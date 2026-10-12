@@ -389,10 +389,10 @@ The container's Python process simulates model reconstruction and a credential; 
 
 nemoclaw-e2e's `dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle` test deploys the [reference dummy image](../build.md#reference-contract-image) through a managed Docker gateway.
 The dummy reports native health without Fabric, a model, or credentials, so apply completes its readiness check.
-The test checks plan, a successful bundled-CLI apply with supported health, an invocation through the image's bridge, unchanged apply, export/reapply with the same runtime identity, and destroy retaining the workspace and gateway storage.
+The test checks plan, a successful bundled-CLI apply with supported health, an invocation that returns the configured `reply` setting, unchanged apply, export/reapply with the same runtime identity, and destroy retaining the workspace and gateway storage, after which the agent no longer answers.
 It requests no inference and does not qualify a production adapter's health.
 
-Supply a verified bundle and an owned document like the gateway tests', with a fresh UID, free gateway port and subnet, the local dummy image by digest, and `harness.kind: org.nemoclaw.dummy`:
+Supply a verified bundle and an owned document like the gateway tests', with a fresh UID, free gateway port and subnet, the local dummy image by digest, `harness.kind: org.nemoclaw.dummy`, and a `harness.settings.reply` string:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
@@ -401,7 +401,10 @@ cargo test -p nemoclaw-e2e --test integration \
   dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle -- --ignored --exact
 ```
 
-It uses a private temporary state directory and retains gateway storage after destroy; `cargo ci live-docker` removes it with the run's other owned resources.
+The test keeps its state in a private temporary directory that it deletes when it ends.
+A successful run retains the gateway's storage, initializer, and bridge; a failed run can also leave the gateway and sandbox running, and `nemoclaw destroy` cannot remove them without the deleted state.
+`cargo ci live-docker` removes every resource labeled with the document's UID after the suite.
+After a manual run, list them with `docker ps -a`, `docker volume ls`, and `docker network ls` using `--filter label=nemoclaw.nvidia.com/uid=UID`, and remove only those; a verified cleanup procedure for retained gateway storage is tracked in [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640).
 
 ## Docker Gateway Recovery
 

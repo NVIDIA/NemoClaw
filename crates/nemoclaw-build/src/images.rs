@@ -19,6 +19,8 @@ pub const PLATFORMS: [&str; 2] = ["linux/arm64", "linux/amd64"];
 const BRIDGE_LABEL: &str = "io.nemoclaw.fabric.bridge";
 const CATALOG_LABEL: &str = "io.nemoclaw.fabric.catalog";
 const REFERENCE_LABEL: &str = "io.nemoclaw.fabric.reference";
+/// The adapter the reference dummy image implements.
+const REFERENCE_ADAPTER: &str = "org.nemoclaw.dummy";
 // Lifecycle profiles start a native adapter and make two inference requests.
 const QUALIFY_TIMEOUT: Duration = Duration::from_secs(480);
 
@@ -231,13 +233,31 @@ fn read_metadata(image: &str, args: &[&str]) -> Result<Value> {
 /// Labels that publish the image's bridge capabilities and its catalog: the
 /// installed Fabric discovery for harnesses, the explicit descriptor for the
 /// reference dummy.
-pub fn labels(name: &str, bridge: Value, catalog: Option<Value>) -> Result<Vec<(String, String)>> {
+pub fn labels(name: &str, bridge: Value, catalog: Value) -> Result<Vec<(String, String)>> {
     let compact = |value: &Value| {
         serde_json::to_string(value).map_err(|_| "unserializable metadata".to_owned())
     };
-    let catalog = catalog.ok_or_else(|| format!("{name} has no installed catalog"))?;
     if catalog["bridge"] != bridge {
         return Err("catalog and executable bridge capabilities disagree".into());
+    }
+    // Only the reference image publishes the reference adapter, and it
+    // publishes nothing else, so neither can pass for the other.
+    let adapters: Vec<&str> = catalog["adapters"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|adapter| adapter["descriptor"]["adapter_id"].as_str().unwrap_or(""))
+        .collect();
+    if name == "dummy" {
+        if adapters != [REFERENCE_ADAPTER] {
+            return Err(format!(
+                "the reference image must list only {REFERENCE_ADAPTER}"
+            ));
+        }
+    } else if adapters.contains(&REFERENCE_ADAPTER) {
+        return Err(format!(
+            "{name} lists {REFERENCE_ADAPTER}, which only the reference image may publish"
+        ));
     }
     Ok(vec![
         (BRIDGE_LABEL.to_owned(), compact(&bridge)?),
@@ -270,7 +290,7 @@ pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
             )?;
             // The reference image has no Fabric to discover with, so it
             // publishes its one explicit descriptor in the same catalog form.
-            let catalog = Some(read_metadata(
+            let catalog = read_metadata(
                 &temporary,
                 if name == "dummy" {
                     &["/opt/nemoclaw/dummy_catalog.py"]
@@ -282,7 +302,7 @@ pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
                         "/opt/nemoclaw/provenance.json",
                     ]
                 },
-            )?);
+            )?;
             let labels = labels(&name, bridge, catalog)?;
             let context = tempfile::tempdir().map_err(|_| "cannot create a label context")?;
             fs::write(

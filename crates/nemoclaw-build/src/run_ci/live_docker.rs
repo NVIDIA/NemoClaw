@@ -162,28 +162,35 @@ fn prepare(
         })
         .collect();
     let mut subnets = Vec::new();
-    let mut document_for = |name: &str, image: &str, harness: &str| -> Result<PathBuf> {
-        let uid = live::uuid()?;
-        let subnet = live::free_subnet(&used, &subnets)?;
-        subnets.push(subnet.clone());
-        let path = inputs.join(format!("{name}.yaml"));
-        fs::write(
-            &path,
-            live::gateway_document(&GatewayInputs {
-                name,
-                uid: &uid,
-                port: live::free_port()?,
-                subnet: &subnet,
-                image,
-                harness,
-            }),
-        )?;
-        owned.uids.push(uid);
-        Ok(path)
-    };
+    let mut document_for =
+        |name: &str, image: &str, harness: &str, settings: Option<&str>| -> Result<PathBuf> {
+            let uid = live::uuid()?;
+            let subnet = live::free_subnet(&used, &subnets)?;
+            subnets.push(subnet.clone());
+            let path = inputs.join(format!("{name}.yaml"));
+            fs::write(
+                &path,
+                live::gateway_document(&GatewayInputs {
+                    name,
+                    uid: &uid,
+                    port: live::free_port()?,
+                    subnet: &subnet,
+                    image,
+                    harness,
+                    settings,
+                }),
+            )?;
+            owned.uids.push(uid);
+            Ok(path)
+        };
     // The dummy reports native health, so its whole lifecycle completes.
-    let lifecycle = document_for("live-dummy", &dummy, "org.nemoclaw.dummy")?;
-    let mut document = |name: &str| document_for(name, &agent, harness);
+    let lifecycle = document_for(
+        "live-dummy",
+        &dummy,
+        "org.nemoclaw.dummy",
+        Some(r#"{"reply": "dummy-reply"}"#),
+    )?;
+    let mut document = |name: &str| document_for(name, &agent, harness, None);
     // Each gateway test refuses resources from an earlier run, so each gets
     // fresh documents: recovery, an isolation pair, and profile revisions.
     let recovery = document("live-recovery")?;

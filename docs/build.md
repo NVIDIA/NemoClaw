@@ -158,7 +158,7 @@ The snapshot holds canonical descriptors and provenance only; it does not change
 Build the dummy `fabric-agent` image to exercise the provisioning interface without Fabric, a native agent, credentials, or a model.
 It uses the same command host as all ten interim adapter images and supplies a deterministic reference backend.
 It is a test fixture, excluded from the production `agents` target and the bundled catalog.
-Its image catalog lists one [explicit descriptor](../image/fabric/dummy.fabric-adapter.json), so a deployment can select `org.nemoclaw.dummy` by image digest; the [Docker live suite](contributing/live-tests.md#dummy-agent-lifecycle) deploys it that way.
+Its image catalog lists one [explicit descriptor](../image/fabric/dummy.fabric-adapter.json), so a deployment can run it by setting `harness.kind: org.nemoclaw.dummy` and the image's immutable reference; the [Docker live suite](contributing/live-tests.md#dummy-agent-lifecycle) deploys it that way.
 On Linux ARM64, run from the repository root:
 
 ```sh

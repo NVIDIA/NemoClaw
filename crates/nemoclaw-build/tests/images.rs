@@ -10,7 +10,7 @@ use std::path::Path;
 fn harness_images_carry_a_catalog_that_agrees_with_their_bridge() {
     let bridge = json!({"interface_version": 1});
     let catalog = json!({"bridge": bridge, "adapters": []});
-    let published = labels("openclaw", bridge.clone(), Some(catalog.clone())).unwrap();
+    let published = labels("openclaw", bridge.clone(), catalog.clone()).unwrap();
     assert_eq!(
         published,
         [
@@ -19,22 +19,35 @@ fn harness_images_carry_a_catalog_that_agrees_with_their_bridge() {
         ]
     );
     let disagreeing = json!({"bridge": {"interface_version": 2}});
-    assert!(labels("openclaw", bridge.clone(), Some(disagreeing)).is_err());
-    assert!(labels("openclaw", bridge, None).is_err());
+    assert!(labels("openclaw", bridge.clone(), disagreeing).is_err());
+    // Only the reference image may publish the reference adapter.
+    let impostor = json!({"bridge": bridge, "adapters": [{"descriptor": {"adapter_id": "org.nemoclaw.dummy"}}]});
+    assert!(labels("openclaw", bridge, impostor).is_err());
 }
 
 #[test]
 fn the_reference_image_carries_a_catalog_so_deployments_can_select_it() {
     let bridge = json!({"interface_version": 1});
-    let catalog = json!({"bridge": bridge, "adapters": []});
+    let catalog = json!({"bridge": bridge, "adapters": [{"descriptor": {"adapter_id": "org.nemoclaw.dummy"}}]});
     assert_eq!(
-        labels("dummy", bridge.clone(), Some(catalog.clone())).unwrap(),
+        labels("dummy", bridge.clone(), catalog.clone()).unwrap(),
         [
             ("io.nemoclaw.fabric.bridge".to_owned(), bridge.to_string()),
             ("io.nemoclaw.fabric.catalog".to_owned(), catalog.to_string()),
         ]
     );
-    assert!(labels("dummy", bridge, None).is_err());
+    // A catalog from Fabric discovery, read by mistake, lists other adapters.
+    let discovered =
+        json!({"bridge": bridge, "adapters": [{"descriptor": {"adapter_id": "nvidia.fabric.pi"}}]});
+    assert!(labels("dummy", bridge.clone(), discovered).is_err());
+    assert!(
+        labels(
+            "dummy",
+            bridge.clone(),
+            json!({"bridge": bridge, "adapters": []})
+        )
+        .is_err()
+    );
 }
 
 #[test]

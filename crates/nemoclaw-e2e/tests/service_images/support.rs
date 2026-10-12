@@ -147,24 +147,17 @@ impl Scenario {
         let proxy_image = std::env::var("NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE")
             .expect("explicit digest-pinned proxy image");
         assert!(proxy_image.contains("@sha256:"));
-        let installed = inspect("image", &image);
-        let mut catalog = FabricCatalog::from_json(
-            installed["Config"]["Labels"]["io.nemoclaw.fabric.catalog"]
+        // Discovery reads the image's own labels, served unchanged; check them
+        // here so a stale image fails with a rebuild instruction.
+        let metadata = inspect("image", &image);
+        FabricCatalog::from_json(
+            metadata["Config"]["Labels"]["io.nemoclaw.fabric.catalog"]
                 .as_str()
-                .expect("installed catalog"),
+                .expect(
+                    "the agent image has no Fabric catalog; rebuild it with cargo images build",
+                ),
         )
-        .unwrap();
-        catalog.bridge = Some(
-            serde_json::from_str(
-                installed["Config"]["Labels"]["io.nemoclaw.fabric.bridge"]
-                    .as_str()
-                    .unwrap(),
-            )
-            .unwrap(),
-        );
-        let mut metadata = installed;
-        metadata["Config"]["Labels"]["io.nemoclaw.fabric.catalog"] =
-            json!(serde_json::to_string(&catalog).unwrap());
+        .expect("the agent image's Fabric catalog is invalid; rebuild it with cargo images build");
         let metadata_server = docker::Fixture::start(move |request| {
             assert_eq!(request.method, "GET", "discovery must not mutate the engine");
             let value = if request.path == "/info" { json!({"ID":"image-fixture","Architecture":metadata["Architecture"],"OSType":"linux","ServerVersion":"28.0"}) } else {

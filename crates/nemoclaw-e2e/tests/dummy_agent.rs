@@ -96,10 +96,18 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
         ComputeDriver::Docker
     );
     let sandbox = &document.spec.sandboxes[0];
-    assert_eq!(
-        document.sandbox_harness(sandbox).unwrap().kind,
-        "org.nemoclaw.dummy".parse().unwrap()
-    );
+    let harness = document.sandbox_harness(sandbox).unwrap();
+    assert_eq!(harness.kind, "org.nemoclaw.dummy".parse().unwrap());
+    // The dummy replies with this setting, so the reply shows that apply
+    // delivered the authored native settings to the running agent.
+    let configured_reply = harness
+        .settings
+        .as_ref()
+        .and_then(|settings| settings.get("reply"))
+        .and_then(|reply| reply.as_str())
+        .expect("the document sets harness.settings.reply")
+        .to_owned();
+    let resource = format!("openshell_sandbox.{}", sandbox.name);
     let state = tempfile::tempdir().unwrap();
     let deployment = Deployment::new(state.path(), &bundle);
     let cancel = CancellationToken::new();
@@ -129,7 +137,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
         applied
             .changes
             .iter()
-            .any(|change| change.resource == "openshell_sandbox.assistant"),
+            .any(|change| change.resource == resource),
         "apply must create the sandbox: {:?}",
         applied.changes
     );
@@ -150,7 +158,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
         "{reply}"
     );
     assert_eq!(
-        reply["result"]["fabric_result"]["output"]["message"], "dummy-lifecycle",
+        reply["result"]["fabric_result"]["output"]["message"], configured_reply,
         "{reply}"
     );
 
@@ -173,9 +181,13 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
         destroyed
             .changes
             .iter()
-            .any(|change| change.resource == "openshell_sandbox.assistant"),
+            .any(|change| change.resource == resource),
         "destroy must remove the sandbox: {:?}",
         destroyed.changes
+    );
+    assert!(
+        client.agent_snapshot(&binding).await.is_err(),
+        "the destroyed sandbox's agent must no longer answer"
     );
     assert_eq!(
         destroyed.retained,

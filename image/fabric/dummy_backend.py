@@ -10,6 +10,8 @@ from types import SimpleNamespace
 
 ADAPTER_ID = "org.nemoclaw.dummy"
 HEALTH_CHECKS = ("live", "active", "ready")
+# The reference adapter's settings and their types; its descriptor publishes the same.
+SETTINGS = {"reply": str, "ready": bool, "fail_start": bool, "fail_stop": bool}
 
 
 class InvalidConfiguration(ValueError):
@@ -57,9 +59,9 @@ class Backend:
         if set(harness) - {"adapter_id", "settings"}:
             raise InvalidConfiguration("unknown reference harness field")
         settings = harness.get("settings", {})
-        types = {"reply": str, "ready": bool, "fail_start": bool, "fail_stop": bool}
         if not isinstance(settings, dict) or any(
-            key not in types or type(value) is not types[key] for key, value in settings.items()
+            key not in SETTINGS or type(value) is not SETTINGS[key]
+            for key, value in settings.items()
         ):
             raise InvalidConfiguration("invalid reference settings")
         return copy.deepcopy(config)

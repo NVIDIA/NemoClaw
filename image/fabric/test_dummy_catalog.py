@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from bridge_contract import capabilities
-from dummy_backend import ADAPTER_ID, HEALTH_CHECKS
+from dummy_backend import ADAPTER_ID, HEALTH_CHECKS, SETTINGS
 
 INSTALLED = Path("/opt/nemoclaw/dummy_catalog.py")
 
@@ -35,10 +35,15 @@ class DummyCatalogTest(unittest.TestCase):
 
     def test_descriptor_settings_match_the_backend(self):
         descriptor = json.loads(Path("/opt/nemoclaw/dummy.fabric-adapter.json").read_text())
+        schema_types = {str: "string", bool: "boolean"}
         self.assertEqual(
-            set(descriptor["settings_schema"]["properties"]),
-            {"reply", "ready", "fail_start", "fail_stop"},
+            {
+                name: setting["type"]
+                for name, setting in descriptor["settings_schema"]["properties"].items()
+            },
+            {name: schema_types[kind] for name, kind in SETTINGS.items()},
         )
+        self.assertIs(descriptor["settings_schema"]["additionalProperties"], False)
 
 
 if __name__ == "__main__":

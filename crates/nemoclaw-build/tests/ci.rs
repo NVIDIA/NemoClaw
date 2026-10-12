@@ -104,8 +104,28 @@ fn gateway_documents_are_fresh_and_avoid_ports_and_subnets_in_use() {
         subnet: &chosen,
         image: "nc-live@sha256:abc",
         harness: "nvidia.fabric.pi",
+        settings: None,
     });
     let value: serde_json::Value = serde_saphyr::from_str(&document).unwrap();
+    assert!(
+        value["spec"]["sandboxes"][0]["harness"]
+            .get("settings")
+            .is_none()
+    );
+    let with_settings = gateway_document(&GatewayInputs {
+        name: "live-dummy",
+        uid: &first,
+        port: 17951,
+        subnet: &chosen,
+        image: "nc-live@sha256:abc",
+        harness: "org.nemoclaw.dummy",
+        settings: Some(r#"{"reply": "dummy-reply"}"#),
+    });
+    let with_settings: serde_json::Value = serde_saphyr::from_str(&with_settings).unwrap();
+    assert_eq!(
+        with_settings["spec"]["sandboxes"][0]["harness"]["settings"],
+        serde_json::json!({"reply": "dummy-reply"})
+    );
     assert_eq!(value["metadata"]["uid"], first.as_str());
     assert_eq!(value["spec"]["gateway"]["management"], "managed");
     assert_eq!(
@@ -138,6 +158,7 @@ fn gateway_documents_parse_as_current_configuration() {
         subnet: "172.30.202.0/24",
         image: &format!("nc-live@sha256:{}", "a".repeat(64)),
         harness: "nvidia.fabric.pi",
+        settings: None,
     });
     let parsed = nemoclaw_sdk::config::Document::parse(document.as_bytes()).unwrap();
     assert_eq!(

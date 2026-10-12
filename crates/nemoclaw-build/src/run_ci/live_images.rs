@@ -144,5 +144,25 @@ pub(super) fn load(
             .stderr(Stdio::null())
             .status();
     }
+    // The archive holds every live image; drop the shared names of those this
+    // step does not use, so loading leaves nothing it did not name.
+    let remaining = docker()
+        .args([
+            "image",
+            "ls",
+            "--format",
+            "{{.Repository}}:{{.Tag}}",
+            SHARED,
+        ])
+        .output()?;
+    for shared in String::from_utf8_lossy(&remaining.stdout).lines() {
+        if shared.starts_with(&format!("{SHARED}:")) {
+            let _ = docker()
+                .args(["image", "rm", shared])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
     Ok(())
 }

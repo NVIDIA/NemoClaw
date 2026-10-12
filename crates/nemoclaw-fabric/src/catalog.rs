@@ -15,7 +15,12 @@ pub const IMAGE_CATALOG_LABEL: &str = "io.nemoclaw.fabric.catalog";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FabricCatalog {
     pub schema_version: u32,
+    /// The Fabric revision the descriptors come from. The reference dummy
+    /// image has no Fabric; it records the revision whose adapter contract its
+    /// explicit descriptor follows. Planning requires the SDK's pinned revision.
     pub fabric_revision: String,
+    /// That revision's source archive checksum. The reference image records
+    /// it without containing the archive.
     pub source_sha256: String,
     /// Present only when the selected image advertises its bridge contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]

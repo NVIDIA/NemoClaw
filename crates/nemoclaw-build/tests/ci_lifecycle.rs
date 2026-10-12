@@ -104,10 +104,12 @@ case "$1 $2" in
         fi ;;
     'run '*)
         case "$*" in
-            *--installed*|*dummy_catalog.py*) printf '{"bridge":{"protocol":1}}\n' ;;
+            *dummy_catalog.py*) printf '{"bridge":{"protocol":1},"adapters":[{"descriptor":{"adapter_id":"org.nemoclaw.dummy"}}]}\n' ;;
+            *--installed*) printf '{"bridge":{"protocol":1},"adapters":[]}\n' ;;
             *) printf '{"protocol":1}\n' ;;
         esac ;;
     'image inspect') printf 'sha256:0123456789abcdef\n' ;;
+    'image ls') printf 'nc-live-images:unneeded\n' ;;
     'save '*) printf 'saved %s\n' "$*" ;;
     'load '*) while IFS= read -r line; do printf '%s\n' "$line" >> docker.stdin; done ;;
 esac
@@ -395,6 +397,7 @@ fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compr
     assert!(log.contains("--tag nc-live-images:pi"), "{log}");
     // The reference dummy runs the full Docker lifecycle without Fabric.
     assert!(log.contains("buildx bake dummy --load"), "{log}");
+    assert!(log.contains("/opt/nemoclaw/dummy_catalog.py"), "{log}");
     for variant in ["dummy", "proxy-a", "proxy-b"] {
         assert!(
             log.contains(&format!("--tag nc-live-images:{variant}")),
@@ -457,6 +460,12 @@ fn live_docker_loads_prebuilt_images_under_its_own_names_instead_of_building() {
             "{log}"
         );
     }
+    // Archive images this step does not use keep no shared name behind.
+    assert!(
+        log.lines()
+            .any(|line| line == "image rm nc-live-images:unneeded"),
+        "{log}"
+    );
 }
 
 #[test]
