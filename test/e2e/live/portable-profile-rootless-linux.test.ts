@@ -72,6 +72,7 @@ import {
   runSandboxTokenContainerProbe,
 } from "./openshell-gateway-auth-probe.ts";
 import { verifyPinnedPodmanGatewayStarts } from "./portable-profile-gateway-proof.ts";
+import { proveHermesPortableOnboardingTransaction } from "../fixtures/portable-hermes-transaction-live.ts";
 
 const gatewayEnvModule = (
   "default" in importedGatewayEnv && importedGatewayEnv.default
@@ -154,7 +155,7 @@ const PORTABLE_PROFILE_E2E_PHASES = [
   "verify distinct same-network routes",
   "upgrade the historical receipt through public start and verify its lifecycle",
   "prove post-recovery stop settlement",
-  "record portable environment completion",
+  "run receipt-bound Hermes build, publish, and OpenShell create",
 ] as const;
 
 function run(command: string, args: readonly string[]): string {
@@ -1328,6 +1329,18 @@ async function main(progress: TestProgress): Promise<void> {
         runtimeAuthority,
         sourceRevision,
       });
+      progress.phase("run receipt-bound Hermes build, publish, and OpenShell create");
+      await proveHermesPortableOnboardingTransaction({
+        artifactDir,
+        openshellBin,
+        openshellClientEnv,
+        runtimeAuthority,
+        sourceRevision,
+        sourceEnv: withoutPodmanConnectionSelectors(openshellClientEnv),
+        gatewayName: HERMES_PORTABLE_E2E_GATEWAY_NAME,
+        policySourcePath: HERMES_PORTABLE_E2E_POLICY,
+        buildSettings: HERMES_PORTABLE_E2E_BUILD_SETTINGS,
+      });
     });
 
     fs.writeFileSync(
@@ -1372,7 +1385,6 @@ async function main(progress: TestProgress): Promise<void> {
       { encoding: "utf-8", mode: 0o600 },
     );
 
-    progress.phase("record portable environment completion");
     console.log("Portable profile rootless environment E2E passed.");
   } finally {
     void (disposableNetworkCreated

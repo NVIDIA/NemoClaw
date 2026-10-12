@@ -649,6 +649,17 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       ...launchInput,
       policyAttached: Boolean(createPlan.createRequest.policyPath),
     });
+    const provider = input.runtime.runtimeProvider;
+    const imageBuildSurface = provider?.containerEngine;
+    const nativePodmanCapture =
+      provider?.identity.id === "podman" &&
+      imageBuildSurface?.supported &&
+      imageBuildSurface.identities.some(
+        (identity) => identity.operation === "external-image-preparation",
+      )
+        ? (args: readonly string[], timeoutMs: number) =>
+            imageBuildSurface.capture("external-image-preparation", args, timeoutMs)
+        : undefined;
     const { createArgs: _portableArgs, ...prebuild } = await prebuildSandboxImageIfEligible({
       buildCtx: buildContext.buildCtx,
       buildId,
@@ -658,6 +669,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       gatewayDriver: input.plan.portableLifecycle
         ? "podman"
         : (input.runtime.runtimeProvider?.identity.id ?? "unsupported"),
+      ...(nativePodmanCapture ? { nativePodmanCapture } : {}),
       origin: buildContext.origin,
       sourceReference: createPlan.createRequest.source.reference,
       sandboxName: input.launchInput.sandboxName,

@@ -273,10 +273,12 @@ describe("sandbox BuildKit prebuild", () => {
 
   it("builds and inspects a generated image in the native Podman engine", async () => {
     const { buildCtx, createArgs } = createBuildContext();
-    const buildImage = vi.fn(async (_args, options) => {
-      expect(options.env.CONTAINER_HOST).toBeUndefined();
-      expect(options.env.CONTAINER_CONNECTION).toBeUndefined();
-      return 0;
+    const nativePodmanCapture = vi.fn((args: readonly string[]) => {
+      return {
+        status: 0,
+        stdout: args[0] === "image" ? IMAGE_ID.slice("sha256:".length) : "",
+        stderr: "",
+      };
     });
     const publishImage = vi.fn(async () => 0);
     const log = vi.fn();
@@ -293,27 +295,52 @@ describe("sandbox BuildKit prebuild", () => {
         CONTAINER_HOST: "ssh://remote.invalid",
         CONTAINER_CONNECTION: "remote",
       },
-      buildImage,
+      nativePodmanCapture,
       publishImage,
-      inspectImageId: () => IMAGE_ID.slice("sha256:".length),
       log,
     });
 
-    expect(buildImage).toHaveBeenCalledWith(
+    expect(nativePodmanCapture).toHaveBeenCalledWith(
       [
         "build",
+        "--quiet",
         "-t",
         "nemoclaw-sandbox-local:alpha-1234567890",
         "-f",
         path.join(buildCtx, "Dockerfile"),
         buildCtx,
       ],
-      expect.any(Object),
+      20 * 60_000,
+    );
+    expect(nativePodmanCapture).toHaveBeenCalledWith(
+      ["image", "inspect", "--format", "{{.Id}}", "nemoclaw-sandbox-local:alpha-1234567890"],
+      5_000,
     );
     expect(publishImage).not.toHaveBeenCalled();
     expect(result.imageRef).toBe("nemoclaw-sandbox-local:alpha-1234567890");
     expect(result.imageId).toBe(IMAGE_ID);
     expect(log).toHaveBeenCalledWith(expect.stringContaining("rootless Podman"));
+  });
+
+  it("stops a native Podman build when its selected gateway authority changes", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const nativePodmanCapture = vi.fn(() => {
+      throw new Error("selected Podman socket changed");
+    });
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        gatewayDriver: "podman",
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
+        nativePodmanCapture,
+      }),
+    ).rejects.toThrow("Local rootless Podman build could not start");
+    expect(nativePodmanCapture).toHaveBeenCalledTimes(1);
   });
 
   it("hands a receipt-bound Portable Hermes image to create only after Podman publication", async () => {

@@ -24,6 +24,7 @@ import {
 } from "../sandbox/build-context";
 import { isPortableExperimentalProfile, PORTABLE_LOCAL_REGISTRY } from "./docker-driver-platform";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
+import type { RuntimeProviderCommandCapture } from "./runtime-provider/contract";
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSY_FLAG_VALUES = new Set(["0", "false", "no", "off"]);
@@ -55,6 +56,11 @@ export interface SandboxPrebuildInput {
     ) => { readonly status: number | null; readonly stdout: string; readonly error?: Error };
     readonly imageAvailable: (reference: string) => Promise<boolean>;
   };
+  /** Provider-bound native Podman operation using the selected gateway socket and executable. */
+  nativePodmanCapture?: (
+    args: readonly string[],
+    timeoutMs: number,
+  ) => RuntimeProviderCommandCapture;
   origin: SandboxBuildContextOrigin;
   env?: NodeJS.ProcessEnv;
   buildImage?: (
@@ -243,6 +249,11 @@ export async function prebuildSandboxImageIfEligible(
       `Generated Dockerfile build requires the selected ${input.gatewayDriver} gateway engine; refusing a ${selectedEngine} build.`,
     );
   }
+  if (selectedEngine === "podman" && !portable && !input.nativePodmanCapture) {
+    throw new Error(
+      "Generated Dockerfile build requires the selected Podman gateway image-build authority.",
+    );
+  }
   const dockerHost = String(env.DOCKER_HOST ?? "").trim();
   const dockerContext = String(env.DOCKER_CONTEXT ?? "").trim();
   if (selectedEngine === "docker" && dockerHost && !isSupportedGatewayDockerHost(env.DOCKER_HOST)) {
@@ -317,17 +328,27 @@ export async function prebuildSandboxImageIfEligible(
     }
   }
   const builderName = selectedEngine === "podman" ? "rootless Podman" : "BuildKit";
-  const buildImage =
-    input.buildImage ??
-    (input.portableReceipt
+  const buildImage = input.portableReceipt
+    ? async (args: readonly string[]) => {
+        const outcome = input.portableReceipt!.podman(
+          ["build", "--quiet", ...args.slice(1)],
+          LOCAL_IMAGE_BUILD_TIMEOUT_MS,
+        );
+        return outcome.error ? null : outcome.status;
+      }
+    : selectedEngine === "podman" && !portable
       ? async (args: readonly string[]) => {
-          const outcome = input.portableReceipt!.podman(
+          const outcome = input.nativePodmanCapture!(
             ["build", "--quiet", ...args.slice(1)],
             LOCAL_IMAGE_BUILD_TIMEOUT_MS,
           );
-          return outcome.error ? null : outcome.status;
+          if ((outcome.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+            throw new ImageCommandDeadlineError();
+          }
+          if (outcome.error) throw outcome.error;
+          return outcome.status;
         }
-      : createHostImageCommand(selectedEngine));
+      : (input.buildImage ?? createHostImageCommand(selectedEngine));
   log(`  Building sandbox image with ${builderName}...`);
 
   let status: number | null;
@@ -387,30 +408,38 @@ export async function prebuildSandboxImageIfEligible(
   input.portableReceipt?.context.assertCurrent();
 
   const inspectImageId =
-    input.inspectImageId ??
-    ((ref: string) => {
-      if (input.portableReceipt) {
-        const inspection = input.portableReceipt.podman(
-          ["image", "inspect", "--format", "{{.Id}}", ref],
-          5_000,
-        );
-        return inspection.status === 0 ? inspection.stdout.trim() : "";
-      }
-      if (selectedEngine === "docker")
-        return dockerImageInspectFormat("{{.Id}}", ref, {
-          env: dockerBuildSubprocessEnv(env),
-          replaceEnv: true,
-          ignoreError: true,
-        }).trim();
-      const inspection = spawnSync("podman", ["image", "inspect", "--format", "{{.Id}}", ref], {
-        env: localPodmanEnvironment(dockerBuildSubprocessEnv(env)),
-        encoding: "utf8",
-        timeout: 5_000,
-        maxBuffer: 4096,
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      return inspection.status === 0 ? inspection.stdout.trim() : "";
-    });
+    selectedEngine === "podman" && !portable
+      ? (ref: string) => {
+          const inspection = input.nativePodmanCapture!(
+            ["image", "inspect", "--format", "{{.Id}}", ref],
+            5_000,
+          );
+          return inspection.status === 0 && !inspection.error ? inspection.stdout.trim() : "";
+        }
+      : (input.inspectImageId ??
+        ((ref: string) => {
+          if (input.portableReceipt) {
+            const inspection = input.portableReceipt.podman(
+              ["image", "inspect", "--format", "{{.Id}}", ref],
+              5_000,
+            );
+            return inspection.status === 0 ? inspection.stdout.trim() : "";
+          }
+          if (selectedEngine === "docker")
+            return dockerImageInspectFormat("{{.Id}}", ref, {
+              env: dockerBuildSubprocessEnv(env),
+              replaceEnv: true,
+              ignoreError: true,
+            }).trim();
+          const inspection = spawnSync("podman", ["image", "inspect", "--format", "{{.Id}}", ref], {
+            env: localPodmanEnvironment(dockerBuildSubprocessEnv(env)),
+            encoding: "utf8",
+            timeout: 5_000,
+            maxBuffer: 4096,
+            stdio: ["ignore", "pipe", "ignore"],
+          });
+          return inspection.status === 0 ? inspection.stdout.trim() : "";
+        }));
   let imageId: string | null;
   try {
     const inspected = inspectImageId(imageRef).trim();

@@ -990,7 +990,7 @@ To silence the warning when the host is intentionally small, set `NEMOCLAW_IGNOR
 ### Generated Sandbox Image Build Requires the Selected Local Engine
 
 On a local Docker gateway, NemoClaw builds each generated OpenClaw, Hermes, or Deep Agents Code sandbox image with host-side BuildKit.
-On a native Podman gateway, it builds and inspects the image in the current user's local Podman store.
+On a native Podman gateway, it builds and inspects the image through the selected gateway's Podman socket.
 The experimental Portable Hermes profile builds with current-user rootless Podman and publishes to the managed local registry.
 NemoClaw stops before sandbox creation in these cases:
 
@@ -999,11 +999,13 @@ NemoClaw stops before sandbox creation in these cases:
 - The selected engine cannot start the build.
 - The build exits with an error.
 - The local build exceeds 20 minutes.
-- On the Docker path, an explicit `DOCKER_HOST` prevents NemoClaw from confirming that the build and gateway use the same engine.
+- On the Docker path, `DOCKER_HOST` names an unsupported endpoint instead of an absolute local `unix://` socket.
+- On the Docker path, a non-default Docker context is selected while `DOCKER_HOST` is unset.
 
 It does not send that generated Dockerfile to the OpenShell gateway's classic Docker API builder because that builder cannot enforce the same instructions.
 
-On the Docker path, unset `DOCKER_HOST` and keep the local prebuild enabled.
+On the Docker path, use an absolute local `unix://` socket in `DOCKER_HOST`, or unset an unsupported value.
+Keep the local prebuild enabled.
 Verify that the host Docker installation provides BuildKit:
 
 ```bash
