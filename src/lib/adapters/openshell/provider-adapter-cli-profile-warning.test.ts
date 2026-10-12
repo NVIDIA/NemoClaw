@@ -152,6 +152,7 @@ describe("provider profile warnings after a binding mutation (#12940)", () => {
       run,
       warn,
       readProfileFile: () => PROFILE_YAML,
+      defaultTimeoutMs: 120_000,
     });
 
     expect(
@@ -171,6 +172,7 @@ describe("provider profile warnings after a binding mutation (#12940)", () => {
       "provider",
     ]);
     expect(run.mock.calls[3]?.[0]).toEqual(PROFILE_EXPORT_ARGS);
+    expect(run.mock.calls[2]?.[1]).toMatchObject({ timeout: 30_000 });
     expect(warn).toHaveBeenCalledOnce();
     expect(warn.mock.calls[0]?.[0]).toContain("gateway operator");
     expect(warn.mock.calls[0]?.[0]).not.toContain(SECRET);
@@ -208,7 +210,7 @@ describe("provider profile warnings after a binding mutation (#12940)", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("warns when the attached provider cannot be inspected after a verified import", async () => {
+  it("uses caller timeout and warns when post-attach lookup fails (#12940)", async () => {
     const warn = vi.fn();
     const run = vi
       .fn<RunProviderCommand>()
@@ -219,6 +221,7 @@ describe("provider profile warnings after a binding mutation (#12940)", () => {
       run,
       warn,
       readProfileFile: () => PROFILE_YAML,
+      defaultTimeoutMs: 120_000,
     });
 
     expect(
@@ -229,9 +232,11 @@ describe("provider profile warnings after a binding mutation (#12940)", () => {
         target: TARGET,
         sandboxName: "alpha",
         providerName: "test-provider",
+        timeoutMs: 100,
       }),
     ).resolves.toEqual({ ok: true });
     expect(run).toHaveBeenCalledTimes(3);
+    expect(run.mock.calls[2]?.[1]).toMatchObject({ timeout: 100 });
     expect(warn).toHaveBeenCalledOnce();
     expect(warn.mock.calls[0]?.[0]).toContain("did not complete");
     expect(warn.mock.calls[0]?.[0]).not.toContain(SECRET);
