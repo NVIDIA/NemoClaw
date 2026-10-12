@@ -553,7 +553,7 @@ vi.mock("../wsl-docker-desktop-gpu", async (importOriginal) => ({
 
 describe("managed llama.cpp operation probe strategy", () => {
   const env = { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark" };
-  const input = {} as Parameters<
+  const input = { guardedStdioForward: true } as Parameters<
     ReturnType<typeof createDockerLlamaCppHostLocalOperation>["createLlamaCppLifecycle"]
   >[0];
 
@@ -593,6 +593,31 @@ describe("managed llama.cpp operation probe strategy", () => {
             : []),
         ],
       ]);
+    },
+  );
+
+  it.each([false, true])(
+    "preserves the former bridge transport for an unguarded WSL runtime with inspection %s",
+    (inspection) => {
+      vi.mocked(detectWslDockerDesktopStatus).mockReturnValue("docker-desktop");
+      const createLifecycle = vi.fn(() => ({}) as never);
+      const operation = createDockerLlamaCppHostLocalOperation(
+        env,
+        contextCapture("ssh://nvidia@spark.example.test"),
+        undefined,
+        createLifecycle,
+      );
+      const selected = inspection
+        ? createDockerLlamaCppInspectionOperation(operation.engine, env, createLifecycle)
+        : operation;
+
+      selected.createLlamaCppLifecycle({ ...input, guardedStdioForward: undefined });
+
+      expect(createLifecycle).toHaveBeenCalledExactlyOnceWith({
+        ...input,
+        guardedStdioForward: undefined,
+        loopbackProbe: "host-process",
+      });
     },
   );
 

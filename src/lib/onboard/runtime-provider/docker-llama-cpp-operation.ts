@@ -145,7 +145,9 @@ function dockerLlamaCppLifecycleOptions(
     }) === "docker-desktop";
   return {
     ...input,
-    ...(desktop ? { bindings: { ...input.bindings, stdioForward: true } } : {}),
+    ...(desktop && input.guardedStdioForward
+      ? { bindings: { ...input.bindings, stdioForward: true } }
+      : {}),
     loopbackProbe: input.loopbackProbe ?? (desktop ? "host-process" : undefined),
   };
 }
