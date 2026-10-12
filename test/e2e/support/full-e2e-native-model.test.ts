@@ -37,6 +37,16 @@ it("gives separate invocations different temporary provider and model entries", 
   expect(first.primary).not.toBe(second.primary);
 });
 
+it("keeps native NVIDIA routing and credential resolution across a model edit", () => {
+  const fixture = buildNativeModelRestartFixture("nvidia/model", "nvidia-prod");
+  expect(JSON.parse(fixture.patch).models.providers[fixture.provider]).toMatchObject({
+    baseUrl: "https://integrate.api.nvidia.com/v1",
+    apiKey: "${NVIDIA_INFERENCE_API_KEY}",
+    api: "openai-completions",
+    models: [{ id: "nvidia/model", name: "nvidia/model" }],
+  });
+});
+
 it("encodes model identifiers as JSON data without interpreting path or shell syntax", () => {
   const model = 'vendor/a.b[0]"; $(not-a-command)';
   const fixture = buildNativeModelRestartFixture(model);
