@@ -157,7 +157,7 @@ function exportAgent(
     name: agent.name,
     ...(tools === undefined ? {} : { tools }),
     ...(source.webSearch?.agentRefs.some((reference) => reference === agent.name)
-      ? { integrationRefs: ["brave-search" as const] }
+      ? { integrationRefs: [`${source.webSearch.provider}-search` as const] }
       : {}),
     ...(agent.primary && source.auth !== undefined ? { auth: { method: source.auth.method } } : {}),
     inference: {
@@ -204,6 +204,12 @@ function targetFilesystem(
 
 function targetPolicy(source: VerifiedExportSource): Record<string, unknown> {
   const policy = structuredClone(source.policy) as Record<string, unknown>;
+  const networks = policy.network_policies as
+    | Record<string, { endpoints?: Record<string, unknown>[] }>
+    | undefined;
+  for (const network of Object.values(networks ?? {})) {
+    for (const endpoint of network.endpoints ?? []) delete endpoint.provider_credentialed;
+  }
   const landlock = policy.landlock as Record<string, unknown> | undefined;
   // The pinned v1 consumer names fail-closed Landlock enforcement hard_requirement.
   if (landlock?.compatibility === "strict") landlock.compatibility = "hard_requirement";
@@ -226,7 +232,7 @@ function exportSandbox(source: VerifiedExportSource, providerName: string): V1Al
       ? {}
       : {
           integrations: {
-            "brave-search": {
+            [`${source.webSearch.provider}-search`]: {
               kind: "webSearch" as const,
               provider: source.webSearch.provider,
               credential: source.webSearch.credential,

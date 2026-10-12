@@ -4,9 +4,14 @@
 const MINUTE_MS = 60_000;
 
 export const SANDBOX_SURVIVAL_MARKER_PATHS = [
+  "/sandbox/.survival-unknown-marker",
   "/sandbox/.openclaw/workspace/.survival-workspace-marker",
   "/sandbox/.openclaw/agents/main/sessions/.survival-session-marker",
   "/sandbox/.openclaw/memory/.survival-memory-marker",
+  "/sandbox/.local/share/e2e-package/.survival-package-marker",
+  "/sandbox/.openclaw/plugins/e2e/.survival-plugin-marker",
+  "/sandbox/.openclaw/hooks/.survival-hook-marker",
+  "/sandbox/.openclaw/cron/.survival-cron-marker",
 ] as const;
 
 export const SANDBOX_SURVIVAL_NATIVE_READINESS = {
@@ -57,7 +62,7 @@ export const SANDBOX_SURVIVAL_LIFECYCLE_WORST_CASE_MS =
 export const SANDBOX_SURVIVAL_PREPARATION_BUDGET_MS = 30 * MINUTE_MS;
 export const SANDBOX_SURVIVAL_READINESS_BUDGET_MS = 15 * MINUTE_MS;
 export const SANDBOX_SURVIVAL_LIFECYCLE_BUDGET_MS = 10 * MINUTE_MS;
-export const SANDBOX_SURVIVAL_FINAL_VALIDATION_BUDGET_MS = 10 * MINUTE_MS;
+export const SANDBOX_SURVIVAL_FINAL_VALIDATION_BUDGET_MS = 15 * MINUTE_MS;
 export const SANDBOX_SURVIVAL_TEST_HEADROOM_MS = 5 * MINUTE_MS;
 
 export const SANDBOX_SURVIVAL_TEST_TIMEOUT_MS =

@@ -104,6 +104,14 @@ export async function handleAgentSetupState<Agent>({
   const agentSetupContext = deps.agentSetupContext();
   const initializeOpenclawInferenceRoute = async (): Promise<void> => {
     if (!initializeNativeInferenceRoute) return;
+    if (
+      settleOpenclawStartupBeforeConfiguration &&
+      !(await deps.settleStartedOpenclawGatewayForConfiguration(sandboxName))
+    ) {
+      throw new Error(
+        `External-image OpenClaw pairing did not settle after configuration for sandbox '${sandboxName}'.`,
+      );
+    }
     await (deps.initializeOpenclawInferenceRoute ?? initializeDefaultOpenclawInferenceRoute)(
       sandboxName,
       model,
@@ -192,7 +200,7 @@ export async function handleAgentSetupState<Agent>({
       )) !== true
     ) {
       throw new Error(
-        `External-image OpenClaw startup did not settle before configuration for sandbox '${sandboxName}'.`,
+        `OpenClaw startup did not settle before configuration for sandbox '${sandboxName}'.`,
       );
     }
     revalidateSandboxIdentity?.(`configure OpenClaw in sandbox '${sandboxName}'`);

@@ -94,6 +94,7 @@ export type HermesPostRestoreGatewayState =
 export type HermesPostRestoreGatewayRestartState =
   | "not-applicable"
   | "restarted"
+  | "restart-health-timeout"
   | "restart-failed";
 
 type GatewayRecoveryObservation = {
@@ -162,6 +163,12 @@ export async function restartHermesGatewayAfterStateRestore(
     ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
   });
   if (result.ok) return "restarted";
+  // A health timeout is emitted only after the native restart command was
+  // accepted. The final post-restore check can therefore still prove the new
+  // process if it crosses the readiness boundary just after the restart
+  // helper's bounded wait. Other failures provide no replacement evidence and
+  // must remain fail-closed when the old process merely stayed healthy.
+  if (result.failureLayer === "health timeout") return "restart-health-timeout";
   return "restart-failed";
 }
 
@@ -207,7 +214,7 @@ async function verifyHermesGatewayAfterStateRestoreImpl(
   originalIdentity?: HermesCronRestoreIdentity,
 ): Promise<HermesPostRestoreGatewayVerification> {
   if (agentName !== "hermes") return { state: "not-applicable" };
-  const restarted = restartState === "restarted";
+  const restarted = restartState === "restarted" || restartState === "restart-health-timeout";
   const checkAndRecover = deps.checkAndRecoverSandboxProcesses ?? checkAndRecoverSandboxProcesses;
   const observeReplacement = deps.observeHermesCronReplacement ?? observeHermesCronReplacement;
   const maxAttempts = originalIdentity

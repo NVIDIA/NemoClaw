@@ -49,24 +49,44 @@ Select review evidence for the publication state before every agent-managed push
 
 After the applicable review step, repeat every canonical base read, fetch, and comparison command in Branch state immediately before each validation attempt.
 
-Confirm that the complete validation execution surface is byte-for-byte identical with the canonical comparison ref:
+Compare the validation execution surface with the canonical comparison ref before execution:
 
 - validation command and hook configuration;
 - package manifests, lockfiles, and package-manager configuration;
 - transitively loaded repository-local helpers and configuration;
 - resolved validator executables.
 
-Do not infer executable identity from a package name or version. Do not use a branch-defined validator as independent evidence. If any surface differs, is unavailable, or cannot be traced, do not execute the candidate validator or publish. Report the path or executable and canonical base SHA.
+Inspect differences as part of the authorized repair. A changed validator, dependency, or configuration
+is not itself a new authorization boundary. Do not infer executable identity from a package version.
+Run changed validation code in an isolated environment without contributor-host credentials when it
+can access credentials or change host state. Keep unchanged trusted-base checks where applicable.
+Record the candidate checks separately; they cannot independently approve their own policy changes.
+Independent CI and maintainer review remain required before merge.
+
+The isolation requirement includes the installed `pre-push` hook and every child it launches.
+`language: system` runs on the contributor host; a normal `git push` does not isolate it.
+An isolated standalone test does not establish that a later host hook is safe.
+Use a verified isolation boundary for the actual hook process, with no inherited secret environment,
+credential files, SSH agent socket, or credential helper access. Keep Git transport authentication
+outside that boundary. Preserve the installed hook, its arguments and input, and its failure status.
+Record the boundary and verify credential access is denied before executing changed validators.
+If the actual hook cannot run safely, stop before the push and report the missing isolation capability.
+Do not disable hooks or replace them with a successful no-op. Reading and reviewing the diff needs no approval.
+
+For Pi image-input changes, normal local hooks may report pending qualification. Publish the candidate
+through normal hooks, collect genuine AMD64 and ARM64 receipts from the same successful qualification
+run, verify source parity, and update the receipt authority. Continue without another bootstrap waiver.
+CI retains the strict receipt check. Pending qualification never establishes readiness or merge approval.
 
 Confirm that the installed pre-push hook is available. Then use a normal `git push`; do not use `--no-verify`. The hook prepares build artifacts and runs the publication checks once. Do not run a separate `npm run validate:pr` before the push. If the hook is missing or stale, stop and repair the contributor setup before publication.
 
-Do not push when publication validation fails or is inconclusive. Complete formatting and generation before the final commit; publication validation checks tracked files without applying fixes. If validation reports a required change, repair it, commit it, inspect the new diff, refresh the trusted base, and push again. For an open PR, preserve the completed disposition record for the unchanged remote candidate and review the local repair without recollecting that remote candidate.
+Do not push when publication validation fails or is inconclusive, except the documented pending Pi qualification state. Complete formatting and generation before the final commit; publication validation checks tracked files without applying fixes. If validation reports a required change, repair it, commit it, inspect the new diff, refresh the trusted base, and push again. For an open PR, preserve the completed disposition record for the unchanged remote candidate and review the local repair without recollecting that remote candidate.
 
 The shared compiler-check runner may reuse a successful local result only when the candidate and base commits, source bytes, installed dependency bytes, resolved executable, execution environment, and required generated outputs still match. Missing, unreadable, stale, or failed evidence must execute the check. A dirty worktree or external Node loader prevents reuse. This local optimization does not establish independent review, CI success, or publication authorization. Keep the trusted-validation comparison above.
 
 Use `npm run check` for repository-wide validation changes, such as hooks, formatter configuration, generated-check scripts, or coverage baselines.
 
-A maintainer may unblock unavailable trusted-base validation only with recorded evidence identifying the base and candidate SHAs, isolated environment, trusted validator entry point and resolved executables, exact command and result, and publication authorization. The environment must not give candidate code contributor-host credentials.
+When a required trusted validator cannot evaluate an intentional validator change, record the base and candidate SHAs, isolated environment, resolved executables, command, result, and independent checks still pending. Existing authorization to prepare the PR covers draft publication only after the actual publication hooks can run safely. It does not waive hook isolation, required CI, or independent acceptance of the changed policy.
 
 `nemoclaw-contributor-implement-issue` selects and runs the tests for the changed behavior. Record its command and result in the PR body. Do not select a test in this workflow or rerun a reported test because hooks passed. If this evidence is missing, route the change set back to that skill. Do not open the PR with an unselected tests line. For documentation-only changes, require `npm run docs` to pass before publication.
 

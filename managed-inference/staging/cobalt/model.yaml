@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingModel
+
+metadata:
+  id: vllm.cobalt.v1
+  displayName: Cobalt
+
+spec:
+  # Bind released NVFP4 weights with MTP support and their size before activation.
+  id: staging/cobalt
+  revision: "0000000000000000000000000000000000000000"
+  environmentValue: cobalt
+  displayName: Cobalt
+  menuOrder: 60
+  servedName: cobalt
+  downloadSizeBytes: 1
+  gated: true
+  installFastSafetensors: false
+  preparation:
+    ref: none/v1
+  probePolicyRef: nvidia.endpoint-validation.extended/v1
+  capabilities:
+    chatCompletions: true
+    streaming: true
+    toolCalls: true
+    structuredOutputs: true
+    reasoning: true
+    multimodal: true

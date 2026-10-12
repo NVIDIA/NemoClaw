@@ -2396,6 +2396,10 @@ async function runVllmInstall(
 
   console.log("");
   console.log(`  vLLM (${runtimeProfile.name}):`);
+  if (hostLocalSelection?.displayName) {
+    console.log(`    Selected for your hardware: ${hostLocalSelection.displayName}`);
+    console.log(`    Context limit: ${String(model.maxModelLen)} tokens`);
+  }
   console.log(`    Image: ${runtimeProfile.image}`);
   console.log(
     `    Model: ${model.id}${modelSource === "env" ? " (NEMOCLAW_VLLM_MODEL override)" : ""}`,

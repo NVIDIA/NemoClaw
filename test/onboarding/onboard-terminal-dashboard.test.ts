@@ -152,7 +152,7 @@ runner.runCapture = (command) => {
       "Route:    inference",
       "Provider: nvidia-prod",
       "Model:    openai:gpt-5.4",
-      "Endpoint: https://inference.local/v1",
+      "Endpoint: https://integrate.api.nvidia.com/v1",
     ].join("\n");
   }
   if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
@@ -188,6 +188,12 @@ registry.getSandbox = () =>
         name: sandboxName,
         gpuEnabled: false,
         agent: "langchain-deepagents-code",
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "provider-revision-1",
+        },
         dashboardPort: 18789,
         observabilityEnabled: false,
         toolDisclosure: "progressive",

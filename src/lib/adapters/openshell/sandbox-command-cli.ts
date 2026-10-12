@@ -9,9 +9,11 @@ import {
   type ProcessSessionResult,
 } from "../../core/process-session";
 import { spawnExitCode } from "../../core/process-exit";
-import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
-import { isValidName } from "../../sandbox-name-contract";
 import { buildSubprocessEnv } from "../../subprocess-env";
+import {
+  buildOpenShellRuntimeSelectionEnv,
+  type OpenShellRuntimeSelection,
+} from "./runtime-selection";
 import type { OpenshellAsyncCaptureSignalSource } from "./client";
 import { captureOpenshellCommandAsyncResult } from "./command-execution";
 import { resolveOpenshellBinaryOrNull } from "./resolve-shared";
@@ -27,6 +29,13 @@ import {
 } from "./sandbox-command";
 import { buildSandboxCommandStdio } from "./sandbox-command-stdio";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
+import {
+  assertCliOpenShellSandboxName,
+  assertCliOpenShellSessionTarget,
+  assertCliOpenShellTarget,
+} from "./target-validation";
+
+export { assertCliOpenShellSandboxName, assertCliOpenShellTarget } from "./target-validation";
 
 import { runCapturedProcess, type CapturedProcessChild } from "../../core/process-capture";
 import type {
@@ -93,20 +102,6 @@ export type CliOpenShellSandboxCommandExecutorDeps = Readonly<{
 
 function targetArgs(target: OpenShellGatewayTarget): string[] {
   return target.kind === "named" ? ["-g", target.gatewayName] : [];
-}
-
-export function assertCliOpenShellTarget(
-  target: OpenShellGatewayTarget,
-  environment = process.env,
-): void {
-  if (target.kind === "named" && !isValidName(target.gatewayName)) {
-    throw new Error("Invalid OpenShell gateway name");
-  }
-  assertNoOpenShellGatewayEndpointOverride(environment);
-}
-
-export function assertCliOpenShellSandboxName(sandboxName: string): void {
-  if (!isValidName(sandboxName)) throw new Error("Invalid OpenShell sandbox name");
 }
 
 export function buildCliOpenShellSandboxExecArgs(
@@ -266,6 +261,16 @@ function unavailableBinary(): OpenShellSandboxCommandCompletion {
   };
 }
 
+/** Apply the same filtered environment and recorded runtime to native sandbox probes. */
+export function buildSandboxCommandEnvironment(
+  runtimeSelection?: OpenShellRuntimeSelection,
+  runtimeEnv?: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  return runtimeSelection
+    ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
+    : (runtimeEnv ?? buildSubprocessEnv());
+}
+
 export function createCliOpenShellSandboxCommandExecutor(
   deps: CliOpenShellSandboxCommandExecutorDeps = {},
 ): OpenShellSandboxCommandExecutor & OpenShellSandboxBufferedCommandExecutor {
@@ -306,7 +311,10 @@ export function createCliOpenShellSandboxCommandExecutor(
     },
     runBuffered: async (request) => {
       assertCliOpenShellSandboxName(request.sandboxName);
-      const environment = request.environment ?? deps.hostEnv ?? buildSubprocessEnv();
+      const environment = buildSandboxCommandEnvironment(
+        undefined,
+        request.environment ?? deps.hostEnv,
+      );
       assertCliOpenShellTarget(request.target, environment);
       const binary = resolveBinary();
       if (!binary) {
@@ -424,12 +432,6 @@ function sessionOutcome(
 }
 
 function sessionArgs(request: OpenShellSandboxSessionRequest): string[] {
-  if (
-    !isValidName(request.sandboxName) ||
-    (request.target.kind === "named" && !isValidName(request.target.gatewayName))
-  ) {
-    throw new Error("Invalid OpenShell session target");
-  }
   if (request.kind === "connect") {
     // OpenShell 0.0.116 changed `sandbox connect` from opening a fresh SSH
     // shell to attaching the sandbox's registered main process. NemoClaw's
@@ -468,7 +470,7 @@ export function createCliOpenShellSandboxSessionExecutor(
       let binary: string | null;
       let args: string[];
       try {
-        assertNoOpenShellGatewayEndpointOverride(environment);
+        assertCliOpenShellSessionTarget(request.sandboxName, request.target, environment);
         args = sessionArgs(request);
         binary = (deps.resolveBinary ?? resolveOpenshellBinaryOrNull)();
       } catch (error) {

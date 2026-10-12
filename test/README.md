@@ -76,12 +76,39 @@ distinct quality value. Do not move assertions into helpers, aggregate objects, 
 After a valid reduction, run `npm run e2e:assertions:update` and include the lower baseline in the
 same change. The ratchet rejects growth and stale baselines.
 
-Maintainer-approved exceptions are recorded in `ci/e2e-assertion-growth-exceptions.json`.
-Each entry binds a PR number to SHA-256 digests of the exact base and candidate budget files.
-Local hooks and candidate CI use the branch policy. The independent GitHub growth check uses only trusted-base
-policy and the event's PR number; a candidate cannot authorize its own independent check.
-A new exception must either land on `main` first or have its expected independent-check failure
-explicitly waived by a maintainer. Remove the entry after its PR merges.
+Maintainer-approved exceptions can use `changeSha256` in `ci/e2e-assertion-growth-exceptions.json`.
+This digest binds every assertion-count and file-inventory change, including reductions, to a PR.
+Formatting and unrelated base changes do not invalidate it. Changed deltas, paths, or reference metadata do.
+Legacy entries with exact `baseBudgetSha256` and `headBudgetSha256` remain supported and retain their original scope.
+Do not convert a legacy approval without maintainer acceptance of the new scope.
+
+The failed growth check prints the change digest. A maintainer can authorize it on the affected PR:
+
+```text
+NemoClaw-E2E-Growth: approve <change-sha256>
+```
+
+Post the command as the entire comment, without a code fence or explanatory text.
+Edited comments are ineligible because moderation can preserve the original author. Post a new record to change a decision.
+Inspect the reported budget changes before recording approval.
+A request to repair CI does not itself authorize increasing the assertion budget. Use `revoke` instead of `approve` to revoke it.
+The independent check reads paginated comments from GitHub and verifies each author's current maintain
+or admin role. Bot comments and candidate-defined approvals cannot authorize that check.
+The last matching maintainer record wins. Deleting a record removes it from subsequent evaluations.
+Creating, editing, or deleting an approval record automatically refreshes the growth check for the current PR commit.
+Both PR events and approval changes mark the current commit's required `checks` status pending before running trusted-base checks.
+The independent status uses the repository's existing required context. The native CI job produces a check run;
+this workflow writes a separate commit status. GitHub requires [both records to pass when their shared name is required](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks).
+After invalidation, a failed or incomplete check cannot restore the earlier green commit status.
+PR and comment evaluations run serially per PR and read current comments instead of replaying old decisions.
+Comments quoting the approval marker also trigger reevaluation, but malformed or quoted records are ignored when reading approvals. A quote does not revoke a valid approval. Keeping these events eligible ensures the latest queued evaluation still reads a revocation if GitHub replaces an older pending run in the concurrency group.
+No policy PR or manual rerun is required for an approval change.
+If cancellation or runner loss prevents the final status report, the pending status continues to block merging. Its Details link identifies the interrupted workflow. After diagnosing the interruption, rerun that workflow under the bounded retry policy; it rereads the current PR and approvals before replacing the status. Ordinary validation failures and cancellations that reach the final reporting step publish failure.
+Normal code review and the assertion census still apply. This record authorizes only the stated budget delta.
+
+Local hooks and candidate CI may use the matching branch entry for preliminary validation.
+Independent CI accepts trusted-base entries or the GitHub maintainer record, never a candidate's own exception.
+Preserve reference metadata and every retained file's budget. Remove branch entries after their PR merges.
 
 New test files must use TypeScript. Each plugin test must execute at least one Vitest `expect`
 assertion. The repository test configuration owns automatic mock and environment cleanup; restore

@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
+import type { parseAuditConfig } from "../../../scripts/audit-reviewed-npm-graph.mts";
 
 export type LockedGraphFixture<T> = Readonly<{
   graph: T;
@@ -12,13 +13,15 @@ export type LockedGraphFixture<T> = Readonly<{
   manifest: Buffer;
 }>;
 
-export function openClawReplacementGraphFixture<T>(
+type ReviewedLockedGraph = ReturnType<typeof parseAuditConfig>["lockedGraphs"][number];
+
+export function openClawReplacementGraphFixture(
   repoRoot: string,
-  graph: T,
-): LockedGraphFixture<T> {
+  graph: ReviewedLockedGraph,
+): LockedGraphFixture<ReviewedLockedGraph> {
   const encodedLock = fs
     .readFileSync(
-      path.join(repoRoot, "test/fixtures/openclaw-2026.9.1-package-lock.json.gz.base64"),
+      path.join(repoRoot, "test/fixtures/openclaw-2026.9.5-package-lock.json.gz.base64"),
       "utf8",
     )
     .replaceAll(/\s/g, "");
@@ -26,6 +29,10 @@ export function openClawReplacementGraphFixture<T>(
   const parsedLock = JSON.parse(lock.toString("utf8")) as {
     packages: { "": Record<string, unknown> };
   };
+  if (!graph.replacement) throw new Error("OpenClaw transition requires a reviewed replacement");
+  if (createHash("sha256").update(lock).digest("hex") !== graph.replacement.lockSha256) {
+    throw new Error("OpenClaw transition fixture does not match the reviewed replacement lock");
+  }
   return {
     graph,
     lock,

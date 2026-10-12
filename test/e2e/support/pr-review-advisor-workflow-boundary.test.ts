@@ -320,6 +320,12 @@ it.each([
     "Unified advisor coordinator shadow must consume exact-attempt trusted evidence",
   ],
   [
+    "coordinator required-check evidence",
+    "COORDINATOR_REQUIRED_CHECKS: ${{ github.event_name == 'workflow_run' && 'pass' || 'pending' }}",
+    "COORDINATOR_REQUIRED_CHECKS: pass",
+    "Unified advisor coordinator shadow must consume exact-attempt trusted evidence",
+  ],
+  [
     "coordinator upload step",
     "- name: Upload coordinator shadow decision",
     "- name: Upload coordinator result",

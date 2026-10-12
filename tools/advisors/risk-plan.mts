@@ -172,6 +172,14 @@ const HERMES_STARTUP_RUNTIME_FILES = new Set([
   "agents/hermes/start.sh",
 ]);
 const OPENCLAW_STARTUP_RUNTIME_FILES = new Set(["scripts/nemoclaw-start.sh"]);
+// These owners create, approve, or restore OpenClaw pairing authority. Keep
+// their focused proof on the canonical transition that exercises pairing and
+// scope approval instead of a rebuild-only state transfer.
+const OPENCLAW_PAIRING_RUNTIME_FILES = new Set([
+  "src/lib/actions/sandbox/auto-pair-approval.ts",
+  "src/lib/actions/sandbox/restore-gateway-pairing.ts",
+  "src/lib/adapters/openshell/restore-gateway-pairing.ts",
+]);
 const MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION =
   "ci/protected-managed-image-runtime-activation-v1.json";
 const MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime" as const;
@@ -436,6 +444,9 @@ export function focusedPrE2eJobsForChangedFiles(
       (file) => OPENCLAW_STARTUP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
     ),
   );
+  const openClawPairingRuntimeFiles = stableUnique(
+    changedFiles.filter((file) => OPENCLAW_PAIRING_RUNTIME_FILES.has(file)),
+  );
   return [
     { id: "staging-brev-launchable", matchedFiles: brevLaunchableFiles },
     ...(journaledRecreateResumeFiles.length > 0
@@ -478,6 +489,10 @@ export function focusedPrE2eJobsForChangedFiles(
       id,
       matchedFiles: openClawMessagingRuntimeFiles,
     })),
+    {
+      id: "issue-4462-scope-upgrade-approval",
+      matchedFiles: openClawPairingRuntimeFiles,
+    },
   ].filter((selection) => selection.matchedFiles.length > 0);
 }
 
@@ -515,18 +530,19 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Upgrade, rebuild, snapshot, and restore operations must preserve user state while replacing stale runtime state.",
     tier: 2,
-    requiredJobs: ["rebuild-openclaw", "state-backup-restore"],
+    requiredJobs: ["rebuild-hermes", "rebuild-openclaw"],
     invariants: [
       "host and in-sandbox runtime versions agree after mutation",
       "credentials, policy, messaging, and workspace state survive intended preservation paths",
       "failed mutations remain retryable without destructive cleanup",
     ],
     matches: (file) =>
-      (file.startsWith("src/") ||
+      file.startsWith("src/lib/state/") ||
+      ((file.startsWith("src/") ||
         file.startsWith("nemoclaw/") ||
         file.startsWith("scripts/") ||
         file.startsWith("nemoclaw-blueprint/")) &&
-      MUTATION_FILE.test(file),
+        MUTATION_FILE.test(file)),
   },
   {
     id: "shared-agent",

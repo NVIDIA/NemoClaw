@@ -6,12 +6,14 @@
   "description": "Locked production dependency graph for the OpenClaw runtime",
   "license": "Apache-2.0",
   "dependencies": {
-    "openclaw": "2026.9.1"
+    "openclaw": "2026.9.2"
   },
   "overrides": {
+    "@modelcontextprotocol/sdk": "1.31.0",
     "hono": "4.12.34",
     "tar": "7.5.21",
-    "fast-uri": "3.1.7"
+    "fast-uri": "3.1.7",
+    "undici": "8.10.2"
   },
   "engines": {
     "node": ">=22.22.3 <23 || >=24.15.0 <25 || >=25.9.0"

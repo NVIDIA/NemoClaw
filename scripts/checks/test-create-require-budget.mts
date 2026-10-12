@@ -38,7 +38,6 @@ export const CLI_CREATE_REQUIRE_FILES = [
   "src/lib/state/onboard-session-cross-process-lock.test.ts",
   "src/lib/state/onboard-session-tool-disclosure.test.ts",
   "src/lib/state/onboard-session.test.ts",
-  "src/lib/state/user-managed-files-probe.test.ts",
 ] as const;
 
 export const TEST_SUPPORT_CREATE_REQUIRE_FILES = [

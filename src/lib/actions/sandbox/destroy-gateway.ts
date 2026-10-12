@@ -11,6 +11,7 @@ import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { stopOpenShellGatewayUserService } from "../../onboard/docker-driver-gateway-service";
 import {
   resolveGatewayPortFromName,
+  removeDockerDriverGatewayBinding,
   resolveGatewayStateDirForPort,
 } from "../../onboard/gateway-binding";
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
@@ -58,6 +59,8 @@ interface ResolveGatewayCleanupRuntimeProviderDeps extends Pick<
   "resolveOwnedRuntimeProviderId"
 > {
   configuredRuntimeProviderId?: string | null;
+  requireOwnedRuntime?: boolean;
+  recoveryRecordedAt?: string;
 }
 
 // Compute the Docker-driver gateway state directory that belongs to
@@ -95,8 +98,12 @@ export function resolveGatewayCleanupRuntimeProviderId(
       gatewayName,
       gatewayPort: perGatewayState.port,
       stateDir: perGatewayState.stateDir,
+      ...(deps.recoveryRecordedAt !== undefined
+        ? { recoveryRecordedAt: deps.recoveryRecordedAt }
+        : {}),
     },
   );
+  if (deps.requireOwnedRuntime && !recorded) return null;
   if (registered && recorded && registered !== recorded) {
     throw new Error(
       `Refusing cleanup for gateway '${gatewayName}': registered runtime provider '${registered}' does not match recorded gateway runtime provider '${recorded}'.`,
@@ -306,6 +313,7 @@ export async function cleanupGatewayAfterLastSandbox(
   if (externallySupervised) {
     return;
   }
+  removeDockerDriverGatewayBinding(os.homedir(), perGatewayState.port, perGatewayState.stateDir);
   if (runtimeProvider?.gateway.ownsHostReadiness !== true) {
     dockerRemoveVolumesByPrefix(`openshell-cluster-${gatewayName}`, {
       ignoreError: true,

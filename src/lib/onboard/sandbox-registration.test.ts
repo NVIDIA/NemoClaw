@@ -93,6 +93,39 @@ function createdRegistryEntryInput(
 }
 
 describe("buildCreatedSandboxRegistryEntry", () => {
+  it("records only an exact native NVIDIA provider identity", () => {
+    const attachment = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    const entry = buildCreatedSandboxRegistryEntry(
+      createdRegistryEntryInput({
+        inferenceSelection: {
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-prod",
+          endpointUrl: null,
+          credentialEnv: null,
+          preferredInferenceApi: null,
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        },
+        nativeNvidiaProviderAttachment: attachment,
+      }),
+    );
+
+    expect(entry.nativeNvidiaProviderAttachment).toEqual(attachment);
+    expect(() =>
+      buildCreatedSandboxRegistryEntry(
+        createdRegistryEntryInput({
+          nativeNvidiaProviderAttachment: { ...attachment, providerId: "" },
+        }),
+      ),
+    ).toThrow(/native NVIDIA provider attachment failed closed validation/u);
+  });
+
   it("records the resolved custom OpenShell gateway state directory (#10665)", () => {
     const entry = buildCreatedSandboxRegistryEntry(
       createdRegistryEntryInput({
@@ -340,6 +373,21 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.toolDisclosure).toBe("progressive");
     expect(entry.observabilityEnabled).toBe(false);
     expect(entry.dcodeAutoApprovalMode).toBeUndefined();
+
+    const sessionRead = vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "demo",
+      agent: null,
+      messagingPlan: null,
+      checkpoint: { messaging: { kind: "declined" } },
+    });
+    const knownEmptyEntry = buildCreatedSandboxRegistryEntry(createdRegistryEntryInput());
+    expect(knownEmptyEntry.messaging?.plan).toMatchObject({
+      sandboxName: "demo",
+      agent: "openclaw",
+      channels: [],
+      credentialBindings: [],
+    });
+    sessionRead.mockRestore();
   });
 
   it("normalizes invalid preferred inference API values", () => {

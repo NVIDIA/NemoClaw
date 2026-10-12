@@ -78,10 +78,12 @@ describe("createSetupNim", () => {
     expect(createNvidiaFeaturedModelSession).toHaveBeenCalledTimes(2);
     expect(createNvidiaFeaturedModelSession).toHaveBeenNthCalledWith(1, {
       defaultModel: ultra,
+      onModelSelected: expect.any(Function),
       writeLine: log,
     });
     expect(createNvidiaFeaturedModelSession).toHaveBeenNthCalledWith(2, {
       defaultModel: ultra,
+      onModelSelected: expect.any(Function),
       fallbackModelOptions: [
         {
           id: "nvidia/nemotron-3-ultra-550b-a55b",
@@ -145,6 +147,7 @@ describe("createSetupNim", () => {
 
     expect(createNvidiaFeaturedModelSession).toHaveBeenCalledWith({
       defaultModel: ultra,
+      onModelSelected: expect.any(Function),
       writeLine: expect.any(Function),
     });
     expect(select).toHaveBeenCalledWith(sharedModel, null, true);
@@ -1391,6 +1394,10 @@ describe("createSetupNim", () => {
     const setupNim = createSetupNim(
       makeDeps({
         isNonInteractive: () => true,
+        discoverManagedLlamaCppSelections: () => ({
+          choices: [],
+          resolution: { kind: "rejected", reason: "vLLM fixture has no managed llama.cpp choice" },
+        }),
         localModelProfileIntegration: { resolvePlan: () => plan, onboard },
         detectInferenceProviderHostState: () =>
           makeHostState({ vllmProfile: profile, hasVllmImage: true }),

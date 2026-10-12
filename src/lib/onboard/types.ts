@@ -82,14 +82,14 @@ export interface SandboxCreateIntent {
   readonly reuseRegisteredCredentials?: true;
   /** Internal durable handoff for one journaled same-name replacement. */
   readonly recreateTransaction?: {
+    /** Process-local proof that this fresh, non-forced run opened the journal. */
+    readonly freshNonForced?: true;
     readonly id: string;
     readonly targetGeneration: string;
     readonly targetIntentFingerprint: string;
   };
   /** Internal outer-rebuild authority for carrying managed MCP state through replacement. */
   readonly recreateJournalTargetIntentFingerprint?: string;
-  /** Validated non-secret Hermes environment assignments carried by a rebuild. */
-  readonly rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
   /** Bounded live OpenShell policy handoff for one active rebuild. */
   readonly rebuildPolicySourcePath?: string;
 }
@@ -168,8 +168,6 @@ export type OnboardOptions = {
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
   /** Internal immutable managed-image/profile handoff validated before rebuild deletion. */
   managedWorkloadRebuild?: import("./workload/rebuild").ManagedWorkloadRebuildHandoff;
-  /** Internal validated non-secret Hermes environment assignments carried by a rebuild. */
-  rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
   /** Bounded live OpenShell policy handoff for one active rebuild. */
   rebuildPolicySourcePath?: string;
   /** Internal hint for resolving the sandbox base image without repeating remote discovery. */

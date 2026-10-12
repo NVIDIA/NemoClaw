@@ -321,9 +321,8 @@ export function buildChildEnv(
   // onboarding action's child runs without nemoclaw on PATH and
   // dies with 'nemoclaw: command not found'. Add ~/.local/bin to
   // every child's PATH at the fixture boundary so the install
-  // location is consistent across phases. Idempotent equivalent of
-  // the install-path-refresh.sh nemoclaw_ensure_local_bin_on_path
-  // helper, applied centrally instead of per-script.
+  // location is consistent across phases. Apply this at the fixture
+  // boundary for each child process.
   const home = out.HOME ?? base.HOME;
   if (typeof home === "string" && home.length > 0) {
     const localBin = `${home}/.local/bin`;

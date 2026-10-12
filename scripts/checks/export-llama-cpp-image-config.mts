@@ -640,11 +640,11 @@ export function loadLlamaCppImageConfig(
     "build-essential": "12.10ubuntu1",
     "ca-certificates": "20260601~24.04.1",
     cmake: "3.28.3-1build7",
-    curl: "8.5.0-2ubuntu10.13",
+    curl: "8.5.0-2ubuntu10.15",
     "g++-14": "14.2.0-4ubuntu2~24.04.1",
     "gcc-14": "14.2.0-4ubuntu2~24.04.1",
-    "libcurl4-openssl-dev": "8.5.0-2ubuntu10.13",
-    "libssl-dev": "3.0.13-0ubuntu3.15",
+    "libcurl4-openssl-dev": "8.5.0-2ubuntu10.15",
+    "libssl-dev": "3.0.13-0ubuntu3.16",
   };
   const expectedCompiler = {
     c: "gcc-14",
@@ -653,9 +653,9 @@ export function loadLlamaCppImageConfig(
   };
   const expectedRuntimePackages = {
     "ca-certificates": "20260601~24.04.1",
-    libcurl4t64: "8.5.0-2ubuntu10.13",
+    libcurl4t64: "8.5.0-2ubuntu10.15",
     libgomp1: "14.2.0-4ubuntu2~24.04.1",
-    libssl3t64: "3.0.13-0ubuntu3.15",
+    libssl3t64: "3.0.13-0ubuntu3.16",
   };
   const expectedRequiredPaths = [
     "/opt/llama.cpp/lib/libggml-cuda.so",
@@ -682,18 +682,18 @@ export function loadLlamaCppImageConfig(
   const requestGuardGoVersion = requiredString(
     requestGuardToolchain?.version,
     "request guard Go version",
-    /^1\.26\.6$/u,
+    /^1\.26\.9$/u,
   );
   const requestGuardGoArchives = {
     amd64: requiredString(
       requestGuardToolchainArchives?.amd64,
       "amd64 request guard Go archive SHA-256",
-      /^sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89$/u,
+      /^sha256:42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d$/u,
     ),
     arm64: requiredString(
       requestGuardToolchainArchives?.arm64,
       "arm64 request guard Go archive SHA-256",
-      /^sha256:d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e$/u,
+      /^sha256:4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052$/u,
     ),
   };
   if (

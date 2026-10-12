@@ -35,14 +35,14 @@ describe("managed startup profile release contract", () => {
   it("tracks the active OpenClaw release pins outside runtime startup intent", () => {
     expect(MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS.openclaw).toEqual(
       expect.arrayContaining([
-        { input: "OPENCLAW_2026_9_1_INTEGRITY", reason: "integrity-pin" },
-        { input: "OPENCLAW_2026_9_1_TARBALL", reason: "release-composition" },
+        { input: "OPENCLAW_2026_9_2_INTEGRITY", reason: "integrity-pin" },
+        { input: "OPENCLAW_2026_9_2_TARBALL", reason: "release-composition" },
         {
-          input: "OPENCLAW_DIAGNOSTICS_OTEL_2026_9_1_INTEGRITY",
+          input: "OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY",
           reason: "integrity-pin",
         },
         {
-          input: "OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY",
+          input: "OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY",
           reason: "integrity-pin",
         },
       ]),

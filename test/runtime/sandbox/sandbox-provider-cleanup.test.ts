@@ -182,7 +182,7 @@ describe("detachSandboxProviders", () => {
     ]);
   });
 
-  it("retains a detach failure for a different missing sandbox even when absence is tolerated", async () => {
+  it("retains a detach failure for a different missing sandbox", async () => {
     const { runOpenshell } = buildRunOpenshell(
       new Map([
         [
@@ -196,7 +196,6 @@ describe("detachSandboxProviders", () => {
     );
     const result = await detachSandboxProviders("phantom", {
       runOpenshell,
-      tolerateMissingSandbox: true,
     });
     expect(result.failures).toEqual([
       {
@@ -204,45 +203,6 @@ describe("detachSandboxProviders", () => {
         output: "Error: status: NotFound, sandbox 'other-box' not found",
       },
     ]);
-  });
-
-  it("tolerates sandbox-not-found when tolerateMissingSandbox is set (opportunistic call)", async () => {
-    const responses = new Map<string, RunResult>([
-      [
-        "sandbox provider detach phantom phantom-telegram-bridge",
-        { status: 1, stderr: "Error: status: NotFound, sandbox 'phantom' not found" },
-      ],
-    ]);
-    const { runOpenshell } = buildRunOpenshell(responses);
-
-    const result = await detachSandboxProviders("phantom", {
-      runOpenshell,
-      tolerateMissingSandbox: true,
-    });
-
-    expect(result.failures).toEqual([]);
-  });
-
-  it("suppresses output for tolerated missing-sandbox detach probes", async () => {
-    const { runOpenshell } = buildRunOpenshell(new Map(), {
-      status: 1,
-      stderr: "Error: status: NotFound, sandbox 'phantom' not found",
-    });
-
-    const result = await detachSandboxProviders("phantom", {
-      runOpenshell,
-      tolerateMissingSandbox: true,
-    });
-
-    expect(result.failures).toEqual([]);
-    expect(runOpenshell).toHaveBeenCalledTimes(SANDBOX_PROVIDER_SUFFIXES.length);
-    runOpenshell.mock.calls.forEach(([, opts]) => {
-      expect(opts).toMatchObject({
-        ignoreError: true,
-        suppressOutput: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-    });
   });
 
   it("collects non-tolerated failures without aborting the loop", async () => {

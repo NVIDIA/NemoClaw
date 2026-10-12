@@ -316,6 +316,7 @@ describe("showSandboxStatus flow", () => {
     );
     expect(output).toContain("Model:    nvidia/nemotron");
     expect(output).toContain("Provider: nvidia");
+    expect(process.exitCode).toBe(1);
   });
 
   it("shell-quotes hostile route values in drift recovery commands (#6315)", async () => {

@@ -35,9 +35,11 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
   it("still rolls back when pre-rollback diagnostic capture fails", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
+    const openShellGpuDiagnostics = { collect: vi.fn(() => []) };
     const deps = {
       runOpenshell: vi.fn(() => ({ status: 0 })),
       runCaptureOpenshell: vi.fn(() => ""),
+      openShellGpuDiagnostics,
       sleep: vi.fn(),
       dockerCapture: vi.fn(() => ""),
     };
@@ -68,6 +70,11 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
 
     expect(finalizeBackup).toHaveBeenCalledWith({ result: RESULT, supervisorReady: false }, deps);
     expect(onPatchFailureExit).toHaveBeenCalledTimes(1);
+    expect(onPatchFailureExit).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Error),
+      expect.objectContaining({ openShellGpuDiagnostics }),
+    );
     expect(console.warn).toHaveBeenCalledWith(
       expect.stringContaining(
         "Could not capture the failed GPU container before rollback: disk full",

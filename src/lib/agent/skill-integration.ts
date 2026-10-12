@@ -13,6 +13,7 @@ export interface AgentSkillIntegration {
   readonly listCommand: readonly string[];
   readonly addCommand: readonly string[] | null;
   readonly removeCommand: readonly string[] | null;
+  readonly verifiedContentDigest: "sha256" | null;
 }
 
 function readCommand(
@@ -52,7 +53,13 @@ export function readAgentSkillIntegration(raw: ManifestRecord): AgentSkillIntegr
     throw new Error("Agent manifest skills must be a mapping");
   }
   const record = value as ManifestRecord;
-  const allowedKeys = new Set(["writable_root", "list_command", "add_command", "remove_command"]);
+  const allowedKeys = new Set([
+    "writable_root",
+    "list_command",
+    "add_command",
+    "remove_command",
+    "verified_content_digest",
+  ]);
   const unexpected = Object.keys(record).filter((key) => !allowedKeys.has(key));
   if (unexpected.length > 0) {
     throw new Error(`Agent manifest skills contains unsupported fields: ${unexpected.join(", ")}`);
@@ -75,11 +82,26 @@ export function readAgentSkillIntegration(raw: ManifestRecord): AgentSkillIntegr
 
   const listCommand = readCommand(record, "list_command", null);
   if (!listCommand) throw new Error("Agent manifest skills.list_command is required");
+  const addCommand = readCommand(record, "add_command", SKILL_SOURCE_TOKEN);
+  const verifiedContentDigest = record.verified_content_digest;
+  if (
+    verifiedContentDigest !== undefined &&
+    verifiedContentDigest !== null &&
+    verifiedContentDigest !== "sha256"
+  ) {
+    throw new Error("Agent manifest skills.verified_content_digest must be sha256");
+  }
+  if (verifiedContentDigest === "sha256" && addCommand) {
+    throw new Error(
+      "Agent manifest skills.verified_content_digest requires the canonical add fallback",
+    );
+  }
   return Object.freeze({
     writableRoot,
     listCommand,
-    addCommand: readCommand(record, "add_command", SKILL_SOURCE_TOKEN),
+    addCommand,
     removeCommand: readCommand(record, "remove_command", SKILL_NAME_TOKEN),
+    verifiedContentDigest: verifiedContentDigest ?? null,
   });
 }
 

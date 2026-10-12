@@ -331,6 +331,7 @@ async function completeRegistration(createIntent: CreateIntent): Promise<Sandbox
         stderr: "",
       })),
     },
+    () => undefined,
   );
   const created = {
     origin: "created",

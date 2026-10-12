@@ -3010,9 +3010,9 @@ reportChildScenario(async () => {
       const { result, lines } = await captureConsoleOutput(async () => {
         try {
           await resolveNonInteractiveBuildCredential({
-            provider: "nvidia-prod",
             helpUrl: "https://build.nvidia.com/settings/api-keys",
-            recoveredFromSandbox: false,
+            recovery: { recoveredFromSandbox: false },
+            getSandbox: () => null,
             providerExistsInGateway: () => false,
           });
           return null;
@@ -3057,9 +3057,9 @@ reportChildScenario(async () => {
       const { result, lines } = await captureConsoleOutput(async () => {
         try {
           await resolveNonInteractiveBuildCredential({
-            provider: "nvidia-prod",
             helpUrl: "https://build.nvidia.com/settings/api-keys",
-            recoveredFromSandbox: false,
+            recovery: { recoveredFromSandbox: false },
+            getSandbox: () => null,
             providerExistsInGateway: () => false,
           });
           return null;

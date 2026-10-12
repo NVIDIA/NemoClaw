@@ -7,7 +7,10 @@ import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requirePublicNvidiaInferenceKey } from "../fixtures/inference-adapter.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
-import { buildProviderRoutedEnv } from "./model-router-provider-routed-inference-helpers.ts";
+import {
+  buildProviderRoutedEnv,
+  registerRouterDiagnostics,
+} from "./model-router-provider-routed-inference-helpers.ts";
 
 // Focused direct CLI/sandbox test: the contract is the real provider-routed
 // onboard boundary plus one ordinary sandbox inference.local completion.
@@ -64,6 +67,9 @@ test(
       timeoutMs: 120_000,
     });
 
+    const onboardEnv = buildProviderRoutedEnv(apiKey, SANDBOX_NAME);
+    registerRouterDiagnostics(cleanup, artifacts, onboardEnv);
+
     progress.phase("onboard the routed provider");
     const onboard = await host.command(
       "node",
@@ -76,7 +82,7 @@ test(
       ],
       {
         artifactName: "onboard-model-router-provider-routed",
-        env: buildProviderRoutedEnv(apiKey, SANDBOX_NAME),
+        env: onboardEnv,
         redactionValues: [apiKey],
         timeoutMs: ONBOARD_TIMEOUT_MS,
       },

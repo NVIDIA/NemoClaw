@@ -178,7 +178,7 @@ runner.runCapture = (command) => {
       "Route:    inference",
       "Provider: nvidia-prod",
       "Model:    openai:nvidia/nemotron-3-super-120b-a12b",
-      "Endpoint: https://inference.local/v1",
+      "Endpoint: https://integrate.api.nvidia.com/v1",
     ].join("\n");
   }
   return "";

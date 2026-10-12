@@ -3,9 +3,7 @@
 
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, expect, it, vi } from "vitest";
 import { serializedLlamaCppHostLocalInferenceReceipt } from "../../../../../test/helpers/host-local-inference-receipt";
 
 vi.mock("../../messaging-channel-setup", () => ({
@@ -13,27 +11,36 @@ vi.mock("../../messaging-channel-setup", () => ({
   detectUnconfiguredMessagingChannels: vi.fn(() => []),
 }));
 
-let home: string;
+const home = await vi.hoisted(async () => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-host-local-resume-"));
+  vi.stubEnv("HOME", directory);
+  return directory;
+});
+
+import { handleSandboxState } from "./sandbox";
+import { baseOptions, createDeps } from "./sandbox-test-fixtures";
+import { createSession } from "../../../state/onboard-session";
+import * as registry from "../../../state/registry";
+import { normalizeInferenceSelection } from "../../../inference/selection";
+import { qualifyPendingSandboxCreateReservation } from "../../../state/registry/route-reservation";
+import { createSandboxHostLocalInferenceProvenance } from "../../../state/registry/host-local-inference";
+
 beforeEach(async () => {
-  home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-host-local-resume-"));
   vi.stubEnv("HOME", home);
-  vi.resetModules();
+  expect(process.env.HOME).toBe(home);
+  await fs.mkdir(home, { recursive: true });
 });
 afterEach(async () => {
-  vi.unstubAllEnvs();
   await fs.rm(home, { recursive: true, force: true });
+});
+afterAll(() => {
+  vi.unstubAllEnvs();
 });
 
 async function resumedHostLocalSandbox() {
-  const { handleSandboxState } = await import("./sandbox");
-  const { baseOptions, createDeps } = await import("./sandbox-test-fixtures");
-  const { createSession } = await import("../../../state/onboard-session");
-  const registry = await import("../../../state/registry");
-  const { normalizeInferenceSelection } = await import("../../../inference/selection");
-  const { qualifyPendingSandboxCreateReservation } =
-    await import("../../../state/registry/route-reservation");
-  const { createSandboxHostLocalInferenceProvenance } =
-    await import("../../../state/registry/host-local-inference");
   const session = createSession({ sandboxName: "saved" });
   session.steps.sandbox.status = "complete";
   const hostLocalInferenceReceipt = serializedLlamaCppHostLocalInferenceReceipt("docker");

@@ -115,7 +115,9 @@ export function buildOpenShellGatewayUserServiceRemovalScript(): string {
   ].join("\n");
 }
 
-export function buildOpenShellGatewayUserServiceStopScript(): string {
+export function buildOpenShellGatewayUserServiceStopScript(
+  options: { permanent?: boolean } = {},
+): string {
   return [
     "set -eu",
     "installer=$1",
@@ -124,6 +126,13 @@ export function buildOpenShellGatewayUserServiceStopScript(): string {
     "  exit 1",
     "fi",
     'source "$installer"',
+    ...(options.permanent
+      ? [
+          'if [ "$(uname -s)" = Linux ] && command -v systemctl >/dev/null 2>&1; then',
+          `  systemctl --user show-environment >/dev/null 2>&1 || exit ${USER_SERVICE_UNAVAILABLE_EXIT}`,
+          "fi",
+        ]
+      : []),
     "selection=",
     "if stop_active_openshell_gateway_user_service selection; then",
     '  case "$selection" in',
@@ -198,6 +207,12 @@ export interface SandboxReadyOptions {
   env?: NodeJS.ProcessEnv;
   artifactNamePrefix?: string;
   timeoutMs?: number;
+}
+
+export interface StopGatewayRuntimeOptions {
+  env?: NodeJS.ProcessEnv;
+  /** Lifecycle stops restart a selected service during cleanup; permanent stops do not. */
+  userServiceMode?: "lifecycle" | "permanent";
 }
 
 function sleep(ms: number): Promise<void> {
@@ -352,18 +367,28 @@ export class LifecyclePhaseFixture {
     assertExitZero(result, "remove staged OpenShell gateway user service");
   }
 
-  async stopGatewayRuntime(): Promise<HostGatewayRuntime | null> {
-    const runtime = (await this.gateway?.resolveHostRuntime()) ?? null;
+  async stopGatewayRuntime(
+    options: StopGatewayRuntimeOptions = {},
+  ): Promise<HostGatewayRuntime | null> {
+    const runtimeEnv = buildAvailabilityProbeEnv(options.env);
+    const runtime = (await this.gateway?.resolveHostRuntime({ env: runtimeEnv })) ?? null;
     await this.host.command(
       "sh",
       ["-lc", "command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true"],
       {
         artifactName: "lifecycle-gateway-forward-stop",
-        env: buildAvailabilityProbeEnv(),
+        env: runtimeEnv,
         timeoutMs: 30_000,
       },
     );
-    if (await this.stopOpenShellGatewayUserService()) return runtime;
+    if (
+      await this.stopOpenShellGatewayUserService({
+        env: runtimeEnv,
+        mode: options.userServiceMode ?? "lifecycle",
+      })
+    ) {
+      return runtime;
+    }
 
     const pidFileStop = await this.host.command(
       "sh",
@@ -380,7 +405,7 @@ export class LifecyclePhaseFixture {
       ],
       {
         artifactName: "lifecycle-gateway-pid-stop",
-        env: buildAvailabilityProbeEnv(),
+        env: runtimeEnv,
         timeoutMs: 30_000,
       },
     );
@@ -395,7 +420,7 @@ export class LifecyclePhaseFixture {
       ["container", "ps", "--format", "{{.ID}}\t{{.Names}}"],
       {
         artifactName: "lifecycle-gateway-runtime-discover",
-        env: buildAvailabilityProbeEnv(),
+        env: runtimeEnv,
         timeoutMs: 60_000,
       },
     );
@@ -414,7 +439,7 @@ export class LifecyclePhaseFixture {
         ["container", "stop", gatewayHandles[0]],
         {
           artifactName: "lifecycle-gateway-container-stop",
-          env: buildAvailabilityProbeEnv(),
+          env: runtimeEnv,
           timeoutMs: 60_000,
         },
       );
@@ -423,19 +448,22 @@ export class LifecyclePhaseFixture {
     return runtime;
   }
 
-  private async stopOpenShellGatewayUserService(): Promise<boolean> {
+  private async stopOpenShellGatewayUserService(options: {
+    env: NodeJS.ProcessEnv;
+    mode: "lifecycle" | "permanent";
+  }): Promise<boolean> {
     const pendingSelection = this.stoppedOpenShellGatewayUserService;
     const result = await this.host.command(
       "bash",
       [
         "-c",
-        buildOpenShellGatewayUserServiceStopScript(),
+        buildOpenShellGatewayUserServiceStopScript({ permanent: options.mode === "permanent" }),
         "stop-openshell-gateway-user-service",
         NEMOCLAW_INSTALLER,
       ],
       {
         artifactName: "lifecycle-gateway-user-service-stop",
-        env: buildAvailabilityProbeEnv(),
+        env: options.env,
         timeoutMs: 120_000,
       },
     );
@@ -450,8 +478,11 @@ export class LifecyclePhaseFixture {
       if (!match) {
         throw new Error("OpenShell gateway user service stop did not report its selection.");
       }
-      if (match[1] === "unavailable") return pendingSelection !== null;
+      if (match[1] === "unavailable") {
+        return options.mode === "lifecycle" && pendingSelection !== null;
+      }
       const selection = match[1] as UserServiceSelection;
+      if (options.mode === "permanent") return true;
       this.stoppedOpenShellGatewayUserService = selection;
       this.cleanup.add(`lifecycle.gateway-user-service-restart:${selection}`, async () => {
         if (this.stoppedOpenShellGatewayUserService !== selection) return;
@@ -459,9 +490,12 @@ export class LifecyclePhaseFixture {
       });
       return true;
     }
-    if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT) return pendingSelection !== null;
+    if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT) {
+      return options.mode === "lifecycle" && pendingSelection !== null;
+    }
+    const phase = options.mode === "permanent" ? "permanent cleanup" : "lifecycle qualification";
     throw new Error(
-      `OpenShell gateway user service stop failed during lifecycle qualification: ` +
+      `OpenShell gateway user service stop failed during ${phase}: ` +
         `${result.stderr || result.stdout || `exit ${String(result.exitCode)}`}`,
     );
   }

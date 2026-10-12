@@ -9,7 +9,7 @@ export default class TunnelCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Manage the cloudflared public-URL tunnel";
   static description =
-    "Manage the cloudflared public-URL tunnel for the default sandbox dashboard.";
+    "Manage the selected OpenShell gateway port's cloudflared public-URL tunnel.";
   static usage = ["tunnel <start|stop|status>"];
   static examples = [
     "<%= config.bin %> tunnel start",

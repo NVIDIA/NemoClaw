@@ -6,6 +6,7 @@ import type { SandboxEntry } from "../../state/registry";
 
 vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: vi.fn(() => ({ status: 0, output: "" })),
+  captureResolvedOpenshellAsync: vi.fn(async () => ({ status: 0, output: "" })),
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: vi.fn(() => ({ status: 0 })),
 }));

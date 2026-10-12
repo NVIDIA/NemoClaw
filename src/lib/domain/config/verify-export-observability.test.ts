@@ -32,7 +32,7 @@ describe("OpenClaw observability export (#12144)", () => {
       const exported = await exportSnapshots([openClawTelemetrySnapshot()]);
       expect(exported.outcome.ok).toBe(true);
       const evidence = validateConfigExportWithPinnedV1(exported.writeStdout.mock.calls[0]![0]);
-      expect(evidence.revision).toBe("88c6600c06b0937907290362eef86912052c4ad0");
+      expect(evidence.revision).toBe("42a26d90f1f6207cc35b5053556db67c86ce759f");
       expect(evidence.openclawNativeSettings?.alpha).toMatchObject({
         diagnostics: {
           enabled: true,

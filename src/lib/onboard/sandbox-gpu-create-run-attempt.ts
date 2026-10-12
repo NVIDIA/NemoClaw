@@ -334,8 +334,10 @@ async function checkSandboxExecutableReadiness(
   if (result.outcome.kind === "failed") {
     return "probe_failed";
   }
+  if (result.outcome.signal) return "probe_failed";
   if (result.outcome.exitCode === 0) return "ready";
-  return OPENSHELL_SANDBOX_NOT_READY.test(normalizedOpenShellCommandOutput(result))
+  const output = normalizedOpenShellCommandOutput(result);
+  return output.trim().length === 0 || OPENSHELL_SANDBOX_NOT_READY.test(output)
     ? "not_ready"
     : "probe_failed";
 }
@@ -1108,6 +1110,7 @@ export function createSandboxGpuCreateAttemptRunner(
             verifyGpuOrExit: deferNativeProofFailure ? undefined : runtimePatch.verifyGpuOrExit,
             reportGpuProofFailure: !deferNativeProofFailure,
             selectedMode: runtimePatch.selectedMode,
+            openShellGpuDiagnostics: deps.openShellGpuDiagnostics,
             runCaptureOpenshell: deps.runCaptureOpenshell,
             log: console.log,
           },

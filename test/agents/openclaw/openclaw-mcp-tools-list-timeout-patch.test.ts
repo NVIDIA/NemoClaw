@@ -219,7 +219,7 @@ describe("patchOpenClawMcpToolsListTimeout", () => {
   );
 
   it("keeps the exact-shape patch enabled for the supported OpenClaw version", () => {
-    expect(SUPPORTED_OPENCLAW_VERSION).toBe("2026.9.1");
+    expect(SUPPORTED_OPENCLAW_VERSION).toBe("2026.9.2");
   });
 
   it("fails closed for an unreviewed OpenClaw version", () => {

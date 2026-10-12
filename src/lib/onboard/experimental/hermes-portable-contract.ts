@@ -12,12 +12,10 @@ import {
   readBoolean,
   readHealthProbe,
   readObject,
-  readStateFiles,
   readString,
   readUserManagedFiles,
 } from "../../agent/manifest-readers";
 import { readAgentRuntime } from "../../agent/runtime-manifest";
-import { readStateDirectories } from "../../agent/state-directory-contract";
 import { readWebAuth } from "../../agent/web-auth";
 import {
   buildCurrentHermesPortableRuntimeEnvArgs,
@@ -55,9 +53,11 @@ const REVIEWED_HERMES_MANIFEST_VERSIONS = new Set(["0.20.6", "0.21.3"]);
 // the historical rootless lifecycle fixture have advanced past these hashes.
 const REVIEWED_INSTALLED_STATE_IDENTITY =
   "1cadfa0a741b4e66b5599a5edede99c2ef9cb00ef59c9814f164f95a89957140";
-const PRE_DASHBOARD_RETIREMENT_STATE_IDENTITY =
+const PRE_NATIVE_INVENTORY_STATE_IDENTITY =
   "60ee30ca30cf989b0eb9ab67ed9633f470ad05b2c9c92f5e576d2ea8a6db3c64";
-const CURRENT_STATE_IDENTITY = "5ad73d7188e1ee38f981e7ec3387fe729b64c71759bb46adfb49ff872728d7fe";
+const PRE_COMPLETE_HOME_DASHBOARD_RETIREMENT_STATE_IDENTITY =
+  "5ad73d7188e1ee38f981e7ec3387fe729b64c71759bb46adfb49ff872728d7fe";
+const CURRENT_STATE_IDENTITY = "573a0bfbf320b397bcd1d159662bb7d8c849d926f789f1af5b0ebfbb70de4da1";
 const REVIEWED_INSTALLED_MANIFEST_STATE_IDENTITIES = new Map([
   [
     "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2",
@@ -69,18 +69,29 @@ const REVIEWED_INSTALLED_MANIFEST_STATE_IDENTITIES = new Map([
   ],
   [
     "27453a10ca2e75f16ce5a1487192d11ac92b4d1752e8538131b5233c17a89d85",
-    PRE_DASHBOARD_RETIREMENT_STATE_IDENTITY,
+    PRE_NATIVE_INVENTORY_STATE_IDENTITY,
   ],
   [
     "4600403d80c0ca038a89ac627f248a41148f1d97f649a49588a06b29427cee6c",
-    PRE_DASHBOARD_RETIREMENT_STATE_IDENTITY,
+    PRE_NATIVE_INVENTORY_STATE_IDENTITY,
   ],
+  ["32491879c546bac2dd5f92abecc3e25f05bc4fb25f924b2b114b90aa1ed501a3", CURRENT_STATE_IDENTITY],
+  ["9773457ced4ace14ee6418f02eff55ec77a7345775e1adc49fd21757910aeb3b", CURRENT_STATE_IDENTITY],
+  ["632a183c7fbf796b0b37d255fa7f61d4a84f32df7b5a3d1a3914f82bae4c889b", CURRENT_STATE_IDENTITY],
+  ["786c68b81fff943dd1a0424b5afb4fef8d30a9d4c1ede32286dc6f74be3e28c9", CURRENT_STATE_IDENTITY],
+  ["f7d8e507f243f0456a0ff6e1d96721fe7165e1f2c8f3a0741482be24acf3870b", CURRENT_STATE_IDENTITY],
+  ["d830b4b990082dce8c0999b3812f8744b87674057a03abe4562d66248c18e0a6", CURRENT_STATE_IDENTITY],
+  ["11e7474a3c9a4ea1d9808bc05626bcc97fe7d34c1956600544abae9b88d93a8f", CURRENT_STATE_IDENTITY],
   [
     "3f19946aa05920ef90ae0651e2da123ad8b13bedff6e0dd8c1b9f5cb20024af5",
-    PRE_DASHBOARD_RETIREMENT_STATE_IDENTITY,
+    PRE_NATIVE_INVENTORY_STATE_IDENTITY,
+  ],
+  [
+    "38f10b7dcb8074134b00144e361905ebb0fed80fb575b0ef5af0eb18f3f4cf43",
+    PRE_COMPLETE_HOME_DASHBOARD_RETIREMENT_STATE_IDENTITY,
   ],
 ]);
-const CURRENT_MANIFEST = "38f10b7dcb8074134b00144e361905ebb0fed80fb575b0ef5af0eb18f3f4cf43";
+const CURRENT_MANIFEST = "9cdcf8eecdae0510f0fe7b2991316f73422d8b1ce83f71799eb7108395fae073";
 
 export interface ResolveHermesPortableStartupContractInput {
   readonly agent: AgentDefinition;
@@ -185,7 +196,6 @@ function manifestConfigPaths(config: ManifestRecord | undefined) {
 
 function manifestProjection(record: ManifestRecord) {
   const config = readObject(record, "config");
-  const stateDirectories = readStateDirectories(record);
   return {
     name: readString(record, "name"),
     expectedVersion: readString(record, "expected_version"),
@@ -195,8 +205,6 @@ function manifestProjection(record: ManifestRecord) {
     devicePairing: readBoolean(record, "device_pairing"),
     webAuth: readWebAuth(record),
     configPaths: manifestConfigPaths(config),
-    stateDirectories,
-    stateFiles: readStateFiles(record) ?? [],
     userManagedFiles: readUserManagedFiles(record) ?? [],
   };
 }
@@ -211,8 +219,6 @@ function agentProjection(agent: AgentDefinition): ReturnType<typeof manifestProj
     devicePairing: agent.device_pairing,
     webAuth: agent.webAuth,
     configPaths: agent.configPaths,
-    stateDirectories: agent.stateDirectories,
-    stateFiles: agent.stateFiles,
     userManagedFiles: agent.userManagedFiles,
   };
 }
@@ -337,8 +343,6 @@ function stateIdentity(projection: ReturnType<typeof manifestProjection>): strin
     JSON.stringify(
       canonical({
         configPaths: projection.configPaths,
-        stateDirectories: projection.stateDirectories,
-        stateFiles: projection.stateFiles,
         userManagedFiles: projection.userManagedFiles,
       }),
     ),

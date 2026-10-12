@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { OpenShellGpuDiagnostics } from "../adapters/openshell/gpu-diagnostics";
 import { getSandboxFailurePhase } from "../state/gateway";
 import {
   buildDockerGpuMode,
@@ -124,6 +125,67 @@ describe("Docker GPU patch diagnostics", () => {
     expect(snapshot.patchedContainerState?.Error).toContain("could not select device driver");
   });
 
+  it("uses typed OpenShell observations as the sole phase authority when raw capture conflicts", () => {
+    const collect = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => [
+      {
+        name: "openshell-sandbox-get.txt",
+        content: "Name: alpha\nPhase: Provisioning\n",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+      {
+        name: "openshell-sandbox-list.txt",
+        content: "alpha   Error   2s ago\n",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+    ]);
+    const runCaptureOpenshell = sandboxCapture(
+      "Name: alpha\nPhase: Ready\n",
+      "alpha   Ready   2s ago\n",
+    );
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      {},
+      { openShellGpuDiagnostics: { collect }, runCaptureOpenshell },
+    );
+
+    expect(snapshot.sandboxPhase).toBe("Error");
+    expect(snapshot.sandboxListLine).toBe("alpha   Error   2s ago");
+    expect(collect).toHaveBeenCalledOnce();
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("rejects phase-shaped content from failed typed artifacts without raw fallback", () => {
+    const collect = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => [
+      {
+        name: "openshell-sandbox-get.txt",
+        content: "Name: alpha\nPhase: Error\n",
+        outcome: { kind: "failed", error: { kind: "capture", message: "exit 1" } },
+      },
+      {
+        name: "openshell-sandbox-list.txt",
+        content: "alpha   Error   2s ago\n",
+        outcome: { kind: "failed", error: { kind: "timeout", message: "timed out" } },
+      },
+    ]);
+    const runCaptureOpenshell = sandboxCapture(
+      "Name: alpha\nPhase: Ready\n",
+      "alpha   Ready   2s ago\n",
+    );
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      {},
+      { openShellGpuDiagnostics: { collect }, runCaptureOpenshell },
+    );
+
+    expect(snapshot.sandboxPhase).toBeNull();
+    expect(snapshot.sandboxListLine).toBeNull();
+    expect(snapshot.openShellDiagnosticArtifacts).toHaveLength(2);
+    expect(collect).toHaveBeenCalledOnce();
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
+  });
+
   it("classifies a dead patched container as patched_container_failed with the failed mode", () => {
     const result = classify(
       failureSnapshot(
@@ -145,6 +207,34 @@ describe("Docker GPU patch diagnostics", () => {
     expect(flat).toContain("patched_container_exit_code=125");
     expect(flat).toContain("could not select device driver");
     expect(flat).toContain("patched_create_option=--gpus all");
+  });
+
+  it("names the startup-command replacement container without GPU wording (#12080)", () => {
+    const result = classifyDockerGpuPatchFailure(
+      failureSnapshot("Error", { Status: "exited", ExitCode: 127 }, "alpha   Error   1m ago"),
+      buildDockerGpuMode("startup-command"),
+    );
+
+    expect(result.kind).toBe("patched_container_failed");
+    expect(result.headline).toContain("Startup-command replacement container exited with code 127");
+    expect(result.headline).toContain("persistent sandbox startup command");
+    expect(result.headline).not.toMatch(/GPU/);
+    expect(result.summaryLines.join("\n")).toContain(
+      "patched_create_option=persistent sandbox startup command",
+    );
+  });
+
+  it("classifies an Error-phase startup-command recreation without GPU wording (#12080)", () => {
+    const result = classifyDockerGpuPatchFailure(
+      failureSnapshot("Error", null, "alpha   Error   1m ago"),
+      buildDockerGpuMode("startup-command"),
+    );
+
+    expect(result.kind).toBe("sandbox_error_phase");
+    expect(result.headline).toBe(
+      "OpenShell sandbox entered Error phase during startup-command restart persistence.",
+    );
+    expect(result.headline).not.toMatch(/GPU/);
   });
 
   it("explains exit code 127 when container logs prove the managed startup command is missing (#7996)", () => {

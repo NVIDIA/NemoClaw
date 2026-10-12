@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:ad2a0a3d2b3e8aa8edc162f304f1ca8fc9417ce412e0b385bf6d78066313f242
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:c50a0db0efb317ee4c48438435ca6d754b894d61acc7f91c4c4b0e615b09c5a5
 ARG NEMOCLAW_CORPORATE_CA_B64=
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 # BuildKit supplies this automatic platform argument. The Portable staged
@@ -46,7 +46,7 @@ COPY agents/hermes/plugin/__init__.py agents/hermes/plugin/plugin.yaml /opt/nemo
 # Channel-owned Google Chat runtime asset, loaded by the plugin beside its own
 # __init__.py.
 COPY src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py /opt/nemoclaw-hermes-plugin/googlechat_adapter.py
-COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
+COPY agents/hermes/generate-config.ts agents/hermes/check-native-credentials.ts /opt/nemoclaw-hermes-config/
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py agents/hermes/finalize-image-layout.sh /opt/nemoclaw-hermes-config/
 COPY agents/hermes/a2a-neutral.patch agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/
@@ -62,7 +62,8 @@ COPY agents/hermes/patch-profile-policy-defaults.py /opt/nemoclaw-hermes-config/
 COPY agents/hermes/managed_policy.py /opt/nemoclaw-hermes-config/managed_policy.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts
-COPY src/lib/tool-disclosure.ts src/lib/providerless-inference.ts /src/lib/
+COPY src/lib/tool-disclosure.ts src/lib/providerless-inference.ts src/lib/inference-credential.ts /src/lib/
+COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
 COPY src/lib/messaging/ /src/lib/messaging/
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 
@@ -369,6 +370,10 @@ RUN printf '%s  %s\n' \
     /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py managed-runtime-capability
 
+# Verify that native credentials resolve through the pinned Hermes runtime.
+# hadolint ignore=DL3059
+RUN node /opt/nemoclaw-hermes-config/check-native-credentials.ts
+
 # Ensure the NemoClaw plugin for Hermes is readable.
 # hadolint ignore=DL3059
 RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
@@ -377,7 +382,7 @@ RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 # read-only.
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
-    && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/tool-disclosure.ts /src/lib/providerless-inference.ts \
+    && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/tool-disclosure.ts /src/lib/providerless-inference.ts /src/lib/inference-credential.ts \
     && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/bundled-npm-package.mts \
         /scripts/lib/openclaw-npm-remediation.mts /scripts/lib/reviewed-npm-audit.mts \
         /scripts/lib/reviewed-npm-identity.mts \
@@ -756,9 +761,9 @@ RUN node \
 # file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
 # Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,hermes-cli-adapter-v1.json,validate-cli-adapter.py,validate-env-secret-boundary.py,finalize-tirith-marker.py,cron-restore-control.py}`.
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=d892e57585485880e41c9bd0afe5b851e131997ab6ac86956a58db0704147781
-ARG NEMOCLAW_HERMES_WRAPPER_SHA256=1d6e6e46de34ccd5904e1a1add45eca536790902e610a46303a1811bb926eb81
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=ca37193cfa1fd972f64db1e3feb77a0b605e2dec507ee8414310ce002aba6985
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=5205a5446d0a509c5bc60f77fd97ec579449c2c7291dcc2878a788f25f078d6f
-ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=8173abf39766a41afad3110622ce7dc78612a4cc96ea75e88150125e7dabc8b5
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=8a034b4ecd32b69487d7524200c59446cf8df40a19e92b064d81f052dd8a51c4
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=408c80aacb38ef52cad87278c73f4b0f8863eea75bc7f0ee4f80864137ebf0b0
 # hadolint ignore=DL4006
@@ -1460,7 +1465,7 @@ RUN set -eu; \
         "vim-common=2:9.2.0858-1" \
         "vim-tiny=2:9.2.0858-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" \
-        "libssl3t64=3.5.7-1~deb13u2" \
+        "libssl3t64=3.5.7-1~deb13u3" \
         "nemoclaw-python3.13-htmlparser-fix=$python_fix_version" \
         "perl-base=5.44.0-1nemoclaw1" \
         "perl=5.44.0-1nemoclaw1" \
@@ -1472,7 +1477,7 @@ RUN set -eu; \
     test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0858-1"; \
     test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1"; \
     test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2"; \
-    test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u2"; \
+    test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u3"; \
     test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1"; \
     test "$(perl -e 'print $^V')" = "v5.44.0"; \

@@ -14,7 +14,7 @@ type WorkflowStep = WorkflowRecord & {
 
 const JOB_ID = "managed-image-protected-runtime";
 const SELECTOR =
-  "${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}";
+  "${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && needs['package-openshell-sdk'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}";
 const ACTIVATION_PATH = "ci/protected-managed-image-runtime-activation-v1.json";
 const LIVE_TEST_PATH = "test/e2e/live/managed-image-protected-runtime.test.ts";
 const REGISTRY_IMAGE =
@@ -100,10 +100,11 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
       "base-image-publication",
       "generate-matrix",
       "managed-image-multiarch-startup",
+      "package-openshell-sdk",
     ])
   ) {
     errors.push(
-      `${JOB_ID} must depend on base-image-publication, generate-matrix, and managed-image-multiarch-startup`,
+      `${JOB_ID} must depend on base-image-publication, generate-matrix, managed-image-multiarch-startup, and package-openshell-sdk`,
     );
   }
   if (job.if !== SELECTOR) errors.push(`${JOB_ID} must use the trusted execution plan`);
@@ -120,6 +121,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
 
   const jobEnv = record(job.env);
   requireValues(errors, `${JOB_ID} env`, jobEnv, {
+    CHECKOUT_SHA: "${{ inputs.checkout_sha || github.sha }}",
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime",
     E2E_JOB: "1",
     E2E_TARGET_ID: JOB_ID,
@@ -252,8 +254,75 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   ) {
     errors.push(`${JOB_ID} must pin the trusted E2E preparation action`);
   }
-  if (prepare?.with !== undefined) {
-    errors.push(`${JOB_ID} must use the default CLI build`);
+  if (!isDeepStrictEqual(prepare?.with, { "build-cli": "false" })) {
+    errors.push(`${JOB_ID} must defer the CLI build until OpenShell projection`);
+  }
+
+  const projection = requireStep(
+    errors,
+    workflowSteps,
+    "Bind reviewed candidate OpenShell runtime",
+  );
+  if (projection?.id !== "openshell-projection")
+    errors.push(`${JOB_ID} must identify the OpenShell projection`);
+  const restore = requireStep(errors, workflowSteps, "Restore trusted OpenShell sources");
+  if (restore?.if !== "${{ always() && steps.openshell-projection.outcome == 'success' }}") {
+    errors.push(`${JOB_ID} must restore sources after a successful OpenShell projection`);
+  }
+  for (const [step, operation, output] of [
+    [projection, "prepare", "openshell-projection.json"],
+    [restore, "restore", "openshell-projection-restored.json"],
+  ] as const) {
+    const expected = `set -euo pipefail\nnode tools/e2e/protected-openshell-workspace.mts ${operation} > "$E2E_ARTIFACT_DIR/${output}"\n`;
+    if (
+      step?.run !== expected ||
+      step?.shell !== "bash" ||
+      step?.env !== undefined ||
+      step?.["continue-on-error"] !== undefined
+    ) {
+      errors.push(`${JOB_ID} must use the reviewed OpenShell ${operation} operation`);
+    }
+  }
+  if (projection?.if !== undefined) errors.push(`${JOB_ID} must not skip OpenShell projection`);
+  const sdkDownload = requireStep(errors, workflowSteps, "Download reviewed OpenShell SDK archive");
+  if (
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    })
+  )
+    errors.push(`${JOB_ID} must download this run's reviewed SDK archives`);
+  const sdkInstall = requireStep(
+    errors,
+    workflowSteps,
+    "Install reviewed OpenShell SDK from trusted controller",
+  );
+  if (
+    !isDeepStrictEqual(sdkInstall, {
+      name: "Install reviewed OpenShell SDK from trusted controller",
+      uses: "./.github/actions/install-reviewed-openshell-sdk",
+    })
+  )
+    errors.push(
+      `${JOB_ID} must install the projected SDK with the trusted controller's archive verifier`,
+    );
+  const cliBuild = requireStep(
+    errors,
+    workflowSteps,
+    "Build trusted CLI with reviewed OpenShell runtime",
+  );
+  if (
+    !isDeepStrictEqual(cliBuild, {
+      name: "Build trusted CLI with reviewed OpenShell runtime",
+      shell: "bash",
+      run: "npm run build:cli",
+    })
+  ) {
+    errors.push(`${JOB_ID} must build the trusted CLI after OpenShell projection`);
   }
 
   const activation = requireStep(
@@ -290,6 +359,9 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   if (hermesBase?.uses !== REVIEWED_HERMES_PLATFORM_ACTION) {
     errors.push(`${JOB_ID} must use the shared reviewed Hermes platform resolver`);
   }
+  if (hermesBase?.if !== "${{ inputs.checkout_sha == '' }}") {
+    errors.push(`${JOB_ID} must resolve a published Hermes base only without a PR candidate`);
+  }
   requireValues(errors, `${JOB_ID} Hermes platform resolver`, record(hermesBase?.with), {
     "dockerfile-path": ".candidate-runtime/agents/hermes/Dockerfile",
     platform: "linux/amd64",
@@ -301,29 +373,36 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Resolve digest-pinned amd64 runtime base images",
   );
   requireValues(errors, `${JOB_ID} runtime base env`, record(bases?.env), {
+    CANDIDATE_BASES: "${{ inputs.checkout_sha != '' }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha || github.sha }}",
     DCODE_BASE_REF: "${{ needs.base-image-publication.outputs.dcode_base_ref }}",
     HERMES_BASE_REF:
       "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}",
   });
   requireFragments(errors, bases, [
+    '[[ "$CANDIDATE_BASES" == true || "$CANDIDATE_BASES" == false ]] || exit 1',
     'prepared_inputs="$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/prepared-inputs"',
     '[[ -f "$prepared_inputs" && ! -L "$prepared_inputs" ]]',
     'read -r cached_revision cached_platform cached_openclaw cached_hermes cached_dcode extra < "$prepared_inputs"',
     '[[ -z "$extra" &&',
     '"$cached_revision" == "$CHECKOUT_SHA"',
     '"$cached_platform" == "linux/amd64"',
-    '"$cached_hermes" == "$HERMES_BASE_REF"',
-    '"$cached_dcode" == "$DCODE_BASE_REF"',
+    "node scripts/checks/protected-dcode-base-receipt.mts verify",
+    '"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base"',
+    '"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base-receipt.json" "$agent"',
+    '"$verified" == "$reference"',
+    'local candidate_prefix="localhost:5000/nemoclaw-managed-protected-base/${agent}@"',
+    '[[ "$reference" == "${candidate_prefix}${digest}" ]]',
+    '[[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]',
+    '[[ "$CANDIDATE_BASES" == false && "$reference" == "${repository}@${digest}" &&',
+    '( -z "$expected_published" || "$reference" == "$expected_published" ) ]]',
     '"$(cat "$prepared_inputs")" == "$cached_revision $cached_platform $cached_openclaw $cached_hermes $cached_dcode"',
-    '[[ "$cached_openclaw" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]]',
-    'openclaw_digest="${cached_openclaw##*@}"',
-    'docker buildx imagetools inspect "$cached_openclaw" --raw > "$work_dir/openclaw-exact.raw"',
-    '"sha256:$(sha256sum "$work_dir/openclaw-exact.raw" | awk \'{print $1}\')" == "$openclaw_digest"',
-    'printf \'openclaw=%s\\n\' "$cached_openclaw" >> "$GITHUB_OUTPUT"',
-    'docker buildx imagetools inspect "$DCODE_BASE_REF" --raw',
-    'dcode_digest="${DCODE_BASE_REF##*@}"',
-    'printf \'dcode=%s\\n\' "$DCODE_BASE_REF" >> "$GITHUB_OUTPUT"',
+    'docker buildx imagetools inspect "$reference" --raw > "$work_dir/${name}-exact.raw"',
+    '"sha256:$(sha256sum "$work_dir/${name}-exact.raw" | awk \'{print $1}\')" == "$digest"',
+    'printf \'%s=%s\\n\' "$name" "$reference" >> "$GITHUB_OUTPUT"',
+    "resolve_cached_base openclaw openclaw \"$cached_openclaw\" ghcr.io/nvidia/nemoclaw/sandbox-base ''",
+    'resolve_cached_base hermes hermes "$cached_hermes" ghcr.io/nvidia/nemoclaw/hermes-sandbox-base "$HERMES_BASE_REF"',
+    'resolve_cached_base dcode langchain-deepagents-code "$cached_dcode" ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base "$DCODE_BASE_REF"',
   ]);
   if (text(bases?.run).includes("ghcr.io/nvidia/nemoclaw/sandbox-base:latest")) {
     errors.push(`${JOB_ID} must reuse the OpenClaw base from the prepared build cache`);
@@ -368,8 +447,9 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     errors.push(`${JOB_ID} build controller must execute trusted workflow code`);
   }
   requireValues(errors, `${JOB_ID} protected runtime build bases`, record(build?.env), {
-    BASE_HERMES:
-      "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}",
+    BASE_OPENCLAW: "${{ steps.runtime-bases.outputs.openclaw }}",
+    BASE_HERMES: "${{ steps.runtime-bases.outputs.hermes }}",
+    BASE_DCODE: "${{ steps.runtime-bases.outputs.dcode }}",
     RUNTIME_USER: "${{ steps.runtime-contract.outputs.runtime_user }}",
   });
 
@@ -396,11 +476,19 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     errors.push(`${JOB_ID} must expose NVIDIA_API_KEY only to trusted qualification code`);
   }
   requireFragments(errors, qualification, [
+    'node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-verified.json"',
     '[[ "$(git rev-parse --verify HEAD)" == "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA" ]]',
-    'export OPENSHELL_BIN="$(command -v openshell)"',
+    'OPENSHELL_BIN="$(command -v openshell)"\nexport OPENSHELL_BIN',
     "tools/e2e/live-vitest-invocation.mts run",
     `--test-path ${LIVE_TEST_PATH}`,
   ]);
+  const qualificationRun = text(qualification?.run);
+  const verifyPosition = qualificationRun.indexOf(
+    "node tools/e2e/protected-openshell-workspace.mts verify",
+  );
+  if (verifyPosition < 0 || verifyPosition > qualificationRun.indexOf("OPENSHELL_BIN=")) {
+    errors.push(`${JOB_ID} must verify projected sources before runtime qualification`);
+  }
   if (text(qualification?.run).includes(".candidate-runtime")) {
     errors.push(`${JOB_ID} trusted qualification must not execute candidate checkout paths`);
   }
@@ -433,6 +521,10 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Download exact protected runtime build cache",
     "Prepare E2E workspace",
     "Validate protected runtime activation contract",
+    "Bind reviewed candidate OpenShell runtime",
+    "Download reviewed OpenShell SDK archive",
+    "Install reviewed OpenShell SDK from trusted controller",
+    "Build trusted CLI with reviewed OpenShell runtime",
     "Resolve reviewed Hermes runtime base image",
     "Resolve digest-pinned amd64 runtime base images",
     "Start isolated protected runtime registry",
@@ -440,6 +532,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Install OpenShell CLI",
     "Run all-agent GPU, local inference, rollback, and cleanup qualification",
     "Remove isolated protected runtime registry",
+    "Restore trusted OpenShell sources",
     "Upload protected managed-image runtime artifacts",
     "Clean up Docker auth",
   ]);

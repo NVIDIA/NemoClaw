@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { createCliOpenShellInferenceRouteMutator } from "../../src/lib/adapters/openshell/inference-route-cli.js";
 import type {
   HostLocalInferenceOperation,
   HostLocalInferencePreparedStartup,
@@ -855,6 +856,39 @@ describe("onboard host-local inference routing", () => {
       expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
       expect(harness.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
       expect(harness.updateSandbox).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { provider: "ollama-local", service: "ollama" },
+    { provider: "vllm-local", service: "vllm" },
+  ] as const)(
+    "retains the $service gateway and runtime after an ambiguous route mutation",
+    async ({ provider, service }) => {
+      const route = fixture("openclaw", service);
+      const harness = createHarness({
+        overrides: {
+          applyLocalInferenceRoute: undefined,
+          inferenceRouteMutator: createCliOpenShellInferenceRouteMutator(async () => ({
+            status: 0,
+            signal: null,
+            output: "Error: authentication failed",
+            stdout: "",
+            stderr: "Error: authentication failed",
+          })),
+        },
+      });
+
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, provider, null, null, null, [], {
+          hostLocalInference: route.selection,
+        }),
+      ).rejects.toThrow("EXIT_CALLED:1");
+
+      expect(route.gatewayRollback).not.toHaveBeenCalled();
+      expect(route.preparedStartups[0]?.rollback).not.toHaveBeenCalled();
+      expect(route.events).not.toContain("runtime-rollback");
+      expect(harness.errors.join(" ")).toContain("route update result is unknown");
     },
   );
 

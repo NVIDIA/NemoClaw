@@ -19,6 +19,7 @@ import { withGatewayRouteMutationLock } from "./inference/gateway-route-mutation
 import { resolveGatewayName, resolveSandboxGatewayName } from "./onboard/gateway-binding";
 import { validateName } from "./runner";
 import * as onboardSession from "./state/onboard-session";
+import { withCurrentPortableHostFenceTry } from "./state/portable-uninstall-retirement";
 import type { SandboxEntry } from "./state/registry";
 import * as registry from "./state/registry";
 import { getSandboxEntryInference } from "./state/registry-entry-view";
@@ -37,6 +38,15 @@ export type RecoveredSandboxEntry = SandboxEntry & {
 };
 
 type Session = ReturnType<typeof onboardSession.loadSession>;
+
+/** Route a metadata-only destroy retry using recovery retained in the selected state root. */
+export function hasIdentityFreeRetainedRecovery(sandboxName: string): boolean {
+  return onboardSession
+    .listRetainedSandboxRecoveryRecords()
+    .some(
+      (record) => record.sandboxName === sandboxName && record.sandboxIdentityFingerprint === null,
+    );
+}
 
 type RecoveredSandboxMetadata = Partial<
   Pick<
@@ -463,21 +473,23 @@ export async function recoverRegistryEntries({
   if (!hasRecoverySeed) {
     return recoverRegistryEntriesFromSnapshot(current, session, requestedSandboxName, gatewayName);
   }
-  return withGatewayRouteMutationLock(gatewayName, async () => {
-    const lockedCurrent = registry.listSandboxes();
-    const lockedSession = onboardSession.loadSession();
-    const lockedCheck = shouldRecoverRegistryEntries(
-      lockedCurrent,
-      lockedSession,
-      requestedSandboxName,
-    );
-    return lockedCheck.shouldRecover
-      ? recoverRegistryEntriesFromSnapshot(
-          lockedCurrent,
-          lockedSession,
-          requestedSandboxName,
-          gatewayName,
-        )
-      : { ...lockedCurrent, recoveredFromSession: false, recoveredFromGateway: 0 };
-  });
+  return withCurrentPortableHostFenceTry(() =>
+    withGatewayRouteMutationLock(gatewayName, async () => {
+      const lockedCurrent = registry.listSandboxes();
+      const lockedSession = onboardSession.loadSession();
+      const lockedCheck = shouldRecoverRegistryEntries(
+        lockedCurrent,
+        lockedSession,
+        requestedSandboxName,
+      );
+      return lockedCheck.shouldRecover
+        ? recoverRegistryEntriesFromSnapshot(
+            lockedCurrent,
+            lockedSession,
+            requestedSandboxName,
+            gatewayName,
+          )
+        : { ...lockedCurrent, recoveredFromSession: false, recoveredFromGateway: 0 };
+    }),
+  );
 }

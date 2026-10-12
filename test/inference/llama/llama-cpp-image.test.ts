@@ -220,10 +220,10 @@ describe("declarative llama.cpp server image", () => {
     expect(manifest.spec?.runtime?.gid).toBeGreaterThan(0);
     expect(manifest.spec?.build?.requestGuardToolchain).toEqual({
       archives: {
-        amd64: "sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89",
-        arm64: "sha256:d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e",
+        amd64: "sha256:42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d",
+        arm64: "sha256:4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052",
       },
-      version: "1.26.6",
+      version: "1.26.9",
     });
   });
 
@@ -391,12 +391,12 @@ describe("declarative llama.cpp server image", () => {
     ],
     [
       "an unreviewed request guard Go version",
-      manifestSource.replace("version: 1.26.6", "version: 1.26.5"),
+      manifestSource.replace("version: 1.26.9", "version: 1.26.6"),
     ],
     [
       "a substituted request guard Go archive",
       manifestSource.replace(
-        "sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89",
+        "sha256:42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d",
         `sha256:${"0".repeat(64)}`,
       ),
     ],

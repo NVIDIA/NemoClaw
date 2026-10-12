@@ -43,6 +43,13 @@ The install refuses package removals, preserving the runner's Docker and contain
   Its independent macOS live job and WSL shard 1 run live E2E only when the workflow tests `main` and Docker is available.
   This workflow does not publish or satisfy `Release qualification`.
 - `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
+- The explicit-only `portable-hermes-finalization` job in `.github/workflows/e2e.yaml`
+  runs the portable-profile scenario on the reviewed x86-64 NVIDIA GPU runner with
+  rootless Podman 5.7. It builds Podman and rootlessport from the pinned v5.7.0
+  source commit. It reuses the reviewed native pasta, netavark, and aardvark-dns
+  components. Select it with
+  `jobs=portable-hermes-finalization`; the job selects Podman 5.7 regardless of
+  gateway-runtime inputs.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
@@ -76,8 +83,28 @@ It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JO
 Each selected consumer restores the artifact instead of running `npm run build:cli`.
 Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
 The `managed-image-multiarch-startup` no-build job keeps that setting and compiles only the candidate shared policy boundary on the host.
+The `managed-image-protected-runtime` qualification-relay case uses a digest-pinned Node HTTP fixture on an owned internal Docker network.
+It exercises the qualification runner's address inspection and relay, then removes the fixture resources.
+This case needs Docker but no GPU, model, OpenShell sandbox, or provider credential.
+The deterministic qualification-runner tests retain ownership of TCP forwarding, invalid-input coverage, and listener closure.
 It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
 Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
+The trusted controller accepts both v1 multiarch activation and v2 Deep Agents
+base activation. PR runs build all three managed-agent bases from the selected
+checkout's Dockerfiles, pins and lockfiles on native CPU runners. Each base has
+a separate OCI layout and receipt bound to its agent, source SHA, trusted
+workflow SHA, platform, run ID and attempt. The protected GPU controller verifies
+these identities and every config, manifest and layer digest before using the
+bases offline. PR runs reject published-base substitution and failed verification.
+Runs without a PR source retain published OpenClaw and Hermes bases; Deep Agents
+uses a published base with v1 activation and a candidate base with v2 activation.
+The receipt command retains its Deep Agents default for existing callers; an
+explicit agent selects the OpenClaw or Hermes contract.
+
+OpenClaw HTTP liveness can precede heartbeat activation. The protected startup check polls only
+missing heartbeat evidence within the shared 240-second startup deadline. It still requires the
+configured interval and rejects malformed or conflicting records without retrying them.
+
 The shared compiler uses native GitHub caching of `dist/` and `nemoclaw/dist/`
 for main CI, PR CI, and E2E candidate preparation. Its key includes the checkout
 SHA, trusted recipe revision, action content, Node version, and runner platform.
@@ -147,7 +174,8 @@ This boundary keeps candidate source separate from the trusted workflow implemen
 The `base-image-publication` job selects managed-image authority before any stock-onboarding consumer starts.
 
 For a manual same-repository PR run, the trusted planner compares immutable base and candidate commit trees against the reviewed image-input paths.
-When those paths are unchanged, the job selects the nearest fully successful cohort publication from the PR base's first-parent history.
+When those paths are unchanged, the planner finds the PR base's latest reviewed image input on the trusted workflow commit's first-parent history.
+It selects the nearest fully successful cohort publication at or after that commit.
 It downloads the complete cohort and Deep Agents Code base contracts by immutable artifact ID.
 It binds each artifact to the selected workflow run, attempt, revision, artifact ID, and digest.
 The cohort validator requires OpenClaw, Hermes, and LangChain Deep Agents Code on `linux/amd64` and `linux/arm64`.
@@ -161,6 +189,17 @@ It binds every artifact to the workflow run, attempt, candidate commit, artifact
 It requires every shipped agent once, one candidate revision, one release, and one cohort before it assembles the candidate catalog.
 No matching successful run, invalid or duplicated run metadata, or incomplete, duplicated, mixed, or substituted artifact evidence stops before any stock-onboarding consumer starts.
 Manual PR E2E does not fall back to local Dockerfile builds.
+
+Routine changes to existing dependency pins, lockfiles, and image digests use
+this path policy; they do not need a new dependency registry or per-version
+workflow edits. Regression cases exercise the real policy for OpenClaw, Hermes,
+Deep Agents, Pi, OpenShell, and shared npm inputs. These are artifact-selection
+tests, not live qualification. OpenShell's gateway-only jobs select the candidate
+release through the existing trusted installer verifier. New release trust
+records, controller protocols, permissions, and unsupported platforms still need
+their own review. Historical upgrade fixtures keep their historical versions.
+Pi retains its separate candidate contract and qualification receipts below;
+selecting a shipped-agent catalog does not qualify Pi.
 
 Unchanged runs pass the selected base revision and complete cohort receipt to every stock-onboarding consumer.
 Changed-input runs pass the authenticated candidate catalog separately to those consumers.
@@ -178,11 +217,12 @@ These are two required acceptance executions, not retries; either failure remain
 OpenClaw feature tests use the shared explicit admin-approval fixture before native operations
 that require elevated scopes. It approves only the request ID emitted by the current sandbox's
 non-admin CLI, after the existing selector verifies that device and its requested scopes.
-The fixture transfers its approval script through non-terminal `exec --stdin`, then runs the
-verified script bytes in a subshell of the prepared `connect` shell. The subshell inherits its
-approval wrapper while isolating the script's exit and cleanup trap. This preserves the credential boundary
-without feeding a bulk script through terminal line editing. Cleanup removes the temporary
-script after success or failure; a cleanup failure also fails the fixture. The fixture checks
+The fixture transfers its approval script through non-terminal `exec --stdin`. The exact-request
+path then starts an interactive shell through `openshell sandbox exec` for the named gateway and
+runs the verified script bytes in that prepared shell's non-interactive interpreter. The
+interpreter inherits the approval wrapper while isolating the script's exit and cleanup trap. This
+preserves the credential boundary without feeding a bulk script through terminal line editing.
+Cleanup removes the temporary script after success or failure; a cleanup failure also fails the fixture. The fixture checks
 the transferred bytes against the host's digest before evaluation and rejects a replaced script.
 Managed-image activation retains its cron-consumer proof. Feature setup can stop after the exact
 approval and verify the grant through its own native operation, avoiding an unrelated cron job or
@@ -257,6 +297,16 @@ local image, removes registry credentials, validates the anonymously pullable di
 `managed-pr-contract-*` all-agent catalog pattern and every release alias. The checked-in Pi
 qualification receipts may consume these candidate contracts only when the recorded image-source
 paths are unchanged through the receipt commit.
+
+Keep a Pi upgrade in one PR with two publication steps:
+
+1. Commit and push the image inputs, leaving both existing receipts and their authority unchanged.
+   Local hooks permit this source-only step and report qualification as pending.
+2. After both candidate images publish, add their receipts and matching authority in the same PR.
+   Keep image inputs unchanged between the source and receipt commits.
+
+CI does not permit the source-only exception. It requires refreshed receipts before the PR can pass.
+A partial receipt or authority change remains an error in local hooks and CI.
 
 Pi full lifecycle qualification runs on Linux AMD64. Linux ARM64 remains release-gated by its native
 managed-image build, startup, publication, and checked-in receipt. The receipt refresh check requires
@@ -373,6 +423,12 @@ The matrix disables `fail-fast`.
 Each macOS Vitest shard has a 30-minute budget. The independent macOS live E2E
 job has a 150-minute budget, including its 70-minute live test and cleanup.
 The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
+
+WSL setup checks the systemd manager after package installation. An unavailable bus or a timed-out
+probe permits one restart of the job's Ubuntu distro, followed by bounded readiness probes.
+Other errors stop setup. The helper masks `docker.service` and `docker.socket` in the job-owned
+distro so the masks survive a restart. The test script checks Docker again immediately before
+Vitest. The helper removes the masks and requires Docker health before the live step.
 
 The independent macOS job and WSL shard 1 run focused live E2E only when the run tests `main` and Docker is available.
 Otherwise, the workflow records the skip and retains the platform contract evidence.
@@ -492,6 +548,18 @@ of credential values. It then changes the fixture's recorded sandbox fingerprint
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
+The `hermes-discord` target owns the live messaging refusal boundary for #12987. After Discord
+onboarding, it requires the persisted sandbox state to contain the configured Discord channel, then
+uses the shared Hermes export fixture to run both real CLI launchers. Both must refuse the unsupported
+messaging state without publishing a file or exposing credentials. The E2E support tests cover the
+deterministic refusal selection and diagnostic comparison.
+The target owns the shared export fixture in the catalogue so fixture changes select this live check.
+The target removes redundant CLI-presence, sandbox-list, and standalone provider-get probes: later
+live commands use both CLIs, read the persisted sandbox entry, and require the named provider to be
+attached before testing its rewrite. Its health check requires Hermes's `"ok"` response before
+continuing because later phases depend on that instance being ready. No live assertion count
+increases.
+
 The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
 Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
 the disabled baseline. The TUI check then runs without changing that registry baseline. The installed
@@ -576,6 +644,12 @@ Changes to shared catalogue execution paths select every catalogue target.
 The `openclaw-inference-switch` target owns fresh custom-image route initialization.
 Its fixture contains only a different baked model and stale limits.
 The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.
+The OpenClaw native NVIDIA and mock Anthropic switch variants start with an authenticated local OpenAI-compatible fixture.
+The native NVIDIA destination uses the public endpoint and its public credential only after switching.
+Route assertions use JSON fields so terminal column alignment does not affect the result.
+Hermes native installation uses the public NVIDIA provider before its same-provider model switch.
+The Hermes native switch derives its baseline model expectation from the environment passed to installation.
+Its later proxy-resolution probe pairs the public NVIDIA credential with the public endpoint.
 
 Most entries use one ID for catalogue selection, evidence, and artifacts.
 Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.
@@ -584,7 +658,10 @@ The `double-onboard-hermes` and `onboard-resume-hermes` entries run the existing
 onboarding scenarios with Hermes and API port 8643. `double-onboard-hermes`
 retains one sandbox identity check and proves dashboard and API forward ownership
 after reuse. `onboard-resume-hermes` retains its before-and-after resume evidence.
-The original entries retain OpenClaw coverage.
+The original entries retain OpenClaw coverage. `double-onboard` also repeats
+onboarding with a changed model and verifies replacement identity, the OpenClaw
+primary model, and the recorded selection. Unit and integration tests own the
+drift decision and interactive confirmation cases.
 
 Give each entry one `displayName` in the form `<area>: <observable outcome>`.
 Do not include this implementation metadata or workflow text in the display name:
@@ -645,6 +722,9 @@ The fixture retries read-only daemon readiness checks on connection refusal or c
 timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
 preparation, onboarding, and export mutations are not retried.
 Cleanup destroys each sandbox before its inference runtime and removes private output files.
+The attached-Ollama export scenario gives the candidate CLI a private per-test `HOME`. Cleanup
+removes its sandbox, stops the gateway runtime, and removes the gateway registration before it
+removes that state and the exported YAML.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
@@ -703,6 +783,12 @@ A catalogue Vitest selection that runs no tests exits nonzero before manifest cr
 Failed targets still write a manifest for diagnosis, and the existing artifact upload publishes the manifest with the target artifacts.
 The manifest is secret-free diagnostic evidence.
 It does not replace the workflow job result or the strict `Release qualification` aggregate.
+
+The `model-router-provider-routed-inference` target writes `router-diagnostics.json` before sandbox cleanup.
+It summarizes the final 64 KiB of the router log as fixed status flags and a completion-response count.
+It never copies log text, request content, or credentials into that file.
+An unavailable log is recorded explicitly; a false flag does not prove that an unlogged event did not occur.
+The cleanup registry captures diagnostics before destroying the sandbox and records capture failures separately from the test failure.
 
 Run the planner locally to render the complete default selection as a Markdown table:
 
@@ -766,8 +852,15 @@ The report also groups repeated observable outcomes. Those rows are retained onl
 
 ## Full E2E inference availability
 
-`live/full-e2e.test.ts` owns the live sandbox `inference.local` arithmetic probe.
-It requires a successful response containing the expected answer.
+`live/full-e2e.test.ts` owns the live sandbox arithmetic probe.
+Source installs use `inference.local`; the Brev Launchable uses the native NVIDIA endpoint
+with its supervisor-issued credential handle. The test verifies the native provider attachment
+on the declared gateway and retains that route across its temporary native model edit.
+The live boundary proves attachment, credential resolution, and a real inference response.
+The support tests own route selection, command encoding, credential rejection, and model-edit configuration.
+The deterministic public-key format precondition lives in `fixtures/hosted-inference.ts`;
+`support/public-nvidia-switch-provider.test.ts` retains its acceptance and rejection cases.
+The probe requires a successful response containing the expected answer.
 `live/full-e2e-inference-probe.ts` owns parsing and retry behavior;
 `support/full-e2e-inference-probe.test.ts` verifies that behavior.
 The stateless request has no tools or conversation persistence, so repeating it
@@ -1029,10 +1122,11 @@ OpenClaw and Hermes discovery before and after gateway restart. Deterministic
 state-restore tests prove complete native directories are archived without
 image-plugin exclusions.
 
-On Docker, managed-image activation also adopts the published OpenClaw and
-Hermes digests through `--from-image`. It confirms OpenShell readiness, the
-durable external-image receipt, NemoClaw destruction, and shared image
-retention. The external-image check does not run on Podman.
+On Docker and rootless Podman, managed-image activation also adopts the
+published OpenClaw and Hermes digests through `--from-image`. It confirms
+OpenShell readiness, the durable external-image receipt, identity-drift
+rejection before replacement, rebuild from the recorded digest, NemoClaw
+destruction, and shared image retention.
 
 ## Device-auth health classification
 
@@ -1158,7 +1252,7 @@ lanes:
 
 - `common-egress-agent`;
 - `hermes-e2e`, including dashboard coverage, and `hermes-discord`;
-- the Anthropic-compatible `hermes-inference-switch` mode;
+- the native NVIDIA `hermes-inference-switch` mode;
 - the Hermes shards of `security-posture` and `channels-stop-start`;
 - the `hermes` and `deepagents` shards of `mcp-bridge`.
 
@@ -1409,9 +1503,11 @@ artifact. A later early failure can retain only `lane.log`. A successful job
 contains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`;
 `cleanup.json` exists only after the job confirms workspace absence.
 The preinstalled suite resolves its gateway name and port from the external
-gateway declaration before registering cleanup. It removes its sandbox but
-does not remove the platform gateway registration or service. Source-install
-runs retain their test-owned gateway cleanup.
+gateway declaration before registering cleanup. It removes its first sandbox
+with `--no-cleanup-gateway`, confirms the exact platform registration remains,
+and runs fresh same-agent onboarding plus inference through that retained
+registration. Final cleanup preserves the external registration and service.
+Source-install runs retain their test-owned gateway cleanup.
 The Launchable controller enables `NEMOCLAW_E2E_COMMAND_EVIDENCE=1` to retain
 completed command records in `full-e2e.log`. Each `NEMOCLAW_E2E_COMMAND` JSON
 line contains redacted argv, UTC start and finish timestamps, duration, exit
@@ -1488,7 +1584,7 @@ concrete job executions.
 - `channels-stop-start` with the `hermes` shard
 - `hermes-discord`
 - `hermes-e2e`, including dashboard coverage
-- `hermes-inference-switch` with the `anthropic` mode
+- `hermes-inference-switch` with the `native-nvidia` mode
 - `security-posture` with the `hermes` shard
 
 The two extra instrumented executions come from the 3 `common-egress-agent`
@@ -1690,8 +1786,10 @@ its existing platform-specific qualification.
 
 ### DGX Spark Express vLLM
 
-`spark-express-vllm.test.ts` is a physical-host qualification for the second DGX Spark Express inference option, the catalog-backed fixed vLLM profile.
-It requires a qualified NVIDIA DGX Spark with Docker, NVIDIA Container Toolkit, OpenShell prerequisites, enough storage for the pinned image and model, and no unrelated `nemoclaw-vllm` container.
+`dgx-express.test.ts` contains separate physical-host cases for Spark and Station Express.
+The Spark case qualifies the second DGX Spark Express inference option, the catalog-backed fixed vLLM profile.
+The canonical runner requires an explicit selector matching `E2E_TARGET_ID`; it rejects missing, unknown, or mismatched selections before starting Vitest.
+The Spark case requires a qualified NVIDIA DGX Spark with Docker, NVIDIA Container Toolkit, OpenShell prerequisites, enough storage for the pinned image and model, and no unrelated `nemoclaw-vllm` container.
 The target accepts only a local Docker socket and the default Docker context, rejects remote selectors, and treats Docker inspection errors as preflight failures instead of absent resources.
 The target sources `scripts/install.sh` from the candidate checkout, calls the Express option-selection functions with option 2, and invokes the candidate CLI directly for onboarding.
 It does not run the hosted installer bootstrap, clone or ref selection, dependency installation, CLI exposure, or the real terminal prompt.
@@ -1704,12 +1802,7 @@ The standard E2E artifacts retain bounded command output.
 Run the target from a clean candidate checkout on the Spark host:
 
 ```bash
-E2E_JOB=1 \
-E2E_TARGET_ID=spark-express-vllm \
-NEMOCLAW_RUN_LIVE_E2E=1 \
-NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm \
-npx tsx tools/e2e/live-vitest-invocation.mts run \
-  --test-path test/e2e/live/spark-express-vllm.test.ts
+E2E_JOB=1 E2E_TARGET_ID=spark-express-vllm NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-express-vllm:'
 ```
 
 A passing target establishes that the source-checkout option-2 path selects the fixed vLLM preset and recipe, the managed container carries catalog provenance and the catalog-derived serve command, `inference.local` completes a chat request, and unrelated sandbox egress receives an HTTP `403` response.
@@ -1728,6 +1821,11 @@ capability unchanged to an audited subprocess boundary; do not replace it with
 a custom, copied, or no-op adapter.
 
 ## Push and Manual PR E2E
+
+The `token-rotation` target uses real OpenShell sandbox recreation with test messaging tokens
+and a local inference fixture. It leaves the default pre-recreation backup enabled and checks
+that `/sandbox/work/credential-preserve.txt` retains its contents after changing the Telegram
+token. This proves the workspace-preservation boundary, not external messaging authentication.
 
 E2E does not run automatically for pull requests.
 Pull requests retain deterministic CI, including the `e2e-support` Vitest project.
@@ -1815,6 +1913,15 @@ The API must report `NVIDIA/NemoClaw` as the PR source repository. Empty `jobs` 
 
 A same-repository PR may also select any supported E2E job or target.
 Main and manual PR runs use the same typed planner from the trusted workflow revision.
+The planner derives managed-image prerequisites from the selected jobs' dependency graph.
+Gateway auth and external gateway health can run without managed-agent image publication;
+selecting an image consumer alongside them retains that consumer's publication gate.
+When either gateway job is selected, the trusted installer verifier reads the exact candidate's blueprint,
+installer, Brev installer, and supervisor pins as data and selects its reviewed OpenShell release.
+Gateway auth and external gateway health use that version, not the version pinned on `main`.
+Unreviewed releases, inconsistent pins, and modified installer templates fail admission.
+Adding release trust remains a reviewed change; selecting an already trusted version needs no
+version-specific workflow change. A focused pass is not full release qualification.
 PRs from forks, including other NVIDIA repositories, are rejected before candidate execution.
 The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
 Jetson and Launchable retain their operator and image-producer requirements.
@@ -1826,10 +1933,13 @@ The full-main `Release qualification` aggregate does not use this receipt.
 The `base-image-publication` job first resolves any authenticated PR managed-image catalog.
 When a PR catalog is selected, explicit targets with no `jobs` selector and no `managed-image-` target use it without waiting for main's base images.
 Other selections with a PR catalog retain the Deep Agents Code base prerequisite, including full runs and protected managed-image build targets.
-Runs without a PR catalog require a trusted main base and managed-image publication; PR runs select the nearest fully successful publication on the PR base first-parent history.
+Runs without a PR catalog require a trusted main base and managed-image publication.
+PR runs select the nearest fully successful publication on the trusted workflow commit's first-parent history.
+The publication must cover the PR base's latest reviewed image input.
 For that publication, the job binds the run ID, attempt, revision, cohort artifact ID, and artifact digest before it emits `managed_image_revision`.
 It validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that workflow attempt.
-`generate-matrix` and every stock-onboarding job depend on this publication job, so incomplete publication creates no onboarding fanout.
+`generate-matrix` runs first and selects whether publication is required.
+Stock-onboarding jobs still depend on publication, so incomplete publication creates no onboarding fanout.
 Direct `main` runs use the same publication workflow and artifact contract.
 
 The Deep Agents Code managed-image target uses the shared receipt check to verify its image digest, source revision, and cohort.
@@ -1923,10 +2033,25 @@ To select the protected managed-image runtime qualification, set `jobs=managed-i
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
+The GPU job reads OpenShell sources from the candidate commit as data, then validates their pins and operational templates.
+It projects only the reviewed installer, supervisor and feature-check modules, plus version literals, into the trusted controller checkout.
+It builds that controller after projection and verifies the projected sources before qualification.
+The job restores the trusted sources after qualification and retains source-digest records with its artifacts.
+Those records identify tested inputs; they do not prove live E2E success.
+The job also selects the candidate OpenShell SDK from the controller's reviewed current or replacement archives.
+It projects the SDK identity into the trusted manifest and lockfile, then installs the verified archive before building the CLI.
+The SDK version must match the candidate runtime version.
+Changed SDK dependency metadata or transitive dependencies require a trust/bootstrap review; unrelated candidate npm changes never enter the controller.
+Live qualification must still pass for the selected candidate; source projection and archive-install tests do not establish that result.
 To select native runtime qualification evidence production, set `jobs=native-runtime-qualification-producer`.
 Leave `targets` empty and keep `include_staging_brev_launchable=false`.
 For this producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.
 Confirm that the PR comes from `NVIDIA/NemoClaw`, the required ephemeral runner variables are configured, and the workflow has not been rerun.
+To run Portable Hermes finalization evidence, set
+`jobs=portable-hermes-finalization` and leave `targets` empty. This explicit lane
+selects Podman 5.7 itself, uses the exact candidate checkout, and obtains its
+runtime binary and helper artifact through trusted workflow jobs before
+candidate execution.
 A trusted `main` workflow step validates the open PR before candidate checkout.
 It requires `NVIDIA/NemoClaw` as the source repository before authorizing the full ordinary plan and credential profiles.
 A second validation after checkout rejects a changed selected commit, base commit, repository, or
@@ -2054,3 +2179,72 @@ These assertions run inside the existing `full-e2e` lifecycle instead of a
 second standalone onboarding run. This keeps the measurement on the job's first
 sandbox build, avoids warming Docker layers before a duplicate performance
 test, and makes `full-e2e` the source of truth for the hard cold-path contract.
+
+## DGX Station Express
+
+The explicit `dgx-station-express` target runs the local Station Express installer with cached Ultra weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
+
+## Fixed hosted provider qualification
+
+`live/inference-routing-provider-smoke.test.ts` owns credential-backed native inference smoke tests.
+Select `openai`, `anthropic`, `gemini`, `openrouter`, or `hermes` with
+`NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE`; `all` selects all five.
+Use an approved disposable environment and credentials from its approved source.
+These tests are outside the credential-free `inference-routing` PR lane.
+A skipped provider is missing qualification evidence.
+
+OpenAI, Anthropic, Gemini, and OpenRouter onboard OpenClaw and start a fresh agent process.
+Hermes Provider onboards Hermes and submits a fresh request to its managed API.
+Each case checks the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer.
+Before the request, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
+for a salted fingerprint of the selected credential. Only the fingerprint enters the probe; reports contain
+booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
+The sample inspects up to 200 files smaller than 1 MiB, taking the first 64 KiB of each readable file.
+This is not an exhaustive filesystem scan. The scan checks only sandbox environment variables, process arguments, and sampled files.
+It does not prove credential isolation in host processes or upstream requests.
+Separate smoke assertions check native configuration and require a fresh, nonempty provider response.
+Deterministic tests own protocol/header construction, ownership collisions,
+sandbox isolation, restart, and failed-operation recovery.
+
+Each selected case requires its matching approved model variable, listed below. The smoke does not select a default model.
+The Hermes smoke uses `NOUS_API_KEY`. It does not prove interactive OAuth login or token refresh.
+Credentials remain in the test host environment and OpenShell provider store; artifacts redact them.
+The existing cleanup helper destroys each test sandbox. After successful onboarding, strict cleanup checks sandbox absence only.
+Failed onboarding uses best-effort cleanup. Neither path proves removal of credentials from the OpenShell provider store.
+Discard the approved disposable gateway after each run, including failed onboarding. Use a fresh gateway for a retry.
+
+Select one explicit target with `targets=hosted-inference-openai`, `hosted-inference-anthropic`,
+`hosted-inference-gemini`, `hosted-inference-openrouter`, or `hosted-inference-hermes`.
+These Docker targets reuse `inference-routing-provider-smoke.test.ts` and the trusted E2E controller.
+These targets require explicit selection. Default suites and changed-file selection do not include them,
+even when a workflow or provider source changes. The initial consumer is Slice 2 (#12589); its native
+provider behavior must exist in the candidate before running these assertions. Advisor can recommend
+an explicit hosted target. Selection does not grant dispatch or credential access.
+The credential-free `inference-routing` target remains separate.
+
+Before dispatch, obtain an approved disposable environment and credential source for the selected provider.
+Credential-bearing hosted runs require the canonical `e2e.yaml` workflow from `main`.
+Branch-dispatched workflows receive no hosted-provider or registry credentials, even for an approved candidate.
+The controller passes only that target's repository secret (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`GEMINI_API_KEY`, `OPENROUTER_API_KEY`, or `NOUS_API_KEY`) to the test step.
+Set the corresponding repository variable `NEMOCLAW_OPENAI_MODEL`, `NEMOCLAW_ANTHROPIC_MODEL`,
+`NEMOCLAW_GEMINI_MODEL`, `NEMOCLAW_OPENROUTER_MODEL`, or `NEMOCLAW_HERMES_MODEL` to an approved model.
+Missing credentials or models fail before onboarding. A selected test that skips cannot produce passing evidence.
+The existing controller binds artifacts to the tested source revision and trusted workflow revision.
+For an authorized hosted-provider candidate run, the trusted reporter comments on the PR after the selected jobs finish.
+It rechecks the open PR's head, base, and repository before posting the candidate commit, workflow commit, selected results, and artifact link.
+The artifacts retain scenario evidence and per-sandbox `cleanup.json` when produced. Inspect cleanup outcomes separately; missing evidence is not a pass.
+A changed PR head or base rejects the comment. Other candidate dispatches retain their existing artifact-only reporting path.
+For a manual same-repository PR run, GitHub workflow-dispatch permission authorizes the operator.
+The controller verifies the open PR, repository, candidate commit, base commit, and workflow revision before credential forwarding.
+Review the complete candidate diff and approve the selected credential source before dispatch.
+Candidate-controlled host processes can read or copy the selected provider key while the test runs.
+The sandbox isolation check does not attest isolation from those host processes.
+Job cleanup and artifact redaction do not revoke the key or erase a copy made by candidate code.
+Rotate or revoke the key in its issuing provider to remove later access.
+Hermes API-key evidence does not qualify interactive OAuth login.
+
+Hermes OAuth remains a separate live qualification for Slice 2 (#12589). An authorized account operator
+must complete device authorization in an approved disposable interactive environment, verify a fresh
+request through the returned native endpoint, restart, and verify another fresh request. Record the
+tested commit and redacted results. This prerequisite adds no OAuth selector or automation.

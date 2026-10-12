@@ -586,6 +586,38 @@ describe("RuntimeProviderBundle registry contract", () => {
         ],
       ]),
     ).toThrow(/duplicate operation identities/u);
+
+    const docker = createDockerRuntimeProviderBundle();
+    const dockerContainerEngine = docker.containerEngine;
+    expectSupportedSurface(dockerContainerEngine);
+    const {
+      externalImagePreparation: _externalImagePreparation,
+      ...containerEngineWithoutExternalImagePreparation
+    } = dockerContainerEngine;
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "docker",
+          replaceSurface(docker, "containerEngine", containerEngineWithoutExternalImagePreparation),
+        ],
+      ]),
+    ).toThrow(/cannot advertise external images without provider-owned preparation authority/u);
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "docker",
+          replaceSurface(docker, "containerEngine", {
+            ...dockerContainerEngine,
+            identities: dockerContainerEngine.identities.filter(
+              ({ operation }) => operation !== "external-image-preparation",
+            ),
+          }),
+        ],
+      ]),
+    ).toThrow(
+      /cannot expose external image preparation without external-image-preparation authority/u,
+    );
   });
 
   it("requires an explicit boolean gateway readiness owner", () => {
@@ -1183,7 +1215,6 @@ describe("socket-free MXC action contract", () => {
           stopInferenceResources: vi.fn(),
           runtimeProviders: providers,
           deps: {
-            wipeSandboxState: vi.fn(),
             deleteConvergence: {
               now: () => deleteConvergenceMs,
               sleep: (milliseconds) => {

@@ -27,7 +27,9 @@ const SERVICE_USER_ACCESS_SCRIPT = [
   `/usr/bin/printf '${SERVICE_USER_ACCESS_MARKER}:%s\\n' "$status"`,
   'exit "$status"',
 ].join("\n");
+// Keep the wrapper alive until GNU timeout can escalate to KILL for the whole group.
 const DIRECT_SERVICE_USER_PROOF_SCRIPT = [
+  "trap ':' TERM",
   '"$1" --version',
   "status=$?",
   'case "$status" in',
@@ -423,7 +425,7 @@ function runBoundedDirectServiceUserProof(
   // this ordering, the outer timeout could stop only sudo and orphan descendants.
   const result = options.runCaptureExImpl(
     [
-      "/usr/bin/timeout",
+      fs.existsSync("/usr/bin/gnutimeout") ? "/usr/bin/gnutimeout" : "/usr/bin/timeout",
       "--signal=TERM",
       `--kill-after=${EXECUTION_PROOF_TIMEOUT_KILL_AFTER}`,
       `${String(EXECUTION_PROOF_TIMEOUT_SECONDS)}s`,

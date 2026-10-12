@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../cli/branding";
+import {
+  createUpgradeTelemetry,
+  finishTelemetryOperation,
+  setTelemetryOutcome,
+} from "./telemetry/upgrade";
 import { B, D, G, R, YW } from "../cli/terminal-style";
 import { GATEWAY_PORT } from "../core/ports";
 import { getVersion } from "../core/version";
@@ -175,32 +180,24 @@ function confirmedLegacyManagedRecoveryNames(): Set<string> {
   }
 }
 
-// Under installer restore intent, a registry sandbox is eligible for prepared-
-// backup recovery only when its persisted binding resolves to the selected
-// gateway. Ready/Running sandboxes are eligible only when upgrade classification
-// also proves them stale. A current sandbox observed Stopped is likewise healthy
-// when the registry retains intentional-stop state; this matters when the
-// installer's second verification pass follows a successful recovery. Other
-// non-Ready or absent sandboxes remain eligible because the replaced gateway may
-// expose legacy state optimistically or not at all.
-// Observation alone is insufficient: a sandbox bound to a different recorded
-// gateway may be Ready there, so recovering it would clobber a healthy sandbox.
-// resolveSandboxGatewayName throws on an invalid persisted
-// binding — report that fixed, sanitized condition and treat it as ineligible so
-// a corrupted registry row never drives a recreate. Remove this guard only when
-// every registry write path validates gateway bindings before persistence.
+// Prepared recovery must target the sandbox's recorded gateway. Ready rows
+// require staleness or an explicitly confirmed legacy OpenClaw probe failure.
+// Current, intentionally stopped sandboxes remain healthy on the installer's
+// second verification pass. Other non-Ready or absent rows can need recovery
+// because the replacement gateway may expose incomplete legacy state.
+// Invalid gateway bindings fail closed before a registry row can drive recreation.
 function isPreparedRecoveryCandidate(
   sandbox: registry.SandboxEntry,
   liveNames: Set<string>,
-  staleNames: Set<string>,
+  recoveryRequiredNames: Set<string>,
   observedStoppedNames: Set<string>,
   selectedGatewayName: string,
 ): boolean {
-  if (liveNames.has(sandbox.name) && !staleNames.has(sandbox.name)) return false;
+  if (liveNames.has(sandbox.name) && !recoveryRequiredNames.has(sandbox.name)) return false;
   if (
     sandbox.stopped === true &&
     observedStoppedNames.has(sandbox.name) &&
-    !staleNames.has(sandbox.name)
+    !recoveryRequiredNames.has(sandbox.name)
   ) {
     return false;
   }
@@ -296,12 +293,15 @@ export async function upgradeSandboxes(
   const normalized = normalizeUpgradeSandboxesOptions(options);
   const checkOnly = normalized.check === true;
   const skipConfirm = shouldSkipUpgradeConfirmation(normalized);
-
   const sandboxes = registry
     .listSandboxes()
     .sandboxes.filter((sandbox) => registry.isPublishedSandboxRegistration(sandbox));
+  const { recordTarget, recordUntargeted, recordCheckedTargets, verifyTarget, finish } =
+    createUpgradeTelemetry(sandboxes, resolveSandboxGatewayName);
+
   if (sandboxes.length === 0) {
     console.log("  No sandboxes found in the registry.");
+    setTelemetryOutcome(checkOnly ? "checked" : "no_change", "unchanged");
     return;
   }
 
@@ -315,7 +315,11 @@ export async function upgradeSandboxes(
     .sort();
   if (incompatibleSandboxNames.length > 0) {
     printIncompatibleRegisteredSandboxNames(incompatibleSandboxNames);
+    for (const name of incompatibleSandboxNames)
+      recordTarget(name, checkOnly ? "checked" : "failed", "unavailable");
+    setTelemetryOutcome(checkOnly ? "checked" : "failed", "unchanged");
     if (checkOnly) return;
+    await finishTelemetryOperation(1);
     process.exit(1);
   }
 
@@ -412,26 +416,41 @@ export async function upgradeSandboxes(
   // reconnected mid-run, so neither recovery candidates nor orphans.
   const becameReadyNames = new Set<string>();
   if (recoverPreparedBackups) {
-    const staleLiveNames = new Set(
-      stale.filter((sandbox) => sandbox.running).map((sandbox) => sandbox.name),
+    const recoveryRequiredNames = new Set(staleNames);
+    // A legacy gateway can report Ready while the old agent is unreachable.
+    // Missing provenance cannot establish image drift, so preserve the installer's
+    // explicit recovery authorization when that legacy OpenClaw probe fails.
+    for (const sandbox of managedUpgradeSandboxes) {
+      if (
+        liveNames.has(sandbox.name) &&
+        versions.get(sandbox.name)?.unavailableReason === "probe-failed" &&
+        confirmedLegacyManagedNames.has(sandbox.name) &&
+        (sandbox.agent == null || sandbox.agent === "openclaw") &&
+        !sandboxState.hasPositiveManagedImageEvidence(sandbox)
+      ) {
+        recoveryRequiredNames.add(sandbox.name);
+      }
+    }
+    const recoveryLiveNames = new Set(
+      [...recoveryRequiredNames].filter((name) => liveNames.has(name)),
     );
     const gatewayEligible = managedUpgradeSandboxes.filter((sandbox) =>
       isPreparedRecoveryCandidate(
         sandbox,
         liveNames,
-        staleNames,
+        recoveryRequiredNames,
         observedStoppedNames,
         selectedGatewayName,
       ),
     );
-    const staleLiveCandidates = gatewayEligible.filter((sandbox) =>
-      staleLiveNames.has(sandbox.name),
+    const recoveryLiveCandidates = gatewayEligible.filter((sandbox) =>
+      recoveryLiveNames.has(sandbox.name),
     );
     const nonReadyCandidates = gatewayEligible.filter((sandbox) =>
       nonReadyLiveNames.has(sandbox.name),
     );
     const absentCandidates = gatewayEligible.filter(
-      (sandbox) => !staleLiveNames.has(sandbox.name) && !nonReadyLiveNames.has(sandbox.name),
+      (sandbox) => !recoveryLiveNames.has(sandbox.name) && !nonReadyLiveNames.has(sandbox.name),
     );
     const confirmedAbsentCandidates = await confirmAbsentRecoveryCandidates(
       absentCandidates,
@@ -443,7 +462,7 @@ export async function upgradeSandboxes(
       if (!confirmedAbsentNames.has(sandbox.name)) becameReadyNames.add(sandbox.name);
     }
     recoveryCandidates = [
-      ...staleLiveCandidates,
+      ...recoveryLiveCandidates,
       ...nonReadyCandidates,
       ...confirmedAbsentCandidates,
     ];
@@ -490,6 +509,11 @@ export async function upgradeSandboxes(
   const orphanNames = new Set(unobservedOwnGatewaySandboxes.map((sandbox) => sandbox.name));
   const unknownWithoutOrphans = unknown.filter((sandbox) => !orphanNames.has(sandbox.name));
   printPinnedExternalImageSandboxes(externalImageSandboxes);
+  const reconciliationNames = new Set(stoppedIntentReconciliations.map((sandbox) => sandbox.name));
+  recordUntargeted(
+    [staleNames, unknownNames, orphanNames, assessedRecoveryNames, reconciliationNames],
+    checkOnly,
+  );
 
   if (
     stale.length === 0 &&
@@ -504,7 +528,13 @@ export async function upgradeSandboxes(
       // rather than parsing output. An orphan is actionable — it needs
       // `upgrade-sandboxes` to reconcile — so it must not report the same
       // exit code as a clean run.
-      if (checkOnly) process.exit(1);
+      for (const sandbox of unobservedOwnGatewaySandboxes)
+        recordTarget(sandbox.name, checkOnly ? "checked" : "skipped", "unavailable");
+      setTelemetryOutcome(checkOnly ? "checked" : "skipped", "unchanged");
+      if (checkOnly) {
+        await finishTelemetryOperation(1);
+        process.exit(1);
+      }
       return;
     }
     console.log(
@@ -512,6 +542,9 @@ export async function upgradeSandboxes(
         ? "  No automatically managed sandboxes require an upgrade."
         : "  All sandboxes are up to date.",
     );
+    if (checkOnly)
+      for (const sandbox of sandboxes) recordTarget(sandbox.name, "checked", "unchanged");
+    setTelemetryOutcome(checkOnly ? "checked" : "no_change", "unchanged");
     return;
   }
 
@@ -535,12 +568,8 @@ export async function upgradeSandboxes(
       console.log(
         `    ${recovery.sandbox.name}  ${D}${recovery.manifest.timestamp}${R}  (pre-upgrade backup)`,
       );
-      // #7073: the validated manifest records the agent-specific managed state
-      // root restored for this sandbox. Warn before the destructive recreate so
-      // users can back up paths outside that exact root rather than silently
-      // losing them.
       console.log(
-        `    ${YW}⚠ Recovery restores ${JSON.stringify(recovery.manifest.dir)} state only for this sandbox. Files outside this recorded managed state path (e.g. /sandbox/user-data) are NOT preserved by the recreate — back them up before upgrading.${R}`,
+        `    ${YW}⚠ Recovery restores the complete native home/workspace archive rooted at ${JSON.stringify(recovery.manifest.nativeState!.root)}. OpenShell-owned credential stores and host-only secrets outside that root are not part of this backup.${R}`,
       );
     }
   }
@@ -585,6 +614,9 @@ export async function upgradeSandboxes(
     // #10211: reached only when stale, unknown, a prepared recovery, or a
     // rejected recovery was found — never the "all up to date" case above.
     // `--check` is read-only, so scripts gate on the exit code.
+    recordCheckedTargets(orphanNames);
+    setTelemetryOutcome("checked", "unchanged");
+    await finishTelemetryOperation(1);
     process.exit(1);
   }
 
@@ -595,6 +627,16 @@ export async function upgradeSandboxes(
   const notObservedReadyOrNonReady = stopped.filter(
     (sandbox) => !assessedRecoveryNames.has(sandbox.name),
   );
+  const unattemptedNames = new Set([
+    ...notObservedReadyOrNonReady.map((sandbox) => sandbox.name),
+    ...unknown
+      .filter((sandbox) => !assessedRecoveryNames.has(sandbox.name))
+      .map((sandbox) => sandbox.name),
+    ...unobservedOwnGatewaySandboxes
+      .filter((sandbox) => !assessedRecoveryNames.has(sandbox.name))
+      .map((sandbox) => sandbox.name),
+  ]);
+  for (const name of unattemptedNames) recordTarget(name, "skipped", "unavailable");
   if (notObservedReadyOrNonReady.length > 0) {
     console.log(
       `  ${D}Skipping ${notObservedReadyOrNonReady.length} sandbox(es) not observed on the selected gateway — verify their recorded gateway or start them first.${R}`,
@@ -608,12 +650,17 @@ export async function upgradeSandboxes(
   ) {
     printOrphanedRegistrySandboxes(unobservedOwnGatewaySandboxes);
     console.log("  No running stale sandboxes to rebuild.");
+    setTelemetryOutcome("skipped", "unchanged");
     return;
   }
 
   let rebuilt = 0;
   let stoppedReconciled = 0;
   let failed = rejectedRecoveries.length;
+  let skipped = unattemptedNames.size;
+  let unverified = 0;
+  for (const recovery of rejectedRecoveries)
+    recordTarget(recovery.sandbox.name, "failed", "unavailable");
   const recoveredNames = new Set<string>();
   const work = [
     ...ordinaryRebuildable.map((sandbox) => ({ sandbox, manifest: null })),
@@ -632,6 +679,8 @@ export async function upgradeSandboxes(
       const answer = await askPrompt(`  ${verb} '${sandbox.name}'? [y/N]: `);
       if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
         console.log(`  Skipped '${sandbox.name}'.`);
+        skipped++;
+        recordTarget(sandbox.name, "skipped", "unchanged");
         continue;
       }
     }
@@ -660,11 +709,13 @@ export async function upgradeSandboxes(
       }
       rebuilt++;
       recoveredNames.add(sandbox.name);
+      unverified += Number(!verifyTarget(sandbox.name));
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       const verb = manifest ? "recover" : "rebuild";
       console.error(`  ${YW}⚠${R} Failed to ${verb} '${sandbox.name}': ${errorMessage}`);
       failed++;
+      recordTarget(sandbox.name, "failed", "unavailable");
     }
   }
   for (const sandbox of stoppedIntentReconciliations) {
@@ -672,6 +723,8 @@ export async function upgradeSandboxes(
       const answer = await askPrompt(`  Return '${sandbox.name}' to its stopped state? [y/N]: `);
       if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
         console.log(`  Skipped '${sandbox.name}'.`);
+        skipped++;
+        recordTarget(sandbox.name, "skipped", "unchanged");
         continue;
       }
     }
@@ -684,12 +737,14 @@ export async function upgradeSandboxes(
         );
       }
       stoppedReconciled++;
+      recordTarget(sandbox.name, "completed", "applied");
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(
         `  ${YW}⚠${R} Failed to reconcile stopped state for '${sandbox.name}': ${errorMessage}`,
       );
       failed++;
+      recordTarget(sandbox.name, "failed", "partial");
     }
   }
 
@@ -702,5 +757,9 @@ export async function upgradeSandboxes(
     console.log(`  ${G}✓${R} ${stoppedReconciled} sandbox(es) reconciled to stopped state.`);
   }
   if (failed > 0) console.log(`  ${YW}⚠${R} ${failed} sandbox(es) failed — see errors above.`);
-  if (failed > 0) process.exit(1);
+  finish(failed, unverified, skipped, rebuilt + stoppedReconciled);
+  if (failed > 0) {
+    await finishTelemetryOperation(1);
+    process.exit(1);
+  }
 }

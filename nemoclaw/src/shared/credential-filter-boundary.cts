@@ -125,6 +125,13 @@ const SAFE_CREDENTIAL_PLACEHOLDER_PATTERNS: readonly RegExp[] = [
 ];
 const SAFE_CREDENTIAL_PLACEHOLDER_LITERALS: ReadonlySet<string> = new Set([
   "unused",
+  // Pi and Deep Agents use this public, fixed route sentinel when talking to
+  // OpenShell's local managed-inference endpoint. It is not upstream
+  // authority and is safe to carry across a native-home rebuild.
+  "nemoclaw-managed-inference",
+  // Hermes requires an sk-prefixed value in its config, but OpenShell replaces
+  // this reserved non-secret sentinel at the proxy boundary before inference.
+  "sk-OPENSHELL-PROXY-REWRITE",
   CREDENTIAL_PLACEHOLDER,
 ]);
 

@@ -356,11 +356,16 @@ describe("E2E fixture clients", () => {
     await host.expectListed("assistant");
     await host.expectStatus("assistant");
     await host.cleanupSandbox("assistant");
+    await host.cleanupSandbox("retained", { preserveGatewayRegistration: true });
 
     expect(runner.calls.map((call) => ({ command: call.command, args: call.args }))).toEqual([
       { command: "nemoclaw", args: ["list"] },
       { command: "nemoclaw", args: ["assistant", "status"] },
       { command: "nemoclaw", args: ["assistant", "destroy", "--yes"] },
+      {
+        command: "nemoclaw",
+        args: ["retained", "destroy", "--yes", "--no-cleanup-gateway"],
+      },
     ]);
   });
 
@@ -709,12 +714,16 @@ describe("E2E fixture clients", () => {
     const pidRunner = new FakeRunner();
     pidRunner.stdout = "12345\n";
     const pidHost = new HostCliClient(pidRunner, { cliPath: "nemoclaw" });
+    const privateRuntimeEnv = { ...process.env, HOME: "/private/export-home" };
     await expect(
-      new GatewayClient(pidHost, new SandboxClient(pidRunner)).resolveHostRuntime(),
+      new GatewayClient(pidHost, new SandboxClient(pidRunner)).resolveHostRuntime({
+        env: privateRuntimeEnv,
+      }),
     ).resolves.toEqual({
       kind: "pid",
       id: "12345",
     });
+    expect(pidRunner.calls[0]?.options?.env?.HOME).toBe(privateRuntimeEnv.HOME);
 
     const containerRunner = new FakeRunner();
     containerRunner.exitCode = 1;
@@ -738,6 +747,7 @@ describe("E2E fixture clients", () => {
 
   it("gateway client proves registration, listener, and host runtime are removed", async () => {
     const runner = new FakeRunner();
+    const privateRuntimeEnv = { ...process.env, HOME: "/private/export-home" };
     runner.enqueue({ exitCode: 1, stderr: "No active gateway" });
     runner.enqueue({ exitCode: 1 });
     runner.enqueue({ exitCode: 1 });
@@ -749,6 +759,7 @@ describe("E2E fixture clients", () => {
 
     await gateway.expectRemoved("nemoclaw", {
       artifactName: "final-gateway",
+      env: privateRuntimeEnv,
       gatewayPort: 18_080,
     });
 
@@ -766,6 +777,9 @@ describe("E2E fixture clients", () => {
     expect(runner.calls[1].options).toMatchObject({
       artifactName: "final-gateway-listener",
     });
+    expect(
+      runner.calls.slice(2).every((call) => call.options?.env?.HOME === privateRuntimeEnv.HOME),
+    ).toBe(true);
   });
 
   it("gateway client rejects an inconclusive listener absence probe", async () => {

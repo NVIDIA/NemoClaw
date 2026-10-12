@@ -137,8 +137,8 @@ describe("findAvailableHermesApiPortFromObservations", () => {
     ).toBe(8643);
   });
 
-  it("blocks allocation when ownership is indeterminate", () => {
-    expect(() =>
+  it("keeps an unprovable port occupied and allocates the next free port (#11979)", () => {
+    expect(
       findAvailableHermesApiPortFromObservations(
         "beta",
         8642,
@@ -148,7 +148,33 @@ describe("findAvailableHermesApiPortFromObservations", () => {
         ],
         new Map(),
       ),
-    ).toThrow(/could not prove OpenShell forward ownership/i);
+    ).toBe(8643);
+  });
+
+  it("reports both recovery actions when API ports have mixed occupancy and ownership errors", () => {
+    const observations = Array.from({ length: 11 }, (_, index) =>
+      forwardObservation("beta", 8642 + index, index === 0 ? "foreign" : "indeterminate"),
+    );
+    expect(() =>
+      findAvailableHermesApiPortFromObservations("beta", 8642, observations, new Map()),
+    ).toThrow(
+      "Some candidate ports have unverified OpenShell forward ownership.\n" +
+        "Restore OpenShell forward ownership verification for these ports, then rerun onboarding.",
+    );
+    expect(() =>
+      findAvailableHermesApiPortFromObservations("beta", 8642, observations, new Map()),
+    ).toThrow(/Destroy a listed Hermes sandbox or stop a listed non-OpenShell listener/);
+  });
+
+  it("requests restored ownership verification when every API port is unverified", () => {
+    const observations = Array.from({ length: 11 }, (_, index) =>
+      forwardObservation("beta", 8642 + index, "indeterminate"),
+    );
+    expect(() =>
+      findAvailableHermesApiPortFromObservations("beta", 8642, observations, new Map()),
+    ).toThrow(
+      "Restore OpenShell forward ownership verification for these ports, then rerun onboarding.",
+    );
   });
 });
 

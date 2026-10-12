@@ -3,7 +3,7 @@
 
 import type { SandboxEntry } from "../state/registry";
 
-export type LifecycleOperation = "snapshot" | "rebuild" | "upgrade" | "recovery" | "reboot";
+export type LifecycleOperation = "rebuild" | "upgrade" | "recovery" | "reboot";
 
 export type LifecycleRegistrationIssue = {
   field: keyof SandboxEntry;
@@ -12,14 +12,14 @@ export type LifecycleRegistrationIssue = {
 };
 
 const LIFECYCLE_FIELD_OPERATIONS = {
-  openshellDriver: ["snapshot", "recovery", "reboot"],
-  openshellVersion: ["snapshot", "recovery", "reboot"],
+  openshellDriver: ["recovery", "reboot"],
+  openshellVersion: ["recovery", "reboot"],
   nemoclawVersion: ["rebuild", "upgrade", "recovery"],
   fromDockerfile: ["rebuild", "upgrade", "recovery"],
   dashboardPort: ["rebuild", "recovery", "reboot"],
-  imageTag: ["snapshot", "rebuild", "upgrade", "recovery"],
-  gatewayName: ["snapshot", "recovery", "reboot"],
-  gatewayPort: ["snapshot", "recovery", "reboot"],
+  imageTag: ["rebuild", "upgrade", "recovery"],
+  gatewayName: ["recovery", "reboot"],
+  gatewayPort: ["recovery", "reboot"],
 } as const satisfies Record<string, readonly LifecycleOperation[]>;
 
 function hasOwn(entry: SandboxEntry, field: keyof SandboxEntry): boolean {

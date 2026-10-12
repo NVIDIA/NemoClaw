@@ -825,7 +825,7 @@ describe("runFatalOnboardRuntimePreflight", () => {
 
   it("disables the container-backed WSL GPU prover during host admission", () => {
     const detect = vi.fn((_deps?: DetectGpuDeps): GpuDetection | null => null);
-    const collectN1xWslProduct = vi.fn(() => undefined);
+    const collectWslNvidiaProduct = vi.fn(() => undefined);
 
     runFatalOnboardRuntimePreflight(
       {},
@@ -834,11 +834,11 @@ describe("runFatalOnboardRuntimePreflight", () => {
         deferEffectfulChecks: true,
         assessHost: wslDockerDesktopHost,
         detectGpu: detect,
-        collectN1xWslProduct,
+        collectWslNvidiaProduct,
       },
     );
 
-    expect(collectN1xWslProduct).toHaveBeenCalledOnce();
+    expect(collectWslNvidiaProduct).toHaveBeenCalledOnce();
     expect(detect).toHaveBeenCalledOnce();
     expect(detect).toHaveBeenCalledWith(
       expect.objectContaining({ proveArm64ContainerGpu: null, n1xWslProduct: null }),
@@ -1050,7 +1050,7 @@ describe("readiness-gated runtime preflight", () => {
   });
 
   it("reuses one N1x WSL product observation across GPU and readiness classification", async () => {
-    const collectN1xWslProduct = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
+    const collectWslNvidiaProduct = vi.fn(() => ({ n1x: true, stationGb300: false }));
     const detectGpu = vi.fn((deps?: DetectGpuDeps): GpuDetection | null => {
       const isObservation = deps?.proveArm64ContainerGpu === null;
       !isObservation && deps?.onContainerGpuProof?.({ providerId: "docker", passed: true });
@@ -1075,14 +1075,14 @@ describe("readiness-gated runtime preflight", () => {
         collectGatewayReadiness: async () => collectedGatewayReadiness(),
         assessHost: wslDockerDesktopHost,
         detectGpu,
-        collectN1xWslProduct,
+        collectWslNvidiaProduct,
         warnIfHostProxyMissesLoopback: vi.fn(),
         assertRuntimeProviderHealthy: vi.fn(),
         validateSandboxGpuPreflight: vi.fn(),
       },
     );
 
-    expect(collectN1xWslProduct).toHaveBeenCalledOnce();
+    expect(collectWslNvidiaProduct).toHaveBeenCalledOnce();
     expect(new Set(detectGpu.mock.calls.map(([deps]) => deps?.n1xWslProduct))).toEqual(
       new Set([true]),
     );
@@ -1123,7 +1123,9 @@ describe("readiness-gated runtime preflight", () => {
           collectGatewayReadiness: async () => collectedGatewayReadiness(),
           assessHost: wslDockerDesktopHost,
           runCaptureImpl,
-          collectN1xWslProduct: vi.fn(() => n1xWslProduct),
+          collectWslNvidiaProduct: vi.fn(() =>
+            n1xWslProduct === undefined ? undefined : { n1x: n1xWslProduct, stationGb300: false },
+          ),
           createArm64ContainerGpuProver: () =>
             createArm64ContainerGpuProver({
               platform: "linux",

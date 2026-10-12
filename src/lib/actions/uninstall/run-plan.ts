@@ -83,6 +83,7 @@ import {
   hasStateScopedSandboxNamespace,
   isHostPortFree,
   processUsesStateScopedSandboxNamespace,
+  readHostGatewayProcessExecutable,
   scopedHostGatewayProcessAbsenceFailure,
   scopedHostGatewayProcessOwnershipFailure,
   type StopHostGatewayOptions,
@@ -358,9 +359,9 @@ function removeManagedGatewayState(paths: UninstallPaths, runtime: UninstallRunt
 }
 
 // Entries under `nemoclawStateDir` (~/.nemoclaw/) that survive uninstall by
-// default. `rebuild-backups/` holds host-side snapshots from
-// `nemoclaw <name> snapshot create` and `nemoclaw backup-all`; `backups/`
-// holds host-side workspace backups from `scripts/backup-workspace.sh`;
+// default. `rebuild-backups/` holds whole-native-state backups from
+// `nemoclaw backup-all`, rebuild, and recreation flows; `backups/` holds
+// host-side workspace backups from `scripts/backup-workspace.sh`;
 // `sandboxes.json` is the host-side sandbox registry. Full wipe still happens
 // when NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 is set, or when the user answers
 // `y` to the interactive prompt.
@@ -1854,15 +1855,9 @@ function normalizeGatewayProcessExecutable(
 }
 
 function readGatewayProcessExecutable(pid: number, runtime: UninstallRuntime): string | null {
+  if (runtime.platform === "linux") return readHostGatewayProcessExecutable(pid, runtime);
   const provided = runtime.readProcessExecutable?.(pid);
   if (provided !== undefined) return provided;
-  if (runtime.platform === "linux") {
-    try {
-      return runtime.realpathSync(`/proc/${String(pid)}/exe`);
-    } catch {
-      return null;
-    }
-  }
   if (runtime.platform !== "darwin") return null;
   const inspected = runtime.run("/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "txt", "-Fn"], {
     env: runtime.env,

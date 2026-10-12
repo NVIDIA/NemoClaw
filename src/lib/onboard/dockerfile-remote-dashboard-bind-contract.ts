@@ -64,12 +64,13 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "7e6a6879382f833f17be02ca7d287685b6afa1c423b1e087b3b05dd677d6e325",
   "4a54da2c1c33c681ae0dad181a5a7456c926051d91420aa60cf7edef6330ba65",
   "e69b86c132e44c502b3dce8b9359c8798079e93489bd2d27f75d514b45502d4e",
-  "d4b6c80ecc6f243f2141a439e2690aa563c55e19e7d6f3965d3d8685507866c1",
+  "a2f5db30933d1ce0c62e9f5a582bc5e0652e4b500e5f2df8e87bf3f196059224",
   "e1b6dca3e6b30624f364b36ff52e654978bc120cc7800df2ff209c14949acd64",
   "c682148fc7efec9f947c326c6029181cd879b7cba3e8361246aba7d0e6fe70a3",
   "2801e488822e10a39a5586bd150279e54df4612e30c2fa782453534a466def59",
   "8f0861e48c0cec37faa662fccd130ab21f972ac3ed2a0ce5f4e5a1e9ec223130",
-  "6364b77bae0a2a4449737beefac36c439333a5e37993ac404c02e375aa170515",
+  // Security inventory verification with matching Debian OpenSSL u3 pins.
+  "8d0214ab5fec6f6c255e5177ba91c579b36be81ae98c4c5301c483effd750d30",
   // Sandbox-user native OpenClaw state modes with root-mode shared access;
   // this exact instruction changes filesystem metadata, not dashboard config.
   "402ffef36760a20e70316a145fa37908c99774496d3dcd0da5f8547b9ac80071",
@@ -88,6 +89,10 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // The same reviewed install with npm forced offline for every optional
   // plugin command; it still preserves the generated dashboard config.
   "a72a06b293274fb997f5a4b8b1c61cf3daa8a7cc4b8385baa0d9dc63400b8d52",
+  // The same offline optional-plugin install with reviewed 2026.9.2 pins.
+  "8754faf5ce97000259b81e36ec447e9fd13051260a8be1f5018e5db11d6414b9",
+  // Reviewed Tavily preinstall with archive verification before native installation.
+  "51dcdf8ba66279d7c1bee2b14d45fcd0ebf7ce1a8284241c9302b479ca2602a0",
   // Reviewed local NemoClaw plugin installation with explicit capability
   // acceptance; the following inspect and pruning steps are unchanged.
   "464abc5ff104c8bdeae57e6fdb775b7bda7dd756cba0dd1a7752b7d03e8f8372",

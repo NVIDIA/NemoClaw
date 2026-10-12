@@ -57,6 +57,7 @@ import type {
 import { removeManagedHermesStateVolume } from "../managed-workload/hermes-state-volume";
 import {
   createOnboardRecreateGatewayAuthorityRevalidator,
+  shouldReconcileRestoredOpenClawSelection,
   type OwnedSandboxRecreateRuntime,
 } from "../onboard-recreate-journal";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
@@ -86,7 +87,11 @@ import {
 } from "./identity-boundary";
 import {
   publishAttachedProvidersBeforeDockerSandboxCreation,
+  usesNativeNvidiaProvider,
+  usesNativeHostedProvider,
+  verifyNativeHostedAttachmentAfterCreate,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
+  verifyNativeNvidiaAttachmentAfterCreate,
 } from "./provider-publication";
 import {
   materializeRebuildPolicyHandoff,
@@ -378,6 +383,7 @@ export function selectRebuildCreatePolicy(
   sandboxName: string,
   authorizedCredentialBindingProviders: readonly string[],
   policySource?: string,
+  inferenceProvider: string | null = null,
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
@@ -397,8 +403,20 @@ export function selectRebuildCreatePolicy(
     livePolicyPath: policySourcePath,
     ...(policySource === undefined ? {} : { livePolicySource: policySource }),
     replacementPolicy: generatedPolicy,
-    requiredNetworkPolicyKeys,
-    removedNetworkPolicyKeys,
+    requiredNetworkPolicyKeys: [
+      ...requiredNetworkPolicyKeys,
+      ...(usesNativeNvidiaProvider(inferenceProvider) ? ["native_nvidia_inference"] : []),
+      ...(usesNativeHostedProvider(inferenceProvider) ? ["native_hosted_inference"] : []),
+    ],
+    removedNetworkPolicyKeys: [
+      ...removedNetworkPolicyKeys,
+      ...(inferenceProvider !== null && !usesNativeNvidiaProvider(inferenceProvider)
+        ? ["native_nvidia_inference"]
+        : []),
+      ...(inferenceProvider !== null && !usesNativeHostedProvider(inferenceProvider)
+        ? ["native_hosted_inference"]
+        : []),
+    ],
     requiredNetworkPolicySources,
     authorizedCredentialBindingProviders,
   });
@@ -977,6 +995,7 @@ export async function readManagedDcodeCreateSelectionDrift(
     model: string;
     preferredInferenceApi: string | null;
     createIntent: Pick<SandboxCreateIntent, "endpointUrl"> | null;
+    nativeProvider: boolean;
   },
   readDcodeSelectionDrift: DcodeSelectionDriftReader,
 ) {
@@ -986,6 +1005,7 @@ export async function readManagedDcodeCreateSelectionDrift(
     input.model,
     input.preferredInferenceApi,
     input.createIntent?.endpointUrl ?? null,
+    input.nativeProvider,
   );
 }
 
@@ -1413,6 +1433,8 @@ export function createProviderEffectBoundary(input: {
   readonly deferred: boolean;
   readonly sandboxName: string;
   readonly gatewayName: string;
+  readonly expectedNativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  readonly expectedNativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
   readonly preparationInput: ProviderPreparationInput;
   readonly preparationDeps: ProviderPreparationDeps;
   readonly runVerifiedSandboxCreateEffects: import("../types").VerifiedSandboxCreateEffects | null;
@@ -1431,6 +1453,32 @@ export function createProviderEffectBoundary(input: {
       input.preparationInput,
       input.preparationDeps,
     );
+  const attachAndVerifyNativeInferenceProvider = async (
+    context: VerifiedSandboxCreateEffectsContext,
+  ) => {
+    if (
+      !usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) &&
+      !usesNativeHostedProvider(input.preparationInput.inferenceProvider)
+    )
+      return;
+    context.revalidateSandboxIdentity(
+      `attaching and verifying native ${usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) ? "NVIDIA" : "inference"} provider for sandbox '${input.sandboxName}'`,
+    );
+    await verifyNativeNvidiaAttachmentAfterCreate({
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      inferenceProvider: input.preparationInput.inferenceProvider,
+      expected: input.expectedNativeNvidiaProviderAttachment,
+      deps: input.preparationDeps,
+    });
+    await verifyNativeHostedAttachmentAfterCreate({
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      inferenceProvider: input.preparationInput.inferenceProvider,
+      expected: input.expectedNativeHostedProviderAttachment,
+      deps: input.preparationDeps,
+    });
+  };
   if (!input.deferred) {
     return {
       validateBeforeCreate: validate,
@@ -1438,7 +1486,11 @@ export function createProviderEffectBoundary(input: {
         input.revalidateSandboxIdentityBeforeCreate();
         await publish();
       },
-      runAfterVerifiedCreate: undefined,
+      runAfterVerifiedCreate:
+        usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) ||
+        usesNativeHostedProvider(input.preparationInput.inferenceProvider)
+          ? attachAndVerifyNativeInferenceProvider
+          : undefined,
     };
   }
   return {
@@ -1459,6 +1511,7 @@ export function createProviderEffectBoundary(input: {
         `publishing deferred providers for sandbox '${input.sandboxName}'`,
       );
       await publish();
+      await attachAndVerifyNativeInferenceProvider(context);
       context.revalidateSandboxIdentity(
         `attaching deferred providers to sandbox '${input.sandboxName}'`,
       );
@@ -1473,42 +1526,18 @@ export function createProviderEffectBoundary(input: {
   };
 }
 
-type SandboxProviderCleanupAuthority =
-  | {
-      readonly revalidateSandboxIdentity: (operation: string) => void;
-    }
-  | {
-      readonly observeSandbox: () => ReturnType<
-        SandboxCreateOrchestrationRuntime["getSandboxRecreateObservation"]
-      >;
-      readonly revalidateSandboxIdentity: (operation: string) => void;
-    };
-
-export async function runAuthorityBoundProviderCleanup(
-  input: {
-    readonly sandboxName: string;
-    readonly runProviderPreDeleteCleanup: SandboxCreateOrchestrationRuntime["runSandboxProviderPreDeleteCleanup"];
-    readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
-    readonly redact: SandboxCreateOrchestrationRuntime["redact"];
-    readonly tolerateMissingSandbox?: boolean;
-  } & SandboxProviderCleanupAuthority,
-): Promise<void> {
-  const revalidateSandboxIdentity =
-    "observeSandbox" in input
-      ? (operation: string): void => {
-          if (input.observeSandbox().state !== "missing") {
-            throw new Error(
-              `Cannot clean up providers for sandbox '${input.sandboxName}': a sandbox with that name appeared after absence was verified while ${operation}.`,
-            );
-          }
-          input.revalidateSandboxIdentity(operation);
-        }
-      : input.revalidateSandboxIdentity;
+export async function runAuthorityBoundProviderCleanup(input: {
+  readonly sandboxName: string;
+  readonly runProviderPreDeleteCleanup: SandboxCreateOrchestrationRuntime["runSandboxProviderPreDeleteCleanup"];
+  readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
+  readonly redact: SandboxCreateOrchestrationRuntime["redact"];
+  readonly revalidateSandboxIdentity: (operation: string) => void;
+}): Promise<void> {
+  const { revalidateSandboxIdentity } = input;
   revalidateSandboxIdentity(`cleaning up providers for sandbox '${input.sandboxName}'`);
   await input.runProviderPreDeleteCleanup(input.sandboxName, {
     runOpenshell: input.runOpenshell,
     redact: input.redact,
-    ...(input.tolerateMissingSandbox ? { tolerateMissingSandbox: true } : {}),
     revalidateSandboxIdentity,
   });
 }
@@ -1732,7 +1761,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       assessHost,
       baseImageResolutionFlow,
       cliDisplayName,
-      cliName,
       completeOrdinaryOnboardSandboxCreation,
       confirmRecreateForSelectionDrift,
       createOnboardCreatedSandboxCompletion,
@@ -1741,6 +1769,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       dashboardRuntime,
       dcodeAutoApprovalFlow,
       detectMessagingCredentialRotation,
+      openShellGpuDiagnostics,
       ensureAgentFixedForward,
       ensureDashboardForward,
       filterEnabledChannelsByAgent,
@@ -2014,6 +2043,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           provider,
           preferredInferenceApi,
           endpointUrl: createIntent?.endpointUrl ?? null,
+          nativeProvider: Boolean(
+            resolvedCreateIntent.nativeHostedProviderAttachment ||
+            resolvedCreateIntent.nativeNvidiaProviderAttachment,
+          ),
           startupProfile: {
             chatUiUrl,
             effectiveDashboardPort: effectivePort,
@@ -2206,10 +2239,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const recreateProtection = createSandboxRecreateProtection({
       sandboxName,
       sandboxEntry: existingEntry,
+      getSandbox: registry.getSandbox,
       note,
     });
+    let reconcileOpenClawInference = false;
     const openRecreateJournal = (): OwnedSandboxRecreateRuntime =>
       recreateJournal.openOnboardRecreateJournal({
+        ...(reconcileOpenClawInference ? { reconcileOpenClawInference: true as const } : {}),
         target: {
           sandboxName,
           gatewayName: GATEWAY_NAME,
@@ -2309,6 +2345,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       );
       const needsProviderMigration =
         hasMessagingTokens && providerExistence.some(({ token, exists }) => token && !exists);
+      const existingSandboxEntry = registry.getSandbox(sandboxName);
       const selectionDrift = isManagedDcodeAgent
         ? await readManagedDcodeCreateSelectionDrift(
             {
@@ -2317,6 +2354,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               model,
               preferredInferenceApi,
               createIntent,
+              nativeProvider: Boolean(
+                existingSandboxEntry?.nativeHostedProviderAttachment ||
+                existingSandboxEntry?.nativeNvidiaProviderAttachment,
+              ),
             },
             readDcodeSelectionDrift,
           )
@@ -2326,7 +2367,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         isManagedDcodeAgent,
       );
       const sandboxGpuDrift = hasSandboxGpuDrift(sandboxName, effectiveSandboxGpuConfig);
-      const existingSandboxEntry = registry.getSandbox(sandboxName);
       const externalImageDrift = await confirmExternalImageSelection({
         sandboxName,
         requestedReference: fromImage,
@@ -2509,6 +2549,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       // mutating a live sandbox.
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
       await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
+      reconcileOpenClawInference = shouldReconcileRestoredOpenClawSelection(
+        getRequestedSandboxAgentName(agent),
+        customOpenClawImage,
+        isRecreateSandbox(false),
+        selectionDrift,
+      );
       if (!createIntent?.recreateTransaction) recreateRuntime = openRecreateJournal();
       if (recreateRuntime.acceptedTarget) {
         if ("complete" in recreateRuntime) recreateRuntime.complete();
@@ -2547,7 +2593,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       if (
         beginRecreateDeleteAfterPolicyPreflight({
           capturePolicySource: captureRebuildPolicySource,
-          beginDelete: recreateRuntime.beginDelete,
+          beginDelete: () =>
+            recreateRuntime.beginDelete(reconcileOpenClawInference ? true : undefined),
         }) === "source"
       ) {
         await runAuthorityBoundProviderCleanup({
@@ -2665,11 +2712,14 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 chatUiUrl,
                 provider,
                 endpointUrl: createIntent?.endpointUrl ?? null,
+                nativeProvider: Boolean(
+                  resolvedCreateIntent.nativeHostedProviderAttachment ||
+                  resolvedCreateIntent.nativeNvidiaProviderAttachment,
+                ),
                 compatibleEndpointReasoning: createIntent?.compatibleEndpointReasoning,
                 preferredInferenceApi,
                 webSearchConfig,
                 toolDisclosure: effectiveToolDisclosure,
-                rebuildPreservedEnv: createIntent?.rebuildPreservedEnv,
                 ...(isManagedDcodeAgent
                   ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode }
                   : {}),
@@ -2707,25 +2757,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     resolvedCreateIntent,
                   )
                 ).messagingTokenDefs;
-              },
-              runProviderPreDeleteCleanup: async (verifiedIdentityRevalidation) => {
-                await runAuthorityBoundProviderCleanup({
-                  sandboxName,
-                  runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
-                  runOpenshell,
-                  redact,
-                  tolerateMissingSandbox: true,
-                  ...(verifiedIdentityRevalidation
-                    ? {
-                        revalidateSandboxIdentity: verifiedIdentityRevalidation,
-                      }
-                    : {
-                        observeSandbox: () =>
-                          getSandboxRecreateObservation(sandboxName, GATEWAY_NAME),
-                        revalidateSandboxIdentity: (operation: string) =>
-                          revalidateSandboxIdentity(false, operation),
-                      }),
-                });
               },
               upsertMessagingProviders: (tokenDefs, options) =>
                 applyMessagingProviders(tokenDefs, {
@@ -2841,6 +2872,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           sandboxName,
           rebuildPolicyProviderAuthority,
           rebuildPolicySource?.document,
+          resolvedCreateIntent.inferenceProvider,
         )
       : materializedInitialSandboxPolicy;
     const createRequestPlan = selectRebuildCreateRequestPlan({
@@ -3142,6 +3174,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           onboardSession.markRetainedSandboxRecovery,
         ),
       );
+    let selectedOpenShellGpuDiagnostics = openShellGpuDiagnostics;
     const runCreateFlow = async (
       createRequest: import("../../adapters/openshell/sandbox-lifecycle").CreateOpenShellSandboxRequest,
       hermesPortableReadyCapture?: import("../sandbox-gpu-create-flow").HermesPortableReadyCapture,
@@ -3150,6 +3183,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       effectivePolicySourcePath?: string,
       runDeferredProviderEffects?: (context: VerifiedSandboxCreateEffectsContext) => Promise<void>,
     ) => {
+      const createFlowOpenShellGpuDiagnostics = hermesPortableReadyRunner
+        ? sandboxGpuCreateFlow.createHermesPortableGpuDiagnostics(
+            sandboxName,
+            GATEWAY_NAME,
+            hermesPortableReadyRunner,
+          )
+        : openShellGpuDiagnostics;
       assertCreateLifecycleJournal({
         portableLifecycle: agentCreateInput.hermesPortableLifecycle,
         runtimeGeneration: recreateRuntime.targetGeneration ?? null,
@@ -3381,6 +3421,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             },
             {
               commandExecutor: sandboxCommandExecutor,
+              openShellGpuDiagnostics: createFlowOpenShellGpuDiagnostics,
               runOpenshell: hermesPortableReadyRunner ?? runOpenshell,
               runCaptureOpenshell: hermesPortableReadyCapture ?? runCaptureOpenshell,
               sandboxObserver: createCliOpenShellSandboxObserverFromRunner(
@@ -3392,6 +3433,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               verifyDirectSandboxGpu: createGpuVerifier,
             },
           );
+          selectedOpenShellGpuDiagnostics = createFlowOpenShellGpuDiagnostics;
           persistFinalHandoffAcknowledgement(created.runtimePatch);
           return created;
         },
@@ -3447,7 +3489,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         preferredInferenceApi,
         endpointUrl: createIntent?.endpointUrl ?? null,
       },
-      { createIntent, resolvedCreateIntent },
+      {
+        createIntent,
+        resolvedCreateIntent,
+        reconcileOpenClawInference:
+          onboardSession.loadSession()?.checkpoint?.sandboxRecreate?.reconcileOpenClawInference ===
+          true,
+      },
       sandboxRuntimeFields,
       agentCreateInput.portableLifecycle,
       {
@@ -3495,6 +3543,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       preparedSandboxWorkload,
       note,
       sandboxCommandExecutor,
+      () => selectedOpenShellGpuDiagnostics,
+      existingEntry,
     );
     // Managed bootstrap can invalidate OpenShell's cached Ready state after it
     // replaces the container. Registry publication stays bound to the durable
@@ -3544,6 +3594,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       deferred: createIntent?.deferSandboxEffectsUntilIdentityVerification === true,
       sandboxName,
       gatewayName: GATEWAY_NAME,
+      expectedNativeNvidiaProviderAttachment: resolvedCreateIntent.nativeNvidiaProviderAttachment,
+      expectedNativeHostedProviderAttachment: resolvedCreateIntent.nativeHostedProviderAttachment,
       preparationInput: providerPreparationInput,
       preparationDeps: providerPreparationDeps,
       runVerifiedSandboxCreateEffects,

@@ -55,7 +55,7 @@ test(
       boundary: "exact managed Hermes rebuild state restoration and native readiness",
       contracts: [
         "rebuild uses the published exact managed image without stale controller fixtures",
-        "Hermes memory, native user plugin, lazy package state, operator config, and migrated dashboard session state survive the rebuild",
+        "unknown home, workspace, memory, hook, cron, child-agent, plugin, package, operator config, and migrated dashboard session state survive the rebuild",
         "the native Hermes health endpoint is ready after restore",
       ],
     });
@@ -123,6 +123,7 @@ test(
         "set -eu",
         assertOperatorConfig,
         `umask 077; mkdir -p /sandbox/.hermes/memories; printf '%s\\n' '${marker}' > /sandbox/.hermes/memories/.rebuild-state-marker; sync`,
+        `mkdir -p /sandbox/.hermes/workspace /sandbox/.hermes/hooks /sandbox/.hermes/cron /sandbox/.hermes/agents/child; for target in /sandbox/.rebuild-unknown-marker /sandbox/.hermes/workspace/.rebuild-workspace-marker /sandbox/.hermes/hooks/.rebuild-hook-marker /sandbox/.hermes/cron/.rebuild-cron-marker /sandbox/.hermes/agents/child/.rebuild-history-marker; do printf '%s' '${marker}' > "$target"; done`,
         `mkdir -p "$(dirname '${legacyDashboardSession}')"; printf '%s\\n' '{"e2e_marker":"${marker}"}' > '${legacyDashboardSession}'`,
         "plugin=/sandbox/.hermes/plugins/e2e-native-plugin",
         "package=/sandbox/.hermes/lazy-packages/e2e_native_package",
@@ -146,10 +147,7 @@ test(
       timeoutMs: 20 * 60_000,
     });
     const rebuildOutput = resultText(rebuild);
-    expect(
-      rebuild.exitCode === 0 || /Restore result: success=true/u.test(rebuildOutput),
-      rebuildOutput,
-    ).toBe(true);
+    expect(rebuild.exitCode, rebuildOutput).toBe(0);
 
     progress.phase("verify restored state and native readiness");
     await lifecycle.assertSandboxReadyAfterRebuild(SANDBOX_NAME, {
@@ -167,6 +165,7 @@ test(
         `test ! -e '${legacyDashboardHome}'`,
         "test ! -e /sandbox/.hermes/dashboard-home",
         'marker="$(cat /sandbox/.hermes/memories/.rebuild-state-marker)"',
+        'for target in /sandbox/.rebuild-unknown-marker /sandbox/.hermes/workspace/.rebuild-workspace-marker /sandbox/.hermes/hooks/.rebuild-hook-marker /sandbox/.hermes/cron/.rebuild-cron-marker /sandbox/.hermes/agents/child/.rebuild-history-marker; do test "$(cat "$target")" = "$marker"; done',
         "HERMES_HOME=/sandbox/.hermes hermes plugins list --plain --user >/tmp/e2e-native-plugins-after-rebuild",
         "grep -Fq 'e2e-native-plugin' /tmp/e2e-native-plugins-after-rebuild",
         "/opt/hermes/.venv/bin/python -I /sandbox/.hermes/plugins/e2e-native-plugin/__init__.py",

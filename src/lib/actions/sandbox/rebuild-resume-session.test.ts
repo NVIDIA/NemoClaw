@@ -61,7 +61,6 @@ describe("rewindSessionForRebuildResume", () => {
         },
       });
       session.metadata.fromDockerfile = "/tmp/reviewed.Dockerfile";
-      session.migratedLegacyValueHashes = { OLD_PROVIDER_KEY: "abc123" };
       markStep(session, "gateway", "complete");
       markStep(session, "inference", "complete");
       markStep(session, "openclaw", "failed");
@@ -79,7 +78,6 @@ describe("rewindSessionForRebuildResume", () => {
       expect(rewound).toBe(session);
       expect(rewound.sessionId).toBe(originalSessionId);
       expect(rewound.metadata.fromDockerfile).toBe("/tmp/reviewed.Dockerfile");
-      expect(rewound.migratedLegacyValueHashes).toEqual({ OLD_PROVIDER_KEY: "abc123" });
       expect(rewound).toMatchObject({
         sandboxName: "alpha",
         resumable: true,
