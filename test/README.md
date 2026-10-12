@@ -103,7 +103,8 @@ utility behavior, keeps Ubuntu's default utilities intact, and stops Docker befo
 
 Some tests also run host `python3` helper scripts. The same job installs their packages from
 [`ci/platform-vitest-macos-requirements.lock`](../ci/platform-vitest-macos-requirements.lock), which
-owns the authoritative list. Install them before you run the `cli` project:
+owns the authoritative list. Use a virtual environment with the workflow's Python version.
+Install the packages before you run the `cli` project:
 
 ```bash
 python3 -m pip install --requirement ci/platform-vitest-macos-requirements.lock
