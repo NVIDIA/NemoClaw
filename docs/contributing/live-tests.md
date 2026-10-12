@@ -404,7 +404,8 @@ cargo test -p nemoclaw-e2e --test integration \
 The test keeps its state in a private temporary directory that it deletes when it ends.
 A successful run retains the gateway's storage, initializer, and bridge; a failed run can also leave the gateway and sandbox running, and `nemoclaw destroy` cannot remove them without the deleted state.
 `cargo ci live-docker` removes every resource labeled with the document's UID after the suite.
-After a manual run, list them with `docker ps -a`, `docker volume ls`, and `docker network ls` using `--filter label=nemoclaw.nvidia.com/uid=UID`, and remove only those; a verified cleanup procedure for retained gateway storage is tracked in [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640).
+After a manual run, list and remove its objects with the UID-label commands in [Remove Retained Resources](../usage.md#remove-retained-resources).
+The test's state directory is temporary, so skip that procedure's destroy check; after a failed run, first stop the listed running containers with `docker container stop`.
 
 ## Docker Gateway Recovery
 

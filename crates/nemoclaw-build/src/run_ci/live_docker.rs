@@ -457,6 +457,7 @@ esac
             subnet: "172.30.202.0/24",
             image: &format!("nc-live@sha256:{}", "a".repeat(64)),
             harness: "nvidia.fabric.pi",
+            settings: None,
         });
         let workspace = nemoclaw_sdk::config::Document::parse(document.as_bytes())
             .unwrap()
