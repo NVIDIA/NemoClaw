@@ -136,7 +136,7 @@ describe("managed llama.cpp lifecycle adapter", () => {
       gatewayPort,
       homeDir,
       operation,
-      finalizeCleanup: vi.fn(() => ({ ok: true as const, removed: [] })),
+      finalizeCleanup: vi.fn(() => ({ ok: true as const, removed: [], preserved: [] })),
       rehydrate: vi.fn(
         () =>
           ({
