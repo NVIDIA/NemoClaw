@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The steps of `CI / Native`, runnable locally with `cargo ci`.
+//! The steps of `CI / Bundle`, runnable locally with `cargo ci`.
 //!
 //! This module builds without the `sdk` feature, so it can install the pinned
 //! Protocol Buffers compiler before anything that needs it is compiled.
@@ -11,7 +11,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-/// One `CI / Native` step, in workflow order.
+/// One `CI / Bundle` step, in workflow order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
     /// Install the pinned `protoc` and `cargo-nextest` into `.tools`.

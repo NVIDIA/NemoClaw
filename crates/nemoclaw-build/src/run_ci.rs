@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Run `CI / Native` steps with the same commands, environment, and tools as CI.
+//! Run `CI / Bundle` steps with the same commands, environment, and tools as CI.
 
 use super::*;
 use nemoclaw_build::ci::{self, Step};

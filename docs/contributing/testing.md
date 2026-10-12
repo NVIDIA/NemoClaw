@@ -3,7 +3,7 @@
 
 # Tests
 
-Before pushing, run this platform's `CI / Native` checks from the repository root:
+Before pushing, run this platform's `CI / Bundle` checks from the repository root:
 
 ```sh
 cargo ci
@@ -169,7 +169,7 @@ CI keeps each step's JUnit report, with per-test durations, for 14 days in the `
 
 | Workflow | Checks |
 |---|---|
-| CI / Native | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64` |
+| CI / Bundle | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64` |
 | CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
 | CI / Dependencies | `Policy` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
@@ -181,7 +181,7 @@ A `Test / PLATFORM` check succeeds only when every job of that platform succeeds
 
 ### Jobs of One Platform
 
-Each platform in [CI / Native](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/native-platform.yml) on its own runners:
+Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/native-platform.yml) on its own runners:
 
 1. `Build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, `schema`, and `archive`: the unit layer, and the archive that later jobs run.
 2. `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
@@ -341,7 +341,7 @@ These tests use fixtures and temporary files; they do not start deployment workl
 
 ## CI Caches
 
-Native CI disables incremental compilation.
+`CI / Bundle` disables incremental compilation.
 Development and test builds use `debug = 1`, retaining line-number backtraces without full local-variable debug data.
 Profiles live in `.cargo/config.toml`, whose hash and the current month are part of the CI dependency cache prefix.
 Changing a profile, or starting a new month, therefore starts a fresh cache with a one-time dependency rebuild.

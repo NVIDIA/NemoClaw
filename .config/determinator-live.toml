@@ -25,7 +25,7 @@ globs = [
     "rust-toolchain.toml",
     ".config/nextest.toml",
     ".github/actions/**",
-    # The live jobs run in CI / Native.
+    # The live jobs run in CI / Bundle.
     ".github/workflows/native-platform.yml",
     ".github/workflows/rust.yml",
 ]

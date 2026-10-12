@@ -98,7 +98,7 @@ CLI failures appear in the test output.
 It never starts inference or substitutes another agent process through exec.
 
 If this test fails, passing lower-level fixture tests does not establish compatibility.
-Run it explicitly for candidate dependency upgrades, outside the default build; `CI / Native` retains the fast descriptor, reference, and protocol tests.
+Run it explicitly for candidate dependency upgrades, outside the default build; `CI / Bundle` retains the fast descriptor, reference, and protocol tests.
 
 ## Retained Storage Observations
 
