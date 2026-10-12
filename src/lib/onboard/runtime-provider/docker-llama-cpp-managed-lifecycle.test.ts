@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -32,6 +31,7 @@ import {
   MODEL_FILENAME,
   modelFilesystemIdentity,
   keyRootIdentitySha256,
+  journalStore,
   replaceModelWithSameSizeContent,
   NETWORK_ID,
   PROBE_IMAGE,
@@ -51,11 +51,7 @@ import {
   createTestDockerLlamaCppManagedLifecycle as createLifecycle,
   privateBridgeFixture,
 } from "./docker-llama-cpp-private-bridge.test-support";
-import type {
-  HostLocalCreateJournalExecutionLease,
-  HostLocalCreateJournalRecord,
-  HostLocalCreateJournalStore,
-} from "./host-local-create-journal";
+import type { HostLocalCreateJournalRecord } from "./host-local-create-journal";
 import {
   type HostLocalInferenceReceiptWriter,
   serializeHostLocalInferenceReceipt,
@@ -134,111 +130,12 @@ function authorityStore(): PersistedEngineAuthorityStore {
     record: (next) => (authority = next),
   };
 }
-interface TestJournalStore extends HostLocalCreateJournalStore {
-  readonly abandonExecution: () => void;
-  readonly hasExecution: () => boolean;
-  readonly failNextPrepareReceipt: () => void;
-  readonly failNextPrepareReceiptAfterCommit: () => void;
-  readonly failNextFinalize: () => void;
-}
-
-function journalStore(): TestJournalStore {
-  const records = new Map<string, HostLocalCreateJournalRecord>();
-  let activeLease: HostLocalCreateJournalExecutionLease | null = null;
-  let prepareReceiptFails = false;
-  let prepareReceiptFailsAfterCommit = false;
-  let finalizeFails = false;
-  const update = (
-    id: string,
-    mutate: (value: HostLocalCreateJournalRecord) => HostLocalCreateJournalRecord,
-  ) => {
-    const current = records.get(id);
-    invariant(current, "missing journal");
-    const next = Object.freeze(mutate(current));
-    records.set(id, next);
-    return next;
-  };
-  return {
-    load: (id) => records.get(id) ?? null,
-    list: () => [...records.values()],
-    create: (record) => {
-      records.set(record.transactionId, Object.freeze(record));
-      return record;
-    },
-    recordNetworkCreated: (id, networkId) =>
-      update(id, (record) => ({
-        ...record,
-        phase: "prepared",
-        networkId,
-        createIntentUnixMs: null,
-      })),
-    recordCreating: (id, createIntentUnixMs) =>
-      update(id, (record) => ({ ...record, phase: "creating", createIntentUnixMs })),
-    recordCreated: (id, runtimeId) =>
-      update(id, (record) => ({ ...record, phase: "created", runtimeId })),
-    recordStarted: (id) => update(id, (record) => ({ ...record, phase: "started" })),
-    prepareReceipt: (id, serializedReceipt) => {
-      switch (prepareReceiptFails) {
-        case true:
-          prepareReceiptFails = false;
-          throw new Error("prepare receipt failed");
-      }
-      const prepared = update(id, (record) => ({
-        ...record,
-        phase: "receipt-prepared",
-        serializedReceipt,
-        receiptSha256: createHash("sha256").update(serializedReceipt).digest("hex"),
-      }));
-      switch (prepareReceiptFailsAfterCommit) {
-        case true:
-          prepareReceiptFailsAfterCommit = false;
-          throw new Error("prepare receipt outcome unknown");
-      }
-      return prepared;
-    },
-    finalize: (id) => {
-      switch (finalizeFails) {
-        case true:
-          finalizeFails = false;
-          throw new Error("finalize failed");
-      }
-      return update(id, (record) => ({
-        ...record,
-        phase: "finalized",
-      }));
-    },
-    retire: (id) => void records.delete(id),
-    acquireExecution: (transactionId) => {
-      invariant(activeLease === null, "execution is already owned by a live process");
-      activeLease = Object.freeze({
-        schemaVersion: 1,
-        transactionId,
-        ownerId: "12345678-1234-4123-8123-123456789abc",
-        ownerPid: process.pid,
-        ownerStartIdentity: "test-process-start-identity",
-      });
-      return activeLease;
-    },
-    assertExecution: (lease) => {
-      invariant(activeLease === lease, "execution ownership changed");
-    },
-    releaseExecution: (lease) => {
-      invariant(activeLease === lease, "execution ownership changed");
-      activeLease = null;
-    },
-    abandonExecution: () => (activeLease = null),
-    hasExecution: () => activeLease !== null,
-    failNextPrepareReceipt: () => (prepareReceiptFails = true),
-    failNextPrepareReceiptAfterCommit: () => (prepareReceiptFailsAfterCommit = true),
-    failNextFinalize: () => (finalizeFails = true),
-  };
-}
-
 function dockerFixture(
   configuredHostPort = "",
   publishedHostPort?: string,
   publishedHostIp = "127.0.0.1",
   publishedBindingCount = 0,
+  imageReference = IMAGE,
 ): DockerFixture {
   return createDockerFixture(
     { apiKeyPath, modelPath, networkName: bindings().network.name },
@@ -246,6 +143,7 @@ function dockerFixture(
     publishedHostPort,
     publishedHostIp,
     publishedBindingCount,
+    imageReference,
   );
 }
 
@@ -267,6 +165,7 @@ function options(
     plan: plan(),
     probeImageReference: PROBE_IMAGE,
     readinessTimeoutSeconds: 1_800,
+    guardedStdioForward: true,
   };
 }
 
@@ -1471,11 +1370,87 @@ it("uses the guarded WSL transport without a published port through start, resum
   expect(fixture.engine.capture(["container", "inspect", RUNTIME_ID]).status).toBe(1);
 });
 
+it("keeps a former-image WSL receipt inspectable and removable without image replacement (#12285)", () => {
+  const formerImage =
+    "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675";
+  const fixture = dockerFixture("", "49152", "127.0.0.1", 0, formerImage);
+  const store = journalStore();
+  const bridge = privateBridgeFixture();
+  const former = options(fixture, store, { ...bindings(), imageReference: formerImage });
+  const receipt = createLifecycle(former, {}, bridge).start(receiptWriter());
+  fixture.capture.mockClear();
+  const updated = createLifecycle(
+    {
+      ...former,
+      guardedStdioForward: undefined,
+      bindings: { ...former.bindings, stdioForward: true },
+      loopbackProbe: "host-process",
+    },
+    { hostLoopbackProbe: () => ({ status: 0, stdout: "", stderr: "" }) },
+    bridge,
+  );
+  expect(updated.runtime.inspectManaged(receipt).running).toBe(true);
+  expect(updated.resume(receipt)).toEqual(receipt);
+  expect(updated.runtime.destroy(receipt).status).toBe("removed");
+  expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["create", "--pull=never"]);
+});
+
+it("recovers an unfinished former-image WSL journal without creating a new runtime (#12285)", () => {
+  const formerImage =
+    "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675";
+  const fixture = dockerFixture("", "49152", "127.0.0.1", 0, formerImage);
+  const store = journalStore();
+  const bridge = privateBridgeFixture();
+  const former = options(fixture, store, { ...bindings(), imageReference: formerImage });
+  expect(() =>
+    createLifecycle(former, {}, bridge).start(
+      receiptWriter(() => {
+        throw new Error("writer unavailable");
+      }),
+    ),
+  ).toThrow("writer unavailable");
+  fixture.capture.mockClear();
+  const updated = createLifecycle(
+    {
+      ...former,
+      guardedStdioForward: undefined,
+      bindings: { ...former.bindings, stdioForward: true },
+      loopbackProbe: "host-process",
+    },
+    { hostLoopbackProbe: () => ({ status: 0, stdout: "", stderr: "" }) },
+    bridge,
+  );
+  expect(updated.recoverUnfinished(receiptWriter())).toEqual({
+    recovered: [TRANSACTION_ID],
+    failures: [],
+  });
+  expect(store.load(TRANSACTION_ID)?.phase).toBe("finalized");
+  expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["create", "--pull=never"]);
+});
+
+it("accepts a newly pinned WSL image when its recipe declares guarded stdio (#12285)", () => {
+  const nextImage = `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"a".repeat(64)}`;
+  const fixture = dockerFixture("", "49152", "127.0.0.1", 0, nextImage);
+  const base = options(fixture);
+  const lifecycle = createLifecycle(
+    {
+      ...base,
+      bindings: { ...base.bindings, imageReference: nextImage, stdioForward: true },
+      loopbackProbe: "host-process",
+    },
+    { hostLoopbackProbe: () => ({ status: 0, stdout: "", stderr: "" }) },
+  );
+  const receipt = lifecycle.start(receiptWriter());
+  expect(receipt.runtime).toMatchObject({ imageRef: nextImage });
+  expect(lifecycle.runtime.destroy(receipt).status).toBe("removed");
+});
+
 it("rejects an unqualified WSL image before container creation (#12285)", () => {
   const fixture = dockerFixture("0", "49152", "127.0.0.1", 1);
   const base = options(fixture);
   const input = {
     ...base,
+    guardedStdioForward: undefined,
     bindings: {
       ...base.bindings,
       imageReference:

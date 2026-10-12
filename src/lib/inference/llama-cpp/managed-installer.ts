@@ -21,8 +21,9 @@ import {
 } from "../../onboard/runtime-provider/persisted-engine-authority";
 import { requireRuntimeProviderHostLocalInferenceOperation } from "../../onboard/runtime-provider/registry";
 import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
+import { servingCatalogDigest } from "../serving/catalog";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
-import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
+import type { LlamaCppServingRecipe, ResolvedLlamaCppInferenceSelection } from "../serving/types";
 import { buildVllmDockerEnv } from "../vllm-docker-env";
 import { LLAMA_CPP_CREDENTIAL_ENV } from "./contract";
 import { acquireVerifiedLlamaCppGguf, verifyLlamaCppGgufCacheEntry } from "./gguf-acquisition";
@@ -49,6 +50,30 @@ export const MANAGED_LLAMA_CPP_OWNER_VALUE = "true" as const;
 
 const IMAGE_PULL_TIMEOUT_MS = 30 * 60 * 1000;
 const DOCKER_INSPECT_TIMEOUT_MS = 15_000;
+const HISTORIC_WSL_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
+const HISTORIC_WSL_RECIPE_DIGEST =
+  "sha256:b1032bb63f7f0772ddc96576219269fe42a086814eca561d1b28d69394dc72e1";
+const HISTORIC_WSL_IMAGE =
+  "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675";
+const HISTORIC_WSL_IMAGE_DOWNLOAD_SIZE_BYTES = 1_827_478_485;
+
+/** Reconstruct only the prior published WSL recipe, without changing its runtime identity. */
+function historicalWslRecipe(recipe: LlamaCppServingRecipe): LlamaCppServingRecipe | null {
+  if (recipe.metadata.id !== HISTORIC_WSL_RECIPE_ID) return null;
+  const historical: LlamaCppServingRecipe = {
+    ...recipe,
+    spec: {
+      ...recipe.spec,
+      runtime: {
+        ...recipe.spec.runtime,
+        image: HISTORIC_WSL_IMAGE,
+        imageDownloadSizeBytes: HISTORIC_WSL_IMAGE_DOWNLOAD_SIZE_BYTES,
+        guardedStdioForward: undefined,
+      },
+    },
+  };
+  return servingCatalogDigest(historical) === HISTORIC_WSL_RECIPE_DIGEST ? historical : null;
+}
 
 export interface ManagedLlamaCppInstallOptions {
   readonly sandboxName: string;
@@ -431,9 +456,6 @@ export function resolveManagedLlamaCppOwnerSelection(
   owner: NonNullable<ReturnType<typeof loadManagedLlamaCppOwner>>,
 ): ResolvedLlamaCppInferenceSelection {
   const catalog = loadManagedInferenceCatalog();
-  if (catalog.catalogDigest !== owner.catalogDigest) {
-    throw new Error("Managed llama.cpp catalog authority changed; rerun onboarding.");
-  }
   const recipe = catalog.recipes.find(({ metadata }) => metadata.id === owner.recipeId);
   const candidatePresets = catalog.presets.filter(
     ({ spec }) =>
@@ -460,16 +482,23 @@ export function resolveManagedLlamaCppOwnerSelection(
   const presetDigest = catalog.sources.find(
     ({ kind, id }) => kind === "ServingPreset" && id === preset.metadata.id,
   )?.digest;
-  if (recipeDigest !== owner.recipeDigest || presetDigest !== owner.presetDigest) {
+  if (presetDigest !== owner.presetDigest) {
+    throw new Error("Managed llama.cpp recipe authority changed; rerun onboarding.");
+  }
+  const current =
+    catalog.catalogDigest === owner.catalogDigest && recipeDigest === owner.recipeDigest;
+  const historical =
+    owner.recipeDigest === HISTORIC_WSL_RECIPE_DIGEST ? historicalWslRecipe(recipe) : null;
+  if (!current && historical === null) {
     throw new Error("Managed llama.cpp recipe authority changed; rerun onboarding.");
   }
   return {
     outcome: "selected",
     selection: "explicit",
-    catalogDigest: catalog.catalogDigest,
-    recipeDigest,
+    catalogDigest: current ? catalog.catalogDigest : owner.catalogDigest,
+    recipeDigest: current ? recipeDigest : owner.recipeDigest,
     presetDigest,
-    recipe,
+    recipe: historical ?? recipe,
     preset,
   };
 }
@@ -509,6 +538,7 @@ function lifecycleFor(input: {
     plan: compileLlamaCppGgufCachePlan(recipe),
     probeImageReference: recipe.spec.readiness.probeImage,
     readinessTimeoutSeconds: recipe.spec.readiness.timeoutSeconds,
+    ...(recipe.spec.runtime.guardedStdioForward ? { guardedStdioForward: true as const } : {}),
   });
 }
 

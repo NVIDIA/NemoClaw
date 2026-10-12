@@ -38,6 +38,7 @@ import {
   installManagedLlamaCpp,
   MANAGED_LLAMA_CPP_NETWORK_NAME,
   rehydrateManagedLlamaCppLifecycle,
+  resolveManagedLlamaCppOwnerSelection,
   resumeManagedLlamaCppRuntime,
 } from "./managed-installer";
 import {
@@ -454,6 +455,36 @@ describe("managed llama.cpp Docker authority", () => {
 });
 
 describe("managed llama.cpp installer", () => {
+  it("rehydrates the former WSL recipe without substituting the new image (#12285)", () => {
+    const catalog = loadManagedInferenceCatalog();
+    const preset = catalog.presets.find(
+      ({ metadata }) => metadata.id === "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b",
+    );
+    expect(preset).toBeDefined();
+    const owner = {
+      schemaVersion: 1 as const,
+      sandboxName: "existing-wsl",
+      catalogDigest: `sha256:${"0".repeat(64)}`,
+      presetDigest: catalog.sources.find(
+        ({ kind, id }) => kind === "ServingPreset" && id === preset!.metadata.id,
+      )!.digest,
+      recipeDigest: "sha256:b1032bb63f7f0772ddc96576219269fe42a086814eca561d1b28d69394dc72e1",
+      recipeId: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1",
+    };
+    const selected = resolveManagedLlamaCppOwnerSelection(owner);
+    expect(selected.catalogDigest).toBe(owner.catalogDigest);
+    expect(selected.recipeDigest).toBe(owner.recipeDigest);
+    expect(selected.recipe.spec.runtime.image).toBe(
+      "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675",
+    );
+    expect(selected.recipe.spec.runtime.guardedStdioForward).toBeUndefined();
+    expect(() =>
+      resolveManagedLlamaCppOwnerSelection({
+        ...owner,
+        recipeDigest: `sha256:${"0".repeat(64)}`,
+      }),
+    ).toThrow("Managed llama.cpp recipe authority changed");
+  });
   it("stops after acquisition when sandbox identity refuses activation (#9833)", async () => {
     const selected = selection();
     const homeDir = temporaryHome();

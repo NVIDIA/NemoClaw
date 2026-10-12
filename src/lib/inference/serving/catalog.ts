@@ -279,6 +279,11 @@ function validateRecipeSemantics(
   }
 
   if (!isLlamaCppServingRecipe(recipe)) {
+    if (recipe.spec.runtime && "guardedStdioForward" in recipe.spec.runtime) {
+      throw new ServingCatalogValidationError(
+        `Recipe ${recipe.metadata.id} declares guarded stdio outside llama.cpp.`,
+      );
+    }
     const argumentNames = new Set<string>();
     for (const argument of recipe.spec.serve?.arguments ?? []) {
       if (argumentNames.has(argument.name)) {

@@ -65,6 +65,7 @@ export function createDockerFixture(
   publishedHostPort?: string,
   publishedHostIp = "127.0.0.1",
   publishedBindingCount = 0,
+  imageReference = IMAGE,
 ): DockerFixture {
   const launchContract = {
     ...contract(),
@@ -117,7 +118,7 @@ export function createDockerFixture(
       Id: RUNTIME_ID,
       Name: "/nemoclaw-llama-cpp",
       Config: {
-        Image: IMAGE,
+        Image: imageReference,
         User: "1001:1001",
         Entrypoint: container?.entrypoint ?? [],
         Cmd: container?.command ?? [],
@@ -305,7 +306,7 @@ export function createDockerFixture(
           running: false,
           status: "created",
           transactionId: labels["io.nvidia.nemoclaw.host-local-inference.transaction-sha256"] ?? "",
-          command: args.slice(args.indexOf(IMAGE) + 1),
+          command: args.slice(args.indexOf(imageReference) + 1),
           entrypoint: [String(args[args.indexOf("--entrypoint") + 1] ?? "")],
         };
         createHook?.();

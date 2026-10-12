@@ -301,8 +301,10 @@ During managed installation, NemoClaw first checks internal runtime readiness an
 It repeats these checks when onboarding resumes.
 It then runs the authoritative OpenShell Docker bridge probe on fixed port `8081`.
 On Docker Desktop in WSL, NemoClaw runs the loopback health probe from the WSL CLI process because a host-network container cannot reach the WSL loopback listener.
-If that bridge probe cannot connect or times out after the earlier checks pass, onboarding stops without changing UFW.
-When the bridge reports a valid narrow subnet and a gateway IP address inside that subnet, the error reports these values:
+If the bridge probe cannot connect or times out after the earlier checks pass, onboarding stops without changing UFW.
+On Docker Desktop in WSL, this failure reports the private sandbox bridge probe result. Check that Docker Desktop is running, that its WSL integration is enabled for this distribution, and that the OpenShell Docker network and host gateway are available before retrying onboarding. The WSL path does not print a UFW command.
+
+On native Linux, when the bridge reports a valid narrow subnet and a gateway IP address inside that subnet, the error reports these values:
 
 - The detected Docker network.
 - The source subnet.
@@ -310,7 +312,7 @@ When the bridge reports a valid narrow subnet and a gateway IP address inside th
 - The fixed port `8081`.
 - The narrow UFW command.
 
-If the bridge topology is missing or invalid, onboarding fails closed without printing topology or a UFW command.
+On native Linux, if the bridge topology is missing or invalid, onboarding fails closed without printing topology or a UFW command.
 Inspect the OpenShell Docker bridge configuration before you retry onboarding.
 
 <Warning>
@@ -359,9 +361,13 @@ The managed path does not provide an in-place model, image, recipe upgrade, down
 The installed runtime remains bound to the repository YAML authority recorded during onboarding.
 Do not edit the ownership, receipt, or recipe-digest state to force a migration.
 
-If an updated NemoClaw release changes that authority, resume fails closed and preserves the existing state.
-NemoClaw does not currently define a managed llama.cpp migration procedure for that case.
-Follow release-specific migration guidance when it becomes available.
+An existing Windows WSL Qwen runtime with the former pinned image remains bound to its recorded recipe, receipt, and journal.
+NemoClaw can inspect, resume, recover, and remove that runtime without replacing its image.
+The former pinned image must remain available locally for resume.
+Other unrecognized authority changes fail closed and preserve the existing state.
+
+To use the current pinned image, run `$$nemoclaw <sandbox-name> destroy` for the existing managed runtime, then run onboarding again.
+This removes the owned runtime and network but preserves the shared model cache.
 
 ## Remove the Managed Runtime
 

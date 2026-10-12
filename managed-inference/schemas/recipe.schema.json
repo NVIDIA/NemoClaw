@@ -155,6 +155,9 @@
             "imageDownloadSizeBytes": {
               "$ref": "#/$defs/positiveSafeInteger"
             },
+            "guardedStdioForward": {
+              "const": true
+            },
             "imageUnpackedSizeBytes": {
               "$ref": "#/$defs/positiveSafeInteger"
             },
@@ -1327,6 +1330,7 @@
             "properties": {
               "image": {},
               "imageDownloadSizeBytes": {},
+              "guardedStdioForward": {},
               "platforms": {},
               "networkExposure": {},
               "restartPolicy": {},
