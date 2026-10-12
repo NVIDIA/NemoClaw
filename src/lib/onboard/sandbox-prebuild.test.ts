@@ -107,6 +107,7 @@ describe("sandbox BuildKit prebuild", () => {
     vi.stubEnv("CONTAINERS_CONF", "/home/user/.config/nemoclaw/portable/containers.conf");
     vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ci");
     vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
+    vi.stubEnv("DOCKER_HOST", "");
     vi.stubEnv("BUILDX_BUILDER", "external-builder");
     vi.stubEnv("XDG_CONFIG_HOME", "/home/user/.config");
     vi.stubEnv("HTTPS_PROXY", "http://proxy:8080");
