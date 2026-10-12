@@ -695,6 +695,19 @@ getBuiltinModule("child_process").spawn("bare-child", [], { stdio: "ignore" });
     );
   });
 
+  test("requires Station cleanup to retain canonical progress at its observed child boundary", () => {
+    const file = path.join(REPO_ROOT, "tools/e2e/dgx-station-cleanup.mts");
+    const source = fs.readFileSync(file, "utf8");
+    expect(scanDirectChildProcessSource(file, source).auditFailures).toEqual([]);
+    const forged = source.replace(
+      "progress: options.progress,",
+      "progress: { activity: () => () => undefined, onOutput: () => undefined },",
+    );
+    expect(scanDirectChildProcessSource(file, forged).auditFailures).toEqual([
+      expect.stringMatching(/progress must retain the reviewed TestProgress capability/u),
+    ]);
+  });
+
   test("rejects unreviewed or structurally forged observed-child progress", () => {
     const canonicalSource = fs.readFileSync(FAKE_OPENAI_SOURCE, "utf8");
     expect(scanDirectChildProcessSource(FAKE_OPENAI_SOURCE, canonicalSource).auditFailures).toEqual(

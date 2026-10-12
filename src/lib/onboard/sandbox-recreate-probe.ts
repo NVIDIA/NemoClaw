@@ -3,8 +3,10 @@
 
 import {
   type CaptureOpenshellOptions,
+  type CaptureOpenshellAsyncOptions,
   type CaptureOpenshellResult,
   captureOpenshellCommand,
+  captureOpenshellCommandAsync,
 } from "../adapters/openshell/client";
 import { captureOpenshell } from "../adapters/openshell/runtime";
 import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv";
@@ -25,6 +27,14 @@ import {
 export const SANDBOX_RECREATE_PROBE_TIMEOUT_MS = OPENSHELL_PROBE_TIMEOUT_MS;
 
 export type { CaptureOpenshellOptions, CaptureOpenshellResult };
+
+export function captureSandboxRecreateOpenshellCommandAsync(
+  binary: string,
+  args: string[],
+  options: CaptureOpenshellAsyncOptions,
+): Promise<CaptureOpenshellResult> {
+  return captureOpenshellCommandAsync(binary, args, options);
+}
 
 export function captureSandboxRecreateOpenshellCommand(
   binary: string,

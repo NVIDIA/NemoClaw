@@ -427,7 +427,7 @@ function verifyOpenShellPins(
       ".github/workflows/e2e.yaml gateway auth OpenShell version",
       failures,
     ),
-    pins.maxVersion,
+    "${{ needs.generate-matrix.outputs.openshell_version }}",
     ".github/workflows/e2e.yaml gateway auth OpenShell version",
     failures,
   );

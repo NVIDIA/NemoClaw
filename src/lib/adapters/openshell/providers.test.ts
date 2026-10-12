@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { managedBraveProfile } from "../../../../test/fixtures/openshell-provider-profile";
+import {
+  managedBraveProfile,
+  managedTavilyProfile,
+} from "../../../../test/fixtures/openshell-provider-profile";
 import { createProviders } from "./providers";
 import { createSandboxes } from "./sandboxes";
 import { createSandboxConfig } from "./sandbox-config";
@@ -80,7 +83,7 @@ function nativeNvidiaFixture() {
     provider: {
       ...provider().provider,
       type: "nvidia",
-      profileWorkspace: "",
+      profileWorkspace: "default",
       config: {},
     },
   });
@@ -89,6 +92,140 @@ function nativeNvidiaFixture() {
 }
 
 describe("OpenShell provider evidence", () => {
+  it.each([
+    ["openclaw", undefined],
+    ["openclaw", false],
+    ["hermes", undefined],
+    ["hermes", false],
+  ] as const)(
+    "qualifies %s Tavily with allowUninspectedCredentials=%s without credential reads (#12138)",
+    async (agent, allowUninspectedCredentials) => {
+      const { raw, connect } = fixture();
+      const profile = managedTavilyProfile(agent);
+      const profileContract = agent === "hermes" ? "tavily-hermes-v1" : "tavily";
+      const readCredential = vi.fn(() => {
+        throw new Error(canary);
+      });
+      raw.getProvider.mockResolvedValue({
+        provider: {
+          ...provider().provider,
+          type: profileContract,
+          profileWorkspace: "default",
+          credentials: Object.defineProperty({}, "TAVILY_API_KEY", {
+            enumerable: true,
+            get: readCredential,
+          }),
+          credentialHandles: {},
+          config: {},
+        },
+      });
+      raw.getProviderProfile.mockResolvedValue({
+        profile: {
+          ...profile,
+          endpoints: profile.endpoints.map((endpoint) => ({
+            ...endpoint,
+            ...(allowUninspectedCredentials === undefined ? {} : { allowUninspectedCredentials }),
+          })),
+        },
+      });
+      const input = { ...request(), configKeys: [], profileContract } as const;
+      const result = await createProviders(connect).get(input);
+      expect(result).toMatchObject({
+        type: profileContract,
+        credentialKeys: ["TAVILY_API_KEY"],
+        configKeys: [],
+        config: {},
+        profileWorkspace: "default",
+        managedProfile: {
+          id: profileContract,
+          source: "user",
+          scope: "workspace",
+          resourceVersion: "4",
+        },
+      });
+      expect(raw.getProviderProfile).toHaveBeenCalledExactlyOnceWith(
+        { id: profileContract, workspace: "default" },
+        { signal: input.signal },
+      );
+      expect(readCredential).not.toHaveBeenCalled();
+      expect(JSON.stringify(result)).not.toContain(canary);
+      expect(Object.isFrozen(result?.managedProfile)).toBe(true);
+    },
+  );
+
+  describe.each(["openclaw", "hermes"] as const)("%s Tavily profile contract", (agent) => {
+    const profileContract = agent === "hermes" ? "tavily-hermes-v1" : "tavily";
+    const profile = managedTavilyProfile(agent);
+    const credential = profile.credentials[0]!;
+    const endpoint = profile.endpoints[0]!;
+    it.each([
+      ["another agent's profile", { id: agent === "hermes" ? "tavily" : "tavily-hermes-v1" }],
+      ["an unknown profile source", { source: "foreign" }],
+      ["a different scope", { scope: "platform" }],
+      ["an unversioned user profile", { resourceVersion: 0n }],
+      ["discovery metadata", { discovery: {} }],
+      ["unknown profile fields", { $unknown: [{}] }],
+      ["inference capability", { inferenceCapable: true }],
+      [
+        "a different credential variable",
+        { credentials: [{ ...credential, envVars: ["OTHER_KEY"] }] },
+      ],
+      ["header authentication", { credentials: [{ ...credential, authStyle: "header" }] }],
+      [
+        "a different credential header",
+        { credentials: [{ ...credential, headerName: "x-unexpected" }] },
+      ],
+      ["credential refresh", { credentials: [{ ...credential, refresh: {} }] }],
+      ["a foreign endpoint", { endpoints: [{ ...endpoint, host: "foreign.example" }] }],
+      ["a read-write access preset", { endpoints: [{ ...endpoint, access: "read-write" }] }],
+      [
+        "uninspected credentials",
+        { endpoints: [{ ...endpoint, allowUninspectedCredentials: true }] },
+      ],
+      [
+        "disabled body rewriting",
+        { endpoints: [{ ...endpoint, requestBodyCredentialRewrite: false }] },
+      ],
+      ["missing request rules", { endpoints: [{ ...endpoint, rules: [] }] }],
+      [
+        "a wildcard request path",
+        {
+          endpoints: [
+            { ...endpoint, rules: [{ allow: { ...endpoint.rules[0]!.allow, path: "/*" } }] },
+          ],
+        },
+      ],
+      [
+        "unknown request rule fields",
+        {
+          endpoints: [
+            {
+              ...endpoint,
+              rules: [
+                { allow: { ...endpoint.rules[0]!.allow, $unknown: [{}] } },
+                endpoint.rules[1],
+              ],
+            },
+          ],
+        },
+      ],
+      [
+        "a different credential binding",
+        { endpoints: [{ ...endpoint, credentialBinding: { provider: "other" } }] },
+      ],
+      ["a different executable", { binaries: [{ path: "/usr/bin/python" }] }],
+    ] as const)("rejects %s (#12138)", async (_label, change) => {
+      const { raw, connect } = fixture();
+      raw.getProvider.mockResolvedValue({
+        provider: { ...provider().provider, type: profileContract, profileWorkspace: "default" },
+      });
+      raw.getProviderProfile.mockResolvedValue({ profile: { ...profile, ...change } });
+      await expect(
+        createProviders(connect).get({ ...request(), configKeys: [], profileContract }),
+      ).rejects.toMatchObject({ kind: "schema" });
+    });
+  });
+
   it("returns requested config values and credential names without secret material", async () => {
     const { connect, raw } = fixture();
     const input = request();
@@ -201,6 +338,10 @@ describe("OpenShell provider evidence", () => {
     { label: "missing credentials", change: { credentials: [] } },
     { label: "missing binaries", change: { binaries: [] } },
     { label: "discovery override", change: { discovery: {} } },
+    {
+      label: "an empty access preset",
+      change: { endpoints: [{ ...managedBraveProfile().endpoints[0], access: "" }] },
+    },
   ])("rejects managed Brave profiles with $label (#10904)", async ({ change }) => {
     const { connect, raw } = fixture();
     raw.getProvider.mockResolvedValue({
@@ -269,6 +410,7 @@ describe("OpenShell provider evidence", () => {
     { credentialBinding: { provider: "foreign", credential: "OTHER_KEY" } },
     { websocketCredentialRewrite: true },
     { allowEncodedSlash: true },
+    { allowUninspectedCredentials: true },
     { path: "/other" },
   ])("rejects managed Brave endpoint drift %j (#10904)", async (change) => {
     const { connect, raw } = fixture();
@@ -365,29 +507,36 @@ describe("OpenShell provider evidence", () => {
     ).rejects.toMatchObject({ kind: "schema" });
   });
 
-  it("verifies the native NVIDIA endpoint through the named gateway profile", async () => {
-    const { connect, raw } = nativeNvidiaFixture();
-    const input = request();
-    const result = await createProviders(connect).get(input);
-    expect(result).toMatchObject({
-      type: "nvidia",
-      configKeys: [],
-      config: {},
-      builtinInferenceEndpoint: "https://integrate.api.nvidia.com/v1",
-    });
-    expect(raw.getProviderProfile).toHaveBeenCalledWith(
-      { id: "nvidia", workspace: "default" },
-      { signal: input.signal },
-    );
-    expect(connect).toHaveBeenCalledExactlyOnceWith(target);
-    expect(JSON.stringify(result)).not.toContain(canary);
-  });
+  it.each(["", "default"])(
+    "verifies the native NVIDIA endpoint at binding %j",
+    async (profileWorkspace) => {
+      const { connect, raw } = nativeNvidiaFixture();
+      raw.getProvider.mockResolvedValue({
+        provider: { ...provider().provider, type: "nvidia", profileWorkspace, config: {} },
+      });
+      const input = request();
+      const result = await createProviders(connect).get(input);
+      expect(result).toMatchObject({
+        type: "nvidia",
+        configKeys: [],
+        config: {},
+        builtinInferenceEndpoint: "https://integrate.api.nvidia.com/v1",
+      });
+      expect(raw.getProviderProfile).toHaveBeenCalledWith(
+        { id: "nvidia", workspace: profileWorkspace },
+        { signal: input.signal },
+      );
+      expect(connect).toHaveBeenCalledExactlyOnceWith(target);
+      expect(JSON.stringify(result)).not.toContain(canary);
+    },
+  );
 
   it.each([
     { label: "wrong identity", change: { id: "openai" } },
     { label: "custom source", change: { source: "user" } },
     { label: "interceptor source", change: { source: "interceptor/custom" } },
     { label: "workspace scope", change: { scope: "workspace" } },
+    { label: "platform scope", change: { scope: "platform" } },
     { label: "custom revision", change: { resourceVersion: 1n } },
     { label: "missing revision", change: { resourceVersion: undefined } },
     { label: "disabled inference", change: { inferenceCapable: false } },
@@ -416,10 +565,11 @@ describe("OpenShell provider evidence", () => {
   });
 
   it.each([
-    { profileWorkspace: "default", config: {} },
+    { profileWorkspace: "foreign", config: {} },
     { profileWorkspace: undefined, config: {} },
     { profileWorkspace: "", config: { NVIDIA_BASE_URL: "https://different.example/v1" } },
     { profileWorkspace: "", config: { UNUSED: canary } },
+    { profileWorkspace: "default", config: { UNUSED: canary } },
   ])("does not infer a builtin endpoint for NVIDIA overrides %#", async (change) => {
     const { connect, raw } = nativeNvidiaFixture();
     raw.getProvider.mockResolvedValue({

@@ -3,8 +3,8 @@
 
 import type { WebSearchConfig } from "../inference/web-search";
 import * as webSearch from "../inference/web-search";
+import { webSearchProviderProfileId } from "../inference/web-search/provider-profile";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
-import { webSearchProviderProfileId } from "../messaging/applier/web-search-provider-profile";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
 import type { ExtraPlaceholderCredentialSources } from "./extra-placeholder-keys";

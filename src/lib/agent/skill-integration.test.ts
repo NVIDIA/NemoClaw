@@ -15,6 +15,7 @@ describe("agent skill integration metadata", () => {
       ["/usr/local/bin/openclaw", "skills", "list", "--agent", "main"],
       true,
       false,
+      null,
     ],
     [
       "hermes",
@@ -22,6 +23,7 @@ describe("agent skill integration metadata", () => {
       ["/usr/local/bin/hermes", "skills", "list"],
       false,
       false,
+      null,
     ],
     [
       "langchain-deepagents-code",
@@ -29,10 +31,11 @@ describe("agent skill integration metadata", () => {
       ["/usr/local/bin/dcode", "skills", "list", "--agent", "agent"],
       false,
       true,
+      "sha256",
     ],
   ] as const)(
     "loads the static %s root and native list contract",
-    (name, writableRoot, listCommand, hasNativeAdd, hasNativeRemove) => {
+    (name, writableRoot, listCommand, hasNativeAdd, hasNativeRemove, verifiedContentDigest) => {
       const agent = loadAgent(name);
       const integration = agent.skillIntegration;
 
@@ -42,6 +45,7 @@ describe("agent skill integration metadata", () => {
       ).toEqual(listCommand);
       expect(Boolean(integration?.addCommand)).toBe(hasNativeAdd);
       expect(Boolean(integration?.removeCommand)).toBe(hasNativeRemove);
+      expect(integration?.verifiedContentDigest).toBe(verifiedContentDigest);
     },
   );
 
@@ -70,6 +74,21 @@ describe("agent skill integration metadata", () => {
         writable_root: "/sandbox/skills",
         list_command: ["skills", "list"],
         inventory: [],
+      },
+    },
+    {
+      skills: {
+        writable_root: "/sandbox/skills",
+        list_command: ["skills", "list"],
+        verified_content_digest: "sha512",
+      },
+    },
+    {
+      skills: {
+        writable_root: "/sandbox/skills",
+        list_command: ["skills", "list"],
+        add_command: ["skills", "install", "{source}"],
+        verified_content_digest: "sha256",
       },
     },
   ])("rejects unsafe or state-shaped metadata %#", (manifest) => {

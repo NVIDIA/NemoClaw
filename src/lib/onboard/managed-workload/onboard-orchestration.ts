@@ -118,6 +118,11 @@ export function prepareExternalImageForOnboard(input: {
     input.computePlan.driverName,
     CURRENT_RUNTIME_PROVIDER_BUNDLES,
   );
+  if (!provider?.containerEngine.supported || !provider.containerEngine.externalImagePreparation) {
+    throw new Error(
+      `Driver '${input.computePlan.driverName}' does not provide container image preparation.`,
+    );
+  }
   return prepareExternalImageForOnboardSource(
     {
       reference: input.reference,
@@ -125,16 +130,7 @@ export function prepareExternalImageForOnboard(input: {
       runtime,
       requestedToolDisclosure: input.requestedToolDisclosure,
     },
-    {
-      capture: (operation, args, timeoutMs) => {
-        if (!provider?.containerEngine.supported) {
-          throw new Error(
-            `Driver '${input.computePlan.driverName}' does not provide container image preparation.`,
-          );
-        }
-        return provider.containerEngine.capture(operation, args, timeoutMs);
-      },
-    },
+    provider.containerEngine.externalImagePreparation,
   );
 }
 
@@ -202,6 +198,7 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly provider: string | null;
   readonly preferredInferenceApi: string | null;
   readonly endpointUrl: string | null;
+  readonly nativeProvider?: boolean;
   readonly startupProfile: ManagedProfileInput;
   readonly note: (message: string) => void;
   readonly fallbackBuildEstimate: () => string | null;
@@ -413,6 +410,8 @@ export function createManagedWorkloadOnboardRuntime(
       selectedModel,
       selectedProvider,
       inferenceApi,
+      input.nativeProvider ?? true,
+      input.endpointUrl,
     );
     preparedProfile = buildManagedStartupOnboardProfile({
       agentName: input.agentName,
@@ -465,7 +464,6 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
     readonly deferSandboxEffectsUntilIdentityVerification?: boolean;
     readonly skipProviderEffects?: boolean;
     readonly rebindMessagingTokenDefs: () => Promise<readonly MessagingTokenDef[]>;
-    readonly runProviderPreDeleteCleanup: MaterializeSandboxCreatePlanInput["runProviderPreDeleteCleanup"];
     readonly upsertMessagingProviders: MaterializeSandboxCreatePlanInput["upsertMessagingProviders"];
     readonly getHermesToolGatewayProviderName: (sandboxName: string) => string;
     readonly discloseInitialSandboxPolicy: (policy: InitialSandboxPolicy) => void;
@@ -555,7 +553,6 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     messagingTokenDefs: [...messagingTokenDefs],
     messagingConfig:
       input.messagingConfig ?? getMessagingChannelConfigFromPlan(input.plannedMessagingPlan),
-    runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
     upsertMessagingProviders: input.plan.upsertMessagingProviders,
     getHermesToolGatewayProviderName: input.plan.getHermesToolGatewayProviderName,
     discloseInitialSandboxPolicy: input.plan.discloseInitialSandboxPolicy,

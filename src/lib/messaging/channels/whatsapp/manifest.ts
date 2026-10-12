@@ -44,6 +44,16 @@ export const whatsappManifest = {
     },
   ],
   credentials: [],
+  // Channel removal owns these cleanup paths. Rebuild persistence captures the
+  // complete native home and intentionally has no per-agent path inventory.
+  state: {
+    openclaw: ["whatsapp"],
+    hermes: [
+      "platforms/whatsapp",
+      "profiles/dashboard-home/platforms/whatsapp/session",
+      "dashboard-home/platforms/whatsapp/session",
+    ],
+  },
   policyPresets: ["whatsapp"],
   render: [
     {

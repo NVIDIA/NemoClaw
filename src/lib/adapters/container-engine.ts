@@ -6,6 +6,7 @@ import path from "node:path";
 
 export type ContainerEngineOperationScope =
   | "host-doctor"
+  | "external-image-preparation"
   | "host-local-inference"
   | "gateway-inspection"
   | "sandbox-lifecycle"

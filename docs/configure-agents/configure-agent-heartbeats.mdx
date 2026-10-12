@@ -54,4 +54,4 @@ openclaw config set agents.defaults.heartbeat.every 2h
 Use `0m` to disable heartbeats.
 Run `openclaw config unset agents.defaults.heartbeat.every` to return the cadence to OpenClaw's default behavior without removing NemoClaw's isolated-session setting.
 Restart and reconnect preserve the current value.
-Rebuild restores the sanitized configuration captured immediately before rebuild, while snapshot restore reapplies the value from the selected snapshot.
+Rebuild transfers the complete native configuration captured immediately before replacement. To roll back to an earlier cadence, set the recorded value explicitly; the retired selective snapshot restore flow is not available.

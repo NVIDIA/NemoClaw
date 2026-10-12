@@ -78,6 +78,8 @@ describe("OpenClaw managed messaging offline image build", () => {
     };
 
     expect(runtimeManifest.overrides).toEqual({
+      "@modelcontextprotocol/sdk": "1.31.0",
+      "proxy-addr": "2.0.8",
       "@openclaw/discord@2026.9.2": {
         "@discord/embedded-app-sdk@2.5.0": {
           uuid: bundledVersion(
@@ -119,6 +121,10 @@ describe("OpenClaw managed messaging offline image build", () => {
     });
     expect(runtimeLock.packages["node_modules/@emnapi/wasi-threads"]).toMatchObject({
       version: "1.2.2",
+    });
+    expect(runtimeLock.packages["node_modules/proxy-addr"]).toMatchObject({
+      version: "2.0.8",
+      dependencies: { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
     });
   });
 
@@ -196,7 +202,7 @@ describe("OpenClaw managed messaging offline image build", () => {
   it("runs and verifies the real offline clean install in the managed-image build", () => {
     const cacheStage = dockerfileSection(
       "AS openclaw-managed-messaging-npm-cache-1",
-      "FROM openclaw-managed-messaging-npm-cache-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION}",
+      "FROM openclaw-managed-messaging-npm-cache-1 AS openclaw-managed-messaging-npm-cache\n",
     );
 
     expect(dockerfile).toContain(

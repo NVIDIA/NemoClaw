@@ -9,6 +9,7 @@ export const slackManifest = {
   displayName: "Slack",
   description: "Slack bot messaging",
   supportedAgents: ["openclaw", "hermes"],
+  state: { hermes: ["platforms/slack"] },
   auth: {
     mode: "token-paste",
   },

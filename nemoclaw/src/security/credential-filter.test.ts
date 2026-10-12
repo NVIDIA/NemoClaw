@@ -90,6 +90,7 @@ describe("plugin credential-filter", () => {
 
   it("preserves safe placeholders and detects secret-shaped values", () => {
     expect(isSafeCredentialPlaceholder("unused")).toBe(true);
+    expect(isSafeCredentialPlaceholder("nemoclaw-managed-inference")).toBe(true);
     expect(isSafeCredentialPlaceholder("Bearer unused")).toBe(true);
     expect(isSafeCredentialPlaceholder("openshell:resolve:env:TOKEN")).toBe(true);
     expect(isSafeCredentialPlaceholder("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_TOKEN")).toBe(true);

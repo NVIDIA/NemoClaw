@@ -6,6 +6,11 @@ import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { isSharedGatewayRouteParticipant } from "../state/registry/route-reservation";
 import type { SandboxEntry } from "../state/registry";
 
+export {
+  nativeInferenceProviderForSandbox,
+  normalizeNativeNvidiaProviderAttachment,
+} from "./native-nvidia";
+
 export type GatewayInferenceRoute = Pick<
   SandboxEntry,
   "provider" | "model" | "endpointUrl" | "preferredInferenceApi" | "credentialEnv"

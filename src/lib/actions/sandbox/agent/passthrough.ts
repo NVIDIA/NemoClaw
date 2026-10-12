@@ -141,7 +141,7 @@ export { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passt
 
 // OpenClaw can exit zero after running in embedded-fallback mode and does not
 // expose a stable machine-readable transport discriminator. These patterns mirror
-// the gateway-auth live tests in restore-gateway-pairing.ts and extend them with
+// the gateway-auth live tests for paired-token recovery and extend them with
 // the reporter-observed `[agent/embedded]` line prefix (#8100). Removal condition:
 // OpenClaw provides a supported machine-readable gateway-only result or removes
 // embedded-fallback mode.

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ModelSelectionProvenance } from "../domain/telemetry/provenance";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import { canonicalEndpoint, normalizeProviderBaseUrl } from "../core/url-utils";
 import { applyCompatibleEndpointContextWindow } from "../inference/compatible-endpoint-context";
@@ -32,6 +33,7 @@ export type OllamaModelSelectionDefaults = {
 };
 
 export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
+  onModelSelected?: (model: string, source: ModelSelectionProvenance["modelSource"]) => void;
   model: string | SetupNimSelectionBackNavigation | null;
   provider: string;
   endpointUrl: string | null;
@@ -104,6 +106,7 @@ export function applyCloudFallbackSelection(
   state.endpointUrl = cloudConfig.endpointUrl;
   state.credentialEnv = cloudConfig.credentialEnv;
   state.model = cloudConfig.defaultModel;
+  state.onModelSelected?.(cloudConfig.defaultModel, "product_catalog");
   state.preferredInferenceApi = null;
   state.nimContainer = null;
   state.allowToolsIncompatible = false;

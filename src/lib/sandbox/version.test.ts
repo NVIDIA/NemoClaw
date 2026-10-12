@@ -12,7 +12,8 @@ import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { runBuffered } = vi.hoisted(() => ({ runBuffered: vi.fn() }));
-vi.mock("../adapters/openshell/sandbox-command-cli.js", () => ({
+vi.mock("../adapters/openshell/sandbox-command-cli.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/openshell/sandbox-command-cli.js")>()),
   createCliOpenShellSandboxCommandExecutor: () => ({ runBuffered }),
 }));
 
@@ -54,7 +55,6 @@ vi.mock("../agent/defs.js", () => ({
     displayName: name === "openclaw" ? "OpenClaw" : "Hermes Agent",
     versionCommand: name === "openclaw" ? "openclaw --version" : "hermes --version",
     expectedVersion: EXPECTED_VERSION_BY_AGENT[name] ?? "0.17.0",
-    stateDirs: [],
     configPaths: { dir: "/sandbox/.openclaw" },
   })),
 }));

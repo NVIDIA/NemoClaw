@@ -69,11 +69,11 @@ describe("connectSandbox route lifecycle", () => {
         "set",
         "-g",
         "nemoclaw",
+        "--no-verify",
         "--provider",
         "anthropic-prod",
         "--model",
         "claude-sonnet-4-20250514",
-        "--no-verify",
       ],
       expect.objectContaining({ ignoreError: true }),
     );
@@ -81,6 +81,34 @@ describe("connectSandbox route lifecycle", () => {
       "openshell",
       ["sandbox", "connect", "alpha"],
       expect.any(Object),
+    );
+  });
+
+  it("stops after an ambiguous route swap before probing or attempting repair", async () => {
+    const harness = createConnectHarness({
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/old-model\n",
+      inferenceSetResult: { status: null, output: "", signal: "SIGTERM" },
+      registryEntry: {
+        model: "claude-sonnet-4-20250514",
+        provider: "anthropic-prod",
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const routeWrites = harness.runOpenshellSpy.mock.calls.filter(
+      ([args]) => Array.isArray(args) && args[0] === "inference" && args[1] === "set",
+    );
+    expect(routeWrites).toHaveLength(1);
+    const routeProbes = harness.sandboxRunBufferedSpy.mock.calls.filter(([request]) =>
+      JSON.stringify(request).includes("inference.local/v1/models"),
+    );
+    expect(routeProbes).toEqual([]);
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "Inspect gateway 'nemoclaw' before retrying the route mutation",
     );
   });
 
@@ -276,11 +304,11 @@ describe("connectSandbox route lifecycle", () => {
         "set",
         "-g",
         "nemoclaw",
+        "--no-verify",
         "--provider",
         "nvidia-prod",
         "--model",
         "nvidia/nemotron-3-super-120b-a12b",
-        "--no-verify",
       ],
       expect.objectContaining({ ignoreError: true }),
     );

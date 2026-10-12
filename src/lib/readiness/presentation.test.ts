@@ -46,6 +46,24 @@ function report(
 }
 
 describe("public readiness presentation (#7412)", () => {
+  it("identifies the unattempted CUDA proof in a read-only WSL host probe (#12817)", () => {
+    const strictReport = report({
+      findings: [
+        {
+          id: "host.platform.wsl_gpu_passthrough_inconclusive",
+          severity: "warning",
+          summary: "Configured container-provider WSL GPU passthrough could not be proven.",
+        },
+      ],
+    });
+
+    const publicReport = createPublicHostProbeReadinessReport(strictReport);
+
+    expect(publicReport.findings[0]?.summary).toContain("did not run the container CUDA proof");
+    expect(strictReport.findings[0]?.summary).toContain("could not be proven");
+    expect(publicReport).toMatchObject({ mutated: false });
+  });
+
   it("rejects reports that claim host mutation", () => {
     const mutatedReport = { ...report(), mutated: true } as unknown as SystemReadinessReport;
 

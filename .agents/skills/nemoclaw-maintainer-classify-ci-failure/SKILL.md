@@ -9,6 +9,11 @@ user_invocable: true
 
 # Classify a CI Failure
 
+When the failed job is part of E2E, first load
+[Audit E2E Assertions](../nemoclaw-maintainer-audit-e2e-assertions/SKILL.md).
+This classifier can locate the failure signature. Its bounded output does not replace the
+complete log review and itemized source audit required before an E2E repair push or expensive rerun.
+
 Run the classifier from a NemoClaw checkout:
 
 ```bash

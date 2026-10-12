@@ -2,7 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { closeSync, mkdtempSync, openSync, readSync, rmSync, statSync } from "node:fs";
+import {
+  closeSync,
+  fstatSync,
+  mkdtempSync,
+  openSync,
+  readSync,
+  rmSync,
+  statSync,
+  writeSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -53,9 +62,56 @@ function tarExitStatus(result: ReturnType<typeof spawnSync>): number {
 }
 
 export type TarArchiveSource = Buffer | { filePath: string };
+export type TarListingSource = TarArchiveSource | { fileDescriptor: number };
+
+function copyDescriptorToPrivateArchive(fileDescriptor: number, tempDir: string): string {
+  const source = fstatSync(fileDescriptor);
+  if (!source.isFile() || !Number.isSafeInteger(source.size) || source.size < 0) {
+    throw new Error("tar archive descriptor must reference a regular file");
+  }
+  const archivePath = path.join(tempDir, "archive.tar");
+  const archiveFd = openSync(archivePath, "wx", 0o600);
+  const chunk = Buffer.alloc(TAR_LISTING_READ_CHUNK_BYTES);
+  let position = 0;
+  try {
+    while (position < source.size) {
+      const requested = Math.min(chunk.byteLength, source.size - position);
+      const bytesRead = readSync(fileDescriptor, chunk, 0, requested, position);
+      if (bytesRead === 0) throw new Error("tar archive descriptor became truncated");
+      let written = 0;
+      while (written < bytesRead) {
+        const count = writeSync(archiveFd, chunk, written, bytesRead - written, position + written);
+        if (count === 0) throw new Error("could not stage tar archive descriptor");
+        written += count;
+      }
+      position += bytesRead;
+    }
+  } finally {
+    closeSync(archiveFd);
+  }
+  return archivePath;
+}
+
+function openIndependentTarDescriptor(
+  tarArchive: Exclude<TarListingSource, Buffer>,
+  tempDir: string,
+) {
+  if ("filePath" in tarArchive) return openSync(tarArchive.filePath, "r");
+  // Linux reopens the underlying inode with an independent file offset, even
+  // after its original pathname is unlinked. Other platforms' /dev/fd clones
+  // share the offset, so use a private positional copy there instead.
+  if (process.platform === "linux") {
+    try {
+      return openSync(`/proc/self/fd/${tarArchive.fileDescriptor}`, "r");
+    } catch {
+      // Fall back for Linux environments without procfs mounted.
+    }
+  }
+  return openSync(copyDescriptorToPrivateArchive(tarArchive.fileDescriptor, tempDir), "r");
+}
 
 export function runTarListing(
-  tarArchive: TarArchiveSource,
+  tarArchive: TarListingSource,
   args: string[],
   failureLabel: string,
   onLine: (line: string) => void,
@@ -76,10 +132,11 @@ export function runTarListing(
           maxBuffer: TAR_LISTING_STDERR_MAX_BUFFER_BYTES,
         })
       : (() => {
-          archiveFd = openSync(tarArchive.filePath, "r");
+          const descriptor = openIndependentTarDescriptor(tarArchive, tempDir);
+          archiveFd = descriptor;
           return spawnSync("tar", args, {
             encoding: "utf-8",
-            stdio: [archiveFd, listingFd, "pipe"],
+            stdio: [descriptor, listingFd, "pipe"],
             timeout: timeoutMs,
             maxBuffer: TAR_LISTING_STDERR_MAX_BUFFER_BYTES,
           });

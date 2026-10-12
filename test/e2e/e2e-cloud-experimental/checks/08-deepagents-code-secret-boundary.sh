@@ -18,6 +18,10 @@ ENV_BACKUP="/tmp/${PREFIX}.env.backup.$$"
 ENV_EXISTED=0
 NETWORK_LOG_PATTERN="NET:OPEN|inference\\.local|pypi\\.org|api\\.openai\\.com|integrate\\.api\\.nvidia\\.com|Server ready|Task completed|PING"
 AUDIT_NETWORK_LOG_PATTERN="NET:OPEN|inference\\.local|pypi\\.org|api\\.openai\\.com|integrate\\.api\\.nvidia\\.com"
+# OpenShell records the exec transport itself as NET:OPEN. Only this exact
+# local SSH relay record is expected; other network opens must still fail.
+AUDIT_EXEC_RELAY_PATTERN='^\[[0-9]+(\.[0-9]+)?\] \[sandbox\] \[OCSF *\] \[ocsf\] NET:OPEN \[INFO\] '
+AUDIT_EXEC_RELAY_PATTERN+='\[msg:ssh relay open \(channel_id=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}, target=unix:/run/openshell/ssh\.sock\)\]$'
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -77,24 +81,27 @@ enable_openshell_audit_logs() {
 
 openshell_audit_logs_since_epoch() {
   local start_epoch="$1"
-  local output=""
+  local output="" filtered=""
 
   if ! output="$(openshell logs "$SANDBOX_NAME" -n 500 --source all --since 2m 2>&1)"; then
     printf 'AUDIT_LOG_READ:0\n%s\n' "$output"
     return 0
   fi
 
-  printf 'AUDIT_LOG_READ:1\n'
-  printf '%s\n' "$output" | awk -v start="$start_epoch" '
+  if ! filtered="$(printf '%s\n' "$output" | awk -v start="$start_epoch" '
     /^\[[0-9]+(\.[0-9]+)?\]/ {
-      close = index($0, "]");
-      ts = substr($0, 2, close - 2) + 0;
+      bracket_end = index($0, "]");
+      ts = substr($0, 2, bracket_end - 2) + 0;
       keep = ts >= start;
       if (keep) print;
       next;
     }
     keep { print; }
-  '
+  ')"; then
+    printf 'AUDIT_LOG_READ:0\n'
+    return 0
+  fi
+  printf 'AUDIT_LOG_READ:1\n%s\n' "$filtered"
 }
 
 restore_env_file() {
@@ -160,15 +167,15 @@ assert_no_rejected_interval_audit_logs() {
   local label="$1"
   local logs="$2"
 
-  if ! echo "$logs" | grep -q "AUDIT_LOG_READ:1"; then
+  if ! grep -q "AUDIT_LOG_READ:1" <<<"$logs"; then
     fail_test "${label}: OpenShell audit logs could not be read: $logs"
     return
   fi
-  if echo "$logs" | grep -q "$FAKE_SECRET"; then
+  if grep -q "$FAKE_SECRET" <<<"$logs"; then
     fail_test "${label}: raw fake secret leaked into OpenShell audit logs"
     return
   fi
-  if echo "$logs" | grep -Eq "$AUDIT_NETWORK_LOG_PATTERN"; then
+  if grep -Ev "$AUDIT_EXEC_RELAY_PATTERN" <<<"$logs" | grep -E "$AUDIT_NETWORK_LOG_PATTERN" >/dev/null; then
     fail_test "${label}: OpenShell audit logs show network path after rejection: $logs"
     return
   fi
@@ -204,7 +211,9 @@ info "Running Deep Agents Code secret-boundary checks in sandbox: $SANDBOX_NAME"
 enable_openshell_audit_logs
 
 runtime_log_marker="$(make_log_marker runtime-env)"
-runtime_audit_start="$(($(date +%s) - 1))"
+# OpenShell audit records have millisecond precision. Backdating this boundary
+# can include successful inference from the preceding headless check.
+runtime_audit_start="$(date +%s.%3N)"
 mark_sandbox_logs "$runtime_log_marker"
 runtime_output="$(dcode_secret_probe_runtime_env || true)"
 runtime_logs="$(sandbox_logs_since_marker "$runtime_log_marker" || true)"
@@ -222,7 +231,7 @@ trap restore_env_file EXIT
 sandbox_exec "printf '%s\n' OPENAI_API_KEY=${FAKE_SECRET@Q} >> ${DEEPAGENTS_ENV_FILE@Q}" >/dev/null
 env_before_hash="$(sandbox_exec "sha256sum ${DEEPAGENTS_ENV_FILE@Q} | awk '{print \$1}'" || true)"
 env_log_marker="$(make_log_marker env-file)"
-env_audit_start="$(($(date +%s) - 1))"
+env_audit_start="$(date +%s.%3N)"
 mark_sandbox_logs "$env_log_marker"
 env_output="$(dcode_secret_probe_env_file || true)"
 env_logs="$(sandbox_logs_since_marker "$env_log_marker" || true)"

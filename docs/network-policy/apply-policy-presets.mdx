@@ -153,7 +153,7 @@ When NemoClaw cannot read the OpenShell policy, it refuses the mutation rather t
 
 Dynamic changes exist only in the current live OpenShell policy. Maintained preset names are inferred by comparing their current content. Custom presets applied through `--from-file` or `--from-dir` use namespaced keys in that same live document so `policy list` and `policy remove` can discover them without a second registry.
 
-`$$nemoclaw <name> rebuild` and snapshot clone hand the complete current OpenShell policy to sandbox creation. They do not reconstruct it from preset records, so trusted changes made through the OpenShell TUI or another host process are preserved too. For baseline changes that apply to every future sandbox, follow [Change the Baseline Network Policy](change-baseline-network-policy).
+`$$nemoclaw <name> rebuild` hands the complete current OpenShell policy to sandbox creation. It does not reconstruct the policy from preset records, so trusted changes made through the OpenShell TUI or another host process are preserved too. For baseline changes that apply to every future sandbox, follow [Change the Baseline Network Policy](change-baseline-network-policy).
 
 ## Approve One Request
 

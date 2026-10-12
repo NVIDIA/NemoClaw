@@ -223,6 +223,9 @@ describe("OpenShell version helpers", () => {
   it("parses installed OpenShell versions into stable gateway image refs", () => {
     expect(getInstalledOpenshellVersion("openshell 0.0.12")).toBe("0.0.12");
     expect(getInstalledOpenshellVersion("openshell 0.0.13-dev.8+gbbcaed2ea")).toBe("0.0.13");
+    expect(getInstalledOpenshellVersion("unrelated tool 0.0.13")).toBe(null);
+    expect(getInstalledOpenshellVersion("openshell-gateway 9.9.9")).toBe(null);
+    expect(getInstalledOpenshellVersion("not-openshell 8.8.8")).toBe(null);
     expect(getInstalledOpenshellVersion("bogus")).toBe(null);
     expect(getStableGatewayImageRef("openshell 0.0.12")).toBe(
       "ghcr.io/nvidia/openshell/cluster:0.0.12",

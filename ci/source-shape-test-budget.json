@@ -12,16 +12,6 @@
       "category": "compatibility"
     },
     {
-      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
-      "test": "leaves an installed package manifest that names a credential-shaped dependency",
-      "category": "security"
-    },
-    {
-      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
-      "test": "returns a credential-free JSON manifest byte for byte",
-      "category": "security"
-    },
-    {
       "file": "test/e2e/live/hermes-e2e.test.ts",
       "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
       "category": "security"
@@ -112,6 +102,16 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/native-podman-setup-action.test.ts",
+      "test": "builds the Portable Podman toolchain outside candidate execution",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/native-podman-setup-action.test.ts",
+      "test": "runs Portable Hermes only on the explicit Podman 5.7 GPU lane",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
       "test": "routes rootless job dependency auditing by workflow trigger (#11028)",
       "category": "security"
@@ -172,6 +172,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
+      "test": "requires Portable Hermes selection to stage its native helper artifact",
+      "category": "security"
+    },
+    {
       "file": "test/platform/images/node-tar-dockerfile-contract.test.ts",
       "test": "rejects an isolated unreviewed Deep Agents Code Node base pin",
       "category": "security"
@@ -224,6 +229,11 @@
     {
       "file": "test/agents/openclaw/openclaw-npm-remediation.test.ts",
       "test": "replaces the reviewed bundled Axios graph with the patched graph",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/openclaw/openclaw-npm-remediation.test.ts",
+      "test": "replaces only the reviewed Slack bundled proxy-addr package",
       "category": "security"
     },
     {
@@ -409,6 +419,11 @@
     {
       "file": "test/install/installer-homebrew-formula-reuse-trust.test.ts",
       "test": "accepts only the reviewed OpenShell 0.0.116 installer template",
+      "category": "security"
+    },
+    {
+      "file": "test/install/installer-hash-check.test.ts",
+      "test": "does not base-trust the obsolete Brev npm replacement digest",
       "category": "security"
     },
     {

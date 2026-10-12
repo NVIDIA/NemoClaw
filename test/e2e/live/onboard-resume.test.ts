@@ -243,7 +243,7 @@ test(
     // Assertion: hermetic-compatible-endpoint-ready — the workflow does not
     // pass hosted NVIDIA inference secrets. Instead, this test exposes a local
     // fake OpenAI-compatible endpoint at a host address the OpenShell gateway and
-    // sandbox can route to, matching test/e2e/lib/hermetic-compatible-inference.sh.
+    // sandbox can route to.
     const fakePublicHost = "host.openshell.internal";
     let fake = await startFakeOpenAiCompatibleServer({
       apiKey: FAKE_COMPATIBLE_AUTH_VALUE,

@@ -115,14 +115,14 @@ exit 90
   }
 });
 
-it.each([
+const publishedBaseCases = [
   {
     candidateContents: "unrelated candidate change\n",
     candidatePath: "README.md",
     expectedLocal: false,
     failPublishedPull: false,
     rejectCopyParsing: false,
-    title: "reuses a published DCode base built from the same runtime contract inputs",
+    title: "reuses a published base built from the same inputs",
   },
   {
     candidateContents: "print('new contract')\n",
@@ -130,7 +130,7 @@ it.each([
     expectedLocal: true,
     failPublishedPull: false,
     rejectCopyParsing: false,
-    title: "builds the DCode base locally when its published source predates the runtime contract",
+    title: "builds locally when the published source predates a copied runtime contract",
   },
   {
     candidateContents: "security patch v2\n",
@@ -138,7 +138,23 @@ it.each([
     expectedLocal: true,
     failPublishedPull: false,
     rejectCopyParsing: false,
-    title: "builds the DCode base locally when a copied security input changed",
+    title: "builds locally when a copied security input changed",
+  },
+  {
+    candidateContents: "deepagents==0.8.0\n",
+    candidatePath: "agents/langchain-deepagents-code/requirements.lock",
+    expectedLocal: true,
+    failPublishedPull: false,
+    rejectCopyParsing: false,
+    title: "builds locally when a copied dependency lock changed without a Dockerfile edit",
+  },
+  {
+    candidateContents: ".git\nREADME.md\n",
+    candidatePath: ".dockerignore",
+    expectedLocal: true,
+    failPublishedPull: false,
+    rejectCopyParsing: false,
+    title: "builds locally when the Docker context exclusions changed",
   },
   {
     candidateContents:
@@ -147,7 +163,7 @@ it.each([
     expectedLocal: true,
     failPublishedPull: false,
     rejectCopyParsing: false,
-    title: "builds the DCode base locally when its COPY parser changed",
+    title: "builds locally without executing a changed COPY parser",
   },
   {
     candidateContents: "adversarial contract v2\n",
@@ -163,7 +179,7 @@ it.each([
     expectedLocal: true,
     failPublishedPull: true,
     rejectCopyParsing: false,
-    title: "builds the DCode base locally when the published base cannot be verified",
+    title: "builds locally when the published base cannot be verified",
   },
   {
     candidateContents: "candidate documentation\n",
@@ -171,9 +187,16 @@ it.each([
     expectedLocal: true,
     failPublishedPull: false,
     rejectCopyParsing: true,
-    title: "builds the DCode base locally when direct COPY parsing rejects the Dockerfile",
+    title: "builds locally when direct COPY parsing rejects the Dockerfile",
   },
-])("$title", (testCase) => {
+] as const;
+
+it.each(
+  // One synthetic COPY contract exercises every agent routed through this resolver.
+  publishedBaseCases.flatMap((testCase) =>
+    ["openclaw", "hermes", "langchain-deepagents-code"].map((agent) => ({ ...testCase, agent })),
+  ),
+)("$agent: $title", (testCase) => {
   const { candidateContents, candidatePath, expectedLocal, failPublishedPull, rejectCopyParsing } =
     testCase;
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-pr-base-"));
@@ -293,7 +316,7 @@ exit 90
   );
   const environment = {
     ...process.env,
-    AGENT: "langchain-deepagents-code",
+    AGENT: testCase.agent,
     ALIAS_RAW: aliasRaw,
     BASE_ALIAS: `${baseRepository}:latest`,
     BASE_DOCKERFILE: "agents/langchain-deepagents-code/Dockerfile.base",

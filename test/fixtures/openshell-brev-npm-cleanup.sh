@@ -1,0 +1,432 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Standalone Brev CPU bootstrap for Docker, reviewed Node/npm, OpenShell, and NemoClaw.
+#
+
+set -euo pipefail
+
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-}"
+NEMOCLAW_REF="${NEMOCLAW_REF:-main}"
+
+LAUNCH_LOG="${LAUNCH_LOG:-/tmp/launch-plugin.log}"
+SENTINEL="/var/run/nemoclaw-launchable-ready"
+
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+
+mkdir -p "$(dirname "$LAUNCH_LOG")"
+exec > >(tee -a "$LAUNCH_LOG") 2>&1
+
+_ts() { date '+%H:%M:%S'; }
+info() { printf '\033[0;32m[%s ci-cpu]\033[0m %s\n' "$(_ts)" "$1"; }
+warn() { printf '\033[1;33m[%s ci-cpu]\033[0m %s\n' "$(_ts)" "$1"; }
+fail() {
+  printf '\033[0;31m[%s ci-cpu]\033[0m %s\n' "$(_ts)" "$1"
+  exit 1
+}
+
+# Keep aligned with scripts/lib/npm-diagnostics.sh.
+# BEGIN npm diagnostics helper
+sanitize_npm_diagnostics() {
+  LC_ALL=C sed -E \
+    -e $'s/\033\\][^\007\033]*(\007|\033\\\\)//g' \
+    -e $'s/\033\\[[0-?]*[ -\\/]*[@-~]//g' \
+    | LC_ALL=C tr '\015' '\012' \
+    | LC_ALL=C tr -cd '\11\12\40-\176' \
+    | awk '
+    BEGIN { private_key = 0 }
+    {
+      line = $0
+      lower = tolower(line)
+      if (line ~ /-----BEGIN ([A-Z0-9]+ )?PRIVATE[ ]KEY-----/) {
+        print "<REDACTED>"
+        private_key = 1
+        next
+      }
+      if (private_key) {
+        if (line ~ /-----END ([A-Z0-9]+ )?PRIVATE[ ]KEY-----/) private_key = 0
+        next
+      }
+      if (lower ~ /(authorization|proxy-authorization|cookie|set-cookie)[ \t]*[:=]/ ||
+          lower ~ /(bearer|basic)[ \t]+[^ \t]/ ||
+          lower ~ /(^|[^a-z0-9])[a-z0-9_.-]*(auth|credential|key|pass|passwd|password|secret|token)[a-z0-9_.-]*[ \t]*[:=]/) {
+        print "<REDACTED CREDENTIAL LINE>"
+        next
+      }
+      print line
+    }
+  ' \
+    | sed -E \
+      -e 's#[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]'"'"'"]+#<REDACTED_URL>#g' \
+      -e 's#(github_pat_|ghp_|glpat-|gsk_|hf_|nvcf-|nvapi-|pypi-|sk-(ant-|proj-)?|tvly-|xapp-|xox[bpas]-)[A-Za-z0-9_-]{8,}#<REDACTED>#g' \
+      -e 's#eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}#<REDACTED>#g' \
+      -e 's#[A-Za-z0-9_+/=-]{32,}#<REDACTED>#g'
+}
+
+bounded_npm_diagnostic_excerpt() {
+  local limit="${1:-3900}"
+  LC_ALL=C awk -v limit="$limit" '
+    {
+      tail = tail $0 ORS
+      if (length(tail) > limit) tail = substr(tail, length(tail) - limit + 1)
+      if ($0 ~ /^npm (error|ERR!|verbose stack)( |$)/ && length(errors) < 2000)
+        errors = substr(errors $0 ORS, 1, 2000)
+    }
+    END {
+      remaining = limit - length(errors)
+      if (length(tail) > remaining) tail = substr(tail, length(tail) - remaining + 1)
+      printf "%s%s", errors, tail
+    }
+  '
+}
+# END npm diagnostics helper
+
+run_npm_install_with_diagnostics() (
+  readonly stage="$1"
+  readonly working_directory="$2"
+  readonly MAX_EXCERPT_BYTES=3900
+  caller_umask="$(umask)"
+  readonly caller_umask
+  umask 077
+  diagnostic_directory="$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-npm-install.XXXXXX")"
+  readonly diagnostic_directory
+  readonly command_log="$diagnostic_directory/npm-install.redacted.log"
+  trap 'if ! rm -rf -- "$diagnostic_directory"; then printf "npm diagnostic cleanup failed\n" >&2; fi' EXIT
+  umask "$caller_umask"
+
+  cd "$working_directory"
+  command=(env
+    -u COMPATIBLE_API_KEY -u GH_TOKEN -u GITHUB_TOKEN
+    -u NVIDIA_INFERENCE_API_KEY -u NODE_AUTH_TOKEN -u NPM_CONFIG__AUTH_TOKEN -u NPM_TOKEN
+    NO_COLOR=1 npm_config_color=false npm_config_loglevel=verbose npm_config_logs_max=0)
+  npm_command=(npm install --ignore-scripts)
+  if [[ "$stage" == "reviewed-npm" ]]; then
+    command=(sudo "${command[@]}" "RUNNER_TEMP=$reviewed_npm_tmp")
+    npm_command=(bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json)
+  fi
+
+  set +e
+  "${command[@]}" "${npm_command[@]}" 2>&1 \
+    | sanitize_npm_diagnostics \
+    | bounded_npm_diagnostic_excerpt "$MAX_EXCERPT_BYTES" >"$command_log"
+  pipeline_status=("${PIPESTATUS[@]}")
+  set -e
+  readonly status="${pipeline_status[0]}"
+  if [[ "${pipeline_status[1]}" -ne 0 || "${pipeline_status[2]}" -ne 0 ]]; then
+    : >"$command_log"
+    printf 'npm command diagnostic sanitization or capture failed\n' >&2
+  fi
+  if [[ "$status" -eq 0 ]]; then
+    tail -3 "$command_log"
+    exit 0
+  fi
+  if [[ "$stage" == "reviewed-npm" ]]; then
+    printf 'reviewed npm bootstrap failed (exit %s).\n' "$status" >&2
+  else
+    printf 'npm install failed during %s dependency installation (exit %s).\n' "$stage" "$status" >&2
+  fi
+  printf '%s\n' '--- npm command output ---' >&2
+  if [[ -s "$command_log" ]]; then
+    cat "$command_log" >&2
+  else
+    printf 'npm command output unavailable\n' >&2
+  fi
+  exit "$status"
+)
+
+assert_openshell_version() {
+  local raw="$1"
+  if [[ ! "$raw" =~ ^v?[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+    fail "Invalid OPENSHELL_VERSION '$raw'; expected vX.Y.Z or X.Y.Z"
+  fi
+}
+
+case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
+  stable | auto) ;;
+  dev) fail "NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported." ;;
+  *) fail "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, auto" ;;
+esac
+if [ -z "$OPENSHELL_VERSION" ]; then
+  case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
+    stable | auto) OPENSHELL_VERSION="v0.0.116" ;;
+  esac
+fi
+assert_openshell_version "$OPENSHELL_VERSION"
+if [[ "$OPENSHELL_VERSION" != v* ]]; then
+  OPENSHELL_VERSION="v${OPENSHELL_VERSION}"
+fi
+if [[ "$OPENSHELL_VERSION" != "v0.0.116" ]]; then
+  fail "NemoClaw requires exact stable OpenShell 0.0.116; OPENSHELL_VERSION resolved to '${OPENSHELL_VERSION}'."
+fi
+if [ "${1:-}" = "--print-openshell-version" ]; then
+  printf '%s\n' "$OPENSHELL_VERSION"
+  exit 0
+fi
+OPENSHELL_VERSION_NO_V="${OPENSHELL_VERSION#v}"
+TARGET_USER="${SUDO_USER:-$(id -un)}"
+TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+NEMOCLAW_CLONE_DIR="${NEMOCLAW_CLONE_DIR:-${TARGET_HOME}/NemoClaw}"
+
+retry() {
+  local max_attempts="$1" sleep_sec="$2" desc="$3"
+  shift 3
+  local attempt=1
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+    if ((attempt >= max_attempts)); then
+      warn "Failed after $max_attempts attempts: $desc"
+      return 1
+    fi
+    info "Retry $attempt/$max_attempts for: $desc (sleeping ${sleep_sec}s)"
+    sleep "$sleep_sec"
+    ((attempt++))
+  done
+}
+
+# Brev VMs sometimes have unattended-upgrades running at boot.
+wait_for_apt_lock() {
+  local max_wait=120 elapsed=0
+  while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
+    || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+    if ((elapsed >= max_wait)); then
+      warn "apt lock not released after ${max_wait}s — proceeding anyway"
+      return 0
+    fi
+    if ((elapsed % 15 == 0)); then
+      info "Waiting for apt lock to be released... (${elapsed}s)"
+    fi
+    sleep 5
+    ((elapsed += 5))
+  done
+}
+
+openshell_cli_asset_for_arch() {
+  local arch
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64 | amd64) printf '%s\n' "openshell-x86_64-unknown-linux-musl.tar.gz" ;;
+    aarch64 | arm64) printf '%s\n' "openshell-aarch64-unknown-linux-musl.tar.gz" ;;
+    *) fail "Unsupported architecture: $arch" ;;
+  esac
+}
+
+openshell_cli_pinned_sha256() {
+  local release_tag="$1" asset="$2"
+  case "${release_tag}:${asset}" in
+    v0.0.116:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e"
+      ;;
+    v0.0.116:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "7a949c48d1e000cd280869eea1e203e24816b9cfefc575b68a8b72b939cb3f43"
+      ;;
+    v0.0.116:openshell-checksums-sha256.txt)
+      printf '%s\n' "f8b6ec65366f9d256737b884ba4d9f184b4dbbbb9540711ed9e4934d772eba7e"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+openshell_checksum_line() {
+  local checksum_file="$1" asset="$2"
+  awk -v asset="$asset" '$2 == asset { print; found=1; exit } END { if (!found) exit 1 }' "$checksum_file"
+}
+
+validate_openshell_archive() {
+  local archive="$1" expected_member="$2" members verbose
+  members="$(LC_ALL=C tar -tzf "$archive")" \
+    || fail "Unable to list OpenShell archive $(basename "$archive")"
+  [ "$members" = "$expected_member" ] \
+    || fail "Unsafe OpenShell archive $(basename "$archive"): expected exactly one member named $expected_member"
+  verbose="$(LC_ALL=C tar -tvzf "$archive")" \
+    || fail "Unable to inspect OpenShell archive $(basename "$archive")"
+  [[ "$verbose" != *$'\n'* && "${verbose:0:1}" = "-" && "${verbose##* }" = "$expected_member" ]] \
+    || fail "Unsafe OpenShell archive $(basename "$archive"): $expected_member must be one regular file"
+}
+
+verify_openshell_cli_asset() {
+  local tmpdir="$1" asset="$2" checksum_file="openshell-checksums-sha256.txt"
+  local checksum_line expected_sha release_sha
+  local -a sha_cmd
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha_cmd=(sha256sum)
+  elif command -v shasum >/dev/null 2>&1; then
+    sha_cmd=(shasum -a 256)
+  else
+    fail "No SHA-256 tool available (sha256sum/shasum)"
+  fi
+
+  retry 3 10 "download openshell checksum" \
+    curl -fsSL -o "$tmpdir/$checksum_file" \
+    "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${checksum_file}"
+  checksum_line="$(openshell_checksum_line "$tmpdir/$checksum_file" "$asset")" \
+    || fail "OpenShell checksum file does not list $asset"
+  expected_sha="$(openshell_cli_pinned_sha256 "$OPENSHELL_VERSION" "$asset")" \
+    || fail "No NemoClaw-pinned SHA-256 for OpenShell ${OPENSHELL_VERSION} asset ${asset}"
+  release_sha="$(printf '%s\n' "$checksum_line" | awk '{print $1}')"
+  [[ "$release_sha" == "$expected_sha" ]] \
+    || fail "OpenShell release checksum for $asset does not match NemoClaw-pinned ${OPENSHELL_VERSION} digest"
+  (cd "$tmpdir" && printf '%s\n' "$checksum_line" | "${sha_cmd[@]}" -c -) \
+    || fail "OpenShell CLI checksum verification failed for $asset"
+}
+
+install_openshell_cli_release() {
+  local asset tmpdir
+  asset="$(openshell_cli_asset_for_arch)"
+  tmpdir="$(mktemp -d)"
+  retry 3 10 "download openshell" \
+    curl -fsSL -o "$tmpdir/$asset" \
+    "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${asset}"
+  verify_openshell_cli_asset "$tmpdir" "$asset"
+  validate_openshell_archive "$tmpdir/$asset" openshell
+  tar xzf "$tmpdir/$asset" -C "$tmpdir"
+  sudo install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
+  rm -rf "$tmpdir"
+}
+
+# 1. System packages
+# Kill unattended-upgrades immediately — it grabs the apt lock on boot
+# and can block for 60-120s. Irrelevant on an ephemeral CI VM.
+sudo systemctl stop unattended-upgrades 2>/dev/null || true
+sudo systemctl disable unattended-upgrades 2>/dev/null || true
+sudo killall -9 unattended-upgr 2>/dev/null || true
+
+info "Installing system packages..."
+wait_for_apt_lock
+retry 3 10 "apt-get update" sudo apt-get update -qq
+retry 3 10 "apt-get install" sudo apt-get install -y -qq \
+  ca-certificates curl git jq tar >/dev/null 2>&1
+info "System packages installed"
+
+# 2. Docker
+if command -v docker >/dev/null 2>&1; then
+  info "Docker already installed"
+else
+  info "Installing Docker..."
+  wait_for_apt_lock
+  retry 3 10 "install docker" sudo apt-get install -y -qq docker.io >/dev/null 2>&1
+  info "Docker installed"
+fi
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$TARGET_USER" 2>/dev/null || true
+# New Docker group membership takes effect in a new login session.
+info "Docker enabled ($(docker --version 2>/dev/null | head -c 40))"
+
+# 3. Node.js 24.18.1
+NODE_VERSION="24.18.1"
+if command -v node >/dev/null 2>&1 && [[ "$(node --version)" == "v${NODE_VERSION}" ]]; then
+  info "Node.js already installed: $(node --version)"
+else
+  case "$(uname -m)" in
+    x86_64)
+      node_arch="x64"
+      node_sha256="9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"
+      ;;
+    aarch64 | arm64)
+      node_arch="arm64"
+      node_sha256="df224555a083b918e46260cc969838501b9f9a87140c1195e5b9597b56d5dae2"
+      ;;
+    *) fail "Unsupported Node.js architecture: $(uname -m)" ;;
+  esac
+  info "Installing Node.js ${NODE_VERSION}..."
+  node_tmp="$(mktemp)"
+  node_url="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.gz"
+  curl -fsSL --proto '=https' --tlsv1.2 "$node_url" -o "$node_tmp" || {
+    rm -f "$node_tmp"
+    fail "Failed to download Node.js archive"
+  }
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual_hash="$(sha256sum "$node_tmp" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual_hash="$(shasum -a 256 "$node_tmp" | awk '{print $1}')"
+  else
+    rm -f "$node_tmp"
+    fail "No SHA-256 tool available (sha256sum/shasum)"
+  fi
+  if [[ "$actual_hash" != "$node_sha256" ]]; then
+    rm -f "$node_tmp"
+    fail "Node.js archive integrity check failed\n  Expected: $node_sha256\n  Actual:   $actual_hash"
+  fi
+  # The archive does not delete files left by the bundled npm from an older Node release.
+  sudo rm -rf /usr/local/lib/node_modules/npm
+  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner
+  rm -f "$node_tmp"
+  [[ "$(node --version)" == "v${NODE_VERSION}" ]] || fail "Node.js installation did not produce v${NODE_VERSION}"
+  info "Node.js $(node --version) installed"
+fi
+
+# 4. OpenShell CLI
+if command -v openshell >/dev/null 2>&1; then
+  _installed_ver="$(openshell --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo '0.0.0')"
+  _pinned_ver="$OPENSHELL_VERSION_NO_V"
+  if [ "$_installed_ver" = "$_pinned_ver" ]; then
+    info "OpenShell CLI already installed at pinned version: $_installed_ver"
+  else
+    info "OpenShell CLI $_installed_ver does not match pinned ${_pinned_ver} — reinstalling..."
+    install_openshell_cli_release
+    info "OpenShell CLI upgraded: $(openshell --version 2>&1 || echo unknown)"
+  fi
+else
+  info "Installing OpenShell CLI ${OPENSHELL_VERSION}..."
+  install_openshell_cli_release
+  info "OpenShell CLI installed: $(openshell --version 2>&1 || echo unknown)"
+fi
+
+# 5. Clone NemoClaw and install deps
+if [[ -d "$NEMOCLAW_CLONE_DIR/.git" ]]; then
+  info "NemoClaw repo exists at $NEMOCLAW_CLONE_DIR — refreshing"
+  git -C "$NEMOCLAW_CLONE_DIR" fetch origin "$NEMOCLAW_REF"
+  git -C "$NEMOCLAW_CLONE_DIR" checkout "$NEMOCLAW_REF"
+  git -C "$NEMOCLAW_CLONE_DIR" pull --ff-only origin "$NEMOCLAW_REF" || true
+else
+  info "Cloning NemoClaw (ref: $NEMOCLAW_REF)..."
+  git clone --branch "$NEMOCLAW_REF" --depth 1 \
+    "https://github.com/NVIDIA/NemoClaw.git" "$NEMOCLAW_CLONE_DIR"
+fi
+
+info "Installing npm dependencies..."
+cd "$NEMOCLAW_CLONE_DIR"
+reviewed_npm_tmp="$(mktemp -d)"
+trap 'rm -rf "$reviewed_npm_tmp"' EXIT
+run_npm_install_with_diagnostics reviewed-npm "$NEMOCLAW_CLONE_DIR"
+rm -rf "$reviewed_npm_tmp"
+trap - EXIT
+[[ "$(npm --version)" == "12.0.2" ]] || fail "Reviewed npm 12.0.2 installation failed"
+run_npm_install_with_diagnostics root "$NEMOCLAW_CLONE_DIR"
+info "Root deps installed"
+
+# Build explicitly because --ignore-scripts skips prepare.
+info "Building CLI (dist/)..."
+npm run build:cli 2>&1 | tail -3
+info "CLI built"
+
+info "Building TypeScript plugin..."
+cd "$NEMOCLAW_CLONE_DIR/nemoclaw"
+run_npm_install_with_diagnostics plugin "$NEMOCLAW_CLONE_DIR/nemoclaw"
+npm run build 2>&1 | tail -3
+cd "$NEMOCLAW_CLONE_DIR"
+info "Plugin built"
+
+# Link the compiled CLI without npm's global-prefix housekeeping.
+info "Linking nemoclaw CLI (direct symlink)..."
+sudo ln -sf "$NEMOCLAW_CLONE_DIR/bin/nemoclaw.js" /usr/local/bin/nemoclaw
+sudo chmod +x "$NEMOCLAW_CLONE_DIR/bin/nemoclaw.js"
+info "nemoclaw CLI linked at /usr/local/bin/nemoclaw"
+
+# 6. Readiness sentinel
+sudo touch "$SENTINEL"
+echo "=== Ready ===" | sudo tee -a "$LAUNCH_LOG" >/dev/null
+
+info "════════════════════════════════════════════════════"
+info "  CI-Ready CPU launchable setup complete"
+info "  NemoClaw:   $NEMOCLAW_CLONE_DIR (ref: $NEMOCLAW_REF)"
+info "  OpenShell:  $(openshell --version 2>&1 || echo unknown)"
+info "  Node.js:    $(node --version)"
+info "  Docker:     $(docker --version 2>/dev/null | head -c 40)"
+info "  Sentinel:   $SENTINEL"
+info "════════════════════════════════════════════════════"

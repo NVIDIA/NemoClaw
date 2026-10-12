@@ -8,7 +8,10 @@ import type {
   OpenShellProviderResult,
 } from "../adapters/openshell/provider-adapter";
 import { classifyGatewayProviderNames, isBridgeProviderName } from "../credentials/provider-list";
-import { queryRegisteredGatewayProviders } from "./inference-set-provider-diagnostics";
+import {
+  buildInferenceSetFailure,
+  queryRegisteredGatewayProviders,
+} from "./inference-set-provider-diagnostics";
 
 const STATIC_WARNING =
   "  ⚠ Could not query registered OpenShell providers while formatting the failure.";
@@ -49,6 +52,15 @@ describe("inference set provider diagnostics", () => {
     expect(isBridgeProviderName("nvidia-prod")).toBe(false);
   });
 
+  it("normalizes the internal native NVIDIA provider to its public name", () => {
+    expect(
+      classifyGatewayProviderNames(["nemoclaw-nvidia-prod-v1", "nvidia-prod", "custom-provider"]),
+    ).toEqual({
+      bridgeNames: [],
+      credentialNames: ["custom-provider", "nvidia-prod"],
+    });
+  });
+
   it.each([
     {
       name: "thrown adapter error",
@@ -81,5 +93,27 @@ describe("inference set provider diagnostics", () => {
     ).resolves.toBeUndefined();
     expect(log).toHaveBeenCalledWith(STATIC_WARNING);
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining("query-secret"));
+  });
+
+  it("normalizes a status-zero route failure to a nonzero public CLI exit", async () => {
+    const providerAdapter = adapterWithList({ ok: true, value: { names: [] } });
+
+    await expect(
+      buildInferenceSetFailure(
+        {
+          kind: "command",
+          reason: "indeterminate",
+          exitCode: 0,
+          message: "The route result is unknown.",
+        },
+        true,
+        "nemoclaw",
+        { providerAdapter, log: vi.fn() },
+      ),
+    ).resolves.toMatchObject({
+      exitCode: 1,
+      message: expect.stringContaining("Inspect gateway 'nemoclaw'"),
+    });
+    expect(providerAdapter.listProviders).not.toHaveBeenCalled();
   });
 });

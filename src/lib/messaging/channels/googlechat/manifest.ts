@@ -15,6 +15,7 @@ export const googlechatManifest = {
   displayName: "Google Chat",
   description: "Google Chat (Chat API) bot messaging (experimental)",
   supportedAgents: ["openclaw", "hermes"],
+  state: { hermes: ["platforms/googlechat"] },
   auth: {
     mode: "token-paste",
   },

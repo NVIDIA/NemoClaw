@@ -200,7 +200,7 @@ export async function handleAgentSetupState<Agent>({
       )) !== true
     ) {
       throw new Error(
-        `External-image OpenClaw startup did not settle before configuration for sandbox '${sandboxName}'.`,
+        `OpenClaw startup did not settle before configuration for sandbox '${sandboxName}'.`,
       );
     }
     revalidateSandboxIdentity?.(`configure OpenClaw in sandbox '${sandboxName}'`);

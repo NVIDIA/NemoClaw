@@ -29,16 +29,6 @@ config:
   dir: /sandbox/.pi/agent
   config_file: models.json
   format: json
-state_dirs:
-  - path: sessions
-  - path: prompts
-  - path: themes
-  - path: tools
-    backup: false
-  - path: bin
-    backup: false
-state_files:
-  - path: settings.json
 device_pairing: false
 inference:
   provider_type: openai_compatible

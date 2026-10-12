@@ -8,7 +8,7 @@ describe("Google Chat tunnel runtime", () => {
   it("targets a dedicated route-restricted proxy instead of the dashboard", async () => {
     const pidDir = "/tmp/nemoclaw-services-test-googlechat";
     const startAll = vi.fn(async () => undefined);
-    const stopCloudflared = vi.fn();
+    const stopCloudflared = vi.fn(() => true);
     const stopGooglechatWebhookProxy = vi.fn();
     const startGooglechatWebhookProxy = vi.fn(async () => 24680);
     const services = {
@@ -57,7 +57,7 @@ describe("Google Chat tunnel runtime", () => {
         readCloudflaredState: () => ({ kind: "running", pid: 123 }),
         resolveServicePidDir: () => "/tmp/nemoclaw-services-test",
         startAll: async () => undefined,
-        stopCloudflared: () => undefined,
+        stopCloudflared: () => true,
       }),
       loadWebhookProxy: () => ({
         readGooglechatWebhookProxyState: () => ({
@@ -85,7 +85,7 @@ describe("Google Chat tunnel runtime", () => {
         startAll: async () => {
           throw new Error("cloudflared failed");
         },
-        stopCloudflared: () => undefined,
+        stopCloudflared: () => true,
       }),
       loadWebhookProxy: () => ({
         readGooglechatWebhookProxyState: () => ({
@@ -103,5 +103,71 @@ describe("Google Chat tunnel runtime", () => {
     expect(stopGooglechatWebhookProxy).toHaveBeenCalledWith(
       "/tmp/nemoclaw-services-test-googlechat",
     );
+  });
+
+  it("preserves the route proxy when cloudflared cleanup is unverified", () => {
+    const stopGooglechatWebhookProxy = vi.fn();
+    const options = createDefaultGooglechatTunnelGateOptions({
+      loadServices: () => ({
+        getTunnelUrl: () => "https://restricted.trycloudflare.com",
+        readCloudflaredState: () => ({
+          kind: "unverified-pid-process",
+          pid: 4242,
+          reason: "inspection-unavailable",
+        }),
+        resolveServicePidDir: () => "/tmp/nemoclaw-services-test",
+        startAll: async () => undefined,
+        stopCloudflared: () => false,
+      }),
+      loadWebhookProxy: () => ({
+        readGooglechatWebhookProxyState: () => ({
+          running: true,
+          port: 24680,
+          upstreamPort: 18789,
+        }),
+        startGooglechatWebhookProxy: async () => 24680,
+        stopGooglechatWebhookProxy,
+      }),
+      sandboxName: "test",
+    });
+
+    expect(() => options.stopTunnel?.()).toThrow(
+      "Google Chat tunnel cleanup is incomplete because cloudflared could not be confirmed stopped",
+    );
+    expect(stopGooglechatWebhookProxy).not.toHaveBeenCalled();
+  });
+
+  it("does not start a route proxy when prior cloudflared cleanup is unverified", async () => {
+    const startAll = vi.fn(async () => undefined);
+    const startGooglechatWebhookProxy = vi.fn(async () => 24680);
+    const options = createDefaultGooglechatTunnelGateOptions({
+      loadServices: () => ({
+        getTunnelUrl: () => "",
+        readCloudflaredState: () => ({
+          kind: "unverified-pid-process",
+          pid: 4242,
+          reason: "inspection-unavailable",
+        }),
+        resolveServicePidDir: () => "/tmp/nemoclaw-services-test",
+        startAll,
+        stopCloudflared: () => false,
+      }),
+      loadWebhookProxy: () => ({
+        readGooglechatWebhookProxyState: () => ({
+          running: false,
+          port: null,
+          upstreamPort: null,
+        }),
+        startGooglechatWebhookProxy,
+        stopGooglechatWebhookProxy: vi.fn(),
+      }),
+      sandboxName: "test",
+    });
+
+    await expect(options.startTunnel?.()).rejects.toThrow(
+      "Google Chat tunnel cleanup is incomplete because cloudflared could not be confirmed stopped",
+    );
+    expect(startGooglechatWebhookProxy).not.toHaveBeenCalled();
+    expect(startAll).not.toHaveBeenCalled();
   });
 });

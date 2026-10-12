@@ -9,14 +9,15 @@ import {
   decodeJetsonArtifactArchive,
   JETSON_DISPATCH_AUDIENCE,
   JETSON_DISPATCH_TARGET,
-  jetsonDispatchJobId,
-  type JetsonDispatchArtifact,
-  type JetsonDispatchRequest,
-  type JetsonDispatchStatus,
+  dispatchJobId,
+  type DispatchArtifact,
+  type DispatchRequest,
+  type DispatchStatus,
   MAX_JETSON_DISPATCH_ARTIFACT_RESPONSE_BYTES,
-  parseJetsonDispatchArtifact,
+  parseDispatchArtifact,
   parseJetsonDispatchRequest,
-  parseJetsonDispatchStatusResponse,
+  type JetsonDispatchRequest,
+  parseDispatchStatusResponse,
 } from "./jetson-dispatch-contract.mts";
 import { writePrivateRegularFile } from "./private-file.mts";
 
@@ -43,6 +44,12 @@ type JetsonCancellationResult =
   | { outcome: "failed"; failure: JetsonCancellationFailure; receiptWritten: boolean }
   | { outcome: "succeeded"; receiptWritten: boolean };
 
+export function printableDispatchError(error: unknown): string {
+  return (error instanceof Error ? error.message : "Dispatch client failed")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ")
+    .slice(0, 1000);
+}
+
 function record(value: unknown, name: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${name} must be an object`);
@@ -50,8 +57,11 @@ function record(value: unknown, name: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-export function dispatcherBaseUrl(value: string | undefined): URL {
-  if (!value) throw new Error("JETSON_DISPATCH_URL is required");
+export function dispatcherBaseUrl(
+  value: string | undefined,
+  variable = "JETSON_DISPATCH_URL",
+): URL {
+  if (!value) throw new Error(`${variable} is required`);
   const url = new URL(value);
   if (
     url.protocol !== "https:" ||
@@ -61,14 +71,14 @@ export function dispatcherBaseUrl(value: string | undefined): URL {
     url.hash ||
     (url.pathname !== "" && url.pathname !== "/")
   ) {
-    throw new Error("JETSON_DISPATCH_URL must be an HTTPS origin without credentials or a path");
+    throw new Error(`${variable} must be an HTTPS origin without credentials or a path`);
   }
   url.pathname = "/";
   return url;
 }
 
 export function createGitHubOidcTokenProvider(
-  options: { fetchImpl?: typeof fetch; now?: () => number } = {},
+  options: { fetchImpl?: typeof fetch; now?: () => number; audience?: string } = {},
 ): (env?: NodeJS.ProcessEnv) => Promise<string> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? Date.now;
@@ -93,7 +103,7 @@ export function createGitHubOidcTokenProvider(
     if (requestUrl.protocol !== "https:") {
       throw new Error("GitHub OIDC request URL must use HTTPS");
     }
-    requestUrl.searchParams.set("audience", JETSON_DISPATCH_AUDIENCE);
+    requestUrl.searchParams.set("audience", options.audience ?? JETSON_DISPATCH_AUDIENCE);
     const response = await fetchImpl(requestUrl, {
       headers: { Authorization: `Bearer ${requestToken}` },
       signal: AbortSignal.timeout(15_000),
@@ -192,7 +202,7 @@ function delay(milliseconds: number): Promise<void> {
 
 function writeJetsonRecoveryReceipt(
   receiptFile: string,
-  dispatch: Pick<JetsonDispatchStatus, "jobId" | "request">,
+  dispatch: Pick<DispatchStatus, "jobId" | "request">,
   cancellation?: {
     failure?: JetsonCancellationFailure;
     outcome: "failed" | "pending" | "succeeded";
@@ -230,7 +240,7 @@ function classifyCancellationFailure(error: unknown): JetsonCancellationFailure 
 
 async function cancelJetsonDispatch(options: {
   baseUrl: URL;
-  dispatch: Pick<JetsonDispatchStatus, "jobId" | "request">;
+  dispatch: Pick<DispatchStatus, "jobId" | "request">;
   reason: JetsonCancellationReason;
   receiptFile: string;
   request: typeof dispatcherRequest;
@@ -283,7 +293,7 @@ export type CancelJetsonDispatch = (
 
 export function createJetsonCancellation(options: {
   baseUrl: URL;
-  dispatch: Pick<JetsonDispatchStatus, "jobId" | "request">;
+  dispatch: Pick<DispatchStatus, "jobId" | "request">;
   receiptFile: string;
   request: typeof dispatcherRequest;
 }): CancelJetsonDispatch {
@@ -304,12 +314,12 @@ export function createJetsonCancellation(options: {
 export async function submitJetsonDispatch(options: {
   baseUrl: URL;
   cancel?: CancelJetsonDispatch;
-  dispatchRequest: JetsonDispatchRequest;
+  dispatchRequest: DispatchRequest;
   receiptFile: string;
   request?: typeof dispatcherRequest;
   stopping?: () => boolean;
-}): Promise<{ cancel: CancelJetsonDispatch; status: JetsonDispatchStatus }> {
-  const jobId = jetsonDispatchJobId(options.dispatchRequest);
+}): Promise<{ cancel: CancelJetsonDispatch; status: DispatchStatus }> {
+  const jobId = dispatchJobId(options.dispatchRequest);
   const dispatch = { jobId, request: options.dispatchRequest };
   writeJetsonRecoveryReceipt(options.receiptFile, dispatch);
   if (options.stopping?.()) {
@@ -325,9 +335,9 @@ export async function submitJetsonDispatch(options: {
       request,
     });
 
-  let status: JetsonDispatchStatus;
+  let status: DispatchStatus;
   try {
-    status = parseJetsonDispatchStatusResponse(
+    status = parseDispatchStatusResponse(
       await request({
         baseUrl: options.baseUrl,
         method: "POST",
@@ -357,13 +367,13 @@ export async function pollJetsonDispatch(options: {
   baseUrl: URL;
   cancel?: CancelJetsonDispatch;
   deadlineMs: number;
-  initialStatus: JetsonDispatchStatus;
+  initialStatus: DispatchStatus;
   now?: () => number;
   receiptFile: string;
   request?: typeof dispatcherRequest;
   stopping?: () => boolean;
   wait?: typeof delay;
-}): Promise<JetsonDispatchStatus> {
+}): Promise<DispatchStatus> {
   const now = options.now ?? Date.now;
   const request = options.request ?? dispatcherRequest;
   const jobId = options.initialStatus.jobId;
@@ -401,7 +411,7 @@ export async function pollJetsonDispatch(options: {
     }
     await wait(POLL_INTERVAL_MS);
     try {
-      status = parseJetsonDispatchStatusResponse(
+      status = parseDispatchStatusResponse(
         await request({
           baseUrl: options.baseUrl,
           method: "GET",
@@ -442,21 +452,27 @@ export function jetsonDispatchRequestFromEnvironment(
   });
 }
 
-async function main(): Promise<void> {
-  const request = jetsonDispatchRequestFromEnvironment();
-  const baseUrl = dispatcherBaseUrl(process.env.JETSON_DISPATCH_URL);
-  const artifactDirectory = process.env.E2E_ARTIFACT_DIR ?? "";
+export async function runDispatchClient(options: {
+  request: DispatchRequest;
+  baseUrl: URL;
+  artifactDirectory: string;
+  receiptName: string;
+  archiveName: string;
+  requestImpl?: typeof dispatcherRequest;
+}): Promise<void> {
+  const { request, baseUrl, artifactDirectory } = options;
+  const requestImpl = options.requestImpl ?? dispatcherRequest;
   if (!path.isAbsolute(artifactDirectory)) throw new Error("E2E_ARTIFACT_DIR must be absolute");
   fs.mkdirSync(artifactDirectory, { recursive: true, mode: 0o700 });
   fs.chmodSync(artifactDirectory, 0o700);
-  const receiptFile = path.join(artifactDirectory, "jetson-dispatch.json");
+  const receiptFile = path.join(artifactDirectory, options.receiptName);
 
-  const jobId = jetsonDispatchJobId(request);
+  const jobId = dispatchJobId(request);
   const cancelDispatch = createJetsonCancellation({
     baseUrl,
     dispatch: { jobId, request },
     receiptFile,
-    request: dispatcherRequest,
+    request: requestImpl,
   });
   let submissionStarted = false;
   let stopping = false;
@@ -474,48 +490,65 @@ async function main(): Promise<void> {
   process.on("SIGINT", cancel);
   process.on("SIGTERM", cancel);
 
-  submissionStarted = true;
-  const submission = await submitJetsonDispatch({
-    baseUrl,
-    cancel: cancelDispatch,
-    dispatchRequest: request,
-    receiptFile,
-    stopping: () => stopping,
-  });
-  const dispatched = submission.status;
-  console.log(`Jetson dispatch accepted as ${jobId}`);
-  const deadline = Date.now() + MAX_WAIT_MS;
-  await pollJetsonDispatch({
-    baseUrl,
-    cancel: cancelDispatch,
-    deadlineMs: deadline,
-    initialStatus: dispatched,
-    receiptFile,
-    stopping: () => stopping,
-  });
+  try {
+    submissionStarted = true;
+    const submission = await submitJetsonDispatch({
+      baseUrl,
+      cancel: cancelDispatch,
+      dispatchRequest: request,
+      request: requestImpl,
+      receiptFile,
+      stopping: () => stopping,
+    });
+    const dispatched = submission.status;
+    console.log(`${request.target} dispatch accepted as ${jobId}`);
+    const deadline = Date.now() + MAX_WAIT_MS;
+    await pollJetsonDispatch({
+      baseUrl,
+      cancel: cancelDispatch,
+      deadlineMs: deadline,
+      initialStatus: dispatched,
+      request: requestImpl,
+      receiptFile,
+      stopping: () => stopping,
+    });
 
-  const artifactValue = await dispatcherRequest({
-    baseUrl,
-    method: "GET",
-    path: `v1/jobs/${jobId}/artifact`,
-    maxBytes: MAX_JETSON_DISPATCH_ARTIFACT_RESPONSE_BYTES,
-  });
-  const artifact: JetsonDispatchArtifact = parseJetsonDispatchArtifact(artifactValue, jobId);
-  const { artifactArchiveBase64, ...artifactReceipt } = artifact;
-  writePrivateRegularFile(receiptFile, `${JSON.stringify(artifactReceipt, null, 2)}\n`);
-  if (artifactArchiveBase64 !== undefined) {
-    writePrivateRegularFile(
-      path.join(artifactDirectory, "jetson-e2e-artifacts.tar.gz"),
-      decodeJetsonArtifactArchive(artifactArchiveBase64),
-    );
+    const artifactValue = await requestImpl({
+      baseUrl,
+      method: "GET",
+      path: `v1/jobs/${jobId}/artifact`,
+      maxBytes: MAX_JETSON_DISPATCH_ARTIFACT_RESPONSE_BYTES,
+    });
+    const artifact: DispatchArtifact = parseDispatchArtifact(artifactValue, jobId);
+    const { artifactArchiveBase64, ...artifactReceipt } = artifact;
+    writePrivateRegularFile(receiptFile, `${JSON.stringify(artifactReceipt, null, 2)}\n`);
+    if (artifactArchiveBase64 !== undefined) {
+      writePrivateRegularFile(
+        path.join(artifactDirectory, options.archiveName),
+        decodeJetsonArtifactArchive(artifactArchiveBase64),
+      );
+    }
+    console.log(`${request.target} dispatch conclusion: ${artifact.status.conclusion}`);
+    if (artifact.status.conclusion !== "success") process.exitCode = 1;
+  } finally {
+    process.off("SIGINT", cancel);
+    process.off("SIGTERM", cancel);
   }
-  console.log(`Jetson dispatch conclusion: ${artifact.status.conclusion}`);
-  if (artifact.status.conclusion !== "success") process.exitCode = 1;
+}
+
+async function main(): Promise<void> {
+  await runDispatchClient({
+    request: jetsonDispatchRequestFromEnvironment(),
+    baseUrl: dispatcherBaseUrl(process.env.JETSON_DISPATCH_URL),
+    artifactDirectory: process.env.E2E_ARTIFACT_DIR ?? "",
+    receiptName: "jetson-dispatch.json",
+    archiveName: "jetson-e2e-artifacts.tar.gz",
+  });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
-    console.error(error instanceof Error ? error.message : "Jetson dispatch client failed");
+    console.error(printableDispatchError(error));
     process.exitCode = 1;
   });
 }

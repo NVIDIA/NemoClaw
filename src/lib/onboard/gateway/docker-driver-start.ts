@@ -12,6 +12,11 @@ import {
 import { gatewayHostRuntimeEnvironment } from "../runtime-provider/configured-runtime";
 import { trackChildExit } from "../child-exit-tracker";
 import * as dockerDriverGatewayCutover from "../docker-driver-gateway-cutover";
+import {
+  readDockerDriverGatewayBinding,
+  resolveDockerDriverGatewayBinding,
+  writeDockerDriverGatewayBinding,
+} from "./state-dir";
 import { reportDockerDriverGatewayStartFailure } from "../docker-driver-gateway-failure";
 import * as dockerDriverGatewayLaunch from "../docker-driver-gateway-launch";
 import {
@@ -217,12 +222,17 @@ export function createDockerDriverGatewayStart(
       observeGatewayReuse: (request: Parameters<typeof deps.observer.observeGatewayReuse>[0]) =>
         deps.observer.observeGatewayReuse({ ...request, runtimeSelection }),
     };
+    const binding = resolveDockerDriverGatewayBinding(
+      process.env,
+      os.homedir(),
+      deps.gatewayPort(),
+    );
     const stateDir = deps.gatewayBinding.resolveGatewayStateDirForPort({
-      configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+      configured: binding.stateDir,
       home: os.homedir(),
       port: deps.gatewayPort(),
     });
-    const configuredStateDir = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
+    const configuredStateDir = binding.stateDir?.trim();
     const stateLifecycleLock = configuredStateDir
       ? gatewayStateLifecycleLock.acquireManagedGatewayStateLifecycleLock(stateDir)
       : null;
@@ -243,6 +253,30 @@ export function createDockerDriverGatewayStart(
       const gatewayBin = deps.resolveOpenShellGatewayBinary();
       const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
       const gatewayEnv = deps.getDockerDriverGatewayEnv(openshellVersionOutput);
+      const rememberBinding = () => {
+        const network = gatewayEnv.OPENSHELL_DOCKER_NETWORK_NAME;
+        if (!network) return;
+        const defaultStateDir = deps.gatewayBinding.resolveGatewayStateDirForPort({
+          home: os.homedir(),
+          port: deps.gatewayPort(),
+        });
+        if (
+          stateDir === defaultStateDir &&
+          network === "openshell-docker" &&
+          !readDockerDriverGatewayBinding(os.homedir(), deps.gatewayPort())
+        )
+          return;
+        try {
+          writeDockerDriverGatewayBinding(os.homedir(), deps.gatewayPort(), {
+            stateDir,
+            dockerNetworkName: network,
+          });
+        } catch {
+          (output?.warn ?? console.warn)(
+            "  Gateway is healthy, but its custom binding could not be saved. Preserve NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR and OPENSHELL_DOCKER_NETWORK_NAME for recovery.",
+          );
+        }
+      };
       const runtimeIdentity = gatewayBin
         ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
             gatewayBin,
@@ -381,7 +415,10 @@ export function createDockerDriverGatewayStart(
             },
           ),
       );
-      if (cutover !== "launch") return;
+      if (cutover !== "launch") {
+        rememberBinding();
+        return;
+      }
       if (!gatewayBin || !gatewayLaunch) {
         throw new Error("OpenShell gateway launch missing after cutover");
       }
@@ -438,6 +475,7 @@ export function createDockerDriverGatewayStart(
         sleepSeconds: deps.sleepSeconds,
       });
       if (startup === "healthy") {
+        rememberBinding();
         (output?.log ?? console.log)("  ✓ Docker-driver gateway is healthy");
         return;
       }

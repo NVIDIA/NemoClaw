@@ -61,7 +61,10 @@ function createBedrockSetupHarness(
     endpointUrl: BEDROCK_URL,
     credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
     isNonInteractive: () => false,
-    runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+    gatewayName: "nemoclaw",
+    inferenceRouteMutator: {
+      setInferenceRoute: vi.fn(async () => ({ ok: true as const })),
+    },
     upsertProvider: vi.fn(async () => ({ ok: true })),
     verifyInferenceRoute: vi.fn(),
     verifyOnboardInferenceSmoke,
@@ -245,5 +248,30 @@ describe("Bedrock Runtime onboarding helper", () => {
     await expect(setupBedrockRuntimeInference(options)).rejects.toThrow("bedrock smoke rejected");
     expect(updateSandbox).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalledWith(BEDROCK_SUCCESS_LOG);
+  });
+
+  it("stops without retry or success publication after an ambiguous Bedrock route update", async () => {
+    const { options, updateSandbox } = createBedrockSetupHarness(vi.fn());
+    const setInferenceRoute = vi.fn(async () => ({
+      ok: false as const,
+      ambiguous: true,
+      error: {
+        kind: "command" as const,
+        reason: "indeterminate" as const,
+        exitCode: null,
+        message: "route result unknown",
+      },
+    }));
+    options.inferenceRouteMutator = { setInferenceRoute };
+
+    await expect(setupBedrockRuntimeInference(options)).rejects.toThrow("EXIT_CALLED:1");
+
+    expect(setInferenceRoute).toHaveBeenCalledOnce();
+    expect(options.verifyInferenceRoute).not.toHaveBeenCalled();
+    expect(options.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(options.error).toHaveBeenCalledWith(
+      "  The route update result is unknown. Inspect gateway 'nemoclaw' before retrying onboarding.",
+    );
   });
 });

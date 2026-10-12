@@ -21,6 +21,7 @@ import {
   classifyHermesPortableRegistry,
   createHermesPortableAuthenticatedHealthCapture,
   createHermesPortableChildEnvironment,
+  createHermesPortableGpuDiagnostics,
   createHermesPortableReadyRunner,
   createHermesPortableOpenShellCapture,
   createHermesPortableReadyCapture,
@@ -236,6 +237,51 @@ describe("Hermes portable onboarding transaction", () => {
       ["sandbox", "list", "-g", "nemoclaw"],
       expect.objectContaining({ timeout: 1_234 }),
     );
+  });
+
+  it("keeps GPU failure diagnostics on receipt-owned get/list authority", () => {
+    const capture = vi.fn((args: readonly string[], _timeoutMs?: number) => ({
+      status: 0,
+      stdout: Buffer.from(args[1] === "get" ? "Phase: Error\n" : "alpha  Error\n"),
+      stderr: Buffer.alloc(0),
+    }));
+    const run = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
+    const diagnostics = createHermesPortableGpuDiagnostics("alpha", "nemoclaw", run);
+
+    const artifacts = diagnostics.collect({
+      target: { kind: "selected" },
+      sandboxName: "alpha",
+      timeoutMs: 1_234,
+      redact: (value) => value,
+    });
+
+    expect(capture.mock.calls).toEqual([
+      [["sandbox", "get", "-g", "nemoclaw", "alpha"], 1_234],
+      [["sandbox", "list", "-g", "nemoclaw"], 1_234],
+    ]);
+    expect(artifacts).toEqual([
+      {
+        name: "openshell-sandbox-get.txt",
+        content: "Phase: Error",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+      {
+        name: "openshell-sandbox-list.txt",
+        content: "alpha  Error",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+      {
+        name: "openshell-logs.txt",
+        content: "",
+        outcome: {
+          kind: "failed",
+          error: {
+            kind: "unavailable",
+            message: "OpenShell runner authority does not support doctor logs",
+          },
+        },
+      },
+    ]);
   });
 
   it("runs authenticated health inside the exact OpenShell workload namespace (#9211)", () => {

@@ -17,16 +17,18 @@ import {
 } from "../actions/sandbox/runtime/openclaw-lifecycle";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import * as buildContext from "../build-context";
+import { resolveExternalDashboardUrl } from "../dashboard/url";
 import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
 import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import * as sandboxState from "../state/sandbox";
 import {
-  MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
+  MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR,
   type RecreatedSandboxRestoreOptions,
   type RestoreResult,
 } from "../state/sandbox";
 import { cliName } from "./branding";
+import { writeRestoredOpenclawInferenceRoute } from "./openclaw/initial-inference-route";
 import { createDcodeSelectionDriftReader } from "./dcode-selection-drift";
 import { restoreDefaultAfterRecreate } from "./default-preservation";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
@@ -53,24 +55,31 @@ import {
 import type { SelectionDrift } from "./selection-drift";
 import type { VerifiedSandboxCreateBoundary } from "./types";
 import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
-import { OnboardRestoreSnapshotDriftError } from "./session-bootstrap";
+import {
+  OnboardRestoreSnapshotDriftError,
+  preserveRestoredModelSelections,
+} from "./session-bootstrap";
 
 export type CreatedSandboxFinalizationOptions = {
   sandboxName: string;
   gatewayName?: string;
   restoreBackupPath: string | null;
   preUpgradeBackup: boolean;
+  previousEntry?: SandboxEntry | null;
   targetAgentType: string;
   customImage?: boolean;
+  reconcileOpenClawInference?: boolean;
   validateManagedDcode: boolean;
   provider: string;
   model: string;
   preferredInferenceApi: string | null;
   endpointUrl?: string | null;
+  nativeProvider?: boolean;
 };
 
 export type CreatedSandboxFinalizationDeps = {
   revalidateSandboxIdentity?(operation: string): void;
+  writeRestoredOpenclawInferenceRoute?: typeof writeRestoredOpenclawInferenceRoute;
   restoreRecreatedSandboxState(
     sandboxName: string,
     backupPath: string,
@@ -86,6 +95,7 @@ export type CreatedSandboxFinalizationDeps = {
     model: string,
     preferredInferenceApi: string | null,
     endpointUrl: string | null,
+    nativeProvider: boolean,
   ): Promise<SelectionDrift>;
   prepareRegistration?(): SandboxEntry | Promise<SandboxEntry>;
   revalidatePreparedRegistration?(prepared: SandboxEntry): SandboxEntry | Promise<SandboxEntry>;
@@ -104,6 +114,7 @@ type RegistrationSeed = Omit<
   | "workload"
   | "hermesDashboardState"
   | "dashboardPort"
+  | "dashboardExternalUrl"
   | "lifecycleGeneration"
   | "lifecycleLiveIdentityFingerprint"
   | "inferenceRouteReservation"
@@ -122,12 +133,20 @@ export interface CreatedSandboxCompletionOptions {
     >;
   };
   readonly gpu: {
+    readonly commandExecutor: OpenShellSandboxBufferedCommandExecutor;
     readonly config: Parameters<
       typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
     >[0];
     readonly provider: string;
     readonly dockerDriverGateway: boolean;
     readonly verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult;
+    readonly resolveOpenShellGpuDiagnostics: () =>
+      | NonNullable<
+          Parameters<
+            typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
+          >[2]["openShellGpuDiagnostics"]
+        >
+      | undefined;
     readonly runCaptureOpenshell: NonNullable<
       Parameters<
         typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
@@ -357,6 +376,7 @@ export function createCreatedSandboxCompletionActions(
 ): CreatedSandboxCompletionActions {
   let chatUiUrl = options.dashboard.chatUiUrl;
   let dashboardPort = 0;
+  let dashboardExternalUrl: string | null = null;
   let hermesDashboardState = options.dashboard.initialHermesState;
   async function verifyCreatedProviderGpu(created: SandboxGpuCreateFlowResult): Promise<void> {
     await dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady(
@@ -367,7 +387,9 @@ export function createCreatedSandboxCompletionActions(
         dockerDriverGateway: options.gpu.dockerDriverGateway,
         selectedRoute: created.route,
         verifyDirectSandboxGpu: options.gpu.verifyDirectSandboxGpu,
+        openShellGpuDiagnostics: options.gpu.resolveOpenShellGpuDiagnostics(),
         runCaptureOpenshell: options.gpu.runCaptureOpenshell,
+        deps: { commandExecutor: options.gpu.commandExecutor },
         log: console.log,
       },
       created.runtimePatch,
@@ -379,10 +401,16 @@ export function createCreatedSandboxCompletionActions(
       () => options.gpu.persistFinalHandoffAcknowledgement(created.runtimePatch),
     );
   }
-  function recordHermesGpuProof(): void {
-    options.gpu.config.sandboxGpuProof = options.gpu.verifyDirectSandboxGpu(
-      options.finalization.sandboxName,
-    );
+  async function recordHermesGpuProof(): Promise<void> {
+    await dockerGpuLocalInference.verifyGpuSandboxAccessAfterReady(options.gpu.config, {
+      sandboxName: options.finalization.sandboxName,
+      dockerDriverGateway: options.gpu.dockerDriverGateway,
+      selectedRoute: "native",
+      verifyDirectSandboxGpu: options.gpu.verifyDirectSandboxGpu,
+      selectedMode: () => null,
+      openShellGpuDiagnostics: options.gpu.resolveOpenShellGpuDiagnostics(),
+      runCaptureOpenshell: options.gpu.runCaptureOpenshell,
+    });
   }
   async function finalizeDashboard(): Promise<void> {
     await options.dashboard.releasePort();
@@ -396,6 +424,7 @@ export function createCreatedSandboxCompletionActions(
       );
     }
     process.env.CHAT_UI_URL = chatUiUrl;
+    dashboardExternalUrl = resolveExternalDashboardUrl(chatUiUrl);
     hermesDashboardState = options.dashboard.resolveHermesState(dashboardPort);
     deps.revalidateSandboxIdentity?.(
       `recording Hermes dashboard capability for sandbox '${options.finalization.sandboxName}'`,
@@ -434,7 +463,7 @@ export function createCreatedSandboxCompletionActions(
         deps.revalidateSandboxIdentity?.(
           `recording GPU capability for sandbox '${options.finalization.sandboxName}'`,
         );
-        recordHermesGpuProof();
+        await recordHermesGpuProof();
       }
       if (manageDashboard) {
         deps.revalidateSandboxIdentity?.(
@@ -500,6 +529,7 @@ export function createCreatedSandboxCompletionActions(
           workload: resolved.workloadReceipt,
           hermesDashboardState,
           dashboardPort,
+          dashboardExternalUrl,
           ...currentLifecycle,
           inferenceRouteReservation: verifiedInferenceRouteReservation,
           verifiedCreate,
@@ -575,6 +605,8 @@ type OnboardCreateIntent = {
   readonly observabilityEnabled?: boolean;
 } | null;
 type OnboardResolvedCreateIntent = {
+  readonly nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
+  readonly nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   readonly policy: {
     readonly options: object;
   };
@@ -583,6 +615,7 @@ type OnboardResolvedCreateIntent = {
 type OnboardCreateContext = {
   readonly createIntent: OnboardCreateIntent;
   readonly resolvedCreateIntent: OnboardResolvedCreateIntent;
+  readonly reconcileOpenClawInference?: boolean;
 };
 type OnboardAgentFlags = {
   readonly customOpenClawImage: boolean;
@@ -699,6 +732,8 @@ export function createOnboardCreatedSandboxCompletion(
   workload: WorkloadResolutionInput["workload"],
   note: (message: string) => void,
   commandExecutor: OpenShellSandboxBufferedCommandExecutor,
+  resolveOpenShellGpuDiagnostics: CreatedSandboxCompletionOptions["gpu"]["resolveOpenShellGpuDiagnostics"],
+  previousEntry?: SandboxEntry | null,
 ): CreatedSandboxCompletionActions {
   const { provider, model, preferredInferenceApi, endpointUrl } = inference;
   const { createIntent, resolvedCreateIntent } = createContext;
@@ -716,13 +751,19 @@ export function createOnboardCreatedSandboxCompletion(
         sandboxName,
         restoreBackupPath,
         preUpgradeBackup: pendingStateRestoreBackupPath !== null,
+        previousEntry,
         targetAgentType: agent?.name ?? "openclaw",
         customImage: Boolean(fromDockerfile) || agentFlags.externalImage === true,
+        reconcileOpenClawInference: createContext.reconcileOpenClawInference,
         validateManagedDcode: agentFlags.isManagedDcodeAgent,
         provider,
         model,
         preferredInferenceApi,
         endpointUrl,
+        nativeProvider: Boolean(
+          resolvedCreateIntent.nativeHostedProviderAttachment ||
+          resolvedCreateIntent.nativeNvidiaProviderAttachment,
+        ),
       },
       registration: {
         sandboxName,
@@ -766,10 +807,12 @@ export function createOnboardCreatedSandboxCompletion(
           preparedPolicy.getVerifiedCreateRegistrationAuthority,
       },
       gpu: {
+        commandExecutor,
         config: gpuConfig,
         provider,
         dockerDriverGateway,
         verifyDirectSandboxGpu,
+        resolveOpenShellGpuDiagnostics,
         runCaptureOpenshell,
         persistFinalHandoffAcknowledgement: preparedPolicy.persistFinalHandoffAcknowledgement,
         persistFinalHandoffCommitStarted: preparedPolicy.persistFinalHandoffCommitStarted,
@@ -844,7 +887,7 @@ export async function finalizeCreatedSandbox(
     deps.revalidateSandboxIdentity?.(`restoring files for sandbox '${options.sandboxName}'`);
     if (!deps.prepareRegistration || !deps.revalidatePreparedRegistration) {
       deps.error(
-        `  Managed snapshot restore has no prepared registration authority for sandbox '${options.sandboxName}'.`,
+        `  Managed rebuild restore has no prepared registration authority for sandbox '${options.sandboxName}'.`,
       );
       deps.error("  State was not restored and registry metadata was not updated.");
       reportUnregisteredSandboxRecovery();
@@ -870,10 +913,6 @@ export async function finalizeCreatedSandbox(
     }
     const restoreOptions = {
       targetAgentType: options.targetAgentType,
-      ...(options.customImage ? { allowCustomImageWholeStateFileRestore: true } : {}),
-      ...(options.targetAgentType === "hermes"
-        ? { restoreLegacyMigrationStateDirs: ["dashboard-home"] }
-        : {}),
     } satisfies RecreatedSandboxRestoreOptions;
     const resolveTarget = async () => {
       preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);
@@ -927,10 +966,10 @@ export async function finalizeCreatedSandbox(
         `  ✓ State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
       );
     } else {
-      if (restore.error === MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR) {
+      if (restore.error === MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR) {
         await abortOpenClawRestoreWindow();
         deps.error(
-          `  Managed snapshot restore is deferred for newly created sandbox '${options.sandboxName}' until its runtime authority can be bound before registry publication.`,
+          `  Managed rebuild restore is deferred for newly created sandbox '${options.sandboxName}' until its runtime authority can be bound before registry publication.`,
         );
         deps.error("  State was not restored and registry metadata was not updated.");
         reportUnregisteredSandboxRecovery();
@@ -961,6 +1000,25 @@ export async function finalizeCreatedSandbox(
       deps.error(`  Keep the snapshot for manual recovery: ${options.restoreBackupPath}`);
       return deps.exitProcess(1);
     }
+    if (openClawRestoreWindow && options.reconcileOpenClawInference && !options.customImage) {
+      try {
+        preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);
+        if (!options.gatewayName)
+          throw new Error("OpenClaw restore reconciliation requires its selected gateway.");
+        await (deps.writeRestoredOpenclawInferenceRoute ?? writeRestoredOpenclawInferenceRoute)(
+          options.sandboxName,
+          options.model,
+          options.provider,
+          options.preferredInferenceApi,
+          options.gatewayName,
+          deps.revalidateSandboxIdentity,
+          { endpointUrl: options.endpointUrl, nativeProvider: options.nativeProvider ?? false },
+        );
+      } catch (error) {
+        await abortOpenClawRestoreWindow();
+        throw error;
+      }
+    }
     if (openClawRestoreWindow) {
       deps.revalidateSandboxIdentity?.(
         `releasing offline state restore for sandbox '${options.sandboxName}'`,
@@ -987,6 +1045,7 @@ export async function finalizeCreatedSandbox(
       options.model,
       options.preferredInferenceApi,
       options.endpointUrl ?? null,
+      options.nativeProvider ?? false,
     );
     if (finalSelection.changed || finalSelection.unknown) {
       deps.error(
@@ -1008,5 +1067,15 @@ export async function finalizeCreatedSandbox(
   if (preparedRegistration) {
     preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration);
   }
-  return preparedRegistration ? deps.register(preparedRegistration) : deps.register();
+  const registration = await (preparedRegistration
+    ? deps.register(preparedRegistration)
+    : deps.register());
+  if (options.restoreBackupPath && options.previousEntry && options.gatewayName) {
+    await preserveRestoredModelSelections(
+      options.sandboxName,
+      options.gatewayName,
+      options.previousEntry,
+    );
+  }
+  return registration;
 }

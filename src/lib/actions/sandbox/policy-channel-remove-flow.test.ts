@@ -77,7 +77,6 @@ describe("policy channel remove/enable flows", () => {
       name: agent,
       displayName: "Hermes",
       configPaths: { dir: `/sandbox/.${agent}` },
-      stateDirs: ["platforms", "profiles"],
     } as unknown as defs.AgentDefinition);
     vi.spyOn(registry, "getSandbox").mockReturnValue(current);
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue([channel]);
@@ -149,7 +148,6 @@ describe("policy channel remove/enable flows", () => {
       name: "openclaw",
       displayName: "OpenClaw",
       configPaths: { dir: "/sandbox/.openclaw" },
-      stateDirs: ["wechat", "openclaw-weixin"],
     } as unknown as defs.AgentDefinition);
     vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", agent: "openclaw" });
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue([]);
@@ -192,7 +190,6 @@ describe("policy channel remove/enable flows", () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "custom-agent",
       configPaths: { dir: "/sandbox/.custom-agent" },
-      stateDirs: ["wechat"],
     } as unknown as defs.AgentDefinition);
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",

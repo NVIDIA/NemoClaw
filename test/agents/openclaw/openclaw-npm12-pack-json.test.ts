@@ -170,7 +170,7 @@ describe("OpenClaw npm 12 pack JSON compatibility", () => {
     expect(dockerfile).toContain(invocation);
     expect(dockerfile.indexOf(invocation)).toBeLessThan(
       dockerfile.indexOf(
-        'openclaw plugins install --force --accept-capabilities "npm-pack:${plugin_install_archive}"',
+        'openclaw plugins install --force --accept-capabilities "npm-pack:${plugin_archive}"',
       ),
     );
     expect(

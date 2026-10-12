@@ -35,5 +35,5 @@ Use this guide when editing files under `fern/`.
 - Run `npm run docs:live` when layout, component, CSS, or asset changes need visual review.
 - Run `npm run docs:preview:watch` only when you need to verify branch preview publication behavior.
 - For doc-only or Fern-only PRs, rely on normal `pre-commit`, `commit-msg`, and `pre-push` hooks when they pass.
-- If hooks were skipped or unavailable, refresh `origin/main` and run `npm run validate:pr` once to reproduce those checks.
+- If hooks are missing, stale, or were skipped, repair [contributor setup](../.agents/skills/nemoclaw-contributor-onboard/SKILL.md), then follow the [publication procedure](../.agents/skills/nemoclaw-contributor-create-pr/references/validation.md). The actual installed pre-push hook must run in its verified credential-isolated boundary when changed validators can access credentials or change host state; a separate `npm run validate:pr` does not replace it.
 - Do not run `npm run check` or an all-files hook baseline routinely for focused docs changes.

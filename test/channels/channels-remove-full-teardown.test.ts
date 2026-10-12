@@ -3,7 +3,7 @@
 //
 // Regression test for #3998 — `nemoclaw <sandbox> channels remove <channel>`
 // must (1) remove the channel preset from the live OpenShell policy, (2) wipe the channel's durable
-// state inside the sandbox so the rebuild's state_dirs backup does not
+// state inside the sandbox so the rebuild's complete native-home backup does not
 // restore stale auth files, and (3) refuse to proceed to rebuild when the
 // in-sandbox cleanup for a QR-paired channel fails — otherwise the backup
 // would re-capture the auth blob and the channel would reconnect after

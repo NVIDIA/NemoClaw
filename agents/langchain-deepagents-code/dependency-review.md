@@ -46,13 +46,35 @@ The managed image patches the exact `quickjs-rs==0.2.5` engine constructor to
 set `Config.memory_init_cow = False`. This Wasmtime option uses ordinary memory
 initialization and does not require NemoClaw to weaken the OpenShell sandbox
 restriction. The image build rejects another `quickjs-rs` version or source
-shape and initializes the real QuickJS runtime after applying the patch. The
-live Deep Agents TUI check separately requires `memfd_create` to remain denied,
-initializes the real QuickJS runtime, and completes an interactive model turn.
+shape. After patching, the image build runs `validate-quickjs-runtime.py` through
+the pinned LangChain REPL. It exercises the worker thread, OXC transform, async
+shell-tool bridge, snapshot restoration, and a second synchronous tool call.
+The live Deep Agents TUI check runs the same validator with
+`--require-memfd-denied` before its interactive sessions. That mode requires
+`EPERM` before importing Wasmtime, so cached artifacts cannot hide initialization
+failures. It adds no syscall permissions. The build and sandbox probes have
+bounded process deadlines, and failure messages omit third-party exception text.
+
+PR #11972 first appears in release source at `v0.0.128`. The reopened #11847 report used
+`v0.0.127`, whose source does not contain the patch. That report does not
+establish a regression of the patch. Existing sandboxes require a rebuilt
+managed image; updating the host CLI alone does not patch installed packages.
 
 Remove this patch when a reviewed `quickjs-rs` or Deep Agents Code release
 provides an equivalent non-memfd Wasmtime configuration and the live check
 passes through that upstream path.
+
+## Native NVIDIA Model Credentials
+
+The hardened DCode model constructor ignores mutable `config.toml` credentials.
+For the root-owned `https://integrate.api.nvidia.com/v1` route, it reads the
+supervisor-provided `NVIDIA_INFERENCE_API_KEY` placeholder and requires that the
+complete placeholder names that environment variable. Missing values, real keys,
+and placeholders for other variables fail before constructing the model.
+OpenShell resolves the placeholder at its proxy; the model process receives no
+real inference key. Other managed routes retain the synthetic inference token.
+The constructor regression test exercises this installed package patch, including
+versioned placeholders, instead of relying on a configuration round trip.
 
 ## Progressive MCP Tool Catalog Compatibility
 
@@ -266,7 +288,14 @@ tests verify that both managed Ultra IDs receive the argument and unrelated
 models do not. The focused managed-model-params patch test verifies that the
 managed provider resolver supplies it only for those IDs, and the Deep Agents
 E2E test verifies the installed request settings.
-Remove this argument only after a reviewed serving-template or client update
+The native NVIDIA attachment uses `https://integrate.api.nvidia.com/v1`
+directly and omits this argument at both supply points. Live native endpoint
+requests showed that enabling it moves reasoning into answer content, while
+omitting it preserves separate reasoning and valid tool calls with null content.
+The native endpoint exception is exact; the managed `inference.local` aliases
+retain the workaround. Focused tests cover the native exception in both the
+config generator and patched constructor.
+Remove this argument from the managed route only after a reviewed serving-template or client update
 produces nonempty assistant content for reasoning-plus-tool-call turns without
 it, and the live DCode Ultra E2E passes for both managed model IDs with both
 supply points deleted.

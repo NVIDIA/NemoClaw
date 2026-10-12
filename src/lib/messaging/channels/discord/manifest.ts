@@ -9,6 +9,7 @@ export const discordManifest = {
   displayName: "Discord",
   description: "Discord bot messaging",
   supportedAgents: ["openclaw", "hermes"],
+  state: { hermes: ["platforms/discord"] },
   auth: {
     mode: "token-paste",
   },

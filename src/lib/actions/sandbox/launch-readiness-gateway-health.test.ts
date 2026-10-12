@@ -206,6 +206,7 @@ const SANDBOX = "alpha";
 const GATEWAY = "nemoclaw";
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const dcodeAgent = loadAgent("langchain-deepagents-code");
+const OPENROUTER_GATEWAY_AGENTS = ["openclaw", "hermes"] as const;
 
 function dcodeEntry(provider = "openrouter-api"): SandboxEntry {
   return {
@@ -225,6 +226,8 @@ function dcodeHealthDeps(
 ): LaunchReadinessHealthDeps {
   return {
     smoke: vi.fn(async () => ({ ok: true }) as const),
+    gatewayHealth: vi.fn(async () => true),
+    forwardsHealthy: vi.fn(() => true),
     inferenceProbe: vi.fn(async () => ({
       healthy: true,
       broken: false,
@@ -311,4 +314,69 @@ describe("Deep Agents Code launch readiness", () => {
       }),
     );
   });
+});
+
+describe("OpenRouter launch readiness", () => {
+  it.each(OPENROUTER_GATEWAY_AGENTS)(
+    "accepts the %s catalog 404 after the recorded inference request succeeds (#12621)",
+    async (agentName) => {
+      const agent = loadAgent(agentName);
+      const entry = {
+        name: SANDBOX,
+        agent: agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      } as SandboxEntry;
+      const currentDeps = dcodeHealthDeps({ ok: true });
+
+      await expect(
+        requireLaunchSemanticHealth(SANDBOX, GATEWAY, agentName, entry, agent, true, currentDeps),
+      ).resolves.toBeUndefined();
+      expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY,
+        agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      });
+    },
+  );
+
+  it.each(OPENROUTER_GATEWAY_AGENTS)(
+    "rejects the %s catalog 404 when the recorded inference request fails (#12621)",
+    async (agentName) => {
+      const agent = loadAgent(agentName);
+      const entry = {
+        name: SANDBOX,
+        agent: agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      } as SandboxEntry;
+      const currentDeps = dcodeHealthDeps({
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 401",
+        httpStatus: 401,
+      });
+
+      await expect(
+        requireLaunchSemanticHealth(SANDBOX, GATEWAY, agentName, entry, agent, true, currentDeps),
+      ).rejects.toEqual(
+        expect.objectContaining<Partial<LaunchReadinessObservationError>>({
+          category: "health",
+          failedCheck: "inference request",
+        }),
+      );
+      expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY,
+        agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      });
+    },
+  );
 });
