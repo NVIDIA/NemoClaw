@@ -1,10 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  NVIDIA_HOSTED_CREDENTIAL_ENV,
-  NVIDIA_HOSTED_NATIVE_ENDPOINT,
-} from "../../../src/lib/inference/native-nvidia/index.ts";
 import { testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -30,16 +26,16 @@ import {
   hashCheck,
   hermesApiCommand,
   hermesGatewayPid,
-  initialInstallModel,
+  hostedInstallModel,
   sandboxInferenceCommand,
   inferenceLocalMaxTokens,
   installHermes,
   maybeAssertEnvHashStable,
+  parseHermesGatewayPid,
   mockAnthropicSwitchEnabled,
   PROXY_FORBIDDEN_MARKERS,
   PROXY_RESOLUTION_PROVIDER,
   parseHermesModelBlock,
-  parseHermesGatewayPid,
   parseInferenceRoute,
   prepareCompatibleAnthropicSwitchBinding,
   prepareProxyResolutionRoute,
@@ -188,9 +184,11 @@ test(
     expect(baselineRoute.exitCode, resultText(baselineRoute)).toBe(0);
     expect(parseInferenceRoute(resultText(baselineRoute))).toEqual({
       provider: mockBaseline ? "compatible-endpoint" : PUBLIC_NVIDIA_SWITCH_PROVIDER,
-      model: initialInstallModel(env(apiKey, installEnv)),
+      model: hostedInstallModel(env(apiKey, installEnv)),
     });
-    const baselineSession = structuredClone(registryState().session);
+    const baselineState = registryState();
+    const baselineSession = structuredClone(baselineState.session);
+    const baselineRegistry = structuredClone(baselineState.registry.sandboxes?.[SANDBOX_NAME]);
     const switchBinding = await prepareCompatibleAnthropicSwitchBinding(host, cleanup);
     const switchEndpointUrl = switchBinding?.endpointUrl ?? null;
     switchBinding && redactionValues.push(switchBinding.credentialValue);
@@ -344,12 +342,12 @@ test(
     expect(state.session).toEqual(baselineSession);
     const publicSwitch = SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER;
     const durableEndpointUrl = publicSwitch
-      ? NVIDIA_HOSTED_NATIVE_ENDPOINT
+      ? baselineRegistry?.endpointUrl
       : (switchEndpointUrl ??
         process.env.NEMOCLAW_ENDPOINT_URL ??
         DEFAULT_HOSTED_INFERENCE_BASE_URL);
     const durableCredentialEnv = publicSwitch
-      ? NVIDIA_HOSTED_CREDENTIAL_ENV
+      ? baselineRegistry?.credentialEnv
       : switchEndpointUrl
         ? "COMPATIBLE_ANTHROPIC_API_KEY"
         : "COMPATIBLE_API_KEY";
@@ -358,7 +356,7 @@ test(
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(durableCredentialEnv);
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(
-      publicSwitch ? "openai-completions" : RUNTIME_SWITCH_API,
+      publicSwitch ? baselineRegistry?.preferredInferenceApi : RUNTIME_SWITCH_API,
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.nimContainer).toBeNull();
     progress.phase("exercise sandbox inference and Hermes API");

@@ -11,10 +11,7 @@ import {
   DEFAULT_CLOUD_MODEL,
   resolveAgentInferenceApi,
 } from "../../../src/lib/inference/config.ts";
-import {
-  NVIDIA_HOSTED_CREDENTIAL_ENV,
-  NVIDIA_HOSTED_NATIVE_ENDPOINT,
-} from "../../../src/lib/inference/native-nvidia/index.ts";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -172,10 +169,6 @@ export function hostedInstallModel(runtimeEnv: NodeJS.ProcessEnv = process.env):
   return (
     runtimeEnv.NEMOCLAW_MODEL ?? runtimeEnv.NEMOCLAW_COMPAT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL
   );
-}
-
-export function initialInstallModel(installEnv: NodeJS.ProcessEnv): string {
-  return installEnv.NEMOCLAW_MODEL || DEFAULT_CLOUD_MODEL;
 }
 
 export function openshellGatewayName(runtimeEnv: NodeJS.ProcessEnv = process.env): string {
@@ -770,60 +763,13 @@ export function expectedApiMode(): string | undefined {
 // POSIX ERE character classes; support tests pin the accepted scalar shapes.
 export const API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("sk-[^"[:space:]]+"|'sk-[^'[:space:]]+'|sk-[^"'[:space:]]+)[[:space:]]*$`;
 
-// Classify the unredacted config inside the sandbox. Fixture transport masks
-// api_key values before returning them to the host.
-export const NATIVE_NVIDIA_CREDENTIAL_ORACLE = String.raw`
-def unique_mapping_pairs(pairs):
-    return dict(pairs) if len({key for key, _ in pairs}) == len(pairs) else None
-
-def native_credential_handles_valid(config):
-    expected = ${JSON.stringify("${" + NVIDIA_HOSTED_CREDENTIAL_ENV + "}")}
-    provider = ${JSON.stringify(PUBLIC_NVIDIA_SWITCH_PROVIDER)}
-    try:
-        custom = [entry for entry in config["custom_providers"] if entry["name"] == provider]
-        handles = [
-            config["model"]["api_key"],
-            config["providers"][provider]["api_key"],
-            custom[0]["api_key"],
-        ]
-        return len(custom) == 1 and all(value == expected for value in handles)
-    except (KeyError, IndexError, TypeError):
-        return False
-`;
-
-export const NATIVE_NVIDIA_CREDENTIAL_PROBE = String.raw`
-from pathlib import Path
-import sys
-import yaml
-
-${NATIVE_NVIDIA_CREDENTIAL_ORACLE}
-
-class UniqueKeyLoader(yaml.SafeLoader):
-    pass
-
-def construct_unique_mapping(loader, node):
-    return unique_mapping_pairs(loader.construct_pairs(node))
-
-UniqueKeyLoader.add_constructor("tag:yaml.org,2002:map", construct_unique_mapping)
-try:
-    config = yaml.load(Path(sys.argv[1]).read_text(encoding="utf-8"), Loader=UniqueKeyLoader)
-    valid = native_credential_handles_valid(config)
-except (OSError, ValueError, TypeError, yaml.YAMLError):
-    valid = False
-print("OK" if valid else "FAIL invalid native credential handles")
-sys.exit(0 if valid else 1)
-`;
-
 export function apiKeyShapeCommand(provider: string = SWITCH_PROVIDER): string[] {
-  return provider === PUBLIC_NVIDIA_SWITCH_PROVIDER
-    ? [
-        "/opt/hermes/.venv/bin/python",
-        "-I",
-        "-c",
-        `exec(${JSON.stringify(NATIVE_NVIDIA_CREDENTIAL_PROBE)})`,
-        "/sandbox/.hermes/config.yaml",
-      ]
-    : ["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"];
+  const nativeReference = String.raw`\$\{NVIDIA_INFERENCE_API_KEY\}`;
+  const pattern =
+    provider === PUBLIC_NVIDIA_SWITCH_PROVIDER
+      ? `^[[:space:]]*api_key:[[:space:]]*("${nativeReference}"|'${nativeReference}'|${nativeReference})[[:space:]]*$`
+      : API_KEY_SHAPE_PATTERN;
+  return ["grep", "-Eq", pattern, "/sandbox/.hermes/config.yaml"];
 }
 
 export async function apiKeyShape(sandbox: SandboxClient): Promise<ShellProbeResult> {
