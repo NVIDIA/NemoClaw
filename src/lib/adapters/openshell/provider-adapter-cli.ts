@@ -44,6 +44,7 @@ import {
   parseCliOpenShellProviderMetadata,
 } from "./provider-metadata-cli";
 import {
+  type CheckedInProviderProfileContract,
   exportedProviderProfileMatchesContract,
   isMissingProviderProfile,
   parseCheckedInProviderProfileContract,
@@ -76,6 +77,7 @@ export type CliOpenShellProviderAdapterDeps = Readonly<{
   defaultTimeoutMs?: number;
   readProfileFile?: (profilePath: string) => string;
   environment?: OpenShellGatewayEndpointEnvironment;
+  warn?: (message: string) => void;
 }>;
 
 export type CliOpenShellProviderAdapter = Omit<OpenShellProviderAdapter, "importProviderProfile"> &
@@ -313,10 +315,13 @@ function namedGatewayEndpointOverrideError(
   }
 }
 
-/** Register one checked-in profile through the synchronous OpenShell CLI boundary. */
-export function importCliOpenShellProviderProfile(
+function importCliOpenShellProviderProfileWithCallback(
   request: ImportOpenShellProviderProfileRequest,
-  deps: CliOpenShellProviderAdapterDeps = {},
+  deps: CliOpenShellProviderAdapterDeps,
+  onProfileVerified?: (
+    target: OpenShellGatewayTarget,
+    contract: CheckedInProviderProfileContract,
+  ) => void,
 ): CliOpenShellProviderProfileResult {
   const environment = deps.environment ?? process.env;
   const targetError = namedGatewayEndpointOverrideError(request.target, environment);
@@ -368,6 +373,7 @@ export function importCliOpenShellProviderProfile(
         operation: "verify",
       };
     }
+    onProfileVerified?.(request.target, contract);
     return { ok: true };
   };
 
@@ -400,6 +406,14 @@ export function importCliOpenShellProviderProfile(
     return { ok: false, error: importError, operation: "import" };
   }
   return validateExportedProfile(exportProfile());
+}
+
+/** Register one checked-in profile through the synchronous OpenShell CLI boundary. */
+export function importCliOpenShellProviderProfile(
+  request: ImportOpenShellProviderProfileRequest,
+  deps: CliOpenShellProviderAdapterDeps = {},
+): CliOpenShellProviderProfileResult {
+  return importCliOpenShellProviderProfileWithCallback(request, deps);
 }
 
 function parseProfileCredentialKeys(output: string, expectedProfileId: string): string[] | null {
@@ -463,6 +477,16 @@ export function createCliOpenShellProviderAdapter(
 ): CliOpenShellProviderAdapter {
   const run = deps.run ?? runOpenshellProviderCommand;
   const environment = deps.environment ?? process.env;
+  const verifiedProfiles = new Map<string, Map<string, CheckedInProviderProfileContract>>();
+  const targetKey = (target: OpenShellGatewayTarget) =>
+    target.kind === "named" ? `named:${target.gatewayName}` : "selected";
+  const warn = (message: string) => {
+    try {
+      (deps.warn ?? console.warn)(message);
+    } catch {
+      // Advisory output must not change a successful provider mutation.
+    }
+  };
   const timeoutFor = (request: OpenShellProviderRequest) =>
     request.timeoutMs ?? deps.defaultTimeoutMs ?? OPENSHELL_OPERATION_TIMEOUT_MS;
   const invoke = (
@@ -490,6 +514,34 @@ export function createCliOpenShellProviderAdapter(
             ? error
             : new Error("OpenShell provider command failed before returning a result."),
       };
+    }
+  };
+
+  const warnIfVerifiedProfileChanged = (request: OpenShellProviderRequest, profileId: string) => {
+    const contract = verifiedProfiles.get(targetKey(request.target))?.get(profileId);
+    if (!contract) return;
+    const exported = invoke(
+      ["provider", "profile", "export", profileId, "--output", "json"],
+      { ...request, timeoutMs: Math.min(timeoutFor(request), OPENSHELL_OPERATION_TIMEOUT_MS) },
+      undefined,
+      2,
+      true,
+    );
+    const warning = `Warning: Post-mutation verification of OpenShell provider profile '${profileId}' did not complete. Ask the gateway operator to inspect this profile.`;
+    if (commandError(exported)) {
+      warn(warning);
+      return;
+    }
+    try {
+      JSON.parse(commandStdout(exported));
+    } catch {
+      warn(warning);
+      return;
+    }
+    if (!exportedProviderProfileMatchesContract(commandStdout(exported), contract)) {
+      warn(
+        `Warning: OpenShell provider profile '${profileId}' changed after verification. NemoClaw cannot confirm which definition was used at bind time. Ask the gateway operator to inspect this profile.`,
+      );
     }
   };
 
@@ -620,7 +672,9 @@ export function createCliOpenShellProviderAdapter(
         message: "OpenShell could not create the provider from existing credentials.",
       });
     }
-    return error ? failure(error) : mutationSuccess();
+    if (error) return failure(error);
+    warnIfVerifiedProfileChanged(request, request.type);
+    return mutationSuccess();
   };
 
   const getProvider: OpenShellProviderAdapter["getProvider"] = async (
@@ -742,7 +796,16 @@ export function createCliOpenShellProviderAdapter(
   };
 
   const importProviderProfile: CliOpenShellProviderAdapter["importProviderProfile"] = (request) => {
-    return importCliOpenShellProviderProfile(request, { ...deps, environment, run });
+    return importCliOpenShellProviderProfileWithCallback(
+      request,
+      { ...deps, environment, run },
+      (target, contract) => {
+        const key = targetKey(target);
+        const profiles = verifiedProfiles.get(key) ?? new Map();
+        profiles.set(contract.profileId, contract);
+        verifiedProfiles.set(key, profiles);
+      },
+    );
   };
 
   const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] = async (
@@ -863,7 +926,29 @@ export function createCliOpenShellProviderAdapter(
       3,
     );
     const error = commandError(result);
-    return error ? failure(error) : mutationSuccess();
+    if (error) return failure(error);
+    const profiles = verifiedProfiles.get(targetKey(request.target));
+    if (profiles) {
+      const warnIncompleteVerification = () =>
+        warn(
+          `Warning: Post-mutation profile verification for '${request.providerName}' did not complete. Ask the gateway operator to inspect its profile.`,
+        );
+      try {
+        const provider = await getProvider({
+          target: request.target,
+          providerName: request.providerName,
+          timeoutMs: Math.min(timeoutFor(request), OPENSHELL_OPERATION_TIMEOUT_MS),
+        });
+        if (!provider.ok) {
+          warnIncompleteVerification();
+        } else if (profiles.has(provider.value.type)) {
+          warnIfVerifiedProfileChanged(request, provider.value.type);
+        }
+      } catch {
+        warnIncompleteVerification();
+      }
+    }
+    return mutationSuccess();
   };
 
   const listProviderAttachments: OpenShellProviderAdapter["listProviderAttachments"] = async (

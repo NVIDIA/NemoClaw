@@ -15,6 +15,9 @@ on:
       - "test/inference/llama/llama-cpp-image.test.ts"
       - "test/inference/llama/llama-cpp-image-publication-evidence.test.ts"
       - "test/inference/llama/llama-cpp-image-workflow.test.ts"
+      - "test/platform/images/llama-cpp-stdio-image-proof.py"
+      - "test/platform/images/llama-cpp-stdio-image-proof-test.py"
+      - "test/platform/images/fixtures/llama-cpp-stdio-upstream.c"
   workflow_dispatch:
     inputs:
       publish:
@@ -253,6 +256,14 @@ jobs:
           docker rm "$container_id" >/dev/null
           trap - EXIT
 
+      - name: Exercise packaged request guard through Docker exec
+        shell: bash
+        env:
+          IMAGE: nemoclaw-llama-cpp-pr:${{ matrix.arch }}-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test/platform/images/llama-cpp-stdio-image-proof.py "$IMAGE"
+
   publication-gate:
     name: Validate trusted publication request
     needs: config
@@ -483,6 +494,14 @@ jobs:
             --arg reference "$reference" \
             '{imageId:$imageId,platform:$platform,platformDigest:$platformDigest,reference:$reference}' \
             > "$RUNNER_TEMP/llama-cpp-anonymous-pulls/anonymous-pull-${ARCH}.json"
+
+      - name: Exercise published request guard through Docker exec
+        shell: bash
+        env:
+          IMAGE: ${{ needs.config.outputs.publication_repository }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          test/platform/images/llama-cpp-stdio-image-proof.py "$IMAGE"
 
       - name: Upload anonymous pull evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
