@@ -283,7 +283,7 @@ describe("sandbox BuildKit prebuild", () => {
         sandboxName: "alpha",
         dockerDriverGateway: true,
         gatewayDriver: "docker",
-        env: { DOCKER_CONTEXT: "remote-builder" },
+        env: { DOCKER_HOST: "   ", DOCKER_CONTEXT: " remote-builder " },
         buildImage,
       }),
     ).rejects.toThrow(
@@ -814,7 +814,7 @@ describe("sandbox BuildKit prebuild", () => {
       env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
       buildImage,
       publishImage,
-      inspectImageId: () => IMAGE_ID,
+      inspectImageId: () => IMAGE_ID.slice("sha256:".length),
       log: () => {},
     });
 
@@ -836,6 +836,7 @@ describe("sandbox BuildKit prebuild", () => {
       }),
     );
     expect(result.imageRef).toBe("127.0.0.1:54321/nemoclaw-sandbox-local:alpha-1234567890");
+    expect(result.imageId).toBe(IMAGE_ID);
     expect(fs.existsSync(credentialConfig)).toBe(false);
   });
 

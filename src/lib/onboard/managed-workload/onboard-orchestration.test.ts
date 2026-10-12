@@ -37,6 +37,14 @@ const preparationState = vi.hoisted(() => ({
 }));
 const prepareSandboxWorkloadSource = vi.hoisted(() => vi.fn());
 const INSTALLED_REVISION = vi.hoisted(() => "d".repeat(40));
+const prebuildResult = vi.hoisted(() => ({
+  value: null as null | {
+    createArgs: string[];
+    sourceReference: string;
+    imageRef: string;
+    imageId: string;
+  },
+}));
 const releaseRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-release-root-"));
 fs.writeFileSync(path.join(releaseRoot, ".version"), "0.0.0\n");
 
@@ -60,6 +68,19 @@ vi.mock("../../core/version", () => ({
   getVersion: () => "v0.0.0",
 }));
 
+vi.mock("../sandbox-prebuild", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../sandbox-prebuild")>();
+  return {
+    ...actual,
+    prebuildSandboxImageIfEligible: (
+      input: Parameters<typeof actual.prebuildSandboxImageIfEligible>[0],
+    ) =>
+      prebuildResult.value
+        ? Promise.resolve(prebuildResult.value)
+        : actual.prebuildSandboxImageIfEligible(input),
+  };
+});
+
 import { mapManagedStartupProfileToAgentEnvironment } from "../managed-startup/agent-environment";
 import { buildManagedStartupOnboardProfile } from "../managed-startup/onboard-profile";
 import {
@@ -75,7 +96,10 @@ import {
   shouldUseManagedOpenclawStartup,
 } from "./onboard-orchestration";
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  prebuildResult.value = null;
+});
 
 function createFreshOnboardingRuntime(
   environment: Readonly<Record<string, string>>,
@@ -933,7 +957,9 @@ describe("managed workload onboard orchestration", () => {
       expectedFromDockerfile: null,
       expectedStageCalls: 1,
       providerId: null,
-      expectedError: "requires a local Docker or Podman gateway",
+      prebuild: null,
+      assertLaunch: (launch: ReturnType<typeof prepareOnboardSandboxWorkloadLaunch>) =>
+        expect(launch).rejects.toThrow("requires a local Docker or Podman gateway"),
     },
     {
       behavior: "passes the original Dockerfile to patch resolution for a prepared Hermes rebuild",
@@ -943,7 +969,9 @@ describe("managed workload onboard orchestration", () => {
       expectedFromDockerfile: hermesDockerfile,
       expectedStageCalls: 0,
       providerId: null,
-      expectedError: "requires a local Docker or Podman gateway",
+      prebuild: null,
+      assertLaunch: (launch: ReturnType<typeof prepareOnboardSandboxWorkloadLaunch>) =>
+        expect(launch).rejects.toThrow("requires a local Docker or Podman gateway"),
     },
     {
       behavior: "keeps Portable OpenClaw on the typed create launch",
@@ -954,10 +982,35 @@ describe("managed workload onboard orchestration", () => {
       expectedStageCalls: 1,
       portableLifecycle: true,
       providerId: "podman",
-      expectedError: "could not inspect the staged context",
+      prebuild: null,
+      assertLaunch: (launch: ReturnType<typeof prepareOnboardSandboxWorkloadLaunch>) =>
+        expect(launch).rejects.toThrow("could not inspect the staged context"),
+    },
+    {
+      behavior: "passes the built generated image to the typed create request",
+      agentName: "langchain-deepagents-code",
+      fromDockerfile: dcodeDockerfile,
+      preparedBuildContext: null,
+      expectedFromDockerfile: null,
+      expectedStageCalls: 1,
+      providerId: "docker",
+      prebuild: {
+        createArgs: [],
+        sourceReference: "nemoclaw-sandbox-local:dcode-image-build",
+        imageRef: "nemoclaw-sandbox-local:dcode-image-build",
+        imageId: `sha256:${"a".repeat(64)}`,
+      },
+      assertLaunch: async (launch: ReturnType<typeof prepareOnboardSandboxWorkloadLaunch>) => {
+        const prepared = await launch;
+        expect(prepared.createRequestPlan.source.reference).toBe(
+          "nemoclaw-sandbox-local:dcode-image-build",
+        );
+        expect(prepared.launch.prebuild.imageRef).toBe("nemoclaw-sandbox-local:dcode-image-build");
+      },
     },
   ])("$behavior", async (testCase) => {
     const { agentName, fromDockerfile, preparedBuildContext } = testCase;
+    prebuildResult.value = testCase.prebuild;
     vi.stubEnv(
       "NEMOCLAW_EXPERIMENTAL_PROFILE",
       testCase.providerId === "podman" ? "portable" : "default",
@@ -1002,72 +1055,71 @@ describe("managed workload onboard orchestration", () => {
       }),
     );
 
-    await expect(
-      prepareOnboardSandboxWorkloadLaunch({
-        runtime: {
-          runtimeProvider: testCase.providerId ? { identity: { id: testCase.providerId } } : null,
-          ensurePreparedWorkload: vi.fn(),
-          ensurePreparedProfile: vi.fn(),
+    const preparedLaunch = prepareOnboardSandboxWorkloadLaunch({
+      runtime: {
+        runtimeProvider: testCase.providerId ? { identity: { id: testCase.providerId } } : null,
+        ensurePreparedWorkload: vi.fn(),
+        ensurePreparedProfile: vi.fn(),
+      },
+      workload: {
+        source: {
+          kind: "legacy-dockerfile",
+          dockerfilePath: fromDockerfile,
+          reason: "runtime-unsupported",
         },
-        workload: {
-          source: {
-            kind: "legacy-dockerfile",
-            dockerfilePath: fromDockerfile,
-            reason: "runtime-unsupported",
-          },
-          release: "v0.0.0",
-          fallbackDiagnostic: null,
+        release: "v0.0.0",
+        fallbackDiagnostic: null,
+      },
+      legacy: {
+        preparedBuildContext,
+        agent: { name: agentName, displayName: agentName, dockerfilePath: fromDockerfile },
+        fromDockerfile,
+        createAgentSandbox,
+        resolvePatchInput,
+      },
+      plan: {
+        intent: {},
+        portableLifecycle: testCase.portableLifecycle === true,
+        rebindMessagingTokenDefs: async () => [],
+        upsertMessagingProviders: vi.fn(() => []),
+        getHermesToolGatewayProviderName: vi.fn(() => "unused"),
+        discloseInitialSandboxPolicy: vi.fn(),
+      },
+      launchInput: {
+        agent: null,
+        chatUiUrl: "http://127.0.0.1:18789",
+        sandboxName: "dcode",
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
+        extraPlaceholderKeys: [],
+        getDashboardForwardPort: () => "0",
+        hermesDashboardState: {},
+        manageDashboard: false,
+        openshellShellCommand: () => "openshell sandbox create",
+        openshellArgv: (args: string[]) => ["openshell", ...args],
+      },
+      plannedMessagingPlan: null,
+      gpu: {
+        provider: "compatible-endpoint",
+        config: {
+          mode: "0",
+          hostGpuDetected: false,
+          hostGpuPlatform: null,
+          sandboxGpuEnabled: false,
+          sandboxGpuDevice: null,
+          errors: [],
         },
-        legacy: {
-          preparedBuildContext,
-          agent: { name: agentName, displayName: agentName, dockerfilePath: fromDockerfile },
-          fromDockerfile,
-          createAgentSandbox,
-          resolvePatchInput,
-        },
-        plan: {
-          intent: {},
-          portableLifecycle: testCase.portableLifecycle === true,
-          rebindMessagingTokenDefs: async () => [],
-          upsertMessagingProviders: vi.fn(() => []),
-          getHermesToolGatewayProviderName: vi.fn(() => "unused"),
-          discloseInitialSandboxPolicy: vi.fn(),
-        },
-        launchInput: {
-          agent: null,
-          chatUiUrl: "http://127.0.0.1:18789",
-          sandboxName: "dcode",
-          env: { NEMOCLAW_SANDBOX_PREBUILD: "0" },
-          extraPlaceholderKeys: [],
-          getDashboardForwardPort: () => "0",
-          hermesDashboardState: {},
-          manageDashboard: false,
-          openshellShellCommand: () => "openshell sandbox create",
-          openshellArgv: (args: string[]) => ["openshell", ...args],
-        },
-        plannedMessagingPlan: null,
-        gpu: {
-          provider: "compatible-endpoint",
-          config: {
-            mode: "0",
-            hostGpuDetected: false,
-            hostGpuPlatform: null,
-            sandboxGpuEnabled: false,
-            sandboxGpuDevice: null,
-            errors: [],
-          },
-          dockerDriverGateway: false,
-          gatewayPort: 8080,
-        },
-        dependencies: {
-          materializeSandboxCreatePlan,
-          prepareSandboxBuildPatchConfig: vi.fn(() => ({
-            messagingChannelConfig: null,
-          })),
-          resolveSandboxBuildPatch,
-        },
-      } as unknown as Parameters<typeof prepareOnboardSandboxWorkloadLaunch>[0]),
-    ).rejects.toThrow(testCase.expectedError);
+        dockerDriverGateway: testCase.providerId === "docker",
+        gatewayPort: 8080,
+      },
+      dependencies: {
+        materializeSandboxCreatePlan,
+        prepareSandboxBuildPatchConfig: vi.fn(() => ({
+          messagingChannelConfig: null,
+        })),
+        resolveSandboxBuildPatch,
+      },
+    } as unknown as Parameters<typeof prepareOnboardSandboxWorkloadLaunch>[0]);
+    await testCase.assertLaunch(preparedLaunch);
 
     expect(resolvePatchInput).toHaveBeenCalledOnce();
     expect(resolveSandboxBuildPatch).toHaveBeenCalledOnce();

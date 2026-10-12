@@ -673,7 +673,7 @@ async function buildHermesPortableSandboxImage(
     ["image", "inspect", "--format", "{{.Id}}", reference],
     5_000,
   );
-  if (inspection.status !== 0 || !/^sha256:[a-f0-9]{64}$/u.test(inspection.stdout.trim())) {
+  if (inspection.status !== 0 || !/^(?:sha256:)?[a-f0-9]{64}$/u.test(inspection.stdout.trim())) {
     fail("built image is unavailable in the selected Podman store");
   }
   console.log(`  Podman build completed for ${reference}.`);

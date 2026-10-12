@@ -207,7 +207,9 @@ export async function prebuildSandboxImageIfEligible(
       `Generated Dockerfile build requires the selected ${input.gatewayDriver} gateway engine; refusing a ${selectedEngine} build.`,
     );
   }
-  if (!portable && !env.DOCKER_HOST && env.DOCKER_CONTEXT && env.DOCKER_CONTEXT !== "default") {
+  const dockerHost = String(env.DOCKER_HOST ?? "").trim();
+  const dockerContext = String(env.DOCKER_CONTEXT ?? "").trim();
+  if (!portable && !dockerHost && dockerContext && dockerContext !== "default") {
     throw new Error(
       "Generated Dockerfile build cannot prove that the selected Docker context shares the local gateway engine.",
     );
@@ -354,7 +356,9 @@ export async function prebuildSandboxImageIfEligible(
   let imageId: string | null;
   try {
     const inspected = inspectImageId(imageRef).trim();
-    imageId = isImmutableDockerImageId(inspected) ? inspected.toLowerCase() : null;
+    const normalized =
+      portable && /^[0-9a-f]{64}$/i.test(inspected) ? `sha256:${inspected}` : inspected;
+    imageId = isImmutableDockerImageId(normalized) ? normalized.toLowerCase() : null;
   } catch {
     imageId = null;
   }

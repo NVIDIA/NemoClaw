@@ -333,6 +333,7 @@ export interface HermesPortableTransactionFixtureOptions {
   createSandbox?: HermesPortableOnboardingDeps<{ ready: true }>["createSandbox"];
   buildStatus?: number;
   inspectImageStatus?: number;
+  inspectImageId?: string;
   pushStatus?: number;
   imageAvailable?: boolean;
   policySource?: string | Buffer;
@@ -379,7 +380,7 @@ export function createHermesPortableTransactionFixture(
           events.push("image-inspect");
           return {
             status: options.inspectImageStatus ?? 0,
-            stdout: `sha256:${IMAGE_ID}\n`,
+            stdout: `${options.inspectImageId ?? `sha256:${IMAGE_ID}`}\n`,
             stderr: "",
           };
         },
