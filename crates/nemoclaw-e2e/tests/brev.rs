@@ -1,5 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+#[path = "support/fabric.rs"]
+mod fabric;
+use fabric::{bindings, runtime_id};
+
 use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
 use nemoclaw_sdk::{
     CancellationToken, Change, Deployment, OperationResult, Outcome,
@@ -7,13 +11,7 @@ use nemoclaw_sdk::{
     config::{ComputeDriver, Document, Gateway},
 };
 use serde_json::{Value, json};
-use std::{
-    collections::BTreeSet,
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-    sync::Arc,
-};
+use std::{collections::BTreeSet, fs, path::PathBuf, process::Command, sync::Arc};
 
 fn explicit_path(name: &str) -> PathBuf {
     let path = PathBuf::from(std::env::var_os(name).expect(name));
@@ -63,33 +61,33 @@ fn docker_inventory() -> Value {
     Value::Object(inventory)
 }
 
-fn bindings(directory: &Path) -> (Value, Row) {
-    let state: Value =
-        serde_json::from_slice(&fs::read(directory.join("terraform.tfstate")).unwrap()).unwrap();
-    let mut ids = serde_json::Map::new();
-    let mut sandbox = None;
-    for resource in state["resources"].as_array().unwrap() {
-        let instances = resource["instances"].as_array().unwrap();
-        assert_eq!(instances.len(), 1);
-        let attributes = &instances[0]["attributes"];
-        ids.insert(
-            format!(
-                "{}.{}",
-                resource["type"].as_str().unwrap(),
-                resource["name"].as_str().unwrap()
-            ),
-            attributes["id"].clone(),
-        );
-        if resource["type"] == "openshell_sandbox" {
-            assert!(
-                sandbox
-                    .replace(serde_json::from_value(attributes.clone()).unwrap())
-                    .is_none(),
-                "expected one sandbox binding"
-            );
-        }
-    }
-    (Value::Object(ids), sandbox.unwrap())
+#[test]
+fn runtime_bindings_exclude_data_source_observations() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = json!({"resources": [
+        {"mode": "data", "type": "fabric_sandbox_readiness", "name": "assistant",
+         "instances": [{"attributes": {"id": "observation-one"}},
+                       {"attributes": {"id": "observation-two"}}]},
+        {"mode": "managed", "type": "openshell_sandbox", "name": "assistant",
+         "instances": [{"attributes": {"id": "owned-sandbox", "agent_name": "assistant"}}]},
+        {"mode": "managed", "type": "openshell_workspace", "name": "deployment",
+         "instances": [{"attributes": {"id": "owned-workspace"}}]}
+    ]});
+    fs::write(
+        directory.path().join("terraform.tfstate"),
+        state.to_string(),
+    )
+    .unwrap();
+    let (identities, binding) = bindings(directory.path());
+    assert_eq!(
+        identities,
+        json!({
+            "openshell_sandbox.assistant": "owned-sandbox",
+            "openshell_workspace.deployment": "owned-workspace"
+        })
+    );
+    assert_eq!(binding["id"], "owned-sandbox");
+    assert_eq!(binding["agent_name"], "assistant");
 }
 
 async fn exec(client: &OpenShell, binding: &Row, command: Vec<String>) -> Vec<u8> {
@@ -216,22 +214,104 @@ fn egress_proof_requires_policy_denial_for_the_exact_probe_hostname() {
     }
 }
 
-async fn runtime_id(client: &OpenShell, binding: &Row) -> String {
-    let output = exec(
-        client,
-        binding,
-        [
-            "/opt/fabric/bin/python",
-            "-c",
-            "import socket; s=socket.socket(socket.AF_UNIX); s.connect('/sandbox/fabric.sock'); s.sendall(b'{\"operation\":\"status\"}\\n'); print(s.makefile().readline())",
-        ]
-        .map(String::from)
-        .to_vec(),
+async fn runtime_fixture() -> (nemoclaw_e2e::openshell::Fixture, OpenShell, Row) {
+    use nemoclaw_e2e::{image_runtime::targets, openshell::Fixture};
+    use nemoclaw_sdk::backend::Backend;
+
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
-    .await;
-    let value: Value = serde_json::from_slice(&output).unwrap();
-    assert_eq!(value["ready"], true);
-    value["runtime_id"].as_str().unwrap().into()
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let client = OpenShell::connect(
+        &document.spec.gateway.connection(),
+        Arc::new(EnvironmentSecrets),
+    )
+    .unwrap();
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), format!("{key}-generation")))
+        .into();
+    let mut binding = None;
+    for target in targets(&document, &generations)
+        .unwrap()
+        .into_iter()
+        .filter(|target| target.kind != "agent_configuration")
+    {
+        let result = client.ensure(&target.kind, &target.values).await;
+        assert!(result.error().is_none(), "{:?}", result.error());
+        if target.kind == "sandbox" {
+            binding = result.into_parts().0;
+        }
+    }
+    let binding = binding.unwrap();
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state
+            .fabric_configurations
+            .insert(binding["id"].clone(), json!({}));
+        state.exec_calls.clear();
+    }
+    (fixture, client, binding)
+}
+
+fn check_response(runtime_state: &str, identity: Value) -> Vec<u8> {
+    let response = json!({
+        "operation": "check", "status": "succeeded", "changed": false,
+        "result": {
+            "runtime_state": runtime_state, "runtime_id": identity,
+            "generation": "fixture:1",
+            "applied_config": if runtime_state == "running" { json!({}) } else { Value::Null },
+            "health": {}
+        },
+        "error": null
+    });
+    let mut bytes = serde_json::to_vec(&response).unwrap();
+    bytes.push(b'\n');
+    bytes
+}
+
+#[tokio::test]
+async fn runtime_readback_accepts_the_current_bridge_envelope() {
+    let (fixture, client, binding) = runtime_fixture().await;
+    fixture.state.lock().unwrap().exec_response =
+        Some(check_response("running", json!("fixture-runtime")));
+
+    assert_eq!(runtime_id(&client, &binding).await, "fixture-runtime");
+    let state = fixture.state.lock().unwrap();
+    assert_eq!(state.exec_calls.len(), 1);
+    assert!(state.exec_calls[0].ends_with(&[
+        "check".into(),
+        "--agent".into(),
+        binding["agent_name"].clone(),
+        "--live".into()
+    ]));
+}
+
+#[tokio::test]
+async fn runtime_readback_requires_a_running_runtime_with_a_nonempty_identity() {
+    let (fixture, client, binding) = runtime_fixture().await;
+    let client = Arc::new(client);
+    for (runtime_state, identity) in [
+        ("running", json!("")),
+        ("running", json!("  ")),
+        ("running", Value::Null),
+        ("stopped", Value::Null),
+        ("unknown", json!("previous-runtime")),
+        ("unknown", Value::Null),
+    ] {
+        fixture.state.lock().unwrap().exec_response =
+            Some(check_response(runtime_state, identity.clone()));
+        let client = Arc::clone(&client);
+        let binding = binding.clone();
+        assert!(
+            tokio::spawn(async move { runtime_id(&client, &binding).await })
+                .await
+                .unwrap_err()
+                .is_panic(),
+            "accepted {runtime_state} with {identity}"
+        );
+    }
 }
 
 async fn openclaw_reply(client: &OpenShell, binding: &Row, agent: &str, key: &str) -> Vec<u8> {
@@ -379,7 +459,10 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     );
     assert_eq!(
         plan.deferred,
-        ["OpenShell registration and sandbox require the managed gateway"]
+        [
+            "Gateway version and compute-driver compatibility remain unverified until its provider observation completes.",
+            "OpenShell registration and sandbox require the managed gateway",
+        ]
     );
     assert!(plan.retained.is_empty());
     assert!(plan.health.is_empty());
