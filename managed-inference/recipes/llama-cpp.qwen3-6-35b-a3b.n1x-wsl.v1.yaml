@@ -43,8 +43,8 @@ spec:
       cleanup: preserve
 
   runtime:
-    image: ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675
-    imageDownloadSizeBytes: 1827478485
+    image: ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:884a92743c386564199e730da4389225ebc6106ebdab185c0bd9ab2974ba6d5a
+    imageDownloadSizeBytes: 1827533302
     platforms:
       - linux/amd64
       - linux/arm64

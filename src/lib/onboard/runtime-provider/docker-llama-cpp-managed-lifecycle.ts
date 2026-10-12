@@ -73,6 +73,10 @@ const UNCERTAIN_CREATE_ABSENCE_GRACE_MS = MUTATION_TIMEOUT_MS + INSPECT_TIMEOUT_
 const STOP_GRACE_SECONDS = 30;
 const AT_REST = new Set(["created", "dead", "exited"]);
 const CURL_CONNECTIVITY_FAILURE_EXIT_CODES = new Set([7, 28]);
+// Protected-main publication 38289870710, attempt 1: both platform scans,
+// provenance, signature, and exact-index receipt passed for this digest.
+const STDIO_FORWARD_IMAGE_REFERENCE =
+  "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:884a92743c386564199e730da4389225ebc6106ebdab185c0bd9ab2974ba6d5a";
 
 export type DockerLlamaCppManagedLifecycleOptions = HostLocalLlamaCppLifecycleInput;
 
@@ -776,25 +780,13 @@ function createArguments(
   specSha256: string,
   transactionId: string,
 ): readonly string[] {
-  if (options.bindings.stdioForward) {
-    const capability = requireSuccess(
-      "request guard stdio capability inspection",
-      options.engine.capture(
-        [
-          "image",
-          "inspect",
-          "--format",
-          '{{index .Config.Labels "io.nvidia.nemoclaw.inference-server.request-guard.stdio-forward"}}',
-          options.bindings.imageReference,
-        ],
-        INSPECT_TIMEOUT_MS,
-      ),
+  if (
+    options.bindings.stdioForward &&
+    options.bindings.imageReference !== STDIO_FORWARD_IMAGE_REFERENCE
+  ) {
+    throw new Error(
+      "Docker Desktop WSL llama.cpp requires an image with guarded stdio forwarding.",
     );
-    if (capability.trim() !== "1") {
-      throw new Error(
-        "Docker Desktop WSL llama.cpp requires an image with guarded stdio forwarding.",
-      );
-    }
   }
   const run = buildLlamaCppRequestGuardDockerArgv(options.contract, options.bindings);
   if (run[0] !== "run" || run[1] !== "--detach") {

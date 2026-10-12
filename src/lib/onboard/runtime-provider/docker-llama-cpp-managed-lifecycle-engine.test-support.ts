@@ -191,19 +191,6 @@ export function createDockerFixture(
     switch (args[0]) {
       case "version":
         return { status: 0, stdout: "29.8.0", stderr: "" };
-      case "image":
-        invariant(
-          JSON.stringify(args) ===
-            JSON.stringify([
-              "image",
-              "inspect",
-              "--format",
-              '{{index .Config.Labels "io.nvidia.nemoclaw.inference-server.request-guard.stdio-forward"}}',
-              IMAGE,
-            ]),
-          unexpected,
-        );
-        return { status: 0, stdout: "1", stderr: "" };
       case "network":
         switch (args[1]) {
           case "inspect":

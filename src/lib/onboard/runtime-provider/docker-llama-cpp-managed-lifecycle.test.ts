@@ -11,7 +11,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const subprocess = vi.hoisted(() => ({ spawnSync: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawnSync: subprocess.spawnSync }));
 
-import type { ContainerEngine } from "../../adapters/container-engine";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
 import {
@@ -1472,14 +1471,18 @@ it("uses the guarded WSL transport without a published port through start, resum
   expect(fixture.engine.capture(["container", "inspect", RUNTIME_ID]).status).toBe(1);
 });
 
-it("rejects a WSL image without guard authentication before container creation (#12285)", () => {
+it("rejects an unqualified WSL image before container creation (#12285)", () => {
   const fixture = dockerFixture("0", "49152", "127.0.0.1", 1);
-  const capture = fixture.capture.getMockImplementation() as ContainerEngine["capture"];
-  fixture.capture.mockImplementation((args, timeoutMs, input) =>
-    args[0] === "image" ? { status: 0, stdout: "", stderr: "" } : capture(args, timeoutMs, input),
-  );
   const base = options(fixture);
-  const input = { ...base, bindings: { ...base.bindings, stdioForward: true as const } };
+  const input = {
+    ...base,
+    bindings: {
+      ...base.bindings,
+      imageReference:
+        "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675",
+      stdioForward: true as const,
+    },
+  };
   expect(() => createLifecycle(input).start(receiptWriter())).toThrow(/guarded stdio forwarding/u);
   expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["create", "--pull=never"]);
 });

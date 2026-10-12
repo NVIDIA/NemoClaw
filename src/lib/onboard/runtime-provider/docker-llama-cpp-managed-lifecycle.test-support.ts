@@ -10,7 +10,8 @@ import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache
 import type { LlamaCppHostLocalLaunchContract } from "../../inference/llama-cpp/host-local-runtime";
 
 export const MODEL_DIGEST = `sha256:${"a".repeat(64)}`;
-export const IMAGE = `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"c".repeat(64)}`;
+export const IMAGE =
+  "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:884a92743c386564199e730da4389225ebc6106ebdab185c0bd9ab2974ba6d5a";
 export const PROBE_IMAGE = `quay.io/curl/curl@sha256:${"d".repeat(64)}`;
 export const RUNTIME_ID = "e".repeat(64);
 export const NETWORK_ID = "7".repeat(64);
