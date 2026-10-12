@@ -399,7 +399,9 @@ export function createManagedWorkloadOnboardRuntime(
     }
     if (preparedProfile) return preparedProfile;
     const nativeLocalProviderAttachment =
-      input.agentName === "openclaw" || input.agentName === "langchain-deepagents-code"
+      input.agentName === "openclaw" ||
+      input.agentName === "langchain-deepagents-code" ||
+      input.agentName === "pi"
         ? input.nativeLocalProviderAttachment
         : undefined;
     const selectedModel = input.model?.trim() || "";

@@ -39,7 +39,7 @@ const routes = [
   },
 ] as const;
 
-describe.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+describe.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const)(
   "%s managed startup inference",
   (agentName) => {
     it.each(routes)("keeps $name on its selected transport (#12558)", (route) => {
@@ -65,7 +65,7 @@ describe.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
             chatUiUrl: "http://localhost:18789",
             effectiveDashboardPort: 18789,
             dashboardBindAddress: undefined,
-            manageDashboard: agentName !== "langchain-deepagents-code",
+            manageDashboard: agentName !== "langchain-deepagents-code" && agentName !== "pi",
             wslExposure: false,
             hermesDashboardState: {
               config: { enabled: false, port: 19189, internalPort: 29189, tuiEnabled: false },
