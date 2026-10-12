@@ -855,8 +855,7 @@ The live boundary proves attachment, credential resolution, and a real inference
 The support tests own route selection, command encoding, credential rejection, and model-edit configuration.
 The deterministic public-key format precondition lives in `fixtures/hosted-inference.ts`;
 `support/public-nvidia-switch-provider.test.ts` retains its acceptance and rejection cases.
-This changes no live credential, attachment, inference, or cleanup requirement.
-It requires a successful response containing the expected answer.
+The probe requires a successful response containing the expected answer.
 `live/full-e2e-inference-probe.ts` owns parsing and retry behavior;
 `support/full-e2e-inference-probe.test.ts` verifies that behavior.
 The stateless request has no tools or conversation persistence, so repeating it
