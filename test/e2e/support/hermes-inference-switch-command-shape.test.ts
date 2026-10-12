@@ -28,7 +28,8 @@ import {
   hostedInstallModel,
   initialInstallModel,
   parseHermesGatewayPid,
-  NATIVE_NVIDIA_API_KEY_SHAPE_PATTERN,
+  NATIVE_NVIDIA_CREDENTIAL_ORACLE,
+  NATIVE_NVIDIA_CREDENTIAL_PROBE,
   inferenceLocalMaxTokens,
   installHermes,
   mockAnthropicSwitchEnabled,
@@ -179,14 +180,20 @@ describe("Hermes inference switch command shape", () => {
     );
   });
 
-  it("uses direct single-line argv for the in-sandbox API-key probe", () => {
+  it("uses single-line argv for the compatible credential probe", () => {
     const command = apiKeyShapeCommand("compatible-anthropic-endpoint");
 
     expect(command).toEqual(["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"]);
     expect(command.every((argument) => !/[\r\n]/u.test(argument))).toBe(true);
   });
 
-  it("accepts the native NVIDIA config writer's environment handle", () => {
+  type NativeConfig = {
+    model: { api_key: unknown };
+    providers: Record<string, { api_key: unknown }>;
+    custom_providers: Array<{ name: string; api_key: unknown }>;
+  };
+
+  function nativeConfig(): NativeConfig {
     const config: Record<string, unknown> = {};
     applyHermesManagedRoute(config, {
       baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
@@ -194,24 +201,80 @@ describe("Hermes inference switch command shape", () => {
       model: DEFAULT_CLOUD_MODEL,
       upstreamProvider: PUBLIC_NVIDIA_SWITCH_PROVIDER,
     });
-    const command = apiKeyShapeCommand(PUBLIC_NVIDIA_SWITCH_PROVIDER);
-    expect(command).toEqual([
-      "grep",
-      "-Eq",
-      NATIVE_NVIDIA_API_KEY_SHAPE_PATTERN,
+    return YAML.parse(YAML.stringify(config)) as NativeConfig;
+  }
+
+  function nativeCredentialProof(config: NativeConfig, duplicatePairs?: unknown): boolean {
+    const classify = `${NATIVE_NVIDIA_CREDENTIAL_ORACLE}
+import json, sys
+config = json.loads(sys.argv[1])
+if len(sys.argv) > 2:
+    config["model"] = unique_mapping_pairs(json.loads(sys.argv[2]))
+valid = native_credential_handles_valid(config)
+print("OK" if valid else "FAIL invalid native credential handles")
+sys.exit(0 if valid else 1)
+`;
+    const args = ["-c", classify, JSON.stringify(config)];
+    duplicatePairs && args.push(JSON.stringify(duplicatePairs));
+    const result = spawnSync("python3", args, { encoding: "utf8" });
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe(
+      result.status === 0 ? "OK" : "FAIL invalid native credential handles",
+    );
+    return result.status === 0;
+  }
+
+  it("accepts every native credential field from the actual config writer", () => {
+    expect(apiKeyShapeCommand(PUBLIC_NVIDIA_SWITCH_PROVIDER)).toEqual([
+      "/opt/hermes/.venv/bin/python",
+      "-I",
+      "-c",
+      `exec(${JSON.stringify(NATIVE_NVIDIA_CREDENTIAL_PROBE)})`,
       "/sandbox/.hermes/config.yaml",
     ]);
-    expect(matchesApiKeyShape(YAML.stringify(config), command[2])).toBe(true);
+    expect(NATIVE_NVIDIA_CREDENTIAL_PROBE).toContain(NATIVE_NVIDIA_CREDENTIAL_ORACLE);
+    expect(
+      apiKeyShapeCommand(PUBLIC_NVIDIA_SWITCH_PROVIDER).every(
+        (argument) => !/[\r\n]/u.test(argument),
+      ),
+    ).toBe(true);
+    expect(nativeCredentialProof(nativeConfig())).toBe(true);
   });
 
-  it.each([
-    "  api_key: nvapi-test-raw-key",
-    "  api_key: sk-OPENSHELL-PROXY-REWRITE",
-    "  api_key: ${OPENAI_API_KEY}",
-    "  api_key: ${NVIDIA_INFERENCE_API_KEY} trailing",
-    '  api_key: "${NVIDIA_INFERENCE_API_KEY}',
-  ])("rejects an invalid native NVIDIA config credential: %s", (line) => {
-    expect(matchesApiKeyShape(line, NATIVE_NVIDIA_API_KEY_SHAPE_PATTERN)).toBe(false);
+  it.each(
+    ["model", "provider", "custom"].flatMap((field) =>
+      [
+        "nvapi-test-raw-key",
+        "sk-OPENSHELL-PROXY-REWRITE",
+        "${OPENAI_API_KEY}",
+        "${NVIDIA_INFERENCE_API_KEY} trailing",
+        '"${NVIDIA_INFERENCE_API_KEY}',
+      ].map((value) => ({ field, value })),
+    ),
+  )("rejects a wrong native handle while the other fields remain valid: %j", ({ field, value }) => {
+    const config = nativeConfig();
+    const sources = {
+      model: config.model,
+      provider: config.providers[PUBLIC_NVIDIA_SWITCH_PROVIDER],
+      custom: config.custom_providers[0],
+    };
+    sources[field as keyof typeof sources].api_key = value;
+    expect(nativeCredentialProof(config)).toBe(false);
+  });
+
+  it("rejects a second native custom provider with a raw credential", () => {
+    const config = nativeConfig();
+    config.custom_providers.push({ name: PUBLIC_NVIDIA_SWITCH_PROVIDER, api_key: "raw-key" });
+    expect(nativeCredentialProof(config)).toBe(false);
+  });
+
+  it("rejects duplicate YAML credential keys before a valid value can hide a raw value", () => {
+    expect(
+      nativeCredentialProof(nativeConfig(), [
+        ["api_key", "raw-key"],
+        ["api_key", "${NVIDIA_INFERENCE_API_KEY}"],
+      ]),
+    ).toBe(false);
   });
 
   it("accepts only complete sk-prefixed YAML scalars", () => {

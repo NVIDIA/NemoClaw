@@ -1078,8 +1078,11 @@ The switch baseline uses the environment passed to installation: native NVIDIA
 uses the CLI cloud default, while compatible hosted and mock baselines retain
 their explicit models. Support tests own this deterministic model selection.
 The live lane still proves the installed route and all later switch behavior.
-Its credential probe checks the native NVIDIA environment handle or the
-compatible route's proxy sentinel according to the selected provider.
+Its native credential probe parses the sandbox YAML with the installed Hermes
+interpreter and requires the expected handle in all three managed-route fields.
+Duplicate YAML keys and duplicate native custom-provider entries fail the probe.
+Support tests execute the same credential oracle; the installed YAML parser
+belongs to the live image boundary. The compatible lane retains its scalar probe.
 The native switch must restart the gateway to refresh provider credentials;
 the compatible fixture preserves its gateway process. The live lane requires
 successful probes that each identify one gateway PID before comparing its lifecycle.
