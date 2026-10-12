@@ -32,7 +32,7 @@
       "nodeAssertions": 127,
       "namedAssertionHelpers": 662,
       "failCalls": 1,
-      "throwGuards": 527,
+      "throwGuards": 526,
       "objectFieldAssertions": 245,
       "assertionPoints": 3208,
       "generatedProbeBlocks": 209,

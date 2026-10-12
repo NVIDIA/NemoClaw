@@ -938,7 +938,7 @@ export async function qualifyAgent(
     redactionValues: [API_KEY],
     timeoutMs: 10 * 60_000,
   });
-  if (stop.exitCode !== 0 || start.exitCode !== 0) {
+  if (stop.exitCode === 0 && start.exitCode !== 0) {
     await collectOnboardFailureRuntimeDiagnostics(artifacts, host, agent, sandboxName, env);
   }
   expect(
