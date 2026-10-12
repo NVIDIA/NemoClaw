@@ -655,7 +655,9 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       dockerDriverGateway: ["docker", "podman"].includes(
         input.runtime.runtimeProvider?.identity.id ?? "",
       ),
-      gatewayDriver: input.runtime.runtimeProvider?.identity.id ?? "unsupported",
+      gatewayDriver: input.plan.portableLifecycle
+        ? "podman"
+        : (input.runtime.runtimeProvider?.identity.id ?? "unsupported"),
       origin: buildContext.origin,
       sourceReference: createPlan.createRequest.source.reference,
       sandboxName: input.launchInput.sandboxName,

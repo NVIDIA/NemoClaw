@@ -10,6 +10,7 @@ import {
   renderHermesPortableDockerfileBuildSettings,
   type HermesPortableDockerfileBuildSettings,
 } from "../dockerfile-patch";
+import { prebuildSandboxImageIfEligible } from "../sandbox-prebuild";
 import { HERMES_PORTABLE_BUILD_CONTEXT_FILES } from "./hermes-portable-build-context-files";
 
 const CONTEXT_SCHEMA_VERSION = 1 as const;
@@ -174,6 +175,33 @@ export interface HermesPortableStagedBuildContext {
   readonly buildContextPath: string;
   readonly dockerfilePath: string;
   assertCurrent(): void;
+}
+
+/** Adapt the receipt-owned context to the shared generated-image handoff. */
+export async function buildHermesPortableSandboxImage(
+  context: HermesPortableStagedBuildContext,
+  transactionId: string,
+  sandboxName: string,
+  podman: NonNullable<
+    Parameters<typeof prebuildSandboxImageIfEligible>[0]["portableReceipt"]
+  >["podman"],
+  imageAvailable: (reference: string) => Promise<boolean>,
+): Promise<string> {
+  const image = await prebuildSandboxImageIfEligible({
+    buildCtx: context.buildContextPath,
+    buildId: transactionId,
+    dockerDriverGateway: true,
+    gatewayDriver: "podman",
+    origin: "generated",
+    sourceReference: context.dockerfilePath,
+    sandboxName,
+    env: { ...process.env, NEMOCLAW_SANDBOX_PREBUILD: "1" },
+    portableReceipt: { transactionId, context, podman, imageAvailable },
+  });
+  if (!image.sourceReference || !image.imageId) {
+    throw new Error("Portable image build did not produce an image reference.");
+  }
+  return image.sourceReference;
 }
 
 type StagedEntry = Omit<

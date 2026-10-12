@@ -263,12 +263,97 @@ describe("sandbox BuildKit prebuild", () => {
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
-        gatewayDriver: "podman",
-        env: {},
+        gatewayDriver: "docker",
+        env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
         buildImage,
       }),
-    ).rejects.toThrow("refusing a docker build");
+    ).rejects.toThrow("refusing a podman build");
     expect(buildImage).not.toHaveBeenCalled();
+  });
+
+  it("builds and inspects a generated image in the native Podman engine", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn(async (_args, options) => {
+      expect(options.env.CONTAINER_HOST).toBeUndefined();
+      expect(options.env.CONTAINER_CONNECTION).toBeUndefined();
+      return 0;
+    });
+    const publishImage = vi.fn(async () => 0);
+    const log = vi.fn();
+    const result = await prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: BUILD_ID,
+      origin: "generated",
+      createArgs,
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      gatewayDriver: "podman",
+      env: {
+        NEMOCLAW_SANDBOX_PREBUILD: "1",
+        CONTAINER_HOST: "ssh://remote.invalid",
+        CONTAINER_CONNECTION: "remote",
+      },
+      buildImage,
+      publishImage,
+      inspectImageId: () => IMAGE_ID.slice("sha256:".length),
+      log,
+    });
+
+    expect(buildImage).toHaveBeenCalledWith(
+      [
+        "build",
+        "-t",
+        "nemoclaw-sandbox-local:alpha-1234567890",
+        "-f",
+        path.join(buildCtx, "Dockerfile"),
+        buildCtx,
+      ],
+      expect.any(Object),
+    );
+    expect(publishImage).not.toHaveBeenCalled();
+    expect(result.imageRef).toBe("nemoclaw-sandbox-local:alpha-1234567890");
+    expect(result.imageId).toBe(IMAGE_ID);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("rootless Podman"));
+  });
+
+  it("hands a receipt-bound Portable Hermes image to create only after Podman publication", async () => {
+    const { buildCtx, dockerfile } = createBuildContext();
+    const transactionId = "12345678-1234-1234-1234-123456789abc";
+    const events: string[] = [];
+    const assertCurrent = vi.fn(() => events.push("context"));
+    const podman = vi.fn((args: readonly string[], timeoutMs: number) => {
+      events.push(args[0] === "image" ? "inspect" : args[0]);
+      expect(timeoutMs).toBeGreaterThan(0);
+      return { status: 0, stdout: args[0] === "image" ? IMAGE_ID.slice(7) : "" };
+    });
+    const imageAvailable = vi.fn(async () => {
+      events.push("available");
+      return true;
+    });
+    const result = await prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: transactionId,
+      origin: "generated",
+      sourceReference: dockerfile,
+      sandboxName: "hermes",
+      dockerDriverGateway: true,
+      gatewayDriver: "podman",
+      env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
+      portableReceipt: {
+        transactionId,
+        context: { buildContextPath: buildCtx, dockerfilePath: dockerfile, assertCurrent },
+        podman,
+        imageAvailable,
+      },
+      log: () => {},
+    });
+
+    expect(events.indexOf("build")).toBeLessThan(events.indexOf("inspect"));
+    expect(events.indexOf("inspect")).toBeLessThan(events.indexOf("push"));
+    expect(events.indexOf("push")).toBeLessThan(events.indexOf("available"));
+    expect(assertCurrent).toHaveBeenCalled();
+    expect(result.sourceReference).toBe(`127.0.0.1:54321/nemoclaw-sandbox-local:${transactionId}`);
+    expect(result.imageId).toBe(IMAGE_ID);
   });
 
   it("rejects a Docker context that may select a different daemon", async () => {

@@ -45,6 +45,7 @@ const prebuildResult = vi.hoisted(() => ({
     imageId: string;
   },
 }));
+const prebuildInput = vi.hoisted(() => vi.fn());
 const releaseRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-release-root-"));
 fs.writeFileSync(path.join(releaseRoot, ".version"), "0.0.0\n");
 
@@ -74,10 +75,12 @@ vi.mock("../sandbox-prebuild", async (importOriginal) => {
     ...actual,
     prebuildSandboxImageIfEligible: (
       input: Parameters<typeof actual.prebuildSandboxImageIfEligible>[0],
-    ) =>
-      prebuildResult.value
+    ) => {
+      prebuildInput(input);
+      return prebuildResult.value
         ? Promise.resolve(prebuildResult.value)
-        : actual.prebuildSandboxImageIfEligible(input),
+        : actual.prebuildSandboxImageIfEligible(input);
+    },
   };
 });
 
@@ -981,10 +984,46 @@ describe("managed workload onboard orchestration", () => {
       expectedFromDockerfile: null,
       expectedStageCalls: 1,
       portableLifecycle: true,
+      providerId: "docker",
+      prebuild: {
+        createArgs: [],
+        sourceReference: "127.0.0.1:5000/nemoclaw-sandbox-local:openclaw-image-build",
+        imageRef: "127.0.0.1:5000/nemoclaw-sandbox-local:openclaw-image-build",
+        imageId: `sha256:${"a".repeat(64)}`,
+      },
+      assertLaunch: async (launch: ReturnType<typeof prepareOnboardSandboxWorkloadLaunch>) => {
+        const prepared = await launch;
+        expect(prebuildInput).toHaveBeenLastCalledWith(
+          expect.objectContaining({ gatewayDriver: "podman", dockerDriverGateway: true }),
+        );
+        expect(prepared.createRequestPlan.source.reference).toBe(
+          "127.0.0.1:5000/nemoclaw-sandbox-local:openclaw-image-build",
+        );
+      },
+    },
+    {
+      behavior: "selects native Podman for a generated source",
+      agentName: "openclaw",
+      fromDockerfile: path.join(process.cwd(), "Dockerfile"),
+      preparedBuildContext: null,
+      expectedFromDockerfile: null,
+      expectedStageCalls: 1,
       providerId: "podman",
-      prebuild: null,
-      assertLaunch: (launch: ReturnType<typeof prepareOnboardSandboxWorkloadLaunch>) =>
-        expect(launch).rejects.toThrow("could not inspect the staged context"),
+      prebuild: {
+        createArgs: [],
+        sourceReference: "nemoclaw-sandbox-local:openclaw-image-build",
+        imageRef: "nemoclaw-sandbox-local:openclaw-image-build",
+        imageId: `sha256:${"a".repeat(64)}`,
+      },
+      assertLaunch: async (launch: ReturnType<typeof prepareOnboardSandboxWorkloadLaunch>) => {
+        const prepared = await launch;
+        expect(prebuildInput).toHaveBeenLastCalledWith(
+          expect.objectContaining({ gatewayDriver: "podman", dockerDriverGateway: true }),
+        );
+        expect(prepared.createRequestPlan.source.reference).toBe(
+          "nemoclaw-sandbox-local:openclaw-image-build",
+        );
+      },
     },
     {
       behavior: "passes the built generated image to the typed create request",
@@ -1013,7 +1052,7 @@ describe("managed workload onboard orchestration", () => {
     prebuildResult.value = testCase.prebuild;
     vi.stubEnv(
       "NEMOCLAW_EXPERIMENTAL_PROFILE",
-      testCase.providerId === "podman" ? "portable" : "default",
+      testCase.portableLifecycle === true ? "portable" : "default",
     );
     vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
     const resolutionMetadata = { key: "published-agent-base" };

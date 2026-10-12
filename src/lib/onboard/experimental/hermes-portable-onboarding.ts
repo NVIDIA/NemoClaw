@@ -113,10 +113,10 @@ import {
   type HermesPortableReceiptSnapshot,
 } from "./hermes-portable-receipt";
 import {
+  buildHermesPortableSandboxImage,
   createHermesPortableBuildContextPlan,
   type HermesPortableBuildContextSettings,
   type HermesPortableBuildContextPlan,
-  type HermesPortableStagedBuildContext,
 } from "./hermes-portable-build-context";
 
 export type HermesPortableSandboxObservation =
@@ -622,9 +622,6 @@ function rewriteHermesPortableCreateSourceRequest(
   });
 }
 
-const PORTABLE_IMAGE_BUILD_TIMEOUT_MS = 20 * 60_000;
-const PORTABLE_IMAGE_TRANSFER_TIMEOUT_MS = 5 * 60_000;
-
 async function defaultPortableImageAvailable(reference: string): Promise<boolean> {
   const prefix = `${PORTABLE_LOCAL_REGISTRY}/${LOCAL_SANDBOX_IMAGE_REPO}:`;
   if (!reference.startsWith(prefix)) return false;
@@ -644,52 +641,6 @@ async function defaultPortableImageAvailable(reference: string): Promise<boolean
   } catch {
     return false;
   }
-}
-
-/** Build from the transaction's verified context in the selected Podman store. */
-async function buildHermesPortableSandboxImage(
-  context: HermesPortableStagedBuildContext,
-  transactionId: string,
-  container: HermesPortableContainerDeps,
-  imageAvailable: (reference: string) => Promise<boolean>,
-): Promise<string> {
-  if (!/^[a-f0-9-]{36}$/u.test(transactionId)) {
-    fail("image build requires the current transaction identity");
-  }
-  const reference = `${PORTABLE_LOCAL_REGISTRY}/${LOCAL_SANDBOX_IMAGE_REPO}:${transactionId}`;
-  context.assertCurrent();
-  console.log("  Building sandbox image with rootless Podman...");
-  const build = container.podman(
-    ["build", "--quiet", "-t", reference, "-f", context.dockerfilePath, context.buildContextPath],
-    PORTABLE_IMAGE_BUILD_TIMEOUT_MS,
-  );
-  if (build.status !== 0 || build.error) {
-    fail(
-      "Podman image build failed; check the generated Dockerfile and selected engine before retrying",
-    );
-  }
-  context.assertCurrent();
-  const inspection = container.podman(
-    ["image", "inspect", "--format", "{{.Id}}", reference],
-    5_000,
-  );
-  if (inspection.status !== 0 || !/^(?:sha256:)?[a-f0-9]{64}$/u.test(inspection.stdout.trim())) {
-    fail("built image is unavailable in the selected Podman store");
-  }
-  console.log(`  Podman build completed for ${reference}.`);
-  const publication = container.podman(
-    ["push", "--quiet", reference],
-    PORTABLE_IMAGE_TRANSFER_TIMEOUT_MS,
-  );
-  if (publication.status !== 0 || publication.error) {
-    fail("Podman image publication to the managed local registry failed; sandbox creation stopped");
-  }
-  if (!(await imageAvailable(reference))) {
-    fail("built image is not visible in the managed local registry; sandbox creation stopped");
-  }
-  context.assertCurrent();
-  console.log(`  Sandbox image ${reference} is available to the local Podman gateway.`);
-  return reference;
 }
 
 function escapedRegExp(value: string): string {
@@ -1523,7 +1474,8 @@ export async function runHermesPortableOnboardingTransaction<T>(
         const imageReference = await buildHermesPortableSandboxImage(
           buildContext,
           snapshot.receipt.transactionId,
-          containerDeps,
+          snapshot.receipt.sandboxName,
+          containerDeps.podman,
           deps.imageAvailable ?? defaultPortableImageAvailable,
         );
         createResult = await deps.createSandbox(
