@@ -479,7 +479,7 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
 /// A full deployment on a real cluster through the public SDK: the managed
 /// gateway, then an agent sandbox from an image built from this checkout.
 /// Apply stops at the agent's health check, which the pinned Fabric reports
-/// as unsupported (#12443); export must still recover the authored document,
+/// as unsupported (#13031); export must still recover the authored document,
 /// and destroy then removes everything but the gateway's storage.
 ///
 /// `cargo ci live-kind` also provides:

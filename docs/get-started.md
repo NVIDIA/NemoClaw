@@ -113,7 +113,9 @@ nemoclaw apply -o json --progress off --state-dir .local/first-deployment/state 
 ```
 
 Apply computes its own checked plan, creates the deployment resources, and checks agent configuration and readiness.
-Expect exit status zero and JSON with `outcome: "succeeded"`.
+With the pinned Fabric, apply exits with status 1 at `data.fabric_sandbox_readiness.assistant` after creating every resource: Fabric has no health API yet, so readiness cannot be established ([#13031](https://github.com/NVIDIA/NemoClaw/issues/13031)).
+Until that is fixed, this revision cannot complete a first deployment.
+Export still works; whether the agent then answers requests has not been verified.
 Apply does not request a model or agent response; verify a native conversation in the next step.
 On failure, keep the YAML, bundle, and state directory and follow [troubleshooting](troubleshooting.md).
 
