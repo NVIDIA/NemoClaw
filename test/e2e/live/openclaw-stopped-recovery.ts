@@ -34,7 +34,7 @@ export async function proveStoppedDockerAgentRecovery(
   }
   assert(sandboxName.startsWith("e2e-"), "Container disruption requires a test-owned sandbox name");
   const gateway = process.env.OPENSHELL_GATEWAY ?? "nemoclaw";
-  const env = buildAvailabilityProbeEnv();
+  const env = { ...buildAvailabilityProbeEnv(), OPENSHELL_GATEWAY: gateway };
   let observation = 0;
   const readSource = async (): Promise<{ id: string; phase: string }> => {
     const result = await sandbox.openshell(["sandbox", "list", "-g", gateway, "-o", "json"], {

@@ -35,6 +35,7 @@ export type ReviewedNpmCacheSeedRequest = Readonly<{
   cacheDirectory: string;
   lockfilePath: string;
   maximumArchiveBytes?: number;
+  omitBundledVersions?: boolean;
   packumentsOnly?: boolean;
   reviewedPackagesWithoutIntegrity?: readonly ReviewedNpmPackageWithoutIntegrity[];
   reviewedRegistryPackages?: readonly ReviewedNpmArchiveRequest[];
@@ -325,6 +326,12 @@ export async function seedReviewedNpmCache(
     }
 
     if (!request.tarballsOnly && selectedPackument) {
+      const versions = packumentVersions.get(entry.name) ?? {};
+      packumentVersions.set(entry.name, versions);
+      // npm ci needs bundled metadata to validate the locked parent graph.
+      // Fresh plugin installs must only resolve versions with their own reviewed
+      // archives. Publish even an empty packument to replace earlier metadata.
+      if (request.omitBundledVersions && entry.inBundle) continue;
       const version = {
         ...(entry.bundleDependencies ? { bundleDependencies: entry.bundleDependencies } : {}),
         ...(entry.dependencies ? { dependencies: entry.dependencies } : {}),
@@ -338,7 +345,6 @@ export async function seedReviewedNpmCache(
         ...(entry.peerDependenciesMeta ? { peerDependenciesMeta: entry.peerDependenciesMeta } : {}),
         version: entry.version,
       };
-      const versions = packumentVersions.get(entry.name) ?? {};
       const existing = versions[entry.version] as
         | Readonly<{ dist?: Readonly<Record<string, unknown>> }>
         | undefined;
@@ -400,9 +406,14 @@ function parseCli(args: readonly string[]): ReviewedNpmCacheSeedRequest {
   let libc = "";
   let os = "";
   let packumentsOnly = false;
+  let omitBundledVersions = false;
   const archives = new Map<string, string>();
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
+    if (flag === "--omit-bundled-versions") {
+      omitBundledVersions = true;
+      continue;
+    }
     if (flag === "--packuments-only") {
       packumentsOnly = true;
       continue;
@@ -464,6 +475,7 @@ function parseCli(args: readonly string[]): ReviewedNpmCacheSeedRequest {
     archives: selectedArchives,
     cacheDirectory,
     lockfilePath,
+    ...(omitBundledVersions ? { omitBundledVersions: true } : {}),
     ...(packumentsOnly ? { packumentsOnly: true } : {}),
     registryOrigin,
     ...(archiveDirectory ? { selectedPackageSpecs: new Set(selectedArchives.keys()) } : {}),

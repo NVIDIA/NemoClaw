@@ -13,6 +13,8 @@ import {
   describeMessagingBuildPhase,
   type MessagingBuildPhase,
   readMessagingBuildPlanFromEnv,
+  reviewedOpenClawPluginIntegrityByPackageSpec,
+  reviewedOpenClawPluginTarballUrlByPackageSpec,
 } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts";
 import { withLegacyMessagingPlanEnvDirect } from "../../messaging-plan-test-helper";
@@ -42,6 +44,20 @@ vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOrigin
 beforeEach(() => {
   vi.clearAllMocks();
 });
+
+it.each(["discord", "googlechat", "msteams", "whatsapp"])(
+  "resolves the reviewed %s archive for an installed OpenClaw 2026.9.2 sandbox",
+  (channel) => {
+    const env = { OPENCLAW_VERSION: "2026.9.2" };
+    const spec = `@openclaw/${channel}@2026.9.2`;
+    expect(reviewedOpenClawPluginIntegrityByPackageSpec(env)[spec]).toMatch(
+      /^sha512-[A-Za-z0-9+/]+=*$/u,
+    );
+    expect(reviewedOpenClawPluginTarballUrlByPackageSpec(env)[spec]).toBe(
+      `https://registry.npmjs.org/@openclaw/${channel}/-/${channel}-2026.9.2.tgz`,
+    );
+  },
+);
 
 const SCRIPT_PATH = path.join(
   import.meta.dirname,

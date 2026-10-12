@@ -192,7 +192,9 @@ async function resolveOpenClawPostRestoreWindow(
     `OpenClaw gateway-down maintenance window: ${maintenanceWindow.ok ? "verified" : maintenanceWindow.stage}`,
   );
   if (maintenanceWindow.ok) return maintenanceWindow.window;
-  console.log(`  ${D}OpenClaw could not enter its gateway-down maintenance window${R}`);
+  console.log(
+    `  ${D}OpenClaw could not enter its gateway-down maintenance window (${maintenanceWindow.stage})${R}`,
+  );
   bail("OpenClaw could not enter its gateway-down maintenance window during rebuild.");
   return null;
 }

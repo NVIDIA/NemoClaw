@@ -1,14 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { settleOrdinaryOpenClawPairing } from "../../../../src/lib/onboard/machine/finalization-deps";
 import { createCanonicalCliFixture, runOpenclaw } from "./auto-pair-settlement-fixture";
+import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
 
 const START_SCRIPT = path.join(
   import.meta.dirname,
@@ -66,6 +69,74 @@ type SettlementDeps = NonNullable<Parameters<typeof settleOrdinaryOpenClawPairin
 type RaceTiming = "watcher-first" | "host-first";
 
 vi.setConfig({ maxConcurrency: 4 });
+
+describe("auto-pair startup ordering", () => {
+  const waitForStartup = extractShellFunctionFromSource(
+    fs.readFileSync(START_SCRIPT, "utf8"),
+    "wait_for_openclaw_auto_pair_startup",
+  );
+
+  it("waits through startup and redirects before admitting the pairing CLI", async () => {
+    const requests: string[] = [];
+    const statuses = [503, 302, 200];
+    const server = createServer((request, response) => {
+      requests.push(request.url ?? "");
+      response.writeHead(statuses[requests.length - 1] ?? 500);
+      response.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      assert(address && typeof address !== "string", "Expected a TCP listener");
+      const result = await runOpenclaw(
+        "bash",
+        [
+          "-c",
+          [
+            "set -eu",
+            waitForStartup,
+            "openclaw_supervised_pid_is_live() { return 0; }",
+            `GATEWAY_PID=1; GATEWAY_PID_START_IDENTITY=1; _DASHBOARD_PORT=${address.port}`,
+            "wait_for_openclaw_auto_pair_startup && printf 'pairing-admitted'",
+          ].join("\n"),
+        ],
+        { encoding: "utf8", timeout: 8000 },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("pairing-admitted");
+      expect(requests).toEqual(["/startupz", "/startupz", "/startupz"]);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it.each([
+    ["gateway-exited", 1, ""],
+    ["deadline", 0, "[auto-pair] gateway startup deadline reached\n"],
+  ] as const)("refuses pairing when %s", async (_failure, livenessExit, stderr) => {
+    const result = await runOpenclaw(
+      "bash",
+      [
+        "-c",
+        [
+          "set -eu",
+          waitForStartup,
+          `openclaw_supervised_pid_is_live() { return ${livenessExit}; }`,
+          "curl() { printf '503'; }",
+          "sleep() { SECONDS=$((SECONDS + 331)); }",
+          "GATEWAY_PID=1; GATEWAY_PID_START_IDENTITY=1; _DASHBOARD_PORT=18789",
+          "wait_for_openclaw_auto_pair_startup && printf 'pairing-admitted'",
+        ].join("\n"),
+      ],
+      { encoding: "utf8", timeout: 3000 },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(stderr);
+  });
+});
 
 describe("runOpenclaw", () => {
   it("preserves signal termination separately from exit status", async () => {

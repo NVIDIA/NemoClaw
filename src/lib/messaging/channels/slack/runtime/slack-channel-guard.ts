@@ -172,7 +172,7 @@
 
   function isOpenClawSlackFile(filename) {
     var normalized = String(filename || "").replace(/\\/g, "/");
-    return normalized.indexOf("/@openclaw/slack/") !== -1 && normalized.endsWith(".js");
+    return normalized.indexOf("/@openclaw/slack/") !== -1 && /\.m?js$/.test(normalized);
   }
 
   function hasNativeChannelDeniedMentionFeedback(source) {

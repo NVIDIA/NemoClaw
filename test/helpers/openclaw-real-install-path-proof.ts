@@ -19,7 +19,7 @@ function fail(label: string, detail: string): never {
 export function runRealOpenClawInstallPathProof(options: InstallPathProofOptions): void {
   const candidates = fs
     .readdirSync(options.dist)
-    .filter((name) => /^install-package-dir-.+[.]js$/u.test(name))
+    .filter((name) => /^install-package-dir-.+[.]m?js$/u.test(name))
     .map((name) => path.join(options.dist, name))
     .filter((file) =>
       fs.readFileSync(file, "utf8").includes("async function installPackageDir(params)"),
@@ -32,7 +32,7 @@ export function runRealOpenClawInstallPathProof(options: InstallPathProofOptions
   exportName || fail("real install-path runtime", "installPackageDir export is missing");
   const targetCandidates = fs
     .readdirSync(options.dist)
-    .filter((name) => /^install-target-.+[.]js$/u.test(name))
+    .filter((name) => /^install-target-.+[.]m?js$/u.test(name))
     .map((name) => path.join(options.dist, name))
     .filter((file) =>
       fs

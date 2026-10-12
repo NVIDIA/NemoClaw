@@ -93,6 +93,11 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "8754faf5ce97000259b81e36ec447e9fd13051260a8be1f5018e5db11d6414b9",
   // Reviewed Tavily preinstall with archive verification before native installation.
   "51dcdf8ba66279d7c1bee2b14d45fcd0ebf7ce1a8284241c9302b479ca2602a0",
+  // Reviewed separate disposable WeChat and official-channel caches for both
+  // selected and union installs. The messaging applier preserves the dashboard binding.
+  "b8f2bac1bdf5f0d2f9cfdc1d4b0d4c74f7e7d7923cdd810c78cec39a6c0f9261",
+  // The same Tavily-aware installation with reviewed 2026.9.5 pins.
+  "b1d8e91af9b2f10986a27a6bd4c3fc4dda19e22a4a8c44460a0685331a59a1fe",
   // Reviewed local NemoClaw plugin installation with explicit capability
   // acceptance; the following inspect and pruning steps are unchanged.
   "464abc5ff104c8bdeae57e6fdb775b7bda7dd756cba0dd1a7752b7d03e8f8372",
@@ -128,6 +133,9 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // NEMOCLAW_DARWIN_VM_COMPAT chmod for the OpenClaw and NemoClaw state trees;
   // it changes modes only and preserves the generated dashboard binding.
   "295282a4f06106c93df72b4e035f980a2fc0e8a7dcbf6d270e102d7c75be27fb",
+  // Root-owned explicit-proxy endpoint authority; this exact instruction writes
+  // only openclaw-proxy-url and preserves the generated dashboard config.
+  "db9871787f8503167e34995ffe2e2c903d22fbde7007d8e529d1618c2bd61561",
 ]);
 
 function instructionSha256(text: string): string {

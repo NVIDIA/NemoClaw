@@ -1,22 +1,30 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Descriptor-pinned adapter for OpenClaw's canonical pairing-state database."""
+"""Descriptor-pinned reads of OpenClaw state for pairing and gateway ownership."""
 
 import json
 import os
+import socket
 import sqlite3
 import stat
+import time
 import urllib.parse
 
 
 ADAPTER_VERSION = 1
-OPENCLAW_STATE_SCHEMA_VERSION = 15
+# OpenClaw 2026.9.2 and 2026.9.5 retain the same canonical device tables.
+# Keep an explicit reviewed set; unknown schemas must still fail closed.
+OPENCLAW_STATE_SCHEMA_VERSIONS = (15, 17)
 MAX_SQLITE_BYTES = 1024 * 1024 * 1024
 
 
 class OpenClawPairingStateRetryableError(OSError):
     """The canonical snapshot changed or is not ready for a bounded read."""
+
+
+class OpenClawPairingStateBusyError(OpenClawPairingStateRetryableError):
+    """SQLite reported a transient lock; the database identity is unchanged."""
 
 
 def _directory_flags():
@@ -351,7 +359,9 @@ def _paired_record(row):
     return record
 
 
-def _read_records(connection, *, local_device_only=False):
+def _read_records(connection, schema_version, *, local_device_only=False):
+    if schema_version not in OPENCLAW_STATE_SCHEMA_VERSIONS:
+        raise ValueError("unsupported canonical device state schema")
     identities = connection.execute(
         "SELECT identity_key, device_id, public_key_pem, private_key_pem, "
         "created_at_ms, updated_at_ms "
@@ -408,7 +418,7 @@ def _read_records(connection, *, local_device_only=False):
         raise ValueError("canonical device state contains duplicate identities")
     return {
         "adapterVersion": ADAPTER_VERSION,
-        "schemaVersion": OPENCLAW_STATE_SCHEMA_VERSION,
+        "schemaVersion": schema_version,
         "identity": identity,
         "identityTimestamps": {
             "createdAtMs": identity_row["created_at_ms"],
@@ -420,16 +430,17 @@ def _read_records(connection, *, local_device_only=False):
     }
 
 
-def read_openclaw_pairing_state(
+def _read_openclaw_state(
     state_dir,
+    read_records,
     *,
     timeout=0.25,
     state_fd=None,
     sqlite_state_fd=None,
     database_fd=None,
-    local_device_only=False,
+    require_current_user=False,
 ):
-    """Read one canonical snapshot, optionally through caller-owned base descriptors."""
+    """Read a domain snapshot through one shared filesystem and SQLite boundary."""
 
     own_state_fd = state_fd is None
     own_sqlite_state_fd = sqlite_state_fd is None
@@ -458,6 +469,8 @@ def read_openclaw_pairing_state(
                 "openclaw.sqlite", _file_flags(), dir_fd=sqlite_state_fd
             )
         database_metadata = sqlite_database_metadata(database_fd)
+        if require_current_user and database_metadata[2] != os.geteuid():
+            raise OSError("OpenClaw owner lease database identity is unsafe")
         if not sqlite_snapshot_is_current(
             state_dir,
             state_fd,
@@ -502,9 +515,15 @@ def read_openclaw_pairing_state(
                 _require_sqlite_vfs_descriptor(
                     after_schema_read, descriptor_baseline, wal_descriptors[2], 1
                 )
-        if schema_version is None or schema_version[0] != OPENCLAW_STATE_SCHEMA_VERSION:
-            raise ValueError("unsupported canonical device state schema")
-        records = _read_records(connection, local_device_only=local_device_only)
+        records = read_records(
+            connection, None if schema_version is None else schema_version[0]
+        )
+        # The lease observer also requires SQLite's descriptor to remain pinned
+        # after its domain query, including the no-owner result.
+        after_records, _ = _regular_open_file_identity_counts()
+        _require_sqlite_vfs_descriptor(
+            after_records, descriptor_baseline, database_fd, 1
+        )
         if wal_descriptors is None:
             late_wal_descriptors = _open_wal_descriptors(
                 state_dir, state_fd, sqlite_state_fd
@@ -547,7 +566,7 @@ def read_openclaw_pairing_state(
         return records, database_metadata
     except sqlite3.OperationalError as error:
         if "locked" in str(error).lower() or "busy" in str(error).lower():
-            raise OpenClawPairingStateRetryableError(
+            raise OpenClawPairingStateBusyError(
                 "canonical pairing-state database is busy"
             ) from error
         raise
@@ -563,3 +582,82 @@ def read_openclaw_pairing_state(
             os.close(sqlite_state_fd)
         if own_state_fd and state_fd is not None:
             os.close(state_fd)
+
+
+def read_openclaw_pairing_state(
+    state_dir,
+    *,
+    timeout=0.25,
+    state_fd=None,
+    sqlite_state_fd=None,
+    database_fd=None,
+    local_device_only=False,
+):
+    """Read one pairing snapshot, optionally through caller-owned descriptors."""
+
+    return _read_openclaw_state(
+        state_dir,
+        lambda connection, schema: _read_records(
+            connection, schema, local_device_only=local_device_only
+        ),
+        timeout=timeout,
+        state_fd=state_fd,
+        sqlite_state_fd=sqlite_state_fd,
+        database_fd=database_fd,
+    )
+
+
+def _read_owner_lease(connection, _schema_version):
+    if not connection.execute(
+        "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='state_leases'"
+    ).fetchone():
+        return None
+    return connection.execute(
+        "SELECT expires_at, payload_json FROM state_leases "
+        "WHERE scope='gateway-owner' AND lease_key='global'"
+    ).fetchone()
+
+
+def wait_for_openclaw_owner_lease(state_dir):
+    """Observe native expiry without changing the lease or releasing startup hold."""
+
+    deadline = time.monotonic() + 300
+    while True:
+        try:
+            row, _metadata = _read_openclaw_state(
+                state_dir, _read_owner_lease, timeout=1, require_current_user=True
+            )
+        except FileNotFoundError:
+            # No database has been pinned. A disappearing pinned entry is a
+            # retryable snapshot failure inside the shared reader, not absence.
+            return
+        except OpenClawPairingStateBusyError as error:
+            # The retiring owner may still hold the database while it shuts down.
+            # Replacement and removal races stay immediate failures.
+            budget = deadline - time.monotonic()
+            if budget <= 0:
+                raise RuntimeError(
+                    "OpenClaw owner lease state stayed busy through its native expiry window"
+                ) from error
+            time.sleep(min(1, budget))
+            continue
+        else:
+            if row is None:
+                return
+            expires, payload = row
+            owner = json.loads(payload)["owner"]
+            if not isinstance(owner.get("host"), str) or not owner["host"]:
+                raise RuntimeError("OpenClaw owner lease has no host identity")
+            if owner["host"] == socket.gethostname():
+                return
+            if type(expires) is not int:
+                raise RuntimeError("OpenClaw owner lease has no bounded expiry")
+            remaining = (expires - time.time() * 1000) / 1000
+            if remaining <= 0:
+                return
+        budget = deadline - time.monotonic()
+        if budget <= 0:
+            raise RuntimeError(
+                "OpenClaw owner lease remained active through its native expiry window"
+            )
+        time.sleep(min(1, remaining, budget))

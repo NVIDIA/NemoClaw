@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
+import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
 import {
   withPodmanOwnerDiagnostic,
   captureBoundedPodmanOwnerDiagnostic,
@@ -307,6 +308,14 @@ test(
         ),
       (environment, phase) => captureBoundedPodmanOwnerDiagnostic(host, environment, phase),
     );
+    await captureOpenClawOnboardFailure(repair, sandbox, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "phase-2-resume-repair",
+      env: repairEnv,
+      redactionValues: [EXTRA_PROVIDER_TOKEN, "dummy"],
+      runtime: runtimeProvider,
+      host,
+    });
     expect(repair.exitCode, resultText(repair)).toBe(0);
     expect(resultText(repair)).toContain("[resume] Skipping preflight (cached)");
     expect(resultText(repair)).toContain("Recorded sandbox state is unavailable; recreating it");

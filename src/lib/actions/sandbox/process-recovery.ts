@@ -1616,6 +1616,7 @@ export async function waitForStartedNativeGatewayProcess(
   gatewayName: string,
   options: {
     environment?: NodeJS.ProcessEnv;
+    defaultTimeoutSeconds?: number;
     probe?: typeof isSandboxGatewayRunningForStatus;
     delay?: (delayMs: number) => Promise<void>;
     now?: () => number;
@@ -1636,7 +1637,11 @@ export async function waitForStartedNativeGatewayProcess(
   const now = options.now ?? (() => performance.now());
   const deadline =
     now() +
-    resolveGatewayRecoveryWaitSeconds(undefined, options.environment ?? process.env) * 1_000;
+    resolveGatewayRecoveryWaitSeconds(
+      options.defaultTimeoutSeconds ?? 330,
+      options.environment ?? process.env,
+    ) *
+      1_000;
   while (now() < deadline) {
     const remaining = Math.floor(deadline - now());
     if (remaining < 1) break;
@@ -1644,7 +1649,8 @@ export async function waitForStartedNativeGatewayProcess(
       startup: { timeoutMs: Math.min(DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, remaining) },
     });
     if (now() >= deadline) break;
-    if (running !== false) return running;
+    // A timed-out health probe is unavailable evidence, not completed startup.
+    if (running === true) return true;
     const delayMs = Math.min(NATIVE_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS, deadline - now());
     log(`  Native agent gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
     await delay(delayMs);

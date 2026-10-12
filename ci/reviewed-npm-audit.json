@@ -39,58 +39,10 @@
   "artifactDirectory": "coverage/reviewed-npm-audit",
   "archivePackages": [
     {
-      "label": "OpenClaw 2026.9.2",
-      "packageSpec": "openclaw@2026.9.2",
-      "integrity": "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==",
-      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz"
-    },
-    {
       "label": "Codex ACP 0.11.1",
       "packageSpec": "@zed-industries/codex-acp@0.11.1",
       "integrity": "sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLrSIzjgvdcQvAhaZviWj7XPhk4UIdIb0OoA+Lrls824uiQ==",
       "tarballUrl": "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz"
-    },
-    {
-      "label": "OpenClaw diagnostics OTEL 2026.9.2",
-      "packageSpec": "@openclaw/diagnostics-otel@2026.9.2",
-      "integrity": "sha512-yilG4G1Fd1yvW65Qy+qNPR+x6tBjwVmTWv+7BULoN70HY3BJqt9YVOL42PvWXHYpaTs/LwUlisqxjbJRfYyi9A==",
-      "tarballUrl": "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.2.tgz"
-    },
-    {
-      "label": "OpenClaw Brave plugin 2026.9.2",
-      "packageSpec": "@openclaw/brave-plugin@2026.9.2",
-      "integrity": "sha512-6416aPlfnAKlu8IBrrjgfoiss/10xB32ywFwnIf/fkVMQE61qsmzA/qxUniQuDwOB6EBFNEkNs54DhIT7g3UVg==",
-      "tarballUrl": "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.2.tgz"
-    },
-    {
-      "label": "OpenClaw Tavily plugin 2026.9.2",
-      "packageSpec": "@openclaw/tavily-plugin@2026.9.2",
-      "integrity": "sha512-FYK2e7aXagwcGiTRQfidS3PThIfJkAQoqYEtlkadiGxmgeChYY71YLeD6nQAHZKHmTAOw9U7njDxMBvYyXPf5w==",
-      "tarballUrl": "https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.2.tgz"
-    },
-    {
-      "label": "OpenClaw Discord plugin 2026.9.2",
-      "packageSpec": "@openclaw/discord@2026.9.2",
-      "integrity": "sha512-j+fSHxbXA+DSxwbL8SvtsDNL6tvBX4+RmH+EerVW6dCbeIwSconXj6J/+AaN/mhzZI4g0jPPj30TUhdCRRbc2w==",
-      "tarballUrl": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.2.tgz"
-    },
-    {
-      "label": "OpenClaw Slack plugin 2026.9.2",
-      "packageSpec": "@openclaw/slack@2026.9.2",
-      "integrity": "sha512-6M1M6gL3iXahpalNsYAUuA+wvnV8lbMlNNH2ToegFvaSJcIll4S9kFa5mv3GFoquhMRHQjEjnkXPHP/pXwaWcA==",
-      "tarballUrl": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.2.tgz"
-    },
-    {
-      "label": "OpenClaw WhatsApp plugin 2026.9.2",
-      "packageSpec": "@openclaw/whatsapp@2026.9.2",
-      "integrity": "sha512-vOWQIk7FpLHrhMmO+FaLi+pnFB82hiWNJJFJONkBuofERh2SMEz7EMut/vECFFEjFnmOZSVlYfRlxhbNkd/R6g==",
-      "tarballUrl": "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.9.2.tgz"
-    },
-    {
-      "label": "OpenClaw Microsoft Teams plugin 2026.9.2",
-      "packageSpec": "@openclaw/msteams@2026.9.2",
-      "integrity": "sha512-py5KvGOTcd0qGGRf3EuqbH2jO+kZtvMquDMjwGkT6x9F4XZtaCBL/lmLitb4hDb5xaIpPP8ZLIbT8GIMXQr3Og==",
-      "tarballUrl": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.9.2.tgz"
     },
     {
       "label": "Tencent WeChat plugin 2.4.9",
@@ -156,19 +108,12 @@
   "lockedGraphs": [
     {
       "id": "openclaw-runtime",
-      "label": "OpenClaw 2026.9.2 locked runtime graph",
-      "packageSpec": "openclaw@2026.9.2",
-      "integrity": "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==",
-      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
+      "label": "OpenClaw 2026.9.5 locked runtime graph",
+      "packageSpec": "openclaw@2026.9.5",
+      "integrity": "sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w==",
+      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.5.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "b44c7f475fe36a378ebc078dbf068bd225f8470002834ce1308872049213b633",
-      "replacement": {
-        "label": "OpenClaw 2026.9.5 locked runtime graph",
-        "packageSpec": "openclaw@2026.9.5",
-        "integrity": "sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w==",
-        "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.5.tgz",
-        "lockSha256": "b73ebd8bb5e15cfcf080a21beaca0dce50cbca903988b20be74d49c9498baeb7"
-      }
+      "lockSha256": "b73ebd8bb5e15cfcf080a21beaca0dce50cbca903988b20be74d49c9498baeb7"
     },
     {
       "id": "mcporter-runtime",

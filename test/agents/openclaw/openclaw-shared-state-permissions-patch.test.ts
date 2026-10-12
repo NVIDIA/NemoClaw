@@ -505,6 +505,53 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
     }
   });
 
+  it.each([undefined, "1"])(
+    "preserves 2026.9.5 native permission checks with shared marker %s",
+    async (marker) => {
+      const fixture = makeFixture();
+      try {
+        const native = UPSTREAM_AGENT_DB_SOURCE.replace(
+          "chmodSync(dir, OPENCLAW_AGENT_DB_DIR_MODE)",
+          "ensureMode(dir, OPENCLAW_AGENT_DB_DIR_MODE)",
+        ).replace(
+          "\tfor (const candidate of resolveSqliteDatabaseFilePaths(pathname)) if (existsSync(candidate)) chmodSync(candidate, OPENCLAW_AGENT_DB_FILE_MODE);",
+          [
+            "\tfor (const candidate of resolveSqliteDatabaseFilePaths(pathname)) try {",
+            "\t\tensureMode(candidate, OPENCLAW_AGENT_DB_FILE_MODE);",
+            "\t} catch (error) {",
+            '\t\tif (error.code !== "ENOENT") throw error;',
+            "\t}",
+          ].join("\n"),
+        );
+        const file = fixture.agentFiles[0].replace(/\.js$/, ".mjs");
+        fs.renameSync(fixture.agentFiles[0], file);
+        fs.writeFileSync(file, native);
+        patchOpenClawSharedStatePermissions(fixture.dist);
+        expect(patchOpenClawSharedStatePermissions(fixture.dist).status).toBe("already-patched");
+        const runtime = await importAgentFixture(file);
+        const agentDir = path.join(fixture.root, "agent-state");
+        const database = path.join(agentDir, "main.sqlite");
+        const options = {
+          agentId: "main",
+          env: {
+            OPENCLAW_AGENT_DIR: agentDir,
+            ...(marker === undefined ? {} : { NEMOCLAW_OPENCLAW_SHARED_STATE: marker }),
+          },
+        };
+        runtime.ensureOpenClawAgentDatabasePermissions(database, options);
+        fs.writeFileSync(database, "", { mode: 0o644 });
+        runtime.ensureOpenClawAgentDatabasePermissions(database, options);
+        expect(mode(agentDir)).toBe(0o700);
+        expect(mode(database)).toBe(0o600);
+        // Missing WAL/SHM/journal files remain tolerated on repeated calls.
+        runtime.ensureOpenClawAgentDatabasePermissions(database, options);
+        expect(mode(database)).toBe(0o600);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("keeps the gateway per-agent database owner-only", async () => {
     const fixture = makeFixture();
     try {

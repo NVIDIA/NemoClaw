@@ -295,7 +295,26 @@ const PATCHED_AGENT_PERMISSION_HELPER_20260901 = [
   "}",
 ].join("\n");
 
+// OpenClaw 2026.9.5 now skips redundant chmod calls natively. Preserve its
+// Windows handling and ENOENT behavior while retaining our explicit mode contract.
+const UPSTREAM_AGENT_PERMISSION_HELPER_20260905 = UPSTREAM_AGENT_PERMISSION_HELPER_20260901.replace(
+  "chmodSync(dir, OPENCLAW_AGENT_DB_DIR_MODE)",
+  "ensureMode(dir, OPENCLAW_AGENT_DB_DIR_MODE)",
+).replace(
+  "chmodSync(candidate, OPENCLAW_AGENT_DB_FILE_MODE)",
+  "ensureMode(candidate, OPENCLAW_AGENT_DB_FILE_MODE)",
+);
+const PATCHED_AGENT_PERMISSION_HELPER_20260905 =
+  PATCHED_AGENT_PERMISSION_HELPER_20260901.replaceAll(
+    "!nemoclawGroupSharedState ||",
+    'process.platform === "win32" ||',
+  );
+
 const AGENT_PERMISSION_HELPER_SHAPES = [
+  {
+    patched: PATCHED_AGENT_PERMISSION_HELPER_20260905,
+    upstream: UPSTREAM_AGENT_PERMISSION_HELPER_20260905,
+  },
   {
     patched: PATCHED_AGENT_PERMISSION_HELPER,
     upstream: UPSTREAM_AGENT_PERMISSION_HELPER,
@@ -556,7 +575,7 @@ function isStateDbCandidate(source: string): boolean {
 
 export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistResult {
   const resolvedDist = path.resolve(distDir);
-  const stateCandidates = listCandidates(resolvedDist, /^openclaw-state-db-.+\.js$/).filter(
+  const stateCandidates = listCandidates(resolvedDist, /^openclaw-state-db-.+\.m?js$/).filter(
     (file) => isStateDbCandidate(fs.readFileSync(file, "utf8")),
   );
   if (stateCandidates.length !== 1) {
@@ -564,7 +583,7 @@ export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistR
       `Expected exactly one OpenClaw shared-state database target in ${resolvedDist}, found ${stateCandidates.length}`,
     );
   }
-  const agentCandidates = listCandidates(resolvedDist, /^openclaw-agent-db-.+\.js$/).filter(
+  const agentCandidates = listCandidates(resolvedDist, /^openclaw-agent-db-.+\.m?js$/).filter(
     (file) => {
       const source = fs.readFileSync(file, "utf8");
       return (
@@ -579,7 +598,7 @@ export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistR
       `Expected exactly one OpenClaw per-agent database target in ${resolvedDist}, found ${agentCandidates.length}`,
     );
   }
-  const migrationCandidates = listCandidates(resolvedDist, /^state-migrations[.-].+\.js$/).filter(
+  const migrationCandidates = listCandidates(resolvedDist, /^state-migrations[.-].+\.m?js$/).filter(
     (file) => {
       const source = fs.readFileSync(file, "utf8");
       return source.includes("function migrateLegacyUpdateCheckState(params) {");
@@ -590,16 +609,21 @@ export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistR
       `Expected exactly one OpenClaw state-migration target in ${resolvedDist}, found ${migrationCandidates.length}`,
     );
   }
-  const modelsCandidates = listCandidates(resolvedDist, /^models-config-.+\.js$/).filter((file) => {
-    const source = fs.readFileSync(file, "utf8");
-    return (
-      source.includes(MODELS_MARKER) ||
-      (source.includes("async function ensureModelsFileModeForModelsJson(pathname) {") &&
-        source.includes(
-          "async function writeModelsFileAtomicForModelsJson(targetPath, contents) {",
-        ))
-    );
-  });
+  const modelsCandidates = listCandidates(resolvedDist, /^models-config-.+\.m?js$/).filter(
+    (file) => {
+      const source = fs.readFileSync(file, "utf8");
+      return (
+        source.includes(MODELS_MARKER) ||
+        (source.includes("async function ensureModelsFileModeForModelsJson(pathname) {") &&
+          (source.includes(
+            "async function writeModelsFileAtomicForModelsJson(targetPath, contents) {",
+          ) ||
+            source.includes(
+              'await privateFileStore(path.dirname(targetPath)).writeText("models.json", plan.contents);',
+            )))
+      );
+    },
+  );
   if (modelsCandidates.length !== 1) {
     throw new Error(
       `Expected exactly one OpenClaw models-config target in ${resolvedDist}, found ${modelsCandidates.length}`,

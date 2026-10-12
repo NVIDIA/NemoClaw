@@ -359,7 +359,7 @@ function fail(message: string): never {
 function listJsFiles(dir: string): string[] {
   return fs
     .readdirSync(dir, { withFileTypes: true })
-    .filter((entry: import("node:fs").Dirent) => entry.isFile() && entry.name.endsWith(".js"))
+    .filter((entry: import("node:fs").Dirent) => entry.isFile() && /\.m?js$/u.test(entry.name))
     .map((entry: import("node:fs").Dirent) => path.join(dir, entry.name));
 }
 
@@ -2408,10 +2408,13 @@ const BASE_FILE_SPECS: FileSpec[] = [
         file,
       );
       if (result.error) return { source, status: "no-match", error: result.error };
+      const requestIdDeclaration = source.includes("const requestId = params.requestId.trim();")
+        ? "const requestId = params.requestId.trim();"
+        : "const { requestId } = params;";
       result = replaceExactlyOnce(
         result.source,
-        HANDLER_AUTHZ_TARGET,
-        HANDLER_AUTHZ_REPLACEMENT,
+        HANDLER_AUTHZ_TARGET.replace("const { requestId } = params;", requestIdDeclaration),
+        HANDLER_AUTHZ_REPLACEMENT.replace("const { requestId } = params;", requestIdDeclaration),
         "gateway authz target",
         file,
       );

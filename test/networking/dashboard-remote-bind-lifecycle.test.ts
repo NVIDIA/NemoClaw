@@ -142,6 +142,10 @@ describe("remote dashboard bind production lifecycle", () => {
 
   it.each([
     [
+      "explicit-proxy endpoint authority",
+      "    && chmod 0444 /usr/local/share/nemoclaw/openclaw-proxy-url",
+    ],
+    [
       "metadata validation",
       "    && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'",
     ],

@@ -43,7 +43,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const dist = path.dirname(process.argv[1]);
-const files = fs.readdirSync(dist).filter((name) => /^builtin-openclaw(?:-.+)?\.js$/.test(name));
+const files = fs.readdirSync(dist).filter((name) => /^builtin-openclaw(?:-.+)?\.m?js$/.test(name));
 const modules = await Promise.all(files.map((file) => import(pathToFileURL(path.join(dist, file)).href)));
 const factories = [...new Set(modules.flatMap((module) => Object.values(module).filter(
   (value) => typeof value === "function" && value.name === "buildEmbeddedExtensionFactories",

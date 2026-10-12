@@ -21,9 +21,9 @@ import { pathToFileURL } from "node:url";
 const MANIFEST_KIND = "nemoclaw-locked-npm-cache-seed-v1";
 export const LOCKED_NPM_CACHE_SEED_MANIFEST_NAME = "manifest.json";
 const REGISTRY_ORIGIN = "https://registry.npmjs.org";
-// OpenClaw 2026.9.1 is 55,564,082 bytes. Keep downloads bounded while allowing
-// that reviewed lock-pinned archive and modest upstream packaging growth.
-const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
+// OpenClaw 2026.9.5 is 72,453,925 bytes. Keep downloads bounded above
+// that reviewed, lock-pinned archive size.
+const MAX_ARCHIVE_BYTES = 80 * 1024 * 1024;
 const DOWNLOAD_CONCURRENCY = 6;
 const DOWNLOAD_ATTEMPTS = 4;
 const DOWNLOAD_TIMEOUT_MS = 30_000;

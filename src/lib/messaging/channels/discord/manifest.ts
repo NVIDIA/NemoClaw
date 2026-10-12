@@ -217,11 +217,14 @@ export const discordManifest = {
       integrityByVersion: {
         "2026.9.2":
           "sha512-j+fSHxbXA+DSxwbL8SvtsDNL6tvBX4+RmH+EerVW6dCbeIwSconXj6J/+AaN/mhzZI4g0jPPj30TUhdCRRbc2w==",
+        "2026.9.5":
+          "sha512-kPEbPiYAnJqxqLHqBnZCr3zowsxzboW0Q7ZdqX52X7IENLrU4CBdK4+ndqzQf+255ilffrYBTDrHBg8a137cgQ==",
         "2026.9.1":
           "sha512-qNmN2a8A9dET4igPp0RML171sEn8PDMyNCYNp/DqcJ4tn3XTHpacSOTkqBmv5yXTycJRC9rfFP8FT/SdW0Rldg==",
       },
       tarballUrlByVersion: {
         "2026.9.2": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.2.tgz",
+        "2026.9.5": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.5.tgz",
         "2026.9.1": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.1.tgz",
       },
       required: true,

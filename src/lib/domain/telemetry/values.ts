@@ -66,7 +66,7 @@ export const MESSAGING_CHANNELS = [
 export const POLICY_TIER_CATEGORIES = ["restricted", "balanced", "open", "personal"] as const;
 export const SANDBOX_OPERATING_SYSTEMS = ["linux", "windows", "other", "unknown"] as const;
 export const MANAGED_AGENT_VERSIONS: Readonly<Record<string, readonly string[]>> = {
-  openclaw: ["2026.9.2"],
+  openclaw: ["2026.9.5"],
   hermes: ["0.21.3"],
   "langchain-deepagents-code": ["0.1.55"],
 };
