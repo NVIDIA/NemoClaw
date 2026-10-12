@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { isKnownN1xPciDevice } from "../../src/lib/inference/platform-identity/n1x";
 import { describe, expect, it } from "vitest";
 import { runInstallerSourced } from "../helpers/installer-express-prompt-harness";
@@ -95,7 +97,7 @@ detect_express_platform
     expect(detectN1x(false, true).result.stdout).toBe("");
   });
 
-  it("uses the complete shared PCI policy in the standalone installer (#12737)", () => {
+  it("generates the shared PCI policy only when installer markers are present (#12737)", () => {
     const { home, result } = runInstallerSourced(`
 for ((device=0; device<=65535; device++)); do
   printf -v candidate '0x%04x' "$device"
@@ -111,6 +113,62 @@ done
       ).filter(isKnownN1xPciDevice);
       expect(cliAccepted).toEqual(accepted);
       expect(isKnownN1xPciDevice("0x2e04")).toBe(false);
+      const generator = path.join(home, "scripts/lib/generate-n1x-pci-policy.mts");
+      const installer = path.join(home, "scripts/install.sh");
+      fs.mkdirSync(path.dirname(generator), { recursive: true });
+      fs.mkdirSync(path.join(home, "bin/lib"), { recursive: true });
+      fs.copyFileSync(
+        new URL("../../scripts/lib/generate-n1x-pci-policy.mts", import.meta.url),
+        generator,
+      );
+      fs.copyFileSync(
+        new URL("../../bin/lib/n1x-pci-policy.json", import.meta.url),
+        path.join(home, "bin/lib/n1x-pci-policy.json"),
+      );
+      fs.writeFileSync(
+        installer,
+        [
+          "N1X_TEST_BEFORE=before",
+          "# n1x-pci-policy:begin",
+          "n1x_pci_device_is_known() { return 1; }",
+          "# n1x-pci-policy:end",
+          "N1X_TEST_AFTER=after",
+          "",
+        ].join("\n"),
+      );
+      const generated = spawnSync(process.execPath, ["--no-warnings", generator], {
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+      expect(generated.status, generated.stderr).toBe(0);
+      const probe = spawnSync(
+        "bash",
+        [
+          "-c",
+          '. "$1"; shift; for candidate in "$@"; do n1x_pci_device_is_known "$candidate" || exit 1; done; if n1x_pci_device_is_known 0x2e04; then exit 2; fi; printf "%s:%s" "$N1X_TEST_BEFORE" "$N1X_TEST_AFTER"',
+          "n1x-generator-test",
+          installer,
+          ...cliAccepted,
+        ],
+        { encoding: "utf8", timeout: 10_000 },
+      );
+      expect(probe.status, probe.stderr).toBe(0);
+      expect(probe.stdout).toBe("before:after");
+      const missingMarkers = "N1X_TEST_BEFORE=unmodified\n";
+      fs.writeFileSync(installer, missingMarkers);
+      const rejected = spawnSync(process.execPath, ["--no-warnings", generator], {
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+      expect(rejected.status).not.toBe(0);
+      expect(rejected.stderr).toContain("Missing N1x policy generation markers");
+      const retained = spawnSync(
+        "bash",
+        ["-c", '. "$1"; printf "%s" "$N1X_TEST_BEFORE"', "n1x-generator-test", installer],
+        { encoding: "utf8", timeout: 10_000 },
+      );
+      expect(retained.status, retained.stderr).toBe(0);
+      expect(retained.stdout).toBe("unmodified");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
