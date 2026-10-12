@@ -3,8 +3,64 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { PreUpgradeBackupSelectInput } from "./not-ready-recreate";
-import { createSandboxRecreateProtection } from "./sandbox-recreate-protection";
+import {
+  createSandboxRecreateProtection,
+  recoverPublishedSandboxAfterFailedBackup,
+} from "./sandbox-recreate-protection";
 import type { SandboxRecreateSourceProof } from "./sandbox-recreate-transaction";
+
+describe("failed pre-delete backup recovery", () => {
+  const source = { state: "ready" as const, liveIdentityFingerprint: "source-identity" };
+  const expectedEntry = {
+    name: "alpha",
+    pendingRouteReservation: true as const,
+    reservationSessionId: "owner",
+    preRecreatePublishedEntry: { name: "alpha", model: "old-model" },
+  };
+
+  it("restores the owned row and retires its journal when live identity is unchanged (#13018)", () => {
+    const restore = vi.fn(() => true);
+    const abandonJournal = vi.fn();
+    expect(
+      recoverPublishedSandboxAfterFailedBackup({
+        expectedEntry,
+        source,
+        observe: () => source,
+        restore,
+        abandonJournal,
+      }),
+    ).toBe("restored");
+    expect(restore).toHaveBeenCalledExactlyOnceWith(expectedEntry);
+    expect(abandonJournal).toHaveBeenCalledOnce();
+  });
+
+  it.each(["changed identity", "changed registry", "unobservable source"])(
+    "retains recovery authority after %s (#13018)",
+    (failure) => {
+      const restore = vi.fn(() => failure !== "changed registry");
+      const abandonJournal = vi.fn();
+      expect(
+        recoverPublishedSandboxAfterFailedBackup({
+          expectedEntry,
+          source,
+          observe: () =>
+            failure === "unobservable source"
+              ? { state: "missing", liveIdentityFingerprint: null }
+              : {
+                  state: "ready",
+                  liveIdentityFingerprint:
+                    failure === "changed identity"
+                      ? "other-identity"
+                      : source.liveIdentityFingerprint,
+                },
+          restore,
+          abandonJournal,
+        }),
+      ).toBe("ambiguous");
+      expect(abandonJournal).not.toHaveBeenCalled();
+    },
+  );
+});
 
 describe("createSandboxRecreateProtection", () => {
   it("forwards one journal-bound backup context to every recreation path", () => {

@@ -12,6 +12,32 @@ import type {
   SandboxRecreateSourceProof,
 } from "./sandbox-recreate-transaction";
 
+/** A failed backup may retire only its own unchanged, pre-delete reservation. */
+export function recoverPublishedSandboxAfterFailedBackup(input: {
+  expectedEntry: SandboxEntry | null;
+  source: SandboxRecreateObservation;
+  observe: () => SandboxRecreateObservation;
+  restore: (expected: SandboxEntry) => boolean;
+  abandonJournal: () => void;
+}): "restored" | "unavailable" | "ambiguous" {
+  const { expectedEntry, source } = input;
+  if (!expectedEntry?.preRecreatePublishedEntry) return "unavailable";
+  if (source.state !== "ready" || !source.liveIdentityFingerprint) return "ambiguous";
+  try {
+    const current = input.observe();
+    if (
+      current.state !== "ready" ||
+      current.liveIdentityFingerprint !== source.liveIdentityFingerprint ||
+      !input.restore(expectedEntry)
+    )
+      return "ambiguous";
+    input.abandonJournal();
+    return "restored";
+  } catch {
+    return "ambiguous";
+  }
+}
+
 export interface PreUpgradeBackupBinding {
   sourceProof: () => SandboxRecreateSourceProof | null;
   gatewayName: string;
@@ -77,6 +103,7 @@ export function createSandboxRecreateProtection(
     });
 
   return {
+    recoverPublishedAfterFailedBackup: recoverPublishedSandboxAfterFailedBackup,
     selectPreUpgradeBackup,
     // The journal opens only when selection actually asks for a source proof, so
     // a run that restores nothing leaves no transaction behind to complete.

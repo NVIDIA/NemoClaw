@@ -2242,6 +2242,45 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       getSandbox: registry.getSandbox,
       note,
     });
+    const backupSourceObservation = () => getSandboxRecreateObservation(sandboxName, GATEWAY_NAME);
+    const abortFailedRecreateBackup = (
+      expectedEntry: SandboxEntry | null,
+      source: ReturnType<typeof backupSourceObservation>,
+    ): never => {
+      const recovery = recreateProtection.recoverPublishedAfterFailedBackup({
+        expectedEntry,
+        source,
+        observe: backupSourceObservation,
+        restore: (entry) =>
+          registry.restorePublishedSandboxAfterFailedBackup(
+            entry,
+            createCheckpointSession?.sessionId ?? null,
+          ),
+        abandonJournal: () => {
+          if ("abandon" in recreateRuntime) recreateRuntime.abandon();
+          else if (createIntent?.recreateTransaction) {
+            onboardSession.updateSession((session) => {
+              sandboxRecreateTransaction.abandonSandboxRecreateTransaction(
+                session,
+                createIntent.recreateTransaction!.id,
+              );
+              return session;
+            });
+          }
+        },
+      });
+      if (recovery === "restored") {
+        console.error(`  Existing sandbox '${sandboxName}' remains registered and available.`);
+      } else if (recovery === "ambiguous") {
+        console.error(
+          `  Sandbox '${sandboxName}' changed during backup failure; its pending route needs recovery before another onboarding attempt.`,
+        );
+      }
+      console.error(
+        "  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 only if losing workspace state is acceptable.",
+      );
+      process.exit(1);
+    };
     let reconcileOpenClawInference = false;
     const openRecreateJournal = (): OwnedSandboxRecreateRuntime =>
       recreateJournal.openOnboardRecreateJournal({
@@ -2513,12 +2552,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         console.log(`  Messaging credential(s) rotated: ${rotatedNames}`);
         console.log("  Rebuilding sandbox to propagate new credentials to the L7 proxy...");
         if (!shouldSkipPreRecreateBackup(process.env)) {
+          const expectedEntry = registry.getSandbox(sandboxName);
+          const source = backupSourceObservation();
           const result = recreateProtection.backup();
           if (!result.ok) {
-            console.error(
-              "  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 to recreate without preserving state.",
-            );
-            process.exit(1);
+            abortFailedRecreateBackup(expectedEntry, source);
           }
           pendingStateRestore = result.backup;
         }
@@ -2574,12 +2612,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         !shouldSkipPreRecreateBackup(process.env)
       ) {
         note("  Backing up workspace state before recreating sandbox...");
+        const expectedEntry = registry.getSandbox(sandboxName);
+        const source = backupSourceObservation();
         const result = recreateProtection.backup();
         if (!result.ok) {
-          console.error(
-            "  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 to recreate without preserving state.",
-          );
-          process.exit(1);
+          abortFailedRecreateBackup(expectedEntry, source);
         }
         pendingStateRestore = result.backup;
       }

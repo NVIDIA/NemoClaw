@@ -98,6 +98,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   configurationApplyPending?: true;
   /** Route-only placeholder created before sandbox creation; never eligible as the default. */
   pendingRouteReservation?: true;
+  /** Published row to restore if this session's recreate stops before deletion. */
+  preRecreatePublishedEntry?: Omit<SandboxEntry, "preRecreatePublishedEntry">;
   /** Onboard session that owns this route transaction, retained after publication for exact idempotence. */
   reservationSessionId?: string;
   createdAt?: string;

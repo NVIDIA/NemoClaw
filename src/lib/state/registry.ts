@@ -756,6 +756,12 @@ export function reserveSandboxInferenceRoute(
     const next = normalizeSandboxPolicyAttribution({
       ...existingForReservation,
       pendingRouteReservation: true,
+      preRecreatePublishedEntry:
+        existing?.pendingRouteReservation === true
+          ? existing.preRecreatePublishedEntry
+          : existing
+            ? structuredClone(existing)
+            : undefined,
       deferredN1xManagedVllmAccepted: undefined,
       reservationSessionId:
         route.reservationSessionId ??
@@ -930,6 +936,33 @@ export function removeSandboxRouteReservationIfCurrent(expected: SandboxEntry): 
   });
 }
 
+/** Restore a published row only while the failed pre-delete reservation is unchanged. */
+export function restorePublishedSandboxAfterFailedBackup(
+  expected: SandboxEntry,
+  sessionId: string | null,
+): boolean {
+  const snapshot = structuredClone(expected);
+  const prior = snapshot.preRecreatePublishedEntry;
+  if (
+    snapshot.pendingRouteReservation !== true ||
+    snapshot.pendingCreateIdentity !== undefined ||
+    !sessionId ||
+    snapshot.reservationSessionId !== sessionId ||
+    !prior ||
+    prior.name !== snapshot.name ||
+    prior.pendingRouteReservation === true ||
+    prior.gatewayName !== snapshot.gatewayName
+  )
+    return false;
+  return withLock(() => {
+    const data = load();
+    if (!isDeepStrictEqual(data.sandboxes[snapshot.name], snapshot)) return false;
+    data.sandboxes[snapshot.name] = normalizeSandboxPolicyAttribution(prior);
+    save(data);
+    return true;
+  });
+}
+
 /** Publish only the owning route transaction and retain its receipt for exact retries. */
 export function finalizeSandboxRouteReservation(name: string, sessionId: string): boolean {
   return withLock(() => {
@@ -941,6 +974,7 @@ export function finalizeSandboxRouteReservation(name: string, sessionId: string)
     data.sandboxes[name] = {
       ...current,
       pendingRouteReservation: undefined,
+      preRecreatePublishedEntry: undefined,
     };
     save(reversibleRemoval.claimInitialDefaultInRegistry(data, name));
     return true;
@@ -960,7 +994,11 @@ export function finalizePendingSandboxRegistration(name: string): boolean {
     ) {
       return false;
     }
-    data.sandboxes[name] = { ...current, pendingRouteReservation: undefined };
+    data.sandboxes[name] = {
+      ...current,
+      pendingRouteReservation: undefined,
+      preRecreatePublishedEntry: undefined,
+    };
     save(reversibleRemoval.claimInitialDefaultInRegistry(data, name));
     return true;
   });
@@ -982,6 +1020,7 @@ export function finalizePendingSandboxRegistrationIfCurrent(expected: SandboxEnt
     data.sandboxes[expectedSnapshot.name] = {
       ...current,
       pendingRouteReservation: undefined,
+      preRecreatePublishedEntry: undefined,
     };
     save(reversibleRemoval.claimInitialDefaultInRegistry(data, expectedSnapshot.name));
     return true;
