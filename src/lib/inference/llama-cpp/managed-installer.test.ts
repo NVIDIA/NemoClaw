@@ -34,6 +34,7 @@ import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
 import {
+  assertManagedLlamaCppResumeSupported,
   inspectManagedLlamaCppRuntimeExact,
   installManagedLlamaCpp,
   MANAGED_LLAMA_CPP_NETWORK_NAME,
@@ -478,12 +479,40 @@ describe("managed llama.cpp installer", () => {
       "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675",
     );
     expect(selected.recipe.spec.runtime.guardedStdioForward).toBeUndefined();
+    expect(() => assertManagedLlamaCppResumeSupported(selected)).toThrow(
+      "The former WSL managed llama.cpp image cannot resume",
+    );
     expect(() =>
       resolveManagedLlamaCppOwnerSelection({
         ...owner,
         recipeDigest: `sha256:${"0".repeat(64)}`,
       }),
     ).toThrow("Managed llama.cpp recipe authority changed");
+  });
+  it("rejects former WSL image resume before Docker effects (#12285)", async () => {
+    const homeDir = temporaryHome();
+    const catalog = loadManagedInferenceCatalog();
+    const preset = catalog.presets.find(
+      ({ metadata }) => metadata.id === "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b",
+    )!;
+    reserveManagedLlamaCppOwner(managedLlamaCppStatePaths(homeDir), {
+      schemaVersion: 1,
+      sandboxName: "existing-wsl",
+      catalogDigest: `sha256:${"0".repeat(64)}`,
+      presetDigest: catalog.sources.find(
+        ({ kind, id }) => kind === "ServingPreset" && id === preset.metadata.id,
+      )!.digest,
+      recipeDigest: "sha256:b1032bb63f7f0772ddc96576219269fe42a086814eca561d1b28d69394dc72e1",
+      recipeId: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1",
+    });
+    const harness = engineHarness();
+    await expect(
+      resumeManagedLlamaCppRuntime("existing-wsl", {
+        homeDir,
+        runtimeProvider: managedRuntimeProvider(harness.engine),
+      }),
+    ).rejects.toThrow("The former WSL managed llama.cpp image cannot resume");
+    expect(harness.capture).not.toHaveBeenCalled();
   });
   it("stops after acquisition when sandbox identity refuses activation (#9833)", async () => {
     const selected = selection();

@@ -127,6 +127,36 @@ describe("managed llama.cpp lifecycle adapter", () => {
     expect(rolledBack.publicationState()).toBe("unpublished");
     expect(stopManaged).toHaveBeenCalledWith(receipt);
     expect(resume).toHaveBeenCalledTimes(2);
+
+    const formerImageAdapter = createManagedLlamaCppLifecycleAdapter({
+      runtimeProvider,
+      runtimeOwnerSandboxName: "spark-agent",
+      expectedModel: "llama-cpp-model",
+      expectedReceipt: receipt,
+      gatewayPort,
+      homeDir,
+      operation,
+      finalizeCleanup: vi.fn(() => ({ ok: true as const, removed: [] })),
+      rehydrate: vi.fn(
+        () =>
+          ({
+            lifecycle: { resume, runtime },
+            operation,
+            receipt,
+            selection: {
+              recipeDigest:
+                "sha256:b1032bb63f7f0772ddc96576219269fe42a086814eca561d1b28d69394dc72e1",
+              recipe: { spec: { model: { servedName: "llama-cpp-model" } } },
+            },
+          }) as never,
+      ),
+    });
+    expect(formerImageAdapter.runtime.inspectManaged(receipt).receipt).toEqual(receipt);
+    expect(() => formerImageAdapter.prepareStartup()).toThrow(
+      "The former WSL managed llama.cpp image cannot resume",
+    );
+    expect(formerImageAdapter.runtime.destroy(receipt).status).toBe("removed");
+    expect(resume).toHaveBeenCalledTimes(2);
   });
 
   it("uses the retained receipt for an idempotent destroy retry after private state is gone", () => {

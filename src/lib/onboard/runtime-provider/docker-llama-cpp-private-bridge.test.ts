@@ -506,7 +506,9 @@ process.stdin.on("data", chunk => {
       "1800",
     ]);
     fs.appendFileSync(path.join(root, "docker"), "\n// executable changed after qualification\n");
-    expect((await request(port, { authorization: `Bearer ${API_KEY}` })).status).toBe(502);
+    await expect
+      .poll(async () => (await request(port, { authorization: `Bearer ${API_KEY}` })).status)
+      .toBe(502);
   } finally {
     server.closeAllConnections();
     await close(server);
@@ -515,7 +517,7 @@ process.stdin.on("data", chunk => {
   }
 });
 
-it("bounds Docker health probes while allowing authenticated requests and later probes (#12285)", async () => {
+it("bounds Docker forwarding while a health probe is running (#12285)", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bridge-health-"));
   const invocations = path.join(root, "invocations.jsonl");
   const upstream = http.createServer();
@@ -564,13 +566,15 @@ connection.once("error", () => process.exit(1));
     expect(excess.headers["retry-after"]).toBe("1");
     expect(invocationCount()).toBe(1);
     expect((await request(port)).status).toBe(401);
-    expect((await request(port, { authorization: `Bearer ${API_KEY}` })).status).toBe(200);
-    expect(invocationCount()).toBe(2);
+    const blocked = await request(port, { authorization: `Bearer ${API_KEY}` });
+    expect(blocked.status).toBe(503);
+    expect(blocked.headers["retry-after"]).toBe("1");
+    expect(invocationCount()).toBe(1);
     held.setHeader("Connection", "close");
     held.end("healthy");
     expect((await pendingHealth).status).toBe(200);
     await expect.poll(async () => (await request(port, { path: "/health" })).status).toBe(200);
-    expect(invocationCount()).toBe(3);
+    expect(invocationCount()).toBe(2);
     upstream.closeAllConnections();
     await close(upstream);
     await expect.poll(async () => (await request(port, { path: "/health" })).status).toBe(502);
@@ -583,6 +587,73 @@ connection.once("error", () => process.exit(1));
     bridge.closeAllConnections();
     upstream.closeAllConnections();
     await Promise.allSettled([pendingHealth]);
+    await close(bridge);
+    await close(upstream);
+    vi.unstubAllEnvs();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("bounds authenticated Docker forwarding and admits a request after release (#12285)", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bridge-auth-capacity-"));
+  const invocations = path.join(root, "invocations.jsonl");
+  const upstream = http.createServer();
+  const upstreamPort = await listen(upstream);
+  const firstResponse = new Promise<http.ServerResponse>((resolve) => {
+    upstream.once("request", (_incoming, response) => resolve(response));
+  });
+  fs.writeFileSync(
+    path.join(root, "docker"),
+    `#!${process.execPath}
+const fs = require("node:fs");
+const net = require("node:net");
+fs.appendFileSync(${JSON.stringify(invocations)}, JSON.stringify(process.argv.slice(2)) + "\\n");
+const connection = net.connect(${String(upstreamPort)}, "127.0.0.1");
+process.stdin.pipe(connection);
+connection.pipe(process.stdout, { end: false });
+connection.once("end", () => process.stdout.end(() => process.exit(0)));
+connection.once("error", () => process.exit(1));
+`,
+    { mode: 0o700 },
+  );
+  vi.stubEnv("PATH", root);
+  vi.stubEnv("DOCKER_HOST", "unix:///tmp/nemoclaw-bridge-auth-capacity-test.sock");
+  const docker = createDockerOperationAuthority("host-local-inference");
+  const bridge = createLlamaCppPrivateBridgeServer(
+    {
+      targetHost: "127.0.0.1",
+      targetPort: 8081,
+      containerId: "c".repeat(64),
+      dockerAuthorityId: docker.engine.authorityId,
+    },
+    API_KEY,
+  );
+  let pending: ReturnType<typeof request> | undefined;
+  try {
+    const port = await listen(bridge);
+    pending = request(port, { authorization: `Bearer ${API_KEY}` });
+    const held = await firstResponse;
+    upstream.on("request", (_incoming, response) => {
+      response.setHeader("Connection", "close");
+      response.end("ready");
+    });
+    const excess = await Promise.all(
+      Array.from({ length: 8 }, () => request(port, { authorization: `Bearer ${API_KEY}` })),
+    );
+    expect(
+      excess.every(({ status, headers }) => status === 503 && headers["retry-after"] === "1"),
+    ).toBe(true);
+    expect(fs.readFileSync(invocations, "utf8").trimEnd().split("\n")).toHaveLength(1);
+    held.setHeader("Connection", "close");
+    held.end("ready");
+    expect((await pending).status).toBe(200);
+    await expect
+      .poll(async () => (await request(port, { authorization: `Bearer ${API_KEY}` })).status)
+      .toBe(200);
+  } finally {
+    bridge.closeAllConnections();
+    upstream.closeAllConnections();
+    await Promise.allSettled([pending]);
     await close(bridge);
     await close(upstream);
     vi.unstubAllEnvs();

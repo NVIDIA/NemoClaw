@@ -316,27 +316,27 @@ On native Linux, if the bridge topology is missing or invalid, onboarding fails 
 Inspect the OpenShell Docker bridge configuration before you retry onboarding.
 
 <Warning>
-  The printed command changes UFW. Confirm that the reported Docker network, source subnet, and
+  On native Linux, the printed command changes UFW. Confirm that the reported Docker network, source subnet, and
   gateway IP address belong to the OpenShell Docker bridge before you run it. The rule allows TCP
   traffic only from that subnet to port `8081` on that gateway IP address.
 </Warning>
 
-Run the command from the onboarding error.
+On native Linux, run the command from the onboarding error.
 It has this form:
 
 ```bash
 sudo ufw allow from <subnet> to <gateway-ip> port 8081 proto tcp
 ```
 
-After you apply the rule, rerun the same onboarding selection.
+On native Linux, after you apply the rule, rerun the same onboarding selection.
 
-If onboarding still reports the bridge failure, or when the managed runtime no longer needs the rule, remove the rule that you added:
+On native Linux, remove the rule if onboarding still reports the bridge failure or the managed runtime no longer needs it:
 
 ```bash
 sudo ufw --force delete allow from <subnet> to <gateway-ip> port 8081 proto tcp
 ```
 
-Use the same subnet and gateway IP address that appeared in the original command.
+On native Linux, use the same subnet and gateway IP address that appeared in the original command.
 
 If resumed onboarding reports that it cannot reserve host-local inference, run `$$nemoclaw <sandbox-name> doctor`.
 Correct the reported runtime or gateway-authority condition before you rerun the same provider and recipe selection.
@@ -362,8 +362,8 @@ The installed runtime remains bound to the repository YAML authority recorded du
 Do not edit the ownership, receipt, or recipe-digest state to force a migration.
 
 An existing Windows WSL Qwen runtime with the former pinned image remains bound to its recorded recipe, receipt, and journal.
-NemoClaw can inspect, resume, recover, and remove that runtime without replacing its image.
-The former pinned image must remain available locally for resume.
+NemoClaw can inspect and remove that runtime without replacing its image.
+The former image cannot resume or recover because it lacks the guarded transport.
 Other unrecognized authority changes fail closed and preserve the existing state.
 
 To use the current pinned image, run `$$nemoclaw <sandbox-name> destroy` for the existing managed runtime, then run onboarding again.

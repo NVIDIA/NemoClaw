@@ -13,6 +13,8 @@ const API_KEY_FILE_DESCRIPTOR = 3;
 const STARTUP_STATUS_DESCRIPTOR = 4;
 const AUTH_MODE = "api-key-fd3";
 const GUARD_FORWARD_TIMEOUT_SECONDS = 30 * 60;
+// Each managed llama.cpp recipe declares one serving slot.
+const MAX_GUARD_FORWARD_REQUESTS = 1;
 const UPSTREAM_CONTINUE_TIMEOUT_MS = 30_000;
 const UNAUTHORIZED_BODY = `${JSON.stringify({
   error: {
@@ -220,7 +222,7 @@ function createLlamaCppPrivateBridgeRequestHandler(
   ) {
     throw new Error("private bridge Docker authority changed");
   }
-  let healthProbeRunning = false;
+  let guardForwardRequests = 0;
 
   return (request, response) => {
     const healthProbe = isUnauthenticatedHealthProbe(request);
@@ -229,22 +231,22 @@ function createLlamaCppPrivateBridgeRequestHandler(
       writeUnauthorized(response);
       return;
     }
-    const needsHealthSlot = healthProbe && docker !== undefined;
-    if (needsHealthSlot) {
-      if (healthProbeRunning) {
+    const needsForwardSlot = docker !== undefined;
+    if (needsForwardSlot) {
+      if (guardForwardRequests >= MAX_GUARD_FORWARD_REQUESTS) {
         request.resume();
         response.writeHead(503, { "Cache-Control": "no-store", "Retry-After": "1" });
         response.end();
         return;
       }
-      healthProbeRunning = true;
+      guardForwardRequests += 1;
     }
-    let healthSlotHeld = needsHealthSlot;
+    let forwardSlotHeld = needsForwardSlot;
     let dockerForwardingStarted = false;
-    const releaseHealthSlot = () => {
-      if (!healthSlotHeld) return;
-      healthSlotHeld = false;
-      healthProbeRunning = false;
+    const releaseForwardSlot = () => {
+      if (!forwardSlotHeld) return;
+      forwardSlotHeld = false;
+      guardForwardRequests -= 1;
     };
 
     const headers: http.OutgoingHttpHeaders = { ...request.headers };
@@ -292,7 +294,7 @@ function createLlamaCppPrivateBridgeRequestHandler(
                     },
                   );
                   dockerForwardingStarted = true;
-                  child.once("close", releaseHealthSlot);
+                  child.once("close", releaseForwardSlot);
                   if (!child.stdin || !child.stdout) {
                     child.kill("SIGKILL");
                     throw new Error("private bridge stream unavailable");
@@ -301,9 +303,10 @@ function createLlamaCppPrivateBridgeRequestHandler(
                     writable: Writable.toWeb(child.stdin),
                     readable: Readable.toWeb(child.stdout),
                   });
-                  child.once("error", () =>
-                    stream.destroy(new Error("request guard forwarding failed")),
-                  );
+                  child.once("error", () => {
+                    releaseForwardSlot();
+                    stream.destroy(new Error("request guard forwarding failed"));
+                  });
                   child.once("exit", (code) => {
                     if (code !== 0) stream.destroy(new Error("request guard forwarding failed"));
                   });
@@ -332,7 +335,7 @@ function createLlamaCppPrivateBridgeRequestHandler(
         },
       );
     } catch {
-      if (!dockerForwardingStarted) releaseHealthSlot();
+      if (!dockerForwardingStarted) releaseForwardSlot();
       request.resume();
       writeUpstreamUnavailable(response);
       return;
@@ -348,7 +351,7 @@ function createLlamaCppPrivateBridgeRequestHandler(
       forwardRequestBody();
     });
     upstream.once("error", () => {
-      if (!dockerForwardingStarted) releaseHealthSlot();
+      if (!dockerForwardingStarted) releaseForwardSlot();
       clearContinueTimer();
       if (!upstreamResponded) writeUpstreamUnavailable(response);
     });

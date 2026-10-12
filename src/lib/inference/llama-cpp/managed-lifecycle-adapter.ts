@@ -19,7 +19,10 @@ import {
   finalizeManagedLlamaCppLifecycleCleanup,
   prepareManagedLlamaCppLifecycleCleanup,
 } from "../local-model-profile/cleanup";
-import { rehydrateManagedLlamaCppLifecycle } from "./managed-installer";
+import {
+  assertManagedLlamaCppResumeSupported,
+  rehydrateManagedLlamaCppLifecycle,
+} from "./managed-installer";
 import { managedLlamaCppStatePaths } from "./managed-state";
 
 export interface ManagedLlamaCppLifecycleAdapterOptions {
@@ -202,6 +205,7 @@ export function createManagedLlamaCppLifecycleAdapter(
     receipt,
     runtime,
     prepareStartup(): HostLocalInferencePreparedStartup {
+      assertManagedLlamaCppResumeSupported(rehydrated.selection);
       const atEntry = runtime.inspectManaged(receipt);
       requireExactReceipt(
         expected,

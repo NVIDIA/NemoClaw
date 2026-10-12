@@ -503,6 +503,16 @@ export function resolveManagedLlamaCppOwnerSelection(
   };
 }
 
+export function assertManagedLlamaCppResumeSupported(
+  selection: ResolvedLlamaCppInferenceSelection,
+): void {
+  if (selection.recipeDigest === HISTORIC_WSL_RECIPE_DIGEST) {
+    throw new Error(
+      "The former WSL managed llama.cpp image cannot resume. Inspect or remove the owned runtime, then onboard with the current pinned image.",
+    );
+  }
+}
+
 function lifecycleFor(input: {
   readonly selection: ResolvedLlamaCppInferenceSelection;
   readonly paths: ManagedLlamaCppStatePaths;
@@ -825,6 +835,7 @@ export async function resumeManagedLlamaCppRuntime(
   }
 
   const selection = resolveManagedLlamaCppOwnerSelection(owner);
+  assertManagedLlamaCppResumeSupported(selection);
   const operation = requireRuntimeProviderHostLocalInferenceOperation(
     options.runtimeProvider,
     "llama-cpp",
