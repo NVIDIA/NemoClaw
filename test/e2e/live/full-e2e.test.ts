@@ -47,6 +47,7 @@ import {
 } from "../fixtures/openclaw-agent-output.ts";
 import { buildOpenClawFirstTurnLatencyEvidence } from "./agent-turn-latency-helpers.ts";
 import {
+  buildFullE2eSandboxInferenceCommand,
   FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
@@ -71,6 +72,10 @@ import {
   agentReplyContainsToken,
   parseOpenClawGatewayModelRun,
 } from "./openclaw-inference-switch-helpers.ts";
+import {
+  PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
+  readPublicNvidiaSwitchAttachmentEvidence,
+} from "./public-nvidia-switch-provider.ts";
 import { createCliOpenShellGatewayReuseObserver } from "../../../src/lib/adapters/openshell/gateway-reuse-cli.ts";
 import type { OpenShellGatewayReuseObservation } from "../../../src/lib/adapters/openshell/gateway-reuse.ts";
 
@@ -435,6 +440,7 @@ console.log(JSON.stringify({
 async function runOpenClawLaunchTurns(input: {
   host: HostCliClient;
   model: string;
+  logicalProvider: string;
   redactionValues: string[];
   sandbox: SandboxClient;
 }): Promise<void> {
@@ -475,7 +481,7 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       timeoutMs: 30_000,
     },
   );
-  const nativeModel = buildNativeModelRestartFixture(input.model);
+  const nativeModel = buildNativeModelRestartFixture(input.model, input.logicalProvider);
   const editNativeModel = await input.sandbox.exec(
     SANDBOX_NAME,
     ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "patch", "--stdin"],
@@ -1006,7 +1012,7 @@ test(
         "sandbox appears in list/status and has policy/inference configuration",
         "native OpenClaw install, invoke, update, self-update, restart, discovery, and removal are not intercepted",
         "an unregistered native-home file survives the exercised native lifecycle",
-        "direct hosted inference and sandbox inference.local both respond",
+        "direct hosted inference and the sandbox's configured inference route both respond",
         ...(USE_PREINSTALLED_LAUNCHABLE
           ? [
               "fresh same-agent onboarding reuses the exact retained external gateway registration and restores inference",
@@ -1205,14 +1211,29 @@ test(
       },
     );
 
-    const inference = await sandbox.openshell(["inference", "get"], {
-      artifactName: "phase-3-openshell-inference-get",
+    const nativeAttachment = await readPublicNvidiaSwitchAttachmentEvidence({
+      artifactName: "phase-3-native-nvidia-provider-attachment",
       env: env(),
-      timeoutMs: 60_000,
+      logicalProvider: hosted.providerName,
+      receipt: getSandbox(SANDBOX_NAME)?.nativeNvidiaProviderAttachment,
+      sandbox,
+      sandboxName: SANDBOX_NAME,
     });
+    const inference =
+      nativeAttachment === null
+        ? await sandbox.openshell(["inference", "get"], {
+            artifactName: "phase-3-openshell-inference-get",
+            env: env(),
+            timeoutMs: 60_000,
+          })
+        : null;
     expect(
-      inference.exitCode === 0 && resultText(inference).includes(hosted.model),
-      resultText(inference),
+      inference !== null
+        ? inference.exitCode === 0 && resultText(inference).includes(hosted.model)
+        : nativeAttachment === PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
+      inference !== null
+        ? resultText(inference)
+        : (nativeAttachment ?? "missing native attachment"),
     ).toBe(true);
 
     const policy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
@@ -1246,17 +1267,7 @@ test(
         run: (availabilityAttempt) =>
           sandbox.exec(
             SANDBOX_NAME,
-            [
-              "curl",
-              "-fsS",
-              "--max-time",
-              "90",
-              "https://inference.local/v1/chat/completions",
-              "-H",
-              "Content-Type: application/json",
-              "--data-raw",
-              attempt.requestBody,
-            ],
+            buildFullE2eSandboxInferenceCommand(attempt.requestBody, hosted.providerName),
             {
               artifactName: `${attempt.artifactName}-availability-${availabilityAttempt}`,
               captureLimitBytes: FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
@@ -1302,7 +1313,13 @@ test(
 
     progress.phase("verify native configuration across restart and launch");
     await (process.platform === "linux"
-      ? runOpenClawLaunchTurns({ host, model: hosted.model, redactionValues, sandbox })
+      ? runOpenClawLaunchTurns({
+          host,
+          model: hosted.model,
+          logicalProvider: hosted.providerName,
+          redactionValues,
+          sandbox,
+        })
       : Promise.resolve());
 
     progress.phase("exercise native plugin package and update lifecycle");
@@ -1387,17 +1404,7 @@ test(
               run: (availabilityAttempt) =>
                 sandbox.exec(
                   SANDBOX_NAME,
-                  [
-                    "curl",
-                    "-fsS",
-                    "--max-time",
-                    "90",
-                    "https://inference.local/v1/chat/completions",
-                    "-H",
-                    "Content-Type: application/json",
-                    "--data-raw",
-                    attempt.requestBody,
-                  ],
+                  buildFullE2eSandboxInferenceCommand(attempt.requestBody, hosted.providerName),
                   {
                     artifactName: `retained-${attempt.artifactName}-availability-${availabilityAttempt}`,
                     captureLimitBytes: FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,

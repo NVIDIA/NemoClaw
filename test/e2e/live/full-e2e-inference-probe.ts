@@ -4,6 +4,11 @@
 import { runBoundedRetry, type RetryEvidence } from "../../../tools/e2e/retry-evidence.mts";
 
 import { resolveMaxTokensField } from "../../../src/lib/inference/max-tokens-field.ts";
+import {
+  NATIVE_NVIDIA_AUTH_HEADER_SCRIPT,
+  NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+} from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { containsAnswer, containsToolCallStructure } from "../../helpers/e2e-answer-assertions.ts";
 
 const ARITHMETIC_PROMPT = "What is 6 multiplied by 7? Reply with only the integer, no extra words.";
@@ -17,6 +22,33 @@ const EVIDENCE_PARSE_ERROR_LIMIT_BYTES = 2 * 1024;
 const EVIDENCE_MODEL_LIMIT_BYTES = 512;
 const EVIDENCE_FINISH_REASON_LIMIT_BYTES = 128;
 const TRUNCATION_SUFFIX = "...[truncated]";
+
+export function buildFullE2eSandboxInferenceCommand(
+  requestBody: string,
+  logicalProvider: string,
+): [string, ...string[]] {
+  if (logicalProvider === NVIDIA_HOSTED_LOGICAL_PROVIDER) {
+    return [
+      "bash",
+      "-c",
+      `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; exec curl -fsS --max-time 90 "$1" -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-raw "$2"`,
+      "full-e2e-native-inference",
+      `${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions`,
+      requestBody,
+    ];
+  }
+  return [
+    "curl",
+    "-fsS",
+    "--max-time",
+    "90",
+    "https://inference.local/v1/chat/completions",
+    "-H",
+    "Content-Type: application/json",
+    "--data-raw",
+    requestBody,
+  ];
+}
 const USAGE_TOTAL_FIELDS = ["prompt_tokens", "completion_tokens", "total_tokens"] as const;
 const USAGE_DETAIL_FIELDS = [
   "audio_tokens",
