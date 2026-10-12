@@ -11,7 +11,11 @@ import {
   readBoundedNvidiaFirmwareValue,
 } from "../inference/dgx-station-identity.js";
 import type { NvidiaPlatform } from "../inference/nim.js";
-import { collectN1xIdentity, type N1xIdentityOptions } from "../inference/platform-identity/n1x.js";
+import {
+  collectN1xIdentity,
+  isKnownN1xPciDevice,
+  type N1xIdentityOptions,
+} from "../inference/platform-identity/n1x.js";
 import { collectWslNvidiaProduct } from "../inference/platform-identity/n1x-wsl.js";
 import {
   isQualifiedStationProfile,
@@ -48,6 +52,7 @@ export interface PlatformIdentity {
   n1xCandidate?: boolean | null;
   n1xFastOsMarker?: boolean | null;
   n1xPciGpu?: boolean | null;
+  n1xPciDevice?: string | null;
   n1xWslGpu?: boolean | null;
   n1xWslProduct?: boolean | null;
   stationGb300WslGpu?: boolean | null;
@@ -462,6 +467,7 @@ export function collectPlatformIdentity(
         n1xCandidate: true,
         n1xFastOsMarker: n1xIdentity.fastOsMarker,
         n1xPciGpu: n1xIdentity.pciGpu,
+        ...(n1xIdentity.pciDevice ? { n1xPciDevice: n1xIdentity.pciDevice } : {}),
       };
     }
   }
@@ -548,18 +554,21 @@ function deriveN1xQualification(input: Readonly<PlatformQualificationInput>): {
 } {
   const identity =
     input.nvidiaPlatform === "n1x" || input.n1xCandidate === true || input.n1xFastOsMarker === true;
+  const identityEstablished =
+    input.n1xFastOsMarker === true || isKnownN1xPciDevice(input.n1xPciDevice ?? undefined);
   const qualified =
     input.nvidiaPlatform === "n1x" &&
-    input.n1xFastOsMarker === true &&
+    identityEstablished &&
     input.n1xPciGpu === true &&
     input.platform === "linux" &&
     input.architecture === "arm64" &&
+    !input.isWsl &&
     input.hasNvidiaGpu;
   let status: QualificationStatus = "unknown";
-  if (identity && input.n1xFastOsMarker === false) {
-    status = "unqualified";
-  } else if (identity && input.n1xFastOsMarker === true && input.n1xPciGpu !== undefined) {
+  if (identity && identityEstablished && input.n1xPciGpu !== undefined) {
     status = qualified ? "qualified" : "unqualified";
+  } else if (identity && input.n1xFastOsMarker === false) {
+    status = "unqualified";
   }
   return { identity, qualified, status };
 }
@@ -749,6 +758,7 @@ export function projectPlatformQualification(
         n1xCandidate: input.n1xCandidate ?? null,
         n1xFastOsMarker: input.n1xFastOsMarker ?? null,
         n1xPciGpu: input.n1xPciGpu ?? null,
+        n1xPciDevice: input.n1xPciDevice ?? null,
         n1xWslGpu: input.n1xWslGpu ?? null,
         n1xWslProduct: input.n1xWslProduct ?? null,
         stationGb300WslGpu: input.stationGb300WslGpu ?? null,
@@ -1021,7 +1031,7 @@ export function projectPlatformQualification(
       id: "host.platform.n1x_unqualified",
       severity: "blocking",
       summary:
-        "N1x requires the trusted FastOS marker, NVIDIA PCI identity, Arm64 host, and available NVIDIA GPU.",
+        "N1x requires a trusted FastOS marker or recognized N1x PCI device, NVIDIA display-class PCI identity, a native Linux Arm64 host, and an available NVIDIA GPU.",
       capabilityIds: ["host.platform.n1x", "host.platform.supported"],
       ...(evidence.length ? { evidenceIds: ["host.platform.identity"] } : {}),
     });
