@@ -26,6 +26,10 @@ describe.each(["openclaw", "hermes"] as const)("%s messaging export", (agent) =>
       plan: { ...empty, runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] } },
     },
     { label: "all channels removed", plan: { ...empty, workflow: "remove-channel" } },
+    ...(["add-channel", "start-channel", "stop-channel", "rebuild"] as const).map((workflow) => ({
+      label: `an empty ${workflow} plan`,
+      plan: { ...empty, workflow },
+    })),
   ])("exports a sandbox with $label", async ({ plan }) => {
     const result = await exportSnapshots([observedMessaging(agent, { schemaVersion: 1, plan })]);
     const withoutMessaging = await exportSnapshots([observedMessaging(agent, undefined)]);
@@ -39,6 +43,10 @@ describe.each(["openclaw", "hermes"] as const)("%s messaging export", (agent) =>
     { label: "missing plan", change: { plan: undefined } },
     { label: "unknown state schema", change: { schemaVersion: 2 } },
     { label: "unknown plan schema", planChange: { schemaVersion: 2 } },
+    { label: "unsupported workflow", planChange: { workflow: "unknown" } },
+    { label: "empty workflow", planChange: { workflow: "" } },
+    { label: "missing workflow", planChange: { workflow: undefined } },
+    { label: "malformed workflow", planChange: { workflow: 1 } },
     { label: "foreign sandbox", planChange: { sandboxName: "foreign" } },
     { label: "foreign agent", planChange: { agent: "foreign" } },
     { label: "missing channels", planChange: { channels: undefined } },
