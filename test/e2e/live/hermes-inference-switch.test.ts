@@ -31,7 +31,7 @@ import {
   inferenceLocalMaxTokens,
   installHermes,
   maybeAssertEnvHashStable,
-  maybeAssertPidStable,
+  maybeAssertGatewayPids,
   mockAnthropicSwitchEnabled,
   PROXY_FORBIDDEN_MARKERS,
   PROXY_RESOLUTION_PROVIDER,
@@ -218,7 +218,9 @@ test(
 
     progress.phase("validate switched route and mutable config");
     const pidAfter = await hermesGatewayPid(sandbox, "pid-after");
-    maybeAssertPidStable(pidBefore, pidAfter, (actual, expected) => expect(actual).toBe(expected));
+    maybeAssertGatewayPids(pidBefore, pidAfter, (actual, previous) => {
+      expect(actual === previous).toBe(SWITCH_PROVIDER !== PUBLIC_NVIDIA_SWITCH_PROVIDER);
+    });
 
     const health = await sandbox.exec(
       SANDBOX_NAME,

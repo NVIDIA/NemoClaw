@@ -1080,6 +1080,9 @@ their explicit models. Support tests own this deterministic model selection.
 The live lane still proves the installed route and all later switch behavior.
 Its credential probe checks the native NVIDIA environment handle or the
 compatible route's proxy sentinel according to the selected provider.
+The native switch must restart the gateway to refresh provider credentials;
+the compatible fixture preserves its gateway process. The live PID comparison
+expects that lifecycle when both probes identify the gateway.
 
 The Hermes Slack lane accepts only correctly scoped OpenShell resolver
 placeholders for Slack assignments in `.env` and for the API egress probes.

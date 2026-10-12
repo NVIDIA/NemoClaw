@@ -730,14 +730,14 @@ export async function envHash(
   });
 }
 
-export function maybeAssertPidStable(
+export function maybeAssertGatewayPids(
   before: ShellProbeResult,
   after: ShellProbeResult,
-  assertStable: (a: string, b: string) => void,
+  assertLifecycle: (a: string, b: string) => void,
 ): void {
   const beforePid = before.stdout.trim();
   const afterPid = after.stdout.trim();
-  beforePid && afterPid && assertStable(afterPid, beforePid);
+  beforePid && afterPid && assertLifecycle(afterPid, beforePid);
 }
 
 export function expectedBaseUrl(): string {
