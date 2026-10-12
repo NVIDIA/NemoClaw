@@ -186,8 +186,6 @@ describe("Pi managed model catalog generation", () => {
         defaultProvider: "openshell",
         defaultModel: "selected-local-model",
       });
-      expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o600);
-
       const userSettings = '{"defaultProvider":"other","futurePiSetting":true}\n';
       fs.writeFileSync(settingsPath, userSettings);
       const rerun = spawnSync(process.execPath, [path.join(root, "agents/pi/generate-config.ts")], {
@@ -197,6 +195,7 @@ describe("Pi managed model catalog generation", () => {
       });
       expect(rerun.status, rerun.stderr).toBe(0);
       expect(fs.readFileSync(settingsPath, "utf8")).toBe(userSettings);
+      expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o600);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

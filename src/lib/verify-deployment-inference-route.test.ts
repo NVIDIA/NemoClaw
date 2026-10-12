@@ -60,7 +60,7 @@ describe("verifyDeployment inference route model-catalog validation", () => {
   it.each([
     ["openclaw", true],
     [DCODE_AGENT, true],
-    ["pi", false],
+    ["pi", true],
     ["hermes", false],
   ])("selects the same onboarding verification route for %s", (agentName, expected) => {
     const context = onboardInferenceVerificationContext("my-sandbox", "my-gateway", agentName, {
