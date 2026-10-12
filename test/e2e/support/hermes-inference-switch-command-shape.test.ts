@@ -27,6 +27,7 @@ import {
   hasAuthenticatedProxyResolutionRequest,
   hostedInstallModel,
   initialInstallModel,
+  parseHermesGatewayPid,
   NATIVE_NVIDIA_API_KEY_SHAPE_PATTERN,
   inferenceLocalMaxTokens,
   installHermes,
@@ -50,6 +51,21 @@ import {
 
 describe("Hermes inference switch command shape", () => {
   afterEach(() => vi.unstubAllEnvs());
+
+  it.each(["123", " 123\n"])("reads one PID from a successful gateway probe: %s", (stdout) => {
+    expect(parseHermesGatewayPid({ exitCode: 0, stdout })).toBe("123");
+  });
+
+  it.each([
+    { exitCode: 1, stdout: "123" },
+    { exitCode: 0, stdout: "" },
+    { exitCode: 0, stdout: "0" },
+    { exitCode: 0, stdout: "python" },
+    { exitCode: 0, stdout: "123 456" },
+    { exitCode: 0, stdout: "123\n456" },
+  ])("rejects a failed or ambiguous gateway PID probe: %j", (probe) => {
+    expect(parseHermesGatewayPid(probe)).toBeUndefined();
+  });
 
   function matchesApiKeyShape(line: string, pattern = API_KEY_SHAPE_PATTERN): boolean {
     return (
@@ -251,6 +267,7 @@ describe("Hermes inference switch command shape", () => {
   );
 
   it("keeps proxy-resolution evidence on a dedicated OpenAI provider", async () => {
+    vi.stubEnv("NEMOCLAW_ENDPOINT_URL", undefined);
     const command = vi
       .fn()
       .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "created" })
@@ -277,6 +294,8 @@ describe("Hermes inference switch command shape", () => {
         "openai",
         "--credential",
         "NVIDIA_INFERENCE_API_KEY",
+        "--config",
+        `OPENAI_BASE_URL=${NVIDIA_HOSTED_NATIVE_ENDPOINT}`,
       ]),
     );
     expect(command.mock.calls[2]?.[1]).toEqual(

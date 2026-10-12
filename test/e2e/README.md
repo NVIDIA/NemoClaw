@@ -1081,8 +1081,12 @@ The live lane still proves the installed route and all later switch behavior.
 Its credential probe checks the native NVIDIA environment handle or the
 compatible route's proxy sentinel according to the selected provider.
 The native switch must restart the gateway to refresh provider credentials;
-the compatible fixture preserves its gateway process. The live PID comparison
-expects that lifecycle when both probes identify the gateway.
+the compatible fixture preserves its gateway process. The live lane requires
+successful probes that each identify one gateway PID before comparing its lifecycle.
+The native registry retains the NVIDIA endpoint, credential environment key,
+and OpenAI Completions API family after selection.
+The later proxy-resolution probe uses the same public NVIDIA endpoint as its
+credential; the compatible fixture retains its authenticated mock endpoint.
 
 The Hermes Slack lane accepts only correctly scoped OpenShell resolver
 placeholders for Slack assignments in `.env` and for the API egress probes.

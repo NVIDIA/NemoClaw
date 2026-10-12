@@ -238,7 +238,11 @@ export async function prepareProxyResolutionRoute({
   redactionValues: string[];
 }): Promise<{ model: string; requestOffset: number }> {
   const endpoint =
-    mockBaseline?.baseUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
+    mockBaseline?.baseUrl ??
+    process.env.NEMOCLAW_ENDPOINT_URL ??
+    (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
+      ? NVIDIA_HOSTED_NATIVE_ENDPOINT
+      : DEFAULT_HOSTED_INFERENCE_BASE_URL);
   const model = mockBaseline ? PROXY_RESOLUTION_MODEL : SWITCH_MODEL;
   const requestOffset = mockBaseline?.requests().length ?? 0;
 
@@ -730,14 +734,11 @@ export async function envHash(
   });
 }
 
-export function maybeAssertGatewayPids(
-  before: ShellProbeResult,
-  after: ShellProbeResult,
-  assertLifecycle: (a: string, b: string) => void,
-): void {
-  const beforePid = before.stdout.trim();
-  const afterPid = after.stdout.trim();
-  beforePid && afterPid && assertLifecycle(afterPid, beforePid);
+export function parseHermesGatewayPid(
+  result: Pick<ShellProbeResult, "exitCode" | "stdout">,
+): string | undefined {
+  const pid = result.stdout.trim();
+  return result.exitCode === 0 && /^[1-9][0-9]*$/u.test(pid) ? pid : undefined;
 }
 
 export function expectedBaseUrl(): string {
