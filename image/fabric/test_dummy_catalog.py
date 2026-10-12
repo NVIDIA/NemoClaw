@@ -6,13 +6,18 @@ import json
 import unittest
 from pathlib import Path
 
-import dummy_catalog
 from bridge_contract import capabilities
 from dummy_backend import ADAPTER_ID, HEALTH_CHECKS
 
+INSTALLED = Path("/opt/nemoclaw/dummy_catalog.py")
 
+
+# The catalog reads the dummy image's installed files, so only that image runs it.
+@unittest.skipUnless(INSTALLED.exists(), "runs in the reference dummy image")
 class DummyCatalogTest(unittest.TestCase):
     def test_catalog_lists_the_dummy_with_its_bridge_and_runtime(self):
+        import dummy_catalog
+
         catalog = dummy_catalog.snapshot()
         provenance = json.loads(Path("/opt/nemoclaw/provenance.json").read_text())
         self.assertEqual(catalog["fabric_revision"], provenance["fabric_revision"])
