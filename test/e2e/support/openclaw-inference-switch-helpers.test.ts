@@ -13,6 +13,8 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 
 import {
+  getRouteOutput,
+  readOpenClawConfig,
   agentReplyContainsToken,
   anthropicToolCount,
   classifyExhaustedPostSwitchEvidence,
@@ -299,15 +301,6 @@ describe("openclaw-inference-switch mock-Anthropic baseline", () => {
   });
 });
 
-const captured = vi.hoisted(() => ({ test: vi.fn() }));
-vi.mock("../fixtures/e2e-test.ts", async () => ({
-  expect: (await import("vitest")).expect,
-  test: captured.test,
-}));
-vi.mock("../fixtures/managed-image-receipt.ts", () => ({
-  selectedE2eManagedImageReference: () => "example.invalid/openclaw@sha256:" + "a".repeat(64),
-}));
-
 const disposables: Array<() => unknown> = [];
 afterEach(async () => {
   for (const dispose of disposables.splice(0).reverse()) await dispose();
@@ -316,7 +309,6 @@ afterEach(async () => {
 });
 
 it("requests structured route output instead of aligned terminal columns", async () => {
-  const { getRouteOutput } = await import("../live/openclaw-inference-switch.test.ts");
   const command = vi.fn(async (_command: string, args: string[]) => ({
     exitCode: 0,
     stderr: "",
@@ -324,15 +316,46 @@ it("requests structured route output instead of aligned terminal columns", async
       ? JSON.stringify({ provider: "compatible-anthropic-endpoint", model: "mock-anthropic-model" })
       : "Provider: compatible-anthropic-endpoint\nModel:    mock-anthropic-model\n",
   }));
-  const result = await getRouteOutput(
-    { command } as unknown as HostCliClient,
-    "/tmp/switch-test-home",
-  );
+  const result = await getRouteOutput({ command } as unknown as HostCliClient, {
+    env: { HOME: "/tmp/switch-test-home" },
+    timeoutMs: 1000,
+  });
   expect(JSON.parse(result.stdout)).toEqual({
     provider: "compatible-anthropic-endpoint",
     model: "mock-anthropic-model",
   });
 });
+
+async function probeOpenClawConfig(
+  sandbox: Parameters<typeof readOpenClawConfig>[0],
+  home: string,
+  expected: {
+    model: string;
+    inferenceApi: string;
+    artifactName: string;
+    nativeNvidia?: boolean;
+  },
+) {
+  const result = await readOpenClawConfig(sandbox, "switch-test", {
+    artifactName: expected.artifactName,
+    env: { HOME: home },
+    timeoutMs: 1000,
+    nativeNvidia: expected.nativeNvidia,
+  });
+  expect(result.exitCode).toBe(0);
+  const config = JSON.parse(result.stdout);
+  const providerKey = expected.inferenceApi === "anthropic-messages" ? "anthropic" : "inference";
+  const provider = config.models.providers[providerKey];
+  expect(config.agents.defaults.model.primary).toBe(`${providerKey}/${expected.model}`);
+  expect(provider.api).toBe(expected.inferenceApi);
+  expect(provider.apiKey).toBe(expected.nativeNvidia ? undefined : "unused");
+  const model = provider.models.find((entry: { id: string }) => entry.id === expected.model);
+  expect(
+    expected.inferenceApi === "anthropic-messages"
+      ? model.maxTokens > 0
+      : model.maxTokens === undefined,
+  ).toBe(true);
+}
 
 const scopedNativeHandle = "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY";
 
@@ -363,12 +386,11 @@ function sandboxForOpenClawConfig(config: object, handle = scopedNativeHandle) {
 }
 
 it("checks the actual switched native model budget with a materialized handle", async () => {
-  const { assertOpenClawConfig } = await import("../live/openclaw-inference-switch.test.ts");
   const model = "nvidia/nemotron-3-super-120b-a12b";
   const config: any = {};
   patchOpenClawInferenceConfig(config, "nvidia-prod", model, "openai-completions");
   config.models.providers.inference.apiKey = scopedNativeHandle;
-  await assertOpenClawConfig(sandboxForOpenClawConfig(config) as never, "/tmp/switch-home", {
+  await probeOpenClawConfig(sandboxForOpenClawConfig(config) as never, "/tmp/switch-home", {
     model,
     inferenceApi: "openai-completions",
     artifactName: "switched-native-config",
@@ -377,7 +399,6 @@ it("checks the actual switched native model budget with a materialized handle", 
 });
 
 it("checks the actual switched Anthropic model budget", async () => {
-  const { assertOpenClawConfig } = await import("../live/openclaw-inference-switch.test.ts");
   const model = "mock-anthropic-model";
   const config = {};
   patchOpenClawInferenceConfig(
@@ -386,7 +407,7 @@ it("checks the actual switched Anthropic model budget", async () => {
     model,
     "anthropic-messages",
   );
-  await assertOpenClawConfig(sandboxForOpenClawConfig(config) as never, "/tmp/switch-home", {
+  await probeOpenClawConfig(sandboxForOpenClawConfig(config) as never, "/tmp/switch-home", {
     model,
     inferenceApi: "anthropic-messages",
     artifactName: "switched-anthropic-config",
@@ -403,13 +424,12 @@ it.each([
   "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
   null,
 ])("rejects an incorrect native OpenClaw credential value after redaction: %s", async (value) => {
-  const { assertOpenClawConfig } = await import("../live/openclaw-inference-switch.test.ts");
   const model = "nvidia/nemotron-3-super-120b-a12b";
   const config: any = {};
   patchOpenClawInferenceConfig(config, "nvidia-prod", model, "openai-completions");
   config.models.providers.inference.apiKey = value;
   await expect(
-    assertOpenClawConfig(sandboxForOpenClawConfig(config) as never, "/tmp/switch-home", {
+    probeOpenClawConfig(sandboxForOpenClawConfig(config) as never, "/tmp/switch-home", {
       model,
       inferenceApi: "openai-completions",
       artifactName: "invalid-native-credential",
@@ -421,13 +441,12 @@ it.each([
 it.each(["", "nvapi-fixture-secret", "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY"])(
   "rejects a missing or unscoped native handle even when config matches: %s",
   async (handle) => {
-    const { assertOpenClawConfig } = await import("../live/openclaw-inference-switch.test.ts");
     const model = "nvidia/nemotron-3-super-120b-a12b";
     const config: any = {};
     patchOpenClawInferenceConfig(config, "nvidia-prod", model, "openai-completions");
     config.models.providers.inference.apiKey = handle;
     await expect(
-      assertOpenClawConfig(sandboxForOpenClawConfig(config, handle) as never, "/tmp/switch-home", {
+      probeOpenClawConfig(sandboxForOpenClawConfig(config, handle) as never, "/tmp/switch-home", {
         model,
         inferenceApi: "openai-completions",
         artifactName: "invalid-native-handle",
