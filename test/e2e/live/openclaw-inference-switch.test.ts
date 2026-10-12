@@ -51,6 +51,8 @@ import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  getRouteOutput,
+  readOpenClawConfig,
   agentReplyContainsToken,
   anthropicToolCount,
   classifyExhaustedPostSwitchEvidence,
@@ -530,13 +532,6 @@ async function openclawGatewayPid(sandbox: SandboxClient, home: string): Promise
   return result.stdout.trim();
 }
 
-async function getRouteOutput(host: HostCliClient, home: string): Promise<ShellProbeResult> {
-  return runNemoclaw(host, home, ["inference", "get", "--json"], {
-    artifactName: "nemoclaw-inference-get-after-switch",
-    timeoutMs: COMMAND_TIMEOUT_MS,
-  });
-}
-
 async function assertRegistryAndSession(
   home: string,
   options: { mockProvider?: MockAnthropicProvider; sandbox: SandboxClient },
@@ -617,32 +612,12 @@ async function readAndAssertOpenClawConfig(
     nativeNvidia?: boolean;
   },
 ): Promise<OpenClawModelConfig | undefined> {
-  const configResult = await sandbox.exec(
-    SANDBOX_NAME,
-    expected.nativeNvidia
-      ? [
-          "node",
-          "-e",
-          [
-            'const fs = require("node:fs");',
-            'const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));',
-            "const provider = config.models?.providers?.inference;",
-            // A fresh exec receives the newly attached provider handle. Keep
-            // both values inside the sandbox because ShellProbe redacts the
-            // credential-shaped config field before returning stdout.
-            "const handle = process.env.NVIDIA_INFERENCE_API_KEY;",
-            'require("node:assert/strict").ok(/^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY$/.test(handle ?? "") && provider?.apiKey === handle, "native credential reference mismatch");',
-            "delete provider.apiKey;",
-            "process.stdout.write(JSON.stringify(config));",
-          ].join(" "),
-        ]
-      : ["cat", "/sandbox/.openclaw/openclaw.json"],
-    {
-      artifactName: expected.artifactName,
-      env: commandEnv(home),
-      timeoutMs: COMMAND_TIMEOUT_MS,
-    },
-  );
+  const configResult = await readOpenClawConfig(sandbox, SANDBOX_NAME, {
+    nativeNvidia: expected.nativeNvidia,
+    artifactName: expected.artifactName,
+    env: commandEnv(home),
+    timeoutMs: COMMAND_TIMEOUT_MS,
+  });
   expect(configResult.exitCode, resultText(configResult)).toBe(0);
   const config = JSON.parse(configResult.stdout) as OpenClawConfig;
   const expectedProviderKey =
@@ -1334,7 +1309,10 @@ test(
     }
 
     progress.phase("inspect route configuration and recorded state");
-    const route = await getRouteOutput(host, home);
+    const route = await getRouteOutput(host, {
+      env: commandEnv(home),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    });
     expect(route.exitCode, resultText(route)).toBe(0);
     const routeState = JSON.parse(route.stdout) as { provider?: unknown; model?: unknown };
     expect(routeState.provider).toBe(SWITCH_PROVIDER);
