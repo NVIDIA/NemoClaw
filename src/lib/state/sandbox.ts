@@ -1366,12 +1366,18 @@ function growArchiveMember(
   nextOffset: number,
   archiveSize: number,
   replacementSize: number,
+  maxBytes: number,
 ): number {
   const newNextOffset =
     headerOffset + TAR_BLOCK_BYTES + Math.ceil(replacementSize / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
   const growth = newNextOffset - nextOffset;
   if (!Number.isSafeInteger(archiveSize + growth))
     throw new Error("the native archive is too large");
+  if (archiveSize + growth > maxBytes) {
+    throw new Error(
+      `Native archive sanitation exceeded the ${maxBytes}-byte backup-space limit. Free backup-disk space or reduce the native home, then retry.`,
+    );
+  }
   if (growth > 0) {
     for (let end = archiveSize; end > nextOffset;) {
       const start = Math.max(nextOffset, end - 1024 * 1024);
@@ -1402,7 +1408,10 @@ function growArchiveMember(
  * Structured configuration can grow during serialization. Move subsequent
  * members in bounded chunks. Replacement startup creates fresh local authority.
  */
-export function sanitizeMachineLocalArchiveConfig(archivePath: string): string | null {
+export function sanitizeMachineLocalArchiveConfig(
+  archivePath: string,
+  maxBytes = NATIVE_STATE_CAPTURE_MAX_BYTES,
+): string | null {
   const hermesTarget = ".hermes/.env";
   const openClawDatabaseTargets = new Set([
     ".openclaw/state/openclaw.sqlite",
@@ -1501,6 +1510,7 @@ export function sanitizeMachineLocalArchiveConfig(archivePath: string): string |
                 nextOffset,
                 archiveSize,
                 replacement.byteLength,
+                maxBytes,
               );
               archiveSize += growth;
               nextOffset += growth;
@@ -2415,7 +2425,7 @@ function backupNativeSandboxState(
         `Native state archive validation failed: ${hardLinkViolations.join("; ")}`,
       );
     }
-    const sanitationFailure = sanitizeMachineLocalArchiveConfig(archivePath);
+    const sanitationFailure = sanitizeMachineLocalArchiveConfig(archivePath, maxBytes);
     if (sanitationFailure) {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(`Native state archive sanitation failed: ${sanitationFailure}`);

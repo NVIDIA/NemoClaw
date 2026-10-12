@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -94,6 +95,53 @@ describe("complete native-home machine authority", () => {
       }
     },
   );
+
+  it("rejects cumulative configuration growth beyond the backup-space limit", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-growth-limit-"));
+    try {
+      const nativeRoot = path.join(fixture, "native-home");
+      const source = `${Array.from({ length: 2000 }, (_, index) => `setting${index}: on\n`).join("")}api_key: private-fixture-value\n`;
+      const config = path.join(nativeRoot, ".hermes/config.yaml");
+      const saved = path.join(nativeRoot, ".hermes/backups/config/config.yml.saved");
+      fs.mkdirSync(path.dirname(saved), { recursive: true });
+      fs.writeFileSync(config, source);
+      fs.writeFileSync(saved, source);
+      const captured = spawnSync("tar", ["-C", nativeRoot, "-cf", "-", "."]);
+      expect(captured.status).toBe(0);
+      const replacement = JSON.stringify({
+        ...parseYaml(source),
+        api_key: "[STRIPPED_BY_MIGRATION]",
+      });
+      const growth =
+        (Math.ceil(Buffer.byteLength(replacement) / 512) -
+          Math.ceil(Buffer.byteLength(source) / 512)) *
+        512;
+      expect(growth).toBeGreaterThan(0);
+      // The capture and one expansion fit; the second expansion must be rejected.
+      const limit = captured.stdout.byteLength + growth;
+      const boundedArchive = path.join(fixture, "bounded.tar");
+      fs.writeFileSync(boundedArchive, captured.stdout);
+      expect(sandboxState.sanitizeMachineLocalArchiveConfig(boundedArchive, limit)).toContain(
+        "backup-space limit",
+      );
+      expect(fs.statSync(boundedArchive).size).toBe(limit);
+      writeSandboxRegistry("growth-limit", "hermes");
+      const backup = sandboxState.backupSandboxState("growth-limit", {
+        nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
+        nativeStateCaptureMaxBytes: limit,
+      });
+      expect(backup.success).toBe(false);
+      expect(backup.error).toContain("sanitation failed");
+      expect(backup.error).toContain("backup-space limit");
+      expect(backup.error).toContain("Free backup-disk space");
+      const backups = path.join(TMP_HOME, ".nemoclaw/rebuild-backups/growth-limit");
+      expect(fs.existsSync(backups) ? fs.readdirSync(backups) : []).toEqual([]);
+      expect(fs.readFileSync(config, "utf8")).toBe(source);
+      expect(fs.readFileSync(saved, "utf8")).toBe(source);
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
 
   it.each([".openclaw", ".openclaw-data"])(
     "replaces the %s device identity with an explicit startup placeholder",
