@@ -157,6 +157,31 @@ describe("runFixCoreDns", () => {
     expect(calls.map((call) => call.env?.DOCKER_HOST)).not.toContain(`unix://${PODMAN_SOCKET}`);
   });
 
+  it("runs Docker against the current Colima context when the CLI default answers through it (#12367)", () => {
+    const colimaHost = "unix:///home/test/.colima/default/docker.sock";
+    const { calls, runDocker } = patchingRunDocker("Name: colima\nServer Version: 27.0.0\n");
+    const result = runFixCoreDns(
+      { gatewayName: "nemoclaw" },
+      {
+        commandExists: () => false,
+        env: LINUX_ENV,
+        existsSocket: () => false,
+        log: vi.fn(),
+        platform: "linux",
+        probeDockerHost: probeAnswers({ [DEFAULT_AUTHORITY]: "docker" }),
+        inspectCurrentDockerContext: () => ({ name: "colima", host: colimaHost }),
+        readFile: () => "nameserver 1.1.1.1\n",
+        runDocker,
+        uid: () => "1000",
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.runtime).toBe("colima");
+    expect(calls.length).toBeGreaterThan(0);
+    expect(new Set(calls.map((call) => call.env?.DOCKER_HOST))).toEqual(new Set([colimaHost]));
+  });
+
   it("adopts a discovered Podman socket once it answers", () => {
     const { calls, runDocker } = patchingRunDocker("");
     const result = runFixCoreDns(
