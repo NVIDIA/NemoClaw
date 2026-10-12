@@ -164,7 +164,7 @@ describe("native-home destroy fallback", () => {
     });
     const control = base.lifecycle.privilegedSandboxControl;
     const failure = { status: 1, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
-    const execute = vi.fn(() => {
+    const execute = vi.fn((_input: { readonly command: readonly string[] }) => {
       events.push("privileged");
       return failure;
     });
