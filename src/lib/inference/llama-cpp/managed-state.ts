@@ -24,6 +24,7 @@ const MAX_STATE_BYTES = 64 * 1024;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_SANDBOX_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const SAFE_RECIPE_ID = /^[a-z0-9][a-z0-9._-]{0,159}$/u;
+const GPU_UUID = /^GPU-[0-9a-f-]+$/iu;
 
 export interface ManagedLlamaCppOwner {
   readonly schemaVersion: 1;
@@ -32,6 +33,7 @@ export interface ManagedLlamaCppOwner {
   readonly presetDigest: string;
   readonly recipeDigest: string;
   readonly recipeId: string;
+  readonly gpuDeviceUuid?: string;
 }
 
 export interface ManagedLlamaCppStatePaths {
@@ -64,8 +66,11 @@ function normalizeOwner(value: ManagedLlamaCppOwner): ManagedLlamaCppOwner {
     !/^sha256:[a-f0-9]{64}$/u.test(value.catalogDigest) ||
     !/^sha256:[a-f0-9]{64}$/u.test(value.presetDigest) ||
     !/^sha256:[a-f0-9]{64}$/u.test(value.recipeDigest) ||
+    (value.gpuDeviceUuid !== undefined && !GPU_UUID.test(value.gpuDeviceUuid)) ||
     Object.keys(value).sort().join(",") !==
-      "catalogDigest,presetDigest,recipeDigest,recipeId,sandboxName,schemaVersion"
+      (value.gpuDeviceUuid === undefined
+        ? "catalogDigest,presetDigest,recipeDigest,recipeId,sandboxName,schemaVersion"
+        : "catalogDigest,gpuDeviceUuid,presetDigest,recipeDigest,recipeId,sandboxName,schemaVersion")
   ) {
     throw new Error("Managed llama.cpp owner state is malformed.");
   }

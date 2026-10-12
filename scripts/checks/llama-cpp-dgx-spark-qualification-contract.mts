@@ -180,7 +180,7 @@ export type LlamaCppDgxSparkExecutionPlan = {
       readonly runtimeBase: typeof LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE;
     };
     readonly platform: {
-      readonly cudaArchitectures: "121a-real";
+      readonly cudaArchitectures: "103-real;120-real;121a-real";
       readonly platform: typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM;
     };
     readonly repository: typeof LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY;
@@ -1058,7 +1058,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
     imageCuda.developmentBase !== LLAMA_CPP_DGX_SPARK_CUDA_DEVELOPMENT_BASE ||
     imageCuda.runtimeBase !== LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE ||
     platform.platform !== LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM ||
-    platform.cudaArchitectures !== "121a-real" ||
+    platform.cudaArchitectures !== "103-real;120-real;121a-real" ||
     imageRuntime.port !== 8081 ||
     imageSource.repository !== LLAMA_CPP_DGX_SPARK_SOURCE_REPOSITORY ||
     imageSource.revision !== LLAMA_CPP_DGX_SPARK_SOURCE_REVISION ||
@@ -1405,7 +1405,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
         runtimeBase: LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE,
       },
       platform: {
-        cudaArchitectures: "121a-real",
+        cudaArchitectures: "103-real;120-real;121a-real",
         platform: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM,
       },
       repository: LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY,
