@@ -6,17 +6,18 @@ import {
   isExactExternalImageReference,
   isRuntimeImageContentId,
 } from "../../state/registry/workload";
-import type { RuntimeProviderCommandCapture } from "../runtime-provider/contract";
 import type {
-  ExternalImageAgent,
-  ExternalImageWorkloadSource,
-  SandboxWorkloadRuntimeCapabilities,
-} from "./source";
+  RuntimeProviderCommandCapture,
+  RuntimeProviderExternalImageLocalInspection,
+  RuntimeProviderExternalImagePreparationSurface,
+} from "../runtime-provider/contract";
+import type { ExternalImageWorkloadSource, SandboxWorkloadRuntimeCapabilities } from "./source";
+import { EXTERNAL_IMAGE_AGENTS, type ExternalImageAgent } from "./source";
 
 const INSPECT_LIMIT_BYTES = 256 * 1024;
 const PREPARE_TIMEOUT_MS = 10 * 60 * 1000;
 
-interface DockerImageInspect {
+interface RuntimeImageInspect {
   readonly Id?: unknown;
   readonly Os?: unknown;
   readonly Architecture?: unknown;
@@ -36,13 +37,7 @@ export interface PrepareExternalImageInput {
   readonly runtime: SandboxWorkloadRuntimeCapabilities;
 }
 
-export interface PrepareExternalImageDependencies {
-  readonly capture: (
-    operation: "external-image-preparation",
-    args: readonly string[],
-    timeoutMs?: number,
-  ) => RuntimeProviderCommandCapture;
-}
+export type PrepareExternalImageDependencies = RuntimeProviderExternalImagePreparationSurface;
 
 export class ExternalImagePreparationError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -78,7 +73,9 @@ export function parseExactExternalImageReference(value: unknown): string {
 }
 
 function requireExternalImageAgent(agentName: string): ExternalImageAgent {
-  if (agentName === "openclaw" || agentName === "hermes") return agentName;
+  if (EXTERNAL_IMAGE_AGENTS.some((agent) => agent === agentName)) {
+    return agentName as ExternalImageAgent;
+  }
   throw new ExternalImagePreparationError(
     `agent '${agentName}' is not supported for user-supplied images.`,
   );
@@ -130,7 +127,7 @@ function requireToolDisclosure(environment: readonly string[]): ToolDisclosure {
 }
 
 function requireAgentMetadata(
-  inspect: DockerImageInspect,
+  inspect: RuntimeImageInspect,
   environment: readonly string[],
   agent: ExternalImageAgent,
 ): void {
@@ -160,15 +157,15 @@ function requireAgentMetadata(
   }
 }
 
-function parseInspectOutput(output: string): DockerImageInspect {
+function parseInspectOutput(output: string, runtimeName: string): RuntimeImageInspect {
   if (Buffer.byteLength(output, "utf8") > INSPECT_LIMIT_BYTES) {
-    throw new ExternalImagePreparationError("Docker returned oversized image metadata.");
+    throw new ExternalImagePreparationError(`${runtimeName} returned oversized image metadata.`);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
   } catch (error) {
-    throw new ExternalImagePreparationError("Docker returned malformed image metadata.", {
+    throw new ExternalImagePreparationError(`${runtimeName} returned malformed image metadata.`, {
       cause: error,
     });
   }
@@ -178,20 +175,17 @@ function parseInspectOutput(output: string): DockerImageInspect {
     typeof parsed[0] !== "object" ||
     !parsed[0]
   ) {
-    throw new ExternalImagePreparationError("Docker must return exactly one image record.");
+    throw new ExternalImagePreparationError(`${runtimeName} must return exactly one image record.`);
   }
-  return parsed[0] as DockerImageInspect;
-}
-
-function isMissingLocalImage(inspection: RuntimeProviderCommandCapture): boolean {
-  return /(?:No such image|No such object)(?::|$)/iu.test(inspection.stderr);
+  return parsed[0] as RuntimeImageInspect;
 }
 
 function validateInspect(
   reference: string,
-  inspect: DockerImageInspect,
+  inspect: RuntimeImageInspect,
   agent: ExternalImageAgent,
   runtime: SandboxWorkloadRuntimeCapabilities,
+  dependencies: PrepareExternalImageDependencies,
 ): ExternalImageWorkloadSource {
   const support = runtime.externalImages;
   if (!support?.exactDigestReferences || support.platforms.length !== 1) {
@@ -226,9 +220,11 @@ function validateInspect(
   const environment = requireStringArray(inspect.Config?.Env, "environment");
   requireAgentMetadata(inspect, environment, agent);
   const toolDisclosure = requireToolDisclosure(environment);
-  const runtimeImageContentId = inspect.Id;
+  const runtimeImageContentId = dependencies.normalizeContentId(inspect.Id);
   if (!isRuntimeImageContentId(runtimeImageContentId)) {
-    throw new ExternalImagePreparationError("Docker returned an invalid immutable image identity.");
+    throw new ExternalImagePreparationError(
+      `${dependencies.displayName} returned an invalid immutable image identity.`,
+    );
   }
   return {
     kind: "external-image",
@@ -250,44 +246,66 @@ export function prepareExternalImageWorkloadSource(
       `driver '${input.runtime.driverName}' does not support user-supplied images.`,
     );
   }
-  let inspected = dependencies.capture(
-    "external-image-preparation",
-    ["image", "inspect", reference],
-    PREPARE_TIMEOUT_MS,
-  );
-  if (inspected.error) {
-    throw new ExternalImagePreparationError("Docker image inspection is unavailable.", {
-      cause: inspected.error,
-    });
+  let localInspection: RuntimeProviderExternalImageLocalInspection;
+  try {
+    localInspection = dependencies.inspectLocal(reference, PREPARE_TIMEOUT_MS);
+  } catch (error) {
+    throw new ExternalImagePreparationError(
+      `${dependencies.displayName} could not inspect the requested image locally.`,
+      error instanceof Error ? { cause: error } : undefined,
+    );
   }
-  if (inspected.status !== 0) {
-    if (!isMissingLocalImage(inspected)) {
+  if (localInspection.status === "failed") {
+    throw new ExternalImagePreparationError(
+      `${dependencies.displayName} could not inspect the requested image locally.`,
+      localInspection.error ? { cause: localInspection.error } : undefined,
+    );
+  }
+  let inspected: RuntimeProviderCommandCapture;
+  if (localInspection.status === "absent") {
+    let pulled: RuntimeProviderCommandCapture;
+    try {
+      pulled = dependencies.pull(reference, PREPARE_TIMEOUT_MS);
+    } catch (error) {
       throw new ExternalImagePreparationError(
-        "Docker could not inspect the requested image locally.",
+        `${dependencies.displayName} could not pull the requested image. Check image visibility or authenticate with ${dependencies.displayName}, then retry.`,
+        error instanceof Error ? { cause: error } : undefined,
       );
     }
-    const pulled = dependencies.capture(
-      "external-image-preparation",
-      ["pull", reference],
-      PREPARE_TIMEOUT_MS,
-    );
     if (pulled.status !== 0 || pulled.error) {
       throw new ExternalImagePreparationError(
-        "Docker could not pull the requested image. Check image visibility or authenticate with Docker, then retry.",
+        `${dependencies.displayName} could not pull the requested image. Check image visibility or authenticate with ${dependencies.displayName}, then retry.`,
         pulled.error ? { cause: pulled.error } : undefined,
       );
     }
-    inspected = dependencies.capture(
-      "external-image-preparation",
-      ["image", "inspect", reference],
-      PREPARE_TIMEOUT_MS,
-    );
+    try {
+      inspected = dependencies.inspectPulled(reference, PREPARE_TIMEOUT_MS);
+    } catch (error) {
+      throw new ExternalImagePreparationError(
+        `${dependencies.displayName} could not inspect the pulled image.`,
+        error instanceof Error ? { cause: error } : undefined,
+      );
+    }
     if (inspected.status !== 0 || inspected.error) {
       throw new ExternalImagePreparationError(
-        "Docker could not inspect the pulled image.",
+        `${dependencies.displayName} could not inspect the pulled image.`,
+        inspected.error ? { cause: inspected.error } : undefined,
+      );
+    }
+  } else {
+    inspected = localInspection.inspection;
+    if (inspected.status !== 0 || inspected.error) {
+      throw new ExternalImagePreparationError(
+        `${dependencies.displayName} could not inspect the requested image locally.`,
         inspected.error ? { cause: inspected.error } : undefined,
       );
     }
   }
-  return validateInspect(reference, parseInspectOutput(inspected.stdout), agent, input.runtime);
+  return validateInspect(
+    reference,
+    parseInspectOutput(inspected.stdout, dependencies.displayName),
+    agent,
+    input.runtime,
+    dependencies,
+  );
 }

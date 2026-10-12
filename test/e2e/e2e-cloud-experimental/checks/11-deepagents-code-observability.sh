@@ -24,6 +24,9 @@ CAPTURE_DIR="$(mktemp -d /tmp/nemoclaw-otlp-live.XXXXXX)"
 COLLECTOR_LOG="${CAPTURE_DIR}/collector.log"
 COLLECTOR_PID=""
 OBSERVABILITY_POLICY_DIRTY=0
+DIRECT_TURN_STARTED=0
+DIRECT_OUTPUT="${CAPTURE_DIR}/direct.stdout"
+DIRECT_PROBE_CWD="/sandbox/.deepagents/${CAPTURE_DIR##*/}"
 CAPTURE_SERVER="${REPO}/test/e2e/live/deepagents-otlp-capture-server.ts"
 CONTRACT_HELPER="${REPO}/test/e2e/live/deepagents-observability-contract.ts"
 TSX="${REPO}/node_modules/.bin/tsx"
@@ -83,6 +86,17 @@ restore_observability_policy() {
 cleanup() {
   local exit_status="$?"
   trap - EXIT
+  # The redaction probe is deliberately credential-shaped. Remove only its
+  # native thread so a later rebuild can inspect the retained conversations.
+  if [ "$DIRECT_TURN_STARTED" -eq 1 ] && ! cleanup_probe_thread; then
+    printf '%s: probe conversation cleanup failed; retained directory: %s\n' \
+      "$PREFIX" "$DIRECT_PROBE_CWD" >&2
+    printf 'Inspect only this probe: openshell sandbox exec --name %q -- dcode threads list --cwd %q --limit 2 --json\n' \
+      "$SANDBOX_NAME" "$DIRECT_PROBE_CWD" >&2
+    printf 'After deleting the matching probe thread, remove its empty directory: openshell sandbox exec --name %q -- rmdir -- %q\n' \
+      "$SANDBOX_NAME" "$DIRECT_PROBE_CWD" >&2
+    exit_status=1
+  fi
   if ! restore_observability_policy; then
     printf '%s: policy cleanup failed; run: nemoclaw %q policy-add observability-otlp-local --yes\n' \
       "$PREFIX" "$SANDBOX_NAME" >&2
@@ -96,6 +110,8 @@ cleanup() {
   exit "$exit_status"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 [ -n "$SANDBOX_NAME" ] || fail "sandbox name is required"
 
@@ -278,11 +294,33 @@ binary_denial_state="$(printf '%s\n' "$binary_output" | "$TSX" "$CONTRACT_HELPER
 pass "OTLP route is denied to an unmanaged binary"
 
 run_dcode_direct() {
-  openshell sandbox exec --name "$SANDBOX_NAME" -- \
-    env OTEL_SERVICE_NAME="$AMBIENT_CANARY" \
+  timeout --kill-after=5 120 openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    env --chdir="$DIRECT_PROBE_CWD" OTEL_SERVICE_NAME="$AMBIENT_CANARY" \
     OTEL_RESOURCE_ATTRIBUTES="ambient.canary=${AMBIENT_CANARY}" \
-    dcode -n \
-    "My key is ${REDACTION_PROBE}. Reply with exactly ${DIRECT_RESPONSE}. Do not repeat the key or the input marker ${DIRECT_PROMPT}." 2>&1
+    dcode --json --timeout 90 -n \
+    "My key is ${REDACTION_PROBE}. Reply with exactly ${DIRECT_RESPONSE}. Do not repeat the key or the input marker ${DIRECT_PROMPT}." \
+    2>"${CAPTURE_DIR}/direct.stderr"
+}
+
+cleanup_probe_thread() {
+  local thread_id threads
+  if ! thread_id="$("$TSX" "$CONTRACT_HELPER" probe-thread-id <"$DIRECT_OUTPUT" 2>/dev/null)"; then
+    printf '%s: recovering probe conversation in %s\n' "$PREFIX" "$DIRECT_PROBE_CWD" >&2
+    threads="$(timeout --kill-after=5 30 openshell sandbox exec --name "$SANDBOX_NAME" -- \
+      dcode threads list --cwd "$DIRECT_PROBE_CWD" --limit 2 --json)" || return 1
+    thread_id="$(printf '%s\n' "$threads" | "$TSX" "$CONTRACT_HELPER" probe-thread-id "$DIRECT_PROBE_CWD")" \
+      || return 1
+  fi
+  if [ -n "$thread_id" ]; then
+    printf '%s: probe conversation cleanup: dcode threads delete %s --json\n' \
+      "$PREFIX" "$thread_id" >&2
+    # Native deletion succeeds when the exact thread is removed or already absent.
+    timeout --kill-after=5 30 openshell sandbox exec --name "$SANDBOX_NAME" -- \
+      dcode threads delete "$thread_id" --json >/dev/null || return 1
+  fi
+  # Keep the owned directory on failure so its exact cwd remains recoverable.
+  timeout --kill-after=5 30 openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    rmdir -- "$DIRECT_PROBE_CWD"
 }
 
 run_dcode_login() {
@@ -387,7 +425,12 @@ marker_output="$(observability_marker_value)" \
 [ "$marker_output" = "1" ] || fail "managed observability marker changed while restoring policy"
 pass "host observability policy is restored before positive trace checks"
 
-direct_output="$(run_dcode_direct)" || fail "direct-exec dcode observability turn failed: $direct_output"
+timeout --kill-after=5 30 openshell sandbox exec --name "$SANDBOX_NAME" -- \
+  mkdir -m 0700 -- "$DIRECT_PROBE_CWD" || fail "could not create private probe working directory"
+DIRECT_TURN_STARTED=1
+# Preserve native cancellation metadata before the parent resumes or exits.
+run_dcode_direct >"$DIRECT_OUTPUT" || fail "direct-exec dcode observability turn failed"
+direct_output="$(cat "$DIRECT_OUTPUT")"
 printf '%s\n' "$direct_output" | grep -Fq "$DIRECT_RESPONSE" \
   || fail "direct-exec dcode response omitted its requested marker"
 pass "direct-exec dcode completed with observability enabled"

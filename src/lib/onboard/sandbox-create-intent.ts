@@ -140,6 +140,8 @@ export function resolveSandboxCreateIntent({
   basePolicyPath,
   sandboxName,
   inferenceProvider,
+  nativeNvidiaProviderAttachment,
+  nativeHostedProviderAttachment,
   hostLocalInferenceRouteOnly = false,
   channels,
   enabledChannels,
@@ -187,6 +189,8 @@ export function resolveSandboxCreateIntent({
   return {
     sandboxName,
     inferenceProvider: normalizedInferenceProvider,
+    ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+    ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
     activeMessagingChannels,
     messagingProviderRequests: messagingProviderRequests.map((request) => ({ ...request })),
     reusableMessagingProviders: enabledReusableMessagingProviders,

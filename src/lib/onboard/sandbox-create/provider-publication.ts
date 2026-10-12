@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isNativeHostedProviderName } from "../../inference/native-provider/hosted-attachment";
+import { hostedNativeProviderForAttachment } from "../../inference/native-provider/hosted-attachment";
+import { nativeProviderLifecycle } from "../../inference/native-provider";
+
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import type {
   OpenShellProviderAdapter,
@@ -10,6 +14,10 @@ import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/prov
 import type { OpenShellGatewayEndpointEnvironment } from "../../adapters/openshell/gateway-scope";
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
+import {
+  ensureNativeNvidiaProviderAttached,
+  NVIDIA_HOSTED_NATIVE_PROVIDER,
+} from "../../inference/native-nvidia";
 import {
   messagingCredentialProviderProfilePath,
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
@@ -58,6 +66,56 @@ function resolveProviderAdapter(deps: ProviderPreparationDeps): OpenShellProvide
       run: (args, options) => deps.runOpenshell(args, options),
     })
   );
+}
+
+export function usesNativeNvidiaProvider(inferenceProvider: string | null): boolean {
+  return inferenceProvider === NVIDIA_HOSTED_NATIVE_PROVIDER;
+}
+
+export async function verifyNativeNvidiaAttachmentAfterCreate(input: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly inferenceProvider: string | null;
+  readonly expected: SandboxEntry["nativeNvidiaProviderAttachment"];
+  readonly deps: ProviderPreparationDeps;
+}): Promise<void> {
+  if (!usesNativeNvidiaProvider(input.inferenceProvider)) return;
+  if (!input.expected) {
+    throw new Error(
+      `Sandbox '${input.sandboxName}' is missing its native NVIDIA provider identity receipt.`,
+    );
+  }
+  await ensureNativeNvidiaProviderAttached({
+    adapter: resolveProviderAdapter(input.deps),
+    target: namedOpenShellGateway(input.gatewayName),
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
+}
+
+export function usesNativeHostedProvider(inferenceProvider: string | null): boolean {
+  return isNativeHostedProviderName(inferenceProvider);
+}
+
+export async function verifyNativeHostedAttachmentAfterCreate(input: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly inferenceProvider: string | null;
+  readonly expected: SandboxEntry["nativeHostedProviderAttachment"];
+  readonly deps: ProviderPreparationDeps;
+}): Promise<void> {
+  if (!usesNativeHostedProvider(input.inferenceProvider)) return;
+  const definition = hostedNativeProviderForAttachment(input.expected);
+  if (!input.expected || !definition || definition.providerName !== input.inferenceProvider)
+    throw new Error(
+      `Sandbox '${input.sandboxName}' is missing its native hosted provider identity receipt.`,
+    );
+  await nativeProviderLifecycle<string, string>(definition).ensureNativeProviderAttached({
+    adapter: resolveProviderAdapter(input.deps),
+    target: namedOpenShellGateway(input.gatewayName),
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
 }
 
 type ExpectedMessagingBindingInspection =

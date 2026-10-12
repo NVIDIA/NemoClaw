@@ -73,6 +73,8 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "messaging",
   "model",
   "name",
+  "nativeNvidiaProviderAttachment",
+  "nativeHostedProviderAttachment",
   "nimContainer",
   "observabilityEnabled",
   "openshellDriver",
@@ -133,7 +135,18 @@ export interface ObservedExportEndpointEvidence {
     readonly profileWorkspace?: string;
     /** null means the OpenAI profile was read at its binding and confirmed absent. */
     readonly managedProfile?: {
-      readonly id: "brave" | "openai" | "tavily" | "tavily-hermes-v1";
+      readonly id:
+        | "brave"
+        | "openai"
+        | "tavily"
+        | "tavily-hermes-v1"
+        | "nemoclaw-nvidia-inference-v1"
+        | "nemoclaw-openai-inference-v1"
+        | "nemoclaw-anthropic-inference-v1"
+        | "nemoclaw-gemini-inference-v1"
+        | "nemoclaw-openrouter-inference-v1"
+        | "nemoclaw-hermes-inference-v1"
+        | `nemoclaw-hermes-inference-${string}-v1`;
       readonly source: "builtin" | "user";
       readonly scope: "" | "platform" | "workspace";
       readonly resourceVersion: string;
@@ -145,7 +158,11 @@ export interface ObservedExportEndpointEvidence {
         readonly kind: "provider-config";
         readonly key: "OPENAI_BASE_URL" | "ANTHROPIC_BASE_URL";
       }
-    | { readonly kind: "builtin-profile"; readonly profileId: "nvidia" };
+    | { readonly kind: "builtin-profile"; readonly profileId: "nvidia" }
+    | {
+        readonly kind: "managed-profile";
+        readonly profileId: string;
+      };
 }
 
 export interface ObservedExportWebSearchProvider {

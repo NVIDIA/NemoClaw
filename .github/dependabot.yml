@@ -14,3 +14,17 @@ updates:
       codeql-action:
         patterns:
           - "github/codeql-action/*"
+
+  # The v1 development branch keeps its own workflows and composite actions.
+  # Dependabot reads this file only from the default branch.
+  - package-ecosystem: "github-actions"
+    target-branch: "v1"
+    directories:
+      - "/"
+      - "/.github/actions/*"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "v1"

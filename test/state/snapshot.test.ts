@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import childProcess, { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -154,20 +155,14 @@ function buildSymlinkCredentialTraversalTar(): Buffer {
   ]);
 }
 
-function writeOpenClawRegistry(sandboxName: string): void {
+function writeSandboxRegistry(sandboxName: string, agent: "hermes" | null = null): void {
   fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(
     path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
     JSON.stringify({
       defaultSandbox: sandboxName,
       sandboxes: {
-        [sandboxName]: {
-          name: sandboxName,
-          model: "m",
-          provider: "p",
-          gpuEnabled: false,
-          agent: null,
-        },
+        [sandboxName]: { name: sandboxName, model: "m", provider: "p", gpuEnabled: false, agent },
       },
     }),
   );
@@ -298,7 +293,7 @@ describe("complete native home persistence", () => {
       const sourceCredential = ["COMPATIBLE_API_KEY=ghp", "_", "0123456789abcdef", "\n"].join("");
       fs.mkdirSync(path.dirname(credentialPath), { recursive: true });
       fs.writeFileSync(credentialPath, sourceCredential);
-      writeOpenClawRegistry("alpha");
+      writeSandboxRegistry("alpha");
       const assertCurrent = vi.fn();
 
       const backup = backupSandboxStateWithManagedAuthority(
@@ -464,7 +459,7 @@ describe("complete native home persistence", () => {
       fs.mkdirSync(path.dirname(arbitraryConfig), { recursive: true });
       fs.writeFileSync(arbitraryConfig, "configuration");
       const assertCurrent = vi.fn();
-      writeOpenClawRegistry("alpha");
+      writeSandboxRegistry("alpha");
       const backup = sandboxState.backupSandboxState("alpha", {
         nativeStateSource: {
           root: "/sandbox",
@@ -528,7 +523,7 @@ describe("complete native home persistence", () => {
       };
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
       fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-      writeOpenClawRegistry("alpha");
+      writeSandboxRegistry("alpha");
 
       const backup = sandboxState.backupSandboxState("alpha", {
         nativeStateSource: {
@@ -561,29 +556,29 @@ describe("complete native home persistence", () => {
     }
   });
 
-  it("removes only Hermes machine-local API authority from the archive copy", () => {
+  it("sanitizes Hermes backup without host Python and preserves live state (#11174)", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-api-state-"));
+    const run = childProcess.spawnSync;
+    const hostSpawn = vi.spyOn(childProcess, "spawnSync").mockImplementation((...args) => {
+      expect(path.basename(args[0]), "backup must not require host Python").not.toMatch(
+        /^python(?:\d+(?:\.\d+)*)?$/u,
+      );
+      return Reflect.apply(run, childProcess, args);
+    });
+    syncBuiltinESMExports();
     try {
       const nativeRoot = path.join(fixture, "native-home");
       const envPath = path.join(nativeRoot, ".hermes", ".env");
-      const source = [
-        `API_SERVER_KEY=${"a".repeat(64)}`,
-        "OPENAI_API_KEY=sk-OPENSHELL-PROXY-REWRITE",
-        "LOG_LEVEL=info",
-        "",
-      ].join("\n");
+      const source = `API_SERVER_KEY=${"a".repeat(64)}
+OPENAI_API_KEY=sk-OPENSHELL-PROXY-REWRITE
+LOG_LEVEL=info
+`;
       fs.mkdirSync(path.dirname(envPath), { recursive: true });
       fs.writeFileSync(envPath, source);
-      writeOpenClawRegistry("alpha");
-
+      writeSandboxRegistry("alpha", "hermes");
       const backup = sandboxState.backupSandboxState("alpha", {
-        nativeStateSource: {
-          root: "/sandbox",
-          directory: nativeRoot,
-          assertCurrent: vi.fn(),
-        },
+        nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
       });
-
       expect(backup.success, backup.error).toBe(true);
       sandboxState.inspectNativeSandboxState(
         backup.manifest!.backupPath,
@@ -600,7 +595,10 @@ describe("complete native home persistence", () => {
         ".hermes/.env",
       );
       expect(fs.readFileSync(envPath, "utf8")).toBe(source);
+      expect(hostSpawn).toHaveBeenCalled();
     } finally {
+      hostSpawn.mockRestore();
+      syncBuiltinESMExports();
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
@@ -659,7 +657,7 @@ describe("complete native home persistence", () => {
         fs.mkdirSync(path.dirname(target), { recursive: true });
         fs.writeFileSync(target, JSON.stringify(value, null, 2));
       }
-      writeOpenClawRegistry("alpha");
+      writeSandboxRegistry("alpha");
 
       const backup = sandboxState.backupSandboxState("alpha", {
         nativeStateSource: {
@@ -726,7 +724,7 @@ describe("complete native home persistence", () => {
       ].join(".");
       fs.mkdirSync(path.dirname(fixturePath), { recursive: true });
       fs.writeFileSync(fixturePath, `expect(parse(${JSON.stringify(publicJwt)})).toBe(true);\n`);
-      writeOpenClawRegistry("alpha");
+      writeSandboxRegistry("alpha");
 
       const backup = sandboxState.backupSandboxState("alpha", {
         nativeStateSource: {
@@ -761,7 +759,7 @@ describe("complete native home persistence", () => {
           Buffer.from(`sk-${"x".repeat(64)}`),
         ]),
       );
-      writeOpenClawRegistry("alpha");
+      writeSandboxRegistry("alpha");
 
       const backup = sandboxState.backupSandboxState("alpha", {
         nativeStateSource: {
@@ -795,11 +793,12 @@ describe("complete native home persistence", () => {
       process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
       process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
       process.env.PATH = `${binDir}:${oldPath ?? ""}`;
-      writeOpenClawRegistry("alpha");
+      writeSandboxRegistry("alpha");
 
       const expected = new Map([
         ["unknown.txt", "undeclared"],
         ["workspace/project.txt", "workspace"],
+        ["work/user-data.txt", "credential-rotation-workspace"],
         [".openclaw/openclaw.json", '{"native":true}'],
         [".local/share/packages/tool.txt", "package"],
         [".openclaw/plugins/custom/index.js", "plugin"],
@@ -929,7 +928,7 @@ describe("complete native home persistence", () => {
       process.env.NEMOCLAW_TEST_NATIVE_HOME = "/.openshell";
       process.env.NEMOCLAW_TEST_NATIVE_WORKSPACE = "/.openshell/workspace";
       process.env.PATH = `${binDir}:${oldPath ?? ""}`;
-      writeOpenClawRegistry("alpha");
+      writeSandboxRegistry("alpha");
 
       const backup = sandboxState.backupSandboxState("alpha");
 
@@ -967,7 +966,7 @@ describe("complete native home persistence", () => {
       process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
       process.env.NEMOCLAW_TEST_CAPTURE_BYTES = "4096";
       process.env.PATH = `${binDir}:${oldPath ?? ""}`;
-      writeOpenClawRegistry("alpha");
+      writeSandboxRegistry("alpha");
       const backup = sandboxState.backupSandboxState("alpha", {
         nativeStateCaptureMaxBytes: 1024,
       });
@@ -1023,7 +1022,7 @@ describe("complete native home persistence", () => {
         const nativeRoot = path.join(fixture, "native-home");
         fs.mkdirSync(path.dirname(path.join(nativeRoot, relativePath)), { recursive: true });
         fs.writeFileSync(path.join(nativeRoot, relativePath), content);
-        writeOpenClawRegistry("alpha");
+        writeSandboxRegistry("alpha");
         const backup = sandboxState.backupSandboxState("alpha", {
           nativeStateSource: {
             root: "/sandbox",
@@ -1136,7 +1135,7 @@ describe("complete native home persistence", () => {
       process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
       process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
       process.env.PATH = `${binDir}:${oldPath ?? ""}`;
-      writeOpenClawRegistry("alpha");
+      writeSandboxRegistry("alpha");
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
       expect(backup.error).toContain("credential-bearing or uninspectable content");
@@ -1156,7 +1155,7 @@ describe("complete native home persistence", () => {
       const nativeRoot = path.join(fixture, "native-home");
       fs.mkdirSync(nativeRoot, { recursive: true });
       fs.writeFileSync(path.join(nativeRoot, "payload.txt"), "payload");
-      writeOpenClawRegistry("alpha");
+      writeSandboxRegistry("alpha");
       const backup = sandboxState.backupSandboxState("alpha", {
         nativeStateSource: {
           root: "/sandbox",
@@ -1197,7 +1196,7 @@ describe("complete native home persistence", () => {
       process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
       process.env.NEMOCLAW_TEST_SSH_COMMAND_LOG = commandLog;
       process.env.PATH = `${binDir}:${oldPath ?? ""}`;
-      writeOpenClawRegistry("alpha");
+      writeSandboxRegistry("alpha");
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success, backup.error).toBe(true);
       for (const entry of fs.readdirSync(nativeRoot)) {
@@ -1278,7 +1277,7 @@ process.stdout.write(String(uid) + "\\n");
         process.env.NEMOCLAW_TEST_NATIVE_WORKSPACE = nativeRoot;
         process.env.NEMOCLAW_TEST_EXECUTE_RESTORE_SCRIPT = "1";
         process.env.PATH = `${binDir}:${oldPath ?? ""}`;
-        writeOpenClawRegistry("alpha");
+        writeSandboxRegistry("alpha");
         const backup = sandboxState.backupSandboxState("alpha");
         expect(backup.success, backup.error).toBe(true);
         const backupPath = backup.manifest!.backupPath;
@@ -1360,7 +1359,7 @@ process.exit(result.status ?? 90);
         process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE = craftedArchive;
         process.env.NEMOCLAW_TEST_TAR_LOG = tarLog;
         process.env.PATH = `${binDir}:${oldPath ?? ""}`;
-        writeOpenClawRegistry("alpha");
+        writeSandboxRegistry("alpha");
 
         const backup = sandboxState.backupSandboxState("alpha", {
           nativeStateSource: {
@@ -1419,7 +1418,7 @@ process.exit(result.status ?? 90);
       process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE = craftedArchive;
       process.env.NEMOCLAW_TEST_TAR_LOG = tarLog;
       process.env.PATH = `${binDir}:${oldPath ?? ""}`;
-      writeOpenClawRegistry("alpha");
+      writeSandboxRegistry("alpha");
 
       const backup = sandboxState.backupSandboxState("alpha", {
         nativeStateSource: {
@@ -1461,7 +1460,7 @@ process.exit(result.status ?? 90);
       process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
       process.env.NEMOCLAW_TEST_SSH_COMMAND_LOG = commandLog;
       process.env.PATH = `${binDir}:${oldPath ?? ""}`;
-      writeOpenClawRegistry("alpha");
+      writeSandboxRegistry("alpha");
 
       const backup = sandboxState.backupSandboxState("alpha", {
         nativeStateSource: {

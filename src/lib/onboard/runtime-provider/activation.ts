@@ -60,6 +60,7 @@ const REQUIRED_MUTATIONS = [
 
 export const RUNTIME_PROVIDER_ACTIVATION_ENGINE_SCOPES = [
   "host-doctor",
+  "external-image-preparation",
   "gateway-inspection",
   "host-local-inference",
   "sandbox-lifecycle",

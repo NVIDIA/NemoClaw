@@ -22,7 +22,15 @@ import {
   createOpenclawSetup,
   isOpenclawGatewayReady,
 } from "./openclaw-setup";
-import { createInitialOpenclawInferenceRoute } from "./openclaw/initial-inference-route";
+import {
+  createInitialOpenclawInferenceRoute,
+  createOpenclawInferenceRouteWriter,
+} from "./openclaw/initial-inference-route";
+
+import {
+  patchOpenClawInferenceConfig,
+  writeOpenClawInferenceConfigNatively,
+} from "../actions/inference-set";
 
 describe("OpenClaw sandbox setup", () => {
   beforeEach(() => {
@@ -327,6 +335,8 @@ describe("initial OpenClaw inference route", () => {
       "compatible-endpoint",
       { effort: null, explicit: false },
       false,
+      undefined,
+      true,
     );
   });
 
@@ -384,6 +394,126 @@ describe("OpenClaw reuse preserves native configuration", () => {
         "model",
         undefined,
         managedProfileApplied,
+      );
+    },
+  );
+});
+
+describe("restored native OpenClaw inference fields", () => {
+  it("changes the selected route while preserving unrelated native settings (#12667)", async () => {
+    const config = {
+      agents: {
+        defaults: {
+          model: { primary: "inference/test-model", fallbacks: ["other/fallback"] },
+          workspace: "/sandbox/custom",
+        },
+      },
+      channels: { telegram: { enabled: true } },
+      gateway: { port: 18789 },
+      models: { providers: { other: { models: [{ id: "fallback" }] } } },
+    };
+    const writeValues = vi.fn();
+    const identity = vi.fn();
+    const write = createOpenclawInferenceRouteWriter({
+      readOpenclawConfig: () => config,
+      patchOpenclawInferenceConfig: patchOpenClawInferenceConfig,
+      writeOpenclawInferenceConfigNatively: (name, patched, route, gateway) =>
+        writeOpenClawInferenceConfigNatively(name, patched, route, writeValues, gateway),
+    });
+    await write(
+      "openclaw",
+      "changed-model",
+      "compatible-endpoint",
+      null,
+      "nemoclaw-9090",
+      identity,
+    );
+    expect(config).toMatchObject({
+      agents: {
+        defaults: {
+          model: { primary: "inference/changed-model", fallbacks: ["other/fallback"] },
+          workspace: "/sandbox/custom",
+        },
+      },
+      channels: { telegram: { enabled: true } },
+      gateway: { port: 18789 },
+      models: { providers: { other: { models: [{ id: "fallback" }] } } },
+    });
+    expect(writeValues).toHaveBeenCalledExactlyOnceWith(
+      "openclaw",
+      [
+        { dotpath: "agents.defaults.model.primary", value: "inference/changed-model" },
+        { dotpath: "models.mode", value: "merge" },
+        {
+          dotpath: "models.providers.inference",
+          value: expect.objectContaining({
+            models: [expect.objectContaining({ id: "changed-model" })],
+          }),
+        },
+      ],
+      "nemoclaw-9090",
+    );
+    expect(identity).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("initial Hermes provider selection", () => {
+  it.each([
+    {
+      nativeProvider: false,
+      endpointUrl: "https://custom.example/v1",
+      expected: "https://inference.local/v1",
+    },
+    {
+      nativeProvider: true,
+      endpointUrl: "https://authenticated.example/v1",
+      expected: "https://authenticated.example/v1",
+    },
+    {
+      nativeProvider: true,
+      endpointUrl: "https://inference-api.nousresearch.com/v1",
+      expected: "https://inference-api.nousresearch.com/v1",
+    },
+  ])(
+    "preserves $endpointUrl with nativeProvider=$nativeProvider",
+    async ({ expected, ...selection }) => {
+      const config = {};
+      const writeConfig = vi.fn();
+      const readInferenceSelection = vi.fn(() => selection);
+      const write = createOpenclawInferenceRouteWriter({
+        readInferenceSelection,
+        readOpenclawConfig: () => config,
+        patchOpenclawInferenceConfig: patchOpenClawInferenceConfig,
+        writeOpenclawInferenceConfigNatively: writeConfig,
+      });
+      await write("alpha", "fixture-model", "hermes-provider", null, "selected-gateway");
+      expect(readInferenceSelection).toHaveBeenCalledExactlyOnceWith(
+        "alpha",
+        "selected-gateway",
+        "hermes-provider",
+      );
+      expect(writeConfig).toHaveBeenCalledWith(
+        "alpha",
+        config,
+        expect.objectContaining({ inferenceBaseUrl: expected }),
+        "selected-gateway",
+      );
+      readInferenceSelection.mockClear();
+      await write(
+        "alpha",
+        "fixture-model",
+        "hermes-provider",
+        null,
+        "selected-gateway",
+        undefined,
+        selection,
+      );
+      expect(readInferenceSelection).not.toHaveBeenCalled();
+      expect(writeConfig).toHaveBeenLastCalledWith(
+        "alpha",
+        config,
+        expect.objectContaining({ inferenceBaseUrl: expected }),
+        "selected-gateway",
       );
     },
   );

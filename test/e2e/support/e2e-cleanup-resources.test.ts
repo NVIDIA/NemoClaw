@@ -168,6 +168,24 @@ describe("cleanup resources", () => {
     },
   );
 
+  it("registers cleanup for the concurrent-gateway GC orphan tag before invoking GC (#12582)", () => {
+    const source = fs.readFileSync(
+      path.resolve(import.meta.dirname, "..", "live", "concurrent-gateway-ports.test.ts"),
+      "utf8",
+    );
+    const tagImage = source.indexOf('["image", "tag", registeredImageTag, orphanTag]');
+    const registerCleanup = source.indexOf(
+      'cleanup.trackDisposable("remove temporary concurrent gateway GC tag"',
+    );
+    const runGc = source.indexOf('["gc", "--yes"]');
+    const cleanupRemovesTag = source.indexOf('["image", "rm", orphanTag]', registerCleanup);
+
+    expect(tagImage).toBeGreaterThanOrEqual(0);
+    expect(registerCleanup).toBeGreaterThan(tagImage);
+    expect(cleanupRemovesTag).toBeGreaterThan(registerCleanup);
+    expect(runGc).toBeGreaterThan(registerCleanup);
+  });
+
   it("continues typed cleanup after a resource failure", async () => {
     const calls: string[] = [];
     const host: CleanupHost = {

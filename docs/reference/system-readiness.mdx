@@ -152,6 +152,7 @@ Each capability uses `present`, `absent`, or `unknown`.
 | `host.platform.wsl_native_docker` | Native Docker Engine inside WSL. |
 | `host.platform.wsl_gpu_passthrough` | A bounded CUDA proof from the selected Docker or provider-owned runtime. |
 | `host.platform.n1x_wsl` | A proof-backed accepted N1x WSL GPU identity qualified through WSL on Linux ARM64 with an available NVIDIA GPU and a matching selected-provider CUDA proof. The accepted identities are listed below. |
+| `host.platform.station_gb300_wsl` | A Windows product identified as Station GB300 plus a proof-backed NVIDIA GB300 GPU, qualified through WSL on Linux ARM64 with an available NVIDIA GPU and a matching selected-provider CUDA proof. |
 | `host.platform.dgx_spark` | DGX Spark identity from firmware or a trusted FastOS marker on ARM64 with an available NVIDIA GPU. |
 | `host.platform.n1x` | N1x identity from the trusted FastOS marker and NVIDIA display PCI device on Linux ARM64 with an available NVIDIA GPU. This capability does not promote the Deferred platform status. |
 | `host.platform.dgx_station_hardware` | Station GB300 firmware identity and an exact NVIDIA GB300 display-class PCI device. |
@@ -168,7 +169,7 @@ Its only `NAME=` line must be `NAME="DGX SPARK FASTOS"`.
 A matching marker identifies DGX Spark; the ARM64 and available NVIDIA GPU requirements still apply.
 This identity check does not establish hardware qualification for an OEM system.
 
-The report adds `host.platform.wsl`, `host.platform.n1x_wsl`, `host.platform.dgx_spark`, or `host.platform.n1x` qualifications when those platforms apply.
+The report adds `host.platform.wsl`, `host.platform.n1x_wsl`, `host.platform.station_gb300_wsl`, `host.platform.dgx_spark`, or `host.platform.n1x` qualifications when those platforms apply.
 For Station, it adds separate hardware, software, runtime, and combined qualifications.
 For WSL, Docker Desktop and a qualification-backed provider that owns host readiness are `qualified`, native Docker is `unqualified`, and an unrecognized reachable runtime is `unknown`.
 The `host.platform.wsl_gpu_passthrough` capability is `present` only after the selected provider's bounded CUDA proof passes.
@@ -182,6 +183,11 @@ The capability is `present` only when that qualification passes.
 Managed llama.cpp admission also requires `host.platform.wsl_gpu_passthrough` to be `present`, remains Docker Desktop-only, and cannot reuse an unproved GPU name.
 Windows-host Ollama also remains Docker Desktop-only; the provider-owned Podman path applies to WSL-local Ollama.
 The Windows chassis model is bounded diagnostic evidence only and does not establish N1x WSL identity.
+
+The `host.platform.station_gb300_wsl` qualification requires a bounded Windows product observation that identifies Station GB300 and a successful selected-provider CUDA proof that reconciles every reported GPU and includes an `NVIDIA GB300` device.
+It is `qualified` only for Linux ARM64 WSL with an available NVIDIA GPU.
+Managed llama.cpp admission additionally requires Docker Desktop, its local `default` context, and the preset's driver and memory requirements.
+This qualification does not establish support for generic multi-GPU hosts or other Station products.
 
 DGX Station qualification separates hardware identity from software and runtime handling.
 The hardware capability requires a bounded firmware product, product-family, board, or device-tree value with separate `Station` and `GB300` tokens.

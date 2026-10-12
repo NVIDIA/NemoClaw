@@ -1753,7 +1753,11 @@ function nativeArchiveCredentialViolation(
     for (const candidate of candidates) {
       if (candidate.dcodeSessionsDatabaseRole === "sidecar") continue;
       if (candidate.dcodeSessionsDatabaseRole === "database") {
-        const containsCredential = inspectExtractedDcodeSessionsDatabase(scanRoot, candidate.entry);
+        const containsCredential = inspectExtractedDcodeSessionsDatabase(
+          scanRoot,
+          candidate.entry,
+          (reason) => console.error(`DCode session database inspection failed (${reason}).`),
+        );
         if (containsCredential !== false) return candidate.entry;
         continue;
       }

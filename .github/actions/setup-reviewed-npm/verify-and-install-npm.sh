@@ -11,6 +11,8 @@ fi
 
 config_file="$1"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=scripts/lib/npm-diagnostics.sh
+source "$script_dir/../../../scripts/lib/npm-diagnostics.sh"
 download_dir="$(mktemp -d "$RUNNER_TEMP/reviewed-npm.XXXXXX")"
 trap 'rm -rf "$download_dir"' EXIT
 
@@ -31,11 +33,38 @@ NODE
 [ -n "$expected_integrity" ]
 [ -n "$expected_sha256" ]
 
+pack_log="$download_dir/npm-pack.log"
+npm_logs_dir="$download_dir/npm-logs"
+(
+  umask 077
+  mkdir "$npm_logs_dir"
+)
+set +e
 npm pack "npm@$version" \
   --pack-destination "$download_dir" \
   --userconfig /dev/null \
   --registry https://registry.npmjs.org/ \
-  --ignore-scripts --no-audit --no-fund >/dev/null
+  --logs-dir "$npm_logs_dir" --logs-max 1 \
+  --ignore-scripts --no-audit --no-fund >"$pack_log" 2>&1
+pack_status=$?
+set -e
+if [ "$pack_status" -ne 0 ]; then
+  printf 'reviewed npm pack failed (exit %s)\n' "$pack_status" >&2
+  diagnostic_log="$download_dir/npm-diagnostics.log"
+  cat "$pack_log" >"$diagnostic_log"
+  for debug_log in "$npm_logs_dir"/*-debug-0.log; do
+    [ -f "$debug_log" ] || continue
+    cat "$debug_log" >>"$diagnostic_log"
+  done
+  if [ -s "$diagnostic_log" ]; then
+    if ! sanitize_npm_diagnostics <"$diagnostic_log" | bounded_npm_diagnostic_excerpt 3900 >&2; then
+      printf 'npm pack diagnostics unavailable\n' >&2
+    fi
+  else
+    printf 'npm pack diagnostics unavailable\n' >&2
+  fi
+  exit "$pack_status"
+fi
 
 archive="$download_dir/npm-$version.tgz"
 actual_hashes="$download_dir/actual-hashes"
@@ -57,7 +86,8 @@ if [ "$actual_integrity" != "$expected_integrity" ] || [ "$actual_sha256" != "$e
 fi
 
 if ! archive_version="$(
-  tar -xOf "$archive" package/package.json | node -e '
+  cd "$download_dir"
+  tar -xOf "npm-$version.tgz" package/package.json | node -e '
     const version = JSON.parse(require("node:fs").readFileSync(0, "utf8")).version;
     if (typeof version !== "string") process.exit(1);
     process.stdout.write(version);

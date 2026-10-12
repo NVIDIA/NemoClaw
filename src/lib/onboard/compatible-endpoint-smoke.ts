@@ -116,7 +116,10 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
   hostLocalInferenceProofAuthority?: HostLocalInferenceSandboxProofAuthority;
   /** Recheck sandbox identity after the sandbox proof and before success output. */
   beforeSuccess?: () => void;
+  /** Let lifecycle callers report failure through their own recovery boundary. */
+  onFailure?: (exitCode: number) => never;
 }): Promise<void> {
+  const fail: (exitCode: number) => never = options.onFailure ?? process.exit;
   const agentName = options.agent?.name || "openclaw";
   if (
     options.forceCanonicalRoute !== true &&
@@ -161,7 +164,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
     );
     console.error("  The sandbox inference.local route cannot reach the selected model provider.");
     console.error(`  ${compactText(options.redact(providerResult.error.message)).slice(0, 800)}`);
-    process.exit(1);
+    fail(1);
   }
   if (
     options.credentialEnv &&
@@ -202,7 +205,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
       );
     }
     if (smokeOutput) console.error(`  ${compactText(options.redact(smokeOutput)).slice(0, 1200)}`);
-    process.exit(smokeStatus || 1);
+    fail(smokeStatus || 1);
   }
 
   options.beforeSuccess?.();
@@ -211,6 +214,58 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
       ? "  \u2713 Provider responds through inference.local inside the sandbox"
       : "  \u2713 Compatible endpoint responds through inference.local inside the sandbox",
   );
+}
+
+/** Bind the ordinary and post-restore checks to the same runtime adapters. */
+export function createCompatibleEndpointSmoke(
+  runOpenshell: (
+    args: string[],
+    options?: NonNullable<Parameters<CompatibleEndpointSmokeRun>[1]> & { env?: NodeJS.ProcessEnv },
+  ) => ReturnType<CompatibleEndpointSmokeRun>,
+  sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
+  redact: (value: string) => string,
+) {
+  type SmokeOptions = Parameters<typeof verifyCompatibleEndpointSandboxSmoke>[0];
+  return {
+    verify(
+      options: Omit<SmokeOptions, "runOpenshell" | "sandboxCommandExecutor" | "redact">,
+      run = runOpenshell,
+    ): Promise<void> {
+      return verifyCompatibleEndpointSandboxSmoke({
+        ...options,
+        runOpenshell: run,
+        sandboxCommandExecutor,
+        redact,
+      });
+    },
+    verifyRebuilt(
+      options: Pick<
+        SmokeOptions,
+        "sandboxName" | "provider" | "model" | "endpointUrl" | "credentialEnv"
+      > & {
+        environment: NodeJS.ProcessEnv;
+        gatewayName?: string;
+      },
+    ): Promise<void> {
+      const { environment, gatewayName, ...selection } = options;
+      return verifyCompatibleEndpointSandboxSmoke({
+        ...selection,
+        onFailure: (exitCode) => {
+          throw new Error(`Compatible endpoint verification failed (exit ${exitCode}).`);
+        },
+        runOpenshell: (args, runOptions) => runOpenshell(args, { ...runOptions, env: environment }),
+        sandboxCommandExecutor: {
+          runBuffered: (request) =>
+            sandboxCommandExecutor.runBuffered({
+              ...request,
+              environment,
+              ...(gatewayName ? { target: { kind: "named", gatewayName } as const } : {}),
+            }),
+        },
+        redact,
+      });
+    },
+  };
 }
 
 /**

@@ -7,6 +7,12 @@ import {
   exportLiveSource,
   expectExportRefusal,
 } from "../../../../test/support/config-export-harness";
+import fs from "node:fs";
+import { HOSTED_NATIVE_PROVIDERS } from "../../inference/native-provider/hosted";
+import { nativeProviderLifecycle } from "../../inference/native-provider";
+import { parseCheckedInProviderProfileContract } from "../openshell/provider-profile";
+import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
+import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
@@ -37,9 +43,12 @@ import {
   startup,
   entry,
   inventory,
+  legacySharedNvidiaProvider,
   provider,
   configuration,
+  nativeNvidiaEntry,
   nativeNvidiaProvider,
+  nativeNvidiaProfile,
   telemetryEntry,
   dashboardSource,
   braveProvider,
@@ -124,18 +133,133 @@ function mockBraveLiveSource() {
 }
 
 function mockNativeNvidiaSource(profileWorkspace = "default") {
-  mockSupportedLiveSource();
+  mockSupportedLiveSource(3, 3, nativeNvidiaEntry());
   raw.getProvider.mockResolvedValue({ provider: { ...nativeNvidiaProvider(), profileWorkspace } });
   raw.getProviderProfile.mockResolvedValue({
     profile: {
-      id: "nvidia",
-      source: "builtin",
-      scope: "",
-      resourceVersion: 0n,
-      inferenceCapable: true,
-      endpoints: [{ host: "integrate.api.nvidia.com", port: 443 }],
+      ...nativeNvidiaProfile(),
+      ...(profileWorkspace === "" ? { scope: "platform" } : {}),
     },
   });
+  raw.getSandbox.mockResolvedValue({
+    sandbox: {
+      ...inventory().sandbox,
+      spec: {
+        ...inventory().sandbox.spec,
+        providers: ["nemoclaw-nvidia-prod-v1"],
+      },
+    },
+  });
+}
+
+function mockNativeHostedSource(definition: (typeof HOSTED_NATIVE_PROVIDERS)[number]) {
+  const route = resolveManagedStartupInferenceRoute(
+    "openclaw",
+    definition.logicalProvider,
+    "model-a",
+    definition.api,
+  );
+  const startup = buildManagedStartupProfile({
+    ...startupInput,
+    inference: {
+      ...startupInput.inference,
+      routeProvider: route.providerKey,
+      upstreamProvider: definition.logicalProvider,
+      routedBaseUrl: route.inferenceBaseUrl,
+      upstreamEndpointUrl: null,
+      api: definition.api,
+      primaryModelRef: route.primaryModelRef,
+      compatibility: route.inferenceCompat ?? {},
+    },
+  });
+  const native = {
+    ...entry,
+    provider: definition.logicalProvider,
+    endpointUrl: definition.endpoint,
+    credentialEnv: definition.credentialEnv,
+    preferredInferenceApi: definition.api,
+    nativeHostedProviderAttachment: {
+      schemaVersion: 1 as const,
+      profileId: definition.profileId,
+      providerName: definition.providerName,
+      providerId: "native-provider-id",
+    },
+    workload: {
+      ...entry.workload,
+      encodedProfile: startup.encodedProfile,
+      startupProfileSha256: startup.startupProfileSha256,
+    },
+  };
+  mockSupportedLiveSource(3, 3, native);
+  vi.mocked(getSandboxEntryInference).mockReturnValue({
+    kind: "configured",
+    provider: definition.logicalProvider,
+    model: "model-a",
+  });
+  const readCredential = vi.fn(() => {
+    throw new Error("Credential value must not be read");
+  });
+  raw.getProvider.mockResolvedValue({
+    provider: {
+      ...nativeNvidiaProvider(),
+      metadata: { ...nativeNvidiaProvider().metadata, name: definition.providerName },
+      type: definition.profileId,
+      credentials: Object.defineProperty({}, definition.credentialEnv, {
+        enumerable: true,
+        get: readCredential,
+      }),
+    },
+  });
+  const contract = parseCheckedInProviderProfileContract(
+    fs.readFileSync(nativeProviderLifecycle(definition).nativeProviderProfilePath(), "utf8"),
+  )!;
+  const credential = contract.boundary.credentials[0];
+  const endpoint = contract.boundary.endpoints[0] as {
+    host: string;
+    rules: { allow: { method: string; path: string } }[];
+  };
+  const base = managedBraveProfile();
+  raw.getProviderProfile.mockResolvedValue({
+    profile: {
+      ...base,
+      id: definition.profileId,
+      inferenceCapable: true,
+      credentials: [
+        {
+          ...base.credentials[0],
+          envVars: credential.env_vars,
+          authStyle: credential.auth_style,
+          headerName: credential.header_name,
+        },
+      ],
+      endpoints: [
+        {
+          ...base.endpoints[0],
+          host: endpoint.host,
+          access: "",
+          rules: endpoint.rules.map((rule) => ({
+            allow: {
+              ...rule.allow,
+              command: "",
+              query: {},
+              operationType: "",
+              operationName: "",
+              fields: [],
+              params: {},
+            },
+          })),
+        },
+      ],
+      binaries: contract.boundary.binaries.map((path) => ({ path })),
+    },
+  });
+  raw.getSandbox.mockResolvedValue({
+    sandbox: {
+      ...inventory().sandbox,
+      spec: { ...inventory().sandbox.spec, providers: [definition.providerName] },
+    },
+  });
+  return { readCredential, native };
 }
 
 describe("live export snapshot reader", () => {
@@ -628,6 +752,10 @@ describe("live export snapshot reader", () => {
     "exports canonical YAML for native NVIDIA binding %j (#11154)",
     async (profileWorkspace) => {
       mockNativeNvidiaSource(profileWorkspace);
+      vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
+        status: 1,
+        output: "No inference route is configured.",
+      });
       const writeStdout = vi.fn(async (_yaml: string) => {});
       const publish = vi.fn();
       const result = await runConfigExport(
@@ -660,12 +788,114 @@ describe("live export snapshot reader", () => {
       expect(yaml).not.toContain(readFailureCanary);
       expect(raw.getProviderProfile).toHaveBeenCalledTimes(2);
       expect(raw.getProviderProfile).toHaveBeenCalledWith(
-        { id: "nvidia", workspace: profileWorkspace },
+        { id: "nemoclaw-nvidia-inference-v1", workspace: profileWorkspace },
         { signal: expect.any(AbortSignal) },
       );
+      expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
       expect(publish).not.toHaveBeenCalled();
     },
   );
+
+  it.each(
+    HOSTED_NATIVE_PROVIDERS.filter((definition) => definition.logicalProvider !== "gemini-api"),
+  )("exports native $label without reading shared routing or secret values", async (definition) => {
+    const { readCredential } = mockNativeHostedSource(definition);
+    const { result, writeStdout } = await exportLiveSource();
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const yaml = writeStdout.mock.calls[0]![0];
+    const document = asExportedConfig(YAML.parse(yaml));
+    expect(document.spec.inferenceProviders[0]).toMatchObject({
+      endpoint: definition.endpoint,
+      api: definition.api,
+      credential: { env: definition.credentialEnv },
+    });
+    expect(readCredential).not.toHaveBeenCalled();
+    expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+    expect(yaml).not.toContain(readFailureCanary);
+  });
+
+  it("rejects native hosted export when the sandbox attaches an unrelated provider", async () => {
+    mockNativeHostedSource(HOSTED_NATIVE_PROVIDERS[0]);
+    raw.getSandbox.mockResolvedValue({
+      sandbox: {
+        ...inventory().sandbox,
+        spec: { ...inventory().sandbox.spec, providers: ["unrelated"] },
+      },
+    });
+    const exported = await exportLiveSource();
+    expect(exported.result.ok).toBe(false);
+    expect(exported.writeStdout).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      failure: "replaced provider",
+      id: "replacement",
+      type: HOSTED_NATIVE_PROVIDERS[0].profileId,
+      credentials: { OPENAI_API_KEY: readFailureCanary },
+    },
+    {
+      failure: "wrong profile",
+      id: "native-provider-id",
+      type: "unrelated-profile",
+      credentials: { OPENAI_API_KEY: readFailureCanary },
+    },
+    {
+      failure: "extra credential",
+      id: "native-provider-id",
+      type: HOSTED_NATIVE_PROVIDERS[0].profileId,
+      credentials: { OPENAI_API_KEY: readFailureCanary, FOREIGN_KEY: readFailureCanary },
+    },
+  ])("rejects native hosted export with $failure", async ({ id, type, credentials }) => {
+    const definition = HOSTED_NATIVE_PROVIDERS[0];
+    mockNativeHostedSource(definition);
+    raw.getProvider.mockResolvedValue({
+      provider: {
+        ...nativeNvidiaProvider(),
+        metadata: { ...nativeNvidiaProvider().metadata, name: definition.providerName, id },
+        type,
+        credentials,
+      },
+    });
+    const exported = await exportLiveSource();
+    expect(exported.result.ok).toBe(false);
+    expect(exported.writeStdout).not.toHaveBeenCalled();
+  });
+
+  it("retains the legacy shared-route NVIDIA export without a native receipt", async () => {
+    mockSupportedLiveSource();
+    raw.getProvider.mockResolvedValue({ provider: legacySharedNvidiaProvider() });
+    raw.getProviderProfile.mockResolvedValue({
+      profile: {
+        id: "nvidia",
+        source: "builtin",
+        scope: "",
+        resourceVersion: 0n,
+        inferenceCapable: true,
+        endpoints: [{ host: "integrate.api.nvidia.com", port: 443 }],
+      },
+    });
+
+    const { result, writeStdout } = await exportLiveSource();
+
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(writeStdout.mock.calls[0]?.[0]).not.toContain(readFailureCanary);
+    expect(captureSanitizedResolvedOpenshell).toHaveBeenCalled();
+  });
+
+  it("exports native NVIDIA when an unrelated shared route exists (#12558)", async () => {
+    mockNativeNvidiaSource();
+    vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
+      status: 0,
+      output: "Gateway inference:\n  Provider: unrelated\n  Model: unrelated-model\n",
+    });
+
+    const { result, writeStdout } = await exportLiveSource();
+
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(writeStdout.mock.calls[0]?.[0]).not.toContain(readFailureCanary);
+    expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+  });
 
   it.each([
     { label: "endpoint override", providerChange: { config: { NVIDIA_BASE_URL: endpoint } } },
@@ -675,6 +905,12 @@ describe("live export snapshot reader", () => {
     },
     { label: "missing credentials", providerChange: { credentials: {} } },
     { label: "foreign profile binding", providerChange: { profileWorkspace: "foreign" } },
+    {
+      label: "receipt identity mismatch",
+      providerChange: {
+        metadata: { ...nativeNvidiaProvider().metadata, id: "replacement-provider-id" },
+      },
+    },
   ])("rejects native NVIDIA $label without publishing YAML", async ({ providerChange }) => {
     mockNativeNvidiaSource();
     raw.getProvider.mockResolvedValue({
@@ -701,10 +937,51 @@ describe("live export snapshot reader", () => {
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
-  it("rejects NVIDIA endpoint drift between the registry and builtin profile", async () => {
+  it.each([{ providers: [] }, { providers: ["unrelated-provider"] }])(
+    "rejects native NVIDIA without its exact sandbox attachment %j",
+    async ({ providers }) => {
+      mockNativeNvidiaSource();
+      raw.getSandbox.mockResolvedValue({
+        sandbox: {
+          ...inventory().sandbox,
+          spec: { ...inventory().sandbox.spec, providers },
+        },
+      });
+
+      const { result, writeStdout, publish } = await exportLiveSource();
+
+      expect(result).toMatchObject({ ok: false, failure: { kind: "observation" } });
+      expect(writeStdout).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { label: "identity", change: { id: "replacement-profile" } },
+    { label: "scope", change: { scope: "platform" } },
+    { label: "source", change: { source: "builtin" } },
+    { label: "credential boundary", change: { credentials: [] } },
+    { label: "endpoint boundary", change: { endpoints: [] } },
+    { label: "binary boundary", change: { binaries: [] } },
+  ])("rejects native NVIDIA managed profile $label drift", async ({ change }) => {
+    mockNativeNvidiaSource();
+    raw.getProviderProfile.mockResolvedValue({
+      profile: { ...nativeNvidiaProfile(), ...change },
+    });
+
+    const { result, writeStdout, publish } = await exportLiveSource();
+
+    expect(result).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("rejects NVIDIA endpoint drift between the registry and managed profile", async () => {
     mockNativeNvidiaSource();
     vi.mocked(loadRegistry).mockReturnValue({
-      sandboxes: { alpha: { ...entry, endpointUrl: "https://different.example/v1" } },
+      sandboxes: {
+        alpha: { ...nativeNvidiaEntry(), endpointUrl: "https://different.example/v1" },
+      },
       defaultSandbox: null,
     });
     const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
@@ -725,7 +1002,7 @@ describe("live export snapshot reader", () => {
     raw.getProvider.mockImplementation(async () => ({
       provider: {
         ...nativeNvidiaProvider(),
-        metadata: { ...provider().provider.metadata, resourceVersion: BigInt(++revision) },
+        metadata: { ...nativeNvidiaProvider().metadata, resourceVersion: BigInt(++revision) },
       },
     }));
     const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());

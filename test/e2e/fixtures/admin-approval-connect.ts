@@ -12,22 +12,31 @@ const ADMIN_APPROVAL_CONNECT_SH = readFileSync(
   "utf8",
 ).trimEnd();
 
+export function adminApprovalBody(
+  cronName: string,
+  expectedRequestId?: string,
+  verifyCronConsumer = true,
+): string {
+  return ADMIN_APPROVAL_CONNECT_SH.replace("__NEMOCLAW_ADMIN_CRON_NAME__", shellQuote(cronName))
+    .replace("__NEMOCLAW_ADMIN_EXPECTED_REQUEST_ID__", shellQuote(expectedRequestId ?? ""))
+    .replace("__NEMOCLAW_ADMIN_VERIFY_CRON__", verifyCronConsumer ? "1" : "0")
+    .replace("__NEMOCLAW_ADMIN_REQUEST_SELECTOR_PY__", ADMIN_REQUEST_SELECTOR_PY);
+}
+
 export function adminApprovalConnectScript(
   cliPath: string,
   sandboxName: string,
   cronName: string,
   expectedRequestId?: string,
   verifyCronConsumer = true,
+  options: {
+    readonly connectCommand?: readonly string[];
+    readonly preparedShellPrelude?: string;
+  } = {},
 ): string {
   const cli = shellQuote(cliPath);
   const sandbox = shellQuote(sandboxName);
-  const body = ADMIN_APPROVAL_CONNECT_SH.replace(
-    "__NEMOCLAW_ADMIN_CRON_NAME__",
-    shellQuote(cronName),
-  )
-    .replace("__NEMOCLAW_ADMIN_EXPECTED_REQUEST_ID__", shellQuote(expectedRequestId ?? ""))
-    .replace("__NEMOCLAW_ADMIN_VERIFY_CRON__", verifyCronConsumer ? "1" : "0")
-    .replace("__NEMOCLAW_ADMIN_REQUEST_SELECTOR_PY__", ADMIN_REQUEST_SELECTOR_PY);
+  const body = adminApprovalBody(cronName, expectedRequestId, verifyCronConsumer);
   const digest = createHash("sha256").update(body).digest("hex");
   // Read once and verify those bytes before executing them in the prepared
   // shell. A replaced temporary file must never become an approval command.
@@ -38,7 +47,13 @@ export function adminApprovalConnectScript(
   // A fresh non-interactive interpreter owns the body's exit and EXIT trap.
   // Export the prepared approval wrapper; never fall back to the bare CLI.
   // Keep startup hooks out of this child and pass only the verified bytes.
-  const connectSuffix = ` ${shellQuote(digest)}) && ( export -f openclaw && BASH_ENV=/dev/null /bin/bash --noprofile --norc <<< "$approval_body" ); approval_status=$?; printf 'ADMIN_CONNECT_BODY_STATUS=%s\\n' "$approval_status"; exit "$approval_status"`;
+  const preparedShell = options.preparedShellPrelude
+    ? `( ${options.preparedShellPrelude} BASH_ENV=/dev/null /bin/bash --noprofile --norc <<< "$approval_body" )`
+    : `( export -f openclaw && BASH_ENV=/dev/null /bin/bash --noprofile --norc <<< "$approval_body" )`;
+  const connectSuffix = ` ${shellQuote(digest)}) && ${preparedShell}; approval_status=$?; printf 'ADMIN_CONNECT_BODY_STATUS=%s\\n' "$approval_status"; exit "$approval_status"`;
+  const connectCommand = options.connectCommand
+    ? options.connectCommand.map(shellQuote).join(" ")
+    : `${cli} ${sandbox} connect`;
   return [
     "set -euo pipefail",
     // Connect allocates an interactive terminal. Its line editor can corrupt a
@@ -73,7 +88,7 @@ export function adminApprovalConnectScript(
     // Only the validated generated path is expanded on the host. The script
     // body and status variables belong to the prepared shell, not this shell.
     "approval_connect_status=0",
-    `printf '%s%s%s\n' ${shellQuote(connectPrefix)} "$approval_script" ${shellQuote(connectSuffix)} | ${cli} ${sandbox} connect || approval_connect_status=$?`,
+    `printf '%s%s%s\n' ${shellQuote(connectPrefix)} "$approval_script" ${shellQuote(connectSuffix)} | ${connectCommand} || approval_connect_status=$?`,
     'printf "ADMIN_CONNECT_STATUS=%s\\n" "$approval_connect_status"',
     'exit "$approval_connect_status"',
   ].join("\n");

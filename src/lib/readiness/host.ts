@@ -9,6 +9,7 @@ import {
   type NvidiaPlatform,
 } from "../inference/nim.js";
 import type { ContainerGpuProofStatus } from "../container-gpu-proof.js";
+import { isDgxStationGb300GpuName } from "../inference/dgx-station-identity.js";
 import type { HostAssessment } from "../onboard/preflight.js";
 import { assessHost } from "../onboard/preflight.js";
 import { collectWslNvidiaProduct } from "../inference/platform-identity/n1x-wsl.js";
@@ -94,7 +95,10 @@ export interface CollectHostObservationsOptions {
   assess?: () => HostAssessment;
   architecture?: string;
   detectGpu?: () =>
-    | (Pick<GpuDetection, "count" | "containerGpuProof" | "n1xWslProduct"> &
+    | (Pick<
+        GpuDetection,
+        "count" | "containerGpuProof" | "n1xWslProduct" | "stationGb300WslProduct"
+      > &
         Partial<
           Pick<
             GpuDetection,
@@ -210,6 +214,10 @@ function adaptHostAssessment(
     platformIdentity: {
       ...platformIdentity,
       n1xWslGpu: host.isWsl && hostGpuPlatform === "n1x" ? true : undefined,
+      stationGb300WslGpu:
+        host.isWsl && gpu?.gpus
+          ? gpu.gpus.some(({ name }) => isDgxStationGb300GpuName(name))
+          : undefined,
     },
     runtimeProviderId: runtimeProvider?.providerId,
     runtimeProviderOwnsHostReadiness: runtimeProvider?.ownsHostReadiness,
@@ -273,6 +281,17 @@ function observeHost(
       Object.prototype.hasOwnProperty.call(gpu, "n1xWslProduct")
     ) {
       platformIdentityOptions.n1xWslProductObservation = gpu.n1xWslProduct ?? null;
+    }
+    if (
+      !Object.prototype.hasOwnProperty.call(
+        platformIdentityOptions,
+        "stationGb300WslProductObservation",
+      ) &&
+      gpu &&
+      Object.prototype.hasOwnProperty.call(gpu, "stationGb300WslProduct")
+    ) {
+      platformIdentityOptions.stationGb300WslProductObservation =
+        gpu.stationGb300WslProduct ?? null;
     }
     return {
       observedAt,
@@ -399,6 +418,7 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.platform.wsl_runtime_available",
     "host.platform.wsl_gpu_passthrough",
     "host.platform.n1x_wsl",
+    "host.platform.station_gb300_wsl",
     "host.platform.dgx_spark",
     "host.platform.n1x",
     "host.platform.dgx_station_hardware",

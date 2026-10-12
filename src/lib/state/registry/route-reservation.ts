@@ -4,6 +4,9 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
+import { hostedNativeProvider } from "../../inference/native-provider/hosted";
+import { requireHostedProviderAttachment } from "../../inference/native-provider/hosted-attachment";
+import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
 import { isWebSearchProvider } from "../../inference/web-search/provider";
 import { normalizePendingSandboxCreateIdentity } from "./pending-create-identity";
 import type { PendingSandboxCreateIdentity, SandboxEntry } from "./types";
@@ -21,6 +24,8 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "lifecycleLiveIdentityFingerprint",
   "model",
   "name",
+  "nativeNvidiaProviderAttachment",
+  "nativeHostedProviderAttachment",
   "openshellDriver",
   "pendingRouteReservation",
   "pendingCreateIdentity",
@@ -68,6 +73,12 @@ function withVerifiedCreateCheckpoint(
 }
 
 function validCarriedRouteMetadata(entry: SandboxEntry): boolean {
+  try {
+    requireHostedProviderAttachment(entry.nativeHostedProviderAttachment, entry.provider);
+  } catch {
+    return false;
+  }
+
   if (
     entry.dashboardPort !== undefined &&
     entry.dashboardPort !== null &&
@@ -78,6 +89,12 @@ function validCarriedRouteMetadata(entry: SandboxEntry): boolean {
     return false;
   }
   if (entry.webSearchEnabled !== undefined && typeof entry.webSearchEnabled !== "boolean") {
+    return false;
+  }
+  if (
+    entry.nativeNvidiaProviderAttachment !== undefined &&
+    !normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment)
+  ) {
     return false;
   }
   return (
@@ -339,4 +356,19 @@ export function sandboxRegistrationMatchesInferenceRouteReservation(
       normalizeSandboxInferenceRouteSelection(reservation.authority.selection),
     )
   );
+}
+
+/** Preserve only the selected hosted provider's validated registration/reservation identity. */
+export function nativeHostedReservationAttachment(
+  value: unknown,
+  provider: string | null | undefined,
+  previous?: SandboxEntry,
+) {
+  const receipt = requireHostedProviderAttachment(value, provider);
+  return hostedNativeProvider(provider)
+    ? (receipt ??
+        (previous && previous.provider === provider
+          ? previous.nativeHostedProviderAttachment
+          : undefined))
+    : undefined;
 }

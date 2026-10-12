@@ -9,6 +9,7 @@
     "openclaw": "2026.9.2"
   },
   "overrides": {
+    "@modelcontextprotocol/sdk": "1.31.0",
     "hono": "4.12.34",
     "tar": "7.5.21",
     "fast-uri": "3.1.7",

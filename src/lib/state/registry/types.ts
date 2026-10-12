@@ -1,7 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
+import type { NativeHostedProviderAuthorities } from "./native-provider-authority-state";
 import type { InferenceSelection } from "../../inference/selection";
+import type { NativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
+import type {
+  AppliedPolicySelection,
+  ModelAssignmentSelection,
+  ModelSelectionProvenance,
+} from "../../domain/telemetry/provenance";
 import type { ServingProfileProvenance } from "../../inference/serving/types";
 import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
@@ -81,6 +89,13 @@ export interface SandboxHostLocalInferenceProvenance {
 
 export interface SandboxEntry extends Partial<InferenceSelection> {
   name: string;
+  appliedPolicySelection?: AppliedPolicySelection;
+  /** Private selection origin matched to the current native model/provider/API. */
+  nativeModelSelectionProvenance?: ModelSelectionProvenance;
+  /** Private source receipts bound to verified native agent/model assignments. */
+  modelAssignmentSelections?: ModelAssignmentSelection[];
+  /** Agent configuration was persisted but has not crossed verified activation. */
+  configurationApplyPending?: true;
   /** Route-only placeholder created before sandbox creation; never eligible as the default. */
   pendingRouteReservation?: true;
   /** Onboard session that owns this route transaction, retained after publication for exact idempotence. */
@@ -132,6 +147,10 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   managedStartupProtocol?: "identity-bound" | "legacy-unbound";
   /** Canonical provider-neutral receipt for an out-of-sandbox inference runtime. */
   hostLocalInferenceReceipt?: string | null;
+  /** Exact OpenShell provider identity attached for native NVIDIA hosted inference. */
+  nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  /** Exact selected fixed hosted provider identity; separate from gateway ownership. */
+  nativeHostedProviderAttachment?: NativeProviderAttachment;
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   /** Explicit Deferred N1x managed-vLLM choice retained after successful onboarding. */
@@ -231,4 +250,7 @@ export interface SandboxRegistry {
   defaultSandbox: string | null;
   defaultSelectionRevision?: number;
   extraProviders?: string[];
+  /** Exact NemoClaw-owned native NVIDIA provider identity for each OpenShell gateway. */
+  nativeNvidiaProviderAuthorities?: Record<string, NativeNvidiaProviderAttachment>;
+  nativeHostedProviderAuthorities?: NativeHostedProviderAuthorities;
 }

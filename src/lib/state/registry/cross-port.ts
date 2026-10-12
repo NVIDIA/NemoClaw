@@ -202,6 +202,16 @@ function listNamesAcrossGatewayRoots(published: boolean, home: string): string[]
   return names;
 }
 
+/** Registered sandbox names from one gateway-port state root. */
+export function listSandboxNamesInGatewayRoot(
+  gatewayPort: number,
+  home: string = resolveHome(),
+): string[] {
+  return listSandboxHitsAcrossGatewayRoots(home)
+    .filter(({ registryGatewayPort }) => registryGatewayPort === gatewayPort)
+    .map(({ entry }) => entry.name);
+}
+
 /** Published sandbox entries across every registry root, base root first, then ports ascending. */
 export function listPublishedSandboxesAcrossGatewayRoots(
   home: string = resolveHome(),

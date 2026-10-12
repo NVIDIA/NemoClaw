@@ -6,6 +6,7 @@ import ts from "typescript";
 
 import { parseE2eAssertionBudget } from "../../scripts/checks/e2e-assertion-census.mts";
 import type { GrowthGuardrailDiff, PullRequestFile } from "./growth-guardrail-diff";
+import { e2eBudgetChangeDigest } from "./e2e-budget-approval";
 
 const BUDGET_FILE = "ci/test-file-size-budget.json";
 const DOCKERFILE_GROWTH_EXCEPTIONS_FILE = "ci/dockerfile-growth-exceptions.json";
@@ -511,7 +512,18 @@ function hasApprovedE2eBudgetTransition(
     }
     const entry = value as Record<string, unknown>;
     const pullRequest = positiveInteger(entry.pullRequest, "E2E exception pullRequest");
-    const { baseBudgetSha256, headBudgetSha256 } = entry;
+    const { baseBudgetSha256, headBudgetSha256, changeSha256 } = entry;
+    if (changeSha256 !== undefined) {
+      if (
+        typeof changeSha256 !== "string" ||
+        !/^[a-f0-9]{64}$/.test(changeSha256) ||
+        baseBudgetSha256 !== undefined ||
+        headBudgetSha256 !== undefined
+      ) {
+        throw new Error(`${E2E_GROWTH_EXCEPTIONS_FILE}: invalid change digest`);
+      }
+      return { pullRequest, changeSha256 };
+    }
     if (
       typeof baseBudgetSha256 !== "string" ||
       !/^[a-f0-9]{64}$/.test(baseBudgetSha256) ||
@@ -524,12 +536,14 @@ function hasApprovedE2eBudgetTransition(
   });
   const baseDigest = createHash("sha256").update(baseSource).digest("hex");
   const headDigest = createHash("sha256").update(headSource).digest("hex");
+  const changeDigest = e2eBudgetChangeDigest(baseSource, headSource);
   // Local hooks have no PR identity. CI additionally requires the actual event PR.
   return transitions.some(
     (entry) =>
       (pullRequestNumber === null || entry.pullRequest === pullRequestNumber) &&
-      entry.baseBudgetSha256 === baseDigest &&
-      entry.headBudgetSha256 === headDigest,
+      ("changeSha256" in entry
+        ? entry.changeSha256 === changeDigest
+        : entry.baseBudgetSha256 === baseDigest && entry.headBudgetSha256 === headDigest),
   );
 }
 
@@ -623,6 +637,15 @@ export async function e2eAssertionBudgetGrowthViolations(
     if (!genuinelyRemoved) {
       violations.push(`${carriedFile} omitted its live E2E assertion budget`);
     }
+  }
+  if (
+    violations.length > 0 &&
+    !violations.some((v) => v.includes("omitted its live E2E assertion budget"))
+  ) {
+    const digest = e2eBudgetChangeDigest(baseSource, headSource);
+    if (digest && (await diff.readBudgetApproval?.(digest))) return [];
+    if (digest)
+      violations.push(`Maintainer approval record: NemoClaw-E2E-Growth: approve ${digest}`);
   }
   return violations;
 }

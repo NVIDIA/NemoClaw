@@ -51,7 +51,7 @@ describe("PR Review Advisor follow-up contracts", () => {
           submitted_at: "2026-09-14T14:00:00Z",
           author_association: "MEMBER",
           user: { login: "maintainer-d", type: "User" },
-          body: "Blocker D was later cleared.",
+          body: "Blocker D only has a stale approval.",
         },
         {
           id: 25,
@@ -93,23 +93,21 @@ describe("PR Review Advisor follow-up contracts", () => {
     );
 
     expect(selected).toMatchObject({
-      reviewId: 23,
+      reviewId: 24,
       reviewedHeadSha: "a".repeat(40),
       state: "CHANGES_REQUESTED",
-      reviewer: "maintainer-a, maintainer-c",
+      reviewer: "maintainer-a, maintainer-c, maintainer-d",
       inlineComments: [
         { path: "src/a.ts", line: 10, body: "Recheck A." },
         { path: "src/b.ts", line: 20, body: "Recheck B." },
         { path: "src/c.ts", line: 30, body: "Recheck C." },
+        { path: "src/d.ts", line: 40, body: "Recheck D." },
       ],
     });
     expect(selected?.body).toContain("Blocker A remains unresolved.");
     expect(selected?.body).toContain("Blocker B was introduced later.");
     expect(selected?.body).toContain("Blocker C is independently unresolved.");
-    expect(selected?.body).not.toContain("Blocker D was later cleared.");
-    expect(selected?.inlineComments).not.toContainEqual(
-      expect.objectContaining({ path: "src/d.ts" }),
-    );
+    expect(selected?.body).toContain("Blocker D only has a stale approval.");
   });
 
   it("falls back to the latest trusted reviewer when the preferred reviewer has no review", () => {
@@ -135,6 +133,79 @@ describe("PR Review Advisor follow-up contracts", () => {
       reviewer: "maintainer-b",
       state: "APPROVED",
     });
+  });
+
+  it("lets a current-head approval clear only that reviewer's earlier blockers", () => {
+    const currentHeadSha = "f".repeat(40);
+    const selected = selectFollowUpReview(
+      [
+        {
+          id: 31,
+          state: "CHANGES_REQUESTED",
+          commit_id: "a".repeat(40),
+          submitted_at: "2026-09-14T10:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer-a", type: "User" },
+          body: "Blocker A was cleared on the current head.",
+        },
+        {
+          id: 32,
+          state: "CHANGES_REQUESTED",
+          commit_id: "b".repeat(40),
+          submitted_at: "2026-09-14T11:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer-b", type: "User" },
+          body: "Blocker B remains unresolved.",
+        },
+        {
+          id: 33,
+          state: "APPROVED",
+          commit_id: currentHeadSha,
+          submitted_at: "2026-09-14T12:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer-a", type: "User" },
+        },
+      ],
+      [],
+      currentHeadSha,
+    );
+
+    expect(selected).toMatchObject({
+      reviewId: 32,
+      reviewedHeadSha: "b".repeat(40),
+      state: "CHANGES_REQUESTED",
+      reviewer: "maintainer-b",
+    });
+    expect(selected?.body).toBe("Blocker B remains unresolved.");
+  });
+
+  it("does not emit a zero-length follow-up after current-head approval", () => {
+    const currentHeadSha = "f".repeat(40);
+    const selected = selectFollowUpReview(
+      [
+        {
+          id: 34,
+          state: "CHANGES_REQUESTED",
+          commit_id: "a".repeat(40),
+          submitted_at: "2026-09-14T10:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer-a", type: "User" },
+          body: "Blocker A was cleared on the current head.",
+        },
+        {
+          id: 35,
+          state: "APPROVED",
+          commit_id: currentHeadSha,
+          submitted_at: "2026-09-14T11:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer-a", type: "User" },
+        },
+      ],
+      [],
+      currentHeadSha,
+    );
+
+    expect(selected).toBeUndefined();
   });
 
   it("retains a bounded excerpt from every unresolved review body", () => {

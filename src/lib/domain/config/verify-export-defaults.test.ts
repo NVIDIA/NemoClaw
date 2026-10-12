@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
 import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
@@ -56,6 +57,23 @@ function explicitOpenClawDefaultsSnapshot() {
 }
 
 describe("effective v1alpha1 export defaults (#12132)", () => {
+  it.runIf(process.env.NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY === "1")(
+    "rejects the proposed Gemini contract at the pinned V1 revision (#12551)",
+    testTimeoutOptions(12 * 60_000),
+    () => {
+      const fixture = readFileSync(
+        new URL(
+          "../../../../test/fixtures/v1-config-consumer/pending-gemini.yaml",
+          import.meta.url,
+        ),
+        "utf8",
+      );
+      expect(() => validateConfigExportWithPinnedV1(fixture)).toThrow(
+        /configuration violates schema at \/\$defs\/InferenceProvider\/properties\/provider\/enum/u,
+      );
+    },
+  );
+
   it("preserves source values whether their startup inputs were explicit or omitted", async () => {
     const baseline = await exportSnapshots([snapshot()]);
     const explicit = await exportSnapshots([explicitOpenClawDefaultsSnapshot()]);

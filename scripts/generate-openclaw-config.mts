@@ -27,7 +27,10 @@
 //   NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME, NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE,
 //   NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION.
 
+import { nativeHostedAgentConfig } from "../src/lib/inference/native-provider/agent-config.ts";
+
 import { hasProviderlessInferenceEnvironment } from "../src/lib/providerless-inference.ts";
+import { managedInferenceApiKey } from "../src/lib/inference-credential.ts";
 
 import {
   chmodSync,
@@ -728,8 +731,8 @@ function isManagedInferenceLocalRoute(
 
 // Managed inference sessions other than Local Ollama use OpenClaw's safeguard
 // compaction rather than its plain runtime compactor. A two-minute timeout
-// bounds each standard attempt. The N1x managed-vLLM profile needs five minutes
-// because its compaction request can exceed two minutes (#11805). OpenClaw
+// bounds each standard summarization request. The N1x managed-vLLM profile
+// retains its five-minute request timeout (#11805). OpenClaw
 // 2026.9.1 retired the configurable reserve fields, so its runtime owns prompt
 // headroom while NemoClaw retains the profile-specific timeout. Lifecycle notices
 // expose compaction progress, and successful compaction rotates the active transcript.
@@ -759,7 +762,12 @@ export function buildManagedInferenceSafeguardCompaction(
           timeoutSeconds: N1X_COMPACTION_TIMEOUT_SECONDS,
         }
       : {}),
-    qualityGuard: { ...MANAGED_INFERENCE_SAFEGUARD_COMPACTION.qualityGuard },
+    qualityGuard: {
+      ...MANAGED_INFERENCE_SAFEGUARD_COMPACTION.qualityGuard,
+      // Give N1x summaries one corrective attempt with audit feedback (#12297).
+      // Keep the audit enabled so failed summaries cannot replace conversation history.
+      ...(isN1xManagedVllm ? { maxRetries: 1 } : {}),
+    },
   };
 }
 
@@ -965,10 +973,12 @@ export function buildConfig(env: Env = process.env): JsonObject {
       maxTokens,
     });
   }
+  const nativeHosted = nativeHostedAgentConfig(upstreamProvider, inferenceBaseUrl);
   const providers = {
     [providerKey]: {
       baseUrl: inferenceBaseUrl,
-      apiKey: "unused",
+      apiKey: nativeHosted?.apiKey ?? managedInferenceApiKey(inferenceBaseUrl, "unused"),
+      ...(nativeHosted?.headers ? { headers: nativeHosted.headers } : {}),
       api: inferenceApi,
       timeoutSeconds: agentTimeout,
       models: providerModels,
@@ -1095,7 +1105,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const tools = config.tools;
   tools.web ??= {};
   tools.web.fetch = { enabled: true, useTrustedEnvProxy: true };
-  if (managedImageCapabilityUnion) {
+  if (!webSearchProvider) {
+    // OpenClaw treats OPENROUTER_API_KEY as Perplexity search auth when search is unspecified.
     tools.web.search = { enabled: false };
   }
 

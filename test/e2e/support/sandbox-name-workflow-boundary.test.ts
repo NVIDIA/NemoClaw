@@ -7,11 +7,29 @@ import {
   resolveWorkflowSandboxIdentities,
   validateWorkflowSandboxNames,
 } from "../../../tools/e2e/sandbox-name-workflow-boundary.mts";
+import { E2E_TARGET_CATALOGUE } from "../../../tools/e2e/target-catalogue.mts";
+import * as importedSandboxNameContract from "../../../nemoclaw/src/shared/sandbox-name.cts";
 import { readYaml, type Workflow } from "../../helpers/e2e-workflow-contract";
 
 const WORKFLOW_PATHS = [".github/workflows/e2e.yaml"] as const;
+const sandboxNameContract = (
+  "default" in importedSandboxNameContract && importedSandboxNameContract.default
+    ? importedSandboxNameContract.default
+    : importedSandboxNameContract
+) as typeof import("../../../nemoclaw/src/shared/sandbox-name.cts");
+const { isValidName } = sandboxNameContract;
 
-describe("live workflow sandbox name boundary", () => {
+describe("E2E sandbox name boundary", () => {
+  it("keeps every catalogue fixture sandbox name within the canonical boundary", () => {
+    const invalidTargets = E2E_TARGET_CATALOGUE.flatMap((target) => {
+      const sandboxName = target.environment.NEMOCLAW_SANDBOX_NAME;
+      return sandboxName === undefined || isValidName(sandboxName) ? [] : [target.id];
+    });
+
+    expect(isValidName("e2e-overlong-catalogue-name")).toBe(false);
+    expect(invalidTargets).toEqual([]);
+  });
+
   it.each(WORKFLOW_PATHS)(
     "keeps every literal and matrix-generated sandbox identity canonical in %s (#8497)",
     (workflowPath) => {

@@ -1,6 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { validateNvidiaApiKeyValue } from "../../credentials/api-key-validation";
+import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "../../inference/anthropic/openai-surface";
+import {
+  assertEndpointResolvesPublic,
+  parseTrustedPrivateInferenceHostsFromEnv,
+} from "../../inference/endpoint-ssrf-preflight";
+import { usesNvidiaEndpointProbePayload } from "../../inference/openai-probe-models";
+import { getRemoteProviderConfigForName } from "../../onboard/inference-providers/provider-selection-keys";
+import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+
 import {
   createManagedProviderAdapter,
   managedProviderGatewayTarget,
@@ -14,6 +24,10 @@ import {
   hasBedrockRuntimeAwsAuthEnv,
   isBedrockRuntimeEndpoint,
 } from "../../inference/bedrock-runtime";
+import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
+import { fixedNativeProviderForAttachment } from "../../inference/native-provider/fixed";
+import { nativeProviderLifecycle } from "../../inference/native-provider";
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import type { GatewayProviderMetadata } from "../../onboard/gateway-provider-metadata";
 import {
   assessRecoveredProviderCredentialReuse,
@@ -33,10 +47,89 @@ const { REMOTE_PROVIDER_CONFIG } = require("../../onboard/providers") as {
     {
       providerName: string;
       providerType: string;
+      endpointUrl: string;
       credentialEnv: string | null;
     }
   >;
 };
+
+type ProbeResult = { ok: boolean; validated?: boolean };
+type Probe = (
+  endpointUrl: string,
+  model: string,
+  apiKey: string,
+  options: Record<string, unknown>,
+) => ProbeResult | Promise<ProbeResult>;
+
+const probes = require("../../inference/onboard-probes") as {
+  probeAnthropicEndpoint: Probe;
+  probeOpenAiLikeEndpointOptimized: Probe;
+  getProbeExtraHeaders(provider: string): string[] | undefined;
+};
+
+export type HostCredentialTarget = Pick<
+  RebuildSandboxEntry,
+  "provider" | "model" | "endpointUrl" | "credentialEnv" | "preferredInferenceApi"
+>;
+
+/** Validate the host credential that recreate can submit, without changing the gateway. */
+export async function validateRebuildHostInferenceCredential(
+  target: HostCredentialTarget,
+  credentialValue: string,
+  deps = {
+    assertEndpointResolvesPublic,
+    probeAnthropicEndpoint: probes.probeAnthropicEndpoint,
+    probeOpenAiLikeEndpointOptimized: probes.probeOpenAiLikeEndpointOptimized,
+  },
+): Promise<boolean> {
+  const config = getRemoteProviderConfigForName(target.provider, REMOTE_PROVIDER_CONFIG);
+  // Local, routed, and Hermes authentication retain their existing preflights.
+  if (!config || config.providerName === "llama-cpp-local" || target.provider === "hermes-provider")
+    return true;
+  if (
+    target.provider === "compatible-anthropic-endpoint" &&
+    isBedrockRuntimeEndpoint(target.endpointUrl)
+  ) {
+    return true;
+  }
+  if (validateNvidiaApiKeyValue(credentialValue, target.credentialEnv ?? "")) return false;
+  let endpointUrl = config.endpointUrl || target.endpointUrl;
+  if (!endpointUrl || !target.model) return false;
+
+  try {
+    const pins = !config.endpointUrl
+      ? await deps.assertEndpointResolvesPublic(endpointUrl, undefined, {
+          trustedPrivateHosts: parseTrustedPrivateInferenceHostsFromEnv(process.env),
+        })
+      : null;
+    if (pins && !pins.ok) return false;
+    const useAnthropic =
+      config.providerType === "anthropic" && target.preferredInferenceApi !== "openai-completions";
+    if (config.providerType === "anthropic" && !useAnthropic) {
+      endpointUrl = getCompatibleAnthropicOpenAiSurfaceBaseUrl(endpointUrl);
+    }
+    const probe = useAnthropic
+      ? deps.probeAnthropicEndpoint
+      : deps.probeOpenAiLikeEndpointOptimized;
+    const result = await probe(endpointUrl, target.model, credentialValue, {
+      skipResponsesProbe: target.preferredInferenceApi !== "openai-responses",
+      probeStreaming: false,
+      provider: target.provider,
+      extraHeaders: probes.getProbeExtraHeaders(target.provider ?? ""),
+      useNvidiaEndpointProbePayload: usesNvidiaEndpointProbePayload(target.provider ?? ""),
+      ...(pins?.ok
+        ? {
+            pinnedAddresses: pins.addresses,
+            trustedPrivateCapability: pins.trustedPrivateCapability,
+          }
+        : {}),
+    });
+    return result.ok && result.validated !== false;
+  } catch {
+    // Probe errors and response bodies can contain credentials.
+    return false;
+  }
+}
 
 export type RebuildGatewayProviderRegistration =
   | "registered"
@@ -66,12 +159,34 @@ export async function inspectRebuildGatewayProviderRegistration(
   runtimeSelection?: OpenShellRuntimeSelection,
   providerAdapter = rebuildProviderAdapter(runtimeSelection),
   credentialKey?: string | null,
+  nativeAttachment?: NativeProviderAttachment,
 ): Promise<RebuildGatewayProviderRegistration> {
+  let nativeLifecycle: ReturnType<typeof nativeProviderLifecycle> | undefined;
+  if (nativeAttachment) {
+    try {
+      const definition = fixedNativeProviderForAttachment(nativeAttachment);
+      if (definition.logicalProvider !== provider) return "indeterminate";
+      nativeLifecycle = nativeProviderLifecycle(definition);
+    } catch {
+      return "indeterminate";
+    }
+  }
   const result = await providerAdapter.getProvider({
-    providerName: provider,
+    providerName: nativeAttachment?.providerName ?? provider,
     target: managedProviderGatewayTarget,
     ...(credentialKey ? { includeCredentialExpirations: true } : {}),
   });
+  if (result.ok && nativeAttachment) {
+    try {
+      if (
+        nativeLifecycle!.nativeProviderAttachmentFromMetadata(result.value).providerId !==
+        nativeAttachment.providerId
+      )
+        return "indeterminate";
+    } catch {
+      return "indeterminate";
+    }
+  }
   const expiresAtMs = result.ok && credentialKey ? result.value.credentialExpiresAtMs : undefined;
   const credentialExpiresAtMs = credentialKey ? expiresAtMs?.[credentialKey] : undefined;
   const credentialKeyMissing = Boolean(
@@ -221,12 +336,14 @@ export async function checkRebuildGatewayProviderOrBail(
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
   options: {
+    nativeAttachment?: NativeProviderAttachment;
     allowProviderReconfigure?: boolean;
     hostCredentialAvailable?: boolean;
     onProviderReconfigureRequired?: (provider: string, credentialEnv: string) => void;
   } = {},
 ): Promise<boolean> {
-  if (!shouldVerifyRebuildGatewayProvider(provider)) return true;
+  if (!options.nativeAttachment && !shouldVerifyRebuildGatewayProvider(provider)) return true;
+  if (!provider) return false;
 
   const registration = await inspectRebuildGatewayProviderRegistration(
     provider,
@@ -235,6 +352,7 @@ export async function checkRebuildGatewayProviderOrBail(
     undefined,
     rebuildProviderAdapter(),
     credentialEnv,
+    options.nativeAttachment,
   );
   if (registration === "registered") return true;
   if (registration === "expired" && credentialEnv) {
@@ -249,6 +367,7 @@ export async function checkRebuildGatewayProviderOrBail(
   }
   if (
     registration === "missing" &&
+    !options.nativeAttachment &&
     options.allowProviderReconfigure &&
     options.hostCredentialAvailable &&
     credentialEnv &&
@@ -306,6 +425,12 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
   bail: (msg: string, code?: number) => never,
   deps: GatewayCredentialReusePreflightDeps = defaultGatewayCredentialReusePreflightDeps(),
 ): Promise<boolean> {
+  const nativeAttachment = recordedNativeProviderAttachment(config);
+  if (nativeAttachment) {
+    return checkRebuildGatewayProviderOrBail(config.provider, config.credentialEnv, log, bail, {
+      nativeAttachment,
+    });
+  }
   if (hostCredentialAvailable || !config.provider || !config.credentialEnv) return true;
   const isBedrockRuntime =
     config.provider === "compatible-anthropic-endpoint" &&

@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  hostedNativeProvider,
+  usesNativeHermesEndpoint,
+} from "../inference/native-provider/hosted";
+import { requireHostedProviderAttachment } from "../inference/native-provider/hosted-attachment";
+import { prepareHostedNativeProvider } from "../inference/native-provider/setup";
+import type { NativeProviderAttachment } from "../inference/native-provider/contract";
+
 import type { OpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle";
 import { canonicalEndpoint } from "../core/url-utils";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
@@ -15,11 +23,20 @@ import {
   formatGatewayRouteImpactWarning,
   isAdvisoryGatewayRouteConflict,
 } from "../inference/gateway-route-compatibility";
-import {
+import type {
   withGatewayRouteMutationLock,
   withModelRouterPortLifecycleLock,
 } from "../inference/gateway-route-mutation-lock";
 import { getManagedVllmProviderBinding, shouldFrontOllamaWithProxy } from "../inference/local";
+import {
+  ensureNativeNvidiaProvider,
+  isNativeNvidiaProvider,
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  normalizeNativeNvidiaProviderAttachment,
+  persistNativeNvidiaProviderAuthority,
+  resolveGatewayNativeNvidiaProviderAuthority,
+  type NativeNvidiaProviderAttachment,
+} from "../inference/native-nvidia";
 import {
   clearPendingOllamaModelCleanup,
   isLocalOllamaRouteOwner,
@@ -41,11 +58,11 @@ import {
   scopeGatewayOpenshellArgs,
   type OpenShellGatewayEndpointEnvironment,
 } from "../adapters/openshell/gateway-scope";
-import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
+import type { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import type { Session } from "../state/onboard-session";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
-import { resolveModelRouterPort } from "./model-router";
 import {
+  withRoutedInferencePortLock,
   type RoutedProviderDeps,
   upsertRoutedProvider as upsertRoutedInferenceProvider,
 } from "./routed-inference";
@@ -228,6 +245,10 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   // by hand, so every read below must stay optional-chained.
   getSandbox?: typeof import("../state/registry").getSandbox;
   listSandboxes?: typeof import("../state/registry").listSandboxes;
+  getNativeHostedProviderAuthority?: typeof import("../state/registry").getNativeHostedProviderAuthority;
+  setNativeHostedProviderAuthority?: typeof import("../state/registry").setNativeHostedProviderAuthority;
+  getNativeNvidiaProviderAuthority?: typeof import("../state/registry").getNativeNvidiaProviderAuthority;
+  setNativeNvidiaProviderAuthority?: typeof import("../state/registry").setNativeNvidiaProviderAuthority;
   unloadOllamaModels?: (onlyModels: readonly string[]) => OllamaUnloadResult | void;
   withOllamaModelOwnershipLock?: typeof withOllamaModelOwnershipLock;
   withOllamaModelOwnershipTransaction?: typeof withOllamaModelOwnershipTransaction;
@@ -650,13 +671,9 @@ export function createSetupInference(
       provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
     let shouldLogSuccessfulRoute = false;
     const withInferenceMutationLocks = <T>(operation: () => Promise<T> | T): Promise<T> =>
-      deps.withGatewayRouteMutationLock(gatewayName, () => {
-        if (!routedProvider) return operation();
-        const withRouterPortLock =
-          deps.withModelRouterPortLifecycleLock ?? withModelRouterPortLifecycleLock;
-        const port = (deps.getModelRouterPort ?? resolveModelRouterPort)();
-        return withRouterPortLock(port, operation);
-      });
+      deps.withGatewayRouteMutationLock(gatewayName, () =>
+        withRoutedInferencePortLock(routedProvider, operation, deps),
+      );
     const mutateGatewayRoute = (): Promise<SetupInferenceResult> =>
       // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider onboarding centralizes route and two-phase transaction ordering.
       withInferenceMutationLocks(async () => {
@@ -670,32 +687,54 @@ export function createSetupInference(
           );
           return deps.exitProcess(1);
         }
-        const observedRoute = await deps.inferenceRouteObserver.observeInferenceRoute({
-          target: { kind: "named", gatewayName },
-        });
-        if (!observedRoute.ok) {
-          deps.error(
-            `  Cannot reconcile the current OpenShell inference selection on gateway '${gatewayName}' before onboarding mutation: ${observedRoute.error.message}`,
-          );
-          return deps.exitProcess(1);
-        }
-        const compatibility = deps.checkGatewayRouteCompatibility({
-          gatewayName,
-          sandboxName,
-          route: {
-            provider,
-            model,
-            endpointUrl,
-            credentialEnv,
-            preferredInferenceApi: options.preferredInferenceApi ?? null,
-          },
-        });
-        if (!compatibility.ok) {
-          if (!isAdvisoryGatewayRouteConflict(compatibility)) {
-            deps.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+        const recordedSandbox =
+          provider === "hermes-provider" && sandboxName ? deps.getSandbox?.(sandboxName) : null;
+        const hermesAuthority =
+          provider === "hermes-provider"
+            ? ((recordedSandbox?.provider === provider
+                ? requireHostedProviderAttachment(
+                    recordedSandbox.nativeHostedProviderAttachment,
+                    provider,
+                  )
+                : undefined) ??
+              deps.getNativeHostedProviderAuthority?.(
+                gatewayName,
+                provider,
+                endpointUrl || undefined,
+              ))
+            : undefined;
+        const nativeHostedSelection =
+          hostedNativeProvider(provider) &&
+          (provider !== "hermes-provider" ||
+            usesNativeHermesEndpoint(endpointUrl, hermesAuthority));
+        if (!isNativeNvidiaProvider(provider) && !nativeHostedSelection) {
+          const observedRoute = await deps.inferenceRouteObserver.observeInferenceRoute({
+            target: { kind: "named", gatewayName },
+          });
+          if (!observedRoute.ok) {
+            deps.error(
+              `  Cannot reconcile the current OpenShell inference selection on gateway '${gatewayName}' before onboarding mutation: ${observedRoute.error.message}`,
+            );
             return deps.exitProcess(1);
           }
-          deps.error(`  ${formatGatewayRouteImpactWarning(compatibility)}`);
+          const compatibility = deps.checkGatewayRouteCompatibility({
+            gatewayName,
+            sandboxName,
+            route: {
+              provider,
+              model,
+              endpointUrl,
+              credentialEnv,
+              preferredInferenceApi: options.preferredInferenceApi ?? null,
+            },
+          });
+          if (!compatibility.ok) {
+            if (!isAdvisoryGatewayRouteConflict(compatibility)) {
+              deps.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+              return deps.exitProcess(1);
+            }
+            deps.error(`  ${formatGatewayRouteImpactWarning(compatibility)}`);
+          }
         }
         deps.step(4, 8, "Setting up inference provider");
         let endpointPinnedAddresses = options.endpointPinnedAddresses;
@@ -763,6 +802,11 @@ export function createSetupInference(
           | undefined;
         let hostLocalInferenceGatewayPortAuthority: number | undefined;
         let hostLocalInferenceRuntimeProviderId: string | undefined;
+        let nativeHostedEndpoint: string | undefined;
+        let nativeHostedCredentialEnv: string | undefined;
+        let nativeHostedProviderAttachment: NativeProviderAttachment | undefined;
+        let retainedNativeHostedCredential = false;
+        let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
           revalidateSandboxIdentity?.("reserve the sandbox inference route");
@@ -773,14 +817,16 @@ export function createSetupInference(
           const route: Parameters<SetupInferenceDeps["updateSandbox"]>[1] = {
             provider: selectedProvider,
             model: selectedModel,
-            endpointUrl: hostLocalRoute?.applicationBaseUrl ?? endpointUrl,
+            endpointUrl: nativeHostedEndpoint ?? hostLocalRoute?.applicationBaseUrl ?? endpointUrl,
             endpointSource: hostLocalRoute ? "inference-set" : endpointSource,
-            credentialEnv,
+            credentialEnv: nativeHostedCredentialEnv ?? credentialEnv,
             preferredInferenceApi: options.preferredInferenceApi ?? null,
             gatewayName,
             reservationSessionId: options.reservationSessionId,
             hostLocalInferenceReceipt,
             ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+            ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+            ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
             ...(hostLocalInferenceProvenance && hostLocalInferenceGatewayPortAuthority !== undefined
               ? { gatewayPort: hostLocalInferenceGatewayPortAuthority }
               : {}),
@@ -919,6 +965,33 @@ export function createSetupInference(
         }
 
         const setupSelectedProvider = async (): Promise<SetupInferenceResult | null> => {
+          const hosted = hostedNativeProvider(provider);
+          if (hosted && provider !== deps.hermesProviderAuth.HERMES_PROVIDER_NAME) {
+            if (
+              !deps.providerAdapter ||
+              !deps.getNativeHostedProviderAuthority ||
+              !deps.setNativeHostedProviderAuthority
+            ) {
+              throw new Error(
+                "Native hosted setup is missing its provider adapter or ownership store.",
+              );
+            }
+            const credentialValue =
+              deps.hydrateCredentialEnv(credentialEnv || hosted.credentialEnv) || null;
+            nativeHostedProviderAttachment = await prepareHostedNativeProvider({
+              provider,
+              adapter: deps.providerAdapter,
+              gatewayName,
+              credentialValue,
+              reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
+              recordedSandbox: sandboxName ? deps.getSandbox?.(sandboxName) : null,
+              readAuthority: deps.getNativeHostedProviderAuthority,
+              writeAuthority: deps.setNativeHostedProviderAuthority,
+            });
+            retainedNativeHostedCredential = !credentialValue;
+            return null;
+          }
+
           if (provider === deps.hermesProviderAuth.HERMES_PROVIDER_NAME) {
             return inferenceProviders.setupHermesProviderInference(
               {
@@ -932,6 +1005,35 @@ export function createSetupInference(
               },
               {
                 ...commonDeps,
+                getNativeProviderAuthority: () => hermesAuthority,
+                prepareNativeProvider: async (apiKey, returnedEndpoint) => {
+                  if (
+                    !deps.providerAdapter ||
+                    !deps.getNativeHostedProviderAuthority ||
+                    !deps.setNativeHostedProviderAuthority
+                  )
+                    throw new Error(
+                      "Native Hermes setup is missing its provider adapter or ownership store",
+                    );
+                  revalidateSandboxIdentity?.("register the native Hermes provider");
+                  nativeHostedProviderAttachment = await prepareHostedNativeProvider({
+                    provider,
+                    gatewayName,
+                    adapter: deps.providerAdapter,
+                    credentialValue: apiKey,
+                    endpointUrl: returnedEndpoint,
+                    lookup: deps.resolveEndpointHost,
+                    recordedSandbox: sandboxName ? deps.getSandbox?.(sandboxName) : null,
+                    reuseExistingCredential: apiKey === null,
+                    readAuthority: deps.getNativeHostedProviderAuthority,
+                    writeAuthority: deps.setNativeHostedProviderAuthority,
+                  });
+                  nativeHostedEndpoint =
+                    nativeHostedProviderAttachment.endpointUrl ??
+                    hostedNativeProvider(provider)!.endpoint;
+                  nativeHostedCredentialEnv = "OPENAI_API_KEY";
+                  return nativeHostedProviderAttachment;
+                },
                 hermesProviderAuth: deps.hermesProviderAuth,
                 getHermesToolGatewayBroker: deps.getHermesToolGatewayBroker,
                 providerExistsInGateway: (name: string) =>
@@ -947,6 +1049,54 @@ export function createSetupInference(
                 lookup: deps.lookup,
               },
             );
+          }
+
+          if (isNativeNvidiaProvider(provider)) {
+            const resolvedCredentialEnv = credentialEnv || NVIDIA_HOSTED_CREDENTIAL_ENV;
+            const credentialValue = deps.hydrateCredentialEnv(resolvedCredentialEnv) || null;
+            const providerAdapter = deps.providerAdapter;
+            if (!providerAdapter) {
+              throw new Error("Native NVIDIA setup is missing its OpenShell provider adapter.");
+            }
+            const recordedSandbox = sandboxName ? deps.getSandbox?.(sandboxName) : null;
+            const recordedAttachment = normalizeNativeNvidiaProviderAttachment(
+              recordedSandbox?.nativeNvidiaProviderAttachment,
+            );
+            if (
+              recordedSandbox &&
+              isNativeNvidiaProvider(recordedSandbox.provider) &&
+              !recordedAttachment
+            ) {
+              throw new Error(
+                `Sandbox '${sandboxName}' predates native NVIDIA provider attachments. Recreate this beta sandbox before using native NVIDIA inference; NemoClaw does not migrate existing beta sandboxes automatically.`,
+              );
+            }
+            const providerAuthority = resolveGatewayNativeNvidiaProviderAuthority({
+              gatewayName,
+              gatewayAuthority: deps.getNativeNvidiaProviderAuthority?.(gatewayName),
+              recordedAttachment,
+            });
+            nativeNvidiaProviderAttachment = await ensureNativeNvidiaProvider({
+              adapter: providerAdapter,
+              target: { kind: "named", gatewayName },
+              credentialValue,
+              reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
+              ...(providerAuthority ? { expected: providerAuthority } : {}),
+            });
+            if (deps.getNativeNvidiaProviderAuthority && deps.setNativeNvidiaProviderAuthority) {
+              await persistNativeNvidiaProviderAuthority({
+                adapter: providerAdapter,
+                target: { kind: "named", gatewayName },
+                gatewayName,
+                receipt: nativeNvidiaProviderAttachment,
+                ...(providerAuthority ? { existing: providerAuthority } : {}),
+                readAuthority: deps.getNativeNvidiaProviderAuthority,
+                writeAuthority: deps.setNativeNvidiaProviderAuthority,
+              });
+            } else {
+              deps.setNativeNvidiaProviderAuthority?.(gatewayName, nativeNvidiaProviderAttachment);
+            }
+            return null;
           }
 
           if (inferenceProviders.isRemoteProviderName(provider)) {
@@ -1127,18 +1277,23 @@ export function createSetupInference(
         try {
           const providerResult = await setupSelectedProvider();
           if (providerResult) return providerResult;
-          commonDeps.verifyInferenceRoute(provider, model);
+          if (!nativeNvidiaProviderAttachment && !nativeHostedProviderAttachment)
+            commonDeps.verifyInferenceRoute(provider, model);
           if (hostLocalRoute) {
             deps.log(
               "  Deferring inference.local smoke to the sandbox runtime after sandbox readiness.",
             );
-          } else if (options.skipHostInferenceSmoke === true) {
+          } else if (options.skipHostInferenceSmoke === true || retainedNativeHostedCredential) {
             deps.log("  Reusing existing gateway credential; skipping host inference smoke.");
           } else {
             await deps.verifyOnboardInferenceSmoke({
               provider,
               model,
-              endpointUrl,
+              endpointUrl:
+                nativeHostedEndpoint ??
+                nativeHostedProviderAttachment?.endpointUrl ??
+                hostedNativeProvider(provider)?.endpoint ??
+                endpointUrl,
               credentialEnv,
               pinnedAddresses: endpointPinnedAddresses,
               trustedPrivateCapability: endpointTrustedPrivateCapability,
@@ -1272,7 +1427,11 @@ export function createSetupInference(
         revalidateSandboxIdentity,
       );
       if (shouldLogSuccessfulRoute && "ok" in result) {
-        deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
+        deps.log(
+          isNativeNvidiaProvider(provider)
+            ? `  ✓ Native NVIDIA provider ready: ${provider} / ${model}`
+            : `  ✓ Inference route set: ${provider} / ${model}`,
+        );
       }
       return result;
     };

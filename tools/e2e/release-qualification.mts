@@ -29,9 +29,16 @@ function parseJobIds(value: string, label: string, invalidLabel = label.toLowerC
 export function failedReleaseQualificationJobs(
   needs: Record<string, WorkflowNeed>,
   releaseRequiredJobs: readonly string[],
+  managedImageRequired = true,
 ): string[] {
   return [...CONTROLLER_JOBS, ...releaseRequiredJobs].filter(
-    (job) => needs[job]?.result !== "success",
+    (job) =>
+      needs[job]?.result !== "success" &&
+      !(
+        job === "base-image-publication" &&
+        !managedImageRequired &&
+        needs[job]?.result === "skipped"
+      ),
   );
 }
 
@@ -39,6 +46,7 @@ export function assertReleaseQualification(
   needsJson: string,
   releaseRequiredJobsJson: string,
   evidence?: { outputPath: string; runId: string; attempt: string },
+  managedImageRequired = true,
 ): void {
   const needs = JSON.parse(needsJson) as Record<string, WorkflowNeed>;
   if (!needs || typeof needs !== "object" || Array.isArray(needs)) {
@@ -49,7 +57,11 @@ export function assertReleaseQualification(
     "Release-required jobs",
     "release-required job IDs",
   );
-  const failedJobs = failedReleaseQualificationJobs(needs, releaseRequiredJobs);
+  const failedJobs = failedReleaseQualificationJobs(
+    needs,
+    releaseRequiredJobs,
+    managedImageRequired,
+  );
   if (evidence) {
     if (!/^[1-9][0-9]*$/.test(evidence.runId) || !/^[1-9][0-9]*$/.test(evidence.attempt)) {
       throw new Error("Invalid dispatch receipt reference");
@@ -72,6 +84,7 @@ export function assertReleaseQualification(
           kind: "nemoclaw-review-queue-e2e-result-v1",
           dispatchArtifact: `e2e-dispatch-${evidence.runId}-${evidence.attempt}`,
           selectedWorkflowJobs: releaseRequiredJobs,
+          ...(!managedImageRequired ? { managedImageRequired: false } : {}),
           results,
           status:
             failedJobs.length === 0
@@ -102,5 +115,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           attempt: process.env.GITHUB_RUN_ATTEMPT ?? "",
         }
       : undefined,
+    process.env.MANAGED_IMAGE_REQUIRED !== "false",
   );
 }

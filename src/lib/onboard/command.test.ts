@@ -1020,7 +1020,7 @@ describe("onboard command options", () => {
       ),
     ).toThrow("exit:1");
     expect(errors).toEqual([
-      `  Serving profile '${profileId}' is incompatible: podman-host: readiness status is incompatible.`,
+      `  Serving profile '${profileId}' is incompatible: podman-host: readiness status is incompatible; host.docker.unavailable: Docker is unavailable..`,
     ]);
   });
 

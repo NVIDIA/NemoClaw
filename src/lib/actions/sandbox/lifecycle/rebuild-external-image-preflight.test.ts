@@ -37,25 +37,27 @@ function provider(
     readonly acceptsReceipt?: boolean;
   } = {},
 ): RuntimeProviderBundle {
-  const capture = vi.fn(() => ({
-    status: 0,
-    stdout: JSON.stringify([
-      {
-        Id: options.imageId ?? IMAGE_ID,
-        Os: "linux",
-        Architecture: "amd64",
-        Config: {
-          User: "1000:1000",
-          WorkingDir: "/sandbox",
-          Entrypoint: ["node"],
-          Cmd: ["server.js"],
-          Env: [`NEMOCLAW_TOOL_DISCLOSURE=${options.disclosure ?? "progressive"}`],
-          Labels: { "io.nvidia.nemoclaw.agent": "openclaw" },
+  const capture = vi.fn(
+    (_operation: "external-image-preparation", _args: readonly string[], _timeoutMs?: number) => ({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          Id: options.imageId ?? IMAGE_ID,
+          Os: "linux",
+          Architecture: "amd64",
+          Config: {
+            User: "1000:1000",
+            WorkingDir: "/sandbox",
+            Entrypoint: ["node"],
+            Cmd: ["server.js"],
+            Env: [`NEMOCLAW_TOOL_DISCLOSURE=${options.disclosure ?? "progressive"}`],
+            Labels: { "io.nvidia.nemoclaw.agent": "openclaw" },
+          },
         },
-      },
-    ]),
-    stderr: "",
-  }));
+      ]),
+      stderr: "",
+    }),
+  );
   return {
     identity: { id: "docker" },
     workload: { acceptsReceipt: () => options.acceptsReceipt !== false },
@@ -69,6 +71,22 @@ function provider(
         },
       ],
       capture,
+      externalImagePreparation: {
+        displayName: "Docker",
+        inspectLocal: (reference: string, timeoutMs: number) => ({
+          status: "present",
+          inspection: capture(
+            "external-image-preparation",
+            ["image", "inspect", reference],
+            timeoutMs,
+          ),
+        }),
+        pull: (reference: string, timeoutMs: number) =>
+          capture("external-image-preparation", ["pull", reference], timeoutMs),
+        inspectPulled: (reference: string, timeoutMs: number) =>
+          capture("external-image-preparation", ["image", "inspect", reference], timeoutMs),
+        normalizeContentId: (value: unknown) => (typeof value === "string" ? value : null),
+      },
     },
   } as unknown as RuntimeProviderBundle;
 }

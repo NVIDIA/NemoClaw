@@ -91,6 +91,61 @@ print("managed-ultra-template-argument-ok")
     expect(output).toContain("managed-ultra-template-argument-ok");
   });
 
+  it("passes only the matching OpenShell placeholder to the native NVIDIA constructor (#11847)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const routeFile = path.join(tempDir, "managed-inference-base-url");
+    fs.chmodSync(routeFile, 0o644);
+    fs.writeFileSync(routeFile, "https://integrate.api.nvidia.com/v1\n");
+    fs.chmodSync(routeFile, 0o444);
+    const validation = `
+import os
+from deepagents_code import config
+
+name = "NVIDIA_INFERENCE_API_KEY"
+for value in (
+    "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
+    "openshell:resolve:env:v12_NVIDIA_INFERENCE_API_KEY",
+    "openshell:resolve:env:s" + "a" * 64 + "_NVIDIA_INFERENCE_API_KEY",
+):
+    os.environ[name] = value
+    os.environ["DEEPAGENTS_CODE_OPENAI_API_KEY"] = "nemoclaw-managed-inference"
+    for provider in ("openai", "openrouter"):
+        resolved = config._get_provider_kwargs(provider, model_name="nvidia/nemotron-3-ultra-550b-a55b")
+        assert "chat_template_kwargs" not in resolved.get("extra_body", {})
+        assert resolved["api_key"] == value
+        assert resolved["base_url"] == "https://integrate.api.nvidia.com/v1"
+
+for value in (
+    "",
+    "nvapi-" + "x" * 32,
+    "nemoclaw-managed-inference",
+    "openshell:resolve:env:v12_OTHER_API_KEY",
+    "openshell:resolve:env:v12_NVIDIA_INFERENCE_API_KEY\\n",
+):
+    os.environ[name] = value
+    try:
+        config._get_provider_kwargs("openai")
+    except RuntimeError as error:
+        assert not value or value not in str(error)
+    else:
+        raise AssertionError("native resolver accepted an invalid placeholder")
+del os.environ[name]
+try:
+    config._get_provider_kwargs("openai")
+except RuntimeError:
+    pass
+else:
+    raise AssertionError("native resolver accepted a missing placeholder")
+print("native-managed-constructor-placeholder-ok")
+`;
+    const output = execFileSync("python3", ["-c", validation], {
+      env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+      encoding: "utf8",
+    });
+    expect(output).toContain("native-managed-constructor-placeholder-ok");
+  });
+
   it("binds the live Ultra E2E test to the installed resolver, not the configuration round trip (#7441)", () => {
     // The managed resolver never consumes the configuration params table, so a
     // ModelConfig.get_kwargs assertion passes with or without the fix. Keep the

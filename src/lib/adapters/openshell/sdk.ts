@@ -8,6 +8,7 @@ import {
   DEFAULT_GATEWAY_PORT,
   externallySupervisedGatewayStateRootOwnershipFailure,
   managedGatewayStateRootOwnershipFailure,
+  resolveDefaultGatewayStateDirForPort,
   resolveGatewayStateDirForPort,
 } from "../../onboard/gateway/state-dir";
 import {
@@ -140,7 +141,11 @@ export async function connectManagedOpenShellSdk(
         // The canonical default root predates the explicit marker. Its fixed path,
         // owner-only directory checks, and local mTLS identity remain the legacy
         // authority boundary. Managed overrides must always carry the marker.
-        { allowLegacyManagedState: !configuredStateDir },
+        {
+          allowLegacyManagedState:
+            !configuredStateDir &&
+            stateDir === resolveDefaultGatewayStateDirForPort({ home, port }),
+        },
       );
   if (ownershipFailure) {
     const message = `Unsafe OpenShell gateway state directory: ${ownershipFailure}.`;

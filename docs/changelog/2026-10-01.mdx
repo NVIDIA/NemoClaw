@@ -18,11 +18,11 @@ It also improves messaging, status output, configuration export, and operator di
   Refer to [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama).
 - Managed Hermes images now use the published multi-architecture base that contains OpenSSL 3.5.7-1~deb13u3 and matches the completed-image security verification.
   Related change: [PR #12555](https://github.com/NVIDIA/NemoClaw/pull/12555).
-- Docker onboarding for OpenClaw and Hermes accepts a publisher-managed image with `nemoclaw onboard --from-image <repository>@sha256:<digest>`.
+- Docker and qualified rootless Podman onboarding for OpenClaw and Hermes accept a publisher-managed image with `nemoclaw onboard --from-image <repository>@sha256:<digest>`.
   NemoClaw validates the image platform, non-root user, `/sandbox` working directory, executable, any agent metadata, and tool-disclosure declaration before it creates a sandbox.
-  It inspects a local image before it pulls, and Docker's configured credentials provide private-registry access.
+  It inspects a local image before it pulls, and the selected runtime's configured credentials provide private-registry access.
   In non-interactive onboarding, use `NEMOCLAW_FROM_IMAGE` and a sandbox name.
-  Related change: [PR #12301](https://github.com/NVIDIA/NemoClaw/pull/12301).
+  Related changes: [PR #12301](https://github.com/NVIDIA/NemoClaw/pull/12301) and [PR #12538](https://github.com/NVIDIA/NemoClaw/pull/12538).
   Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-onboard) for image requirements and recovery limits.
 - Sandboxes created with `--from-image` retain their recorded digest through resume, rebuild, and snapshot clone.
   NemoClaw revalidates the image before a rebuild or clone changes a sandbox.

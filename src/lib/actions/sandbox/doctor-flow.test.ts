@@ -54,6 +54,8 @@ function createDoctorHarness(
   ollamaInventoryProbeSpy: MockInstance;
   loadAgentSpy: MockInstance;
   probeSandboxInferenceGatewayHealthSpy: MockInstance;
+  probeSandboxNativeNvidiaModelsHealthSpy: MockInstance;
+  verifyNativeNvidiaStatusAttachmentSpy: MockInstance;
   logSpy: MockInstance;
   recoverNamedGatewayRuntimeSpy: MockInstance;
   resolveOpenShellSpy: MockInstance;
@@ -213,6 +215,17 @@ function createDoctorHarness(
       httpStatus: 0,
       detail: "Inference gateway unreachable inside the sandbox.",
     });
+  const probeSandboxNativeNvidiaModelsHealthSpy = vi
+    .spyOn(inferenceRouteHealth, "probeSandboxNativeNvidiaModelsHealth")
+    .mockResolvedValue({
+      ok: true,
+      endpoint: "https://integrate.api.nvidia.com/v1/models",
+      httpStatus: 200,
+      detail: "native NVIDIA models route reachable",
+    });
+  const verifyNativeNvidiaStatusAttachmentSpy = vi
+    .spyOn(inferenceRouteHealth, "verifyNativeNvidiaStatusAttachment")
+    .mockResolvedValue(undefined);
   const loadAgentSpy = vi.spyOn(agentDefs, "loadAgent").mockReturnValue({
     name: "openclaw",
     configPaths: { dir: "/sandbox/.openclaw", configFile: "openclaw.json", format: "json" },
@@ -225,6 +238,7 @@ function createDoctorHarness(
     isStale: true,
   });
   vi.spyOn(statusCommandDeps, "buildStatusCommandDeps").mockReturnValue({});
+  vi.spyOn(tunnelServices, "migrateLegacyCloudflaredState").mockImplementation(() => undefined);
   vi.spyOn(tunnelServices, "readCloudflaredState").mockReturnValue({ kind: "running", pid: 1234 });
   const executeSandboxCommandForVerificationSpy = vi
     .spyOn(sandboxVerificationExec, "executeSandboxCommandForVerification")
@@ -266,6 +280,8 @@ function createDoctorHarness(
     ollamaInventoryProbeSpy,
     loadAgentSpy,
     probeSandboxInferenceGatewayHealthSpy,
+    probeSandboxNativeNvidiaModelsHealthSpy,
+    verifyNativeNvidiaStatusAttachmentSpy,
     logSpy,
     recoverNamedGatewayRuntimeSpy,
     resolveOpenShellSpy,
@@ -613,6 +629,80 @@ describe("runSandboxDoctor flow", () => {
       );
     },
   );
+
+  it("uses hosted attachment authority and never reads the shared gateway route", async () => {
+    const receipt = {
+      schemaVersion: 1,
+      profileId: "nemoclaw-openai-inference-v1",
+      providerName: "nemoclaw-openai-api-v1",
+      providerId: "owned-id",
+    };
+    const harness = createDoctorHarness("openai-api", {
+      registryOverrides: { nativeHostedProviderAttachment: receipt },
+    });
+    const health = requireDist("./inference-route-health.js");
+    const invocation = requireDist("./inference-invocation-probe.js");
+    const verify = vi
+      .spyOn(health, "verifyNativeHostedStatusAttachment")
+      .mockResolvedValue(undefined);
+    const probe = vi
+      .spyOn(invocation, "probeSandboxInferenceInvocation")
+      .mockResolvedValue({ ok: true });
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+    expect(harness.captureOpenShellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "get"]),
+      expect.anything(),
+    );
+    expect(harness.probeSandboxInferenceGatewayHealthSpy).not.toHaveBeenCalled();
+    expect(verify).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw-19080",
+      expected: receipt,
+    });
+    expect(probe).toHaveBeenCalledWith(
+      expect.objectContaining({ nativeProvider: true, provider: "openai-api" }),
+      {},
+      95_000,
+    );
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({ label: "Inference route (native hosted)", status: "ok" }),
+    );
+  });
+
+  it("uses the recorded native NVIDIA attachment instead of an unrelated shared route", async () => {
+    const receipt = {
+      schemaVersion: 1,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    const harness = createDoctorHarness("nvidia-prod", {
+      registryOverrides: { nativeNvidiaProviderAttachment: receipt },
+    });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(harness.captureOpenShellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "get"]),
+      expect.anything(),
+    );
+    expect(harness.probeSandboxInferenceGatewayHealthSpy).not.toHaveBeenCalled();
+    expect(harness.verifyNativeNvidiaStatusAttachmentSpy).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-19080",
+      sandboxName: "alpha",
+      expected: receipt,
+    });
+    expect(harness.probeSandboxNativeNvidiaModelsHealthSpy).toHaveBeenCalledWith("alpha", {
+      gatewayName: "nemoclaw-19080",
+      agentName: "openclaw",
+    });
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({
+        label: "Inference route (native NVIDIA)",
+        status: "ok",
+      }),
+    );
+  });
 
   it("rejects mutating --fix when JSON output was requested", async () => {
     const harness = createDoctorHarness();

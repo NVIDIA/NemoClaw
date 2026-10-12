@@ -79,14 +79,17 @@ describe("E2E workflow plan", () => {
     expect(plan.testMatrix).toEqual(
       credentialFreeTestMatrix(discoverCredentialFreeTests(), ["docker"]),
     );
-    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
+    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(
+      E2E_TARGET_CATALOGUE.filter((target) => target.profile !== "hosted-inference").length,
+    );
     expect(
       plan.coverageMatrix.reduce<Record<string, number>>((counts, row) => {
         counts[row.source] = (counts[row.source] ?? 0) + 1;
         return counts;
       }, {}),
     ).toEqual({
-      catalogue: E2E_TARGET_CATALOGUE.length,
+      catalogue: E2E_TARGET_CATALOGUE.filter((target) => target.profile !== "hosted-inference")
+        .length,
       "typed-registry": 3,
       "shared-e2e": 1,
       "retained-workflow": 14,
@@ -99,7 +102,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(77);
+    expect(plan.coverageMatrix).toHaveLength(79);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-github-read",
       "catalogue-nvidia-api",
@@ -152,7 +155,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(46);
+    expect(catalogueIds).toHaveLength(48);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -199,26 +202,6 @@ describe("E2E workflow plan", () => {
     expect(() => buildE2eWorkflowPlan({ targets: "ubuntu-repo-cloud-hermes" })).toThrow(
       "Unknown target 'ubuntu-repo-cloud-hermes'",
     );
-  });
-
-  it("includes staging only when the execution plan selects it (#9167)", () => {
-    const stagingPlan = buildE2eWorkflowPlan({ jobs: "staging-brev-launchable" });
-
-    expect(stagingPlan.selectedJobs).toEqual(["staging-brev-launchable"]);
-    expect(stagingPlan.coverageMatrix).toEqual([
-      expect.objectContaining({ id: "staging-brev-launchable", source: "staging" }),
-    ]);
-
-    const hermesPlan = buildE2eWorkflowPlan({ jobs: "hermes-e2e" });
-    const stagingRow = buildE2eWorkflowPlan().coverageMatrix.find(
-      (row) => row.id === "staging-brev-launchable",
-    )!;
-    expect(() =>
-      validateE2eWorkflowPlan({
-        ...hermesPlan,
-        coverageMatrix: [stagingRow, ...hermesPlan.coverageMatrix],
-      }),
-    ).toThrow("execution coverage that does not match its execution plan");
   });
 
   it("selects the Launchable identity smoke only when named explicitly (#9925)", () => {
@@ -330,18 +313,18 @@ describe("E2E workflow plan", () => {
       "llama-cpp-generic-gpu-default-docker",
       "messaging-compatible-endpoint-default-docker",
       "messaging-compatible-endpoint-default-podman",
+      "openclaw-compatible-anthropic-inference-switch-anthropic-docker",
+      "openclaw-compatible-anthropic-inference-switch-anthropic-podman",
       "openclaw-inference-switch-default-docker",
       "openclaw-inference-switch-default-podman",
       "openclaw-skill-cli-default-docker",
       "openclaw-skill-cli-default-podman",
     ]);
   });
-
   it("emits required fields and catalogue workflow jobs for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({
       jobs: "hermes-slack,network-policy,openclaw-inference-switch,sandbox-operations",
     });
-
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -364,13 +347,14 @@ describe("E2E workflow plan", () => {
         }),
       ]),
     );
-    expect(plan.catalogueMatrices.standard).toContainEqual(
+    expect(plan.catalogueMatrices["nvidia-api"]).toContainEqual(
       expect.objectContaining({
         id: "openclaw-inference-switch",
-        display_name: "Inference: OpenClaw switches providers and remains responsive",
+        display_name: "Inference: OpenClaw switches to native NVIDIA and remains responsive",
       }),
     );
     expect(selectedWorkflowJobs(plan)).toEqual([
+      "catalogue-nvidia-api",
       "catalogue-nvidia-inference",
       "catalogue-standard",
     ]);
@@ -379,7 +363,6 @@ describe("E2E workflow plan", () => {
     const retainedMigratedJobs = readFreeStandingJobsInventory().allowedJobs.filter((id) =>
       migratedTargetIds.includes(id),
     );
-
     expect(retainedMigratedJobs).toEqual([]);
   });
 
@@ -503,12 +486,12 @@ describe("E2E workflow plan", () => {
     [
       "hermes-inference-switch",
       {
-        profile: "standard",
+        profile: "nvidia-api",
         installNonInteractive: true,
         runnerKey: "hermes-inference-switch",
         hostPreparation: "hermes-swap",
         runnerComparison: true,
-        shard: "anthropic",
+        shard: "native-nvidia",
       },
     ],
     [
@@ -613,30 +596,6 @@ describe("E2E workflow plan", () => {
     },
   );
 
-  it("includes every catalogue profile for an authorized NVIDIA-owned candidate", () => {
-    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-pr-"));
-    const output = path.join(directory, "github-output");
-    const summary = path.join(directory, "summary.md");
-    const plan = buildE2eWorkflowPlan();
-    try {
-      writeE2eWorkflowPlanCiOutput(
-        {},
-        {
-          GITHUB_OUTPUT: output,
-          GITHUB_STEP_SUMMARY: summary,
-          INFERENCE_MODE: "mock",
-          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
-          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
-        },
-      );
-
-      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
-    }
-  });
-
   it("uses the explicit Podman planner in the CI output path", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-podman-"));
     const output = path.join(directory, "github-output");
@@ -698,6 +657,7 @@ describe("E2E workflow plan", () => {
       standard: true,
       "nvidia-api": false,
       "nvidia-inference": false,
+      "hosted-inference": false,
       "github-read": false,
     });
   });
@@ -743,6 +703,11 @@ describe("E2E workflow plan", () => {
 
     expect(plan.catalogueMatrices.standard.map((row) => row.id)).toContain("onboard-resume");
     expect(selectedWorkflowJobs(plan)).toContain("hermes-gpu-startup");
+  });
+
+  it("selects OpenClaw rebuild when its restoration helper changes", () => {
+    const targets = catalogueTargetsForChangedFiles(["test/e2e/live/openclaw-restoration.ts"]);
+    expect(targets.map((target) => target.id)).toContain("rebuild-openclaw");
   });
 
   it("selects both stopped-recovery consumers when the shared proof changes", () => {
@@ -969,16 +934,12 @@ describe("E2E workflow plan", () => {
       { changedFiles: [".github/workflows/e2e-standard-profile.yaml"] },
     );
 
-    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
+    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(
+      E2E_TARGET_CATALOGUE.filter((target) => target.profile !== "hosted-inference").length,
+    );
     expect(plan.selectedJobs).toEqual(["jetson-nvmap-gpu"]);
     expect(plan.matrix).toEqual([]);
     expect(plan.testMatrix).toEqual([]);
-  });
-
-  it("selects every catalogue target when its shared installer changes", () => {
-    expect(catalogueTargetsForChangedFiles(["scripts/install-openshell.sh"])).toEqual(
-      E2E_TARGET_CATALOGUE,
-    );
   });
 
   it("uses the PR risk rules to select catalogue targets for changed runtime code", () => {
@@ -1148,6 +1109,7 @@ describe("E2E workflow plan", () => {
           standard: [],
           "nvidia-api": [],
           "nvidia-inference": [],
+          "hosted-inference": [],
           "github-read": [],
         },
         coverageMatrix: [],

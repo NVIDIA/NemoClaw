@@ -1,8 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
+import type { OpenShellSandboxBufferedCommandRequest } from "../adapters/openshell/sandbox-command";
+import * as commandExecutor from "../adapters/openshell/sandbox-command-cli";
+import { loadAgent } from "../agent/defs";
 import { parseCliOpenShellSandboxInventory } from "../adapters/openshell/sandbox-observer-cli";
 import * as coreVersion from "../core/version";
 import * as sandboxList from "../openshell-sandbox-list";
@@ -579,6 +586,193 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
       allowLegacyManagedImageRecovery: true,
     });
   });
+
+  it("recovers a confirmed legacy sandbox when Ready cannot be version-verified (#7475)", async () => {
+    const harness = createRecoveryHarness(["legacy-box"], {
+      liveOutput: "legacy-box Ready",
+      confirmedLegacyManagedNames: ["legacy-box"],
+      registryOverrides: {
+        "legacy-box": { agent: "openclaw", nemoclawVersion: undefined },
+      },
+      useRealManagedEvidence: true,
+    });
+    harness.checkAgentVersionSpy.mockResolvedValue({
+      sandboxVersion: null,
+      expectedVersion: "2026.5.27",
+      isStale: false,
+      verificationFailed: true,
+      detectionMethod: "unknown",
+      unavailableReason: "probe-failed",
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.rebuildSpy).toHaveBeenCalledExactlyOnceWith("legacy-box", ["--yes"], {
+      throwOnError: true,
+      recoveryManifest: expect.objectContaining({ sandboxName: "legacy-box" }),
+      allowLegacyManagedImageRecovery: true,
+    });
+  });
+
+  it.each([
+    { confirmed: true, probeStatus: 42, rebuilds: 1 },
+    { confirmed: false, probeStatus: 42, rebuilds: 0 },
+    { confirmed: true, probeStatus: 0, rebuilds: 0 },
+  ])(
+    "selects recovery from an executed probe with status $probeStatus and confirmation $confirmed (#7475)",
+    async ({ confirmed, probeStatus, rebuilds }) => {
+      const expectedVersion = loadAgent("openclaw").expectedVersion!;
+      const harness = createRecoveryHarness(["legacy-box"], {
+        liveOutput: "legacy-box Ready",
+        confirmedLegacyManagedNames: confirmed ? ["legacy-box"] : [],
+        registryOverrides: {
+          "legacy-box": { agent: "openclaw", agentVersion: expectedVersion, nemoclawVersion: null },
+        },
+        useRealManagedEvidence: true,
+      });
+      harness.checkAgentVersionSpy.mockRestore();
+      vi.spyOn(registry, "getSandbox").mockReturnValue(harness.registryEntries[0]!);
+      vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+      const directory = mkdtempSync(join(tmpdir(), "legacy-version-probe-"));
+      onTestFinished(() => rmSync(directory, { recursive: true, force: true }));
+      writeFileSync(
+        join(directory, "openclaw"),
+        `#!/bin/sh
+[ "$#" -eq 1 ] && [ "$1" = "--version" ] || exit 99
+printf '%s\\n' '${expectedVersion}'
+exit ${probeStatus}
+`,
+        { mode: 0o700 },
+      );
+      // Run the production transport command locally; only the OpenShell execution boundary is replaced.
+      const runBuffered = vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
+        const [command, ...args] = request.command;
+        const result = spawnSync(command!, args, {
+          encoding: "utf8",
+          timeout: 5_000,
+          env: { HOME: directory, PATH: `${directory}:/usr/bin:/bin` },
+        });
+        expect(result.error).toBeUndefined();
+        expect(result.status).toBe(probeStatus);
+        return {
+          outcome: { kind: "completed" as const, exitCode: result.status! },
+          stdout: result.stdout,
+          stderr: result.stderr,
+        };
+      });
+      vi.spyOn(commandExecutor, "createCliOpenShellSandboxCommandExecutor").mockReturnValue({
+        runBuffered,
+        probeDirectory: vi.fn().mockRejectedValue(new Error("Unexpected directory probe")),
+        runStreaming: vi.fn().mockRejectedValue(new Error("Unexpected streaming command")),
+      });
+
+      await harness.upgradeSandboxes({ auto: true });
+
+      expect(runBuffered).toHaveBeenCalledTimes(1);
+      expect(harness.rebuildSpy).toHaveBeenCalledTimes(rebuilds);
+    },
+  );
+
+  it.each([
+    { condition: "confirmation is absent", confirmedLegacyManagedNames: [] },
+    { condition: "another name is confirmed", confirmedLegacyManagedNames: ["other-box"] },
+    { condition: "restore intent is absent", restoreIntent: "" },
+    { condition: "its gateway differs", gatewayNames: { "legacy-box": "nemoclaw-18080" } },
+    { condition: "its managed fingerprint is current", nemoclawVersion: "0.0.71" },
+    {
+      condition: "its agent version is verified",
+      versionCheck: {
+        sandboxVersion: "2026.5.27",
+        expectedVersion: "2026.5.27",
+        isStale: false,
+        verificationFailed: false,
+        detectionMethod: "openshell-exec" as const,
+      },
+    },
+    { condition: "no expected version exists", unavailableReason: "no-expected-version" as const },
+    { condition: "the probe was skipped", unavailableReason: "skip-probe" as const },
+    { condition: "its agent is outside the OpenClaw recovery scope", agent: "hermes" as const },
+  ])(
+    "does not recover an unverified Ready legacy row when $condition (#7475)",
+    async (scenario) => {
+      const harness = createRecoveryHarness(["legacy-box"], {
+        liveOutput: "legacy-box Ready",
+        confirmedLegacyManagedNames: scenario.confirmedLegacyManagedNames ?? ["legacy-box"],
+        gatewayNames: scenario.gatewayNames,
+        registryOverrides: {
+          "legacy-box": {
+            agent: scenario.agent ?? "openclaw",
+            nemoclawVersion: scenario.nemoclawVersion,
+          },
+        },
+        useRealManagedEvidence: true,
+      });
+      vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", scenario.restoreIntent ?? "1");
+      harness.checkAgentVersionSpy.mockResolvedValue(
+        scenario.versionCheck ?? {
+          sandboxVersion: null,
+          expectedVersion: "2026.5.27",
+          isStale: false,
+          verificationFailed: true,
+          detectionMethod: scenario.unavailableReason ? "unavailable" : "unknown",
+          unavailableReason: scenario.unavailableReason ?? "probe-failed",
+        },
+      );
+
+      await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+      expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+      expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { condition: "missing backup", latestBackup: null },
+    { condition: "custom image", fromDockerfile: "/tmp/custom.Dockerfile" },
+    {
+      condition: "invalid manifest",
+      validation: {
+        ok: false as const,
+        reason: "manifest sandbox does not match the requested sandbox",
+      },
+    },
+  ])(
+    "rejects confirmed Ready legacy recovery with $condition before rebuild (#7475)",
+    async (scenario) => {
+      const harness = createRecoveryHarness(["legacy-box"], {
+        liveOutput: "legacy-box Ready",
+        confirmedLegacyManagedNames: ["legacy-box"],
+        latestBackup: scenario.latestBackup,
+        registryOverrides: {
+          "legacy-box": {
+            agent: "openclaw",
+            nemoclawVersion: undefined,
+            fromDockerfile: scenario.fromDockerfile,
+          },
+        },
+        useRealManagedEvidence: true,
+      });
+      harness.checkAgentVersionSpy.mockResolvedValue({
+        sandboxVersion: null,
+        expectedVersion: "2026.5.27",
+        isStale: false,
+        verificationFailed: true,
+        detectionMethod: "unknown",
+        unavailableReason: "probe-failed",
+      });
+      vi.mocked(sandboxState.validateRebuildRecoveryManifest).mockReturnValue(
+        scenario.validation ?? { ok: true, manifest: makeManifest("legacy-box") },
+      );
+      vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+        throw new Error(`process.exit(${code})`);
+      }) as never);
+
+      await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
+
+      expect(harness.latestBackupSpy).toHaveBeenCalledWith("legacy-box");
+      expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not apply legacy confirmation to another sandbox name (#6114)", async () => {
     const harness = createRecoveryHarness(["legacy-box"], {

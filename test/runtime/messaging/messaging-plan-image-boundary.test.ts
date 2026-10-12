@@ -7,6 +7,7 @@ import {
   encodeMessagingBoundaryPlan,
   FULL_PLAN_ONLY_SENTINEL,
   HERMES_TEAMS_PACKAGE_SPEC,
+  OPENCLAW_TEAMS_PACKAGE_INTEGRITY,
   OPENCLAW_TEAMS_PACKAGE_VERSION,
   TEAMS_APP_ID,
   TEAMS_SECRET_PLACEHOLDER,
@@ -20,8 +21,7 @@ type DockerResult = { status: number; stdout?: string; stderr?: string };
 const IMAGE = "nemoclaw-messaging-boundary:test";
 const RUNTIME_PLAN_PATH = "/usr/local/share/nemoclaw/messaging-runtime-plan.json";
 const PRELOAD_PATH = "/usr/local/lib/nemoclaw/preloads/msteams-message-hints.js";
-const OPENCLAW_TEAMS_ROOT =
-  "/sandbox/.openclaw/npm/projects/openclaw-msteams-d29647a7c0/node_modules/@openclaw/msteams";
+const OPENCLAW_TEAMS_ROOT = "/sandbox/.openclaw/plugins/msteams";
 
 function decodePlan(agent: Agent): any {
   return JSON.parse(Buffer.from(encodeMessagingBoundaryPlan(agent), "base64").toString("utf8"));
@@ -76,6 +76,13 @@ function openClawInspectReport(): any {
       version: OPENCLAW_TEAMS_PACKAGE_VERSION,
       status: "loaded",
       rootDir: OPENCLAW_TEAMS_ROOT,
+      trustedOfficialInstall: true,
+    },
+    install: {
+      source: "npm",
+      resolvedSpec: `@openclaw/msteams@${OPENCLAW_TEAMS_PACKAGE_VERSION}`,
+      integrity: OPENCLAW_TEAMS_PACKAGE_INTEGRITY,
+      installPath: OPENCLAW_TEAMS_ROOT,
     },
     capabilities: [{ kind: "channel", ids: ["msteams"] }],
   };
@@ -281,10 +288,12 @@ describe("messaging plan image boundary helper", () => {
   );
 
   it.each([
-    [
-      "legacy extension layout",
-      (report: any) => (report.plugin.rootDir = "/sandbox/.openclaw/extensions/msteams"),
-    ],
+    ["untrusted installation", (report: any) => (report.plugin.trustedOfficialInstall = false)],
+    ["local archive source", (report: any) => (report.install.source = "archive")],
+    ["local source path", (report: any) => (report.install.sourcePath = "/tmp/plugin")],
+    ["retained archive artifact", (report: any) => (report.install.artifactKind = "npm-pack")],
+    ["unreviewed integrity", (report: any) => (report.install.integrity = "sha512-unreviewed")],
+    ["wrong resolved package", (report: any) => (report.install.resolvedSpec = "other@1.0.0")],
     ["wrong package version", (report: any) => (report.plugin.version = "2026.6.9")],
     ["missing runtime channel", (report: any) => (report.capabilities = [])],
   ])("rejects OpenClaw Teams plugin evidence with %s", (_label, mutate) => {
@@ -293,7 +302,7 @@ describe("messaging plan image boundary helper", () => {
     const mock = successfulDockerRunner("openclaw", report);
 
     expect(() => verifyMessagingPlanImageBoundary(IMAGE, "openclaw", mock.runner)).toThrow(
-      "OpenClaw Teams plugin evidence must be loaded from the managed npm project",
+      "OpenClaw Teams plugin evidence must retain reviewed npm provenance",
     );
   });
 

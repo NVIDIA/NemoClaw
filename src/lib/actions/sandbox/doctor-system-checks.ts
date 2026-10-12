@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
@@ -18,7 +17,12 @@ import {
 import { qualifyPortableAgentLifecycleAuthority } from "../../onboard/experimental/portable-agent-lifecycle";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import type { SandboxEntry } from "../../state/registry";
-import { readCloudflaredState } from "../../tunnel/services";
+import {
+  findHostUnmanagedCloudflaredPids,
+  migrateLegacyCloudflaredState,
+  readCloudflaredState,
+  resolveTunnelPidDir,
+} from "../../tunnel/services";
 import {
   buildGatewayInspectFailureChecks,
   type GatewayInspectOptions,
@@ -167,11 +171,54 @@ function unverifiedCloudflaredPidCheck(pid: number): DoctorCheck {
   };
 }
 
+function legacyCloudflaredMigrationWarning(
+  sandboxName: string,
+  gatewayPort: number,
+  migrateState: typeof migrateLegacyCloudflaredState,
+): DoctorCheck | null {
+  try {
+    migrateState({ sandboxName, gatewayPort });
+    return null;
+  } catch (error) {
+    return {
+      group: "Local services",
+      label: "cloudflared",
+      status: "warn",
+      detail: error instanceof Error ? error.message : "legacy cloudflared migration failed",
+      hint: `inspect each process and stop only the unintended one, then rerun \`${CLI_NAME} ${sandboxName} doctor\``,
+    };
+  }
+}
+
 export function cloudflaredDoctorCheck(
   sandboxName: string,
+  gatewayPort: number = GATEWAY_PORT,
   readState: typeof readCloudflaredState = readCloudflaredState,
+  migrateState: typeof migrateLegacyCloudflaredState = migrateLegacyCloudflaredState,
 ): DoctorCheck {
-  const state = readState(path.join("/tmp", `nemoclaw-services-${sandboxName}`));
+  const usesProductionState = readState === readCloudflaredState;
+  if (usesProductionState) {
+    const warning = legacyCloudflaredMigrationWarning(sandboxName, gatewayPort, migrateState);
+    if (warning) return warning;
+  }
+  const state = readState(resolveTunnelPidDir({ gatewayPort }));
+  const managedPid =
+    state.kind === "stale-pid-process" || state.kind === "unverified-pid-process"
+      ? state.pid
+      : null;
+  const unmanagedPids =
+    usesProductionState && state.kind !== "running"
+      ? findHostUnmanagedCloudflaredPids(managedPid)
+      : [];
+  if (unmanagedPids.length > 0) {
+    return {
+      group: "Local services",
+      label: "cloudflared",
+      status: "warn",
+      detail: `unmanaged PID${unmanagedPids.length === 1 ? "" : "s"} ${unmanagedPids.join(", ")}`,
+      hint: "cloudflared is running without NemoClaw ownership; stop it through its process manager before running `nemoclaw tunnel start`",
+    };
+  }
   switch (state.kind) {
     case "stopped":
       return stoppedCloudflaredCheck();

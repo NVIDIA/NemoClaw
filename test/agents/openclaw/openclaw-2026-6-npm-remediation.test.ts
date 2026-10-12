@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  buildRemediatedOpenClawArchive,
+  buildRemediatedOpenClawPluginArchive,
   patchOpenClawCorePackageGraph,
   patchOpenClawPluginPackageGraph,
 } from "../../../scripts/lib/openclaw-npm-remediation.mts";
@@ -423,7 +423,7 @@ describe("OpenClaw npm remediation", () => {
     };
     let metadataIntegrity = "";
     try {
-      buildRemediatedOpenClawArchive({
+      buildRemediatedOpenClawPluginArchive({
         ...request,
         expectedPatchedMetadataIntegrity: "sha512-deliberate-mismatch",
       });
@@ -434,7 +434,7 @@ describe("OpenClaw npm remediation", () => {
     }
     expect(metadataIntegrity).toMatch(/^sha512-/u);
 
-    const remediated = buildRemediatedOpenClawArchive({
+    const remediated = buildRemediatedOpenClawPluginArchive({
       ...request,
       expectedPatchedMetadataIntegrity: metadataIntegrity,
     });
@@ -470,7 +470,7 @@ describe("OpenClaw npm remediation", () => {
     };
     let metadataIntegrity = "";
     try {
-      buildRemediatedOpenClawArchive({
+      buildRemediatedOpenClawPluginArchive({
         ...request,
         expectedPatchedMetadataIntegrity: "sha512-deliberate-mismatch",
       });
@@ -481,7 +481,7 @@ describe("OpenClaw npm remediation", () => {
     }
     expect(metadataIntegrity).toMatch(/^sha512-/u);
 
-    const remediated = buildRemediatedOpenClawArchive({
+    const remediated = buildRemediatedOpenClawPluginArchive({
       ...request,
       expectedPatchedMetadataIntegrity: metadataIntegrity,
     });

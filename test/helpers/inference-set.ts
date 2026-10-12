@@ -2,21 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
-import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
+import type {
+  CaptureOpenshellOptions,
+  CaptureOpenshellResult,
+} from "../../src/lib/adapters/openshell/client";
 import type {
   OpenShellInferenceRouteMutator,
   OpenShellInferenceRouteObserver,
-} from "../adapters/openshell/inference-route";
-import { createCliOpenShellInferenceRouteMutator } from "../adapters/openshell/inference-route-cli";
-import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
-import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
-import type { AgentConfigTarget } from "../sandbox/config";
-import type { ConfigObject, ConfigValue } from "../security/credential-filter";
-import type { Session } from "../state/onboard-session";
-import type { SandboxEntry } from "../state/registry";
-import type { InferenceSetDeps } from "./inference-set";
-import type { EnsureHttpsPinRuntimeAdapterFn } from "./inference-set-route-containment";
-import { redactInferenceSetRouteDiagnostic } from "./inference-set-provider-diagnostics";
+} from "../../src/lib/adapters/openshell/inference-route";
+import { createCliOpenShellInferenceRouteMutator } from "../../src/lib/adapters/openshell/inference-route-cli";
+import type { OpenShellProviderAdapter } from "../../src/lib/adapters/openshell/provider-adapter";
+import { createCliOpenShellProviderAdapter } from "../../src/lib/adapters/openshell/provider-adapter-cli";
+import { HOSTED_NATIVE_PROVIDERS } from "../../src/lib/inference/native-provider/hosted";
+import { fixedNativeProvider } from "../../src/lib/inference/native-provider/fixed";
+import type { NativeProviderAttachment } from "../../src/lib/inference/native-provider/contract";
+import type { AgentConfigTarget } from "../../src/lib/sandbox/config";
+import type { ConfigObject, ConfigValue } from "../../src/lib/security/credential-filter";
+import type { Session } from "../../src/lib/state/onboard-session";
+import type { SandboxEntry } from "../../src/lib/state/registry";
+import type { InferenceSetDeps } from "../../src/lib/actions/inference-set";
+import type { EnsureHttpsPinRuntimeAdapterFn } from "../../src/lib/actions/inference-set-route-containment";
+import { redactInferenceSetRouteDiagnostic } from "../../src/lib/actions/inference-set-provider-diagnostics";
 
 type LocalValidationResult = ReturnType<InferenceSetDeps["validateLocalProvider"]>;
 
@@ -65,6 +71,93 @@ function defaultCaptureOpenshell(
   return { status, output, stdout: output, stderr: "" };
 }
 
+function nativeAwareProviderAdapter(
+  base: OpenShellProviderAdapter,
+  entries: SandboxEntry[],
+): OpenShellProviderAdapter {
+  const definitions = [fixedNativeProvider("nvidia-prod")!, ...HOSTED_NATIVE_PROVIDERS];
+  const receipts = entries.flatMap((entry) =>
+    [entry.nativeNvidiaProviderAttachment, entry.nativeHostedProviderAttachment].filter(
+      (receipt): receipt is NativeProviderAttachment => !!receipt,
+    ),
+  );
+  const present = new Set(receipts.map((receipt) => receipt.providerName));
+  const attachments = new Map(
+    entries.map((entry) => [
+      entry.name,
+      new Set(
+        [entry.nativeNvidiaProviderAttachment, entry.nativeHostedProviderAttachment]
+          .filter((receipt) => !!receipt)
+          .map((receipt) => receipt!.providerName),
+      ),
+    ]),
+  );
+  const definitionFor = (name: string) =>
+    definitions.find((definition) => definition.providerName === name);
+  return {
+    ...base,
+    ensureProviderPolicyComposition: async () => ({ ok: true, value: undefined }),
+    importProviderProfile: async (request) =>
+      definitions.some((definition) => request.profilePath.endsWith(`${definition.profileId}.yaml`))
+        ? { ok: true }
+        : await base.importProviderProfile(request),
+    getProvider: async (request) => {
+      const definition = definitionFor(request.providerName);
+      if (!definition) return await base.getProvider(request);
+      if (!present.has(request.providerName))
+        return {
+          ok: false,
+          error: { kind: "command", reason: "not_found", message: "provider not found" },
+        };
+      return {
+        ok: true,
+        value: {
+          name: definition.providerName,
+          type: definition.profileId,
+          credentialKeys: [definition.credentialEnv],
+          configKeys: [],
+          revision: {
+            id:
+              receipts.find((receipt) => receipt.providerName === definition.providerName)
+                ?.providerId ?? "11111111-2222-4333-8444-555555555555",
+            resourceVersion: 1,
+          },
+        },
+      };
+    },
+    createProvider: async (request) => {
+      if (!definitionFor(request.name)) return await base.createProvider(request);
+      present.add(request.name);
+      return { ok: true };
+    },
+    updateProvider: async (request) => {
+      if (!definitionFor(request.providerName)) return await base.updateProvider(request);
+      present.add(request.providerName);
+      return { ok: true };
+    },
+    attachProvider: async (request) => {
+      if (!definitionFor(request.providerName)) return await base.attachProvider(request);
+      const names = attachments.get(request.sandboxName) ?? new Set<string>();
+      names.add(request.providerName);
+      attachments.set(request.sandboxName, names);
+      return { ok: true };
+    },
+    detachProvider: async (request) => {
+      if (!definitionFor(request.providerName)) return await base.detachProvider(request);
+      return {
+        ok: true,
+        value: {
+          changed: attachments.get(request.sandboxName)?.delete(request.providerName) ?? false,
+        },
+      };
+    },
+    listProviderAttachments: async (request) => ({
+      ok: true,
+      value: { names: [...(attachments.get(request.sandboxName) ?? [])] },
+    }),
+  };
+}
+
 export function baseSession(overrides: Partial<Session> = {}): Session {
   return {
     version: 1,
@@ -91,7 +184,6 @@ export function baseSession(overrides: Partial<Session> = {}): Session {
     webSearchConfig: null,
     policyPresets: null,
     messagingPlan: null,
-    migratedLegacyValueHashes: null,
     hermesToolGateways: null,
     gpuPassthrough: false,
     telegramConfig: null,
@@ -194,6 +286,8 @@ export function createDeps(options: {
   restartSandboxGateway?: InferenceSetDeps["restartSandboxGateway"];
   settleOpenClawPairing?: InferenceSetDeps["settleOpenClawPairing"];
   withGatewayRouteMutationLock?: InferenceSetDeps["withGatewayRouteMutationLock"];
+  getNativeNvidiaProviderAuthority?: InferenceSetDeps["getNativeNvidiaProviderAuthority"];
+  setNativeNvidiaProviderAuthority?: InferenceSetDeps["setNativeNvidiaProviderAuthority"];
 }): InferenceSetDeps & {
   calls: {
     captureOpenshell: ReturnType<typeof vi.fn>;
@@ -218,6 +312,7 @@ export function createDeps(options: {
     restartSandboxGateway: ReturnType<typeof vi.fn>;
     settleOpenClawPairing: ReturnType<typeof vi.fn>;
     withGatewayRouteMutationLock: ReturnType<typeof vi.fn>;
+    setNativeNvidiaProviderAuthority: ReturnType<typeof vi.fn>;
   };
   getSession: () => Session | null;
 } {
@@ -290,27 +385,32 @@ export function createDeps(options: {
         (async (_gatewayName: string, operation: () => Promise<unknown> | unknown) =>
           await operation()),
     ),
+    setNativeNvidiaProviderAuthority: vi.fn(),
   };
   const providerAdapter =
     options.providerAdapter ??
-    createCliOpenShellProviderAdapter({
-      run: (args, runOptions) => {
-        const result = calls.captureOpenshell(args, {
-          ...(runOptions.env ? { env: runOptions.env } : {}),
-          ignoreError: true,
-          includeStreams: true,
-          ...(runOptions.maxBuffer ? { maxBuffer: runOptions.maxBuffer } : {}),
-          timeout: runOptions.timeout,
-        });
-        return {
-          status: result.status,
-          stdout: result.stdout || result.stderr ? result.stdout : result.output,
-          stderr: result.stderr,
-          ...("error" in result && result.error ? { error: result.error } : {}),
-          ...("signal" in result && result.signal ? { signal: result.signal } : {}),
-        };
-      },
-    });
+    nativeAwareProviderAdapter(
+      createCliOpenShellProviderAdapter({
+        run: (args, runOptions) => {
+          const result = calls.captureOpenshell(args, {
+            ...(runOptions.env ? { env: runOptions.env } : {}),
+            ignoreError: true,
+            includeStreams: true,
+            ...(runOptions.maxBuffer ? { maxBuffer: runOptions.maxBuffer } : {}),
+            timeout: runOptions.timeout,
+          });
+          return {
+            status: result.status,
+            stdout: result.stdout || result.stderr ? result.stdout : result.output,
+            stderr: result.stderr,
+            ...("error" in result && result.error ? { error: result.error } : {}),
+            ...("signal" in result && result.signal ? { signal: result.signal } : {}),
+          };
+        },
+      }),
+      entries,
+    );
+  const hostedAuthority = new Map<string, NativeProviderAttachment>();
   const inferenceRouteMutator =
     options.inferenceRouteMutator ??
     createCliOpenShellInferenceRouteMutator(
@@ -336,6 +436,14 @@ export function createDeps(options: {
     getDefaultSandbox: () => defaultSandbox,
     getSandbox: (name: string) => sandboxes[name] ?? null,
     listSandboxes: () => ({ sandboxes: entries, defaultSandbox }),
+    getNativeHostedProviderAuthority: (gateway, provider) =>
+      hostedAuthority.get(`${gateway}/${provider}`),
+    setNativeHostedProviderAuthority: (gateway, provider, receipt) => {
+      hostedAuthority.set(`${gateway}/${provider}`, receipt);
+    },
+    getNativeNvidiaProviderAuthority: options.getNativeNvidiaProviderAuthority,
+    setNativeNvidiaProviderAuthority:
+      options.setNativeNvidiaProviderAuthority ?? calls.setNativeNvidiaProviderAuthority,
     updateSandbox: calls.updateSandbox,
     getRequestedAgent: () => options.requestedAgent,
     loadSession: () => session,
