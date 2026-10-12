@@ -398,7 +398,9 @@ describe("sandbox BuildKit prebuild", () => {
 
   it("builds with the same supported local Docker socket selected by the gateway", async () => {
     const { buildCtx, createArgs } = createBuildContext();
-    const buildImage = vi.fn(async () => 0);
+    const buildImage = vi.fn(
+      async (_args: readonly string[], _options: { env: NodeJS.ProcessEnv; stdio: "inherit" }) => 0,
+    );
     const inspectImageId = vi.fn(() => IMAGE_ID);
     await prebuildSandboxImageIfEligible({
       buildCtx,
