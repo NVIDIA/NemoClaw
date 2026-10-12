@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
 import { readGatewayProcessEnvironment } from "./gateway/process-environment";
+import { readGatewayProcEntry } from "./gateway/process-proc-entry";
 import { resolveGatewayName } from "./gateway-binding";
 import {
   NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
@@ -20,16 +19,8 @@ export function readDockerDriverGatewayProcessIdentity(
   pid: number,
   captureProcessArgs: (pid: number) => string,
 ): string {
-  const procCmdlinePath = `/proc/${pid}/cmdline`;
-  try {
-    if (fs.existsSync(procCmdlinePath)) {
-      const identity = fs.readFileSync(procCmdlinePath, "utf-8").replace(/\0/g, " ").trim();
-      if (identity) return identity;
-    }
-  } catch {
-    // Fall through to ps on hosts without readable procfs.
-  }
-  return captureProcessArgs(pid);
+  const identity = (readGatewayProcEntry(pid, "cmdline") ?? "").replace(/\0/g, " ").trim();
+  return identity || captureProcessArgs(pid);
 }
 
 export function readDockerDriverGatewayProcessEnvironment(

@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { HOSTED_NATIVE_PROVIDERS } from "../../../inference/native-provider/hosted";
 import { resolveMessagingPlanAuthority } from "../../../messaging/plan-authority";
 import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
 import { createSession } from "../../../state/onboard-session";
@@ -84,6 +85,50 @@ describe("sandbox create intent machine boundary", () => {
       model: "nvidia/nemotron-3-super-120b-a12b",
     });
   });
+
+  it.each(HOSTED_NATIVE_PROVIDERS)(
+    "attaches the recorded native $label resource while retaining its logical selection",
+    async (provider) => {
+      const session = createSession({ sandboxName: "native-hosted" });
+      const nativeHostedProviderAttachment = {
+        schemaVersion: 1 as const,
+        profileId: provider.profileId,
+        providerName: provider.providerName,
+        providerId: "11111111-2222-4333-8444-555555555555",
+      };
+      const { deps, calls } = createDeps({
+        getSandboxRegistryEntry: (name: string) => ({
+          name,
+          provider: provider.logicalProvider,
+          model: "selected-model",
+          endpointUrl: null,
+          preferredInferenceApi: provider.api,
+          webSearchEnabled: false,
+          toolDisclosure: "progressive" as const,
+          fromDockerfile: null,
+          hermesAuthMethod: null,
+          nativeHostedProviderAttachment,
+        }),
+      });
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        sandboxName: "native-hosted",
+        provider: provider.logicalProvider,
+        model: "selected-model",
+      });
+      expect(calls.resolveCreateIntent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inferenceProvider: provider.providerName,
+          nativeHostedProviderAttachment,
+        }),
+      );
+      expect(calls.startStep).toHaveBeenCalledWith("sandbox", {
+        sandboxName: "native-hosted",
+        provider: provider.logicalProvider,
+        model: "selected-model",
+      });
+    },
+  );
 
   it("rejects deterministic create conflicts before resume recreation mutates state (#6226)", async () => {
     const session = createSession({ sandboxName: "saved" });

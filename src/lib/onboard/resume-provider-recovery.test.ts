@@ -76,6 +76,27 @@ function makeDeps(overrides: {
 }
 
 describe("ensureResumeProviderReady", () => {
+  it.each([
+    ["openai-api", "OPENAI_API_KEY"],
+    ["anthropic-prod", "ANTHROPIC_API_KEY"],
+    ["gemini-api", "GEMINI_API_KEY"],
+    ["openrouter-api", "OPENROUTER_API_KEY"],
+  ])(
+    "revalidates native ownership for %s during resume (#12589)",
+    async (provider, credentialEnv) => {
+      const { deps, replaceCalls, exitCalls } = makeDeps({ nonInteractive: true });
+      deps.providerExistsInGateway = () => {
+        throw new Error("A logical provider lookup cannot verify native ownership");
+      };
+      expect(await ensureResumeProviderReady(provider, null, deps)).toEqual({
+        forceInferenceSetup: true,
+        credentialEnv,
+      });
+      expect(replaceCalls).toEqual([]);
+      expect(exitCalls).toEqual([]);
+    },
+  );
+
   it("returns false-forced when no provider is set (nothing to recover)", async () => {
     const { deps } = makeDeps({ providerExists: false });
     const result = await ensureResumeProviderReady(null, null, deps);

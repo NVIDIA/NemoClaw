@@ -95,6 +95,68 @@ function prWorkflowCheck(runId: number, job: ActionJobFixture, startedAt: string
 }
 
 describe("maintainer merge-gate contributor compliance", () => {
+  it.each([
+    { state: "SUCCESS", missingAction: "", pass: true, failing: [], pending: [] },
+    { state: "FAILURE", missingAction: "", pass: false, failing: ["checks: FAILURE"], pending: [] },
+    { state: "PENDING", missingAction: "", pass: false, failing: [], pending: ["checks"] },
+    {
+      state: "SUCCESS",
+      missingAction: "checks",
+      pass: false,
+      failing: ["checks: latest attempt evidence incomplete"],
+      pending: [],
+    },
+  ])(
+    "evaluates legacy $state alongside required Actions evidence (missing: $missingAction)",
+    ({ state, missingAction, pass, failing, pending }) => {
+      const result = runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: [
+          ...successfulRequiredChecks().filter((check) => check.name !== missingAction),
+          {
+            __typename: "StatusContext",
+            context: "checks",
+            state,
+            startedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const output = JSON.parse(result.stdout);
+      expect(output.gates.ci.pass, JSON.stringify(output.gates.ci)).toBe(pass);
+      expect(output.gates.ci.failingChecks ?? []).toEqual(failing);
+      expect(output.gates.ci.pendingChecks ?? []).toEqual(pending);
+    },
+  );
+
+  it.each(["https://untrusted.example/NVIDIA/NemoClaw", "https://github.com/other/repo"])(
+    "rejects legacy success with an untrusted Actions counterpart at %s",
+    (origin) => {
+      const result = runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: [
+          ...successfulRequiredChecks().map((check) => ({
+            ...check,
+            detailsUrl:
+              check.name === "checks"
+                ? check.detailsUrl.replace("https://github.com/NVIDIA/NemoClaw", origin)
+                : check.detailsUrl,
+          })),
+          {
+            __typename: "StatusContext",
+            context: "checks",
+            state: "SUCCESS",
+            startedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const output = JSON.parse(result.stdout);
+      expect(output.gates.ci.pass).toBe(false);
+      expect(output.gates.ci.failingChecks).toContain("checks: latest attempt evidence incomplete");
+    },
+  );
+
   it("requires PR/base SHA evidence for optional Actions checks", () => {
     const result = runGate({
       body: "Signed-off-by: Example User <user@example.com>",

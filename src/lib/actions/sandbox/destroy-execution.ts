@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { finishTelemetryOperation, recordTelemetryTarget } from "../telemetry/operation";
+
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -296,6 +298,7 @@ type SandboxDestroyExecutionInput = {
   portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
   verifyForwardPortsReleased?: () => boolean | Promise<boolean>;
   stopInferenceResources: () => void;
+  onMutationStarted?: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
     hostLocalInferenceLifecycleOptions?: HostLocalInferenceLifecycleOptions;
@@ -462,10 +465,17 @@ export async function executeSandboxDestroy({
   portableContainerAuthority,
   verifyForwardPortsReleased = () => true,
   stopInferenceResources,
+  onMutationStarted,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
   deps = {},
 }: SandboxDestroyExecutionInput): Promise<SandboxDestroyExecutionResult> {
   return withMcpLifecycleLock(sandboxName, async () => {
+    let mutationStarted = false;
+    const markMutationStarted = () => {
+      if (mutationStarted) return;
+      mutationStarted = true;
+      onMutationStarted?.();
+    };
     let destroyRuntimeSelection = mcpRuntimeSelection;
     type IdentityContinuity =
       | { status: "match" }
@@ -743,6 +753,7 @@ export async function executeSandboxDestroy({
     }
     if (!hasHostLocalInferenceOwnership) {
       try {
+        markMutationStarted();
         stopInferenceResources();
       } catch (error) {
         const mcpRecoveryFailure = await restoreMcpForAbort();
@@ -816,6 +827,7 @@ export async function executeSandboxDestroy({
               });
           }
         }
+        markMutationStarted();
         (deps.wipeAgentNativeHome ?? wipeAgentNativeHome)(
           sandboxName,
           sandbox.agent || "openclaw",
@@ -854,6 +866,7 @@ export async function executeSandboxDestroy({
         " Managed inference cleanup may already have run; inspect those resources before retrying.",
       );
     }
+    markMutationStarted();
     const detachOutcome: DetachSandboxProvidersResult = sandboxConfirmedAbsent
       ? { detached: [], failures: [] }
       : runtimeProvider?.cleanup.supported === true && sandbox
@@ -1100,4 +1113,28 @@ export async function executeSandboxDestroy({
       ...(commonLlamaCppAuthorityRetired ? { commonLlamaCppAuthorityRetired: true as const } : {}),
     };
   });
+}
+
+/** The destroy owner records its terminal result after cleanup, including explicit exits. */
+export async function recordDestroyCompletion(
+  sandboxName: string,
+  outcome: "completed" | "cancelled" | "failed",
+  exitCode?: number,
+  gatewayName?: string,
+  mutationStarted = false,
+): Promise<void> {
+  const state =
+    outcome === "completed"
+      ? "applied"
+      : outcome === "cancelled" || !mutationStarted
+        ? "unchanged"
+        : "partial";
+  recordTelemetryTarget({
+    scope: "sandbox",
+    sandboxName,
+    gatewayName: gatewayName ?? "",
+    outcome,
+    state,
+  });
+  if (exitCode !== undefined) await finishTelemetryOperation(exitCode);
 }
