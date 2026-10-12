@@ -377,7 +377,7 @@ describe("sandbox BuildKit prebuild", () => {
     expect(buildImage).not.toHaveBeenCalled();
   });
 
-  it("rejects an explicit Docker host before building for the selected gateway", async () => {
+  it("rejects an unsupported Docker host before building for the selected gateway", async () => {
     const { buildCtx, createArgs } = createBuildContext();
     const buildImage = vi.fn(async () => 0);
     await expect(
@@ -389,11 +389,38 @@ describe("sandbox BuildKit prebuild", () => {
         sandboxName: "alpha",
         dockerDriverGateway: true,
         gatewayDriver: "docker",
-        env: { DOCKER_HOST: "unix:///alternate.sock", DOCKER_CONTEXT: "default" },
+        env: { DOCKER_HOST: "tcp://remote-builder:2375", DOCKER_CONTEXT: "default" },
         buildImage,
       }),
-    ).rejects.toThrow("DOCKER_HOST shares the selected local gateway engine");
+    ).rejects.toThrow("requires a supported local Docker host");
     expect(buildImage).not.toHaveBeenCalled();
+  });
+
+  it("builds with the same supported local Docker socket selected by the gateway", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn(async () => 0);
+    const inspectImageId = vi.fn(() => IMAGE_ID);
+    await prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: BUILD_ID,
+      origin: "generated",
+      createArgs,
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      gatewayDriver: "docker",
+      env: { DOCKER_HOST: "unix:///run/user/1001/docker.sock", DOCKER_CONTEXT: "remote-builder" },
+      buildImage,
+      inspectImageId,
+      log: () => {},
+    });
+    expect(buildImage).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({
+        env: expect.objectContaining({ DOCKER_HOST: "unix:///run/user/1001/docker.sock" }),
+      }),
+    );
+    expect(buildImage.mock.calls[0]?.[1].env.DOCKER_CONTEXT).toBeUndefined();
+    expect(inspectImageId).toHaveBeenCalled();
   });
 
   it("rejects a build that is absent from the selected engine", async () => {

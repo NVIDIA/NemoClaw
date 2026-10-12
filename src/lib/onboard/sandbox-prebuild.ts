@@ -16,6 +16,7 @@ import {
 import { dockerSpawn } from "../adapters/docker/exec";
 import { dockerImageInspectFormat } from "../adapters/docker/inspect";
 import { localPodmanEnvironment } from "../adapters/podman";
+import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import { LOCAL_SANDBOX_IMAGE_REPO } from "../domain/sandbox/image-tag";
 import {
   SANDBOX_BUILD_CONTEXT_PREFIX,
@@ -244,12 +245,12 @@ export async function prebuildSandboxImageIfEligible(
   }
   const dockerHost = String(env.DOCKER_HOST ?? "").trim();
   const dockerContext = String(env.DOCKER_CONTEXT ?? "").trim();
-  if (selectedEngine === "docker" && dockerHost) {
+  if (selectedEngine === "docker" && dockerHost && !isSupportedGatewayDockerHost(env.DOCKER_HOST)) {
     throw new Error(
-      "Generated Dockerfile build cannot prove that DOCKER_HOST shares the selected local gateway engine; unset DOCKER_HOST and retry.",
+      "Generated Dockerfile build requires a supported local Docker host; unset DOCKER_HOST or use an absolute local unix:// socket and retry.",
     );
   }
-  if (selectedEngine === "docker" && dockerContext && dockerContext !== "default") {
+  if (selectedEngine === "docker" && !dockerHost && dockerContext && dockerContext !== "default") {
     throw new Error(
       "Generated Dockerfile build cannot prove that the selected Docker context shares the local gateway engine.",
     );
