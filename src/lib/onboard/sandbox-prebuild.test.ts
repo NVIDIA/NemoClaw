@@ -118,6 +118,7 @@ describe("sandbox BuildKit prebuild", () => {
   });
 
   it("keeps Docker runtime settings while dropping secrets and control-plane state", () => {
+    vi.stubEnv("DOCKER_HOST", undefined);
     vi.stubEnv("PATH", "/usr/bin");
     vi.stubEnv("HOME", "/home/user");
     vi.stubEnv("CONTAINERS_CONF", "/home/user/.config/nemoclaw/portable/containers.conf");
@@ -193,7 +194,7 @@ describe("sandbox BuildKit prebuild", () => {
     );
   });
 
-  it("skips the build when create arguments do not use the staged Dockerfile", async () => {
+  it("rejects create arguments that do not use the staged Dockerfile", async () => {
     const { buildCtx } = createBuildContext();
     const buildImage = vi.fn(async () => 0);
     await expect(
@@ -207,11 +208,7 @@ describe("sandbox BuildKit prebuild", () => {
         env: {},
         buildImage,
       }),
-    ).resolves.toEqual({
-      createArgs: ["--from", "/other/Dockerfile"],
-      imageRef: null,
-      imageId: null,
-    });
+    ).rejects.toThrow("requires the selected staged Dockerfile");
     expect(buildImage).not.toHaveBeenCalled();
   });
 
@@ -237,7 +234,86 @@ describe("sandbox BuildKit prebuild", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("custom Dockerfile"));
   });
 
-  it("skips host Docker for a staged-looking context outside the OS temp directory", async () => {
+  it("rejects a remote gateway before starting a generated build", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn(async () => 0);
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: false,
+        env: {},
+        buildImage,
+      }),
+    ).rejects.toThrow("requires a local Docker or Podman gateway");
+    expect(buildImage).not.toHaveBeenCalled();
+  });
+
+  it("rejects an engine mismatch before starting a generated build", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn(async () => 0);
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        gatewayDriver: "podman",
+        env: {},
+        buildImage,
+      }),
+    ).rejects.toThrow("refusing a docker build");
+    expect(buildImage).not.toHaveBeenCalled();
+  });
+
+  it("rejects a Docker context that may select a different daemon", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn(async () => 0);
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        gatewayDriver: "docker",
+        env: { DOCKER_CONTEXT: "remote-builder" },
+        buildImage,
+      }),
+    ).rejects.toThrow(
+      "cannot prove that the selected Docker context shares the local gateway engine",
+    );
+    expect(buildImage).not.toHaveBeenCalled();
+  });
+
+  it("rejects a build that is absent from the selected engine", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn(async () => 0);
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        gatewayDriver: "docker",
+        env: {},
+        buildImage,
+        inspectImageId: () => "",
+        log: () => {},
+      }),
+    ).rejects.toThrow("not visible in the selected docker engine");
+    expect(buildImage).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a staged-looking context outside the OS temp directory", async () => {
     const { buildCtx, createArgs } = createBuildContext();
     const reportedTempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-other-temp-"));
     temporaryDirectories.push(reportedTempRoot);
@@ -256,11 +332,11 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
         log: () => {},
       }),
-    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
+    ).rejects.toThrow("rejected the staged context trust boundary");
     expect(buildImage).not.toHaveBeenCalled();
   });
 
-  it("skips host Docker for a temporary context without the staging prefix", async () => {
+  it("rejects a temporary context without the staging prefix", async () => {
     const { buildCtx, createArgs } = createBuildContext(os.tmpdir(), "untrusted-build-");
     const buildImage = vi.fn(async () => 0);
 
@@ -276,11 +352,11 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
         log: () => {},
       }),
-    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
+    ).rejects.toThrow("rejected the staged context trust boundary");
     expect(buildImage).not.toHaveBeenCalled();
   });
 
-  it("skips host Docker for a group-writable staged context", async () => {
+  it("rejects a group-writable staged context", async () => {
     const { buildCtx, createArgs } = createBuildContext();
     fs.chmodSync(buildCtx, 0o770);
     const buildImage = vi.fn(async () => 0);
@@ -298,12 +374,12 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
         log,
       }),
-    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
+    ).rejects.toThrow("rejected the staged context trust boundary");
     expect(buildImage).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("failed trust validation"));
+    expect(log).not.toHaveBeenCalled();
   });
 
-  it("skips host Docker for a symlinked staged Dockerfile", async () => {
+  it("rejects a symlinked staged Dockerfile", async () => {
     const { buildCtx, createArgs, dockerfile } = createBuildContext();
     const target = path.join(buildCtx, "Dockerfile.regular");
     fs.renameSync(dockerfile, target);
@@ -322,11 +398,11 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
         log: () => {},
       }),
-    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
+    ).rejects.toThrow("could not inspect the staged context");
     expect(buildImage).not.toHaveBeenCalled();
   });
 
-  it("skips host Docker for a non-regular staged Dockerfile", async () => {
+  it("rejects a non-regular staged Dockerfile", async () => {
     const { buildCtx, createArgs, dockerfile } = createBuildContext();
     fs.rmSync(dockerfile);
     fs.mkdirSync(dockerfile);
@@ -344,11 +420,11 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
         log: () => {},
       }),
-    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
+    ).rejects.toThrow("rejected the staged context trust boundary");
     expect(buildImage).not.toHaveBeenCalled();
   });
 
-  it("skips host Docker when the staged Dockerfile resolves outside its context", async () => {
+  it("rejects a staged Dockerfile that resolves outside its context", async () => {
     const { buildCtx, createArgs, dockerfile } = createBuildContext();
     const outsideDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-prebuild-outside-"));
     temporaryDirectories.push(outsideDirectory);
@@ -370,11 +446,11 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
         log: () => {},
       }),
-    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
+    ).rejects.toThrow("rejected the staged context trust boundary");
     expect(buildImage).not.toHaveBeenCalled();
   });
 
-  it("logs filesystem inspection errors distinctly before falling back", async () => {
+  it("fails closed when staged context inspection errors", async () => {
     const { buildCtx, createArgs } = createBuildContext();
     const buildImage = vi.fn(async () => 0);
     const log = vi.fn();
@@ -394,10 +470,9 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
         log,
       }),
-    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
+    ).rejects.toThrow("could not inspect the staged context");
     expect(buildImage).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("too many open files"));
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("could not be inspected"));
+    expect(log).not.toHaveBeenCalled();
   });
 
   it("uses the argv-based Docker helper and returns the local image on success", async () => {
@@ -662,7 +737,6 @@ describe("sandbox BuildKit prebuild", () => {
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
-        requiresLocalBuildKit: true,
         env: { DOCKER_CONFIG: dockerConfig, WSL_DISTRO_NAME: "Ubuntu" },
         buildImage,
         credentialHelperResponds: () => false,
@@ -737,7 +811,6 @@ describe("sandbox BuildKit prebuild", () => {
       createArgs,
       sandboxName: "alpha",
       dockerDriverGateway: true,
-      requiresLocalBuildKit: true,
       env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
       buildImage,
       publishImage,
@@ -803,7 +876,7 @@ describe("sandbox BuildKit prebuild", () => {
     });
   });
 
-  it("routes default Docker build stdout only while JSONL owns stdout (#6403)", async () => {
+  it("suppresses unfiltered Docker build output in both output modes (#6403)", async () => {
     const { buildCtx, createArgs } = createBuildContext();
     mocks.dockerSpawn.mockImplementation(() => {
       const child = new EventEmitter();
@@ -830,7 +903,7 @@ describe("sandbox BuildKit prebuild", () => {
     );
     expect(mocks.dockerSpawn).toHaveBeenCalledWith(
       expect.arrayContaining(["build", "nemoclaw-sandbox-local:alpha-1234567890"]),
-      expect.objectContaining({ shell: false, stdio: "inherit" }),
+      expect.objectContaining({ shell: false, stdio: ["ignore", "ignore", "ignore"] }),
     );
 
     mocks.dockerSpawn.mockClear();
@@ -843,7 +916,7 @@ describe("sandbox BuildKit prebuild", () => {
       expect.arrayContaining(["build", "nemoclaw-sandbox-local:alpha-1234567890"]),
       expect.objectContaining({
         shell: false,
-        stdio: ["inherit", process.stderr, "inherit"],
+        stdio: ["ignore", "ignore", "ignore"],
       }),
     );
   });
@@ -859,11 +932,10 @@ describe("sandbox BuildKit prebuild", () => {
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
-        requiresLocalBuildKit: true,
         env: { NEMOCLAW_SANDBOX_PREBUILD: "0" },
         log: () => {},
       }),
-    ).rejects.toThrow("Local BuildKit is required for this generated sandbox image");
+    ).rejects.toThrow("Generated Dockerfile image build is required");
   });
 
   it("rejects an untrusted context instead of handing a required build to the gateway", async () => {
@@ -878,11 +950,10 @@ describe("sandbox BuildKit prebuild", () => {
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
-        requiresLocalBuildKit: true,
         env: {},
         log: () => {},
       }),
-    ).rejects.toThrow("Local BuildKit rejected the staged build context trust boundary");
+    ).rejects.toThrow("Generated image build rejected the staged context trust boundary");
   });
 
   it("preserves a required staged-context inspection diagnosis", async () => {
@@ -899,13 +970,10 @@ describe("sandbox BuildKit prebuild", () => {
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
-        requiresLocalBuildKit: true,
         env: {},
         log: () => {},
       }),
-    ).rejects.toThrow(
-      "Local BuildKit could not inspect the staged build context: descriptor limit reached",
-    );
+    ).rejects.toThrow("Generated image build could not inspect the staged context");
   });
 
   it("rejects mismatched create arguments for a required build", async () => {
@@ -919,11 +987,10 @@ describe("sandbox BuildKit prebuild", () => {
         createArgs: ["--from", "/other/Dockerfile"],
         sandboxName: "alpha",
         dockerDriverGateway: true,
-        requiresLocalBuildKit: true,
         env: {},
         log: () => {},
       }),
-    ).rejects.toThrow("Local BuildKit requires the generated staged Dockerfile");
+    ).rejects.toThrow("Generated image build requires the selected staged Dockerfile");
   });
 
   it.each([
@@ -944,7 +1011,6 @@ describe("sandbox BuildKit prebuild", () => {
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
-        requiresLocalBuildKit: true,
         env: {},
         buildImage,
         log: () => {},
@@ -963,50 +1029,51 @@ describe("sandbox BuildKit prebuild", () => {
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
-        requiresLocalBuildKit: true,
         env: {},
         buildImage: async () => {
           throw new Error("builder unavailable");
         },
         log: () => {},
       }),
-    ).rejects.toThrow("Local BuildKit build could not start: builder unavailable");
+    ).rejects.toThrow("Local BuildKit build could not start");
   });
 
   it.each([
     ["nonzero result", async () => 1],
     ["missing exit status", async () => null],
-  ])("falls back to OpenShell after a %s", async (_label, buildImage) => {
+  ])("stops sandbox creation after a %s", async (_label, buildImage) => {
     const { buildCtx, createArgs } = createBuildContext();
-    const result = await prebuildSandboxImageIfEligible({
-      buildCtx,
-      buildId: BUILD_ID,
-      origin: "generated",
-      createArgs,
-      sandboxName: "alpha",
-      dockerDriverGateway: true,
-      env: {},
-      buildImage,
-      log: () => {},
-    });
-    expect(result).toEqual({ createArgs, imageRef: null, imageId: null });
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {},
+        buildImage,
+        log: () => {},
+      }),
+    ).rejects.toThrow("Local BuildKit build failed");
   });
 
-  it("falls back to OpenShell when the Docker helper throws", async () => {
+  it("stops sandbox creation when the Docker helper throws", async () => {
     const { buildCtx, createArgs } = createBuildContext();
-    const result = await prebuildSandboxImageIfEligible({
-      buildCtx,
-      buildId: BUILD_ID,
-      origin: "generated",
-      createArgs,
-      sandboxName: "alpha",
-      dockerDriverGateway: true,
-      env: {},
-      buildImage: async () => {
-        throw new Error("unavailable");
-      },
-      log: () => {},
-    });
-    expect(result).toEqual({ createArgs, imageRef: null, imageId: null });
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {},
+        buildImage: async () => {
+          throw new Error("unavailable");
+        },
+        log: () => {},
+      }),
+    ).rejects.toThrow("Local BuildKit build could not start");
   });
 });

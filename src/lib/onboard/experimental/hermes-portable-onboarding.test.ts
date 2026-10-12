@@ -366,6 +366,16 @@ describe("Hermes portable onboarding transaction", () => {
     expect(completed.created).toBe(true);
     expect(fixture.events[0]).toBe("lock-enter");
     expect(fixture.events.at(-1)).toBe("lock-exit");
+    expect(fixture.events.indexOf("image-build")).toBeLessThan(
+      fixture.events.indexOf("image-inspect"),
+    );
+    expect(fixture.events.indexOf("image-inspect")).toBeLessThan(
+      fixture.events.indexOf("image-push"),
+    );
+    expect(fixture.events.indexOf("image-push")).toBeLessThan(
+      fixture.events.indexOf("image-visible"),
+    );
+    expect(fixture.events.indexOf("image-visible")).toBeLessThan(fixture.events.indexOf("create"));
     expect(fixture.events.indexOf("create")).toBeLessThan(fixture.events.indexOf("registry"));
     expect(fixture.events.indexOf("registry")).toBeLessThan(
       fixture.events.lastIndexOf("policy-base"),
