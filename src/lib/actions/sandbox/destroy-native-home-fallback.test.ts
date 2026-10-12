@@ -3,15 +3,32 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { wipeAgentNativeHome } from "./destroy-execution";
+vi.mock("./mcp-bridge", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mcp-bridge")>()),
+  prepareMcpBridgesForDestroy: async () => ({ entries: [] }),
+}));
+
+import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
+import { DEEP_AGENTS_CODE_SANDBOX_USER } from "../../agent/deep-agents-code-runtime-identity";
+import type { SandboxEntry } from "../../state/registry";
+import { executeSandboxDestroy, wipeAgentNativeHome } from "./destroy-execution";
 
 describe("native-home destroy fallback", () => {
-  it("completes mixed-owner Deep Agents cleanup with the sandbox owner after privileged cleanup", () => {
-    const runOpenshell = vi.fn(() => ({
-      status: 1,
-      stdout: "",
-      stderr: "rm: cannot remove root-owned managed state: Permission denied",
-    }));
+  it.each([
+    {
+      initial: "owner permission failure",
+      openshellResult: {
+        status: 1,
+        stdout: "",
+        stderr: "rm: cannot remove root-owned managed state: Permission denied",
+      },
+    },
+    {
+      initial: "unavailable OpenShell execution",
+      openshellResult: { status: 255, stdout: "", stderr: "sandbox is not running" },
+    },
+  ])("completes Deep Agents cleanup as the sandbox owner after $initial", ({ openshellResult }) => {
+    const runOpenshell = vi.fn(() => openshellResult);
     const runPrivileged = vi.fn((_command: readonly string[]) => ({
       status: 1,
       signal: null,
@@ -132,5 +149,95 @@ describe("native-home destroy fallback", () => {
     ).toThrow("unsafe protected native-home ancestor");
     expect(runPrivileged).not.toHaveBeenCalled();
     expect(clearStoppedNativeHome).not.toHaveBeenCalled();
+  });
+
+  it("destroys through the provider's pinned sandbox user after both cleanup passes fail", async () => {
+    const events: string[] = [];
+    const base = createInMemoryRuntimeProviderBundle({
+      providerId: "mxc",
+      workloadProfile: {
+        support: null,
+        hostArchitectures: ["x64"],
+        managedImageSelectionPolicy: "prefer-managed",
+        legacyDockerfileBuilds: false,
+      },
+    });
+    const control = base.lifecycle.privilegedSandboxControl;
+    const failure = { status: 1, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    const execute = vi.fn(() => {
+      events.push("privileged");
+      return failure;
+    });
+    const executeAsSandboxUser = vi.fn(() => {
+      events.push("sandbox-user");
+      return { ...failure, status: 0 };
+    });
+    const identity = {
+      schemaVersion: 1 as const,
+      providerId: "mxc",
+      resourceHandle: "in-memory:alpha",
+      ownershipSha256: null,
+    };
+    const bundle = {
+      ...base,
+      cleanup: { ...base.cleanup, captureDestroyIdentity: () => identity },
+      lifecycle: {
+        ...base.lifecycle,
+        privilegedSandboxControl: { ...control, execute, executeAsSandboxUser },
+      },
+    };
+    const sandbox: SandboxEntry = {
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      openshellDriver: "mxc",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "alpha-generation-1",
+    };
+    let current: SandboxEntry | null = sandbox;
+    const ok = { status: 0, stdout: "", stderr: "" };
+    const handlers: Record<string, () => { status: number; stdout: string; stderr: string }> = {
+      "sandbox:exec": () => {
+        events.push("openshell-exec");
+        return { status: 255, stdout: "", stderr: "sandbox is not running" };
+      },
+      "sandbox:delete": () => {
+        events.push("delete");
+        current = null;
+        return ok;
+      },
+      "sandbox:get": () =>
+        current
+          ? { status: 0, stdout: "Name: alpha\nPhase: Ready", stderr: "" }
+          : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" },
+    };
+    const runOpenshell = vi.fn(
+      (args: string[]) => handlers[`${String(args[0])}:${String(args[1])}`]?.() ?? ok,
+    );
+
+    await executeSandboxDestroy({
+      force: false,
+      deleteGatewayName: "nemoclaw",
+      getSandbox: () => current,
+      listSandboxes: () => ({ sandboxes: current ? [current] : [] }),
+      runOpenshell,
+      sandbox,
+      sandboxConfirmedAbsent: false,
+      sandboxName: "alpha",
+      stopInferenceResources: vi.fn(),
+      onMutationStarted: vi.fn(),
+      runtimeProviders: { mxc: bundle },
+      expectedRuntimeProviderIdentity: identity,
+      deps: { deleteConvergence: { now: () => 0, sleep: () => undefined } },
+    });
+
+    expect(events.slice(0, 4)).toEqual(["openshell-exec", "privileged", "sandbox-user", "delete"]);
+    expect(executeAsSandboxUser).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER,
+        expectedResourceHandle: "in-memory:alpha",
+        command: execute.mock.calls[0]![0].command,
+      }),
+    );
   });
 });

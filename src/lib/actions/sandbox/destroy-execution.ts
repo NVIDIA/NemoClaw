@@ -247,7 +247,6 @@ export function wipeAgentNativeHome(
       `${agent.displayName} native-home cleanup timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds; its result is unknown.`,
     );
   }
-  const ownerPassFailed = result.status === 1 && !result.error;
   if (result.status !== 0 && result.status !== 20 && result.status !== 21 && runPrivileged) {
     try {
       result = runPrivileged(command);
@@ -260,7 +259,6 @@ export function wipeAgentNativeHome(
     // Complete the same validated wipe as the image's pinned sandbox user.
     if (
       agentName === "langchain-deepagents-code" &&
-      ownerPassFailed &&
       result.status === 1 &&
       !result.error &&
       runAsSandboxUser

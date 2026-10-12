@@ -16,9 +16,7 @@
     },
     {
       "live": "test/e2e/live/deferred-onboarding.test.ts",
-      "liveSources": ["test/e2e/fixtures/deferred-cleanup-diagnostics.ts"],
       "fast": [
-        "test/e2e/support/deferred-onboarding-diagnostics.test.ts",
         "src/lib/actions/installer/deferred-onboarding.test.ts",
         "test/install/install-onboard-yes.test.ts",
         "test/e2e/support/workflow-plan.test.ts"
@@ -677,8 +675,7 @@
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/host-container-discovery.test.ts"
+        "test/e2e/support/e2e-clients.test.ts"
       ]
     },
     {
@@ -1026,8 +1023,7 @@
       "fast": [
         "src/lib/actions/sandbox/rebuild-backup-phase.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
-        "test/state/snapshot.test.ts",
-        "test/e2e/support/host-container-discovery.test.ts"
+        "test/state/snapshot.test.ts"
       ]
     },
     {
@@ -1043,8 +1039,7 @@
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/e2e-phase-environment.test.ts",
-        "test/e2e/support/openclaw-container-diagnostics.test.ts"
+        "test/e2e/support/e2e-phase-environment.test.ts"
       ]
     },
     {

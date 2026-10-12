@@ -520,6 +520,40 @@ fi
       publishIndex < exportIndex,
     ]).toEqual([true, true, true, true]);
 
+    const validationRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-validate-"));
+    try {
+      const identityPath = path.join(
+        validationRoot,
+        "src/lib/agent/deep-agents-code-runtime-identity.json",
+      );
+      fs.mkdirSync(path.dirname(identityPath), { recursive: true });
+      fs.writeFileSync(identityPath, JSON.stringify({ uid: 1601, gid: 1602 }));
+      fs.writeFileSync(
+        path.join(validationRoot, "docker"),
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$FAKE_DOCKER_ARGUMENTS"\n',
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(validationRoot, "node"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      const result = spawnSync("bash", ["-c", validate.run ?? ""], {
+        cwd: validationRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          FAKE_DOCKER_ARGUMENTS: path.join(validationRoot, "docker-arguments"),
+          PATH: `${validationRoot}:${process.env.PATH ?? ""}`,
+          PLATFORM: "linux/amd64",
+          REFERENCE: `sha256:${"b".repeat(64)}`,
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const dockerArgs = fs
+        .readFileSync(path.join(validationRoot, "docker-arguments"), "utf8")
+        .split("\n");
+      expect(dockerArgs[dockerArgs.indexOf("--user") + 1]).toBe("1601:1602");
+    } finally {
+      fs.rmSync(validationRoot, { force: true, recursive: true });
+    }
+
     const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-publish-"));
     const dockerPath = path.join(temporaryRoot, "docker");
     const argumentsPath = path.join(temporaryRoot, "arguments");
