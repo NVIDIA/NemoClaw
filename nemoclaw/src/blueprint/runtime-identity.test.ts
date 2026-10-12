@@ -116,6 +116,16 @@ const profileDocument = [
   "inference_capable: false",
   "",
 ].join("\n");
+const gatewayExportDocument = profileDocument
+  .replace(
+    "id: okta-runtime-v1",
+    "id: okta-runtime-v1\nresource_version: 1\nsource: user\nscope: workspace",
+  )
+  .replace("    header_name: authorization", "    header_name: authorization\n    query_param: ''")
+  .replace(
+    "        - name: client_id\n          required: true",
+    "        - name: client_id\n          required: true\n          secret: false",
+  );
 const entraProfileDocument = readFileSync(
   new URL("../../../nemoclaw-blueprint/provider-profiles/entra-runtime-v1.yaml", import.meta.url),
   "utf8",
@@ -403,6 +413,34 @@ describe("runtime identity contract", () => {
     ]);
 
     await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
+  });
+
+  it("accepts OpenShell's catalog metadata and explicit default fields without a false post-mutation warning", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
+    responses.set("provider profile export okta-runtime-v1 --output yaml", [
+      { exitCode: 0, stdout: gatewayExportDocument, stderr: "" },
+      { exitCode: 0, stdout: gatewayExportDocument, stderr: "" },
+    ]);
+
+    await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
+    expect(warnings).toEqual([]);
+    expect(persistedReceipts).toHaveLength(1);
+  });
+
+  it.each([
+    gatewayExportDocument.replace("source: user", "source: builtin"),
+    gatewayExportDocument.replace("scope: workspace", "scope: platform"),
+    gatewayExportDocument.replace("query_param: ''", "query_param: credential"),
+    gatewayExportDocument.replace("secret: false", "secret: true"),
+    gatewayExportDocument.replace("resource_version: 1", "resource_version: 0"),
+  ])("rejects incompatible gateway export metadata or credential fields", async (exported) => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
+    responses.set("provider profile export okta-runtime-v1 --output yaml", [
+      { exitCode: 0, stdout: exported, stderr: "" },
+    ]);
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/incompatible binding/);
+    expect(persistedReceipts).toEqual([]);
   });
 
   it("warns after provider creation if the profile changed without changing the result", async () => {

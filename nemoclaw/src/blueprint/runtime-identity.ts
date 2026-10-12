@@ -399,6 +399,7 @@ function parseRuntimeIdentityProfile(
   config: Pick<RuntimeIdentityConfig, "provider_type" | "credential_key">,
   policy: RuntimeIdentityProfilePolicy,
   label: string,
+  gatewayExport = false,
 ): ParsedRuntimeIdentityProfile {
   if (Buffer.byteLength(content, "utf8") > MAX_PROFILE_BYTES) {
     throw new Error(`${label} exceeds the ${MAX_PROFILE_BYTES}-byte limit`);
@@ -411,6 +412,42 @@ function parseRuntimeIdentityProfile(
   }
   if (!isPlainObject(parsed) || parsed.id !== config.provider_type) {
     throw new Error(`${label} must declare id '${config.provider_type}'`);
+  }
+  if (gatewayExport) {
+    // OpenShell's export includes catalog provenance and explicit empty/default
+    // credential fields. Check those values before comparing the binding.
+    const hasCatalogMetadata = ["resource_version", "source", "scope"].some((key) => key in parsed);
+    if (hasCatalogMetadata) {
+      if (
+        !Number.isSafeInteger(parsed.resource_version) ||
+        (parsed.resource_version as number) < 1 ||
+        parsed.source !== "user" ||
+        parsed.scope !== "workspace"
+      ) {
+        throw new Error(`${label} has an unsupported catalog origin`);
+      }
+      delete parsed.resource_version;
+      delete parsed.source;
+      delete parsed.scope;
+    }
+    if (Array.isArray(parsed.credentials)) {
+      for (const credential of parsed.credentials) {
+        if (!isPlainObject(credential)) continue;
+        if (credential.query_param === "") delete credential.query_param;
+        if (!isPlainObject(credential.refresh) || !Array.isArray(credential.refresh.material)) {
+          continue;
+        }
+        for (const material of credential.refresh.material) {
+          if (
+            isPlainObject(material) &&
+            material.name === "client_id" &&
+            material.secret === false
+          ) {
+            delete material.secret;
+          }
+        }
+      }
+    }
   }
   if (!hasOnlyKeys(parsed, RUNTIME_IDENTITY_PROFILE_KEYS)) {
     throw new Error(`${label} contains unsupported top-level fields`);
@@ -695,7 +732,13 @@ async function warnIfProfileChanged(
   }
   let matches = false;
   try {
-    const profile = parseRuntimeIdentityProfile(result.stdout, receipt, policy, "Gateway profile");
+    const profile = parseRuntimeIdentityProfile(
+      result.stdout,
+      receipt,
+      policy,
+      "Gateway profile",
+      true,
+    );
     matches = profileDigest(profile.document) === receipt.verified_profile_sha256;
   } catch {
     // A readable but incompatible profile also differs from the verified definition.
@@ -1003,6 +1046,7 @@ export async function prepareRuntimeIdentity(
       config,
       profilePolicy,
       "Imported runtime identity provider profile",
+      true,
     );
   } catch {
     throw new Error(
