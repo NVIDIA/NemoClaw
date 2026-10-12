@@ -152,7 +152,7 @@ pub(super) async fn run_live_kind(
     let tag = format!("{prefix}:{target}");
     let cleanup = ImagesCleanup(tag.clone());
     match images {
-        Some(archive) => live_images::load(archive, &prefix, &[target], &mut Vec::new())?,
+        Some(archive) => live_images::load(archive, &prefix, platform, &[target], &mut Vec::new())?,
         None => live_images::build_agent(platform, &prefix)?,
     }
     let id = String::from_utf8(

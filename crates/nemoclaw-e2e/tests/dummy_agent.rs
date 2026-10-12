@@ -58,20 +58,14 @@ async fn runtime_id(client: &OpenShell, binding: &Row) -> String {
 async fn invoke(client: &OpenShell, binding: &Row, agent: &str, message: &str) -> Value {
     let input = serde_json::json!({ "message": message }).to_string();
     let (exit, output) = client
-        .exec_bound(
+        .exec_input(
             binding,
-            [
-                "sh",
-                "-c",
-                "printf '%s' \"$1\" | fabric-agent invoke --agent \"$2\" --input -",
-                "invoke",
-                &input,
-                agent,
-            ]
-            .map(String::from)
-            .to_vec(),
+            ["fabric-agent", "invoke", "--agent", agent, "--input", "-"]
+                .map(String::from)
+                .to_vec(),
             Row::new(),
             60,
+            input.into_bytes(),
         )
         .await
         .unwrap();
@@ -82,6 +76,35 @@ async fn invoke(client: &OpenShell, binding: &Row, agent: &str, message: &str) -
         String::from_utf8_lossy(&output)
     );
     serde_json::from_slice(&output).unwrap()
+}
+
+/// IDs of the engine's objects of `kind` matching `filter`.
+fn docker_objects(engine: &str, kind: &str, filter: &str) -> Vec<String> {
+    let mut command = Command::new("docker");
+    command.args(["--host", engine, kind, "ls", "--quiet", "--filter", filter]);
+    if kind == "container" {
+        command.arg("--all");
+    }
+    let output = command.output().unwrap();
+    assert!(output.status.success(), "docker {kind} ls failed");
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Keeps the state directory when the test fails, so `nemoclaw destroy` can
+/// still remove what it created.
+struct KeepOnFailure(Option<tempfile::TempDir>);
+
+impl Drop for KeepOnFailure {
+    fn drop(&mut self) {
+        if std::thread::panicking()
+            && let Some(state) = self.0.take()
+        {
+            eprintln!("kept the deployment state at {}", state.keep().display());
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -108,12 +131,31 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
         .expect("the document sets harness.settings.reply")
         .to_owned();
     let resource = format!("openshell_sandbox.{}", sandbox.name);
-    let state = tempfile::tempdir().unwrap();
-    let deployment = Deployment::new(state.path(), &bundle);
+    let Gateway::Managed(gateway) = &document.spec.gateway else {
+        unreachable!()
+    };
+    let engine = gateway.engine.clone();
+    let state = KeepOnFailure(Some(tempfile::tempdir().unwrap()));
+    let state_path = state.0.as_ref().unwrap().path().to_owned();
+    let deployment = Deployment::new(&state_path, &bundle);
     let cancel = CancellationToken::new();
 
     let plan = deployment.plan(&document, &cancel).await.unwrap();
     assert_eq!(plan.outcome, Outcome::Planned);
+    // Before the managed gateway exists, plan creates its runtime stage and
+    // defers the sandbox, which needs the gateway.
+    assert!(
+        plan.deferred_resources.contains(&resource),
+        "plan must defer the sandbox: {:?}",
+        plan.deferred_resources
+    );
+    assert!(
+        plan.changes
+            .iter()
+            .any(|change| change.resource == "nemoclaw_gateway_storage.runtime"),
+        "plan must create the gateway storage: {:?}",
+        plan.changes
+    );
 
     // The bundled CLI's exit status is what an operator sees.
     let apply = Command::new(
@@ -122,7 +164,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
             .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
     )
     .args(["apply", "-o", "json", "--progress", "off", "--state-dir"])
-    .arg(state.path())
+    .arg(&state_path)
     .arg(&config)
     .output()
     .unwrap();
@@ -149,7 +191,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
         Arc::new(EnvironmentSecrets),
     )
     .unwrap();
-    let binding = sandbox_binding(state.path());
+    let binding = sandbox_binding(&state_path);
     let runtime = runtime_id(&client, &binding).await;
     let reply = invoke(&client, &binding, &sandbox.agent.name, "dummy-lifecycle").await;
     assert_eq!(reply["status"], "succeeded", "{reply}");
@@ -168,6 +210,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     let exported = deployment.export(&cancel).await.unwrap();
     assert_eq!(exported, document);
     let reapplied = deployment.apply(&exported, &cancel).await.unwrap();
+    assert_eq!(reapplied.outcome, Outcome::Succeeded);
     assert!(reapplied.changes.is_empty(), "{:?}", reapplied.changes);
     assert_eq!(
         runtime_id(&client, &binding).await,
@@ -185,15 +228,36 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
         "destroy must remove the sandbox: {:?}",
         destroyed.changes
     );
-    assert!(
-        client.agent_snapshot(&binding).await.is_err(),
-        "the destroyed sandbox's agent must no longer answer"
+    // The gateway is gone too, so an unanswered agent would not show that the
+    // sandbox is; Docker must hold none of the gateway's sandbox objects.
+    let sandbox_objects = format!(
+        "label=openshell.ai/sandbox-namespace={}-gateway",
+        document.workspace()
     );
+    for kind in ["container", "volume"] {
+        assert_eq!(
+            docker_objects(&engine, kind, &sandbox_objects),
+            Vec::<String>::new(),
+            "destroy left sandbox {kind}s"
+        );
+    }
+    let mut retained = destroyed.retained.clone();
+    retained.sort();
     assert_eq!(
-        destroyed.retained,
+        retained,
         [
-            "openshell_workspace.deployment",
-            "nemoclaw_gateway_storage.runtime"
+            "nemoclaw_gateway_storage.runtime",
+            "openshell_workspace.deployment"
         ]
+    );
+    // Retained gateway storage is still on the engine.
+    assert!(
+        !docker_objects(
+            &engine,
+            "volume",
+            &format!("label=nemoclaw.nvidia.com/uid={}", document.metadata.uid)
+        )
+        .is_empty(),
+        "destroy removed the retained gateway storage"
     );
 }

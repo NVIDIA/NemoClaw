@@ -212,7 +212,7 @@ COPY image/fabric/dummy_backend.py /opt/nemoclaw/backend.py
 COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent
 ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python PYTHONDONTWRITEBYTECODE=1 HOME=/sandbox
 RUN /opt/fabric/bin/python /opt/nemoclaw/bridge_contract.py > /opt/nemoclaw/bridge.json \
-    && /opt/fabric/bin/python -c 'import json, os; print(json.dumps({"fabric_revision": os.environ["FABRIC_REVISION"], "source_sha256": os.environ["FABRIC_SHA256"]}))' > /opt/nemoclaw/provenance.json
+    && /opt/fabric/bin/python -c 'import json, os; print(json.dumps({"fabric_revision": os.environ["FABRIC_REVISION"], "source_sha256": os.environ["FABRIC_SHA256"]}))' > /opt/nemoclaw/contract.json
 LABEL io.nemoclaw.fabric.reference="dummy"
 USER node
 HEALTHCHECK NONE
@@ -221,4 +221,5 @@ CMD ["serve", "--agent", "main"]
 
 FROM dummy AS reference-tests
 COPY image/fabric/test_reference.py image/fabric/test_protocol.py image/fabric/test_dummy_catalog.py image/fabric/dummy_backend.py /tests/
+ENV NEMOCLAW_REFERENCE_TESTS=1
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'

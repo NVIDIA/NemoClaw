@@ -119,7 +119,7 @@ fn gateway_documents_are_fresh_and_avoid_ports_and_subnets_in_use() {
         subnet: &chosen,
         image: "nc-live@sha256:abc",
         harness: "org.nemoclaw.dummy",
-        settings: Some(r#"{"reply": "dummy-reply"}"#),
+        settings: serde_json::json!({"reply": "dummy-reply"}).as_object(),
     });
     let with_settings: serde_json::Value = serde_saphyr::from_str(&with_settings).unwrap();
     assert_eq!(

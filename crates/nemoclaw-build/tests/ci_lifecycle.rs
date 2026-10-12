@@ -460,9 +460,10 @@ fn live_docker_loads_prebuilt_images_under_its_own_names_instead_of_building() {
             "{log}"
         );
     }
-    // Archive images this step does not use keep no shared name behind.
+    // Only the archive's own names are removed; a shared name another
+    // worktree's build holds stays.
     assert!(
-        log.lines()
+        !log.lines()
             .any(|line| line == "image rm nc-live-images:unneeded"),
         "{log}"
     );

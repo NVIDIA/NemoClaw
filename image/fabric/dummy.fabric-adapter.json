@@ -3,7 +3,7 @@
   "adapter_id": "org.nemoclaw.dummy",
   "adapter_kind": "python",
   "runner": {
-    "module": "dummy_backend"
+    "module": "backend"
   },
   "capabilities": {
     "cancellation": false,

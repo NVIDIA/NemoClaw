@@ -18,7 +18,9 @@ ROOT = Path("/opt/nemoclaw")
 
 
 def snapshot(root=ROOT):
-    provenance = json.loads((root / "provenance.json").read_text())
+    # Not provenance.json: the host reports that file's revision as the Fabric
+    # that validated a configuration, and Fabric validates nothing here.
+    contract = json.loads((root / "contract.json").read_text())
     descriptor_path = root / "dummy.fabric-adapter.json"
     adapters = [
         {
@@ -31,8 +33,8 @@ def snapshot(root=ROOT):
     return {
         "schema_version": 2,
         # The Fabric revision whose adapter contract the descriptor follows.
-        "fabric_revision": provenance["fabric_revision"],
-        "source_sha256": provenance["source_sha256"],
+        "fabric_revision": contract["fabric_revision"],
+        "source_sha256": contract["source_sha256"],
         "bridge": capabilities(HEALTH_CHECKS),
         "adapters": adapters,
         "targets": [],

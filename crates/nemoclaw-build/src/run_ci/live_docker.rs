@@ -198,7 +198,7 @@ fn prepare(
     let (target, harness) = live_images::agent(platform);
     let names = live_images::names(platform);
     match images {
-        Some(archive) => live_images::load(archive, &prefix, &names, &mut owned.images)?,
+        Some(archive) => live_images::load(archive, &prefix, platform, &names, &mut owned.images)?,
         None => {
             owned
                 .images
@@ -231,33 +231,36 @@ fn prepare(
         })
         .collect();
     let mut subnets = Vec::new();
-    let mut document_for =
-        |name: &str, image: &str, harness: &str, settings: Option<&str>| -> Result<PathBuf> {
-            let uid = live::uuid()?;
-            let subnet = live::free_subnet(&used, &subnets)?;
-            subnets.push(subnet.clone());
-            let path = inputs.join(format!("{name}.yaml"));
-            fs::write(
-                &path,
-                live::gateway_document(&GatewayInputs {
-                    name,
-                    uid: &uid,
-                    port: live::free_port()?,
-                    subnet: &subnet,
-                    image,
-                    harness,
-                    settings,
-                }),
-            )?;
-            owned.uids.push(uid);
-            Ok(path)
-        };
+    let mut document_for = |name: &str,
+                            image: &str,
+                            harness: &str,
+                            settings: Option<&serde_json::Map<String, serde_json::Value>>|
+     -> Result<PathBuf> {
+        let uid = live::uuid()?;
+        let subnet = live::free_subnet(&used, &subnets)?;
+        subnets.push(subnet.clone());
+        let path = inputs.join(format!("{name}.yaml"));
+        fs::write(
+            &path,
+            live::gateway_document(&GatewayInputs {
+                name,
+                uid: &uid,
+                port: live::free_port()?,
+                subnet: &subnet,
+                image,
+                harness,
+                settings,
+            }),
+        )?;
+        owned.uids.push(uid);
+        Ok(path)
+    };
     // The dummy reports native health, so its whole lifecycle completes.
     let lifecycle = document_for(
         "live-dummy",
         &dummy,
         "org.nemoclaw.dummy",
-        Some(r#"{"reply": "dummy-reply"}"#),
+        serde_json::json!({"reply": "dummy-reply"}).as_object(),
     )?;
     let mut document = |name: &str| document_for(name, &agent, harness, None);
     // Each gateway test refuses resources from an earlier run, so each gets

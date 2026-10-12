@@ -389,7 +389,7 @@ The container's Python process simulates model reconstruction and a credential; 
 
 nemoclaw-e2e's `dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle` test deploys the [reference dummy image](../build.md#reference-contract-image) through a managed Docker gateway.
 The dummy reports native health without Fabric, a model, or credentials, so apply completes its readiness check.
-The test checks plan, a successful bundled-CLI apply with supported health, an invocation that returns the configured `reply` setting, unchanged apply, export/reapply with the same runtime identity, and destroy retaining the workspace and gateway storage, after which the agent no longer answers.
+The test checks plan, a successful bundled-CLI apply with supported health, an invocation that returns the configured `reply` setting, unchanged apply, export/reapply with the same runtime identity, and destroy, after which Docker holds no sandbox containers or volumes but still holds the gateway's storage.
 It requests no inference and does not qualify a production adapter's health.
 
 Supply a verified bundle and an owned document like the gateway tests', with a fresh UID, free gateway port and subnet, the local dummy image by digest, `harness.kind: org.nemoclaw.dummy`, and a `harness.settings.reply` string:
@@ -401,11 +401,10 @@ cargo test -p nemoclaw-e2e --test integration \
   dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle -- --ignored --exact
 ```
 
-The test keeps its state in a private temporary directory that it deletes when it ends.
-A successful run retains the gateway's storage, initializer, and bridge; a failed run can also leave the gateway and sandbox running, and `nemoclaw destroy` cannot remove them without the deleted state.
-`cargo ci live-docker` removes every resource labeled with the document's UID after the suite.
-After a manual run, list and remove its objects with the UID-label commands in [Remove Retained Resources](../usage.md#remove-retained-resources).
-The test's state directory is temporary, so skip that procedure's destroy check; after a failed run, first stop the listed running containers with `docker container stop`.
+A successful run deletes its temporary state directory and retains the gateway's storage, initializer, and bridge.
+A failed run keeps the state directory and prints its path, because the gateway and sandbox may still be running; remove them with the bundle's `nemoclaw destroy --state-dir PATH`.
+`cargo ci live-docker` removes every resource labeled with the document's UID, and the gateway's sandbox objects, after the suite.
+To remove the retained storage after a manual run, follow [Remove Retained Resources](../usage.md#remove-retained-resources); after a successful run there is no state directory, so skip that procedure's destroy check.
 
 ## Docker Gateway Recovery
 

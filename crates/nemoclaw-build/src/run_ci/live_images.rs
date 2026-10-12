@@ -32,6 +32,14 @@ pub(super) fn names(platform: &str) -> [&'static str; 4] {
     [agent(platform).0, DUMMY, "proxy-a", "proxy-b"]
 }
 
+/// The platform's archive images that `used` does not name.
+fn unused(platform: &str, used: &[&str]) -> Vec<&'static str> {
+    names(platform)
+        .into_iter()
+        .filter(|name| !used.contains(name))
+        .collect()
+}
+
 /// The reference agent image, which reports native health without Fabric.
 pub(super) const DUMMY: &str = "dummy";
 
@@ -113,6 +121,7 @@ pub(super) fn build(platform: &str) -> Result<()> {
 pub(super) fn load(
     archive: &Path,
     prefix: &str,
+    platform: &str,
     names: &[&str],
     owned: &mut Vec<String>,
 ) -> Result<()> {
@@ -144,25 +153,29 @@ pub(super) fn load(
             .stderr(Stdio::null())
             .status();
     }
-    // The archive holds every live image; drop the shared names of those this
-    // step does not use, so loading leaves nothing it did not name.
-    let remaining = docker()
-        .args([
-            "image",
-            "ls",
-            "--format",
-            "{{.Repository}}:{{.Tag}}",
-            SHARED,
-        ])
-        .output()?;
-    for shared in String::from_utf8_lossy(&remaining.stdout).lines() {
-        if shared.starts_with(&format!("{SHARED}:")) {
-            let _ = docker()
-                .args(["image", "rm", shared])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-        }
+    // The archive holds every live image for the platform; drop the shared
+    // names of those this step does not use, and nothing else.
+    for name in unused(platform, names) {
+        let _ = docker()
+            .args(["image", "rm", &format!("{SHARED}:{name}")])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_step_drops_only_the_platform_archive_images_it_does_not_name() {
+        let target = agent("linux_amd64").0;
+        assert_eq!(
+            unused("linux_amd64", &[target]),
+            [DUMMY, "proxy-a", "proxy-b"]
+        );
+        assert!(unused("linux_amd64", &names("linux_amd64")).is_empty());
+    }
 }
