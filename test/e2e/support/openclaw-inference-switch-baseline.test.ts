@@ -72,6 +72,9 @@ it("keeps the public NVIDIA key out of the native switch baseline", async () => 
     }),
   ).rejects.toBe(stop);
   expect(required).toHaveBeenCalledExactlyOnceWith("NVIDIA_API_KEY");
+  const args = nemoclaw.mock.calls[0]![0];
+  const customDockerfile = args[args.indexOf("--from") + 1];
+  expect(fs.readFileSync(customDockerfile, "utf8")).toContain("ARG NEMOCLAW_MESSAGING_PLAN_B64=");
   const options = nemoclaw.mock.calls[0]![1];
   const environment = options.env;
   expect(environment.NEMOCLAW_PROVIDER).toBe("custom");
@@ -84,37 +87,39 @@ it("keeps the public NVIDIA key out of the native switch baseline", async () => 
   expect(options.redactionValues).toContain("openclaw-switch-baseline-credential");
 });
 
-it("closes the mock baseline when public key retrieval fails", async () => {
-  const close = vi.fn(async () => undefined);
-  vi.doMock("../live/openclaw-inference-switch-helpers.ts", async (importOriginal) => ({
-    ...(await importOriginal<object>()),
-    startMockOpenClawBaselineProvider: async () => ({ close }),
-  }));
-  const { progress, run } = await loadNativeSwitchRun();
-  const missingKey = new Error("NVIDIA_API_KEY unavailable");
-  const registered = new Map<string, () => unknown>();
-  await expect(
-    run({
-      artifacts: { target: { declare: vi.fn() } },
-      cleanup: {
-        trackDisposable: (name: string, dispose: () => unknown) => registered.set(name, dispose),
-        trackGateway: vi.fn(),
-        trackSandbox: vi.fn(),
-      },
-      host: { command: vi.fn() },
-      progress,
-      runtimeProvider: { requireAvailable: vi.fn() },
-      sandbox: { openshell: vi.fn() },
-      secrets: {
-        required: vi.fn(() => {
-          throw missingKey;
-        }),
-      },
-    }),
-  ).rejects.toBe(missingKey);
-  const dispose = registered.get("close baseline inference provider");
-  expect(dispose).toBeDefined();
-  expect(close).not.toHaveBeenCalled();
-  await dispose?.();
-  expect(close).toHaveBeenCalledOnce();
-});
+it.each([
+  {
+    label: "invalid",
+    required: () => "invalid-key",
+    expected: "NVIDIA_API_KEY must be a public NVIDIA Endpoints nvapi-* key",
+  },
+  {
+    label: "missing",
+    required: () => {
+      throw new Error("NVIDIA_API_KEY unavailable");
+    },
+    expected: "NVIDIA_API_KEY unavailable",
+  },
+])(
+  "rejects a $label NVIDIA key before starting the baseline provider",
+  async ({ required, expected }) => {
+    const startBaseline = vi.fn();
+    vi.doMock("../live/openclaw-inference-switch-helpers.ts", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../live/openclaw-inference-switch-helpers.ts")>()),
+      startMockOpenClawBaselineProvider: startBaseline,
+    }));
+    const { progress, run } = await loadNativeSwitchRun();
+    const getKey = vi.fn(required);
+    await expect(
+      run({
+        artifacts: { target: { declare: vi.fn() } },
+        cleanup: { trackDisposable: vi.fn() },
+        progress,
+        runtimeProvider: { requireAvailable: vi.fn() },
+        secrets: { required: getKey },
+      }),
+    ).rejects.toThrow(expected);
+    expect(getKey).toHaveBeenCalledExactlyOnceWith("NVIDIA_API_KEY");
+    expect(startBaseline).not.toHaveBeenCalled();
+  },
+);

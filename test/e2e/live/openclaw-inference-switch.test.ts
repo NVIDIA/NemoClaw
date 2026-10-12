@@ -277,6 +277,7 @@ function writeCustomOpenClawDockerfile(home: string): string {
     dockerfilePath,
     [
       `FROM ${baseImage}`,
+      "ARG NEMOCLAW_MESSAGING_PLAN_B64=",
       "ARG NEMOCLAW_TOOL_DISCLOSURE=progressive",
       "ENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}",
       `RUN node -e ${shellQuote(bakeRoute)}`,
@@ -1168,6 +1169,10 @@ test(
       scenarioLabel: "OpenClaw inference switch",
     });
 
+    const publicApiKey =
+      SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
+        ? requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"))
+        : null;
     const useMockBaseline =
       SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER ||
       (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1");
@@ -1179,10 +1184,6 @@ test(
     cleanup.trackDisposable("close baseline inference provider", async () => {
       await baselineProvider?.close();
     });
-    const publicApiKey =
-      SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
-        ? requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"))
-        : null;
     const baseline = baselineProvider
       ? mockBaselineInference(baselineProvider.baseUrl)
       : requireHostedInferenceConfig({
