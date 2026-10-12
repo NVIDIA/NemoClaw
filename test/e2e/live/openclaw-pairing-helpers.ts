@@ -504,13 +504,13 @@ function postPairingReply(text, channel) {
 const { issuePairingChallenge, upsertChannelPairingRequest } = await loadConversationRuntime();
 const envelope = await receiveSlackSocketEvent();
 const event = envelope?.payload?.event;
-if (!event || event.type !== "message" || !event.user || !event.channel) throw new Error("unexpected fake Slack envelope: " + JSON.stringify(envelope).slice(0, 400));
+if (!event || event.type !== "message" || !event.user || !event.channel || !envelope.payload?.team_id) throw new Error("unexpected fake Slack envelope: " + JSON.stringify(envelope).slice(0, 400));
 if (event.user !== process.env.SLACK_PAIRING_USER) throw new Error("unexpected fake Slack user: " + event.user);
 const result = await issuePairingChallenge({
   channel: "slack",
-  senderId: event.user,
+  senderId: "team:" + encodeURIComponent(envelope.payload.team_id) + ":user:" + encodeURIComponent(event.user),
   senderIdLine: "Slack user ID: " + event.user,
-  meta: { accountId: "default", channelId: event.channel, teamId: envelope.payload?.team_id || "" },
+  meta: { accountId: "default", channelId: event.channel, teamId: envelope.payload.team_id, senderId: event.user },
   upsertPairingRequest: async ({ id, meta }) => upsertChannelPairingRequest({ channel: "slack", id, accountId: "default", meta }),
   sendPairingReply: async (text) => { await postPairingReply(text, event.channel); },
 });
@@ -607,12 +607,16 @@ function buildPairingStateCommand(
   return `python3 -c ${shellQuote(PAIRING_STATE_PROBE_SOURCE)} ${shellQuote(query)} ${shellQuote(JSON.stringify(parameters))}`;
 }
 
+function pairingIdentity(channel: PairingChannel, user: string): string {
+  return channel === "slack" ? `team:${SLACK_PAIRING_TEAM}:user:${encodeURIComponent(user)}` : user;
+}
+
 export function buildPairingPendingCommand(
   channel: PairingChannel,
   code: string,
   user: string,
 ): string {
-  return buildPairingStateCommand("pending", channel, code, user);
+  return buildPairingStateCommand("pending", channel, code, pairingIdentity(channel, user));
 }
 
 export function buildPairingApproveCommand(channel: PairingChannel, code: string): string {
@@ -620,8 +624,7 @@ export function buildPairingApproveCommand(channel: PairingChannel, code: string
 }
 
 export function buildPairingAllowFromCommand(channel: PairingChannel, user: string): string {
-  const entry = channel === "slack" ? `team:${SLACK_PAIRING_TEAM}:user:${user}` : user;
-  return buildPairingStateCommand("allowed", channel, "", entry);
+  return buildPairingStateCommand("allowed", channel, "", pairingIdentity(channel, user));
 }
 
 export async function approveAndAssertPairing(options: {
