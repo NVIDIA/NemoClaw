@@ -756,7 +756,7 @@ describe("sandbox-create provider publication branches", () => {
         assert.match(invocations, /--policy .*\/policy\.[a-f0-9-]+\.yaml/u);
         assert.match(invocations, /-- env NEMOCLAW_HERMES_API_PORT=8642/u);
         assert.match(invocations, /MARKER=typed-boundary/u);
-        assert.match(invocations, new RegExp(`PWD=${tmpDir.replaceAll("/", "\\/")}`, "u"));
+        assert.ok(invocations.includes(`PWD=${fs.realpathSync(tmpDir)}/`));
         assert.ok(
           fs.existsSync(path.join(path.dirname(result.active.path), "active.json")),
           "the receipt transaction published active authority",
