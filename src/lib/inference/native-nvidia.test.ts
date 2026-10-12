@@ -34,6 +34,7 @@ function metadata(overrides: Record<string, unknown> = {}) {
 
 function adapter(overrides: Partial<OpenShellProviderAdapter> = {}): OpenShellProviderAdapter {
   return {
+    ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),
     importProviderProfile: vi.fn(() => ({ ok: true })),
     getProvider: vi.fn(async () => ({ ok: true, value: metadata() })),
     createProvider: vi.fn(async () => ({ ok: true })),
@@ -526,4 +527,30 @@ describe("native NVIDIA OpenShell provider", () => {
       /does not have its native NVIDIA inference provider attached[\s\S]*did not confirm removal/u,
     );
   });
+});
+
+it("does not publish credentials when native provider policy is unavailable", async () => {
+  const providerAdapter = adapter({
+    ensureProviderPolicyComposition: vi.fn<
+      OpenShellProviderAdapter["ensureProviderPolicyComposition"]
+    >(async () => ({
+      ok: false,
+      error: { kind: "command", reason: "conflict", message: "disabled by administrator" },
+    })),
+  });
+  await expect(
+    ensureNativeNvidiaProvider({
+      adapter: providerAdapter,
+      target,
+      credentialValue: "opaque-test-secret",
+      expected: {
+        schemaVersion: 1,
+        profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+        providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+        providerId: "provider-id",
+      },
+    }),
+  ).rejects.toThrow("disabled by administrator");
+  expect(providerAdapter.createProvider).not.toHaveBeenCalled();
+  expect(providerAdapter.updateProvider).not.toHaveBeenCalled();
 });

@@ -125,6 +125,49 @@ describe("config export command", () => {
     expect(notice).not.toHaveBeenCalled();
   });
 
+  describe("Gemini refusal (#12551)", () => {
+    beforeEach(async () => {
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      const { observeStableExportSource } = await vi.importActual<
+        typeof import("../../lib/actions/config/observe-export-source")
+      >("../../lib/actions/config/observe-export-source");
+      const { geminiSnapshot } = await import("../../lib/domain/config/export-source-test-fixture");
+      mocks.snapshotReader.read.mockResolvedValue(geminiSnapshot());
+      mocks.observeStableExportSource.mockImplementation(observeStableExportSource);
+    });
+
+    it.each([
+      ["alpha", "--output", "-"],
+      ["alpha", "--output", "/tmp/alpha.yaml"],
+      ["alpha", "--output", "/tmp/alpha.yaml", "--force"],
+    ])("rejects Gemini without rendering or writing YAML: %j", async (...args) => {
+      const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      await expect(ConfigExportCommand.run(args, process.cwd())).rejects.toThrow(
+        "V1 cannot consume this provider",
+      );
+      expect(stdout).not.toHaveBeenCalled();
+      expect(mocks.buildExportConfig).not.toHaveBeenCalled();
+      expect(mocks.renderCanonicalNemoClawConfig).not.toHaveBeenCalled();
+      expect(mocks.publishExportFile).not.toHaveBeenCalled();
+    });
+
+    it("reports an unsupported JSON error without replacing the output file", async () => {
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      process.exitCode = undefined;
+      await ConfigExportCommand.run(
+        ["alpha", "--output", "/tmp/alpha.yaml", "--force", "--json"],
+        process.cwd(),
+      );
+      expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({
+        error: { message: expect.stringContaining("V1 cannot consume this provider") },
+      });
+      expect(process.exitCode).not.toBe(0);
+      expect(mocks.buildExportConfig).not.toHaveBeenCalled();
+      expect(mocks.renderCanonicalNemoClawConfig).not.toHaveBeenCalled();
+      expect(mocks.publishExportFile).not.toHaveBeenCalled();
+    });
+  });
+
   it("rejects JSON on YAML stdout before reading source state (#10938)", async () => {
     await expect(
       ConfigExportCommand.run(["alpha", "--output", "-", "--json"], process.cwd()),

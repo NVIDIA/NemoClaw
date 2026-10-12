@@ -75,6 +75,20 @@ function connectionRefused() {
 }
 
 describe("inference health", () => {
+  it("allows Ultra reasoning before the health acknowledgement", () => {
+    let payload: Record<string, unknown> = {};
+    const result = probeRemoteProviderHealth("nvidia-prod", {
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+      getCredentialImpl: () => "test-key",
+      runCurlProbeImpl: (argv) => {
+        payload = JSON.parse(curlArgValue(argv, "-d")!);
+        return httpOk();
+      },
+    });
+    expect(result?.ok).toBe(true);
+    expect(payload.max_tokens).toBe(256);
+  });
+
   describe("probeRemoteProviderHealth — Bearer-auth chat-completions family", () => {
     it("invokes chat-completions for openai-api and never leaks the key into argv", () => {
       vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", "90");

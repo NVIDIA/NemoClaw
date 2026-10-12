@@ -48,12 +48,21 @@ When you create another Deep Agents sandbox, choose a distinct sandbox name in t
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
-When the default port is already held by another sandbox, `$$nemoclaw onboard` scans ports `18789` through `18799` and uses the next free port.
+When the default port is already held by another sandbox, `$$nemoclaw onboard` scans ports `18789` through `18799` and uses the next verified available port.
 </AgentOnly>
 
 <AgentOnly variant="hermes">
 Each Hermes sandbox also needs its own OpenAI-compatible API port.
-When creating a Hermes sandbox, if another sandbox or a host listener already holds the default API port `8642`, `$$nemoclaw onboard` scans ports `8642` through `8652`, uses the next free port, and records it for the sandbox.
+When creating a Hermes sandbox, if another sandbox or a host listener already holds the default API port `8642`, `$$nemoclaw onboard` scans ports `8642` through `8652`, uses the next verified available port, and records it for the sandbox.
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+When allocating ports for a new sandbox, NemoClaw skips candidates whose OpenShell forward ownership cannot be verified.
+It can select a later candidate only when that port is verified available.
+If no candidate is available, the error lists each blocked port, including a preferred dashboard port outside the default range.
+When every candidate has unverified ownership, inspect ownership before rerunning onboarding.
+For mixed failures, the error includes both verification recovery and the existing occupied-port remedies.
+Refer to [Port already in use](../../reference/troubleshooting#port-already-in-use) for those recovery actions.
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
@@ -73,7 +82,7 @@ A later onboarding run that uses a different `NEMOCLAW_GATEWAY_PORT` or `--contr
 <AgentOnly variant="openclaw,hermes">
 Repeated onboarding and resume keep the sandbox's registered dashboard port and restore a missing forward on that port.
 If the port is already bound, NemoClaw verifies that the listener is the exact OpenShell forward for that sandbox and reuses it without restarting the sandbox.
-Ports registered to another sandbox, foreign listeners, or unverified ownership stop onboarding with a port conflict error.
+For that registered port, another sandbox's registration, a foreign listener, or unverified ownership still stops onboarding with a port conflict error.
 </AgentOnly>
 
 <AgentOnly variant="hermes">
@@ -95,8 +104,8 @@ Gateway cleanup is scoped by sandbox name and port.
 <AgentOnly variant="openclaw,hermes">
 
 ```bash
-$$nemoclaw onboard                                      # first sandbox uses 18789
-$$nemoclaw onboard                                      # second sandbox uses the next free port, such as 18790
+$$nemoclaw onboard                                      # first sandbox uses 18789 when verified available
+$$nemoclaw onboard                                      # second sandbox uses the next verified available port, such as 18790
 ```
 
 To choose a specific port, pass `--control-ui-port`:

@@ -3,7 +3,7 @@
 
 import { isDeepStrictEqual } from "node:util";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
-import { registryEntryGatewayPort } from "../gateway-registry";
+import { registryEntryGatewayPort } from "../../onboard/gateway-binding/identity";
 import type { OnboardCheckpoint } from "../onboard-checkpoint-types";
 import {
   compareAndSetSandboxLifecycleGeneration,

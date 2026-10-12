@@ -35,7 +35,16 @@ export const MIN_PROBE_REPLY_TOKENS = 16;
 export const GEMINI_PROBE_REPLY_TOKENS = 256;
 
 /** Returns the Chat Completions probe budget for a provider. */
-export function resolveProbeReplyTokens(provider: string | null | undefined): number {
+export function resolveProbeReplyTokens(
+  provider: string | null | undefined,
+  model?: string | null,
+): number {
+  // Ultra can consume the 16-token floor on reasoning before its acknowledgement.
+  if (
+    (provider === "nvidia-prod" || provider === "nvidia-nim") &&
+    model === "nvidia/nemotron-3-ultra-550b-a55b"
+  )
+    return 256;
   return provider === "gemini-api" ? GEMINI_PROBE_REPLY_TOKENS : MIN_PROBE_REPLY_TOKENS;
 }
 

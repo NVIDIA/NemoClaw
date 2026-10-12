@@ -388,9 +388,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(outputLines).toContain(`SOURCED_${name}=1`);
       expect(envFileLines).toContain(`export ${name}=1`);
     }
-    expect(envFileLines).toContain(
-      "export NEMOCLAW_ATTACHED_PROVIDER_API_KEY=nemoclaw-openshell-provider",
-    );
+    expect(envFileLines).toContain("unset NEMOCLAW_ATTACHED_PROVIDER_API_KEY");
     expect(envFileLines).toContain("unset ALL_PROXY all_proxy OPENAI_PROXY");
     expect(
       outputLines.filter((line) => /^(?:RUNTIME|SOURCED)_(?:NO_PROXY|no_proxy)=/.test(line)),
@@ -567,6 +565,49 @@ describe("LangChain Deep Agents Code image contracts", () => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it.each(["openshell:resolve:env:v3_NVIDIA_INFERENCE_API_KEY", undefined])(
+    "binds the restored DCode credential variable only to the current native placeholder [%#] (#12822)",
+    (placeholder) => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-native-alias-"));
+      try {
+        const { wrapperPath } = makeWrapperFixture(tempDir);
+        fs.writeFileSync(
+          wrapperPath,
+          fs
+            .readFileSync(wrapperPath, "utf8")
+            .replace(
+              "echo dcode-stub-ran",
+              'printf "%s" "${NEMOCLAW_ATTACHED_PROVIDER_API_KEY-absent}"',
+            ),
+        );
+        const result = runWrapper(wrapperPath, ["-n", "PONG"], {
+          NVIDIA_INFERENCE_API_KEY: placeholder,
+          NEMOCLAW_ATTACHED_PROVIDER_API_KEY: "nemoclaw-openshell-provider",
+        });
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toBe(placeholder ?? "absent");
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([`nvapi-${"a".repeat(64)}`, "openshell:resolve:env:OTHER_TOKEN"])(
+    "rejects an unsafe native alias source before starting dcode [%#] (#12822)",
+    (value) => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-native-alias-denial-"));
+      try {
+        const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+        const result = runWrapper(wrapperPath, ["-n", "PONG"], { NVIDIA_INFERENCE_API_KEY: value });
+        expect(result.status).not.toBe(0);
+        expect(fs.existsSync(ranMarker)).toBe(false);
+        expect(result.stderr).not.toContain(value);
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("loads the agent-native MCP source through the hardened runtime boundary", () => {
     const wrapper = readAgentFile("dcode-wrapper.sh");
@@ -989,7 +1030,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     "references_native_nvidia_route",
     "https://integrate\\.api\\.nvidia\\.com/v1",
     "references_attached_provider_placeholder_key",
-    'api_key_env[[:space:]]*=[[:space:]]*"NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
+    'api_key_env[[:space:]]*=[[:space:]]*"NVIDIA_INFERENCE_API_KEY"',
     "configured_inference_route_contract",
     "classify_headless_output",
     '"schema_version", "command", "data"',
@@ -1124,7 +1165,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "native-nvidia",
       [
         'base_url = "https://integrate.api.nvidia.com/v1"',
-        'api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
+        'api_key_env = "NVIDIA_INFERENCE_API_KEY"',
       ].join("\n"),
     ],
   ])("selects the %s Deep Agents Code inference route contract", (expected, config) => {
@@ -1146,7 +1187,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       [
         'base_url = "https://inference.local/v1"',
         'base_url = "https://integrate.api.nvidia.com/v1"',
-        'api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
+        'api_key_env = "NVIDIA_INFERENCE_API_KEY"',
       ].join("\n"),
     ],
   ])("rejects an inconsistent Deep Agents Code route contract: %s", (_case, config) => {

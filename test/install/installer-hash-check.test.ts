@@ -56,6 +56,8 @@ const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
 );
+const OBSOLETE_NPM_REPLACEMENT_DIGEST =
+  "d6a9924eae784af912bce30dc50884494ec547fbec6aab56f23734f72e3a234c";
 // Retain the reviewed 0.0.116 cleanup fixture across the 0.1.2 migration.
 const NPM_CLEANUP_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "test/fixtures/openshell-brev-npm-cleanup.sh"),
@@ -854,6 +856,22 @@ function parseNpmReplacement(source: string, digest: string, trustedDigest = dig
 }
 
 describe("installer hash verification", () => {
+  // source-shape-contract: security -- Exact absence of the retired Brev digest prevents a stale installer template from regaining authorization
+  it("does not base-trust the obsolete Brev npm replacement digest", () => {
+    const parserSource = fs.readFileSync(
+      path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts"),
+      "utf8",
+    );
+    expect(parserSource).not.toContain(`"${OBSOLETE_NPM_REPLACEMENT_DIGEST}"`);
+
+    const untrustedTemplate = `${BREV_TEMPLATE}\n# Exercise the parser's current trusted-digest diagnostic.\n`;
+    const result = parseNpmReplacement(untrustedTemplate, OBSOLETE_NPM_REPLACEMENT_DIGEST);
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("Brev launchable operational template is not base-trusted");
+    expect(result.stderr).not.toContain(OBSOLETE_NPM_REPLACEMENT_DIGEST);
+  });
+
   describe("DCode bootstrap prerequisite", () => {
     it("admits the reviewed npm replacement only after its trust prerequisite", () => {
       const before = parseNpmReplacement(

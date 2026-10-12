@@ -197,6 +197,115 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(approveCommand).not.toContain('"abc$(touch /tmp/e2e-should-not-run)"');
   });
 
+  it.each([
+    ["slack", "team:T3730E2E:user:U3730E2E", "U3730E2E", 0],
+    ["slack", "team:TOTHER:user:U3730E2E", "U3730E2E", 1],
+    ["slack", "U3730E2E", "U3730E2E", 1],
+    ["discord", "1005536447329222676", "1005536447329222676", 0],
+  ] as const)(
+    "checks the exact %s pending and approval identity %s in SQLite",
+    (channel, storedEntry, user, expectedStatus) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pairing-approval-state-"));
+      try {
+        const database = path.join(tmp, "openclaw.sqlite");
+        const setup = spawnSync(
+          "python3",
+          [
+            "-c",
+            [
+              "import sqlite3, sys",
+              "db = sqlite3.connect(sys.argv[1])",
+              "db.execute('CREATE TABLE channel_pairing_allow_entries (channel_key TEXT, entry TEXT)')",
+              "db.execute('INSERT INTO channel_pairing_allow_entries VALUES (?, ?)', sys.argv[2:])",
+              "db.execute('CREATE TABLE channel_pairing_requests (channel_key TEXT, code TEXT, request_id TEXT)')",
+              "db.execute('INSERT INTO channel_pairing_requests VALUES (?, ?, ?)', (sys.argv[2], 'CODE1234', sys.argv[3]))",
+              "db.commit()",
+              "db.close()",
+            ].join("\n"),
+            database,
+            channel,
+            storedEntry,
+          ],
+          { encoding: "utf8" },
+        );
+        expect(setup.status, setup.stderr).toBe(0);
+        const pending = spawnSync(
+          "sh",
+          [
+            "-c",
+            buildPairingPendingCommand(channel, "CODE1234", user).replace(
+              "/sandbox/.openclaw/state/openclaw.sqlite",
+              database,
+            ),
+          ],
+          { encoding: "utf8" },
+        );
+        expect(pending.status, pending.stderr).toBe(expectedStatus);
+        const approved = spawnSync(
+          "sh",
+          [
+            "-c",
+            buildPairingAllowFromCommand(channel, user).replace(
+              "/sandbox/.openclaw/state/openclaw.sqlite",
+              database,
+            ),
+          ],
+          { encoding: "utf8" },
+        );
+        expect(approved.status, approved.stderr).toBe(expectedStatus);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(["T3730E2E", "TOTHER"])(
+    "issues a Slack request scoped to the event workspace %s",
+    (teamId) => {
+      const start = SLACK_PAIRING_SCRIPT.indexOf(
+        "const { issuePairingChallenge, upsertChannelPairingRequest } = await loadConversationRuntime();",
+      );
+      const probe = SLACK_PAIRING_SCRIPT.slice(start, SLACK_PAIRING_SCRIPT.lastIndexOf("\nNODE"));
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: `
+async function loadConversationRuntime() {
+  return {
+    issuePairingChallenge: async (params) => {
+      const result = await params.upsertPairingRequest({ id: params.senderId, meta: params.meta });
+      await params.sendPairingReply(params.senderIdLine);
+      return result;
+    },
+    upsertChannelPairingRequest: async (params) => {
+      console.log("REQUEST " + JSON.stringify(params));
+      return { code: "CODE1234", created: true };
+    },
+  };
+}
+async function receiveSlackSocketEvent() {
+  return ${JSON.stringify({ payload: { team_id: teamId, event: { type: "message", user: "U3730E2E", channel: "D3730E2E" } } })};
+}
+async function postPairingReply() {}
+${probe}
+`,
+        encoding: "utf8",
+        env: { ...process.env, SLACK_PAIRING_USER: "U3730E2E" },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const request = result.stdout.split("\n").find((line) => line.startsWith("REQUEST "));
+      expect(JSON.parse(request?.slice("REQUEST ".length) ?? "null")).toEqual({
+        channel: "slack",
+        id: `team:${teamId}:user:U3730E2E`,
+        accountId: "default",
+        meta: {
+          accountId: "default",
+          channelId: "D3730E2E",
+          teamId,
+          senderId: "U3730E2E",
+        },
+      });
+    },
+  );
+
   it("loads the managed OpenClaw package without starting a child shell", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-managed-root-"));
     try {

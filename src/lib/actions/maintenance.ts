@@ -3,22 +3,15 @@
 
 import path from "node:path";
 
-import { dockerListImagesFormat, dockerRmi } from "../adapters/docker";
 import { CLI_NAME } from "../cli/branding";
 import { GATEWAY_PORT } from "../core/ports";
-import { prompt as askPrompt } from "../credentials/store";
 import { formatFailedBackupItems } from "../domain/backup-failure";
-import {
-  type GarbageCollectImagesOptions,
-  normalizeGarbageCollectImagesOptions,
-} from "../domain/lifecycle/options";
-import { findOrphanedSandboxImages, parseSandboxImageRows } from "../domain/maintenance/images";
+import type { GarbageCollectImagesOptions } from "../domain/lifecycle/options";
 import {
   classifyOrphanedRegistrySandboxes,
   orphanedRegistryRemediation,
   orphanedRegistrySummary,
 } from "../domain/maintenance/orphan-detection";
-import { SANDBOX_IMAGE_REPOS } from "../domain/sandbox/image-tag";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
@@ -31,6 +24,7 @@ import {
   defaultPortableStateDir,
   withPortableHostFence,
 } from "../state/portable-uninstall-retirement";
+import { garbageCollectImagesWithoutPortableAuthority } from "./maintenance/gc";
 import * as snapshotBackup from "./sandbox/snapshot/backup-authority";
 import {
   backupStartedSandboxState,
@@ -528,85 +522,11 @@ export async function backupAllUnderPortableHostFence(
 export async function garbageCollectImages(
   options: string[] | GarbageCollectImagesOptions = {},
 ): Promise<void> {
-  return withHermesPortableMaintenanceAdmission("gc", () =>
-    garbageCollectImagesWithoutPortableAuthority(options),
+  // Reject unsupported state before even listing host images. The same check
+  // runs again inside deletion admission after confirmation to cover changes
+  // that occur while the prompt is open.
+  assertNoHermesPortableHostAuthority(defaultPortableStateDir(process.env), "gc");
+  return garbageCollectImagesWithoutPortableAuthority(options, (operation) =>
+    withHermesPortableMaintenanceAdmission("gc", async () => await operation()),
   );
-}
-
-async function garbageCollectImagesWithoutPortableAuthority(
-  options: string[] | GarbageCollectImagesOptions = {},
-): Promise<void> {
-  const normalized = normalizeGarbageCollectImagesOptions(options);
-  const dryRun = normalized.dryRun === true;
-  const skipConfirm = normalized.yes === true || normalized.force === true;
-
-  let imagesOutput = "";
-  try {
-    // Scan every sandbox image repo, not just sandbox-from; see
-    // SANDBOX_IMAGE_REPOS for why local prebuilds were missed (#6301).
-    imagesOutput = SANDBOX_IMAGE_REPOS.map((repo) =>
-      dockerListImagesFormat(repo, "{{.Repository}}:{{.Tag}}\t{{.Size}}"),
-    ).join("\n");
-  } catch {
-    console.error("  Failed to query Docker images. Is Docker running?");
-    process.exit(1);
-  }
-
-  const allImages = parseSandboxImageRows(imagesOutput);
-
-  if (allImages.length === 0) {
-    console.log("  No sandbox images found on the host.");
-    return;
-  }
-
-  const { sandboxes } = registry.listSandboxes();
-  const orphans = findOrphanedSandboxImages(allImages, sandboxes);
-
-  if (orphans.length === 0) {
-    console.log(`  All ${allImages.length} sandbox image(s) are in use. Nothing to clean up.`);
-    return;
-  }
-
-  console.log(`  Found ${orphans.length} orphaned sandbox image(s):\n`);
-  for (const img of orphans) {
-    console.log(`    ${img.tag}  ${D}(${img.size})${R}`);
-  }
-  console.log("");
-
-  if (dryRun) {
-    console.log(`  --dry-run: would remove ${orphans.length} image(s).`);
-    return;
-  }
-
-  if (!skipConfirm) {
-    const answer = await askPrompt(`  Remove ${orphans.length} orphaned image(s)? [y/N]: `);
-    if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
-      console.log("  Cancelled.");
-      return;
-    }
-  }
-
-  let removed = 0;
-  let failed = 0;
-  for (const img of orphans) {
-    const rmiResult = dockerRmi(img.tag, {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "pipe"],
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    if (rmiResult.status === 0) {
-      console.log(`  ${G}✓${R} Removed ${img.tag}`);
-      removed++;
-    } else {
-      const details = `${rmiResult.stderr || rmiResult.stdout || ""}`.trim();
-      console.error(`  ${YW}⚠${R} Failed to remove ${img.tag}${details ? `: ${details}` : ""}`);
-      failed++;
-    }
-  }
-
-  console.log("");
-  if (removed > 0) console.log(`  ${G}✓${R} Removed ${removed} orphaned image(s).`);
-  if (failed > 0) console.log(`  ${YW}⚠${R} Failed to remove ${failed} image(s).`);
-  if (failed > 0) process.exit(1);
 }

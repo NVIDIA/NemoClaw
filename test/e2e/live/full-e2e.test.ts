@@ -47,6 +47,7 @@ import {
 } from "../fixtures/openclaw-agent-output.ts";
 import { buildOpenClawFirstTurnLatencyEvidence } from "./agent-turn-latency-helpers.ts";
 import {
+  buildFullE2eSandboxInferenceCommand,
   FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
@@ -71,6 +72,12 @@ import {
   agentReplyContainsToken,
   parseOpenClawGatewayModelRun,
 } from "./openclaw-inference-switch-helpers.ts";
+import {
+  PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
+  readPublicNvidiaSwitchAttachmentEvidence,
+} from "./public-nvidia-switch-provider.ts";
+import { createCliOpenShellGatewayReuseObserver } from "../../../src/lib/adapters/openshell/gateway-reuse-cli.ts";
+import type { OpenShellGatewayReuseObservation } from "../../../src/lib/adapters/openshell/gateway-reuse.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const FULL_E2E_TARGET_ID = process.env.E2E_TARGET_ID ?? "full-e2e";
@@ -131,6 +138,61 @@ async function repoNemoclaw(
     env: env(extraEnv),
     timeoutMs,
   });
+}
+
+type GatewayRegistrationCapture = Readonly<{
+  result: ShellProbeResult;
+  registration: string | null;
+  healthy: boolean;
+}>;
+
+function canonicalObservedGatewayRegistration(
+  observation: OpenShellGatewayReuseObservation,
+  gatewayName: string,
+): string | null {
+  return observation.namedMetadata &&
+    observation.namedEndpoint &&
+    typeof observation.namedActive === "boolean"
+    ? JSON.stringify({
+        name: gatewayName,
+        endpoint: observation.namedEndpoint,
+        active: observation.namedActive,
+      })
+    : null;
+}
+
+async function captureGatewayRegistration(
+  host: HostCliClient,
+  artifactName: string,
+): Promise<GatewayRegistrationCapture> {
+  let latestResult: ShellProbeResult | null = null;
+  const childEnv = env();
+  const observation = await createCliOpenShellGatewayReuseObserver(async (args, options) => {
+    const result = await host.command(host.openshellCommandPath, args, {
+      artifactName: args[0] === "gateway" ? artifactName : `${artifactName}-status`,
+      env: options.env ?? childEnv,
+      timeoutMs: options.timeout,
+    });
+    latestResult = result;
+    return {
+      status: result.exitCode,
+      output: resultText(result),
+      stdout: result.stdout,
+      stderr: result.stderr,
+      signal: result.signal,
+      ...(result.timedOut
+        ? { error: Object.assign(new Error("Gateway probe timed out"), { code: "ETIMEDOUT" }) }
+        : {}),
+    };
+  }, childEnv).observeGatewayReuse({
+    target: { kind: "named", gatewayName: gateway.env.OPENSHELL_GATEWAY },
+  });
+  const result = latestResult!;
+  return {
+    result,
+    registration: canonicalObservedGatewayRegistration(observation, gateway.env.OPENSHELL_GATEWAY),
+    healthy: observation.healthy,
+  };
 }
 
 async function readNativeStateDoctor(sandbox: SandboxClient, artifactName: string) {
@@ -378,6 +440,7 @@ console.log(JSON.stringify({
 async function runOpenClawLaunchTurns(input: {
   host: HostCliClient;
   model: string;
+  logicalProvider: string;
   redactionValues: string[];
   sandbox: SandboxClient;
 }): Promise<void> {
@@ -418,7 +481,7 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       timeoutMs: 30_000,
     },
   );
-  const nativeModel = buildNativeModelRestartFixture(input.model);
+  const nativeModel = buildNativeModelRestartFixture(input.model, input.logicalProvider);
   const editNativeModel = await input.sandbox.exec(
     SANDBOX_NAME,
     ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "patch", "--stdin"],
@@ -901,6 +964,7 @@ test(
         "verify native configuration across restart and launch",
         "exercise native plugin package and update lifecycle",
         "inspect runtime logs and security posture",
+        "reuse the retained external gateway for fresh onboarding",
         "remove full-E2E sandbox",
       ],
     },
@@ -948,7 +1012,12 @@ test(
         "sandbox appears in list/status and has policy/inference configuration",
         "native OpenClaw install, invoke, update, self-update, restart, discovery, and removal are not intercepted",
         "an unregistered native-home file survives the exercised native lifecycle",
-        "direct hosted inference and sandbox inference.local both respond",
+        "direct hosted inference and the sandbox's configured inference route both respond",
+        ...(USE_PREINSTALLED_LAUNCHABLE
+          ? [
+              "fresh same-agent onboarding reuses the exact retained external gateway registration and restores inference",
+            ]
+          : []),
         "sandbox state contains neither auth-profiles.json nor secret-shaped credential values",
         ...(process.platform === "linux"
           ? [
@@ -994,6 +1063,7 @@ test(
         host.cleanupSandbox(SANDBOX_NAME, {
           artifactName: "cleanup-nemoclaw-destroy",
           env: env(),
+          preserveGatewayRegistration: USE_PREINSTALLED_LAUNCHABLE,
           redactionValues: [hosted.apiKey],
           timeoutMs: 120_000,
         }),
@@ -1141,14 +1211,29 @@ test(
       },
     );
 
-    const inference = await sandbox.openshell(["inference", "get"], {
-      artifactName: "phase-3-openshell-inference-get",
+    const nativeAttachment = await readPublicNvidiaSwitchAttachmentEvidence({
+      artifactName: "phase-3-native-nvidia-provider-attachment",
       env: env(),
-      timeoutMs: 60_000,
+      logicalProvider: hosted.providerName,
+      receipt: getSandbox(SANDBOX_NAME)?.nativeNvidiaProviderAttachment,
+      sandbox,
+      sandboxName: SANDBOX_NAME,
     });
+    const inference =
+      nativeAttachment === null
+        ? await sandbox.openshell(["inference", "get"], {
+            artifactName: "phase-3-openshell-inference-get",
+            env: env(),
+            timeoutMs: 60_000,
+          })
+        : null;
     expect(
-      inference.exitCode === 0 && resultText(inference).includes(hosted.model),
-      resultText(inference),
+      inference !== null
+        ? inference.exitCode === 0 && resultText(inference).includes(hosted.model)
+        : nativeAttachment === PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
+      inference !== null
+        ? resultText(inference)
+        : (nativeAttachment ?? "missing native attachment"),
     ).toBe(true);
 
     const policy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
@@ -1182,17 +1267,7 @@ test(
         run: (availabilityAttempt) =>
           sandbox.exec(
             SANDBOX_NAME,
-            [
-              "curl",
-              "-fsS",
-              "--max-time",
-              "90",
-              "https://inference.local/v1/chat/completions",
-              "-H",
-              "Content-Type: application/json",
-              "--data-raw",
-              attempt.requestBody,
-            ],
+            buildFullE2eSandboxInferenceCommand(attempt.requestBody, hosted.providerName),
             {
               artifactName: `${attempt.artifactName}-availability-${availabilityAttempt}`,
               captureLimitBytes: FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
@@ -1238,7 +1313,13 @@ test(
 
     progress.phase("verify native configuration across restart and launch");
     await (process.platform === "linux"
-      ? runOpenClawLaunchTurns({ host, model: hosted.model, redactionValues, sandbox })
+      ? runOpenClawLaunchTurns({
+          host,
+          model: hosted.model,
+          logicalProvider: hosted.providerName,
+          redactionValues,
+          sandbox,
+        })
       : Promise.resolve());
 
     progress.phase("exercise native plugin package and update lifecycle");
@@ -1274,16 +1355,141 @@ test(
       ? await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "openclaw")
       : null;
 
+    progress.phase("reuse the retained external gateway for fresh onboarding");
+    const retainedGatewayEvidence = USE_PREINSTALLED_LAUNCHABLE
+      ? await (async () => {
+          const beforeDestroy = await captureGatewayRegistration(
+            host,
+            "phase-7-gateway-registration-before-destroy",
+          );
+          const destroy = await repoNemoclaw(
+            host,
+            [SANDBOX_NAME, "destroy", "--yes", "--no-cleanup-gateway"],
+            "phase-7-destroy-with-retained-gateway",
+          );
+          const afterDestroy = await captureGatewayRegistration(
+            host,
+            "phase-7-gateway-registration-after-destroy",
+          );
+          const onboard = await host.command(
+            "nemoclaw",
+            [
+              "onboard",
+              "--fresh",
+              "--non-interactive",
+              "--yes",
+              "--yes-i-accept-third-party-software",
+            ],
+            {
+              artifactName: "phase-7-onboard-with-retained-gateway",
+              env: env({ ...hosted.env, NEMOCLAW_AGENT: "openclaw" }),
+              redactionValues,
+              timeoutMs: INSTALL_TIMEOUT_MS,
+            },
+          );
+          const status = await repoNemoclaw(
+            host,
+            [SANDBOX_NAME, "status"],
+            "phase-7-status-after-retained-gateway-onboard",
+          );
+          const inference = await runFullE2eInferenceProbe(hosted.model, async (attempt) =>
+            runFullE2eInferenceCommand({
+              onEvidence: (evidence) =>
+                retainFullE2eInferenceAvailability(attempt.attempt, evidence, () =>
+                  artifacts.writeJson(
+                    `retained-${attempt.artifactName}-availability.json`,
+                    evidence,
+                  ),
+                ),
+              run: (availabilityAttempt) =>
+                sandbox.exec(
+                  SANDBOX_NAME,
+                  buildFullE2eSandboxInferenceCommand(attempt.requestBody, hosted.providerName),
+                  {
+                    artifactName: `retained-${attempt.artifactName}-availability-${availabilityAttempt}`,
+                    captureLimitBytes: FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
+                    env: env(),
+                    redactionValues,
+                    timeoutMs: 120_000,
+                  },
+                ),
+            }),
+          );
+          const afterOnboard = await captureGatewayRegistration(
+            host,
+            "phase-7-gateway-registration-after-onboard",
+          );
+          const finalInferenceAttempt = inference.attempts.at(-1)?.result ?? null;
+          return {
+            afterDestroy,
+            afterOnboard,
+            beforeDestroy,
+            destroy,
+            finalInferenceAttempt,
+            inferenceOutcome: inference.outcome,
+            onboard,
+            status,
+          };
+        })()
+      : null;
+
     progress.phase("remove full-E2E sandbox");
-    await host.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "verify-cleanup-nemoclaw-destroy",
-      env: env(),
-      redactionValues,
-      timeoutMs: 120_000,
-    });
+    const finalDestroy = USE_PREINSTALLED_LAUNCHABLE
+      ? await host.destroySandbox(SANDBOX_NAME, {
+          artifactName: "verify-cleanup-nemoclaw-destroy",
+          env: env(),
+          preserveGatewayRegistration: true,
+          redactionValues,
+          timeoutMs: 120_000,
+        })
+      : null;
+    await (USE_PREINSTALLED_LAUNCHABLE
+      ? Promise.resolve()
+      : host.cleanupSandbox(SANDBOX_NAME, {
+          artifactName: "verify-cleanup-nemoclaw-destroy",
+          env: env(),
+          redactionValues,
+          timeoutMs: 120_000,
+        }));
+    const finalGatewayRegistration = USE_PREINSTALLED_LAUNCHABLE
+      ? await captureGatewayRegistration(host, "phase-8-gateway-registration-after-cleanup")
+      : null;
     const registry = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
     const registryText = fs.existsSync(registry) ? fs.readFileSync(registry, "utf8") : "";
-    expect(registryText).not.toContain(SANDBOX_NAME);
+    const retainedRegistration = retainedGatewayEvidence?.beforeDestroy.registration ?? null;
+    expect(
+      !registryText.includes(SANDBOX_NAME) &&
+        (!retainedGatewayEvidence ||
+          (retainedGatewayEvidence.beforeDestroy.result.exitCode === 0 &&
+            retainedRegistration !== null &&
+            retainedGatewayEvidence.destroy.exitCode === 0 &&
+            retainedGatewayEvidence.afterDestroy.result.exitCode === 0 &&
+            retainedGatewayEvidence.afterDestroy.registration === retainedRegistration &&
+            retainedGatewayEvidence.onboard.exitCode === 0 &&
+            retainedGatewayEvidence.status.exitCode === 0 &&
+            retainedGatewayEvidence.inferenceOutcome === "passed" &&
+            retainedGatewayEvidence.finalInferenceAttempt?.exitCode === 0 &&
+            retainedGatewayEvidence.afterOnboard.result.exitCode === 0 &&
+            retainedGatewayEvidence.afterOnboard.registration === retainedRegistration &&
+            finalDestroy?.exitCode === 0 &&
+            finalGatewayRegistration?.result.exitCode === 0 &&
+            finalGatewayRegistration.healthy &&
+            finalGatewayRegistration.registration === retainedRegistration)),
+      [
+        retainedGatewayEvidence?.beforeDestroy.result,
+        retainedGatewayEvidence?.destroy,
+        retainedGatewayEvidence?.afterDestroy.result,
+        retainedGatewayEvidence?.onboard,
+        retainedGatewayEvidence?.status,
+        retainedGatewayEvidence?.finalInferenceAttempt,
+        retainedGatewayEvidence?.afterOnboard.result,
+        finalDestroy,
+        finalGatewayRegistration?.result,
+      ]
+        .filter((result): result is ShellProbeResult => result !== null && result !== undefined)
+        .map(resultText)
+        .join("\n"),
+    ).toBe(true);
 
     await artifacts.target.complete({
       id: FULL_E2E_TARGET_ID,

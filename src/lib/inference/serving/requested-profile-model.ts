@@ -3,7 +3,8 @@
 
 import { loadServingCatalog } from "./catalog-loader.js";
 import { NEMOCLAW_SERVING_PRESET_ENV } from "./managed-cluster-discovery.js";
-import type { CompiledServingCatalog } from "./types.js";
+import { servingProfileProvenance } from "./profile-provenance.js";
+import type { CompiledServingCatalog, ServingProfileProvenance } from "./types.js";
 
 export { NEMOCLAW_SERVING_PRESET_ENV };
 
@@ -11,6 +12,7 @@ export { NEMOCLAW_SERVING_PRESET_ENV };
 export interface RequestedServingProfileModel {
   readonly presetId: string;
   readonly backend: string;
+  readonly provenance?: ServingProfileProvenance;
   /** Alias the recipe pins with --served-model-name, so what /v1/models reports. */
   readonly servedName: string;
   /** Weights the recipe downloads, so what a reporting endpoint gives as the root. */
@@ -30,7 +32,13 @@ export function servingProfileModel(
   const spec = recipes[0]!.spec;
   const servedName = typeof spec.model.servedName === "string" ? spec.model.servedName.trim() : "";
   return servedName
-    ? { presetId, backend: spec.backend, servedName, modelId: spec.model.id }
+    ? {
+        presetId,
+        backend: spec.backend,
+        provenance: servingProfileProvenance(catalog, presetId),
+        servedName,
+        modelId: spec.model.id,
+      }
     : null;
 }
 

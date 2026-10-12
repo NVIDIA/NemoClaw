@@ -50,7 +50,7 @@ Package-specific guides:
 | Run E2E support tests | `npx vitest run --project e2e-support` |
 | Run live E2E targets | `npm run test:live-e2e` |
 | Run plugin tests | `cd nemoclaw && npm test` |
-| Validate a routine PR diff with `pre-commit`, `commit-msg`, and `pre-push` checks | `npm run validate:pr` |
+| Validate a committed diff outside publication | `npm run validate:pr`; follow `CONTRIBUTING.md` |
 | Run the narrow custom repository checks used by lint and hooks | `npm run checks:repository` |
 | Run the broad repo-wide pre-commit and coverage baseline | `npm run check` |
 | Type-check CLI | `npm run typecheck:cli` |
@@ -157,9 +157,13 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 |------|-----------|
 | **pre-commit** | Cheap structural and file-local checks, including fixers, formatters, and linters |
 | **commit-msg** | commitlint (Conventional Commits) |
-| **pre-push** | Path-scoped incremental CLI/plugin TypeScript checks and checked-JavaScript checks |
+| **pre-push** | Publication validation, path-scoped incremental CLI/plugin TypeScript checks, and checked-JavaScript checks |
 
-`npm run validate:pr` requires a clean committed tree and runs read-only formatting checks.
+The installed pre-push hook runs publication validation with `scripts/checks/validate-pr.mts --pre-push`.
+This mode requires a clean committed tree and runs read-only formatting checks without invoking pre-push hooks recursively.
+The outer hook runs the applicable compiler checks separately.
+Follow the [publication procedure](../skills/nemoclaw-contributor-create-pr/references/validation.md)
+for hook repair, execution isolation, and publication; a standalone command does not replace the hook.
 The repository-check runner reports durations and selects checks from changed paths, including deletions.
 Compiler hooks share content-based local result reuse with explicit validation. Changed or unavailable
 inputs require execution; reuse does not replace trusted validation or independent CI.

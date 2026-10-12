@@ -241,6 +241,8 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Sandbox Management",
       order: 3.2,
+      description:
+        "Print the dashboard URL (not supported for the experimental Hermes portable profile)",
       flags: "[--quiet|-q]",
     },
   ],

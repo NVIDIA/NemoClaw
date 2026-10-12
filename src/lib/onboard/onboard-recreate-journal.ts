@@ -61,6 +61,7 @@ export function managedMcpRecreateRefusalHints(input: ManagedMcpRecreateRefusal)
 }
 
 export interface OpenOnboardRecreateJournalInput {
+  readonly reconcileOpenClawInference?: true;
   readonly target: SandboxRecreateTarget;
   readonly agentName: string;
   readonly intent: OnboardRecreateTargetIntent;
@@ -111,6 +112,7 @@ export function openOnboardRecreateJournal(
     gatewayPort: target.gatewayPort,
     targetIntentFingerprint,
     requireSourceEntry: true,
+    reconcileOpenClawInference: input.reconcileOpenClawInference,
     readRegistryEntry: () => registry.getSandbox(target.sandboxName),
     observe: () => observe(target),
     decorateCheckpoint: (current, checkpoint, now) => ({
@@ -176,4 +178,23 @@ export function openOnboardRecreateJournal(
       });
     },
   };
+}
+
+/** Only a known, explicitly changed managed OpenClaw selection overrides restored native routing. */
+export function shouldReconcileRestoredOpenClawSelection(
+  agentName: string,
+  customImage: boolean,
+  forcedRecreation: boolean,
+  drift: Pick<
+    import("./selection-drift").SelectionDrift,
+    "unknown" | "providerChanged" | "modelChanged"
+  >,
+): boolean {
+  return (
+    agentName === "openclaw" &&
+    !customImage &&
+    !forcedRecreation &&
+    !drift.unknown &&
+    (drift.providerChanged || drift.modelChanged)
+  );
 }

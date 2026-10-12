@@ -379,7 +379,7 @@ references_native_nvidia_route() {
 }
 
 references_attached_provider_placeholder_key() {
-  grep -Eq 'api_key_env[[:space:]]*=[[:space:]]*"NEMOCLAW_ATTACHED_PROVIDER_API_KEY"'
+  grep -Eq 'api_key_env[[:space:]]*=[[:space:]]*"NVIDIA_INFERENCE_API_KEY"'
 }
 
 configured_inference_route_contract() {

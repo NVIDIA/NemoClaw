@@ -78,10 +78,12 @@ describe("createSetupNim", () => {
     expect(createNvidiaFeaturedModelSession).toHaveBeenCalledTimes(2);
     expect(createNvidiaFeaturedModelSession).toHaveBeenNthCalledWith(1, {
       defaultModel: ultra,
+      onModelSelected: expect.any(Function),
       writeLine: log,
     });
     expect(createNvidiaFeaturedModelSession).toHaveBeenNthCalledWith(2, {
       defaultModel: ultra,
+      onModelSelected: expect.any(Function),
       fallbackModelOptions: [
         {
           id: "nvidia/nemotron-3-ultra-550b-a55b",
@@ -145,6 +147,7 @@ describe("createSetupNim", () => {
 
     expect(createNvidiaFeaturedModelSession).toHaveBeenCalledWith({
       defaultModel: ultra,
+      onModelSelected: expect.any(Function),
       writeLine: expect.any(Function),
     });
     expect(select).toHaveBeenCalledWith(sharedModel, null, true);

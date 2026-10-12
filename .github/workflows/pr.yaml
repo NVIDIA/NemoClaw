@@ -582,6 +582,8 @@ jobs:
       - name: Checkout trusted CI actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # PR shards run the base action. The revised action and sibling installer
+          # first run together after both land on main.
           ref: ${{ github.event.pull_request.base.sha }}
           path: .trusted-ci-actions
           persist-credentials: false
@@ -590,6 +592,7 @@ jobs:
             .github/actions/ci-build-typecheck
             .github/actions/ci-compile-artifacts
             .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-install-pinned-ubuntu-packages.sh
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
             .github/actions/ci-installer-integration

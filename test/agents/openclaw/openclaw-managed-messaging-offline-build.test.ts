@@ -122,6 +122,10 @@ describe("OpenClaw managed messaging offline image build", () => {
     expect(runtimeLock.packages["node_modules/@emnapi/wasi-threads"]).toMatchObject({
       version: "1.2.2",
     });
+    expect(runtimeLock.packages["node_modules/proxy-addr"]).toMatchObject({
+      version: "2.0.8",
+      dependencies: { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
+    });
   });
 
   it("pins the complete lock graphs below the cold-build layer limit", () => {

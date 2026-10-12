@@ -99,6 +99,8 @@ const REBUILD_ENV_NAMES = [
   "NEMOCLAW_OPENSHELL_SANDBOX_BIN",
   "NEMOCLAW_REBUILD_VERBOSE",
   "NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH",
+  "NEMOCLAW_TELEMETRY_CONTEXT_DIR",
+  "NEMOCLAW_DISABLE_TELEMETRY",
 ] as const;
 
 /** Recover the recorded gateway location before rebuild can start or replace it. */

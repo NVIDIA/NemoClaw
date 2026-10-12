@@ -7,12 +7,15 @@ from __future__ import annotations
 import errno
 import json
 import os
+import re
 import stat
 from pathlib import Path
+from urllib.parse import urlsplit
 
 MANAGED_POLICY_PATH = Path("/usr/local/share/nemoclaw/hermes-managed-policy.json")
 MANAGED_POLICY_SCHEMA_VERSION = 3
 HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE"
+NVIDIA_INFERENCE_PLACEHOLDER = "${NVIDIA_INFERENCE_API_KEY}"
 
 
 class ManagedPolicyError(Exception):
@@ -50,6 +53,50 @@ def _string_list(value: object, label: str) -> list[str]:
     ):
         raise ManagedPolicyError(f"{label} must be a non-empty list of unique strings")
     return value
+
+
+
+def _native_hosted_placeholder(config: dict, base_url: str) -> str | None:
+    upstream = config.get("_nemoclaw_upstream")
+    provider = upstream.get("provider") if isinstance(upstream, dict) else None
+    if not isinstance(provider, str):
+        return None
+    url = urlsplit(base_url)
+    if (
+        url.scheme != "https"
+        or not url.hostname
+        or url.username
+        or url.password
+        or "?" in base_url
+        or "#" in base_url
+        or re.search(r"[\\\s]", base_url)
+    ):
+        return None
+    if provider.strip() == "hermes-provider":
+        # Match the authenticated endpoint contract in canonicalHermesNativeEndpoint.
+        if (
+            url.hostname in {"inference.local", "localhost"}
+            or url.hostname.endswith(".internal")
+            or re.search(r"%2f|%5c", url.path, re.IGNORECASE)
+        ):
+            return None
+        return "${OPENAI_API_KEY}"
+    fixed_routes = {
+        "openai-api": ("api.openai.com", "/v1", "OPENAI_API_KEY"),
+        "anthropic-prod": ("api.anthropic.com", "", "ANTHROPIC_API_KEY"),
+        "gemini-api": (
+            "generativelanguage.googleapis.com", "/v1beta/openai", "GEMINI_API_KEY"
+        ),
+        "openrouter-api": ("openrouter.ai", "/api/v1", "OPENROUTER_API_KEY"),
+    }
+    expected = fixed_routes.get(provider.strip())
+    if expected is None or (
+        url.hostname != expected[0]
+        or url.port not in (None, 443)
+        or url.path.rstrip("/") != expected[1]
+    ):
+        return None
+    return "${" + expected[2] + "}"
 
 
 def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
@@ -92,10 +139,37 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
     has_routing = any(
         key in config for key in ("model", "providers", "custom_providers", "_nemoclaw_upstream")
     )
-    if has_routing and policy_value(config, "model.api_key") != HERMES_PROXY_REWRITE_SENTINEL:
-        raise ManagedPolicyError(
-            "managed policy model.api_key must use the OpenShell proxy rewrite sentinel"
+    if has_routing:
+        base_url = policy_value(config, "model.base_url")
+        if not isinstance(base_url, str):
+            raise ManagedPolicyError("managed policy model.base_url is invalid")
+        # Keep the raw URL contract identical to config generation and startup.
+        route = re.sub(
+            r"^[^/]+://[^/]+", lambda match: match.group().lower(), base_url, count=1
         )
+        native_nvidia = re.fullmatch(
+            r"https://integrate\.api\.nvidia\.com(?::0*443)?/v1/?", route
+        ) is not None
+        if not native_nvidia and re.match(
+            r"https://integrate\.api\.nvidia\.com(?::(?:0*443)?)?(?:[/?#]|\Z)", route
+        ):
+            raise ManagedPolicyError(
+                "Native NVIDIA inference requires https://integrate.api.nvidia.com/v1."
+            )
+        try:
+            url = urlsplit(base_url)
+            # Preserve the reader's existing malformed-port validation for other routes.
+            _ = url.port
+        except (TypeError, ValueError):
+            raise ManagedPolicyError("managed policy model.base_url is invalid") from None
+        expected_key = NVIDIA_INFERENCE_PLACEHOLDER if native_nvidia else HERMES_PROXY_REWRITE_SENTINEL
+        api_key = policy_value(config, "model.api_key")
+        hosted_placeholder = None if native_nvidia else _native_hosted_placeholder(config, base_url)
+        if api_key != expected_key and (hosted_placeholder is None or api_key != hosted_placeholder):
+            raise ManagedPolicyError(
+                "managed policy model.api_key must use an OpenShell credential placeholder or proxy rewrite sentinel "
+                "matching its route"
+            )
     for managed_path in managed_paths:
         policy_value(config, managed_path)
     return document

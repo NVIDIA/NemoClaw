@@ -259,6 +259,7 @@ describe("credentials oclif adapter source coverage", () => {
           "tavily-hermes-v1",
           "--from-existing",
         ],
+        ["provider", "profile", "-g", "nemoclaw", "export", "tavily-hermes-v1", "--output", "json"],
       ]);
     } finally {
       log.mockRestore();
