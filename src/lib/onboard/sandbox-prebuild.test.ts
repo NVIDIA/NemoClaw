@@ -292,6 +292,25 @@ describe("sandbox BuildKit prebuild", () => {
     expect(buildImage).not.toHaveBeenCalled();
   });
 
+  it("rejects an explicit Docker host before building for the selected gateway", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn(async () => 0);
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        gatewayDriver: "docker",
+        env: { DOCKER_HOST: "unix:///alternate.sock", DOCKER_CONTEXT: "default" },
+        buildImage,
+      }),
+    ).rejects.toThrow("DOCKER_HOST shares the selected local gateway engine");
+    expect(buildImage).not.toHaveBeenCalled();
+  });
+
   it("rejects a build that is absent from the selected engine", async () => {
     const { buildCtx, createArgs } = createBuildContext();
     const buildImage = vi.fn(async () => 0);
@@ -920,6 +939,38 @@ describe("sandbox BuildKit prebuild", () => {
         stdio: ["ignore", "ignore", "ignore"],
       }),
     );
+  });
+
+  it("stops a stalled local build before inspecting or handing off an image", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const child = new EventEmitter();
+    const kill = vi.fn(() => true);
+    Object.assign(child, { kill });
+    mocks.dockerSpawn.mockReturnValue(child);
+    const inspectImageId = vi.fn(() => IMAGE_ID);
+    vi.useFakeTimers();
+    try {
+      const build = prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {},
+        inspectImageId,
+        log: () => {},
+      });
+      const rejection = expect(build).rejects.toThrow(
+        "Local BuildKit build timed out after 20 minutes",
+      );
+      await vi.advanceTimersByTimeAsync(20 * 60_000);
+      await rejection;
+      expect(kill).toHaveBeenCalledWith("SIGKILL");
+      expect(inspectImageId).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects disabling a required local BuildKit build", async () => {

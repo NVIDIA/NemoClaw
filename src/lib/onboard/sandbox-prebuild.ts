@@ -25,6 +25,9 @@ import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers"
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSY_FLAG_VALUES = new Set(["0", "false", "no", "off"]);
+const LOCAL_IMAGE_BUILD_TIMEOUT_MS = 20 * 60_000;
+
+class ImageCommandDeadlineError extends Error {}
 
 export interface SandboxPrebuildInput {
   buildCtx: string;
@@ -83,8 +86,24 @@ function createHostImageCommand(
         command === "podman"
           ? spawn(command, [...args], spawnOptions)
           : dockerSpawn(args, spawnOptions);
-      child.once("error", reject);
-      child.once("close", resolve);
+      let expired = false;
+      const deadline = setTimeout(() => {
+        expired = true;
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // A failed signal still ends this build attempt without handing off an image.
+        }
+        reject(new ImageCommandDeadlineError());
+      }, LOCAL_IMAGE_BUILD_TIMEOUT_MS);
+      child.once("error", (error) => {
+        clearTimeout(deadline);
+        if (!expired) reject(error);
+      });
+      child.once("close", (status) => {
+        clearTimeout(deadline);
+        if (!expired) resolve(status);
+      });
     });
 }
 
@@ -209,7 +228,12 @@ export async function prebuildSandboxImageIfEligible(
   }
   const dockerHost = String(env.DOCKER_HOST ?? "").trim();
   const dockerContext = String(env.DOCKER_CONTEXT ?? "").trim();
-  if (!portable && !dockerHost && dockerContext && dockerContext !== "default") {
+  if (!portable && dockerHost) {
+    throw new Error(
+      "Generated Dockerfile build cannot prove that DOCKER_HOST shares the selected local gateway engine; unset DOCKER_HOST and retry.",
+    );
+  }
+  if (!portable && dockerContext && dockerContext !== "default") {
     throw new Error(
       "Generated Dockerfile build cannot prove that the selected Docker context shares the local gateway engine.",
     );
@@ -284,6 +308,11 @@ export async function prebuildSandboxImageIfEligible(
       },
     );
   } catch (error) {
+    if (error instanceof ImageCommandDeadlineError) {
+      throw new Error(
+        `Local ${builderName} build timed out after 20 minutes; check the selected engine before retrying.`,
+      );
+    }
     throw new Error(
       `Local ${builderName} build could not start; check the selected engine and retry.`,
       { cause: error },
@@ -320,6 +349,11 @@ export async function prebuildSandboxImageIfEligible(
         stdio: "inherit",
       });
     } catch (error) {
+      if (error instanceof ImageCommandDeadlineError) {
+        throw new Error(
+          "Managed local registry publish timed out after 20 minutes; check the local registry before retrying.",
+        );
+      }
       throw new Error(
         "Managed local registry publish could not start; check the local registry and retry.",
         { cause: error },
