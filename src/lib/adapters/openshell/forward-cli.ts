@@ -631,12 +631,16 @@ async function lsofListenerPids(
     run,
   );
   if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return "unavailable";
+  // lsof exits 1 with empty stdout when nothing listens. It may still warn on
+  // stderr (e.g. unstattable fuse/overlay mounts on Docker hosts); that noise
+  // must not make a free port unprovable (#11979). A listener lsof could not
+  // see is still caught by the reachability probe that follows.
   if (
     result.status === 1 &&
     !result.timedOut &&
     !result.error &&
-    !result.stdout.trim() &&
-    !result.stderr.trim()
+    !result.signal &&
+    !result.stdout.trim()
   ) {
     return { ok: true, pids: [] };
   }
