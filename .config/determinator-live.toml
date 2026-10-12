@@ -26,7 +26,7 @@ globs = [
     ".config/nextest.toml",
     ".github/actions/**",
     # The live jobs run in CI / Bundle.
-    ".github/workflows/native-platform.yml",
+    ".github/workflows/bundle-platform.yml",
     ".github/workflows/rust.yml",
 ]
 mark-changed = "all"

@@ -181,7 +181,7 @@ A `Test / PLATFORM` check succeeds only when every job of that platform succeeds
 
 ### Jobs of One Platform
 
-Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/native-platform.yml) on its own runners:
+Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/bundle-platform.yml) on its own runners:
 
 1. `Build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, `schema`, and `archive`: the unit layer, and the archive that later jobs run.
 2. `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
