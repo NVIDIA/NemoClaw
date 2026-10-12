@@ -227,7 +227,7 @@ After a fresh import or an already-registered result, the runner exports the gat
 An export failure, timeout, or mismatch stops apply before provider creation.
 The runner preserves a mismatched gateway profile because another gateway client may own it.
 Ask the gateway operator to inspect the profile before retrying.
-After a match, the runner creates the provider, configures gateway-managed OAuth refresh, and performs the initial token rotation.
+After a match, the runner creates the provider.
 After provider creation, the runner tries to export the profile before it configures credential refresh.
 After attachment, it tries another export.
 If either export succeeds with a different definition, the runner warns that the gateway catalog changed.
@@ -239,6 +239,7 @@ Before attachment, the runner creates or reuses the configured inference provide
 For a reused sandbox and provider, it preserves the live route only when the provider, model, and requested timeout match the blueprint.
 An absent or different route must pass `openshell inference set`.
 The runner attaches the runtime identity and applies policy additions only after OpenShell confirms the route.
+It performs the initial token rotation after attachment.
 
 Each successful apply creates and owns the runtime identity provider whose refresh state it mutates.
 The persisted plan records ownership of the runtime identity provider, sandbox attachment, inference provider, and sandbox.
