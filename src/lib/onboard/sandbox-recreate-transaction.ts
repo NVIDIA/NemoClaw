@@ -188,6 +188,7 @@ export function fingerprintSandboxRecreateValue(value: unknown): string {
 const ROUTE_RESERVATION_FIELDS: readonly (keyof SandboxEntry)[] = [
   "pendingRouteReservation",
   "reservationSessionId",
+  "preRecreatePublishedEntry",
   "deferredN1xManagedVllmAccepted",
   "provider",
   "model",
