@@ -515,6 +515,81 @@ process.stdin.on("data", chunk => {
   }
 });
 
+it("bounds Docker health probes while allowing authenticated requests and later probes (#12285)", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bridge-health-"));
+  const invocations = path.join(root, "invocations.jsonl");
+  const upstream = http.createServer();
+  const upstreamPort = await listen(upstream);
+  const firstResponse = new Promise<http.ServerResponse>((resolve) => {
+    upstream.once("request", (_incoming, response) => resolve(response));
+  });
+  fs.writeFileSync(
+    path.join(root, "docker"),
+    `#!${process.execPath}
+const fs = require("node:fs");
+const net = require("node:net");
+fs.appendFileSync(${JSON.stringify(invocations)}, JSON.stringify(process.argv.slice(2)) + "\\n");
+const connection = net.connect(${String(upstreamPort)}, "127.0.0.1");
+process.stdin.pipe(connection);
+connection.pipe(process.stdout, { end: false });
+connection.once("end", () => process.stdout.end(() => process.exit(0)));
+connection.once("error", () => process.exit(1));
+`,
+    { mode: 0o700 },
+  );
+  vi.stubEnv("PATH", root);
+  vi.stubEnv("DOCKER_HOST", "unix:///tmp/nemoclaw-bridge-health-test.sock");
+  const docker = createDockerOperationAuthority("host-local-inference");
+  const bridge = createLlamaCppPrivateBridgeServer(
+    {
+      targetHost: "127.0.0.1",
+      targetPort: 8081,
+      containerId: "c".repeat(64),
+      dockerAuthorityId: docker.engine.authorityId,
+    },
+    API_KEY,
+  );
+  let pendingHealth: ReturnType<typeof request> | undefined;
+  const invocationCount = () => fs.readFileSync(invocations, "utf8").trimEnd().split("\n").length;
+  try {
+    const port = await listen(bridge);
+    pendingHealth = request(port, { path: "/health" });
+    const held = await firstResponse;
+    upstream.on("request", (_incoming, response) => {
+      response.setHeader("Connection", "close");
+      response.end("healthy");
+    });
+    const excess = await request(port, { path: "/health" });
+    expect(excess.status).toBe(503);
+    expect(excess.headers["retry-after"]).toBe("1");
+    expect(invocationCount()).toBe(1);
+    expect((await request(port)).status).toBe(401);
+    expect((await request(port, { authorization: `Bearer ${API_KEY}` })).status).toBe(200);
+    expect(invocationCount()).toBe(2);
+    held.setHeader("Connection", "close");
+    held.end("healthy");
+    expect((await pendingHealth).status).toBe(200);
+    await expect.poll(async () => (await request(port, { path: "/health" })).status).toBe(200);
+    expect(invocationCount()).toBe(3);
+    upstream.closeAllConnections();
+    await close(upstream);
+    await expect.poll(async () => (await request(port, { path: "/health" })).status).toBe(502);
+    await new Promise<void>((resolve, reject) => {
+      upstream.once("error", reject);
+      upstream.listen(upstreamPort, "127.0.0.1", resolve);
+    });
+    await expect.poll(async () => (await request(port, { path: "/health" })).status).toBe(200);
+  } finally {
+    bridge.closeAllConnections();
+    upstream.closeAllConnections();
+    await Promise.allSettled([pendingHealth]);
+    await close(bridge);
+    await close(upstream);
+    vi.unstubAllEnvs();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it("reports startup ready only after its listener binds", async () => {
   const server = http.createServer();
   const port = await listen(server);

@@ -220,6 +220,7 @@ function createLlamaCppPrivateBridgeRequestHandler(
   ) {
     throw new Error("private bridge Docker authority changed");
   }
+  let healthProbeRunning = false;
 
   return (request, response) => {
     const healthProbe = isUnauthenticatedHealthProbe(request);
@@ -228,6 +229,23 @@ function createLlamaCppPrivateBridgeRequestHandler(
       writeUnauthorized(response);
       return;
     }
+    const needsHealthSlot = healthProbe && docker !== undefined;
+    if (needsHealthSlot) {
+      if (healthProbeRunning) {
+        request.resume();
+        response.writeHead(503, { "Cache-Control": "no-store", "Retry-After": "1" });
+        response.end();
+        return;
+      }
+      healthProbeRunning = true;
+    }
+    let healthSlotHeld = needsHealthSlot;
+    let dockerForwardingStarted = false;
+    const releaseHealthSlot = () => {
+      if (!healthSlotHeld) return;
+      healthSlotHeld = false;
+      healthProbeRunning = false;
+    };
 
     const headers: http.OutgoingHttpHeaders = { ...request.headers };
     headers.host = `${authority.targetHost}:${String(targetPort)}`;
@@ -273,8 +291,12 @@ function createLlamaCppPrivateBridgeRequestHandler(
                       killSignal: "SIGKILL",
                     },
                   );
-                  if (!child.stdin || !child.stdout)
+                  dockerForwardingStarted = true;
+                  child.once("close", releaseHealthSlot);
+                  if (!child.stdin || !child.stdout) {
+                    child.kill("SIGKILL");
                     throw new Error("private bridge stream unavailable");
+                  }
                   const stream = Duplex.fromWeb({
                     writable: Writable.toWeb(child.stdin),
                     readable: Readable.toWeb(child.stdout),
@@ -310,6 +332,7 @@ function createLlamaCppPrivateBridgeRequestHandler(
         },
       );
     } catch {
+      if (!dockerForwardingStarted) releaseHealthSlot();
       request.resume();
       writeUpstreamUnavailable(response);
       return;
@@ -325,6 +348,7 @@ function createLlamaCppPrivateBridgeRequestHandler(
       forwardRequestBody();
     });
     upstream.once("error", () => {
+      if (!dockerForwardingStarted) releaseHealthSlot();
       clearContinueTimer();
       if (!upstreamResponded) writeUpstreamUnavailable(response);
     });
