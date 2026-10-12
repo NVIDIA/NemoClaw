@@ -6,8 +6,6 @@ set -euo pipefail
 
 readonly LOG=/tmp/nemoclaw-brev-v1-startup.log
 readonly SENTINEL=/var/run/nemoclaw-brev-v1-ready
-export DEBIAN_FRONTEND=noninteractive
-export NEEDRESTART_MODE=a
 exec > >(tee -a "${LOG}") 2>&1
 
 as_root() {
@@ -16,6 +14,11 @@ as_root() {
   else
     sudo "$@"
   fi
+}
+
+apt_get() {
+  # sudo may reset the environment; package scripts must not consume bootstrap stdin.
+  as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get "$@" </dev/null
 }
 
 retry() {
@@ -51,20 +54,20 @@ fi
 test -n "${login_user}"
 
 wait_for_apt
-retry 3 as_root apt-get update -qq
-retry 3 as_root apt-get -o DPkg::Lock::Timeout=180 install -y -qq \
+retry 3 apt_get update -qq
+retry 3 apt_get -o DPkg::Lock::Timeout=180 install -y -qq \
   ca-certificates curl git jq rsync tar
 if ! command -v docker >/dev/null 2>&1; then
-  retry 3 as_root apt-get -o DPkg::Lock::Timeout=180 install -y -qq docker.io
+  retry 3 apt_get -o DPkg::Lock::Timeout=180 install -y -qq docker.io
 fi
 as_root systemctl enable --now docker
 as_root usermod -aG docker "${login_user}"
 
 if ! as_root docker buildx version >/dev/null 2>&1; then
   if apt-cache show docker-buildx-plugin >/dev/null 2>&1; then
-    retry 3 as_root apt-get -o DPkg::Lock::Timeout=180 install -y -qq docker-buildx-plugin
+    retry 3 apt_get -o DPkg::Lock::Timeout=180 install -y -qq docker-buildx-plugin
   elif apt-cache show docker-buildx >/dev/null 2>&1; then
-    retry 3 as_root apt-get -o DPkg::Lock::Timeout=180 install -y -qq docker-buildx
+    retry 3 apt_get -o DPkg::Lock::Timeout=180 install -y -qq docker-buildx
   else
     echo "the Brev package repositories do not provide Docker Buildx" >&2
     exit 1

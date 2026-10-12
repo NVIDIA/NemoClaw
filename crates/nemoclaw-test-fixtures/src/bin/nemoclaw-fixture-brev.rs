@@ -94,7 +94,7 @@ fn ssh(args: &[String]) -> i32 {
     0
 }
 
-fn dispatch(name: &str, args: &[String], elevated: bool) -> i32 {
+fn dispatch(name: &str, args: &[String], elevated: bool, package_env: [&str; 2]) -> i32 {
     record(name, args);
     if elevated {
         let mut call = vec![name.to_owned()];
@@ -128,7 +128,21 @@ fn dispatch(name: &str, args: &[String], elevated: bool) -> i32 {
             "-un" => println!("brev"),
             _ => panic!("unexpected id command"),
         },
-        "sudo" => return dispatch(&args[0], &args[1..], true),
+        // Default sudo policy does not preserve these caller-provided variables.
+        "sudo" => return dispatch(&args[0], &args[1..], true, ["", ""]),
+        "env" => {
+            let mut settings = package_env;
+            let mut index = 0;
+            while let Some((key, value)) = args.get(index).and_then(|arg| arg.split_once('=')) {
+                match key {
+                    "DEBIAN_FRONTEND" => settings[0] = value,
+                    "NEEDRESTART_MODE" => settings[1] = value,
+                    _ => panic!("unexpected package environment: {key}"),
+                }
+                index += 1;
+            }
+            return dispatch(&args[index], &args[index + 1..], elevated, settings);
+        }
         "tee" => {
             io::stdout().write_all(&stdin_bytes()).unwrap();
         }
@@ -146,6 +160,16 @@ fn dispatch(name: &str, args: &[String], elevated: bool) -> i32 {
         }
         "apt-get" => {
             assert!(elevated);
+            if setting("CHECK_APT_ENV") != 0 {
+                assert_eq!(
+                    package_env,
+                    ["noninteractive", "a"],
+                    "apt must retain noninteractive settings after elevation"
+                );
+            }
+            if setting("CHECK_APT_STDIN") != 0 {
+                record("apt-stdin", &[stdin_bytes().len().to_string()]);
+            }
             if env::var_os("APT_BUSY_LOCK").is_some() {
                 let probes = fs::read_to_string(root().join("apt-lock.count"))
                     .unwrap_or("0".into())
@@ -219,5 +243,7 @@ fn dispatch(name: &str, args: &[String], elevated: bool) -> i32 {
 fn main() {
     let args: Vec<String> = env::args().collect();
     let name = Path::new(&args[0]).file_name().unwrap().to_str().unwrap();
-    std::process::exit(dispatch(name, &args[1..], false));
+    let frontend = env::var("DEBIAN_FRONTEND").unwrap_or_default();
+    let restart = env::var("NEEDRESTART_MODE").unwrap_or_default();
+    std::process::exit(dispatch(name, &args[1..], false, [&frontend, &restart]));
 }

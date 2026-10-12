@@ -34,9 +34,14 @@ impl Fixture {
     }
 
     fn startup(&self, env: &[(&str, &str)]) -> Output {
+        self.startup_with_input(env, b"")
+    }
+
+    fn startup_with_input(&self, env: &[(&str, &str)], input: &[u8]) -> Output {
         for name in [
             "id",
             "sudo",
+            "env",
             "tee",
             "fuser",
             "apt-get",
@@ -47,7 +52,10 @@ impl Fixture {
         ] {
             symlink(FAKE, self.0.path().join("bin").join(name)).unwrap();
         }
+        let stdin = self.0.path().join("startup.stdin");
+        fs::write(&stdin, input).unwrap();
         self.command(STARTUP)
+            .stdin(fs::File::open(stdin).unwrap())
             .envs(env.iter().copied())
             .output()
             .unwrap()
@@ -333,4 +341,33 @@ fn startup_stops_after_180_seconds_of_busy_locks_without_installing() {
     assert_eq!(waits, 180);
     assert!(calls(&events, "apt-get").is_empty());
     assert!(!fixture.0.path().join("sentinel").exists());
+}
+
+#[test]
+fn startup_keeps_package_operations_noninteractive_after_sudo() {
+    for buildx in ["docker-buildx-plugin", "docker-buildx"] {
+        let fixture = Fixture::new();
+        let output = fixture.startup(&[("BUILDX_PACKAGE", buildx), ("CHECK_APT_ENV", "1")]);
+        succeeded(&output);
+        assert_eq!(calls(&fixture.events(), "apt-get").len(), 4);
+        assert!(fixture.0.path().join("sentinel").exists());
+    }
+}
+
+#[test]
+fn startup_does_not_allow_package_operations_to_read_caller_stdin() {
+    let fixture = Fixture::new();
+    let output = fixture.startup_with_input(
+        &[("CHECK_APT_ENV", "1"), ("CHECK_APT_STDIN", "1")],
+        b"input reserved for the calling bootstrap shell\n",
+    );
+    succeeded(&output);
+    let events = fixture.events();
+    let package_input = calls(&events, "apt-stdin");
+    assert_eq!(package_input.len(), 4);
+    assert!(
+        package_input.iter().all(|event| event[1] == "0"),
+        "package commands consumed the bootstrap input: {package_input:?}"
+    );
+    assert!(fixture.0.path().join("sentinel").exists());
 }
