@@ -135,9 +135,11 @@ function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): 
     existing.env.every((name, index) => name === requested.env[index]) &&
     existingTransport === requestedTransport &&
     // serverIdentity and requireOAuth cannot round-trip through durable
-    // agent-native state (readers reconstruct only server/url/env), so an
-    // absent stored value means "nothing retained to compare against", not a
-    // mismatch. Compare strictly whenever the stored entry carries them.
+    // agent-native or OpenShell policy state (readers reconstruct only
+    // server/url/env plus policy-derived pins). An absent stored value therefore
+    // cannot distinguish an exact retry from a conflicting one: the retry adopts
+    // the requested intent fail-open. Compare strictly whenever the stored entry
+    // carries them; the add path warns when it adopts unverifiable intent.
     (existing.requireOAuth === undefined || existing.requireOAuth === requested.requireOAuth) &&
     (existing.serverIdentity?.digest === undefined ||
       existing.serverIdentity.digest === requested.serverIdentity?.digest)
@@ -1016,12 +1018,28 @@ async function addMcpBridgeUnlocked(
     );
   }
 
-  // Supply-chain verification runs only against an actually stored pin. Durable
-  // agent-native state cannot retain the pin, so a reconstructed entry without
-  // one means there is nothing to verify against (see sameMcpAddIntent); a
-  // stored pin that differs still fails closed inside the verifier.
+  // Supply-chain verification runs only against an actually stored pin. This is
+  // a transient in-memory check, not durable retry validation: reconstructed
+  // agent-native entries never carry serverIdentity (see sameMcpAddIntent), so
+  // this branch does not fire for them and a retry with a conflicting pin is
+  // adopted fail-open below. A stored pin that differs still fails closed here
+  // when the caller supplies one.
   if (existingEntry?.serverIdentity && options.serverIdentity) {
     await verifyMcpServerIdentity(existingEntry, options.serverIdentity);
+  }
+  if (
+    existingEntry &&
+    (options.serverIdentity !== undefined || options.requireOAuth !== undefined) &&
+    existingEntry.serverIdentity === undefined &&
+    existingEntry.requireOAuth === undefined
+  ) {
+    // Durable state cannot prove the prior identity/OAuth intent, so an exact
+    // retry and a conflicting retry are indistinguishable. Adopt the requested
+    // intent for crash-consistent resume and make that visible; changing intent
+    // deliberately still requires remove with --force and re-add.
+    console.warn(
+      `  WARNING: MCP server '${options.server}' retry cannot validate --server-identity/--require-oauth against durable state. Adopting the requested intent.`,
+    );
   }
 
   // Enforce transport-specific trust policies

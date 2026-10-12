@@ -2400,7 +2400,7 @@ async function excludeSandboxBaselineUnlocked(
   const key = options.key?.trim();
   if (!key) {
     console.error("  A baseline key is required.");
-    console.error(`  Usage: ${CLI_NAME} <sandbox> policy exclude <key> [--force] [--dry-run]`);
+    console.error(`  Usage: ${CLI_NAME} <sandbox> policy exclude <key> [--force] [--yes|-y] [--dry-run]`);
     return await exitConfigurationFailure(sandboxName);
   }
 

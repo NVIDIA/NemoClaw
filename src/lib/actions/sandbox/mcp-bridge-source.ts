@@ -753,7 +753,8 @@ async function enrichFromPolicy(
   // reconstructed state: agent-native readers round-trip only server/url/env,
   // and the live OpenShell policy carries none of these fields. Do not read
   // them from endpoint.mcp or invent them here; retry handling in
-  // sameMcpAddIntent tolerates their absence on reconstructed entries.
+  // sameMcpAddIntent adopts the requested intent fail-open because a
+  // reconstructed entry cannot distinguish an exact retry from a conflicting one.
 
   const trustedPrivateHost =
     allowedIps?.some((address) => isBlockedMcpUrlTargetHost(address)) &&

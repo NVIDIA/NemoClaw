@@ -138,7 +138,8 @@ function renderMcpBridgePolicyYaml(
   // In denylist mode, emit deny rules at endpoint level (deny_rules)
   // Do NOT emit deny entries in the rules array — not part of schema
   // No serverIdentity, transport, or requireOAuth in mcp config - these are unsupported by OpenShell v0.0.116.
-  // They are persisted separately in the bridge state and restored during add/rebuild.
+  // They are request-scoped and are not persisted in agent-native or OpenShell
+  // policy state; retries adopt the requested intent (see sameMcpAddIntent).
   // The mcp.allow field is also unsupported; allowlist rules belong in rules[].allow.params.name.
   const mcpConfig: Record<string, unknown> = {};
 

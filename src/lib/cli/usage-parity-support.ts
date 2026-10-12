@@ -51,6 +51,12 @@ function missingUsageFlags(commandId: string, documentedFlags: string | undefine
   return flagTokens(staticUsage(commandId).join(" ")).filter((token) => !documented.has(token));
 }
 
+/** Return flags present in the documented hint but absent from the command's usage. */
+function extraUsageFlags(commandId: string, documentedFlags: string | undefined): string[] {
+  const declared = new Set(flagTokens(staticUsage(commandId).join(" ")));
+  return flagTokens(documentedFlags ?? "").filter((token) => !declared.has(token));
+}
+
 /** Collect the publicly visible (or parity-tracked hidden) display entries. */
 function visibleEntries() {
   return Object.entries(PUBLIC_DISPLAY_ENTRIES)
@@ -77,4 +83,4 @@ function parseUsageHints() {
   });
 }
 
-export { visibleEntries, parseUsageHints, missingUsageFlags };
+export { visibleEntries, parseUsageHints, missingUsageFlags, extraUsageFlags };

@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from "vitest";
 
-import { visibleEntries, parseUsageHints, missingUsageFlags } from "./usage-parity-support";
+import { visibleEntries, parseUsageHints, missingUsageFlags, extraUsageFlags } from "./usage-parity-support";
 
 describe("public display usage parity", () => {
   /** Fail loudly if hint parsing ever yields nothing instead of silently passing. */
@@ -25,6 +25,8 @@ describe("public display usage parity", () => {
     ({ commandId, hint }) => {
       const missing = missingUsageFlags(commandId, hint);
       expect(missing).toEqual([]);
+      const extra = extraUsageFlags(commandId, hint);
+      expect(extra).toEqual([]);
     },
   );
 });
