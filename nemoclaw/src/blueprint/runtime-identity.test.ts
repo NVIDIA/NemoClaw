@@ -588,6 +588,10 @@ describe("runtime identity contract", () => {
       /profile 'okta-runtime-v1' has an incompatible binding/,
     );
     expect(calls.map(({ args }) => commandKey(args))).toContain("provider get acme-okta-runtime");
+    expect(calls.map(({ args }) => commandKey(args))).not.toContain(
+      "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
+    );
+    expect(persistedReceipts).toEqual([]);
   });
 
   it("reports a failure to export an existing profile", async () => {
@@ -600,6 +604,10 @@ describe("runtime identity contract", () => {
     ]);
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/export denied/);
+    expect(calls.map(({ args }) => commandKey(args))).not.toContain(
+      "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
+    );
+    expect(persistedReceipts).toEqual([]);
   });
 
   it.each([
