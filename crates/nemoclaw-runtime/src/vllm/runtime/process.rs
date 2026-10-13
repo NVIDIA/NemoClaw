@@ -98,16 +98,12 @@ mod tests {
         let bin = root.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let python = bin.join("python3");
-        // The existing interpreter accepts the production -m argument and
-        // reads the module-named fixture from the child's working directory.
-        // No newly written fixture is executed; inherited writable descriptors
-        // cannot prevent this child from starting.
-        std::os::unix::fs::symlink("/bin/sh", &python).unwrap();
-        std::fs::write(
-            root.path().join("vllm.entrypoints.openai.api_server"),
-            "[ \"$1\" = --model ] && [ \"$2\" = \"$TEST_MODEL_DIRECTORY\" ] || exit 1\ntest \"$VLLM_API_KEY\" = \"$(/bin/cat \"$TEST_KEY_FILE\")\"\n",
-        )
-        .unwrap();
+        // A disposable executable stands in for Python/vLLM and verifies the
+        // process boundary. The readiness fixture independently checks HTTP.
+        crate::executable::write_executable(
+            &python,
+            "#!/bin/sh\n[ \"$1 $2 $3\" = '-m vllm.entrypoints.openai.api_server --model' ] && [ \"$4\" = \"$TEST_MODEL_DIRECTORY\" ] || exit 1\ntest \"$VLLM_API_KEY\" = \"$(/bin/cat \"$TEST_KEY_FILE\")\"\n",
+        );
         let prepared = PreparedModel {
             model: root.path().join("model"),
             environment: [
@@ -131,7 +127,6 @@ mod tests {
             Some(key.clone()),
         )
         .unwrap();
-        command.command_mut().current_dir(root.path());
         assert!(command.spawn().unwrap().wait().await.unwrap().success());
         assert!(readiness.url.ends_with("/v1/models"));
         let expected = format!("Bearer {key}");

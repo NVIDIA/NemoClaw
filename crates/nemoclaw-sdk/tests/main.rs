@@ -5,6 +5,9 @@
 
 #[path = "support/examples.rs"]
 mod examples;
+#[cfg(unix)]
+#[path = "../../test-support/executable.rs"]
+mod executable;
 #[path = "../../test-support/kube_api.rs"]
 mod kube_api;
 #[path = "support/kube_client.rs"]
