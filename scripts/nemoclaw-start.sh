@@ -901,7 +901,7 @@ native_keys = {
     openrouter["endpoint"]: openrouter["credentialEnv"],
 }
 endpoint = native.get("baseUrl") if isinstance(native, dict) else None
-key = native_keys.get(endpoint) if isinstance(endpoint, str) else None
+key = native_keys.get(endpoint.rstrip("/")) if isinstance(endpoint, str) else None
 if key:
     scoped = re.compile(rf"^{re.escape(prefix)}(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{key}$")
     saved = native.get("apiKey")

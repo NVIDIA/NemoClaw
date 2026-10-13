@@ -177,6 +177,20 @@ os.fsync = sync_or_fail`
     },
   );
 
+  it.each([
+    ["https://integrate.api.nvidia.com/v1/", "NVIDIA_INFERENCE_API_KEY"],
+    ["https://openrouter.ai/api/v1/", "OPENROUTER_API_KEY"],
+  ])("refreshes a native handle with a trailing slash at %s (#13043)", async (endpoint, key) => {
+    const saved = `openshell:resolve:env:v42_${key}`;
+    const current = `openshell:resolve:env:v43_${key}`;
+    const run = await runRefresh(
+      { models: { providers: { inference: { baseUrl: endpoint, apiKey: saved } } } },
+      { [key]: current },
+    );
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.config.models.providers.inference).toEqual({ baseUrl: endpoint, apiKey: current });
+  });
+
   it.skipIf(process.getuid?.() === 0)(
     "preserves valid configuration when atomic publication cannot create a file (#13043)",
     async () => {
@@ -322,6 +336,16 @@ os.fsync = sync_or_fail`
       {
         reason: "different endpoint",
         endpoint: "https://example.com/v1",
+        runtime: "openshell:resolve:env:v43_OPENROUTER_API_KEY",
+      },
+      {
+        reason: "endpoint query",
+        endpoint: "https://openrouter.ai/api/v1/?route=other/",
+        runtime: "openshell:resolve:env:v43_OPENROUTER_API_KEY",
+      },
+      {
+        reason: "endpoint credentials",
+        endpoint: "https://user@openrouter.ai/api/v1/",
         runtime: "openshell:resolve:env:v43_OPENROUTER_API_KEY",
       },
       {
