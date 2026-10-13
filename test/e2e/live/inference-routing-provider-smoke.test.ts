@@ -248,7 +248,7 @@ test(
     const apiKey = environment.OPENROUTER_API_KEY!;
     const model = environment.NEMOCLAW_OPENROUTER_MODEL!;
     await requireLivePrerequisites(host, runtimeProvider);
-    const sandboxName = inferenceSandboxName("e2e-openrouter-dcode");
+    const sandboxName = inferenceSandboxName("e2e-or-dcode");
     cleanup.add(`best-effort Deep Agents Code cleanup for ${sandboxName}`, () =>
       cleanupSandbox(host, sandbox, sandboxName),
     );
