@@ -1187,7 +1187,10 @@ class SandboxStateFlow<
     return { ...state, session };
   }
 
-  private assertGatewayRouteCompatible(sandboxName: string | null): asserts sandboxName is string {
+  private assertGatewayRouteCompatible(
+    sandboxName: string | null,
+    excludePublishedRecreateSource = false,
+  ): asserts sandboxName is string {
     const targetEntry = sandboxName ? this.deps.getSandboxRegistryEntry(sandboxName) : null;
     if (!sandboxName || !targetEntry) {
       this.failGatewayRouteCheck(
@@ -1228,7 +1231,13 @@ class SandboxStateFlow<
     }
     const compatibility = this.deps.checkGatewayRouteCompatibility({
       gatewayName: this.options.gatewayName,
-      sandboxName: null,
+      // A deferred route still belongs to the published source until backup
+      // succeeds. Exclude only that source while checking the replacement.
+      sandboxName: this.publishedRecreateSourceForRouteCheck(
+        sandboxName,
+        targetEntry,
+        excludePublishedRecreateSource,
+      ),
       route: {
         provider: this.options.provider,
         model: this.options.model,
@@ -1241,6 +1250,16 @@ class SandboxStateFlow<
     // The target registry row is the route reservation this transaction owns.
     // A changed target is a lost-reservation race, not an advisory peer drift.
     this.failGatewayRouteCheck(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+  }
+
+  private publishedRecreateSourceForRouteCheck(
+    sandboxName: string,
+    targetEntry: SandboxEntry,
+    excludePublishedRecreateSource: boolean,
+  ): string | null {
+    return excludePublishedRecreateSource && targetEntry.pendingRouteReservation !== true
+      ? sandboxName
+      : null;
   }
 
   private failGatewayRouteCheck(message: string): never {
@@ -2327,7 +2346,10 @@ class SandboxStateFlow<
         this.options.apfInterceptorRequested === true &&
         this.options.provider.trim().length === 0 &&
         this.options.model.trim().length === 0;
-      this.assertGatewayRouteCompatible(requestedSandboxName);
+      this.assertGatewayRouteCompatible(
+        requestedSandboxName,
+        Boolean(this.options.deferredInferenceRoute && createIntent.recreate),
+      );
       await this.assertCheckpointBindingsStillLive(state);
       this.assertCheckpointCreateInputsStillMatch(
         state,
