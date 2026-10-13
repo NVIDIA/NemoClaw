@@ -365,6 +365,36 @@ console.log(JSON.stringify({
     expect(isolationEvidence.canaryDetected, "filesystem scanner detects a planted control").toBe(
       true,
     );
+    const requestOpenClawAgent = async (artifactName: string) => {
+      const response = await sandbox.exec(
+        sandboxName,
+        [
+          "nemoclaw-start",
+          "openclaw",
+          "agent",
+          "--agent",
+          "main",
+          "--json",
+          "--thinking",
+          "off",
+          "--session-id",
+          `native-${crypto.randomUUID()}`,
+          "-m",
+          "Reply with one short greeting. Do not use tools.",
+        ],
+        {
+          artifactName,
+          env: buildAvailabilityProbeEnv(),
+          redactionValues: [apiKey],
+          timeoutMs: 180_000,
+        },
+      );
+      const document = parseOpenClawJsonDocuments(response.stdout)
+        .map(openClawAgentResponseRecord)
+        .filter((value) => value !== null)
+        .at(-1);
+      return { response, document, text: parseOpenClawAgentText(response.stdout) };
+    };
     switch (selected.selector) {
       case "openrouter": {
         const alternateModel =
@@ -398,34 +428,12 @@ console.log(JSON.stringify({
           toAlternate.exitCode,
           "OpenRouter alternate switch failed; inspect the redacted artifact",
         ).toBe(0);
-        const alternateResponse = await sandbox.exec(
-          sandboxName,
-          [
-            "nemoclaw-start",
-            "openclaw",
-            "agent",
-            "--agent",
-            "main",
-            "--json",
-            "--thinking",
-            "off",
-            "--session-id",
-            `native-${crypto.randomUUID()}`,
-            "-m",
-            "Reply with one short greeting. Do not use tools.",
-          ],
-          {
-            artifactName: `${selected.id}-alternate-native-agent`,
-            env: buildAvailabilityProbeEnv(),
-            redactionValues: [apiKey],
-            timeoutMs: 180_000,
-          },
-        );
+        const {
+          response: alternateResponse,
+          document: alternateDocument,
+          text: alternateText,
+        } = await requestOpenClawAgent(`${selected.id}-alternate-native-agent`);
         expect(alternateResponse.exitCode, resultText(alternateResponse)).toBe(0);
-        const alternateDocument = parseOpenClawJsonDocuments(alternateResponse.stdout)
-          .map(openClawAgentResponseRecord)
-          .filter((value) => value !== null)
-          .at(-1);
         const alternateMeta = alternateDocument?.meta;
         const alternateAgentMeta = isObjectRecord(alternateMeta)
           ? alternateMeta.agentMeta
@@ -433,7 +441,7 @@ console.log(JSON.stringify({
         expect(isObjectRecord(alternateAgentMeta) ? alternateAgentMeta.model : undefined).toBe(
           alternateModel,
         );
-        expect(parseOpenClawAgentText(alternateResponse.stdout).trim()).not.toBe("");
+        expect(alternateText.trim()).not.toBe("");
 
         const backToSelected = await host.nemoclaw(
           [
@@ -478,6 +486,9 @@ console.log(JSON.stringify({
       redactionValues: [apiKey],
       timeoutMs: 180_000,
     };
+    const openClawResult = hermes
+      ? null
+      : await requestOpenClawAgent(`${selected.id}-native-agent`);
     const response = hermes
       ? await sandbox.execShell(
           sandboxName,
@@ -494,31 +505,9 @@ console.log(JSON.stringify({
           ),
           responseOptions,
         )
-      : await sandbox.exec(
-          sandboxName,
-          [
-            "nemoclaw-start",
-            "openclaw",
-            "agent",
-            "--agent",
-            "main",
-            "--json",
-            "--thinking",
-            "off",
-            "--session-id",
-            `native-${crypto.randomUUID()}`,
-            "-m",
-            "Reply with one short greeting. Do not use tools.",
-          ],
-          responseOptions,
-        );
+      : openClawResult!.response;
     expect(response.exitCode, resultText(response)).toBe(0);
-    const document = hermes
-      ? JSON.parse(response.stdout)
-      : parseOpenClawJsonDocuments(response.stdout)
-          .map(openClawAgentResponseRecord)
-          .filter((value) => value !== null)
-          .at(-1);
+    const document = hermes ? JSON.parse(response.stdout) : openClawResult!.document;
     // Hermes reports the response model through its API; its selected adapter is
     // recorded in config. OpenClaw reports both in the agent response metadata.
     const agentSelection = hermes
@@ -528,9 +517,7 @@ console.log(JSON.stringify({
       provider: hermes ? "custom" : selected.providerKey,
       model,
     });
-    const text = hermes
-      ? (document.choices?.[0]?.message?.content ?? "")
-      : parseOpenClawAgentText(response.stdout);
+    const text = hermes ? (document.choices?.[0]?.message?.content ?? "") : openClawResult!.text;
     expect(text.trim()).not.toBe("");
   },
 );
