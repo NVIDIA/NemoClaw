@@ -8,6 +8,7 @@ use crate::{
 };
 use nemoclaw_sdk::{Error, OperationResult, Outcome};
 use std::{
+    borrow::Cow,
     collections::BTreeSet,
     io::IsTerminal,
     path::PathBuf,
@@ -91,6 +92,13 @@ impl RenderContext {
             .collect()
     }
 
+    fn add_warnings(&self, value: &mut serde_json::Value) {
+        let warnings = self.warnings();
+        if !warnings.is_empty() {
+            value["warnings"] = serde_json::json!(warnings);
+        }
+    }
+
     fn append_warnings(&self, output: &mut String) {
         let warnings = self.warnings();
         if !warnings.is_empty() {
@@ -131,8 +139,7 @@ pub(crate) fn render(
             },
             OutputFormat::Json => {
                 let mut value = serde_json::to_value(&result)?;
-                let warnings = context.warnings();
-                if !warnings.is_empty() { value["warnings"] = serde_json::json!(warnings); }
+                context.add_warnings(&mut value);
                 if result.outcome == Outcome::Planned {
                     value["complete"] = serde_json::Value::Bool(result.deferred.is_empty());
                 }
@@ -608,10 +615,7 @@ pub(crate) fn render_error(
         "stateDirectory": context.state_dir,
         "error": { "message": message },
     });
-    let warnings = context.warnings();
-    if !warnings.is_empty() {
-        details["warnings"] = serde_json::json!(warnings);
-    }
+    context.add_warnings(&mut details);
     if let Some(input) = &context.input {
         details["input"] = serde_json::json!(input);
     }
@@ -631,15 +635,15 @@ pub(crate) fn render_error(
         details["remainingState"] = serde_json::json!(remaining);
     }
     let help = match sdk {
-        Some(Error::SandboxChangeRefused { .. }) => Some(
-            "Keep this deployment's state. Use a separate deployment with a fresh UID and state directory; see docs/usage.md#choose-the-change-path. Export and destroy still use the retained configuration.".to_owned(),
-        ),
-        Some(Error::SandboxStartup { .. }) => Some(
-            "Inspect the sandbox with OpenShell using this deployment's gateway and workspace; collect gateway and supervisor logs before cleanup.".to_owned(),
-        ),
-        Some(Error::DockerModelUpdateRefused { service }) => Some(format!(
-            "To replace the running model container, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement starts. See docs/inference.md#set-container-limits-and-update-policy."
+        Some(Error::SandboxChangeRefused { .. }) => Some(Cow::Borrowed(
+            "Keep this deployment's state. Use a separate deployment with a fresh UID and state directory; see docs/usage.md#choose-the-change-path. Export and destroy still use the retained configuration.",
         )),
+        Some(Error::SandboxStartup { .. }) => Some(Cow::Borrowed(
+            "Inspect the sandbox with OpenShell using this deployment's gateway and workspace; collect gateway and supervisor logs before cleanup.",
+        )),
+        Some(Error::DockerModelUpdateRefused { service }) => Some(Cow::Owned(format!(
+            "To replace the running model container, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement starts. See docs/inference.md#set-container-limits-and-update-policy."
+        ))),
         _ => None,
     };
     if let Some(help) = &help {

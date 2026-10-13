@@ -126,6 +126,11 @@ impl OllamaProxy {
     }
 }
 
+/// The address of the service's model container resource.
+pub(crate) fn service_address(name: &str) -> String {
+    address(SERVICE_KIND, name)
+}
+
 fn address(kind: &str, name: &str) -> String {
     format!("nemoclaw_{kind}.{name}")
 }
