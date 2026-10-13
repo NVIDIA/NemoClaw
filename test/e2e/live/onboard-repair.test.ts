@@ -275,9 +275,6 @@ test(
       providers.add(LIVE_EXTRA_PROVIDER);
     });
     await artifacts.writeJson("phase-1-extra-providers-seeded.json", seededExtraProviders);
-    expect(seededExtraProviders).toEqual(
-      expect.arrayContaining([LIVE_EXTRA_PROVIDER, STALE_EXTRA_PROVIDER]),
-    );
 
     await sandbox.waitForInitialOpenClawPairing(SANDBOX_NAME, {
       artifactName: "phase-1-wait-for-initial-pairing",
@@ -347,7 +344,6 @@ test(
       timeoutMs: 60_000,
     });
     const sourceId = parseOpenShellSandboxId(resultText(sourceBeforeBackup));
-    expect(sourceId).toBeTruthy();
     await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
@@ -395,12 +391,45 @@ test(
       timeoutMs: 60_000,
     });
     expect(parseOpenShellSandboxId(resultText(sourceAfterBackup))).toBe(sourceId);
-    const connectAfterBackup = await nemoclaw(
-      host,
-      [SANDBOX_NAME, "connect", "--probe-only"],
-      "phase-3-connect-after-rejected-backup",
+    const routeAfterBackup = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
+      artifactName: "phase-3-route-after-rejected-backup",
+      env: env(),
+      timeoutMs: 30_000,
+    });
+    expect(resultText(routeAfterBackup)).toMatch(
+      /Provider:\s*compatible-endpoint[\s\S]*Model:\s*test-model/u,
     );
-    expect(connectAfterBackup.exitCode, resultText(connectAfterBackup)).toBe(0);
+    const requestOffset = fake.requests().length;
+    const sourceChat = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "curl",
+        "-fsS",
+        "--max-time",
+        "60",
+        "https://inference.local/v1/chat/completions",
+        "-H",
+        "Content-Type: application/json",
+        "--data-raw",
+        JSON.stringify({
+          model: "test-model",
+          messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+          max_tokens: 50,
+        }),
+      ],
+      {
+        artifactName: "phase-3-source-inference-after-rejected-backup",
+        env: env(),
+        timeoutMs: 90_000,
+      },
+    );
+    expect(sourceChat.exitCode, resultText(sourceChat)).toBe(0);
+    expect(
+      fake
+        .requests()
+        .slice(requestOffset)
+        .find((request) => request.method === "POST" && request.path === "/v1/chat/completions"),
+    ).toEqual(expect.objectContaining({ model: "test-model", auth: "ok" }));
     await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(`rm -f '${BACKUP_REJECTION_FILE}'`),

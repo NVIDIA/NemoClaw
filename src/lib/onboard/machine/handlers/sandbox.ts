@@ -221,6 +221,7 @@ export interface SandboxStateOptions<
   model: string;
   provider: string;
   hostLocalInferenceRouteOnly?: boolean;
+  deferredInferenceRoute?: () => Promise<void>;
   endpointUrl: string | null;
   compatibleEndpointReasoning: string | null;
   credentialEnv: string | null;
@@ -1272,13 +1273,24 @@ class SandboxStateFlow<
     createIntent: CompleteSandboxCreateIntent,
   ): CompleteSandboxCreateIntent {
     const currentEntry = this.deps.getSandboxRegistryEntry(sandboxName);
+    if (
+      this.options.deferredInferenceRoute &&
+      (currentEntry === null || currentEntry.pendingRouteReservation === true)
+    ) {
+      throw new Error(
+        `Sandbox '${sandboxName}' route ownership changed before its backed-up inference route could be applied. Retry onboarding.`,
+      );
+    }
     if (currentEntry === null || currentEntry.pendingRouteReservation === true) {
       this.reserveCreateRouteForSession(sandboxName);
       return createIntent;
     }
     return {
       ...createIntent,
-      reservePublishedRouteAfterBackup: () => this.reserveCreateRouteForSession(sandboxName),
+      reservePublishedRouteAfterBackup: async () => {
+        await this.options.deferredInferenceRoute?.();
+        this.reserveCreateRouteForSession(sandboxName);
+      },
     };
   }
 

@@ -114,8 +114,10 @@ describe("sandbox route publication", () => {
     });
     const createSandbox = vi.fn(async (...args: unknown[]) => {
       expect(registryEntry.pendingRouteReservation).toBeUndefined();
-      const intent = args.at(-2) as { reservePublishedRouteAfterBackup: () => void };
-      intent.reservePublishedRouteAfterBackup();
+      const intent = args.at(-2) as {
+        reservePublishedRouteAfterBackup: () => void | Promise<void>;
+      };
+      await intent.reservePublishedRouteAfterBackup();
       expect(registryEntry).toMatchObject({
         pendingRouteReservation: true,
         reservationSessionId: session.sessionId,

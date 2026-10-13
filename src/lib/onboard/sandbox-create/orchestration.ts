@@ -2628,7 +2628,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         pendingStateRestore = result.backup;
       }
 
-      createIntent?.reservePublishedRouteAfterBackup?.();
+      await createIntent?.reservePublishedRouteAfterBackup?.();
       // Parse and freeze the rebuild policy while the source sandbox is still
       // intact. A malformed or raced policy must not fail after deletion.
       managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
@@ -2697,7 +2697,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       );
     }
     if (!liveExists && existingEntry) {
-      createIntent?.reservePublishedRouteAfterBackup?.();
+      await createIntent?.reservePublishedRouteAfterBackup?.();
     }
     runForNewSandboxCreate(resumingVerifiedCreate, () => {
       revalidateSandboxIdentity(false, `creating sandbox '${sandboxName}'`);

@@ -60,6 +60,7 @@ import {
 } from "../adapters/openshell/gateway-scope";
 import type { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import type { Session } from "../state/onboard-session";
+import type { SandboxEntry } from "../state/registry/types";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
 import {
   withRoutedInferencePortLock,
@@ -645,12 +646,84 @@ function releaseSupersededOllamaModel(
   if (authorityRefusal) throw authorityRefusal;
 }
 
+function shouldStageGatewayRouteAfterBackup(
+  provider: string,
+  source: SandboxEntry | null | undefined,
+  hostLocalSelection: ProviderInferenceSetupOptions["hostLocalInference"],
+  credentialEnv: string | null,
+  ollamaProxyCredentialEnv: string,
+): boolean {
+  return Boolean(
+    inferenceProviders.isRemoteProviderName(provider) &&
+    !hostLocalSelection &&
+    credentialEnv !== ollamaProxyCredentialEnv &&
+    source &&
+    !isLocalOllamaRouteOwner(source) &&
+    source.pendingRouteReservation !== true,
+  );
+}
+
+function createGatewayRouteStager(input: {
+  deps: SetupInferenceDeps;
+  provider: string;
+  sandboxName: string | null;
+  gatewayName: string;
+  credentialEnv: string | null;
+  hostLocalSelection: ProviderInferenceSetupOptions["hostLocalInference"];
+  options: ProviderInferenceSetupOptions;
+  revalidateSandboxIdentity?: (operation: string) => void;
+}) {
+  let stagedRoute: Parameters<OpenShellInferenceRouteMutator["setInferenceRoute"]>[0] | null = null;
+  const mutator: OpenShellInferenceRouteMutator = {
+    setInferenceRoute: (request) => {
+      input.revalidateSandboxIdentity?.("change the OpenShell inference provider route");
+      const source =
+        input.sandboxName && input.options.deferPublishedRouteReservation
+          ? input.deps.getSandbox?.(input.sandboxName)
+          : null;
+      if (
+        shouldStageGatewayRouteAfterBackup(
+          input.provider,
+          source,
+          input.hostLocalSelection,
+          input.credentialEnv,
+          input.deps.ollamaProxyCredentialEnv,
+        )
+      ) {
+        stagedRoute = request;
+        return Promise.resolve({ ok: true });
+      }
+      return input.deps.inferenceRouteMutator.setInferenceRoute(request);
+    },
+  };
+  return {
+    mutator,
+    hasStagedRoute: () => stagedRoute !== null,
+    successResult: (): SetupInferenceResult => {
+      if (!stagedRoute) return { ok: true };
+      const request = stagedRoute;
+      return {
+        ok: true,
+        deferredInferenceRoute: async () => {
+          input.revalidateSandboxIdentity?.("apply the backed-up sandbox inference route");
+          const result = await input.deps.inferenceRouteMutator.setInferenceRoute(request);
+          if (!result.ok) throw new Error(result.error.message);
+          input.deps.verifyInferenceRoute(
+            input.gatewayName,
+            request.route.provider,
+            request.route.model,
+          );
+        },
+      };
+    },
+  };
+}
+
 export function createSetupInference(
   defaults: SetupInferenceDeps,
   overrides: Partial<SetupInferenceDeps> = {},
 ): SetupInference {
   const deps: SetupInferenceDeps = { ...defaults, ...overrides };
-  const { inferenceRouteMutator } = deps;
 
   return async function setupInferenceWithDeps(
     sandboxName: string | null,
@@ -783,18 +856,23 @@ export function createSetupInference(
           revalidateSandboxIdentity?.("change the OpenShell inference provider route");
           return runExactGatewayOpenshell(...args);
         };
-        const revalidatingInferenceRouteMutator: OpenShellInferenceRouteMutator = {
-          setInferenceRoute: (request) => {
-            revalidateSandboxIdentity?.("change the OpenShell inference provider route");
-            return inferenceRouteMutator.setInferenceRoute(request);
-          },
-        };
+        const hostLocalSelection = options.hostLocalInference;
+        const routeStager = createGatewayRouteStager({
+          deps,
+          provider,
+          sandboxName,
+          gatewayName,
+          credentialEnv,
+          hostLocalSelection,
+          options,
+          revalidateSandboxIdentity,
+        });
+        const revalidatingInferenceRouteMutator = routeStager.mutator;
         let hostLocalRoute: HostLocalInferenceStartupRoute | null = null;
         let hostLocalGatewayMutation: HostLocalInferenceGatewayMutation | null = null;
         let hostLocalRollbackAttempted = false;
         let hostLocalRegistryPublicationEntered = false;
         const hostLocalProviderErrors: string[] = [];
-        const hostLocalSelection = options.hostLocalInference;
         let routeReserved = false;
         let hostLocalInferenceReceipt: string | null = null;
         let hostLocalInferenceProvenance:
@@ -891,6 +969,7 @@ export function createSetupInference(
           gatewayName,
           upsertProvider: selectedUpsertProvider,
           verifyInferenceRoute: (selectedProvider: string, selectedModel: string) => {
+            if (routeStager.hasStagedRoute()) return;
             if (!hostLocalRoute && sandboxName) {
               reserveRoute(sandboxName, selectedProvider, selectedModel);
             }
@@ -1383,7 +1462,7 @@ export function createSetupInference(
           }
           revalidateSandboxIdentity?.("report successful inference provider setup");
           shouldLogSuccessfulRoute = true;
-          return { ok: true as const };
+          return routeStager.successResult();
         } catch (error) {
           if (!hostLocalRoute || !hostLocalSelection) throw error;
           emitHostLocalInferenceFailure(

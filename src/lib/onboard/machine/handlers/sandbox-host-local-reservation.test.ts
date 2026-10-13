@@ -68,7 +68,7 @@ async function resumedHostLocalSandbox() {
       const authority = args[14];
       assert(authority, "Missing create reservation authority");
       // The create mock represents admission after the source backup succeeds.
-      args[15]?.reservePublishedRouteAfterBackup?.();
+      await args[15]?.reservePublishedRouteAfterBackup?.();
       const entry = registry.getSandbox(args[4]);
       expect(authority.sessionId).toBe(session.sessionId);
       expect(normalizeInferenceSelection(authority.selection)).toEqual(
