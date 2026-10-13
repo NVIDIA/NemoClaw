@@ -40,6 +40,9 @@ export const LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE =
 export const LLAMA_CPP_DGX_SPARK_TOOL_IMAGE =
   "nvcr.io/nvidia/vllm@sha256:94e21552f644e0c1627464ba89d2f7a4ce7442e196f72afa0bb5d7fba23cbb03" as const;
 export const LLAMA_CPP_DGX_SPARK_MINIMUM_DRIVER_VERSION = "580.65.06" as const;
+const LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_VERSION = "1.26.9" as const;
+const LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_ARCHIVE_SHA256 =
+  "sha256:4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052" as const;
 export const LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES = 1_100_000 as const;
 export const LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES = [
   "health",
@@ -185,6 +188,10 @@ export type LlamaCppDgxSparkExecutionPlan = {
       readonly platform: typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM;
     };
     readonly repository: typeof LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY;
+    readonly requestGuardToolchain: {
+      readonly archiveSha256: typeof LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_ARCHIVE_SHA256;
+      readonly version: typeof LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_VERSION;
+    };
     readonly runtime: {
       readonly gid: number;
       readonly port: 8081;
@@ -452,13 +459,13 @@ export type LlamaCppDgxSparkQualificationReceipt = {
       readonly slots: 1;
     };
     readonly disabledSurfaces: {
-      readonly corsProxyHttpStatus: 403;
+      readonly corsProxyHttpStatus: 404;
       readonly multimodal: false;
       readonly ok: true;
-      readonly propertiesMutationHttpStatus: 501;
+      readonly propertiesMutationHttpStatus: 404;
       readonly routerHttpStatus: 404;
-      readonly slotsHttpStatus: 501;
-      readonly toolsHttpStatus: 403;
+      readonly slotsHttpStatus: 404;
+      readonly toolsHttpStatus: 404;
       readonly uiHttpStatus: 404;
     };
     readonly health: {
@@ -1026,7 +1033,16 @@ export function parseLlamaCppDgxSparkExecutionPlan(
   const imageBuild = record(plan.imageBuild, "compiled qualification image build");
   requireExactKeys(
     imageBuild,
-    ["backendDirectory", "compiler", "cuda", "platform", "repository", "runtime", "source"],
+    [
+      "backendDirectory",
+      "compiler",
+      "cuda",
+      "platform",
+      "repository",
+      "requestGuardToolchain",
+      "runtime",
+      "source",
+    ],
     "compiled qualification image build",
   );
   const compiler = record(imageBuild.compiler, "compiled qualification compiler");
@@ -1044,6 +1060,15 @@ export function parseLlamaCppDgxSparkExecutionPlan(
     "compiled qualification image platform",
   );
   const imageRuntime = record(imageBuild.runtime, "compiled qualification image runtime");
+  const requestGuardToolchain = record(
+    imageBuild.requestGuardToolchain,
+    "compiled qualification request guard toolchain",
+  );
+  requireExactKeys(
+    requestGuardToolchain,
+    ["archiveSha256", "version"],
+    "compiled qualification request guard toolchain",
+  );
   requireExactKeys(imageRuntime, ["gid", "port", "uid"], "compiled qualification image runtime");
   const imageSource = record(imageBuild.source, "compiled qualification image source");
   requireExactKeys(
@@ -1063,6 +1088,8 @@ export function parseLlamaCppDgxSparkExecutionPlan(
     imageCuda.runtimeBase !== LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE ||
     platform.platform !== LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM ||
     platform.cudaArchitectures !== LLAMA_CPP_DGX_SPARK_CUDA_ARCHITECTURES ||
+    requestGuardToolchain.archiveSha256 !== LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_ARCHIVE_SHA256 ||
+    requestGuardToolchain.version !== LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_VERSION ||
     imageRuntime.port !== 8081 ||
     imageSource.repository !== LLAMA_CPP_DGX_SPARK_SOURCE_REPOSITORY ||
     imageSource.revision !== LLAMA_CPP_DGX_SPARK_SOURCE_REVISION ||
@@ -1413,6 +1440,10 @@ export function parseLlamaCppDgxSparkExecutionPlan(
         platform: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM,
       },
       repository: LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY,
+      requestGuardToolchain: {
+        archiveSha256: LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_ARCHIVE_SHA256,
+        version: LLAMA_CPP_DGX_SPARK_REQUEST_GUARD_GO_VERSION,
+      },
       runtime: { gid, port: 8081, uid },
       source: {
         archiveSha256: LLAMA_CPP_DGX_SPARK_SOURCE_ARCHIVE_SHA256,
@@ -1975,12 +2006,12 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
     properties.model !== LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID ||
     properties.modelPath !== "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf" ||
     disabledSurfaces.ok !== true ||
-    disabledSurfaces.corsProxyHttpStatus !== 403 ||
+    disabledSurfaces.corsProxyHttpStatus !== 404 ||
     disabledSurfaces.multimodal !== false ||
-    disabledSurfaces.propertiesMutationHttpStatus !== 501 ||
+    disabledSurfaces.propertiesMutationHttpStatus !== 404 ||
     disabledSurfaces.routerHttpStatus !== 404 ||
-    disabledSurfaces.slotsHttpStatus !== 501 ||
-    disabledSurfaces.toolsHttpStatus !== 403 ||
+    disabledSurfaces.slotsHttpStatus !== 404 ||
+    disabledSurfaces.toolsHttpStatus !== 404 ||
     disabledSurfaces.uiHttpStatus !== 404 ||
     synchronousChat.ok !== true ||
     synchronousChat.httpStatus !== 200 ||
@@ -2081,13 +2112,13 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
       cancellation: { aborted: true, ok: true, recovered: true },
       contextWindow: { contextSize, ok: true, slots: 1 },
       disabledSurfaces: {
-        corsProxyHttpStatus: 403,
+        corsProxyHttpStatus: 404,
         multimodal: false,
         ok: true,
-        propertiesMutationHttpStatus: 501,
+        propertiesMutationHttpStatus: 404,
         routerHttpStatus: 404,
-        slotsHttpStatus: 501,
-        toolsHttpStatus: 403,
+        slotsHttpStatus: 404,
+        toolsHttpStatus: 404,
         uiHttpStatus: 404,
       },
       health: { httpStatus: 200, ok: true },

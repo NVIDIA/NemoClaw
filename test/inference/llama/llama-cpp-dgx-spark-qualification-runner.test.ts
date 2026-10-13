@@ -182,6 +182,18 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
           value.imageBuild.cuda.runtimeBase = "docker.io/nvidia/cuda:latest";
         },
         (value: Record<string, any>) => {
+          delete value.imageBuild.requestGuardToolchain;
+        },
+        (value: Record<string, any>) => {
+          value.imageBuild.requestGuardToolchain.version = "1.26.8";
+        },
+        (value: Record<string, any>) => {
+          value.imageBuild.requestGuardToolchain.archiveSha256 = `sha256:${"0".repeat(64)}`;
+        },
+        (value: Record<string, any>) => {
+          value.imageBuild.requestGuardToolchain.untrusted = true;
+        },
+        (value: Record<string, any>) => {
           value.recipe.runtime.gpu.cpuFallback = "allow";
         },
         (value: Record<string, any>) => {
@@ -315,6 +327,21 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         `LLAMA_CPP_REVISION=${plan.imageBuild.source.revision}`,
         `NEMOCLAW_REVISION=${HEAD_SHA}`,
         "TARGETPLATFORM=linux/arm64",
+      ]),
+    );
+  });
+
+  it("passes the pinned Go toolchain to the candidate image build (#13026)", () => {
+    const argv = buildCandidateImageArgv(plan, parsedInvocation(), "/work/tmp/metadata.json");
+    const matrix = JSON.parse(config.matrix) as {
+      include: { platform: string; request_guard_go_archive_sha256: string }[];
+    };
+    const arm64 = matrix.include.find(({ platform }) => platform === "linux/arm64");
+    expect(arm64).toBeDefined();
+    expect(valuesAfter(argv, "--build-arg")).toEqual(
+      expect.arrayContaining([
+        `REQUEST_GUARD_GO_VERSION=${config.request_guard_go_version}`,
+        `REQUEST_GUARD_GO_ARCHIVE_SHA256=${arm64!.request_guard_go_archive_sha256}`,
       ]),
     );
   });

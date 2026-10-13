@@ -293,6 +293,8 @@ export function buildCandidateImageArgv(
     `LLAMA_CPP_ARCHIVE_SHA256=${plan.imageBuild.source.archiveSha256}`,
     `LLAMA_CPP_REVISION=${plan.imageBuild.source.revision}`,
     `NEMOCLAW_REVISION=${invocation.candidateHead}`,
+    `REQUEST_GUARD_GO_ARCHIVE_SHA256=${plan.imageBuild.requestGuardToolchain.archiveSha256}`,
+    `REQUEST_GUARD_GO_VERSION=${plan.imageBuild.requestGuardToolchain.version}`,
     `RUNTIME_GID=${plan.imageBuild.runtime.gid}`,
     `RUNTIME_UID=${plan.imageBuild.runtime.uid}`,
     `TARGETPLATFORM=${plan.imageBuild.platform.platform}`,

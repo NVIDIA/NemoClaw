@@ -197,13 +197,13 @@ function receipt() {
       cancellation: { aborted: true, ok: true, recovered: true },
       contextWindow: { contextSize: 262144, ok: true, slots: 1 },
       disabledSurfaces: {
-        corsProxyHttpStatus: 403,
+        corsProxyHttpStatus: 404,
         multimodal: false,
         ok: true,
-        propertiesMutationHttpStatus: 501,
+        propertiesMutationHttpStatus: 404,
         routerHttpStatus: 404,
-        slotsHttpStatus: 501,
-        toolsHttpStatus: 403,
+        slotsHttpStatus: 404,
+        toolsHttpStatus: 404,
         uiHttpStatus: 404,
       },
       health: { httpStatus: 200, ok: true },
@@ -293,6 +293,10 @@ function executionPlan() {
       },
       platform: { cudaArchitectures: "103-real;120-real;121a-real", platform: "linux/arm64" },
       repository: LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY,
+      requestGuardToolchain: {
+        archiveSha256: "sha256:4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052",
+        version: "1.26.9",
+      },
       runtime: { gid: 10001, port: 8081, uid: 10001 },
       source: {
         archiveSha256: LLAMA_CPP_DGX_SPARK_SOURCE_ARCHIVE_SHA256,
