@@ -2,14 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_sdk::{
-    CancellationToken, Deployment, Error, ObservationError, Progress, Secrets,
-    bundle::{Bundle, Manifest, hash_file, required_files},
-    compile::OPENTOFU_VERSION,
+    CancellationToken, Deployment, Error, ObservationError, Progress, Secrets, bundle::Bundle,
     config::Document,
 };
 use std::{
     fs,
-    path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -31,28 +28,6 @@ async fn invalid_programmatic_configuration_cannot_create_deployment_state() {
     assert!(!state.exists());
 }
 
-/// A bundle whose hashes verify, so opening it succeeds. Its files cannot
-/// execute, so no operation that reaches OpenTofu can do anything.
-fn write_bundle(directory: &Path) {
-    let mut manifest = Manifest {
-        version: "0.1.0".into(),
-        rust: "1.98.1".into(),
-        opentofu: OPENTOFU_VERSION.into(),
-        files: Default::default(),
-    };
-    for name in required_files(&manifest.version).unwrap() {
-        let path = directory.join(&name);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, b"non-executable fixture").unwrap();
-        manifest.files.insert(name, hash_file(&path).unwrap());
-    }
-    fs::write(
-        directory.join("manifest.json"),
-        serde_json::to_vec(&manifest).unwrap(),
-    )
-    .unwrap();
-}
-
 #[derive(Default)]
 struct CountingSecrets(AtomicUsize);
 impl Secrets for CountingSecrets {
@@ -67,7 +42,7 @@ async fn a_document_that_fails_validation_is_rejected_before_the_bundle_opens_or
 {
     let directory = tempfile::tempdir().unwrap();
     let bundle = directory.path().join("bundle");
-    write_bundle(&bundle);
+    crate::bundle::write_bundle(&bundle, None);
     assert!(Bundle::open(&bundle).is_ok(), "the bundle must be valid");
     let document = Document::default();
     let mut defaulted = document.clone();

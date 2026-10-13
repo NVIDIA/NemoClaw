@@ -3,6 +3,8 @@
 //! SDK integration tests, linked into one binary so the SDK links once.
 //! Each file is a module; helpers under support/ are shared by all of them.
 
+#[path = "support/bundle.rs"]
+mod bundle;
 #[path = "support/examples.rs"]
 mod examples;
 #[cfg(unix)]
