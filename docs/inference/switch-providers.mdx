@@ -79,6 +79,7 @@ The gateway, CLI, TUI, and Web Dashboard all read that shared configuration.
 Changes between shared routes do not rebuild or restart Hermes.
 A switch to or from a native hosted provider restarts the Hermes gateway after configuration sync, including a live NVIDIA Build switch.
 Active agent requests can be interrupted during the restart.
+If the restart fails, the route and configuration remain committed. Run `$$nemoclaw <name> gateway restart` to apply the switch.
 
 </AgentOnly>
 

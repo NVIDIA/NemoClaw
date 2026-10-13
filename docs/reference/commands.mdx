@@ -3621,6 +3621,7 @@ It then patches the shared native `/sandbox/.hermes/config.yaml`, recomputes the
 Changes between shared routes do not rebuild or restart Hermes.
 A switch to or from a native hosted provider restarts the Hermes gateway after configuration sync, including a live NVIDIA Endpoints switch.
 Active agent requests can be interrupted during the restart.
+If the restart fails, the route and configuration remain committed. Run `$$nemoclaw <name> gateway restart` to apply the switch.
 
 Shared routes use the OpenShell proxy API-key placeholder. On a live NVIDIA Endpoints switch, NemoClaw writes the newly attached provider's scoped OpenShell credential reference into the Hermes config. Other native hosted providers use their managed credential placeholders. None of these values is a raw provider credential. The gateway, CLI, TUI, and Web Dashboard read the same configuration.
 
