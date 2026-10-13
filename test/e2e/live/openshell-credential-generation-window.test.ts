@@ -684,6 +684,11 @@ test(
     );
     expectExitZero(clearExpiryControl, "reset credential-window controls after expiry proof");
 
+    const postInferenceRestoreRevision = await observeDistinctFreshRevision(
+      sandbox,
+      restoredRevision,
+      "credential-window-current-revision-after-inference-restore",
+    );
     const oldChildPromise = sandbox.exec(
       SANDBOX_NAME,
       ["nemoclaw-start", "node", "-e", buildCredentialWindowChildScript({ mcpUrl: tunnel.url })],
@@ -697,10 +702,11 @@ test(
     let oldChildRevision = "";
     let oldChildResult: ShellProbeResult | undefined;
     let restartedRevision = "";
-    const observedRevisions = [restoredRevision];
+    const observedRevisions: string[] = [];
     try {
       oldChildRevision = await waitForReadyRevision(sandbox);
-      expect(oldChildRevision).toBe(restoredRevision);
+      expect(oldChildRevision).toBe(postInferenceRestoreRevision);
+      observedRevisions.push(postInferenceRestoreRevision);
       for (const [index, secret] of rotationSecrets.entries()) {
         await rotateCredential(host, sandbox, fakeMcp, providerName, secret, index + 1, allSecrets);
         observedRevisions.push(
@@ -716,6 +722,7 @@ test(
         oldChildRevision,
         observedRevisions,
         restoredRevision,
+        postInferenceRestoreRevision,
         retainedGenerations: OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,
         rotations: CREDENTIAL_WINDOW_ROTATION_COUNT,
       });

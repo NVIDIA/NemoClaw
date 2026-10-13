@@ -68,7 +68,7 @@ export const SANDBOX_OPERATING_SYSTEMS = ["linux", "windows", "other", "unknown"
 export const MANAGED_AGENT_VERSIONS: Readonly<Record<string, readonly string[]>> = {
   openclaw: ["2026.9.2"],
   hermes: ["0.21.3"],
-  "langchain-deepagents-code": ["0.1.55"],
+  "langchain-deepagents-code": ["0.1.71"],
 };
 export const TELEMETRY_MODEL_KEYS: Readonly<Record<string, string>> = {
   "Qwen/Qwen3.6-27B-FP8": "qwen3_6_27b_fp8",

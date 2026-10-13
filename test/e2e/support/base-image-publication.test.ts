@@ -187,6 +187,10 @@ describe("base-image publication evidence", () => {
   it.each([
     ["src/lib/adapters/container-engine.ts", "src/lib/adapters/container-engine.ts"],
     ["src/lib/adapters/podman/**", "src/lib/adapters/podman/index.ts"],
+    [
+      "src/lib/agent/deep-agents-code-runtime-identity.json",
+      "src/lib/agent/deep-agents-code-runtime-identity.json",
+    ],
     ["test/e2e/fixtures/docker-build-guard.ts", "test/e2e/fixtures/docker-build-guard.ts"],
   ])("publishes after managed-image input %s changes", (publisherPath, changedPath) => {
     const reviewedPaths = parseBaseImagePushPaths(BASE_IMAGE_WORKFLOW_SOURCE);
