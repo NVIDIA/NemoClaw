@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    sync::{Arc, Mutex},
 };
 
 /// `@CONTROL@` and `@STATE@` become the control directory and the state
@@ -92,30 +92,20 @@ fn write_bundle(directory: &Path, script: &str) {
     .unwrap();
 }
 
-/// Scripted tests of one process run one at a time. `Deployment` holds a lock
-/// file for each operation, and a child that another thread forks while the lock
-/// is held keeps the lock until it executes, so a test's next operation can find
-/// the lock held. Nextest runs each test in its own process, where nothing
-/// waits here; `cargo test` runs them as threads of one process.
-static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
-
 /// A temporary bundle with a scripted `tofu`, a control directory, and the path
 /// of a state directory that `Deployment` creates. A test creates one.
 pub struct Scripted {
-    _turn: MutexGuard<'static, ()>,
     _directory: tempfile::TempDir,
     root: PathBuf,
 }
 
 impl Scripted {
     pub fn new() -> Self {
-        let turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
         let directory = tempfile::tempdir().unwrap();
         // The script compares its physical working directory with the state
         // directory, and a macOS temporary path traverses a symbolic link.
         let root = directory.path().canonicalize().unwrap();
         let scripted = Self {
-            _turn: turn,
             _directory: directory,
             root,
         };
