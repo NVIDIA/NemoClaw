@@ -88,6 +88,7 @@ const LOCAL_COPY_SOURCES = [
   "ci/reviewed-npm-audit.json",
   "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json",
   "src/lib/hermes-managed-route.ts",
+  "src/lib/inference/native-nvidia/contract.ts",
   "src/lib/inference/native-provider/agent-config.ts",
   "src/lib/inference/native-provider/contract.ts",
   "src/lib/inference/native-provider/hosted.ts",
