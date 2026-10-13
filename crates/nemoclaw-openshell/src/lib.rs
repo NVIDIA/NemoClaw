@@ -18,7 +18,8 @@ pub mod search;
 
 pub use capabilities::{GatewayCapabilities, OPENSHELL_VERSION};
 pub use connection::{
-    Connection, TlsFiles, capabilities, client, health, remote_error, remote_rejection, request,
+    Connection, RejectableOperation, TlsFiles, capabilities, client, health, remote_error,
+    remote_rejection, request,
 };
 pub use driver::ComputeDriver;
 pub use inputs::structured_inputs;

@@ -3,7 +3,7 @@
 
 //! An OpenShell gateway's version and compute drivers, read over its authenticated channel.
 pub use nemoclaw_openshell::{
-    capabilities, client, health, remote_error, remote_rejection, request,
+    RejectableOperation, capabilities, client, health, remote_error, remote_rejection, request,
 };
 use nemoclaw_sdk::{
     Secrets,
