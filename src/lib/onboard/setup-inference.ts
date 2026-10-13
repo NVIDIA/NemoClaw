@@ -809,6 +809,21 @@ export function createSetupInference(
         let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
+          const publishedSource = options.deferPublishedRouteReservation
+            ? deps.getSandbox?.(name)
+            : null;
+          if (
+            options.deferPublishedRouteReservation &&
+            !hostLocalSelection &&
+            credentialEnv !== deps.ollamaProxyCredentialEnv &&
+            publishedSource &&
+            publishedSource.pendingRouteReservation !== true
+          ) {
+            // The sandbox phase owns the replacement reservation after its
+            // pre-delete backup succeeds. Keep the current source connectable
+            // if that backup rejects the workspace.
+            return true;
+          }
           revalidateSandboxIdentity?.("reserve the sandbox inference route");
           // A route-only reservation abandoned by an earlier run otherwise
           // refuses this one and blames a session that no longer exists
