@@ -120,6 +120,12 @@ export interface ProviderInferenceSetupOptions {
   allowLegacyRecordedNoAuthEndpoint?: boolean;
 }
 
+function freshOnboardRouteReservationOptions(
+  effectiveResume: boolean,
+): Pick<ProviderInferenceSetupOptions, "deferPublishedRouteReservation"> {
+  return effectiveResume ? {} : { deferPublishedRouteReservation: true };
+}
+
 function legacyRecordedNoAuthEndpointSetupOptions(options: {
   authoritativeResumeConfig: boolean;
   recoveredRecordedProvider: boolean;
@@ -1834,7 +1840,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
             ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
             reservationSessionId: session?.sessionId,
-            deferPublishedRouteReservation: !effectiveResume,
+            ...freshOnboardRouteReservationOptions(effectiveResume),
             ...resolveCachedHostLocalInferenceSetupOptions(confirmedSandboxName),
           };
           await deps.startRecordedStep("inference", { provider, model });
@@ -2140,7 +2146,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
         ...(freshManagedOllama ? { reservationSessionId: session?.sessionId } : {}),
-        deferPublishedRouteReservation: !effectiveResume,
+        ...freshOnboardRouteReservationOptions(effectiveResume),
         ...providerRecovery.setupOptions(
           recoveredRecordedProvider,
           confirmedSandboxName,
