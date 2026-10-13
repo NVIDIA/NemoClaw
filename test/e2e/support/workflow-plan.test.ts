@@ -737,6 +737,18 @@ describe("E2E workflow plan", () => {
     ]);
   });
 
+  it("selects Hermes Slack when its shared placeholder probe owner changes", () => {
+    const changedFile = "test/e2e/live/hermes-slack-e2e-helpers.ts";
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "hermes-slack",
+    );
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "hermes-slack",
+    );
+  });
+
   it("selects sandbox operations when its gateway client changes", () => {
     const changedFile = "test/e2e/fixtures/clients/gateway.ts";
     const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
