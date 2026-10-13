@@ -250,6 +250,10 @@ runner.run = (command, opts = {}) => {
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
+  if (normalized.includes("docker image inspect --format {{.Id}}")) {
+    commands.push({ command: normalized, env: null });
+    return "sha256:" + "b".repeat(64);
+  }
   if (normalized.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
   if (normalized.includes("policy get") && normalized.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
   const sandboxCapture = createdSandbox.capture(command);
@@ -271,7 +275,6 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
-  if (!forwardService.recordSpawn(args)) createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -279,11 +282,9 @@ childProcess.spawn = (...args) => {
   child.pid = 4242;
   const cmd = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   commands.push({ command: cmd, env: args[2]?.env || null });
-  // Observe the staged build context state while the sandbox create is in
-  // flight — onboard deletes it once streamSandboxCreate resolves.
-  const fromMatch = cmd.match(/--from\s+(\S+)/);
-  if (fromMatch) {
-    const stagedDir = path.dirname(fromMatch[1]);
+  // Inspect the filtered context at the real prebuild's Docker command boundary.
+  if (args[0] === "docker" && args[1]?.[0] === "build") {
+    const stagedDir = args[1].at(-1);
     hasExtraFileAtSpawn = fs.existsSync(path.join(stagedDir, "extra.txt"));
     stagedIgnoredFilesAtSpawn = {
       nodeModules: fs.existsSync(path.join(stagedDir, "node_modules")),
@@ -301,7 +302,10 @@ childProcess.spawn = (...args) => {
       keepLog: fs.existsSync(path.join(stagedDir, "keep.log")),
       negatedSecret: fs.existsSync(path.join(stagedDir, "secrets", "token.txt")),
     };
+    process.nextTick(() => child.emit("close", Number(process.env.TEST_DOCKER_BUILD_STATUS || 0)));
+    return child;
   }
+  if (!forwardService.recordSpawn(args)) createdSandbox.create(args.flat());
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -317,9 +321,9 @@ const { createSandbox } = require(${onboardPath});
     [null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${customDockerfilePath}, null, null, null, null, []],
     createFixture,
   ));
-  console.log(JSON.stringify({ sandboxName, hasExtraFile: hasExtraFileAtSpawn, stagedIgnoredFiles: stagedIgnoredFilesAtSpawn, stagedDockerignoreFiles: stagedDockerignoreFilesAtSpawn }));
+  console.log(JSON.stringify({ sandboxName, commands, hasExtraFile: hasExtraFileAtSpawn, stagedIgnoredFiles: stagedIgnoredFilesAtSpawn, stagedDockerignoreFiles: stagedDockerignoreFilesAtSpawn }));
 })().catch((error) => {
-  console.error(error);
+  console.log(JSON.stringify({ error: String(error), commands }));
   process.exit(1);
 });
 `;
@@ -333,11 +337,12 @@ const { createSandbox } = require(${onboardPath});
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_SANDBOX_PREBUILD: "1",
         },
         timeout: 30_000,
       });
 
-      assert.equal(result.status, 0, result.stderr || result.error?.message);
+      assert.equal(result.status, 0, result.stderr + result.stdout || result.error?.message);
       const payloadLine = result.stdout
         .trim()
         .split("\n")
@@ -347,6 +352,25 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
       const payload = JSON.parse(payloadLine);
       assert.equal(payload.sandboxName, "my-assistant");
+      const buildIndex = payload.commands.findIndex((entry: { command: string }) =>
+        entry.command.startsWith("docker build -t "),
+      );
+      assert.ok(buildIndex >= 0, "expected a local Docker build");
+      const imageRef = payload.commands[buildIndex].command.match(/-t\s+(\S+)/)?.[1];
+      assert.match(imageRef, /^nemoclaw-sandbox-local:my-assistant-/);
+      const inspectIndex = payload.commands.findIndex(
+        (entry: { command: string }) =>
+          entry.command.includes("docker image inspect --format {{.Id}}") &&
+          entry.command.endsWith(imageRef),
+      );
+      const createIndex = payload.commands.findIndex(
+        (entry: { command: string }) =>
+          entry.command.includes("sandbox create") && entry.command.includes("--from " + imageRef),
+      );
+      assert.ok(inspectIndex > buildIndex, "expected image inspection after build");
+      assert.ok(createIndex > inspectIndex, "expected sandbox creation from the inspected image");
+      assert.match(result.stdout, /BuildKit build completed/);
+      assert.match(result.stdout, /Creating sandbox 'my-assistant'/);
       assert.match(result.stdout, /Using custom Dockerfile:/);
       assert.match(result.stdout, /Docker build context:/);
       assert.match(result.stdout, /Docker build context:.*custom-image/);
@@ -372,6 +396,42 @@ const { createSandbox } = require(${onboardPath});
         keepLog: true,
         negatedSecret: false,
       });
+
+      const failureHome = path.join(tmpDir, "build-failure-home");
+      fs.mkdirSync(failureHome);
+      const failedBuild = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: failureHome,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_SANDBOX_PREBUILD: "1",
+          TEST_DOCKER_BUILD_STATUS: "1",
+        },
+        timeout: 30_000,
+      });
+      assert.equal(failedBuild.status, 1, failedBuild.stderr + failedBuild.stdout);
+      const failureLine = failedBuild.stdout
+        .trim()
+        .split("\n")
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(failureLine, failedBuild.stdout);
+      const failure = JSON.parse(failureLine);
+      assert.match(failure.error, /Local BuildKit build failed \(exit 1\)/);
+      assert.ok(
+        failure.commands.some((entry: { command: string }) =>
+          entry.command.startsWith("docker build -t "),
+        ),
+      );
+      assert.ok(
+        failure.commands.every(
+          (entry: { command: string }) => !entry.command.includes("sandbox create"),
+        ),
+        "sandbox creation must not start after a failed build",
+      );
     },
   );
 

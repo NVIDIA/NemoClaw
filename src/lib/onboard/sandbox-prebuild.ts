@@ -258,15 +258,15 @@ export function sandboxLocalImageRef(
 }
 
 /**
- * Build a NemoClaw-generated staged context with the shared local container
+ * Build a staged Dockerfile context with the selected local container
  * runtime. Docker uses BuildKit; native Podman and the portable profile use
- * rootless Podman. Generated images must be present in the selected engine
+ * rootless Podman. Built images must be present in the selected engine
  * before OpenShell receives their image reference.
  * Ordinary portable builds require HTTP 200 from the managed IPv4 registry
  * before building. The receipt-owned Hermes path proves registry visibility
  * after publication under its existing lifecycle lock.
  * @throws When the portable registry is unavailable or a required build fails.
- * @returns The prebuilt image identity, or unchanged arguments for a custom source.
+ * @returns The built image identity and source reference for sandbox creation.
  */
 export async function prebuildSandboxImageIfEligible(
   input: SandboxPrebuildInput,
@@ -287,43 +287,44 @@ export async function prebuildSandboxImageIfEligible(
   const env = input.env ?? process.env;
   const log = input.log ?? console.log;
   const portable = Boolean(input.portableReceipt) || isPortableExperimentalProfile(env);
-  if (input.origin !== "generated") {
-    log(
-      "  Local BuildKit build skipped for a custom Dockerfile; using the gateway builder instead.",
-    );
-    return result(initialSourceReference, null, null);
-  }
+  const source = input.origin === "custom" ? "Custom" : "Generated";
   if (!input.dockerDriverGateway) {
     throw new Error(
-      "Generated Dockerfile onboarding requires a local Docker or Podman gateway; no image distribution path is configured for this gateway.",
+      `${source} Dockerfile onboarding requires a local Docker or Podman gateway; no image distribution path is configured for this gateway.`,
     );
   }
   const selectedEngine = portable || input.gatewayDriver === "podman" ? "podman" : "docker";
   if (input.gatewayDriver !== undefined && input.gatewayDriver !== selectedEngine) {
     throw new Error(
-      `Generated Dockerfile build requires the selected ${input.gatewayDriver} gateway engine; refusing a ${selectedEngine} build.`,
+      `${source} Dockerfile build requires the selected ${input.gatewayDriver} gateway engine; refusing a ${selectedEngine} build.`,
     );
+  }
+  if (input.origin === "custom" && selectedEngine === "podman") {
+    // Native Podman's workload profile has legacyDockerfileBuilds: false.
+    // Source resolution rejects custom Dockerfiles before this helper; keep
+    // direct calls fail closed under that existing admission rule (#7744).
+    throw new Error("Custom Dockerfile onboarding is unavailable with native Podman.");
   }
   if (selectedEngine === "podman" && !portable && !input.nativePodmanCapture) {
     throw new Error(
-      "Generated Dockerfile build requires the selected Podman gateway image-build authority.",
+      `${source} Dockerfile build requires the selected Podman gateway image-build authority.`,
     );
   }
   const dockerHost = String(env.DOCKER_HOST ?? "").trim();
   const dockerContext = String(env.DOCKER_CONTEXT ?? "").trim();
   if (selectedEngine === "docker" && dockerHost && !isSupportedGatewayDockerHost(env.DOCKER_HOST)) {
     throw new Error(
-      "Generated Dockerfile build requires a supported local Docker host; unset DOCKER_HOST or use an absolute local unix:// socket and retry.",
+      `${source} Dockerfile build requires a supported local Docker host; unset DOCKER_HOST or use an absolute local unix:// socket and retry.`,
     );
   }
   if (selectedEngine === "docker" && !dockerHost && dockerContext && dockerContext !== "default") {
     throw new Error(
-      "Generated Dockerfile build cannot prove that the selected Docker context shares the local gateway engine.",
+      `${source} Dockerfile build cannot prove that the selected Docker context shares the local gateway engine.`,
     );
   }
   if (!resolveSandboxPrebuildEnabled(env, input.dockerDriverGateway)) {
     throw new Error(
-      "Generated Dockerfile image build is required before sandbox creation; enable local prebuild.",
+      `${source} Dockerfile image build is required before sandbox creation; enable local prebuild.`,
     );
   }
   const fromDockerfile = initialSourceReference;
@@ -331,7 +332,7 @@ export async function prebuildSandboxImageIfEligible(
     !fromDockerfile ||
     path.resolve(fromDockerfile) !== path.resolve(input.buildCtx, "Dockerfile")
   ) {
-    throw new Error("Generated image build requires the selected staged Dockerfile.");
+    throw new Error(`${source} image build requires the selected staged Dockerfile.`);
   }
   let trustedContext: TrustedStagedBuildContext | null;
   try {
@@ -356,12 +357,12 @@ export async function prebuildSandboxImageIfEligible(
     }
   } catch (error) {
     throw new Error(
-      "Generated image build could not inspect the staged context; sandbox creation stopped.",
+      `${source} image build could not inspect the staged context; sandbox creation stopped.`,
       { cause: error },
     );
   }
   if (!trustedContext) {
-    throw new Error("Generated image build rejected the staged context trust boundary.");
+    throw new Error(`${source} image build rejected the staged context trust boundary.`);
   }
 
   const imageRef = input.portableReceipt
@@ -414,6 +415,7 @@ export async function prebuildSandboxImageIfEligible(
         ? null
         : prepareDockerBuildEnvironment({
             env,
+            allowCredentialIsolation: input.origin !== "custom",
             credentialHelperResponds: input.credentialHelperResponds,
             dockerContextIsDefault: input.dockerContextIsDefault,
             isWslHost: input.isWslHost,
@@ -422,7 +424,7 @@ export async function prebuildSandboxImageIfEligible(
       preparedDockerEnvironment?.env ?? localPodmanEnvironment(dockerBuildSubprocessEnv(env));
     if (preparedDockerEnvironment?.isolatedCredentialConfig) {
       log(
-        "  Docker Desktop credential helper is unavailable in this WSL session; using an isolated credential-free config for the generated sandbox image build.",
+        `  Docker Desktop credential helper is unavailable in this WSL session; using an isolated credential-free config for the ${source.toLowerCase()} sandbox image build.`,
       );
     }
     input.portableReceipt?.context.assertCurrent();
@@ -439,7 +441,7 @@ export async function prebuildSandboxImageIfEligible(
     if (preparedDockerEnvironment) {
       warnIfDockerBuildEnvironmentCleanupFailed(
         preparedDockerEnvironment.cleanup(),
-        `generated sandbox image '${imageRef}'`,
+        `${source.toLowerCase()} sandbox image '${imageRef}'`,
       );
     }
   }
