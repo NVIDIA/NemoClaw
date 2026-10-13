@@ -58,10 +58,25 @@ describe.concurrent("native provider handle refresh", () => {
       fs.writeFileSync(runtimePlanPath, JSON.stringify(runtimePlan));
       const providerPath = path.join(tmpDir, "providers.cjs");
       fs.writeFileSync(
+        path.join(tmpDir, "providers.json"),
+        JSON.stringify({
+          openrouter: options.nvidia
+            ? hostedNativeProvider("openrouter-api")
+            : (options.provider ?? hostedNativeProvider("openrouter-api")),
+          NVIDIA_HOSTED_NATIVE_ENDPOINT: options.nvidia
+            ? options.provider.endpoint
+            : "https://integrate.api.nvidia.com/v1",
+          NVIDIA_HOSTED_CREDENTIAL_ENV: options.nvidia
+            ? options.provider.credentialEnv
+            : "NVIDIA_INFERENCE_API_KEY",
+        }),
+      );
+      fs.writeFileSync(
         providerPath,
-        `exports.fixedNativeProvider = () => (${JSON.stringify(options.nvidia ? hostedNativeProvider("openrouter-api") : (options.provider ?? hostedNativeProvider("openrouter-api")))});
-exports.NVIDIA_HOSTED_NATIVE_ENDPOINT = ${JSON.stringify(options.nvidia ? options.provider.endpoint : "https://integrate.api.nvidia.com/v1")};
-exports.NVIDIA_HOSTED_CREDENTIAL_ENV = ${JSON.stringify(options.nvidia ? options.provider.credentialEnv : "NVIDIA_INFERENCE_API_KEY")};`,
+        `const fixture = require("./providers.json");
+exports.hostedNativeProvider = () => fixture.openrouter;
+exports.NVIDIA_HOSTED_NATIVE_ENDPOINT = fixture.NVIDIA_HOSTED_NATIVE_ENDPOINT;
+exports.NVIDIA_HOSTED_CREDENTIAL_ENV = fixture.NVIDIA_HOSTED_CREDENTIAL_ENV;`,
       );
       fs.chmodSync(configPath, 0o640);
       fs.chownSync(configPath, process.getuid(), options.group ?? fs.statSync(configPath).gid);

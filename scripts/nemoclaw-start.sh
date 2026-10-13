@@ -868,11 +868,11 @@ parsed = subprocess.run(
         "/usr/local/bin/node",
         "-e",
         'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5");'
-        'const {fixedNativeProvider,NVIDIA_HOSTED_NATIVE_ENDPOINT,NVIDIA_HOSTED_CREDENTIAL_ENV}='
+        'const {hostedNativeProvider,NVIDIA_HOSTED_NATIVE_ENDPOINT,NVIDIA_HOSTED_CREDENTIAL_ENV}='
         'require("/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs");'
         'process.stdout.write(JSON.stringify({'
         'config:JSON5.parse(require("node:fs").readFileSync(0,"utf8")),'
-        'openrouter:fixedNativeProvider("openrouter-api"),'
+        'openrouter:hostedNativeProvider("openrouter-api"),'
         'nvidia:{endpoint:NVIDIA_HOSTED_NATIVE_ENDPOINT,credentialEnv:NVIDIA_HOSTED_CREDENTIAL_ENV}}));',
     ],
     input=source,
