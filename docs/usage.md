@@ -84,11 +84,12 @@ Plan and export read host snapshots through `check --live` without requiring pas
 Destroy does not run readiness checks.
 
 The provider requests `check --ready` through OpenShell.
-The pinned Fabric has no health API, so the bridge returns unsupported with its host snapshot and no health report.
+The pinned Fabric has no health API, so a production adapter image's bridge returns unsupported with its host snapshot and no health report.
 The SDK records `supported: false`, `report: null`, and `reason_code: fabric_health_unsupported`.
 **Apply fails its health check at this pin**, including on unchanged applies, while preserving completed resource changes, state, and agent files.
 A reachable bridge or remembered runtime handle does not establish agent health.
 Real adapters report health as unsupported until Fabric's health API is pinned ([#13031](https://github.com/NVIDIA/NemoClaw/issues/13031)).
+The [reference dummy image](build.md#reference-contract-image) reports health without Fabric, so apply completes with it; it runs no agent and does not establish a production adapter's health.
 
 Use an [agent image built from this revision](build.md#build-agent-images); an image without matching bridge metadata leaves compatibility unknown.
 Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.
