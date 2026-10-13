@@ -2275,6 +2275,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       }
       if (sourceUnchanged) {
         console.error(`  Existing sandbox '${sandboxName}' remains registered and available.`);
+        console.error(
+          `  If the failure names a credential-bearing file, run 'nemoclaw ${sandboxName} connect' to remove or relocate its sensitive content, then retry onboarding.`,
+        );
       } else {
         console.error(
           `  Sandbox '${sandboxName}' changed during backup failure; its recreate journal needs recovery before another onboarding attempt.`,

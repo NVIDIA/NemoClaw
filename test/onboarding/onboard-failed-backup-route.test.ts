@@ -134,6 +134,7 @@ const { createSandbox } = require(${onboardPath});
       context,
     });
     assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /nemoclaw my-assistant connect/);
     const payload = trailingJsonPayload<{
       events: Array<{ kind: string; cmd?: string }>;
       before: unknown;
