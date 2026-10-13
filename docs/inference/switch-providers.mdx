@@ -48,8 +48,8 @@ Target a non-default sandbox by name.
 $$nemoclaw inference set --provider <provider> --model <model> --sandbox <name>
 ```
 
-For `openrouter-api`, NemoClaw verifies the selected model through the sandbox before it commits agent configuration.
-It skips the host-side provider probe because the OpenRouter adapter uses the sandbox-only `host.openshell.internal` route.
+For native NVIDIA and fixed hosted providers, NemoClaw updates only the selected sandbox attachment and verifies a request through its native endpoint.
+OpenRouter requests include its attribution headers.
 If sandbox verification fails, NemoClaw tries to restore the previous inference selection and does not commit the agent configuration.
 
 </AgentOnly>

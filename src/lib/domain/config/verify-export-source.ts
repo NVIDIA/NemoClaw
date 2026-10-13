@@ -6,15 +6,13 @@ import { isDeepStrictEqual } from "node:util";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { normalizeInferenceSelection } from "../../inference/selection";
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
+import { hostedNativeProvider } from "../../inference/native-provider/hosted";
+import { fixedNativeProviderForAttachment } from "../../inference/native-provider/fixed";
 import { BUILD_ENDPOINT_URL } from "../../inference/provider-models";
-import {
-  normalizeNativeNvidiaProviderAttachment,
-  NVIDIA_HOSTED_CREDENTIAL_ENV,
-  NVIDIA_HOSTED_LOGICAL_PROVIDER,
-  NVIDIA_HOSTED_NATIVE_ENDPOINT,
-  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-} from "../../inference/native-nvidia/contract";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../inference/native-nvidia/contract";
 import type { ManagedStartupProfile } from "../../onboard/managed-startup/profile";
+import type { MessagingCompilerWorkflow } from "../../messaging/manifest";
 import {
   buildManagedStartupProfile,
   type ManagedStartupProfileBuilderInput,
@@ -60,6 +58,14 @@ import type {
 const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 const DEFAULT_DASHBOARD_URL = "http://127.0.0.1:18789";
 const HERMES_API_KEY_ENDPOINT = "https://inference-api.nousresearch.com/v1";
+const EMPTY_MESSAGING_WORKFLOWS = {
+  onboard: true,
+  "add-channel": true,
+  "remove-channel": true,
+  "start-channel": true,
+  "stop-channel": true,
+  rebuild: true,
+} satisfies Record<MessagingCompilerWorkflow, true>;
 
 type SupportedExportAgent = "hermes" | "langchain-deepagents-code" | "openclaw";
 type ManagedStartupInferenceRoute = ReturnType<typeof resolveManagedStartupInferenceRoute>;
@@ -156,6 +162,44 @@ function hasEntries(value: unknown): boolean {
   return Array.isArray(value)
     ? value.length > 0
     : value !== undefined && value !== null && value !== false;
+}
+
+function hasExportExcludedMessaging(entry: ObservedExportRegistry): boolean {
+  if (!hasEntries(entry.messaging)) return false;
+  const plan = entry.messaging?.plan;
+  if (
+    !plan ||
+    typeof plan.workflow !== "string" ||
+    !Object.hasOwn(EMPTY_MESSAGING_WORKFLOWS, plan.workflow)
+  )
+    return true;
+  const emptyDerivedFields = {
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+    ...(plan.runtimeSetup !== undefined
+      ? { runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] } }
+      : {}),
+  };
+  // Compact persistence omits derived fields. Preserve raw fields so orphaned effects still reject export.
+  return !isDeepStrictEqual(
+    { ...entry.messaging, plan: { ...emptyDerivedFields, ...plan } },
+    {
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: entry.name,
+        agent: entry.agent,
+        workflow: plan.workflow,
+        channels: [],
+        disabledChannels: [],
+        ...emptyDerivedFields,
+      },
+    },
+  );
 }
 
 function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
@@ -322,7 +366,7 @@ function validateHermesAuthentication(snapshot: QualifiedExportSnapshot): Export
         HERMES_PROVIDER_NAME,
         "openai-completions",
         HERMES_API_KEY_ENDPOINT,
-        "NOUS_API_KEY",
+        nativeExportReceipt(registry) ? "OPENAI_API_KEY" : "NOUS_API_KEY",
       ],
     )
   ) {
@@ -356,7 +400,7 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
       !exportWebSearchBinding(entry) && (entry.webSearchEnabled || entry.webSearchProvider),
       "web search",
     ],
-    ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
+    ["spec.sandboxes[].integrations.messaging", hasExportExcludedMessaging(entry), "messaging"],
     [
       "spec.sandboxes[].harness.interfaces.dashboard",
       entry.agent !== "openclaw" && entry.dashboardRemoteBindPrepared,
@@ -526,6 +570,10 @@ function deepAgentsObservability(
   return agent === "langchain-deepagents-code" ? false : null;
 }
 
+function exportUsesNativeInference(entry: ObservedExportRegistry): boolean {
+  return !hostedNativeProvider(entry.provider) || Boolean(nativeExportReceipt(entry));
+}
+
 function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedStartupProfile {
   if (!isSupportedExportAgent(entry.agent)) {
     throw new Error("The agent is unsupported.");
@@ -545,6 +593,8 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     selected.provider,
     selected.model,
     selected.preferredInferenceApi,
+    exportUsesNativeInference(entry),
+    nativeExportReceipt(entry)?.endpointUrl,
   );
   const projection = EXPORT_AGENT_PROFILE_PROJECTIONS[agent](inference);
   const search = exportWebSearchBinding(entry);
@@ -809,40 +859,60 @@ function classifyManagedStartupProfile(
   return [...findings, ...classifyProfileEquality(profile, supported)];
 }
 
+function nativeExportReceipt(entry: QualifiedExportSnapshot["registry"]) {
+  try {
+    return recordedNativeProviderAttachment(entry);
+  } catch {
+    return undefined;
+  }
+}
+
+function managedEndpointEvidenceMatchesRoute(
+  snapshot: QualifiedExportSnapshot,
+  evidence: NonNullable<QualifiedExportSnapshot["inference"]["endpointEvidence"]> & {
+    source: { kind: "managed-profile"; profileId: string };
+  },
+): boolean {
+  const { inference } = snapshot;
+  const receipt = nativeExportReceipt(snapshot.registry);
+  if (!receipt) return false;
+  const definition = fixedNativeProviderForAttachment(receipt);
+  const hosted = hostedNativeProvider(snapshot.registry.provider, receipt.endpointUrl);
+  const endpoint = hosted?.endpoint ?? NVIDIA_HOSTED_NATIVE_ENDPOINT;
+  const api =
+    hosted?.logicalProvider === "openai-api" && inference.api === "openai-responses"
+      ? "openai-responses"
+      : (hosted?.api ?? "openai-completions");
+  return isDeepStrictEqual(
+    [
+      evidence.source.profileId,
+      evidence.provider.name,
+      evidence.provider.id,
+      inference.provider,
+      inference.api,
+      inference.endpoint,
+      evidence.endpoint,
+      inference.credentialEnv,
+    ],
+    [
+      receipt.profileId,
+      receipt.providerName,
+      receipt.providerId,
+      definition.logicalProvider,
+      api,
+      endpoint,
+      endpoint,
+      definition.credentialEnv,
+    ],
+  );
+}
+
 function endpointEvidenceMatchesRoute(snapshot: QualifiedExportSnapshot): boolean {
   const { inference } = snapshot;
   const evidence = inference.endpointEvidence;
   if (!evidence) return false;
-  if (evidence.source.kind === "managed-profile") {
-    const receipt = normalizeNativeNvidiaProviderAttachment(
-      snapshot.registry.nativeNvidiaProviderAttachment,
-    );
-    return (
-      receipt !== undefined &&
-      isDeepStrictEqual(
-        [
-          evidence.source.profileId,
-          evidence.provider.name,
-          evidence.provider.id,
-          inference.provider,
-          inference.api,
-          inference.endpoint,
-          evidence.endpoint,
-          inference.credentialEnv,
-        ],
-        [
-          NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-          receipt.providerName,
-          receipt.providerId,
-          NVIDIA_HOSTED_LOGICAL_PROVIDER,
-          "openai-completions",
-          NVIDIA_HOSTED_NATIVE_ENDPOINT,
-          NVIDIA_HOSTED_NATIVE_ENDPOINT,
-          NVIDIA_HOSTED_CREDENTIAL_ENV,
-        ],
-      )
-    );
-  }
+  if (evidence.source.kind === "managed-profile")
+    return managedEndpointEvidenceMatchesRoute(snapshot, { ...evidence, source: evidence.source });
   if (evidence.source.kind === "builtin-profile") {
     return (
       inference.credentialEnv !== null &&
@@ -916,9 +986,7 @@ function validateSandboxIdentity(
 
 function sandboxProviderAttachmentsMatch(snapshot: QualifiedExportSnapshot): boolean {
   const { registry: entry, sandbox, inference } = snapshot;
-  const nativeReceipt = normalizeNativeNvidiaProviderAttachment(
-    entry.nativeNvidiaProviderAttachment,
-  );
+  const nativeReceipt = nativeExportReceipt(entry);
   const inferenceAttachment = nativeReceipt?.providerName ?? inference.provider;
   const additionalProviders = sandbox.providerNames.filter((name) => name !== inferenceAttachment);
   const webSearch = exportWebSearchBinding(entry);
@@ -1237,10 +1305,7 @@ function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): Exp
 }
 
 function expectedEndpointProviderName(snapshot: QualifiedExportSnapshot): string {
-  return (
-    normalizeNativeNvidiaProviderAttachment(snapshot.registry.nativeNvidiaProviderAttachment)
-      ?.providerName ?? snapshot.inference.provider
-  );
+  return nativeExportReceipt(snapshot.registry)?.providerName ?? snapshot.inference.provider;
 }
 
 function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFinding[] {

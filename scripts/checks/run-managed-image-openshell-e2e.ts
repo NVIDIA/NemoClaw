@@ -381,6 +381,42 @@ function commandDetail(result: ManagedImageCommandResult): string {
     .slice(-8_000);
 }
 
+function printExactContainerFailureState(containerId: string | null, env: NodeJS.ProcessEnv): void {
+  if (!containerId || !/^[a-f0-9]{64}$/u.test(containerId)) return;
+  const state = commandResult(
+    [
+      "docker",
+      "container",
+      "inspect",
+      "--format",
+      "{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}",
+      containerId,
+    ],
+    env,
+    5_000,
+  );
+  console.error(
+    `Managed-image exact container state: ${managedImageFailureDetail(commandDetail(state))}`,
+  );
+  const processState = commandResult(
+    [
+      "docker",
+      "exec",
+      "--user",
+      "sandbox",
+      containerId,
+      "/bin/sh",
+      "-c",
+      "printf 'pid1='; cat /proc/1/comm; printf 'processes='; ps -eo comm= | head -n 60; printf 'memory-events='; cat /sys/fs/cgroup/memory.events",
+    ],
+    env,
+    5_000,
+  );
+  console.error(
+    `Managed-image exact container processes: ${managedImageFailureDetail(commandDetail(processState))}`,
+  );
+}
+
 function isDockerNotFound(result: ManagedImageCommandResult): boolean {
   return (
     result.status !== 0 &&
@@ -471,8 +507,12 @@ try {
       } finally { fs.closeSync(fd); }
     }
   }
-  if (interval === undefined) throw new Error();
-  process.stdout.write("heartbeat-interval-ms=" + interval);
+  if (interval === undefined) {
+    process.stderr.write("heartbeat-not-started");
+    process.exitCode = 2;
+  } else {
+    process.stdout.write("heartbeat-interval-ms=" + interval);
+  }
 } catch (error) {
   const code = ["EACCES", "EPERM", "ENOENT", "ELOOP", "SyntaxError"].find(value => value === error?.code || value === error?.name) ?? "invalid";
   process.stderr.write("heartbeat-evidence-unavailable:" + operation + ":" + code);
@@ -481,54 +521,71 @@ try {
 `;
 }
 
-export function assertOpenClawHeartbeatStart(
+export async function assertOpenClawHeartbeatStart(
   containerId: string,
   env: NodeJS.ProcessEnv,
   runCommand: ManagedImageCommandRunner = commandResult,
-): void {
+  deadline = Date.now() + 15_000,
+): Promise<void> {
   if (!/^[a-f0-9]{64}$/u.test(containerId)) {
     throw new Error("OpenClaw heartbeat check requires one exact container ID");
   }
-  const result = runCommand(
-    [
-      "docker",
-      "exec",
-      "--user",
-      "sandbox",
-      containerId,
-      "node",
-      "-e",
-      managedOpenClawHeartbeatLogProbe(),
-    ],
-    env,
-    15_000,
-  );
-  if (result.status !== 0 || result.error) {
-    const detail =
-      /^heartbeat-evidence-unavailable:(discover|list|open|parse):(EACCES|EPERM|ENOENT|ELOOP|SyntaxError|invalid)$/u.exec(
-        String(result.stderr ?? ""),
+  while (Date.now() < deadline) {
+    const result = runCommand(
+      [
+        "docker",
+        "exec",
+        "--user",
+        "sandbox",
+        containerId,
+        "node",
+        "-e",
+        managedOpenClawHeartbeatLogProbe(),
+      ],
+      env,
+      Math.max(1, Math.min(15_000, deadline - Date.now())),
+    );
+    if (
+      result.status === 2 &&
+      !result.error &&
+      result.stdout === "" &&
+      result.stderr === "heartbeat-not-started"
+    ) {
+      // HTTP liveness precedes heartbeat activation. Only absence may be polled;
+      // malformed, conflicting, inaccessible, or incorrect evidence still fails immediately.
+      const sleepMs = Math.min(2_000, Math.max(0, deadline - Date.now()));
+      if (sleepMs > 0) await new Promise((resolve) => setTimeout(resolve, sleepMs));
+      continue;
+    }
+    if (result.status !== 0 || result.error) {
+      const detail =
+        /^heartbeat-evidence-unavailable:(discover|list|open|parse):(EACCES|EPERM|ENOENT|ELOOP|SyntaxError|invalid)$/u.exec(
+          String(result.stderr ?? ""),
+        );
+      throw new Error(
+        `managed OpenClaw structured heartbeat evidence unavailable${detail ? ` (${detail[1]}: ${detail[2]})` : ""}`,
       );
-    throw new Error(
-      `managed OpenClaw structured heartbeat evidence unavailable${detail ? ` (${detail[1]}: ${detail[2]})` : ""}`,
-    );
+    }
+    const heartbeatStart = String(result.stdout ?? "").trim();
+    const configuredInterval = /^(\d+)([smh])$/u.exec(MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY);
+    const intervalUnitMs = { s: 1_000, m: 60_000, h: 3_600_000 }[
+      configuredInterval?.[2] as "s" | "m" | "h"
+    ];
+    const expectedIntervalMs = configuredInterval
+      ? Number(configuredInterval[1]) * intervalUnitMs
+      : Number.NaN;
+    const observedIntervalMs = /^heartbeat-interval-ms=(\d+)$/u.exec(heartbeatStart)?.[1];
+    if (
+      !Number.isSafeInteger(expectedIntervalMs) ||
+      observedIntervalMs !== String(expectedIntervalMs)
+    ) {
+      throw new Error(
+        `managed OpenClaw did not start with the requested ${expectedIntervalMs} ms heartbeat`,
+      );
+    }
+    return;
   }
-  const heartbeatStart = String(result.stdout ?? "").trim();
-  const configuredInterval = /^(\d+)([smh])$/u.exec(MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY);
-  const intervalUnitMs = { s: 1_000, m: 60_000, h: 3_600_000 }[
-    configuredInterval?.[2] as "s" | "m" | "h"
-  ];
-  const expectedIntervalMs = configuredInterval
-    ? Number(configuredInterval[1]) * intervalUnitMs
-    : Number.NaN;
-  const observedIntervalMs = /^heartbeat-interval-ms=(\d+)$/u.exec(heartbeatStart)?.[1];
-  if (
-    !Number.isSafeInteger(expectedIntervalMs) ||
-    observedIntervalMs !== String(expectedIntervalMs)
-  ) {
-    throw new Error(
-      `managed OpenClaw did not start with the requested ${expectedIntervalMs} ms heartbeat`,
-    );
-  }
+  throw new Error("managed OpenClaw heartbeat did not start within the managed-startup deadline");
 }
 
 export function managedOpenClawHeartbeatProbe(
@@ -653,10 +710,10 @@ async function waitForCommittedSandboxProbe(
   input: Inputs,
   env: NodeJS.ProcessEnv,
   requireCommitted = true,
+  deadline = Date.now() + 240_000,
 ): Promise<void> {
   const healthProbe = managedImageOpenShellProbe(input.agent, input.model ?? MODEL);
   const committedProbe = managedImageOpenShellCommittedProbe();
-  const deadline = Date.now() + 240_000;
   const runProbe = (probe: string, timeoutMs: number) =>
     commandResult(
       onboard.openshellArgv([
@@ -1271,9 +1328,21 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         request: rootApplyRequest,
         expectedContainerId: ownedContainerId,
       });
-      await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv, !gpuEnabled);
+      const startupDeadline = Date.now() + 240_000;
+      await waitForCommittedSandboxProbe(
+        onboard,
+        input,
+        launch.sandboxEnv,
+        !gpuEnabled,
+        startupDeadline,
+      );
       if (input.agent === "openclaw") {
-        assertOpenClawHeartbeatStart(ownedContainerId, launch.sandboxEnv);
+        await assertOpenClawHeartbeatStart(
+          ownedContainerId,
+          launch.sandboxEnv,
+          commandResult,
+          startupDeadline,
+        );
       }
       if (input.localProvider && !afterLocalInference) {
         assertProtectedLocalInference(onboard, input, launch.sandboxEnv);
@@ -1326,6 +1395,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         `Managed-image failure evidence: ${managedImageFailureDetail(`${result.stdout ?? ""}\n${result.stderr ?? ""}`)}`,
       );
     }
+    printExactContainerFailureState(ownedContainerId, process.env);
   } finally {
     process.exit = exit;
     try {

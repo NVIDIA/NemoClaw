@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { HOSTED_NATIVE_PROVIDERS } from "../../../../src/lib/inference/native-provider/hosted.ts";
 import {
   CANDIDATE_MANAGED_IMAGE_AGENTS,
   SHIPPED_MANAGED_IMAGE_AGENTS,
@@ -77,6 +78,37 @@ describe("Pi candidate contract validation", () => {
     expect(contract.reference).toBe(`ghcr.io/nvidia/nemoclaw/pi-sandbox@${DIGEST}`);
   });
 
+  it("validates a published candidate contract with plain Node", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-contract-"));
+    try {
+      const contractPath = path.join(directory, "contract.json");
+      fs.writeFileSync(
+        contractPath,
+        JSON.stringify(candidateContract({ platform: "linux/arm64" })),
+      );
+      const result = spawnSync(
+        process.execPath,
+        [
+          path.join(root, "tools/managed-images/validate-candidate-contract.mts"),
+          "--contract",
+          contractPath,
+          "--platform",
+          "linux/arm64",
+        ],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: { ...process.env, NODE_OPTIONS: "" },
+          timeout: 5_000,
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Validated candidate contract for pi on linux/arm64");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a contract whose agent is not a candidate managed-image agent", () => {
     expect(() =>
       validateCandidateContract(
@@ -143,6 +175,44 @@ describe("Pi managed model catalog generation", () => {
     });
     expect(status).not.toBe(0);
     expect(stderr).toContain("NEMOCLAW_MODEL must not be empty.");
+  });
+
+  it.each([
+    ...HOSTED_NATIVE_PROVIDERS.filter((provider) => provider.api === "openai-completions"),
+    {
+      label: "NVIDIA",
+      logicalProvider: "nvidia-prod",
+      endpoint: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    },
+  ])("generates native $label routing without writing the host credential (#12589)", (provider) => {
+    const { home, status, stderr } = generate({
+      NEMOCLAW_MODEL: "selected-model",
+      NEMOCLAW_UPSTREAM_PROVIDER: provider.logicalProvider,
+      NEMOCLAW_INFERENCE_BASE_URL: provider.endpoint,
+      [provider.credentialEnv]: "host-credential-must-not-be-written",
+    });
+    try {
+      expect(status, stderr).toBe(0);
+      const text = fs.readFileSync(path.join(home, ".pi", "agent", "models.json"), "utf8");
+      expect(JSON.parse(text).providers.openshell).toEqual({
+        api: "openai-completions",
+        apiKey: `\${${provider.credentialEnv}}`,
+        baseUrl: provider.endpoint,
+        models: [{ id: "selected-model" }],
+        ...(provider.logicalProvider === "openrouter-api"
+          ? {
+              headers: {
+                "HTTP-Referer": "https://www.nvidia.com/nemoclaw/",
+                "X-OpenRouter-Title": "NVIDIA NemoClaw",
+              },
+            }
+          : {}),
+      });
+      expect(text).not.toContain("host-credential-must-not-be-written");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("keeps every provider credential out of the generated catalog", () => {

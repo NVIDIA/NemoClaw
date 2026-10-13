@@ -24,6 +24,7 @@ export type DirectPublicDispatchHarness = {
   migrateLegacyPortState: ReturnType<typeof vi.fn>;
   printSandboxConnectHelp: ReturnType<typeof vi.fn>;
   recoverRegistryEntries: ReturnType<typeof vi.fn>;
+  hasIdentityFreeRetainedRecovery: ReturnType<typeof vi.fn>;
   resetObservedCalls: () => void;
   runOclifArgv: ReturnType<typeof vi.fn>;
   runOclifCommandById: ReturnType<typeof vi.fn>;
@@ -40,6 +41,8 @@ type DirectPublicDispatchOptions = {
   defaultSandbox?: string | null;
   /** Registered route reservations that are not ready or default-eligible. */
   pendingSandboxNames?: readonly string[];
+  /** Identity-free recovery records in the selected gateway's state root. */
+  retainedRecoverySandboxNames?: readonly string[];
   /** Args the sandbox-connect stub treats as connect flags (default: none). */
   connectFlags?: readonly string[];
   /** Legacy sandbox rows that belong to the selected gateway but are not migrated yet. */
@@ -143,6 +146,9 @@ export async function withDirectPublicDispatch(
     recoveredFromSession: false,
     recoveredFromGateway: 0,
   }));
+  const hasIdentityFreeRetainedRecovery = vi.fn((name: string) =>
+    (options.retainedRecoverySandboxNames ?? []).includes(name),
+  );
   const migrateLegacyPortState = vi.fn(() => {
     if (options.migrationError) throw options.migrationError;
     return { migratedSandboxNames: [], migratedSession: false, warnings: [] };
@@ -169,6 +175,7 @@ export async function withDirectPublicDispatch(
     listSandboxes.mockClear();
     migrateLegacyPortState.mockClear();
     recoverRegistryEntries.mockClear();
+    hasIdentityFreeRetainedRecovery.mockClear();
     runOclifArgv.mockClear();
     runOclifCommandById.mockClear();
   };
@@ -193,7 +200,7 @@ export async function withDirectPublicDispatch(
     });
   }
   cacheModule(legacyPortMigrationPath, { hasMigratableLegacySandbox, migrateLegacyPortState });
-  cacheModule(registryRecoveryPath, { recoverRegistryEntries });
+  cacheModule(registryRecoveryPath, { recoverRegistryEntries, hasIdentityFreeRetainedRecovery });
   cacheModule(oclifRunnerPath, { runOclifArgv, runOclifCommandById });
   const connectFlags = new Set(options.connectFlags ?? []);
   cacheModule(sandboxConnectPath, {
@@ -219,6 +226,7 @@ export async function withDirectPublicDispatch(
       migrateLegacyPortState,
       printSandboxConnectHelp,
       recoverRegistryEntries,
+      hasIdentityFreeRetainedRecovery,
       resetObservedCalls,
       runOclifArgv,
       runOclifCommandById,

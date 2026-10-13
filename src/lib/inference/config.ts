@@ -13,6 +13,7 @@ import {
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
 } from "./llama-cpp/contract";
+import { hostedNativeProvider, usesNativeHermesEndpoint } from "./native-provider/hosted";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
 import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
 import { DEFAULT_OLLAMA_MODEL_TAG as DEFAULT_OLLAMA_MODEL } from "./ollama-model-registry";
@@ -213,7 +214,7 @@ export function getProviderSelectionConfig(
 ): ProviderSelectionConfig | null {
   const base: Omit<ProviderSelectionConfig, "model" | "credentialEnv" | "providerLabel"> = {
     endpointType: "custom",
-    endpointUrl: INFERENCE_ROUTE_URL,
+    endpointUrl: hostedNativeProvider(provider)?.endpoint ?? INFERENCE_ROUTE_URL,
     ncpPartner: null,
     profile: DEFAULT_ROUTE_PROFILE,
     provider,
@@ -321,10 +322,18 @@ export function getSandboxInferenceConfig(
   model: string,
   provider: string | null = null,
   preferredInferenceApi: string | null = null,
+  nativeProvider?: boolean,
+  nativeEndpointUrl?: string | null,
 ): SandboxInferenceConfig {
   let providerKey: string;
   let primaryModelRef: string;
-  let inferenceBaseUrl = INFERENCE_ROUTE_URL;
+  const useNativeProvider =
+    nativeProvider ??
+    (provider !== "hermes-provider" || usesNativeHermesEndpoint(nativeEndpointUrl));
+  const hostedNative = useNativeProvider
+    ? hostedNativeProvider(provider, nativeEndpointUrl)
+    : undefined;
+  let inferenceBaseUrl = hostedNative?.endpoint ?? INFERENCE_ROUTE_URL;
   let inferenceApi = preferredInferenceApi || "openai-completions";
   // Providers without a /v1/responses endpoint must never be configured with the
   // Responses API. On a provider switch the runtime API resolves to null and the
@@ -354,7 +363,7 @@ export function getSandboxInferenceConfig(
       }
       providerKey = "anthropic";
       primaryModelRef = `anthropic/${model}`;
-      inferenceBaseUrl = "https://inference.local";
+      inferenceBaseUrl = hostedNative?.endpoint ?? "https://inference.local";
       inferenceApi = "anthropic-messages";
       break;
     case "gemini-api":

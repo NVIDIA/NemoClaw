@@ -2158,7 +2158,11 @@ function withSshCleanupResult<T extends BackupResult | RestoreResult>({
 }
 
 /** Capture one opaque archive of the OpenShell-owned native home/workspace. */
-function backupNativeSandboxState(sandboxName: string, options: BackupOptions): BackupResult {
+function backupNativeSandboxState(
+  sandboxName: string,
+  options: BackupOptions,
+  onDirectoryCreated: (backupPath: string) => void,
+): BackupResult {
   if (backupDeadlineExpired(options.deadlineMs)) {
     return nativeStateFailure("Sandbox backup deadline expired before backup started", true);
   }
@@ -2173,7 +2177,10 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
   if (existsSync(backupPath))
     return nativeStateFailure(`Snapshot path '${backupPath}' already exists; retry the backup.`);
   rejectSymlinksOnPath(backupPath);
-  mkdirSync(backupPath, { recursive: true, mode: 0o700 });
+  mkdirSync(path.dirname(backupPath), { recursive: true, mode: 0o700 });
+  // Claim only a new leaf so failure cleanup cannot remove a concurrent backup.
+  mkdirSync(backupPath, { mode: 0o700 });
+  onDirectoryCreated(backupPath);
   rejectSymlinksOnPath(backupPath);
 
   let temporary: ReturnType<typeof createTempSshConfig> | null = null;
@@ -2278,7 +2285,9 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
           "trap resume EXIT HUP INT TERM",
           "quiesce_pass=0",
           'while :; do collect_candidates; newly_stopped=""; for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) if kill -STOP "$pid" 2>/dev/null; then stopped="$stopped $pid"; newly_stopped=1; fi ;; esac; done; [ -n "$newly_stopped" ] || break; quiesce_pass=$((quiesce_pass + 1)); [ "$quiesce_pass" -lt 10 ] || exit 21; done',
-          'for pid in $stopped; do attempts=0; while [ -r "/proc/$pid/status" ]; do state=""; { while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done; } 2>/dev/null < "/proc/$pid/status" || break; case "$state" in T*) break ;; esac; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
+          // A group leader can be a zombie while sibling threads still run.
+          // Require every remaining task to be stopped or exited before capture.
+          'for pid in $stopped; do attempts=0; while [ -d "/proc/$pid" ]; do pending=""; observed=""; for task in /proc/$pid/task/[0-9]*; do [ -d "$task" ] || continue; observed=1; state=""; { while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done; } 2>/dev/null < "$task/status" || { [ ! -d "$task" ] && continue; }; case "$state" in T*|Z*|X*|x*) ;; *) pending=1 ;; esac; done; [ -n "$observed" ] || { [ ! -d "/proc/$pid" ] && break; pending=1; }; [ -n "$pending" ] || break; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
           "collect_candidates",
           'for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) exit 21 ;; esac; done',
           'if [ -e "$root/.openclaw/state/openclaw.sqlite" ] || [ -L "$root/.openclaw/state/openclaw.sqlite" ] || [ -e "$root/.openclaw-data/state/openclaw.sqlite" ] || [ -L "$root/.openclaw-data/state/openclaw.sqlite" ]; then command -v node >/dev/null 2>&1 || exit 22; node --no-warnings -e ' +
@@ -2482,7 +2491,24 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
 }
 
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
-  return backupNativeSandboxState(sandboxName, options);
+  let createdBackupPath: string | undefined;
+  try {
+    return backupNativeSandboxState(sandboxName, options, (backupPath) => {
+      createdBackupPath = backupPath;
+    });
+  } catch (error) {
+    if (
+      createdBackupPath &&
+      !removeSandboxStateBackup(sandboxName, createdBackupPath, options.deadlineMs)
+    ) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `${detail}. Incomplete backup at '${createdBackupPath}' could not be removed`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
 // ── Restore ────────────────────────────────────────────────────────
 
@@ -3157,7 +3183,7 @@ export type RebuildRecoveryManifestValidation =
   | { ok: false; reason: string };
 
 /**
- * Remove one completed rebuild backup without allowing a caller-controlled
+ * Remove one rebuild backup without allowing a caller-controlled
  * path to escape the sandbox's timestamped backup directory.
  */
 function removePathWithinDeadline(targetPath: string, deadlineMs?: number): boolean {

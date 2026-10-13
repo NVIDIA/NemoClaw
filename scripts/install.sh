@@ -38,7 +38,16 @@ _global_cleanup() {
     rm -f "$f" 2>/dev/null || true
   done
 }
-trap _global_cleanup EXIT
+# The shell owns install/update completion after its existing cleanup finishes.
+_installer_exit() {
+  local status="$?"
+  _global_cleanup
+  if [[ "${_INSTALLER_TELEMETRY_ACTIVE:-false}" == true ]]; then
+    _installer_telemetry_finish "$status" || true
+  fi
+  return "$status"
+}
+trap _installer_exit EXIT
 
 _INSTALLER_SOURCE="${BASH_SOURCE[0]:-$0}"
 SCRIPT_DIR="$(cd "$(dirname "${_INSTALLER_SOURCE}")" && pwd)"
@@ -1567,6 +1576,53 @@ NEMOCLAW_CURRENT_SHELL_NEEDS_PATH_REFRESH=false
 NEMOCLAW_INSTALLER_INITIAL_PATH="${PATH:-}"
 NEMOCLAW_SOURCE_ROOT="$(resolve_repo_root)"
 ONBOARD_RAN=false
+_INSTALLER_TELEMETRY_ACTIVE=false
+_INSTALLER_TELEMETRY_OUTCOME=unverified
+_INSTALLER_TELEMETRY_STATE=unchanged
+_INSTALLER_TELEMETRY_SCOPE=cli
+_NEMOCLAW_VERIFIED_VERSION=""
+
+_installer_telemetry_entry() {
+  command -v node >/dev/null 2>&1 || return 1
+  local root
+  for root in "${NEMOCLAW_SOURCE_ROOT:-}" "${HOME}/.nemoclaw/source"; do
+    [[ -n "$root" && -f "$root/dist/lib/cli/installer-telemetry-entry.js" ]] || continue
+    printf '%s' "$root/dist/lib/cli/installer-telemetry-entry.js"
+    return 0
+  done
+  return 1
+}
+
+_installer_telemetry_begin() {
+  [[ "${FORCE_STATION_INSTALL:-}" != "1" ]] || return 0
+  [[ "${NEMOCLAW_DISABLE_TELEMETRY:-}" != "1" ]] || return 0
+  local phase="$1" entry directory operation=install
+  entry="$(_installer_telemetry_entry)" || return 0
+  [[ "${NEMOCLAW_UPDATE_INVOKED:-}" != "1" ]] || operation=update
+  directory="$(NEMOCLAW_TELEMETRY_INSTALLER_PHASE="$phase" \
+    NEMOCLAW_TELEMETRY_INSTALLED_VERSION="${_NEMOCLAW_VERIFIED_VERSION:-}" \
+    node "$entry" begin "$operation" 2>/dev/null)" || return 0
+  [[ -n "$directory" && -d "$directory" ]] || return 0
+  export NEMOCLAW_TELEMETRY_CONTEXT_DIR="$directory"
+  _INSTALLER_TELEMETRY_ACTIVE=true
+}
+
+_installer_telemetry_finish() {
+  local status="$1" entry
+  entry="$(_installer_telemetry_entry)" || return 0
+  if [[ "$status" -eq 130 || "$status" -eq 143 ]]; then
+    _INSTALLER_TELEMETRY_OUTCOME=cancelled
+  elif [[ "$status" -eq 10 || "$status" -eq 11 ]]; then
+    _INSTALLER_TELEMETRY_OUTCOME=unverified
+    _INSTALLER_TELEMETRY_STATE=pending
+  elif [[ "$status" -ne 0 ]]; then
+    _INSTALLER_TELEMETRY_OUTCOME=failed
+  fi
+  NEMOCLAW_TELEMETRY_INSTALLER_OUTCOME="$_INSTALLER_TELEMETRY_OUTCOME" \
+    NEMOCLAW_TELEMETRY_INSTALLER_STATE="$_INSTALLER_TELEMETRY_STATE" \
+    NEMOCLAW_TELEMETRY_INSTALLED_VERSION="${_NEMOCLAW_VERIFIED_VERSION:-}" \
+    node "$entry" finish "$status" "$_INSTALLER_TELEMETRY_SCOPE" >/dev/null 2>&1 || true
+}
 # Absolute path to the just-installed CLI binary. Populated by
 # verify_nemoclaw whenever the binary is found on disk, even when the
 # current shell's PATH does not yet resolve $_CLI_BIN. Lets the installer
@@ -3241,6 +3297,11 @@ finish_nemoclaw_install() {
     source | managed) ;;
     *) error "The prepared ${_CLI_DISPLAY} CLI has no installation mode." ;;
   esac
+  refresh_path
+  ensure_nemoclaw_shim || true
+  verify_nemoclaw
+  _installer_telemetry_begin installed
+  _INSTALLER_TELEMETRY_STATE=partial
   if [[ "${_OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY:-false}" == true ]]; then
     local old_defer="${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"
     local defer_was_set="${NEMOCLAW_DEFER_OPENSHELL_INSTALL+1}"
@@ -3387,7 +3448,8 @@ is_real_nemoclaw_cli() {
   version_output="$("$bin_path" --version 2>/dev/null)" || return 1
   # Real CLI outputs: "nemoclaw v0.1.0", "nemohermes v0.1.0", or
   # "nemo-deepagents v0.1.0" (or any semver, with optional pre-release/build metadata).
-  [[ "$version_output" =~ ^${expected_name}[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?$ ]]
+  [[ "$version_output" =~ ^${expected_name}[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?$ ]] || return 1
+  _NEMOCLAW_VERIFIED_VERSION="${version_output#* v}"
 }
 
 verify_nemoclaw() {
@@ -3650,7 +3712,7 @@ prepare_current_cli_for_preupgrade_backup() {
     NEMOCLAW_DEFER_OPENSHELL_INSTALL="$old_defer"
     [[ "$defer_was_exported" == true ]] && export NEMOCLAW_DEFER_OPENSHELL_INSTALL
   fi
-  verify_nemoclaw
+  return 0
 }
 
 resolve_prepared_cli_runner() {
@@ -5903,8 +5965,19 @@ n1x_pci_identity_is_valid() {
   [[ "$vendor" = "0x10de" && "$pci_class" =~ ^0x03[0-9a-f]{4}$ ]]
 }
 
+# Generated from bin/lib/n1x-pci-policy.json. Update with node --no-warnings scripts/lib/generate-n1x-pci-policy.mts.
+# n1x-pci-policy:begin
+n1x_pci_device_is_known() {
+  case "${1:-}" in
+    0x2e03 | 0x2e06 | 0x2e13 | 0x2e02 | 0x2e2a) return 0 ;;
+  esac
+  return 1
+}
+# n1x-pci-policy:end
+
 n1x_has_pci_gpu() {
-  local pci_root="" pci_device="" vendor="" pci_class="" scanned=0
+  local pci_root="" pci_device="" vendor="" pci_class="" device="" scanned=0
+  local require_known_device="${1:-0}"
   pci_root="$(n1x_pci_devices_path)"
   [ -d "$pci_root" ] || return 1
   for pci_device in "$pci_root"/*; do
@@ -5918,7 +5991,12 @@ n1x_has_pci_gpu() {
     fi
     vendor="${vendor//[[:space:]]/}"
     pci_class="${pci_class//[[:space:]]/}"
-    n1x_pci_identity_is_valid "$vendor" "$pci_class" && return 0
+    n1x_pci_identity_is_valid "$vendor" "$pci_class" || continue
+    [ "$require_known_device" = "1" ] || return 0
+    device="$(head -c 65 "$pci_device/device" 2>/dev/null)" || continue
+    [ "${#device}" -le 64 ] || continue
+    device="$(printf "%s" "$device" | tr '[:upper:]' '[:lower:]')"
+    n1x_pci_device_is_known "$device" && return 0
   done
   return 1
 }
@@ -5929,7 +6007,15 @@ is_n1x_host() {
     arm64 | aarch64) ;;
     *) return 1 ;;
   esac
-  n1x_fastos_release_is_trusted && n1x_has_pci_gpu
+  if n1x_fastos_release_is_trusted; then
+    n1x_has_pci_gpu
+    return "$?"
+  fi
+  local marker=""
+  marker="$(n1x_fastos_release_path)"
+  # Only an absent marker enables hardware inference; invalid or linked markers stay blocked.
+  [ ! -e "$marker" ] && [ ! -L "$marker" ] || return 1
+  n1x_has_pci_gpu 1
 }
 
 # Concept ISO 1.0.2 reports an NVIDIA BOS kernel but has no FastOS marker.
@@ -7402,11 +7488,11 @@ maybe_offer_express_install() {
     resume_loaded_station_install "$platform"
     return 0
   fi
-  # A Concept ISO-style host is outside the N1x preview identity boundary.
+  # Explain an unqualified Concept ISO-style host without overriding hardware detection.
   if [ -z "$platform" ]; then
     if is_nvidia_bos_arm64_host_without_n1x_marker; then
       warn "NVIDIA BOS ARM64 host has no /etc/fastos-release, as reported for Concept ISO 1.0.2."
-      warn "The Deferred N1x Express preview requires a trusted N1x FASTOS marker. Continuing with ordinary onboarding."
+      warn "The Deferred N1x Express preview requires a trusted N1x FASTOS marker or recognized N1x PCI identity. Continuing with ordinary onboarding."
     fi
     return 0
   fi
@@ -7650,6 +7736,8 @@ main() {
   done
   [[ -z "$expect_experimental_profile" ]] \
     || error "Missing value for --experimental-profile (expected: portable)."
+  NEMOCLAW_TELEMETRY_INSTALLER_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%S).000Z"
+  export NEMOCLAW_TELEMETRY_INSTALLER_STARTED_AT
   case "$EXPERIMENTAL_PROFILE" in
     "") unset NEMOCLAW_EXPERIMENTAL_PROFILE ;;
     portable) export NEMOCLAW_EXPERIMENTAL_PROFILE="$EXPERIMENTAL_PROFILE" ;;
@@ -7753,6 +7841,7 @@ main() {
   # provider/model/policy + non-interactive vars; license acceptance is
   # already recorded by preflight above. Station selection runs its pinned
   # host prerequisite preparation before the generic Docker bootstrap.
+  _installer_telemetry_begin before
   prepare_installer_host
 
   install_nemoclaw_before_onboarding
@@ -7782,8 +7871,11 @@ main() {
       warn "Set NEMOCLAW_SINGLE_SESSION=1 to abort the installer when sessions are active."
     fi
     if should_defer_onboarding "$_cli_runner" "$_registered_sandbox_count"; then
+      _INSTALLER_TELEMETRY_OUTCOME=completed
+      _INSTALLER_TELEMETRY_SCOPE=cli
       info "NVIDIA inference credentials are absent. $(agent_display_name "${NEMOCLAW_AGENT:-openclaw}") onboarding did not run."
     else
+      _INSTALLER_TELEMETRY_SCOPE=sandbox
       if ! recover_preexisting_sandboxes_before_onboard "$_cli_runner"; then
         finalize_install
         return 1
@@ -7792,15 +7884,18 @@ main() {
       local _run_onboard_after_recovery=false
       if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
         if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
+          _INSTALLER_TELEMETRY_OUTCOME=unverified
           warn "Recovery output could not be inspected; skipping generic onboarding."
         elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
           # #6520: do not claim recovery when recorded sandboxes are stranded.
+          _INSTALLER_TELEMETRY_OUTCOME=skipped
           warn "Some recorded sandboxes could not be recovered; skipping generic onboarding."
         elif [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] \
           || [[ "${_STATION_EXPRESS_RESUME_LOADED:-}" == "1" ]] \
           || station_express_receipt_retirement_pending; then
           _run_onboard_after_recovery=true
         else
+          _INSTALLER_TELEMETRY_OUTCOME=completed
           info "Existing sandboxes recovered; skipping generic onboarding."
         fi
       else
@@ -7814,6 +7909,7 @@ main() {
           fi
           run_onboard || fail_onboarding "$?"
           ONBOARD_RAN=true
+          _INSTALLER_TELEMETRY_OUTCOME=completed
           if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" != true ]]; then
             restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
           fi
@@ -7822,6 +7918,7 @@ main() {
         elif [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
           error "DGX Station reconciliation did not run. Fix the host prerequisites above, then rerun the installer."
         else
+          _INSTALLER_TELEMETRY_OUTCOME=skipped
           warn "Skipping onboarding until the host prerequisites above are fixed."
         fi
       fi
@@ -7832,6 +7929,9 @@ main() {
 
   finalize_install
   clear_station_resume_after_completed_onboarding
+  if [[ "$_INSTALLER_TELEMETRY_OUTCOME" == completed ]]; then
+    _INSTALLER_TELEMETRY_STATE=applied
+  fi
 }
 
 clear_station_resume_after_completed_onboarding() {

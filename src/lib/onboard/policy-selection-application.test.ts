@@ -21,6 +21,7 @@ vi.mock("../policy", () => ({
   getAppliedPresets: vi.fn(() => []),
   listCustomPresets: vi.fn(() => []),
   listSetupPolicyPresets: vi.fn(() => [{ name: "npm" }]),
+  persistAppliedPolicySelection: vi.fn(),
   resolveSandboxBaselinePolicy: vi.fn(),
   setupPolicyPresetSupported: vi.fn(() => true),
 }));

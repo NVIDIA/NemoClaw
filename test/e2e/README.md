@@ -83,6 +83,10 @@ It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JO
 Each selected consumer restores the artifact instead of running `npm run build:cli`.
 Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
 The `managed-image-multiarch-startup` no-build job keeps that setting and compiles only the candidate shared policy boundary on the host.
+The `managed-image-protected-runtime` qualification-relay case uses a digest-pinned Node HTTP fixture on an owned internal Docker network.
+It exercises the qualification runner's address inspection and relay, then removes the fixture resources.
+This case needs Docker but no GPU, model, OpenShell sandbox, or provider credential.
+The deterministic qualification-runner tests retain ownership of TCP forwarding, invalid-input coverage, and listener closure.
 It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
 Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
 The trusted controller accepts both v1 multiarch activation and v2 Deep Agents
@@ -96,6 +100,11 @@ Runs without a PR source retain published OpenClaw and Hermes bases; Deep Agents
 uses a published base with v1 activation and a candidate base with v2 activation.
 The receipt command retains its Deep Agents default for existing callers; an
 explicit agent selects the OpenClaw or Hermes contract.
+
+OpenClaw HTTP liveness can precede heartbeat activation. The protected startup check polls only
+missing heartbeat evidence within the shared 240-second startup deadline. It still requires the
+configured interval and rejects malformed or conflicting records without retrying them.
+
 The shared compiler uses native GitHub caching of `dist/` and `nemoclaw/dist/`
 for main CI, PR CI, and E2E candidate preparation. Its key includes the checkout
 SHA, trusted recipe revision, action content, Node version, and runner platform.
@@ -539,9 +548,28 @@ of credential values. It then changes the fixture's recorded sandbox fingerprint
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
+The `hermes-discord` target owns the live messaging refusal boundary for #12987. After Discord
+onboarding, it requires the persisted sandbox state to contain the configured Discord channel, then
+uses the shared Hermes export fixture to run both real CLI launchers. Both must refuse the unsupported
+messaging state without publishing a file or exposing credentials. The E2E support tests cover the
+deterministic refusal selection and diagnostic comparison.
+The target owns the shared export fixture in the catalogue so fixture changes select this live check.
+The target removes redundant CLI-presence, sandbox-list, and standalone provider-get probes: later
+live commands use both CLIs, read the persisted sandbox entry, and require the named provider to be
+attached before testing its rewrite. Its health check requires Hermes's `"ok"` response before
+continuing because later phases depend on that instance being ready. No live assertion count
+increases.
+
 The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
 Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
-the disabled baseline. The TUI check then runs without changing that registry baseline. The installed
+the disabled baseline. Observability turns register unique prompts before execution. Cleanup uses the
+native thread ID from a valid direct-turn result. If that result is malformed or the command fails after
+persisting state, it lists only the probe's private cwd with `--limit 2 --json` and accepts an empty list
+or exactly one thread whose recorded cwd matches. Ambiguous results fail cleanup without deleting a
+thread. Listing, deletion, and removal of the private directory each use a 30-second host timeout with
+a five-second kill grace. A failed command or timeout marks cleanup as failed, retains the private
+directory and recovery instructions, and allows policy and capture cleanup to continue.
+The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.
 On Docker, the fixture compares the registry before and after export. State validation confirms that the
@@ -622,7 +650,15 @@ Changes to shared catalogue execution paths select every catalogue target.
 
 The `openclaw-inference-switch` target owns fresh custom-image route initialization.
 Its fixture contains only a different baked model and stale limits.
+Custom Dockerfile onboarding uses the existing startup and pairing settlement checks before
+restarting the native gateway for the initial inference route, as external-image onboarding does.
 The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.
+The OpenClaw native NVIDIA and mock Anthropic switch variants start with an authenticated local OpenAI-compatible fixture.
+The native NVIDIA destination uses the public endpoint and its public credential only after switching.
+Route assertions use JSON fields so terminal column alignment does not affect the result.
+Hermes native installation uses the public NVIDIA provider before its same-provider model switch.
+The Hermes native switch derives its baseline model expectation from the environment passed to installation.
+Its later proxy-resolution probe pairs the public NVIDIA credential with the public endpoint.
 
 Most entries use one ID for catalogue selection, evidence, and artifacts.
 Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.
@@ -757,6 +793,12 @@ Failed targets still write a manifest for diagnosis, and the existing artifact u
 The manifest is secret-free diagnostic evidence.
 It does not replace the workflow job result or the strict `Release qualification` aggregate.
 
+The `model-router-provider-routed-inference` target writes `router-diagnostics.json` before sandbox cleanup.
+It summarizes the final 64 KiB of the router log as fixed status flags and a completion-response count.
+It never copies log text, request content, or credentials into that file.
+An unavailable log is recorded explicitly; a false flag does not prove that an unlogged event did not occur.
+The cleanup registry captures diagnostics before destroying the sandbox and records capture failures separately from the test failure.
+
 Run the planner locally to render the complete default selection as a Markdown table:
 
 ```bash
@@ -819,8 +861,15 @@ The report also groups repeated observable outcomes. Those rows are retained onl
 
 ## Full E2E inference availability
 
-`live/full-e2e.test.ts` owns the live sandbox `inference.local` arithmetic probe.
-It requires a successful response containing the expected answer.
+`live/full-e2e.test.ts` owns the live sandbox arithmetic probe.
+Source installs use `inference.local`; the Brev Launchable uses the native NVIDIA endpoint
+with its supervisor-issued credential handle. The test verifies the native provider attachment
+on the declared gateway and retains that route across its temporary native model edit.
+The live boundary proves attachment, credential resolution, and a real inference response.
+The support tests own route selection, command encoding, credential rejection, and model-edit configuration.
+The deterministic public-key format precondition lives in `fixtures/hosted-inference.ts`;
+`support/public-nvidia-switch-provider.test.ts` retains its acceptance and rejection cases.
+The probe requires a successful response containing the expected answer.
 `live/full-e2e-inference-probe.ts` owns parsing and retry behavior;
 `support/full-e2e-inference-probe.test.ts` verifies that behavior.
 The stateless request has no tools or conversation persistence, so repeating it
@@ -1057,6 +1106,18 @@ registry remains the durable routing and credential-custody record, while the
 completed onboarding session remains unchanged as historical onboarding
 evidence. Deterministic startup and action tests own the corresponding launch
 environment and session non-rewrite checks.
+
+The native switch must restart the gateway to refresh provider credentials;
+the compatible fixture preserves its gateway process. The live lane requires
+successful probes that each identify one gateway PID before comparing its lifecycle.
+Support tests reject failed, empty, and ambiguous PID probes.
+
+The Hermes Slack lane accepts only correctly scoped OpenShell resolver
+placeholders for both Slack assignments in `.env` and for the API egress probes.
+The saved assignments must each match the currently injected generation.
+Support tests execute the file probe against absent, current, raw, stale, duplicate, mismatched,
+and malformed values. The live lane retains startup, policy, raw credential
+scans, both Slack API calls, and resource cleanup as required evidence.
 
 ## Native plugin and package lifecycle
 
@@ -2143,3 +2204,68 @@ test, and makes `full-e2e` the source of truth for the hard cold-path contract.
 ## DGX Station Express
 
 The explicit `dgx-station-express` target runs the local Station Express installer with cached Ultra weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
+
+## Fixed hosted provider qualification
+
+`live/inference-routing-provider-smoke.test.ts` owns credential-backed native inference smoke tests.
+Select `openai`, `anthropic`, `gemini`, `openrouter`, or `hermes` with
+`NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE`; `all` selects all five.
+Use an approved disposable environment and credentials from its approved source.
+These tests are outside the credential-free `inference-routing` PR lane.
+A skipped provider is missing qualification evidence.
+
+OpenAI, Anthropic, Gemini, and OpenRouter onboard OpenClaw and start a fresh agent process.
+Hermes Provider onboards Hermes and submits a fresh request to its managed API.
+Each case checks the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer.
+Before the request, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
+for a salted fingerprint of the selected credential. Only the fingerprint enters the probe; reports contain
+booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
+The sample inspects up to 200 files smaller than 1 MiB, taking the first 64 KiB of each readable file.
+This is not an exhaustive filesystem scan. The scan checks only sandbox environment variables, process arguments, and sampled files.
+It does not prove credential isolation in host processes or upstream requests.
+Separate smoke assertions check native configuration and require a fresh, nonempty provider response.
+Deterministic tests own protocol/header construction, ownership collisions,
+sandbox isolation, restart, and failed-operation recovery.
+
+Each selected case requires its matching approved model variable, listed below. The smoke does not select a default model.
+The Hermes smoke uses `NOUS_API_KEY`. It does not prove interactive OAuth login or token refresh.
+Credentials remain in the test host environment and OpenShell provider store; artifacts redact them.
+The existing cleanup helper destroys each test sandbox. After successful onboarding, strict cleanup checks sandbox absence only.
+Failed onboarding uses best-effort cleanup. Neither path proves removal of credentials from the OpenShell provider store.
+Discard the approved disposable gateway after each run, including failed onboarding. Use a fresh gateway for a retry.
+
+Select one explicit target with `targets=hosted-inference-openai`, `hosted-inference-anthropic`,
+`hosted-inference-gemini`, `hosted-inference-openrouter`, or `hosted-inference-hermes`.
+These Docker targets reuse `inference-routing-provider-smoke.test.ts` and the trusted E2E controller.
+These targets require explicit selection. Default suites and changed-file selection do not include them,
+even when a workflow or provider source changes. The initial consumer is Slice 2 (#12589); its native
+provider behavior must exist in the candidate before running these assertions. Advisor can recommend
+an explicit hosted target. Selection does not grant dispatch or credential access.
+The credential-free `inference-routing` target remains separate.
+
+Before dispatch, obtain an approved disposable environment and credential source for the selected provider.
+Credential-bearing hosted runs require the canonical `e2e.yaml` workflow from `main`.
+Branch-dispatched workflows receive no hosted-provider or registry credentials, even for an approved candidate.
+The controller passes only that target's repository secret (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`GEMINI_API_KEY`, `OPENROUTER_API_KEY`, or `NOUS_API_KEY`) to the test step.
+Set the corresponding repository variable `NEMOCLAW_OPENAI_MODEL`, `NEMOCLAW_ANTHROPIC_MODEL`,
+`NEMOCLAW_GEMINI_MODEL`, `NEMOCLAW_OPENROUTER_MODEL`, or `NEMOCLAW_HERMES_MODEL` to an approved model.
+Missing credentials or models fail before onboarding. A selected test that skips cannot produce passing evidence.
+The existing controller binds artifacts to the tested source revision and trusted workflow revision.
+For an authorized hosted-provider candidate run, the trusted reporter comments on the PR after the selected jobs finish.
+It rechecks the open PR's head, base, and repository before posting the candidate commit, workflow commit, selected results, and artifact link.
+The artifacts retain scenario evidence and per-sandbox `cleanup.json` when produced. Inspect cleanup outcomes separately; missing evidence is not a pass.
+A changed PR head or base rejects the comment. Other candidate dispatches retain their existing artifact-only reporting path.
+For a manual same-repository PR run, GitHub workflow-dispatch permission authorizes the operator.
+The controller verifies the open PR, repository, candidate commit, base commit, and workflow revision before credential forwarding.
+Review the complete candidate diff and approve the selected credential source before dispatch.
+Candidate-controlled host processes can read or copy the selected provider key while the test runs.
+The sandbox isolation check does not attest isolation from those host processes.
+Job cleanup and artifact redaction do not revoke the key or erase a copy made by candidate code.
+Rotate or revoke the key in its issuing provider to remove later access.
+Hermes API-key evidence does not qualify interactive OAuth login.
+
+Hermes OAuth remains a separate live qualification for Slice 2 (#12589). An authorized account operator
+must complete device authorization in an approved disposable interactive environment, verify a fresh
+request through the returned native endpoint, restart, and verify another fresh request. Record the
+tested commit and redacted results. This prerequisite adds no OAuth selector or automation.

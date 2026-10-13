@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+id: nemoclaw-openrouter-inference-v1
+display_name: NemoClaw OpenRouter Hosted Inference
+description: Native OpenRouter hosted inference access for NemoClaw agents
+category: inference
+credentials:
+  - name: api_key
+    description: OpenRouter hosted inference API key
+    env_vars:
+      - OPENROUTER_API_KEY
+    required: true
+    auth_style: bearer
+    header_name: authorization
+    query_param: ""
+endpoints:
+  - host: openrouter.ai
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: GET, path: "/api/v1/models" }
+      - allow: { method: POST, path: "/api/v1/chat/completions" }
+binaries:
+  - /usr/local/bin/node
+  - /usr/bin/node
+  - /opt/hermes/.venv/bin/python
+  - /opt/hermes/.venv/bin/python3
+  - /opt/venv/bin/python3
+  - /usr/local/bin/curl
+  - /usr/bin/curl
+inference_capable: true

@@ -440,6 +440,76 @@ describe("CLI OpenShell forward observations", () => {
     },
   );
 
+  it("treats a free Linux port as absent when lsof finds no listener but warns on stderr", async () => {
+    const hostProbe = vi.fn<HostProbe>(async () =>
+      captured(
+        1,
+        "",
+        "lsof: WARNING: can't stat() fuse.gvfsd-fuse file system /run/user/1000/gvfs\n      Output information may be incomplete.\n",
+      ),
+    );
+    const adapter = createCliOpenShellForwardAdapter({
+      environment: {},
+      executable: process.execPath,
+      gatewayEndpoint: forward.gatewayEndpoint,
+      hostProbe,
+      platform: "linux",
+      probePort: async () => ({ state: "unbound" }),
+      run: async () => capturedForwardList(noActiveForwards),
+      runtimeSelection,
+    });
+
+    await expect(adapter.observeForwards({ forwards: [forward] })).resolves.toEqual([
+      { state: "absent", forward },
+    ]);
+  });
+
+  it.each([
+    ["an lsof error", "lsof: can't allocate memory\n"],
+    [
+      "an incomplete-output note without a mount warning",
+      "Output information may be incomplete.\n",
+    ],
+    [
+      "a mount warning mixed with an lsof error",
+      "lsof: WARNING: can't stat() fuse.gvfsd-fuse file system /run/user/1000/gvfs\nlsof: can't allocate memory\n",
+    ],
+  ])("keeps a wildcard-bound Linux port unprovable on %s", async (_name, stderr) => {
+    const wildcardForward = { ...forward, localHost: "0.0.0.0" as const };
+    const adapter = createCliOpenShellForwardAdapter({
+      environment: {},
+      executable: process.execPath,
+      gatewayEndpoint: forward.gatewayEndpoint,
+      hostProbe: vi.fn<HostProbe>(async () => captured(1, "", stderr)),
+      platform: "linux",
+      probePort: async () => ({ state: "unbound" }),
+      run: async () => capturedForwardList(noActiveForwards),
+      runtimeSelection,
+    });
+
+    await expect(adapter.observeForwards({ forwards: [wildcardForward] })).resolves.toEqual([
+      { state: "indeterminate", forward: wildcardForward, error: errors.ownership },
+    ]);
+  });
+
+  it("keeps a Linux port unprovable when lsof is silent but the port still accepts connections", async () => {
+    const hostProbe = vi.fn<HostProbe>(async () => captured(1, "", "lsof: WARNING: noise\n"));
+    const adapter = createCliOpenShellForwardAdapter({
+      environment: {},
+      executable: process.execPath,
+      gatewayEndpoint: forward.gatewayEndpoint,
+      hostProbe,
+      platform: "linux",
+      probePort: async () => ({ state: "bound" }),
+      run: async () => capturedForwardList(noActiveForwards),
+      runtimeSelection,
+    });
+
+    await expect(adapter.observeForwards({ forwards: [forward] })).resolves.toEqual([
+      { state: "indeterminate", forward, error: errors.ownership },
+    ]);
+  });
+
   it.each([
     ["an empty valid table", "empty", { state: "absent", forward }],
     [

@@ -10,6 +10,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -100,6 +101,7 @@ export interface RuntimeIdentityPlan {
 export interface RuntimeIdentityReceipt extends RuntimeIdentityPlan {
   provider_created: boolean;
   attachment_created: boolean;
+  verified_profile_sha256?: string;
 }
 
 export interface RuntimeIdentityCommandResult {
@@ -110,6 +112,7 @@ export interface RuntimeIdentityCommandResult {
 
 export interface RuntimeIdentityCommandOptions {
   env?: Record<string, string>;
+  timeoutMs?: number;
 }
 
 export interface RuntimeIdentityCommandDeps {
@@ -118,6 +121,7 @@ export interface RuntimeIdentityCommandDeps {
     options?: RuntimeIdentityCommandOptions,
   ): Promise<RuntimeIdentityCommandResult>;
   formatError(output: string, secretValues?: readonly string[]): string;
+  warn(message: string): void;
   blueprintPath?: string;
   env?: NodeJS.ProcessEnv;
 }
@@ -392,9 +396,10 @@ function parseRuntimeIdentityEndpoint(
 
 function parseRuntimeIdentityProfile(
   content: string,
-  config: RuntimeIdentityConfig,
+  config: Pick<RuntimeIdentityConfig, "provider_type" | "credential_key">,
   policy: RuntimeIdentityProfilePolicy,
   label: string,
+  gatewayExport = false,
 ): ParsedRuntimeIdentityProfile {
   if (Buffer.byteLength(content, "utf8") > MAX_PROFILE_BYTES) {
     throw new Error(`${label} exceeds the ${MAX_PROFILE_BYTES}-byte limit`);
@@ -407,6 +412,42 @@ function parseRuntimeIdentityProfile(
   }
   if (!isPlainObject(parsed) || parsed.id !== config.provider_type) {
     throw new Error(`${label} must declare id '${config.provider_type}'`);
+  }
+  if (gatewayExport) {
+    // OpenShell's export includes catalog provenance and explicit empty/default
+    // credential fields. Check those values before comparing the binding.
+    const hasCatalogMetadata = ["resource_version", "source", "scope"].some((key) => key in parsed);
+    if (hasCatalogMetadata) {
+      if (
+        !Number.isSafeInteger(parsed.resource_version) ||
+        (parsed.resource_version as number) < 1 ||
+        parsed.source !== "user" ||
+        parsed.scope !== "workspace"
+      ) {
+        throw new Error(`${label} has an unsupported catalog origin`);
+      }
+      delete parsed.resource_version;
+      delete parsed.source;
+      delete parsed.scope;
+    }
+    if (Array.isArray(parsed.credentials)) {
+      for (const credential of parsed.credentials) {
+        if (!isPlainObject(credential)) continue;
+        if (credential.query_param === "") delete credential.query_param;
+        if (!isPlainObject(credential.refresh) || !Array.isArray(credential.refresh.material)) {
+          continue;
+        }
+        for (const material of credential.refresh.material) {
+          if (
+            isPlainObject(material) &&
+            material.name === "client_id" &&
+            material.secret === false
+          ) {
+            delete material.secret;
+          }
+        }
+      }
+    }
   }
   if (!hasOnlyKeys(parsed, RUNTIME_IDENTITY_PROFILE_KEYS)) {
     throw new Error(`${label} contains unsupported top-level fields`);
@@ -630,6 +671,7 @@ export function isRuntimeIdentityReceipt(value: unknown): value is RuntimeIdenti
       "credential_key",
       "provider_created",
       "attachment_created",
+      "verified_profile_sha256",
     ]) &&
     typeof value.provider_type === "string" &&
     PROVIDER_TYPE_PATTERN.test(value.provider_type) &&
@@ -638,7 +680,10 @@ export function isRuntimeIdentityReceipt(value: unknown): value is RuntimeIdenti
     typeof value.credential_key === "string" &&
     ENV_NAME_PATTERN.test(value.credential_key) &&
     typeof value.provider_created === "boolean" &&
-    typeof value.attachment_created === "boolean"
+    typeof value.attachment_created === "boolean" &&
+    (value.verified_profile_sha256 === undefined ||
+      (typeof value.verified_profile_sha256 === "string" &&
+        /^[a-f0-9]{64}$/u.test(value.verified_profile_sha256)))
   );
 }
 
@@ -648,6 +693,63 @@ export function buildRuntimeIdentityPlan(config: RuntimeIdentityConfig): Runtime
     provider_name: config.provider_name,
     credential_key: config.credential_key,
   };
+}
+
+function profileDigest(document: Record<string, unknown>): string {
+  return createHash("sha256").update(JSON.stringify(document)).digest("hex");
+}
+
+function warnWithoutChangingResult(deps: RuntimeIdentityCommandDeps, message: string): void {
+  try {
+    deps.warn(message);
+  } catch {
+    // A warning callback must not change the result of a completed mutation.
+  }
+}
+
+async function warnIfProfileChanged(
+  receipt: RuntimeIdentityReceipt,
+  policy: RuntimeIdentityProfilePolicy,
+  deps: RuntimeIdentityCommandDeps,
+): Promise<void> {
+  if (!receipt.verified_profile_sha256) return;
+  let result: RuntimeIdentityCommandResult | undefined;
+  try {
+    result = await deps.run(
+      ["openshell", "provider", "profile", "export", receipt.provider_type, "--output", "yaml"],
+      { timeoutMs: 30_000 },
+    );
+  } catch {
+    // The export may throw, including on timeout. Report only the outcome, never command output.
+  }
+  if (result?.exitCode !== 0) {
+    warnWithoutChangingResult(
+      deps,
+      `Runtime identity provider profile '${receipt.provider_type}' could not be verified after a provider change. ` +
+        "Ask the gateway operator to inspect the profile. NemoClaw continues setup without post-change verification.",
+    );
+    return;
+  }
+  let matches = false;
+  try {
+    const profile = parseRuntimeIdentityProfile(
+      result.stdout,
+      receipt,
+      policy,
+      "Gateway profile",
+      true,
+    );
+    matches = profileDigest(profile.document) === receipt.verified_profile_sha256;
+  } catch {
+    // A readable but incompatible profile also differs from the verified definition.
+  }
+  if (!matches) {
+    warnWithoutChangingResult(
+      deps,
+      `Runtime identity provider profile '${receipt.provider_type}' changed in the gateway catalog. ` +
+        "NemoClaw cannot confirm which definition was used at bind time. Ask the gateway operator to inspect the profile.",
+    );
+  }
 }
 
 function commandOutput(result: RuntimeIdentityCommandResult): string {
@@ -923,50 +1025,47 @@ export async function prepareRuntimeIdentity(
   }
 
   const profileImport = await importValidatedProfile(profileSource, deps);
-  if (profileImport.exitCode !== 0) {
-    if (!/already exists/i.test(commandOutput(profileImport))) {
-      throw new Error(
-        `Failed to import runtime identity provider profile: ${deps.formatError(commandOutput(profileImport))}`,
-      );
-    }
-    const profileExport = await deps.run([
-      "openshell",
-      "provider",
-      "profile",
-      "export",
-      config.provider_type,
-      "--output",
-      "yaml",
-    ]);
-    if (profileExport.exitCode !== 0) {
-      throw new Error(
-        `Failed to inspect existing runtime identity provider profile: ${deps.formatError(commandOutput(profileExport))}`,
-      );
-    }
-    let existingProfile: ParsedRuntimeIdentityProfile;
-    try {
-      existingProfile = parseRuntimeIdentityProfile(
-        profileExport.stdout,
-        config,
-        profilePolicy,
-        "Existing runtime identity provider profile",
-      );
-    } catch {
-      throw new Error(
-        `Runtime identity provider profile '${config.provider_type}' exists with an incompatible binding`,
-      );
-    }
-    if (!isDeepStrictEqual(existingProfile.document, requestedProfile.document)) {
-      throw new Error(
-        `Runtime identity provider profile '${config.provider_type}' exists with an incompatible binding`,
-      );
-    }
+  if (profileImport.exitCode !== 0 && !/already exists/i.test(commandOutput(profileImport))) {
+    throw new Error(
+      `Failed to import runtime identity provider profile: ${deps.formatError(commandOutput(profileImport))}`,
+    );
+  }
+  const profileExport = await deps.run(
+    ["openshell", "provider", "profile", "export", config.provider_type, "--output", "yaml"],
+    { timeoutMs: 30_000 },
+  );
+  if (profileExport.exitCode !== 0) {
+    throw new Error(
+      `Failed to inspect runtime identity provider profile '${config.provider_type}': ${deps.formatError(commandOutput(profileExport), [clientId, refreshToken, clientSecret ?? ""])}`,
+    );
+  }
+  let importedProfile: ParsedRuntimeIdentityProfile;
+  try {
+    importedProfile = parseRuntimeIdentityProfile(
+      profileExport.stdout,
+      config,
+      profilePolicy,
+      "Imported runtime identity provider profile",
+      true,
+    );
+  } catch {
+    throw new Error(
+      `Runtime identity provider profile '${config.provider_type}' has an incompatible binding; ask the gateway operator to inspect the profile before retrying`,
+    );
+  }
+  if (!isDeepStrictEqual(importedProfile.document, requestedProfile.document)) {
+    // Import success does not prove exclusive ownership of this mutable catalog ID.
+    // Preserve a mismatched profile because another gateway client may have replaced it.
+    throw new Error(
+      `Runtime identity provider profile '${config.provider_type}' has an incompatible binding; ask the gateway operator to inspect the profile before retrying`,
+    );
   }
 
   const receipt: RuntimeIdentityReceipt = {
     ...plan,
     provider_created: true,
     attachment_created: false,
+    verified_profile_sha256: profileDigest(requestedProfile.document),
   };
   let providerAcquired = false;
   try {
@@ -990,6 +1089,7 @@ export async function prepareRuntimeIdentity(
     // persistence fails, preserve the provider instead of deleting a resource
     // that the next process cannot prove this run created.
     providerAcquired = true;
+    await warnIfProfileChanged(receipt, profilePolicy, deps);
 
     const refreshArgs = [
       "openshell",
@@ -1052,7 +1152,7 @@ export async function mintRuntimeIdentityCredential(
 export async function attachRuntimeIdentity(
   receipt: RuntimeIdentityReceipt,
   sandboxName: string,
-  deps: RuntimeIdentityCommandDeps,
+  deps: RuntimeIdentityDeps,
 ): Promise<boolean> {
   await requireProviderDerivedPolicy(deps);
   const state = await inspectProvider(receipt, deps, true);
@@ -1069,8 +1169,15 @@ export async function attachRuntimeIdentity(
     sandboxName,
     receipt.provider_name,
   ]);
-  if (attach.exitCode === 0) return true;
-  if (/already attached/i.test(commandOutput(attach))) return false;
+  if (attach.exitCode === 0 || /already attached/i.test(commandOutput(attach))) {
+    const attachmentCreated = attach.exitCode === 0;
+    if (attachmentCreated) {
+      deps.persistReceipt({ ...receipt, attachment_created: true });
+    }
+    const policy = deps.profilePolicy ?? RUNTIME_IDENTITY_PROFILE_POLICIES[receipt.provider_type];
+    if (policy) await warnIfProfileChanged(receipt, policy, deps);
+    return attachmentCreated;
+  }
   throw new Error(
     `Failed to attach runtime identity provider '${receipt.provider_name}': ${deps.formatError(commandOutput(attach))}`,
   );

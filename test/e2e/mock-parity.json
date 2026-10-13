@@ -19,7 +19,8 @@
       "fast": [
         "src/lib/actions/installer/deferred-onboarding.test.ts",
         "test/install/install-onboard-yes.test.ts",
-        "test/e2e/support/workflow-plan.test.ts"
+        "test/e2e/support/workflow-plan.test.ts",
+        "src/lib/actions/sandbox/destroy-native-home-fallback.test.ts"
       ]
     },
     {
@@ -78,11 +79,13 @@
     },
     {
       "live": "test/e2e/live/managed-image-protected-runtime.test.ts",
+      "liveSources": ["test/e2e/live/managed-image-protected-runtime-helpers.ts"],
       "fast": [
         "src/lib/inference/nim.test.ts",
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
         "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
         "test/inference/managed/managed-image-protected-runtime-contract.test.ts",
+        "test/inference/llama/llama-cpp-dgx-spark-qualification-runner.test.ts",
         "test/automation/pull-requests/pr-risk-plan.test.ts"
       ]
     },
@@ -192,18 +195,29 @@
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts",
         "test/onboarding/onboard-inference-gateway-scope.test.ts",
-        "test/e2e/support/managed-image-activation-diagnostics.test.ts"
+        "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+        "test/e2e/support/hosted-provider-smoke-selection.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/inference-routing-provider-smoke.test.ts",
-      "liveOnlyReason": "Requires real provider credentials to prove provider responses and sandbox credential isolation"
+      "liveSources": [
+        "test/e2e/live/inference-routing-credential-scan.ts",
+        "test/e2e/fixtures/hermes-api-command.ts"
+      ],
+      "fast": [
+        "test/generation/generate-native-hosted-config.test.ts",
+        "test/e2e/support/hosted-provider-smoke-selection.test.ts",
+        "test/e2e/support/hosted-credential-scan.test.ts",
+        "test/e2e/support/hosted-inference-workflow-selection.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/full-e2e.test.ts",
       "liveSources": [
         "test/e2e/live/agent-turn-latency-helpers.ts",
         "test/e2e/live/full-e2e-inference-probe.ts",
+        "test/e2e/live/full-e2e-native-model.ts",
         "test/e2e/live/full-e2e-workload-evidence.ts",
         "test/e2e/live/launch-agent-turn.ts",
         "test/e2e/live/pr-base-comparison.ts",
@@ -221,6 +235,7 @@
         "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
+        "test/e2e/support/full-e2e-native-model.test.ts",
         "test/e2e/support/full-e2e-gateway.test.ts",
         "test/e2e/support/launch-agent-turn-provider-availability.test.ts",
         "test/e2e/support/launch-agent-turn-session-evidence.test.ts",
@@ -538,6 +553,7 @@
     {
       "live": "test/e2e/live/concurrent-gateway-ports.test.ts",
       "fast": [
+        "src/lib/actions/maintenance.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -618,7 +634,8 @@
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
         "test/onboarding/onboard-preset-diff.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/hermes-config-export-live.test.ts"
       ]
     },
     {
@@ -659,7 +676,8 @@
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/host-container-discovery.test.ts"
       ]
     },
     {
@@ -831,6 +849,7 @@
         "test/e2e/fixtures/managed-image-receipt.ts"
       ],
       "fast": [
+        "src/lib/actions/inference-get.test.ts",
         "src/lib/actions/inference-set-patch-openclaw.test.ts",
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/retry-policy.test.ts",
@@ -839,6 +858,7 @@
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/inference-switch-workflow-boundary.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
+        "test/e2e/support/openclaw-inference-switch-baseline.test.ts",
         "test/e2e/support/openclaw-inference-switch-helpers.test.ts",
         "test/e2e/support/public-nvidia-switch-provider.test.ts",
         "test/security/admin-approval-helper.test.ts",
@@ -1005,7 +1025,8 @@
       "fast": [
         "src/lib/actions/sandbox/rebuild-backup-phase.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
-        "test/state/snapshot.test.ts"
+        "test/state/snapshot.test.ts",
+        "test/e2e/support/host-container-discovery.test.ts"
       ]
     },
     {
@@ -1021,7 +1042,8 @@
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/e2e-phase-environment.test.ts"
+        "test/e2e/support/e2e-phase-environment.test.ts",
+        "test/e2e/support/openclaw-container-diagnostics.test.ts"
       ]
     },
     {

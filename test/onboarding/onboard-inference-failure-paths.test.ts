@@ -100,7 +100,7 @@ describe("setupInference dependency failures", () => {
     vi.restoreAllMocks();
   });
 
-  it("fails through the injected exit boundary when a known remote provider has no config", async () => {
+  it("fails through the injected exit boundary when a known legacy remote provider has no config", async () => {
     const exitProcess = createInjectedExit();
     const hydrateCredentialEnv = vi.fn();
     const setupBedrockRuntimeInference = vi.fn(async () => ({ handled: false as const }));
@@ -113,11 +113,11 @@ describe("setupInference dependency failures", () => {
       },
     });
 
-    await expect(harness.setupInference("test-box", "gpt-test", "openai-api")).rejects.toThrow(
+    await expect(harness.setupInference("test-box", "gpt-test", "nvidia-nim")).rejects.toThrow(
       "EXIT_CALLED:1",
     );
 
-    expect(harness.errors).toEqual(["  Unsupported provider configuration: openai-api"]);
+    expect(harness.errors).toEqual(["  Unsupported provider configuration: nvidia-nim"]);
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(1);
     expect(setupBedrockRuntimeInference).not.toHaveBeenCalled();
@@ -125,7 +125,7 @@ describe("setupInference dependency failures", () => {
     expectNoPostFailureSideEffects(harness);
   });
 
-  it("fails through the injected exit boundary when a remote credential is missing", async () => {
+  it("fails through the injected exit boundary when a legacy remote credential is missing", async () => {
     const exitProcess = createInjectedExit();
     const hydrateCredentialEnv = vi.fn(() => null);
     const upsertProvider = vi.fn(async () => ({ ok: true }));
@@ -142,29 +142,29 @@ describe("setupInference dependency failures", () => {
       },
     });
 
-    await expect(harness.setupInference("test-box", "gpt-test", "openai-api")).rejects.toThrow(
+    await expect(harness.setupInference("test-box", "gpt-test", "nvidia-nim")).rejects.toThrow(
       "EXIT_CALLED:1",
     );
 
     expect(setupBedrockRuntimeInference).toHaveBeenCalledOnce();
-    expect(hydrateCredentialEnv).toHaveBeenCalledWith("OPENAI_API_KEY");
+    expect(hydrateCredentialEnv).toHaveBeenCalledWith("NVIDIA_INFERENCE_API_KEY");
     expect(upsertProvider).not.toHaveBeenCalled();
     expect(promptValidationRecovery).not.toHaveBeenCalled();
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(1);
     expect(harness.errors).toEqual([
-      "  A host credential is required to configure provider 'openai-api'.",
+      "  A host credential is required to configure provider 'nvidia-nim'.",
     ]);
     expectNoPostFailureSideEffects(harness);
   });
 
-  it("preserves a remote provider upsert status through the injected exit boundary", async () => {
+  it("preserves a legacy remote provider upsert status through the injected exit boundary", async () => {
     const exitProcess = createInjectedExit();
     const hydrateCredentialEnv = vi.fn(() => "openai-secret");
     const upsertProvider = vi.fn(async () => ({
       ok: false,
       status: 23,
-      message: "remote provider registration rejected",
+      message: "legacy remote provider registration rejected",
     }));
     const promptValidationRecovery = vi.fn(async () => "selection" as const);
     const setupBedrockRuntimeInference = vi.fn(async () => ({ handled: false as const }));
@@ -179,30 +179,30 @@ describe("setupInference dependency failures", () => {
       },
     });
 
-    await expect(harness.setupInference("test-box", "gpt-test", "openai-api")).rejects.toThrow(
+    await expect(harness.setupInference("test-box", "gpt-test", "nvidia-nim")).rejects.toThrow(
       "EXIT_CALLED:23",
     );
 
     expect(setupBedrockRuntimeInference).toHaveBeenCalledOnce();
-    expect(hydrateCredentialEnv).toHaveBeenCalledWith("OPENAI_API_KEY");
+    expect(hydrateCredentialEnv).toHaveBeenCalledWith("NVIDIA_INFERENCE_API_KEY");
     expect(upsertProvider).toHaveBeenCalledOnce();
     expect(upsertProvider).toHaveBeenCalledWith(
-      "openai-api",
-      "openai",
-      "OPENAI_API_KEY",
+      "nvidia-nim",
+      "nvidia",
+      "NVIDIA_INFERENCE_API_KEY",
       expect.any(String),
-      { OPENAI_API_KEY: "openai-secret" },
+      { NVIDIA_INFERENCE_API_KEY: "openai-secret" },
       "nemoclaw",
       { revalidateSandboxIdentity: expect.any(Function) },
     );
     expect(promptValidationRecovery).not.toHaveBeenCalled();
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(23);
-    expect(harness.errors).toEqual(["  remote provider registration rejected"]);
+    expect(harness.errors).toEqual(["  legacy remote provider registration rejected"]);
     expectNoPostFailureSideEffects(harness);
   });
 
-  it("redacts a remote inference-set failure and preserves its status at the exit boundary", async () => {
+  it("redacts a legacy remote inference-set failure and preserves its status at the exit boundary", async () => {
     const exitProcess = createInjectedExit();
     const hydrateCredentialEnv = vi.fn(() => "openai-secret");
     const upsertProvider = vi.fn(async () => ({ ok: true }));
@@ -227,7 +227,7 @@ describe("setupInference dependency failures", () => {
       },
     });
 
-    await expect(harness.setupInference("test-box", "gpt-test", "openai-api")).rejects.toThrow(
+    await expect(harness.setupInference("test-box", "gpt-test", "nvidia-nim")).rejects.toThrow(
       "EXIT_CALLED:37",
     );
 
@@ -240,7 +240,7 @@ describe("setupInference dependency failures", () => {
     expect(harness.errors.join("\n")).toContain("route failed");
     expect(harness.errors.join("\n")).not.toContain(NVIDIA_REDACTION_CANARY);
     expectNoPostFailureSideEffects(harness, [
-      "inference set -g nemoclaw --no-verify --provider openai-api --model gpt-test",
+      "inference set -g nemoclaw --no-verify --provider nvidia-nim --model gpt-test",
     ]);
   });
 
@@ -491,13 +491,14 @@ describe("setupInference dependency failures", () => {
 
     const runGatewayOpenshell = checkHermesProviderStoreReachable.mock.calls[0][0];
     expectNemoclawScopedRunner(harness, runGatewayOpenshell);
-    expect(isHermesProviderRegistered).toHaveBeenCalledWith(runGatewayOpenshell);
+    expect(isHermesProviderRegistered).not.toHaveBeenCalled();
     expect(providerExistsInGateway).not.toHaveBeenCalled();
     expect(ensureHermesProviderApiKeyCredentials).toHaveBeenCalledOnce();
     expect(ensureHermesProviderApiKeyCredentials).toHaveBeenCalledWith("test-box", {
       apiKey: "nous-secret",
       runOpenshell: runGatewayOpenshell,
-      baseUrl: undefined,
+      baseUrl: "https://inference-api.nousresearch.com/v1",
+      registerInferenceCredential: expect.any(Function),
     });
     expect(ensureHermesProviderOAuthCredentials).not.toHaveBeenCalled();
     expect(exitProcess).toHaveBeenCalledOnce();
@@ -552,7 +553,7 @@ describe("setupInference dependency failures", () => {
 
     const runGatewayOpenshell = checkHermesProviderStoreReachable.mock.calls[0][0];
     expectNemoclawScopedRunner(harness, runGatewayOpenshell);
-    expect(isHermesProviderRegistered).toHaveBeenCalledWith(runGatewayOpenshell);
+    expect(isHermesProviderRegistered).not.toHaveBeenCalled();
     expect(providerExistsInGateway).not.toHaveBeenCalled();
     expect(resolveHermesNousApiKey).not.toHaveBeenCalled();
     expect(ensureHermesProviderApiKeyCredentials).not.toHaveBeenCalled();
@@ -560,7 +561,8 @@ describe("setupInference dependency failures", () => {
     expect(ensureHermesProviderOAuthCredentials).toHaveBeenCalledWith("test-box", {
       allowInteractiveLogin: false,
       runOpenshell: runGatewayOpenshell,
-      baseUrl: undefined,
+      baseUrl: "https://inference-api.nousresearch.com/v1",
+      registerInferenceCredential: expect.any(Function),
       toolGatewayPresets: [],
     });
     expect(exitProcess).toHaveBeenCalledOnce();

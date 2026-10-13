@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   listSandboxes: vi.fn(),
   listHostGatewayRegistryEntries: vi.fn(),
+  listGatewayStateRoots: vi.fn().mockReturnValue([]),
   getSandbox: vi.fn(),
   recordSandboxStopIntent: vi.fn(),
   updateSandbox: vi.fn(),
@@ -61,6 +62,7 @@ vi.mock("../state/registry/lock", () => ({ withRegistryLockAt: vi.fn() }));
 vi.mock("../state/gateway-registry", async () => ({
   resolveHome: (await import("../state/state-root")).resolveHome,
   listHostGatewayRegistryEntries: mocks.listHostGatewayRegistryEntries,
+  listGatewayStateRoots: mocks.listGatewayStateRoots,
 }));
 vi.mock("../state/sandbox", () => ({
   backupSandboxState: mocks.backupSandboxState,
@@ -1476,7 +1478,7 @@ describe("garbageCollectImages", () => {
     "nemoclaw-sandbox-local",
     "localhost:5000/nemoclaw-sandbox-local",
     "127.0.0.1:5000/nemoclaw-sandbox-local",
-  ])("surfaces an orphan in %s while preserving a registered image (#6301)", async (imageRepo) => {
+  ])("removes an orphan in %s while preserving a registered image (#12923)", async (imageRepo) => {
     mocks.dockerListImagesFormat.mockImplementation((repo: string) =>
       repo === imageRepo
         ? `${imageRepo}:gc-test-orphan-111\t3GB\n${imageRepo}:live-222\t2GB`
@@ -1486,13 +1488,11 @@ describe("garbageCollectImages", () => {
       { entry: { imageTag: `${imageRepo}:live-222` } },
       { entry: { imageTag: "openshell/sandbox-from:in-use" } },
     ]);
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    await garbageCollectImages({ dryRun: true });
-    const out = logSpy.mock.calls.flat().join("\n");
-    logSpy.mockRestore();
-
-    expect(out).toContain(`${imageRepo}:gc-test-orphan-111`);
-    expect(out).not.toContain(`${imageRepo}:live-222`);
+    mocks.dockerRmi.mockReturnValue({ status: 0 });
+    await garbageCollectImages({ yes: true });
+    expect(mocks.dockerRmi.mock.calls.map(([tag]) => tag)).toEqual([
+      `${imageRepo}:gc-test-orphan-111`,
+    ]);
     expect(mocks.dockerListImagesFormat.mock.calls.map((call) => call[0])).toEqual(
       expect.arrayContaining(["openshell/sandbox-from", imageRepo]),
     );

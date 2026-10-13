@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { v00116Pins, v012Pins } from "./openshell-release-fixtures";
+import { selectHistoricalGatewayProcessReader } from "./prepared-gateway-runtime";
 
 export function brevMutationFixtures(
   ASSET_DIGESTS: ReadonlyMap<string, string>,
@@ -175,10 +176,23 @@ export function removeV00106OperationalTrust(source: string): string {
   return `${withoutIdentity.slice(0, capabilityStart)}${withoutIdentity.slice(fallbackStart)}`;
 }
 
-export function prepareReleaseFixtureRuntime(repoRoot: string, root: string): void {
+export function prepareReleaseFixtureRuntime(
+  repoRoot: string,
+  root: string,
+  options: { currentProcessReader?: boolean } = {},
+): void {
   const runtimePath = "src/lib/onboard/docker-driver-gateway-runtime.ts";
   const candidatePins = fs.readFileSync(path.join(root, runtimePath), "utf8");
-  const source = fs.readFileSync(path.join(repoRoot, runtimePath), "utf8");
+  const checkoutSource = fs.readFileSync(path.join(repoRoot, runtimePath), "utf8");
+  // By default the 0.1.2 release fixture predates the shared process reader, so keep
+  // its operational runtime bytes on the independently trusted historical template.
+  // currentProcessReader selects the checkout's thread-group reader for 0.1.2 instead.
+  const source = options.currentProcessReader
+    ? checkoutSource.replace(
+        'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.0.116";',
+        'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.1.2";',
+      )
+    : selectHistoricalGatewayProcessReader(checkoutSource);
   const prepared = source.replace(
     /const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = \{[\s\S]*?\n\};/,
     candidatePins.trim(),

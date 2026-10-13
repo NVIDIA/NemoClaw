@@ -6,7 +6,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mockGatewayProcFiles } from "../../../test/helpers/mock-gateway-proc-files";
+import { mockGatewayProcTaskDir } from "../../../test/helpers/mock-gateway-proc-task-dir";
 import * as dockerDriverGatewayEnv from "./docker-driver-gateway-env";
+import { createGatewayEnvLoader } from "./gateway-binding";
+import { writeDockerDriverGatewayBinding } from "./gateway/state-dir";
 import {
   gatewayIdForStateDir,
   NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
@@ -37,7 +41,7 @@ function makeHelpers(overrides: Partial<DockerDriverGatewayRuntimeDeps> = {}): {
     getBlueprintMaxOpenshellVersion: () => null,
     getInstalledOpenshellVersion: parseVersion,
     isOpenshellDevVersion: () => false,
-    loadDockerDriverGatewayEnv: () => dockerDriverGatewayEnv,
+    loadDockerDriverGatewayEnv: createGatewayEnvLoader(dockerDriverGatewayEnv),
     runCapture,
     shouldUseOpenshellDevChannel: () => false,
     supportedOpenshellFallbackVersion: "0.0.116",
@@ -136,6 +140,57 @@ describe("docker-driver gateway runtime helpers", () => {
       );
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores a saved gateway binding without changing process configuration", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-binding-runtime-"));
+    const stateDir = path.join(home, "custom-gateway-18080");
+    const networkName = "mvca-nemoclaw-b2";
+    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(home);
+    try {
+      withEnv(
+        {
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
+          OPENSHELL_DOCKER_NETWORK_NAME: networkName,
+        },
+        () => {
+          makeHelpers().helpers.getDockerDriverGatewayEnv(null, "linux");
+          expect(
+            fs.existsSync(
+              path.join(home, ".local/state/nemoclaw/gateway-runtime-bindings/18080.json"),
+            ),
+          ).toBe(false);
+          writeDockerDriverGatewayBinding(home, 18080, {
+            stateDir,
+            dockerNetworkName: networkName,
+          });
+        },
+      );
+
+      withEnv(
+        {
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: undefined,
+          OPENSHELL_DOCKER_NETWORK_NAME: undefined,
+        },
+        () => {
+          const { helpers } = makeHelpers();
+          const env = helpers.getDockerDriverGatewayEnv(null, "linux");
+
+          expect(helpers.getDockerDriverGatewayStateDir()).toBe(path.resolve(stateDir));
+          expect(env.OPENSHELL_DOCKER_NETWORK_NAME).toBe(networkName);
+          expect(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBeUndefined();
+          expect(process.env.OPENSHELL_DOCKER_NETWORK_NAME).toBeUndefined();
+          expect(
+            fs.existsSync(
+              path.join(home, ".local/state/nemoclaw/gateway-runtime-bindings/18080.json"),
+            ),
+          ).toBe(true);
+        },
+      );
+    } finally {
+      homedirSpy.mockRestore();
+      fs.rmSync(home, { recursive: true, force: true });
     }
   });
 
@@ -325,6 +380,12 @@ describe("docker-driver gateway runtime helpers", () => {
             : candidate === replacementEnvironment
               ? `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${namespace}\0`
               : originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync);
+        mockGatewayProcFiles(
+          new Map([
+            [replacementCmdline, `${gatewayBin}\0`],
+            [replacementEnvironment, `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${namespace}\0`],
+          ]),
+        );
 
         expect(helpers.isDockerDriverGatewayStateInUse()).toBe(true);
       });
@@ -544,7 +605,7 @@ describe("docker-driver gateway runtime helpers", () => {
     });
     const originalExistsSync = fs.existsSync.bind(fs);
     const originalReadFileSync = fs.readFileSync.bind(fs);
-    const originalReadlinkSync = fs.readlinkSync.bind(fs);
+    const originalRealpathSync = fs.realpathSync.native.bind(fs.realpathSync);
     const existingProcPaths = new Set([`/proc/${pid}/environ`, `/proc/${pid}/exe`]);
     const procFileContents = new Map([[`/proc/${pid}/environ`, "OPENSHELL_DRIVERS=docker\0"]]);
     const procLinks = new Map([[`/proc/${pid}/exe`, replacementGatewayBin]]);
@@ -558,16 +619,59 @@ describe("docker-driver gateway runtime helpers", () => {
         procFileContents.get(String(candidate)) ??
         originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync,
     );
-    vi.spyOn(fs, "readlinkSync").mockImplementation(
+    mockGatewayProcFiles(procFileContents);
+    vi.spyOn(fs.realpathSync, "native").mockImplementation(
       ((candidate, options) =>
         procLinks.get(String(candidate)) ??
-        originalReadlinkSync(candidate, options as never)) as typeof fs.readlinkSync,
+        originalRealpathSync(candidate, options as never)) as typeof fs.realpathSync.native,
     );
 
     expect(
       helpers.getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, identityGatewayBin, "linux")
         ?.reason,
     ).toBe(`executable=${replacementGatewayBin} (expected ${identityGatewayBin})`);
+  });
+
+  it.each([
+    ["/usr/bin/openshell-gateway", null],
+    [
+      "/usr/bin/foreign-gateway",
+      "executable=/usr/bin/foreign-gateway (expected /usr/bin/openshell-gateway)",
+    ],
+    [null, "could not verify process executable"],
+  ])("checks a zombie gateway's current sibling executable %j", (executable, expectedReason) => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const pid = 12_352;
+    const root = `/proc/${pid}`;
+    const thread = `${root}/task/12353`;
+    const gatewayBin = "/usr/bin/openshell-gateway";
+    const files = new Map([
+      [`${root}/status`, "State: Z (zombie)\n"],
+      [`${root}/cmdline`, ""],
+      [`${thread}/cmdline`, `${gatewayBin}\0--name\0nemoclaw-18080\0--port\0${18080}\0`],
+      [`${thread}/environ`, "OPENSHELL_DRIVERS=docker\0"],
+    ]);
+    const readFile = fs.readFileSync.bind(fs);
+    vi.spyOn(fs, "readFileSync").mockImplementation(
+      ((candidate, options) =>
+        files.get(String(candidate)) ??
+        readFile(candidate, options as never)) as typeof fs.readFileSync,
+    );
+    mockGatewayProcFiles(files);
+    mockGatewayProcTaskDir(`/proc/${String(pid)}/task`, [String(pid), "12353"]);
+    const realpath = fs.realpathSync.native.bind(fs.realpathSync);
+    vi.spyOn(fs.realpathSync, "native").mockImplementation(((candidate, options) =>
+      String(candidate) === `${thread}/exe` && executable !== null
+        ? executable
+        : realpath(candidate, options as never)) as typeof fs.realpathSync.native);
+    const { helpers } = makeHelpers();
+    const result = helpers.getDockerDriverGatewayRuntimeDrift(
+      pid,
+      { OPENSHELL_DRIVERS: "docker" },
+      gatewayBin,
+      "linux",
+    );
+    expect(result?.reason ?? null).toBe(expectedReason);
   });
 
   it("rejects a mount-enabled process when the desired capability is disabled", () => {
@@ -658,7 +762,7 @@ describe("docker-driver gateway runtime helpers", () => {
     });
     const originalExistsSync = fs.existsSync.bind(fs);
     const originalReadFileSync = fs.readFileSync.bind(fs);
-    const originalReadlinkSync = fs.readlinkSync.bind(fs);
+    const originalRealpathSync = fs.realpathSync.native.bind(fs.realpathSync);
     const existingProcPaths = new Set([
       `/proc/${pid}/cmdline`,
       `/proc/${pid}/environ`,
@@ -679,10 +783,11 @@ describe("docker-driver gateway runtime helpers", () => {
           procFileContents.get(String(candidate)) ??
           originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync,
       );
-      vi.spyOn(fs, "readlinkSync").mockImplementation(((candidate, options) =>
+      mockGatewayProcFiles(procFileContents);
+      vi.spyOn(fs.realpathSync, "native").mockImplementation(((candidate, options) =>
         String(candidate) === `/proc/${pid}/exe`
           ? gatewayBin
-          : originalReadlinkSync(candidate, options as never)) as typeof fs.readlinkSync);
+          : originalRealpathSync(candidate, options as never)) as typeof fs.realpathSync.native);
 
       expect(
         helpers.getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, gatewayBin, "linux")?.reason,

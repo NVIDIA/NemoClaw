@@ -177,7 +177,7 @@ If onboarding used `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR`, pass its original res
 Use the dedicated gateway state directory created for that port, not a shared or parent directory.
 Onboarding rejects relative overrides, the shared NemoClaw state root or its parents, and existing nonempty directories without valid NemoClaw-managed gateway configuration.
 Let onboarding create the directory when possible. Every existing ancestor, from its containing directory to the filesystem root, must be a real directory owned by the current user or root and must not be group- or world-writable. If the state directory already exists, it must be an owner-controlled, non-symbolic-link directory with mode `0700`.
-If onboarding stops immediately after reserving that directory, uninstall removes the marker-only reservation only while the selected gateway port is free. Gateway configuration, a runtime marker, or a PID file moves cleanup to the managed-gateway checks instead. A port-bound marked gateway with valid generated configuration can be retired after the port is free and a complete process scan proves that no live process claims its state; a listener or unproven process preserves the directory. Inspect and stop the listener or matching gateway process, then rerun uninstall after the port is free.
+If onboarding stops immediately after reserving that directory, uninstall removes the marker-only reservation only while the selected gateway port is free. Gateway configuration, a runtime marker, or a PID file moves cleanup to the managed-gateway checks instead. A port-bound marked gateway with valid generated configuration can be retired after the port is free and a bounded process scan proves that no live process claims its state. A listener, unreadable process identity, or a scan that reaches its probe limit preserves the directory. Inspect and stop the listener or matching gateway process, then rerun uninstall after the port is free.
 Onboarding holds an exclusive lifecycle lock from reservation through gateway initialization.
 If uninstall reports that onboarding owns the state directory while onboarding is active, wait for onboarding to finish and rerun uninstall; the reservation is preserved.
 If the reported `onboard.lock` remains after onboarding ends abruptly, wait briefly and rerun uninstall to retry lock acquisition.
@@ -298,6 +298,8 @@ In this section, `<selected-state-root>` is `~/.nemoclaw/` for the default gatew
 For the default gateway, the uninstall command preserves `~/.nemoclaw/rebuild-backups/`, `~/.nemoclaw/backups/`, and `~/.nemoclaw/sandboxes.json` by default.
 A non-default gateway uses the corresponding entries under `~/.nemoclaw/gateways/<port>/`.
 Before deleting a registered sandbox, the default path writes a fresh backup under that gateway's `rebuild-backups/` directory.
+When the backup contains native agent state, successful uninstall prints the path to its `native-home.tar` archive.
+Deep Agents Code files are inside that archive, not separate loose files.
 The whole-host sweep applies this gate separately to each selected gateway port.
 If a backup fails or any registered sandbox is skipped, uninstall stops that gateway pass before OpenShell resource cleanup.
 A registry entry confirmed absent from both the selected gateway and Docker is exempt because no sandbox state remains to capture.

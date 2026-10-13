@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
+
+import { readGatewayProcEntry } from "./process-proc-entry";
 
 export const NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV = "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE";
 
@@ -30,18 +31,14 @@ export function processEnvironmentUsesSelectedGatewayState(
 }
 
 export function readGatewayProcessEnvironment(pid: number): Record<string, string> | null {
-  const procEnvPath = `/proc/${pid}/environ`;
+  const value = readGatewayProcEntry(pid, "environ");
+  if (value === null) return null;
   const env: Record<string, string> = {};
-  try {
-    if (!fs.existsSync(procEnvPath)) return null;
-    for (const entry of fs.readFileSync(procEnvPath, "utf-8").split("\0")) {
-      if (!entry) continue;
-      const separator = entry.indexOf("=");
-      if (separator <= 0) continue;
-      env[entry.slice(0, separator)] = entry.slice(separator + 1);
-    }
-  } catch {
-    return null;
+  for (const entry of value.split("\0")) {
+    if (!entry) continue;
+    const separator = entry.indexOf("=");
+    if (separator <= 0) continue;
+    env[entry.slice(0, separator)] = entry.slice(separator + 1);
   }
   return env;
 }

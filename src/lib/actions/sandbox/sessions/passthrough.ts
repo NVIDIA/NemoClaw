@@ -61,6 +61,7 @@ export function printSessionsPassthroughHelp(verb?: SessionsPassthroughVerb): vo
     "  list output and OpenClaw-specific flags are forwarded verbatim. Hermes sandboxes pass",
   );
   console.log("  through their native output unchanged.");
+  console.log("  Session listing is not supported for Deep Code sandboxes.");
   console.log("");
 }
 
@@ -250,8 +251,15 @@ async function runSessionsPassthroughUnlocked(
   // Trust boundary: `registry.getSandbox()` reads the host-side, user-owned
   // `~/.nemoclaw/sandboxes.json` registry (`REGISTRY_FILE`). Sandbox processes
   // cannot access the host filesystem to change this agent selection; unknown
-  // or missing values deliberately default to `openclaw` below.
+  // or missing values deliberately default to `openclaw` below. Deep Code
+  // has no session-listing integration and must not use that fallback.
   const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
+  if (sandboxAgent === "langchain-deepagents-code") {
+    console.error(
+      `  Session listing is not supported for sandbox '${sandboxName}' with the '${sandboxAgent}' agent.`,
+    );
+    deferSandboxLifecycleExit(1);
+  }
   const inSandboxBinary = sandboxAgent === "hermes" ? "hermes" : "openclaw";
   const command = [inSandboxBinary, "sessions"];
   if (verb) command.push(verb);

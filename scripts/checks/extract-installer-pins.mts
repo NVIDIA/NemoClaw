@@ -645,6 +645,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         ...V00116_SUPERVISOR_TEMPLATE_BASELINE_SHA256,
         "dceba5ee9bf6d9cd20adf637d63d008c932f751c073bbb0a83cdce087518e917",
+        // Exact 0.1.2 selection with the merged #12928 thread-group process reader.
+        "31e6923609575d64ac36943e58218c801be366b782def8d33406df6e938ef5dd",
       ],
     },
     pinLayout: V00116_OPENSHELL_PIN_LAYOUT,

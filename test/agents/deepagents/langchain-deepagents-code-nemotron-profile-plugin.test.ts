@@ -37,7 +37,7 @@ const EXPECTED_DCODE_VERSION = /^deepagents-code==([^\s;]+)/m.exec(requirementsL
 const EXPECTED_DEEPAGENTS_VERSION = /^deepagents==([^\s;]+)/m.exec(requirementsLock)?.[1];
 assert(EXPECTED_DCODE_VERSION, "requirements.lock must pin deepagents-code");
 assert(EXPECTED_DEEPAGENTS_VERSION, "requirements.lock must pin deepagents");
-const NATIVE_PROFILE_SHA256 = "3b95b118e90c4ae19890c611cc7e1e85261217f971496e9bb7508142133c7d9a";
+const NATIVE_PROFILE_SHA256 = "eec0bfdb27522823f80e5f95a00e03071162c2a96aa71fbffc1c112c5184c01f";
 const UNMODIFIED_BOOTSTRAP_SHA256 =
   "005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf";
 const CANONICAL_MODEL_SPEC = "nvidia:nvidia/nemotron-3-ultra-550b-a55b";
@@ -789,12 +789,12 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
     expect(project).toContain('name = "nemoclaw-deepagents-profile"');
     expect(project).toContain('version = "0.1.0"');
-    expect(project).toContain('requires = ["setuptools==82.0.1"]');
+    expect(project).toContain('requires = ["setuptools==84.0.0"]');
     expect(project).toContain('license = "Apache-2.0"');
     expect(project).toContain('[project.entry-points."deepagents.harness_profiles"]');
     expect(project).toContain('nemoclaw-managed-aliases = "nemoclaw_deepagents_profile:register"');
-    expect(project).toContain('"deepagents-code==0.1.55"');
-    expect(project).toContain('"deepagents==0.7.5"');
+    expect(project).toContain('"deepagents-code==0.1.71"');
+    expect(project).toContain('"deepagents==0.7.15"');
   });
 
   it.each(
@@ -990,7 +990,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
       const validator = fs.readFileSync(validatorPath, "utf8");
       const e2eCheck = fs.readFileSync(e2eProfileCheckPath, "utf8");
 
-      expect(requirements).toMatch(/^langchain-core==1\.5\.3(?:[ \t]|$)/m);
+      expect(requirements).toMatch(/^langchain-core==1\.6\.6(?:[ \t]|$)/m);
       const source = ({ validator: validator, "E2E check": e2eCheck } as const)[scenario]!;
       expect(source).toContain("isinstance(sync_result.content, str)");
       expect(source).toContain("isinstance(async_result.content, str)");
@@ -1013,8 +1013,8 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
   });
 
   it.each([
-    ["Deep Agents Code", { dcode: "0.1.54" }, "deepagents-code==0.1.55"],
-    ["Deep Agents", { deepagents: "0.7.0a7" }, "deepagents==0.7.5"],
+    ["Deep Agents Code", { dcode: "0.1.54" }, "deepagents-code==0.1.71"],
+    ["Deep Agents", { deepagents: "0.7.0a7" }, "deepagents==0.7.15"],
   ] as const)("fails closed on %s version drift", (_label, versions, message) => {
     const fixture = makePluginFixture(versions);
     const result = runPlugin(fixture);

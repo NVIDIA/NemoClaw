@@ -7,7 +7,10 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
+import {
+  DEFAULT_CLOUD_MODEL,
+  resolveAgentInferenceApi,
+} from "../../../src/lib/inference/config.ts";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
@@ -191,7 +194,12 @@ export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Proc
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: openshellGatewayName(),
   };
-  apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey });
+  apiKey &&
+    Object.assign(out, {
+      NVIDIA_INFERENCE_API_KEY: apiKey,
+      NEMOCLAW_PROVIDER: "build",
+      NEMOCLAW_MODEL: process.env.NEMOCLAW_MODEL ?? DEFAULT_CLOUD_MODEL,
+    });
   USE_COMPATIBLE_HOSTED &&
     apiKey &&
     Object.assign(out, {
@@ -240,7 +248,10 @@ export async function prepareProxyResolutionRoute({
   redactionValues: string[];
 }): Promise<{ model: string; requestOffset: number }> {
   const endpoint =
-    mockBaseline?.baseUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
+    mockBaseline?.baseUrl ??
+    (USE_COMPATIBLE_HOSTED
+      ? (process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL)
+      : NVIDIA_HOSTED_NATIVE_ENDPOINT);
   const model = mockBaseline ? PROXY_RESOLUTION_MODEL : SWITCH_MODEL;
   const requestOffset = mockBaseline?.requests().length ?? 0;
 
@@ -715,7 +726,7 @@ export async function hermesGatewayPid(
   return await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
-      "ps -eo pid=,comm=,args= | awk '$0 ~ /hermes/ && $0 ~ /gateway run/ { print $1; exit }'",
+      "ps -eo pid=,comm=,args= | awk '$2 ~ /^(hermes([.]real)?|python[0-9.]*)$/ && $0 ~ /[h]ermes/ && $0 ~ /gateway[ ]run/ { print $1 }'",
     ),
     { artifactName, env: env(), timeoutMs: 30_000 },
   );
@@ -732,14 +743,11 @@ export async function envHash(
   });
 }
 
-export function maybeAssertPidStable(
-  before: ShellProbeResult,
-  after: ShellProbeResult,
-  assertStable: (a: string, b: string) => void,
-): void {
-  const beforePid = before.stdout.trim();
-  const afterPid = after.stdout.trim();
-  beforePid && afterPid && assertStable(afterPid, beforePid);
+export function parseHermesGatewayPid(
+  result: Pick<ShellProbeResult, "exitCode" | "stdout">,
+): string | undefined {
+  const pid = result.stdout.trim();
+  return result.exitCode === 0 && /^[1-9][0-9]*$/u.test(pid) ? pid : undefined;
 }
 
 export function expectedBaseUrl(): string {
