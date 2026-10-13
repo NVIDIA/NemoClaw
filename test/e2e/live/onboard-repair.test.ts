@@ -164,7 +164,6 @@ test(
         providers.delete(LIVE_EXTRA_PROVIDER);
       });
       fs.rmSync(SESSION_FILE, { force: true });
-      expect(fs.existsSync(SESSION_FILE)).toBe(false);
     });
     const cleanupWhenInstalled = (artifactName: string, run: () => Promise<void>): Promise<void> =>
       cleanupWhenOpenShellAvailable(
@@ -276,6 +275,9 @@ test(
       providers.add(LIVE_EXTRA_PROVIDER);
     });
     await artifacts.writeJson("phase-1-extra-providers-seeded.json", seededExtraProviders);
+    expect(seededExtraProviders).toEqual(
+      expect.arrayContaining([LIVE_EXTRA_PROVIDER, STALE_EXTRA_PROVIDER]),
+    );
 
     await sandbox.waitForInitialOpenClawPairing(SANDBOX_NAME, {
       artifactName: "phase-1-wait-for-initial-pairing",
