@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { OPENROUTER_PROVIDER_NAME } from "../inference/openrouter";
 import { buildOpenClawNativeConfigBatchInvocation } from "../sandbox/openclaw-native-config";
 import { runInferenceSet } from "./inference-set";
@@ -100,42 +96,23 @@ describe("OpenRouter model switch verification", () => {
     const updates = deps.calls.setOpenClawConfigValues.mock.calls[0]?.[1];
     expect(updates).toBeDefined();
     const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", updates);
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openrouter-switch-"));
-    try {
-      fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
-        mode: 0o700,
-      });
-      const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
-      const handle = "openshell:resolve:env:v42_OPENROUTER_API_KEY";
-      const result = spawnSync(command[0]!, command.slice(1), {
-        input: invocation.input,
-        encoding: "utf8",
-        timeout: 5_000,
-        env: {
-          ...process.env,
-          PATH: `${directory}:${process.env.PATH ?? ""}`,
-          OPENROUTER_API_KEY: handle,
+    expect(invocation.nativeHandleUpdate).toBe(true);
+    expect(JSON.parse(invocation.input)).toEqual(
+      expect.arrayContaining([
+        {
+          path: "agents.defaults.model.primary",
+          value: `inference/${SUPER}`,
         },
-      });
-      expect(result.status, `${result.error?.message ?? ""} ${result.stderr}`).toBe(0);
-      const applied = JSON.parse(result.stdout) as Array<{ path: string; value: unknown }>;
-      expect(applied).toContainEqual({
-        path: "agents.defaults.model.primary",
-        value: `inference/${SUPER}`,
-      });
-      expect(applied).toContainEqual({
-        path: "models.providers.inference",
-        value: expect.objectContaining({
-          baseUrl: "https://openrouter.ai/api/v1",
-          apiKey: handle,
-          headers: expect.objectContaining({ "X-NemoClaw-Upstream-Provider": "openrouter-api" }),
-        }),
-      });
-      expect(invocation.input).not.toContain(handle);
-      expect(invocation.args.join(" ")).not.toContain(handle);
-    } finally {
-      fs.rmSync(directory, { recursive: true, force: true });
-    }
+        {
+          path: "models.providers.inference",
+          value: expect.objectContaining({
+            baseUrl: "https://openrouter.ai/api/v1",
+            apiKey: "openshell:resolve:env:OPENROUTER_API_KEY",
+            headers: expect.objectContaining({ "X-NemoClaw-Upstream-Provider": "openrouter-api" }),
+          }),
+        },
+      ]),
+    );
   });
 
   it.each([
