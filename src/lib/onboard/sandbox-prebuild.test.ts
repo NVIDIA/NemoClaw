@@ -264,6 +264,16 @@ describe("sandbox BuildKit prebuild", () => {
 
   it.each([
     [
+      "native Podman",
+      {
+        dockerDriverGateway: true,
+        gatewayDriver: "podman",
+        nativePodmanCapture: vi.fn(),
+        env: {},
+      },
+      "unavailable with native Podman",
+    ],
+    [
       "remote gateway",
       { dockerDriverGateway: false, gatewayDriver: "remote", env: {} },
       "no image distribution path",

@@ -244,6 +244,9 @@ export async function prebuildSandboxImageIfEligible(
       `${source} Dockerfile build requires the selected ${input.gatewayDriver} gateway engine; refusing a ${selectedEngine} build.`,
     );
   }
+  if (input.origin === "custom" && selectedEngine === "podman") {
+    throw new Error("Custom Dockerfile onboarding is unavailable with native Podman.");
+  }
   if (selectedEngine === "podman" && !portable && !input.nativePodmanCapture) {
     throw new Error(
       `${source} Dockerfile build requires the selected Podman gateway image-build authority.`,
