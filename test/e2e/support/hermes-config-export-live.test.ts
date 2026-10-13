@@ -250,7 +250,17 @@ describe("Hermes config export live evidence", () => {
     });
 
     await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
+    expect(mocks.writeJson).toHaveBeenCalledWith("hermes-config-export-live-evidence.json", {
+      outcome: "expected-refusal",
+      aliasesEquivalent: false,
+      checked: true,
+      credentialValuesOmitted: true,
+      outputFilesAbsent: false,
+      refusalCategory: null,
+      refusalDiagnosticMatches: false,
+    });
     expect(mocks.writeText).not.toHaveBeenCalled();
+    expect(mocks.readSandboxPolicy).not.toHaveBeenCalled();
     expect(mocks.save).not.toHaveBeenCalled();
   });
 
