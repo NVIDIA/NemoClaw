@@ -3614,7 +3614,13 @@ Switch the active inference provider or model for a NemoClaw-managed OpenClaw sa
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Switch the active inference provider or model for a NemoClaw-managed Hermes sandbox. For NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider, the command attaches or updates the selected sandbox's native provider. Custom endpoints and local providers retain their existing shared OpenShell route. It then patches the shared native `/sandbox/.hermes/config.yaml`, recomputes the config hash, and updates the NemoClaw registry without rebuilding or restarting the gateway.
+Switch the active inference provider or model for a NemoClaw-managed Hermes sandbox.
+For NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider, the command attaches or updates the selected sandbox's native provider.
+Custom endpoints and local providers retain their existing shared OpenShell route.
+It then patches the shared native `/sandbox/.hermes/config.yaml`, recomputes the config hash, and updates the NemoClaw registry.
+Changes between shared routes do not rebuild or restart Hermes.
+A switch to or from a native hosted provider restarts the Hermes gateway after configuration sync, including a live NVIDIA Endpoints switch.
+Active agent requests can be interrupted during the restart.
 
 Shared routes use the OpenShell proxy API-key placeholder. On a live NVIDIA Endpoints switch, NemoClaw writes the newly attached provider's scoped OpenShell credential reference into the Hermes config. Other native hosted providers use their managed credential placeholders. None of these values is a raw provider credential. The gateway, CLI, TUI, and Web Dashboard read the same configuration.
 
