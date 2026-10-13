@@ -258,6 +258,9 @@ test(
       model,
       contract: ["native OpenRouter configuration", "fresh Deep Agents Code response"],
     });
+    cleanup.add(`strict Deep Agents Code cleanup for ${sandboxName}`, () =>
+      cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+    );
     progress.phase("onboard Deep Agents Code");
     const onboard = await onboardSandbox(
       artifacts,
@@ -273,9 +276,6 @@ test(
       progress,
     );
     expect(onboard.exitCode, redactedResultText(onboard)).toBe(0);
-    cleanup.add(`strict Deep Agents Code cleanup for ${sandboxName}`, () =>
-      cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
-    );
     const options = { env: buildAvailabilityProbeEnv(), redactionValues: [apiKey] };
     progress.phase("verify Deep Agents Code credential isolation");
     const isolation = await sandbox.exec(sandboxName, hostedCredentialScanCommand(apiKey), {
