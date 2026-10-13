@@ -1016,10 +1016,10 @@ Catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image. The supplied Dockerfile defines the complete sandbox image, and NemoClaw does not layer it on top of the stock managed runtime. The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it. When the supplied path is the selected agent's own managed Dockerfile (for example, `agents/hermes/Dockerfile` in the NemoClaw checkout the CLI runs from), NemoClaw applies one exception and stages the repository root as the build context, exactly as the managed build does, because that Dockerfile copies repository-root paths. This lets you edit the managed Dockerfile in place (for example to add Python packages) and rebuild from it with `--from`. For this managed exception, onboarding applies the `.dockerignore` from the repository root. For every other `--from` path, onboarding applies a `.dockerignore` from the Dockerfile's parent directory while calculating the context size and staging files for Docker. NemoClaw also applies additional secret-safety exclusions that override `.dockerignore` negation rules: credential-style files and directories such as `.env*`, `.ssh/`, `.aws/`, `.netrc`, `.npmrc`, `secrets/`, `*.pem`, and `*.key` are still skipped even if `.dockerignore` tries to include them. Without a `.dockerignore`, onboarding still skips common large or local-only directories (`node_modules`, `.git`, `.venv`, and `__pycache__`) while staging this context. Other build outputs such as `dist/`, `target/`, or `build/` are included unless your `.dockerignore` excludes them. If the staged context is larger than 100 MB, onboarding prints a warning before the Docker build starts. Move the Dockerfile into a smaller dedicated directory or add `.dockerignore` entries for generated artifacts to shrink the context. If the directory contains unreadable files (for example, Windows system files visible in WSL), onboarding exits with an error suggesting you move the Dockerfile to a dedicated directory.
 
 <Note>
-  NemoClaw builds user-supplied `--from` contexts with the OpenShell gateway builder. The host-side
-  local BuildKit prebuild is limited to build contexts generated entirely by NemoClaw. On a local
-  Docker-driver gateway, a `Local BuildKit build skipped` notice is expected and onboarding
-  continues with the custom image.
+  With a local Docker gateway, NemoClaw builds the staged custom context with BuildKit in the
+  gateway's Docker engine. It checks that the image is available, then passes its image reference to
+  OpenShell. A build failure stops before sandbox creation. A remote gateway without image
+  distribution cannot use `--from`. The native Podman provider does not admit custom Dockerfiles.
 </Note>
 
 ```bash
@@ -1114,7 +1114,7 @@ The flag wins over `NEMOCLAW_SANDBOX_NAME`. When prompting is possible, `NEMOCLA
 
 ### `$$nemoclaw onboard --from`
 
-Use a custom Dockerfile for the sandbox image. This variant of `$$nemoclaw onboard` accepts a `--from <Dockerfile>` argument to build the sandbox from a user-supplied Dockerfile instead of the default NemoClaw image. The user-supplied context uses the OpenShell gateway builder instead of NemoClaw's host-side local BuildKit prebuild.
+Use a custom Dockerfile for the sandbox image. This variant of `$$nemoclaw onboard` accepts a `--from <Dockerfile>` argument to build the sandbox from a user-supplied Dockerfile instead of the default NemoClaw image. NemoClaw builds the staged context in the selected local Docker engine and checks the image before sandbox creation.
 
 ```bash
 $$nemoclaw onboard --from ./Dockerfile.custom

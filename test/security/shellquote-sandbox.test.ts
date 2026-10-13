@@ -173,6 +173,13 @@ sandboxCreateStream.streamSandboxCreate = async (...args) => {
     sawProgress: true,
   };
 };
+const prebuild = require(${sourceModule("onboard", "sandbox-prebuild.ts")});
+prebuild.prebuildSandboxImageIfEligible = async () => ({
+  createArgs: [],
+  sourceReference: "nemoclaw-sandbox-local:fixture-dns",
+  imageRef: "nemoclaw-sandbox-local:fixture-dns",
+  imageId: "sha256:" + "a".repeat(64),
+});
 const { createSandbox } = require(${onboardPath});
 (async () => {
 try {

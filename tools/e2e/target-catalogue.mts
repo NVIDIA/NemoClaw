@@ -1242,6 +1242,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/onboard/machine/handlers/sandbox.ts",
       "src/lib/onboard/openclaw-setup.ts",
       "src/lib/onboard/openclaw/initial-inference-route.ts",
+      "src/lib/onboard/sandbox-prebuild.ts",
       "src/lib/onboard/sandbox-recreate-transaction.ts",
       "test/e2e/live/openclaw-inference-switch-helpers.ts",
       "test/e2e/live/public-nvidia-switch-provider.ts",
