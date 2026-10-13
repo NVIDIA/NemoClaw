@@ -208,20 +208,22 @@ pub fn plan(
     // target. Name the platforms that build it instead; other selections, such
     // as groups or the reference image, keep Bake's own resolution.
     let supported = platform_harnesses(root, platform)?;
-    let mut others = None;
-    for name in selection.iter().filter(|name| !supported.contains(name)) {
-        if others.is_none() {
-            others = Some(
-                PLATFORMS
-                    .into_iter()
-                    .filter(|other| *other != platform)
-                    .map(|other| Ok((other, platform_harnesses(root, other)?)))
-                    .collect::<Result<Vec<_>>>()?,
-            );
-        }
+    let unsupported: Vec<&String> = selection
+        .iter()
+        .filter(|name| !supported.contains(name))
+        .collect();
+    let others = if unsupported.is_empty() {
+        Vec::new()
+    } else {
+        PLATFORMS
+            .into_iter()
+            .filter(|other| *other != platform)
+            .map(|other| Ok((other, platform_harnesses(root, other)?)))
+            .collect::<Result<Vec<_>>>()?
+    };
+    for name in unsupported {
         let building: Vec<&str> = others
             .iter()
-            .flatten()
             .filter(|(_, harnesses)| harnesses.contains(name))
             .map(|(other, _)| *other)
             .collect();
