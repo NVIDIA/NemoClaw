@@ -432,14 +432,14 @@ impl StateBinding {
 
 pub(crate) struct Store {
     pub directory: PathBuf,
-    _lock: File,
+    lock: File,
 }
 impl Drop for Store {
     fn drop(&mut self) {
         // A concurrently spawned child can retain the shared open file
         // description until exec. Closing our descriptor alone would then
         // leave the deployment locked after this operation has finished.
-        let _ = self._lock.unlock();
+        let _ = self.lock.unlock();
     }
 }
 impl Store {
@@ -469,7 +469,7 @@ impl Store {
         })?;
         Ok(Self {
             directory: directory.into(),
-            _lock: lock,
+            lock,
         })
     }
     pub fn load(&self) -> Result<Option<Record>, Error> {

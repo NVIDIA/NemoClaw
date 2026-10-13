@@ -10,7 +10,7 @@ fn dropping_store_releases_lock_while_a_duplicate_descriptor_remains_open() {
     let store = Store::open(directory.path()).unwrap();
     // Model the shared open file description inherited by a concurrent spawn
     // before exec closes the child's copy, without depending on spawn timing.
-    let inherited = store._lock.try_clone().unwrap();
+    let inherited = store.lock.try_clone().unwrap();
     assert!(Store::open(directory.path()).is_err());
     drop(store);
 
