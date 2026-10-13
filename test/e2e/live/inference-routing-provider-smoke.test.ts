@@ -232,6 +232,7 @@ test(
       e2ePhases: [
         "confirm hosted OpenRouter prerequisites",
         "onboard Deep Agents Code",
+        "verify Deep Agents Code credential isolation",
         "verify native OpenRouter route",
         "request a fresh Deep Agents Code response",
       ],
@@ -276,6 +277,23 @@ test(
       cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
     );
     const options = { env: buildAvailabilityProbeEnv(), redactionValues: [apiKey] };
+    progress.phase("verify Deep Agents Code credential isolation");
+    const isolation = await sandbox.exec(sandboxName, hostedCredentialScanCommand(apiKey), {
+      ...options,
+      artifactName: "tc-inf-07d-credential-isolation",
+      timeoutMs: 90_000,
+    });
+    const isolationEvidence = JSON.parse(isolation.stdout) as Record<string, unknown>;
+    expect(
+      { exitCode: isolation.exitCode, ...isolationEvidence },
+      resultText(isolation),
+    ).toMatchObject({
+      exitCode: 0,
+      environmentClean: true,
+      processesClean: true,
+      sampledFilesClean: true,
+      canaryDetected: true,
+    });
     progress.phase("verify native OpenRouter route");
     const config = await sandbox.exec(sandboxName, ["cat", "/sandbox/.deepagents/config.toml"], {
       ...options,
