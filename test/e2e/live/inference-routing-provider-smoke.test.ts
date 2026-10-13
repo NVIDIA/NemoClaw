@@ -172,11 +172,18 @@ test(
     );
     expect(canaryScan.stdout, redactedResultText(canaryScan)).toContain(`FOUND:${canaryPath}`);
 
-    await sandbox.execShell(sandboxName, trustedSandboxShellScript(`rm -f ${canaryPath}`), {
-      artifactName: "tc-inf-05-sandbox-filesystem-canary-remove",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
+    const canaryRemoval = await sandbox.execShell(
+      sandboxName,
+      trustedSandboxShellScript(`rm -f ${canaryPath}`),
+      {
+        artifactName: "tc-inf-05-sandbox-filesystem-canary-remove",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(canaryRemoval.exitCode, "filesystem canary removal failed; inspect the artifact").toBe(
+      0,
+    );
 
     const secretScanSalt = crypto.randomUUID();
     const filesystemScan = await runOpenShell(
@@ -298,6 +305,7 @@ test.for(hostedCases)(
         timeoutMs: 60_000,
       },
     );
+    expect(config.exitCode, "native provider config read failed; inspect the artifact").toBe(0);
     const providerConfig = hermes ? YAML.parse(config.stdout).model : JSON.parse(config.stdout);
     // OpenClaw startup stamps the supervisor's current revision into the handle.
     // Compare its credential binding independently of that runtime-generated scope.
@@ -318,6 +326,7 @@ test.for(hostedCases)(
       redactionValues: [apiKey],
       timeoutMs: 90_000,
     });
+    expect(isolation.exitCode, "credential isolation scan failed; inspect the artifact").toBe(0);
     const isolationEvidence = JSON.parse(isolation.stdout);
     expect(
       isolationEvidence.environmentClean,
@@ -367,11 +376,15 @@ test.for(hostedCases)(
           toAlternate.exitCode,
           "OpenRouter alternate switch failed; inspect the redacted artifact",
         ).toBe(0);
-        const alternateRoute = await host.nemoclaw(["inference", "get", "--json"], {
+        const alternateRoute = await host.nemoclaw([sandboxName, "inference", "get", "--json"], {
           artifactName: `${selected.id}-alternate-route`,
           env: buildAvailabilityProbeEnv(),
           timeoutMs: 30_000,
         });
+        expect(
+          alternateRoute.exitCode,
+          "OpenRouter alternate route read failed; inspect the artifact",
+        ).toBe(0);
         expect(JSON.parse(alternateRoute.stdout).model).toBe(alternateModel);
 
         const backToSelected = await host.nemoclaw(
@@ -396,11 +409,15 @@ test.for(hostedCases)(
           backToSelected.exitCode,
           "OpenRouter return switch failed; inspect the redacted artifact",
         ).toBe(0);
-        const selectedRoute = await host.nemoclaw(["inference", "get", "--json"], {
+        const selectedRoute = await host.nemoclaw([sandboxName, "inference", "get", "--json"], {
           artifactName: `${selected.id}-selected-route`,
           env: buildAvailabilityProbeEnv(),
           timeoutMs: 30_000,
         });
+        expect(
+          selectedRoute.exitCode,
+          "OpenRouter selected route read failed; inspect the artifact",
+        ).toBe(0);
         expect(JSON.parse(selectedRoute.stdout).model).toBe(model);
         break;
       }
