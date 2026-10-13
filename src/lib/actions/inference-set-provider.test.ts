@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import type {
   OpenShellProviderAdapter,
@@ -33,6 +34,24 @@ function markerFromCommand(args: string[]): string {
 }
 
 describe("native NVIDIA credential handle boundary", () => {
+  it("emits a fixed pending signal without printing a missing or raw credential", () => {
+    const missing = spawnSync("sh", ["-c", NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT], {
+      encoding: "utf8",
+      env: { NVIDIA_INFERENCE_API_KEY: "" },
+    });
+    expect(missing.status).toBe(75);
+    expect(missing.stdout).toBe("");
+    expect(missing.stderr).toBe("NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING\n");
+
+    const raw = spawnSync("sh", ["-c", NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT], {
+      encoding: "utf8",
+      env: { NVIDIA_INFERENCE_API_KEY: "raw-test-secret" },
+    });
+    expect(raw.status).toBe(1);
+    expect(raw.stdout).toBe("");
+    expect(raw.stderr).toBe("");
+  });
+
   it.each([
     "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY",
     `openshell:resolve:env:s${"a".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
@@ -91,6 +110,68 @@ describe("native NVIDIA credential handle boundary", () => {
       capture.mockClear();
     },
   );
+
+  it("waits for a newly attached provider handle only when OpenShell reports it pending", async () => {
+    const capture = vi.mocked(captureSanitizedResolvedOpenshellAsync);
+    const sleep = vi.fn(async () => undefined);
+    const handle = "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY";
+    capture.mockImplementationOnce(async (args) => ({
+      status: 75,
+      output: "",
+      stdout: `${markerFromCommand(args)}\n`,
+      stderr: "NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING\n",
+    }));
+    capture.mockImplementationOnce(async (args) => {
+      const stdout = `${markerFromCommand(args)}\n${handle}\n`;
+      return { status: 0, output: stdout, stdout, stderr: "" };
+    });
+
+    await expect(
+      readNativeNvidiaCredentialHandle("hermes-sandbox", "gateway-a", { sleep }),
+    ).resolves.toBe(handle);
+    expect(sleep).toHaveBeenCalledExactlyOnceWith(2_000);
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(markerFromCommand(capture.mock.calls[0]?.[0] ?? [])).not.toBe(
+      markerFromCommand(capture.mock.calls[1]?.[0] ?? []),
+    );
+    capture.mockClear();
+  });
+
+  it("stops after ten explicitly pending read-only probes", async () => {
+    const capture = vi.mocked(captureSanitizedResolvedOpenshellAsync);
+    const sleep = vi.fn(async () => undefined);
+    capture.mockImplementation(async (args) => ({
+      status: 75,
+      output: "",
+      stdout: `${markerFromCommand(args)}\n`,
+      stderr: "NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING\n",
+    }));
+
+    await expect(
+      readNativeNvidiaCredentialHandle("hermes-sandbox", "gateway-a", { sleep }),
+    ).rejects.toThrow("OpenShell did not expose a provider-bound NVIDIA credential handle");
+    expect(capture).toHaveBeenCalledTimes(10);
+    expect(sleep).toHaveBeenCalledTimes(9);
+    capture.mockReset();
+  });
+
+  it("does not retry a non-pending credential probe failure", async () => {
+    const capture = vi.mocked(captureSanitizedResolvedOpenshellAsync);
+    const sleep = vi.fn(async () => undefined);
+    capture.mockImplementationOnce(async (args) => ({
+      status: 75,
+      output: "",
+      stdout: `${markerFromCommand(args)}\n`,
+      stderr: "unrelated execution failure",
+    }));
+
+    await expect(
+      readNativeNvidiaCredentialHandle("hermes-sandbox", "gateway-a", { sleep }),
+    ).rejects.toThrow("OpenShell did not expose a provider-bound NVIDIA credential handle");
+    expect(capture).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+    capture.mockClear();
+  });
 
   it.each([
     [1, "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY", ""],

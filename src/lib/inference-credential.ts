@@ -12,7 +12,7 @@ export const NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN =
 
 // Emit only a provider-bound handle. A raw credential can never reach stdout.
 export const NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT =
-  'printf "%s" "${NVIDIA_INFERENCE_API_KEY:-}" | LC_ALL=C grep -E "^openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY$"';
+  'if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then printf "%s\\n" NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING >&2; exit 75; fi; printf "%s" "$NVIDIA_INFERENCE_API_KEY" | LC_ALL=C grep -E "^openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY$"';
 
 export function managedInferenceApiKey<T extends string>(
   baseUrl: string,
