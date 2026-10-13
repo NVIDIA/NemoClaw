@@ -55,7 +55,7 @@ export async function proveHermesPortableOnboardingTransaction(input: {
   policySourcePath: string;
   buildSettings: HermesPortableBuildContextSettings;
 }): Promise<void> {
-  const sandboxName = `hermes-transaction-${String(process.pid)}`;
+  const sandboxName = `hermes-tx-${process.pid.toString(36)}`;
   const receiptStateDir = path.join(input.runtimeAuthority.homeDir, ".nemoclaw");
   const policyPath = path.join(input.runtimeAuthority.homeDir, ".hermes-transaction-policy.yaml");
   fs.writeFileSync(policyPath, fs.readFileSync(input.policySourcePath), {
