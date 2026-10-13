@@ -322,6 +322,7 @@ A valid credential stored in OpenShell does not bypass validation of a supplied 
 
 Use the recovery guidance that matches the reported check:
 
+- If an OpenClaw or Deep Agents Code local sandbox still records a shared route without a native provider attachment, back up its data and freshly re-onboard it with `--fresh --name <name> --recreate-sandbox`. Rebuild stops before backup or deletion; it cannot convert that legacy route. Complete the replacement before upgrading OpenShell beyond 0.0.116.
 - Verify the sandbox name when its registry entry is missing.
 - Follow the printed OpenShell gateway recovery steps when the gateway schema is incompatible.
 - Correct the exported API key when rebuild reports `the host inference credential could not be validated`.
@@ -345,7 +346,7 @@ Use the recovery guidance that matches the reported check:
   before deletion if the handoff is missing or changed.
 </AgentOnly>
 
-A gateway that reports no live inference route does not stop the rebuild. Replacement onboarding configures and verifies the recorded route before it recreates the sandbox.
+A gateway that reports no live inference route does not stop rebuild for supported selections. Replacement onboarding configures and verifies the recorded route before it recreates the sandbox.
 
 <AgentOnly variant="openclaw">
   The rebuild command preserves the mounted workspace and carries the complete

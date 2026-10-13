@@ -8,6 +8,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import {
   nativeLocalIdentity,
+  nativeLocalCredentialReference,
+  normalizeNativeLocalBinding,
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInferenceForAgent,
   type NativeLocalBinding,
@@ -115,6 +117,32 @@ function fixture(selectedBinding: NativeLocalBinding = binding) {
 }
 
 describe("native local inference", () => {
+  it.each([
+    "http://host.openshell.internal:11435/v1",
+    "http://host.docker.internal:11435/v1/",
+    "http://10.1.2.3:8000/v1",
+  ])("issues a local credential reference for a qualified endpoint: %s", (endpointUrl) => {
+    expect(normalizeNativeLocalBinding({ ...binding, endpointUrl })).toBeDefined();
+    expect(nativeLocalCredentialReference("ollama-local", endpointUrl)).toBe(
+      "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    );
+    expect(nativeLocalCredentialReference("openai-api", endpointUrl)).toBeNull();
+  });
+
+  it.each([
+    "http://host.openshell.internal/v1",
+    "http://host.openshell.internal:80/v1",
+    "http://host.openshell.internal:11435/v1?key=hidden",
+    "http://host.openshell.internal:11435/v1#fragment",
+    "http://host.openshell.internal:11435/v1/**",
+    "http://host.openshell.internal:11435/v1%2fadmin",
+    "http://127.0.0.1:11435/v1",
+    "http://169.254.169.254:11435/v1",
+  ])("rejects an unqualified local credential endpoint: %s", (endpointUrl) => {
+    expect(normalizeNativeLocalBinding({ ...binding, endpointUrl })).toBeUndefined();
+    expect(nativeLocalCredentialReference("ollama-local", endpointUrl)).toBeNull();
+  });
+
   it.each([
     ["openclaw", true],
     ["langchain-deepagents-code", true],

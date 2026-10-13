@@ -821,11 +821,13 @@ PYPLACEHOLDERSTATE
       NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS="$keys" \
       NEMOCLAW_PROVIDER_PLACEHOLDER_RUNTIME_STATE="$_placeholder_runtime_state" \
       /usr/bin/python3 -I - "$config_file" <<'PYPLACEHOLDERS'
+import ipaddress
 import json
 import os
 import re
 import subprocess
 import sys
+from urllib.parse import urlsplit
 
 config_file = sys.argv[1]
 prefix = "openshell:resolve:env:"
@@ -879,15 +881,46 @@ config = json.loads(parsed.stdout)
 refreshed = set()
 native_refreshed = False
 
-# A native NVIDIA handle persisted by the host-side config batch belongs to
-# the provider revision that issued it. After a supervisor restart, only the
-# current revision is available, so replace that exact config field before
-# OpenClaw starts. Never copy a raw value or rewrite config for other providers.
+# A native handle persisted by the host-side config batch belongs to the
+# provider revision that issued it. After a restart or sandbox rebuild, only
+# the current revision is available. Refresh only a known native endpoint and
+# its exact scoped credential field before OpenClaw starts.
 models = config.get("models") if isinstance(config, dict) else None
 providers = models.get("providers") if isinstance(models, dict) else None
 native = providers.get("inference") if isinstance(providers, dict) else None
-if isinstance(native, dict) and native.get("baseUrl") == "https://integrate.api.nvidia.com/v1":
-    key = "NVIDIA_INFERENCE_API_KEY"
+native_key = None
+if isinstance(native, dict):
+    endpoint = native.get("baseUrl")
+    if endpoint == "https://integrate.api.nvidia.com/v1":
+        native_key = "NVIDIA_INFERENCE_API_KEY"
+    elif isinstance(endpoint, str):
+        try:
+            parsed = urlsplit(endpoint)
+            host = parsed.hostname or ""
+            private_ipv4 = False
+            try:
+                address = ipaddress.IPv4Address(host)
+                private_ipv4 = any(
+                    address in network
+                    for network in (
+                        ipaddress.IPv4Network("10.0.0.0/8"),
+                        ipaddress.IPv4Network("172.16.0.0/12"),
+                        ipaddress.IPv4Network("192.168.0.0/16"),
+                    )
+                )
+            except ipaddress.AddressValueError:
+                pass
+            if (
+                parsed.scheme == "http"
+                and not parsed.username
+                and not parsed.password
+                and (private_ipv4 or host in ("host.openshell.internal", "host.docker.internal"))
+            ):
+                native_key = "NEMOCLAW_LOCAL_INFERENCE_TOKEN"
+        except ValueError:
+            pass
+if native_key:
+    key = native_key
     scoped = re.compile(rf"^{re.escape(prefix)}(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{key}$")
     saved = native.get("apiKey")
     state = runtime_state(key)

@@ -104,6 +104,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       toolDisclosurePath,
       applierPath,
       messagingHookPath,
+      path.join(localSrc, "lib/core/endpoint-url-safety.ts"),
       path.join(localSrc, "lib/inference/native-local/agent-config.ts"),
       pluginFile,
       nestedPluginFile,
@@ -179,9 +180,9 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
 it.each([
   {
     agent: "OpenClaw cached install",
-    marker: "# Config inputs precede the cached plugin install.",
+    marker: "COPY --from=openclaw-runtime-payload /scripts/ /scripts/",
     dockerfile: "Dockerfile",
-    start: "chmod 444 /src/lib/*.ts",
+    start: "chmod 444 /src/lib/*.ts /src/lib/inference/native-local/agent-config.ts",
     file: "/src/lib/inference/native-local/agent-config.ts",
   },
   {
@@ -197,6 +198,13 @@ it.each([
     dockerfile: "agents/langchain-deepagents-code/Dockerfile",
     start: "chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts",
     file: "/opt/nemoclaw-deepagents-code/src/lib/inference/native-local/agent-config.ts",
+  },
+  {
+    agent: "DCode helper",
+    marker: "# Copy the managed-startup entrypoint",
+    dockerfile: "agents/langchain-deepagents-code/Dockerfile",
+    start: "chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts",
+    file: "/opt/nemoclaw-deepagents-code/src/lib/core/endpoint-url-safety.ts",
   },
 ])(
   "makes the native config dependency read-only for $agent from private checkout modes (#12558)",

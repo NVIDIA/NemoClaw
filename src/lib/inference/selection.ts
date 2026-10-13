@@ -6,6 +6,26 @@ import {
   readModelSelectionProvenance,
   type ModelSelectionProvenance,
 } from "../domain/telemetry/provenance";
+import { usesNativeLocalInferenceForAgent } from "./native-local/contract";
+
+export { normalizeNativeLocalProviderAttachment } from "./native-local/contract";
+
+/** Identify an existing local selection that predates sandbox-attached providers. */
+export function hasLegacySharedLocalInferenceRoute(recorded: {
+  agent?: string | null;
+  provider?: string | null;
+  endpointUrl?: string | null;
+  nativeLocalProviderAttachment?: unknown;
+}): boolean {
+  return (
+    recorded.nativeLocalProviderAttachment === undefined &&
+    usesNativeLocalInferenceForAgent(
+      recorded.agent ?? "openclaw",
+      recorded.provider,
+      recorded.endpointUrl,
+    )
+  );
+}
 
 export {
   type ReasoningEffortRequest,

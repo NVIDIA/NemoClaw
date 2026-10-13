@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-local/agent-config.ts";
 import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -145,7 +146,7 @@ async function expectSandboxInference42(
     [
       "sh",
       "-lc",
-      `curl -fsS --max-time 120 http://host.openshell.internal:${PROXY_PORT}/v1/chat/completions -H 'Authorization: Bearer openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN' -H 'Content-Type: application/json' --data '${chatRequest(model)}' | ${parseReplyCommand()}`,
+      `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; curl -fsS --max-time 120 http://host.openshell.internal:${PROXY_PORT}/v1/chat/completions -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data '${chatRequest(model)}' | ${parseReplyCommand()}`,
     ],
     {
       artifactName,

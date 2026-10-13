@@ -155,6 +155,36 @@ describe("sandbox registration route transaction", () => {
     expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 
+  it("does not bypass shared route conflicts without a native local attachment (#12975)", async () => {
+    const { nativeLocalProviderAttachment: _attachment, ...legacyEntry } = nativeEntry;
+    const checkGatewayRouteCompatibility = vi.fn(() => ({
+      ok: false as const,
+      gatewayName: "nemoclaw",
+      sandboxName: null,
+      route: { provider: "compatible-endpoint", model: "test-model" },
+      conflicts: [{ sandboxName: "my-assistant", reason: "custom-endpoint" as const }],
+    }));
+    const { calls, deps } = createDeps({
+      checkGatewayRouteCompatibility,
+      getSandboxRegistryEntry: () => legacyEntry,
+    });
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps),
+        agent: { name: "openclaw" },
+        provider: "compatible-endpoint",
+        model: "test-model",
+        endpointUrl: nativeEndpoint,
+        endpointSource: "onboard",
+        credentialEnv: "COMPATIBLE_API_KEY",
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(checkGatewayRouteCompatibility).toHaveBeenCalledOnce();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["hermes", nativeEndpoint],
     ["openclaw", "https://hosted.example.test/v1"],

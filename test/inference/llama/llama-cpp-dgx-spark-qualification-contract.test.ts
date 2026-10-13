@@ -291,7 +291,7 @@ function executionPlan() {
         developmentBase: LLAMA_CPP_DGX_SPARK_CUDA_DEVELOPMENT_BASE,
         runtimeBase: LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE,
       },
-      platform: { cudaArchitectures: "121a-real", platform: "linux/arm64" },
+      platform: { cudaArchitectures: "103-real;120-real;121a-real", platform: "linux/arm64" },
       repository: LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY,
       runtime: { gid: 10001, port: 8081, uid: 10001 },
       source: {

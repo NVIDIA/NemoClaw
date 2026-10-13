@@ -10,10 +10,12 @@ import {
   resetDestroyModuleCache,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 import { serializedLlamaCppHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
+import type { SandboxEntry } from "../../state/registry";
 import {
   nativeLocalIdentity,
   type NativeLocalBinding,
 } from "../../inference/native-local/contract";
+import { retireDestroyedSandboxNativeLocalProvider } from "./destroy-execution";
 
 const binding: NativeLocalBinding = {
   provider: "llama-cpp-local",
@@ -100,7 +102,38 @@ describe("native local provider destroy", () => {
     expect(harness.retireNativeLocalProviderSpy).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ name: "alpha" }),
       "nemoclaw-19080",
+      expect.any(Function),
+      undefined,
     );
     expect(harness.removeSandboxSpy).toHaveBeenCalledOnce();
+  });
+
+  it("retires the native provider in the selected OpenShell workspace (#12975)", async () => {
+    vi.stubEnv("OPENSHELL_WORKSPACE", "ambient-workspace");
+    const runOpenshell = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: `Error: provider '${attachment.providerName}' not found`,
+    }));
+    const sandbox = {
+      name: "alpha",
+      nativeLocalProviderAttachment: attachment,
+    } as SandboxEntry;
+
+    await retireDestroyedSandboxNativeLocalProvider(sandbox, binding.gatewayName, runOpenshell, {
+      gatewayName: binding.gatewayName,
+      workspace: "owned-workspace",
+    });
+
+    expect(runOpenshell).toHaveBeenCalledWith(
+      expect.arrayContaining(["provider", "get", attachment.providerName]),
+      expect.objectContaining({
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: binding.gatewayName,
+          OPENSHELL_WORKSPACE: "owned-workspace",
+        }),
+      }),
+    );
   });
 });

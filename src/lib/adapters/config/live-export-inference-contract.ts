@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
-import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/contract";
 import { exportNativeInferenceReceipt } from "../../domain/config/export-evidence";
 import { fixedNativeProviderForAttachment } from "../../inference/native-provider/fixed";
 import { isDeepStrictEqual } from "node:util";
@@ -11,7 +10,10 @@ import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
 import type { Provider } from "../openshell/providers";
 import type { SandboxEntry } from "../../state/registry/types";
-import { normalizeInferenceSelection } from "../../inference/selection";
+import {
+  normalizeInferenceSelection,
+  normalizeNativeLocalProviderAttachment,
+} from "../../inference/selection";
 
 export function providerContract(api: string | null | undefined) {
   if (api?.startsWith("anthropic")) {

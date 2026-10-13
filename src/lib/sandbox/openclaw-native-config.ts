@@ -20,6 +20,10 @@ const {
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
 }: typeof import("../inference/native-nvidia/contract") = require("../inference/native-nvidia/contract");
 const {
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+  nativeLocalCredentialReference,
+}: typeof import("../inference/native-local/agent-config") = require("../inference/native-local/agent-config");
+const {
   isConfigObject,
 }: typeof import("../security/credential-filter") = require("../security/credential-filter");
 const { redactFull }: typeof import("../security/redact") = require("../security/redact");
@@ -83,14 +87,15 @@ export interface OpenClawConfigUpdate {
 // gateway restart replaces that process image with its old environment. Pin
 // the supervisor-issued handle in the native config batch before restarting;
 // the actual credential remains outside the sandbox and endpoint-bound.
-const materializeNativeNvidiaHandle = [
+const materializeNativeProviderHandle = [
   "import json, os, re, sys",
-  'handle = os.environ.get("NVIDIA_INFERENCE_API_KEY", "")',
+  "env_key, endpoint, reference = sys.argv[2:]",
+  "handle = os.environ.get(env_key, '')",
   "if not handle:",
   '    sys.stderr.write("NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING\\n")',
   "    raise SystemExit(75)",
-  'if not re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY", handle):',
-  '    raise SystemExit("Native NVIDIA provider handle is unavailable or invalid")',
+  'if not re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + re.escape(env_key), handle):',
+  '    raise SystemExit("Native provider handle is unavailable or invalid")',
   'with open(sys.argv[1], "r+", encoding="utf-8") as stream:',
   "    updates = json.load(stream)",
   "    if not isinstance(updates, list):",
@@ -100,14 +105,14 @@ const materializeNativeNvidiaHandle = [
   '        if not isinstance(update, dict) or update.get("path") != "models.providers.inference":',
   "            continue",
   '        provider = update.get("value")',
-  '        if not isinstance(provider, dict) or provider.get("apiKey") != sys.argv[3]:',
+  '        if not isinstance(provider, dict) or provider.get("apiKey") != reference:',
   "            continue",
-  '        if provider.get("baseUrl") != sys.argv[2]:',
-  '            raise SystemExit("Native NVIDIA provider endpoint does not match")',
+  '        if provider.get("baseUrl") != endpoint:',
+  '            raise SystemExit("Native provider endpoint does not match")',
   '        provider["apiKey"] = handle',
   "        matched += 1",
   "    if matched != 1:",
-  '        raise SystemExit("Expected one native NVIDIA provider config update")',
+  '        raise SystemExit("Expected one native provider config update")',
   "    stream.seek(0)",
   '    json.dump(updates, stream, separators=(",", ":"))',
   "    stream.truncate()",
@@ -123,11 +128,34 @@ export function buildOpenClawNativeConfigBatchInvocation(
       isConfigObject(value) &&
       value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER,
   );
-  const materializeCommand = nativeNvidiaUpdate
-    ? `python3 -c ${shellQuote(materializeNativeNvidiaHandle)} "$file" ${shellQuote(NVIDIA_HOSTED_NATIVE_ENDPOINT)} ${shellQuote(NVIDIA_INFERENCE_PLACEHOLDER)} || exit $?; `
+  const localReference = `openshell:resolve:env:${NATIVE_LOCAL_CREDENTIAL_ENV}`;
+  const nativeLocalUpdate = updates.find(
+    ({ dotpath, value }) =>
+      dotpath === "models.providers.inference" &&
+      isConfigObject(value) &&
+      value.apiKey === localReference,
+  );
+  const localEndpoint =
+    nativeLocalUpdate && isConfigObject(nativeLocalUpdate.value)
+      ? nativeLocalUpdate.value.baseUrl
+      : undefined;
+  if (
+    nativeLocalUpdate &&
+    (typeof localEndpoint !== "string" ||
+      nativeLocalCredentialReference("compatible-endpoint", localEndpoint) !== localReference)
+  ) {
+    throw new Error("Native local OpenClaw credential requires a qualified private endpoint.");
+  }
+  const nativeHandleKind: "NVIDIA" | "local" | null = nativeNvidiaUpdate
+    ? "NVIDIA"
+    : nativeLocalUpdate
+      ? "local"
+      : null;
+  const materializeCommand = nativeHandleKind
+    ? `python3 -c ${shellQuote(materializeNativeProviderHandle)} "$file" ${shellQuote(nativeNvidiaUpdate ? "NVIDIA_INFERENCE_API_KEY" : NATIVE_LOCAL_CREDENTIAL_ENV)} ${shellQuote(nativeNvidiaUpdate ? NVIDIA_HOSTED_NATIVE_ENDPOINT : (localEndpoint as string))} ${shellQuote(nativeNvidiaUpdate ? NVIDIA_INFERENCE_PLACEHOLDER : localReference)} || exit $?; `
     : "";
   return {
-    nativeNvidiaUpdate,
+    nativeHandleKind,
     ...(!gateway || typeof gateway === "string"
       ? {}
       : {
@@ -185,7 +213,7 @@ export function executeOpenClawNativeConfigBatch(
   gateway?: string | OpenShellRuntimeSelection,
 ): void {
   const invocation = buildOpenClawNativeConfigBatchInvocation(sandboxName, updates, gateway);
-  runOpenClawNativeConfigBatchUntilHandleReady(invocation.nativeNvidiaUpdate, () =>
+  runOpenClawNativeConfigBatchUntilHandleReady(invocation.nativeHandleKind, () =>
     runOpenshellCommand(binary, invocation.args, {
       env: invocation.env,
       replaceEnv: invocation.replaceEnv,
@@ -204,7 +232,7 @@ type NativeConfigBatchResult = Pick<
 >;
 
 export function runOpenClawNativeConfigBatchUntilHandleReady(
-  nativeNvidiaUpdate: boolean,
+  nativeHandleKind: "NVIDIA" | "local" | null,
   run: () => NativeConfigBatchResult,
   wait: (ms: number) => void = (ms) =>
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
@@ -213,7 +241,7 @@ export function runOpenClawNativeConfigBatchUntilHandleReady(
   // OpenShell 0.0.116 attach can confirm desired state before a fresh process
   // receives the new environment. This retry is owned by native inference and
   // applies only when the materializer exited before OpenClaw changed config.
-  const maxAttempts = nativeNvidiaUpdate ? 10 : 1;
+  const maxAttempts = nativeHandleKind ? 10 : 1;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const result = run();
     if (!result.error && !result.signal && result.status === 0) return;
@@ -223,7 +251,9 @@ export function runOpenClawNativeConfigBatchUntilHandleReady(
       result.status === 75 &&
       String(result.stderr ?? "").includes("NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING");
     if (handlePending && attempt < maxAttempts) {
-      warn(`Native NVIDIA provider handle pending; config attempt ${attempt}/${maxAttempts}`);
+      warn(
+        `Native ${nativeHandleKind} provider handle pending; config attempt ${attempt}/${maxAttempts}`,
+      );
       wait(2_000);
       continue;
     }

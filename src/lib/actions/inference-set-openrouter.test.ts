@@ -177,7 +177,7 @@ describe("OpenRouter model switch verification", () => {
       await expect(
         runInferenceSet({ provider: OPENROUTER_PROVIDER_NAME, model: SUPER }, deps),
       ).rejects.toThrow(
-        /Sandbox-side verification rejected.*previous inference selection.*was not changed/s,
+        /Sandbox-side verification rejected.*previous OpenShell inference selection was restored/s,
       );
 
       expect(routeSelections(deps)).toEqual([]);
@@ -196,7 +196,7 @@ describe("OpenRouter model switch verification", () => {
 
     await expect(
       runInferenceSet({ provider: OPENROUTER_PROVIDER_NAME, model: SUPER }, deps),
-    ).rejects.toThrow(/previous inference selection.*was not changed/);
+    ).rejects.toThrow(/previous OpenShell inference selection was restored/);
 
     expect(deps.calls.probeSandboxRoute).toHaveBeenCalledTimes(3);
     expect(routeSelections(deps)).toEqual([]);
@@ -209,7 +209,7 @@ describe("OpenRouter model switch verification", () => {
 
     await expect(
       runInferenceSet({ provider: OPENROUTER_PROVIDER_NAME, model: SUPER }, deps),
-    ).rejects.toThrow(/sandbox dial failed.*previous inference selection.*was not changed/s);
+    ).rejects.toThrow(/sandbox dial failed.*previous OpenShell inference selection was restored/s);
 
     expect(routeSelections(deps)).toEqual([]);
     expectNoConfigCommit(deps);

@@ -4,6 +4,7 @@
 import type { ModelSelectionProvenance } from "../../../domain/telemetry/provenance";
 import { clearAutoDetectedCompatibleContextWindow } from "../../../inference/compatible-endpoint-context";
 import {
+  hasLegacySharedLocalInferenceRoute,
   resolveAgentProviderInferenceApi,
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
@@ -22,6 +23,7 @@ import { OPENROUTER_PROVIDER_NAME } from "../../../inference/openrouter";
 import type { InferenceEndpointSource } from "../../../inference/selection";
 import type { ServingProfileProvenance } from "../../../inference/serving/types";
 import type { WebSearchConfig } from "../../../inference/web-search";
+import type { SandboxEntry } from "../../../state/registry";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { LLAMA_CPP_PORT } from "../../../inference/llama-cpp/contract";
 import {
@@ -303,6 +305,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     getOpenshellBinary(): string;
     needsBedrockRuntimeAdapter(provider: string, endpointUrl: string | null): boolean;
     isInferenceRouteReady(gatewayName: string, provider: string, model: string): boolean;
+    getSandboxRegistryEntry?(sandboxName: string): Partial<SandboxEntry> | null;
     isRoutedInferenceProvider(provider: string): boolean;
     reconcileModelRouter(): Promise<void>;
     reupsertRoutedProvider(
@@ -1257,6 +1260,28 @@ function nativeLocalAgentOptions(agent: unknown, provider: string, endpointUrl: 
   return usesNativeLocalInference(provider, endpointUrl) ? { agentName: agentName(agent) } : {};
 }
 
+function assertNoLegacySharedLocalResume(
+  deps: Pick<
+    ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
+    "getSandboxRegistryEntry"
+  >,
+  effectiveResume: boolean,
+  sandboxName: string | null,
+): void {
+  const recorded =
+    effectiveResume && sandboxName ? deps.getSandboxRegistryEntry?.(sandboxName) : null;
+  if (
+    recorded &&
+    recorded.pendingRouteReservation !== true &&
+    typeof recorded.createdAt === "string" &&
+    hasLegacySharedLocalInferenceRoute(recorded)
+  ) {
+    throw new Error(
+      `Sandbox ${sandboxName} uses a legacy shared local inference route. Resume is unavailable for this route. Back up the sandbox, then re-onboard it with --fresh --name ${sandboxName} --recreate-sandbox to attach a native provider before upgrading OpenShell.`,
+    );
+  }
+}
+
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gatewayName,
   resume,
@@ -1473,6 +1498,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     forceInferenceSetup ||=
       completeRecoveredReviewSelectionAfterInference || reviewRecoveredInteractively;
     let managedLlamaCppRecovered = false;
+    assertNoLegacySharedLocalResume(deps, effectiveResume, sandboxName);
     if (resumeProviderSelection) {
       assertOnboardReasoningEffortRoute(reasoningEffortRequest, provider, preferredInferenceApi);
       assertProviderInferenceRouteCompatible(

@@ -26,6 +26,7 @@ import {
   ollamaProxyTokenFile,
   openClawModelConfigProjectionScript,
   REPO_ROOT,
+  SANDBOX_NAME,
   startAttachedOllama,
   trackGpuGatewayCleanup,
   waitForAttachedOllama,
@@ -698,6 +699,61 @@ describe("GPU E2E helpers", () => {
       expect.objectContaining({ artifactName: "cleanup-gateway-destroy-gpu" }),
     );
     expect(openshell).not.toHaveBeenCalled();
+  });
+
+  it("does not start a gateway by destroying an unregistered sandbox during pre-clean", async () => {
+    const home = mkdtempSync(path.join(tmpdir(), "nemoclaw-gpu-clean-"));
+    try {
+      const success = { exitCode: 0, stderr: "", stdout: "" };
+      const host = {
+        command: vi.fn(async () => success),
+        cleanupGatewayRegistration: vi.fn(async () => success),
+      } as unknown as HostCliClient;
+      const sandbox = { cleanupSandbox: vi.fn(async () => success) } as unknown as SandboxClient;
+      const lifecycle = {
+        stopGatewayRuntime: vi.fn(async () => null),
+      } as unknown as LifecyclePhaseFixture;
+
+      await cleanupGpu(host, lifecycle, sandbox, { HOME: home });
+      expect(host.command).not.toHaveBeenCalledWith("node", expect.anything(), expect.anything());
+      expect(sandbox.cleanupSandbox).toHaveBeenCalledOnce();
+      expect(lifecycle.stopGatewayRuntime).toHaveBeenCalledOnce();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("still destroys a sandbox recorded in the gateway registry", async () => {
+    const home = mkdtempSync(path.join(tmpdir(), "nemoclaw-gpu-registered-clean-"));
+    try {
+      const registryDir = path.join(home, ".nemoclaw");
+      mkdirSync(registryDir);
+      writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: null,
+          sandboxes: { [SANDBOX_NAME]: { name: SANDBOX_NAME, agent: "openclaw" } },
+        }),
+      );
+      const success = { exitCode: 0, stderr: "", stdout: "" };
+      const host = {
+        command: vi.fn(async () => success),
+        cleanupGatewayRegistration: vi.fn(async () => success),
+      } as unknown as HostCliClient;
+      const sandbox = { cleanupSandbox: vi.fn(async () => success) } as unknown as SandboxClient;
+      const lifecycle = {
+        stopGatewayRuntime: vi.fn(async () => null),
+      } as unknown as LifecyclePhaseFixture;
+
+      await cleanupGpu(host, lifecycle, sandbox, { HOME: home });
+      expect(host.command).toHaveBeenCalledWith(
+        "node",
+        expect.arrayContaining(["destroy", "--yes"]),
+        expect.objectContaining({ artifactName: "cleanup-destroy-gpu" }),
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("stops terminal GPU gateway runtime before registration and private-state cleanup", async () => {

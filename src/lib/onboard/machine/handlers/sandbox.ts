@@ -1246,6 +1246,7 @@ class SandboxStateFlow<
   }
 
   private acceptsNativeLocalReservation(targetEntry: SandboxEntry, sandboxName: string): boolean {
+    if (!targetEntry.nativeLocalProviderAttachment) return false;
     const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
     const nativeLocalReservation = nativeLocalReservationStatus({
       entry: targetEntry,

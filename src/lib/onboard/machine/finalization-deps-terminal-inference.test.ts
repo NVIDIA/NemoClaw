@@ -51,8 +51,10 @@ describe("terminal inference finalization dependency", () => {
     expect(probeOnboardInferenceInvocation).toHaveBeenCalledExactlyOnceWith({
       ...input,
       gatewayName: "nemoclaw-19090",
+      endpointUrl: null,
       nativeLocalExpected: false,
       nativeLocalProviderAttachment: undefined,
+      nativeHostedProviderAttachment: undefined,
     });
   });
 
@@ -81,8 +83,10 @@ describe("terminal inference finalization dependency", () => {
       ...input,
       provider: "ollama-local",
       gatewayName: "nemoclaw-19090",
+      endpointUrl: localBinding.endpointUrl,
       nativeLocalExpected: true,
       nativeLocalProviderAttachment: localAttachment,
+      nativeHostedProviderAttachment: undefined,
     });
   });
 
@@ -102,6 +106,7 @@ describe("terminal inference finalization dependency", () => {
     expect(probeOnboardInferenceInvocation).toHaveBeenCalledExactlyOnceWith({
       ...input,
       gatewayName: "nemoclaw",
+      endpointUrl: null,
       nativeLocalExpected: false,
       nativeLocalProviderAttachment: undefined,
       nativeHostedProviderAttachment,

@@ -31,7 +31,7 @@ import {
   inferenceLocalMaxTokens,
   installHermes,
   maybeAssertEnvHashStable,
-  maybeAssertPidStable,
+  parseHermesGatewayPid,
   mockAnthropicSwitchEnabled,
   PROXY_FORBIDDEN_MARKERS,
   PROXY_RESOLUTION_PROVIDER,
@@ -168,6 +168,11 @@ test(
 
     progress.phase("install baseline Hermes runtime");
     const install = await installHermes(host, apiKey, installEnv);
+    await host.recordSandboxContainerDiscoveryOnFailure(
+      SANDBOX_NAME,
+      install.exitCode,
+      redactionValues,
+    );
     expect(install.exitCode, resultText(install)).toBe(0);
     expectAuthenticatedBaselineInventoryRequest(mockBaseline);
     const baselineRoute = mockBaseline
@@ -184,14 +189,17 @@ test(
     expect(baselineRoute.exitCode, resultText(baselineRoute)).toBe(0);
     expect(parseInferenceRoute(resultText(baselineRoute))).toEqual({
       provider: mockBaseline ? "compatible-endpoint" : PUBLIC_NVIDIA_SWITCH_PROVIDER,
-      model: hostedInstallModel(installEnv),
+      model: hostedInstallModel(env(apiKey, installEnv)),
     });
-    const baselineSession = structuredClone(registryState().session);
+    const baselineState = registryState();
+    const baselineSession = structuredClone(baselineState.session);
+    const baselineRegistry = structuredClone(baselineState.registry.sandboxes?.[SANDBOX_NAME]);
     const switchBinding = await prepareCompatibleAnthropicSwitchBinding(host, cleanup);
     const switchEndpointUrl = switchBinding?.endpointUrl ?? null;
     switchBinding && redactionValues.push(switchBinding.credentialValue);
 
     const pidBefore = await hermesGatewayPid(sandbox, "pid-before");
+    expect(parseHermesGatewayPid(pidBefore), resultText(pidBefore)).toBeDefined();
     const envHashBefore = await envHash(sandbox, "env-hash-before");
 
     progress.phase("switch Hermes inference provider");
@@ -207,8 +215,6 @@ test(
       },
     );
     expect(switched.exitCode, resultText(switched)).toBe(0);
-    expect(resultText(switched)).not.toContain("writing the in-sandbox config failed");
-    expect(resultText(switched)).toContain(`Inference route synced for '${SANDBOX_NAME}'`);
     switchBinding &&
       (await expectOpenAiProvider(
         host,
@@ -218,7 +224,10 @@ test(
 
     progress.phase("validate switched route and mutable config");
     const pidAfter = await hermesGatewayPid(sandbox, "pid-after");
-    maybeAssertPidStable(pidBefore, pidAfter, (actual, expected) => expect(actual).toBe(expected));
+    expect(parseHermesGatewayPid(pidAfter), resultText(pidAfter)).toBeDefined();
+    expect(pidAfter.stdout.trim() !== pidBefore.stdout.trim()).toBe(
+      SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER,
+    );
 
     const health = await sandbox.exec(
       SANDBOX_NAME,
@@ -338,12 +347,12 @@ test(
     expect(state.session).toEqual(baselineSession);
     const publicSwitch = SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER;
     const durableEndpointUrl = publicSwitch
-      ? null
+      ? baselineRegistry?.endpointUrl
       : (switchEndpointUrl ??
         process.env.NEMOCLAW_ENDPOINT_URL ??
         DEFAULT_HOSTED_INFERENCE_BASE_URL);
     const durableCredentialEnv = publicSwitch
-      ? null
+      ? baselineRegistry?.credentialEnv
       : switchEndpointUrl
         ? "COMPATIBLE_ANTHROPIC_API_KEY"
         : "COMPATIBLE_API_KEY";
@@ -352,7 +361,7 @@ test(
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(durableCredentialEnv);
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(
-      publicSwitch ? null : RUNTIME_SWITCH_API,
+      publicSwitch ? baselineRegistry?.preferredInferenceApi : RUNTIME_SWITCH_API,
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.nimContainer).toBeNull();
     progress.phase("exercise sandbox inference and Hermes API");

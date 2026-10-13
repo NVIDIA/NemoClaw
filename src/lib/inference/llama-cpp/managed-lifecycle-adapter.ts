@@ -19,7 +19,11 @@ import {
   finalizeManagedLlamaCppLifecycleCleanup,
   prepareManagedLlamaCppLifecycleCleanup,
 } from "../local-model-profile/cleanup";
-import { rehydrateManagedLlamaCppLifecycle } from "./managed-installer";
+import {
+  rehydrateManagedLlamaCppLifecycle,
+  requireStationGb300StartupGpuAuthority,
+  type ManagedLlamaCppLifecycleRehydration,
+} from "./managed-installer";
 import { managedLlamaCppStatePaths } from "./managed-state";
 
 export interface ManagedLlamaCppLifecycleAdapterOptions {
@@ -81,7 +85,7 @@ export function createManagedLlamaCppLifecycleAdapter(
   const paths = managedLlamaCppStatePaths(homeDir, gatewayPort);
   const finalizeCleanup = options.finalizeCleanup ?? finalizeManagedLlamaCppLifecycleCleanup;
   const prepareCleanup = options.prepareCleanup ?? prepareManagedLlamaCppLifecycleCleanup;
-  if (!fs.existsSync(paths.stateDir)) {
+  const cleanupOnlyAdapter = (): ManagedLlamaCppLifecycleAdapter => {
     const operation =
       options.operation ??
       (() => {
@@ -142,16 +146,30 @@ export function createManagedLlamaCppLifecycleAdapter(
       runtime,
       prepareStartup: unavailable,
     });
-  }
+  };
+  if (!fs.existsSync(paths.stateDir)) return cleanupOnlyAdapter();
 
-  const rehydrated = (options.rehydrate ?? rehydrateManagedLlamaCppLifecycle)({
-    runtimeProvider: options.runtimeProvider,
-    runtimeOwnerSandboxName: options.runtimeOwnerSandboxName,
-    gatewayPort,
-    ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
-    ...(options.environment === undefined ? {} : { env: options.environment }),
-    ...(options.operation === undefined ? {} : { operation: options.operation }),
-  });
+  let rehydrated: ManagedLlamaCppLifecycleRehydration;
+  try {
+    rehydrated = (options.rehydrate ?? rehydrateManagedLlamaCppLifecycle)({
+      runtimeProvider: options.runtimeProvider,
+      runtimeOwnerSandboxName: options.runtimeOwnerSandboxName,
+      gatewayPort,
+      ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
+      ...(options.environment === undefined ? {} : { env: options.environment }),
+      ...(options.operation === undefined ? {} : { operation: options.operation }),
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === "Managed llama.cpp catalog authority changed; rerun onboarding." ||
+        error.message === "Managed llama.cpp recipe authority changed; rerun onboarding.")
+    ) {
+      // A newly pinned image changes catalog authority. Exact receipt cleanup must remain available.
+      return cleanupOnlyAdapter();
+    }
+    throw error;
+  }
   const receipt = requireExactReceipt(
     expected,
     rehydrated.receipt,
@@ -202,6 +220,7 @@ export function createManagedLlamaCppLifecycleAdapter(
     receipt,
     runtime,
     prepareStartup(): HostLocalInferencePreparedStartup {
+      requireStationGb300StartupGpuAuthority(rehydrated.owner, rehydrated.selection);
       const atEntry = runtime.inspectManaged(receipt);
       requireExactReceipt(
         expected,

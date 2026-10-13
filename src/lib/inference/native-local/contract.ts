@@ -4,8 +4,7 @@
 import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
 import { VLLM_PORT } from "../../core/vllm-port";
 import { createHash } from "node:crypto";
-import { isIP } from "node:net";
-import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
+import { qualifiedNativeLocalEndpointUrl } from "./agent-config";
 import { isValidName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
 import type { NativeProviderAttachment } from "../native-provider/lifecycle";
 
@@ -40,7 +39,6 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
     (!isLocalInferenceProvider(input.provider as string) &&
       input.provider !== "compatible-endpoint") ||
     typeof input.endpointUrl !== "string" ||
-    unsafeEndpointUrlViolation(input.endpointUrl) ||
     typeof input.credentialEnv !== "string" ||
     !/^[A-Z][A-Z0-9_]*$/.test(input.credentialEnv) ||
     (input.authMode !== "authenticated" && input.authMode !== "sentinel") ||
@@ -52,40 +50,17 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
       (typeof input.transactionId !== "string" || !/^[a-f0-9]{64}$/.test(input.transactionId)))
   )
     return undefined;
-  try {
-    const endpoint = new URL(input.endpointUrl);
-    const host = endpoint.hostname;
-    // Loopback always identifies the sandbox itself. Public or arbitrary DNS
-    // names belong to hosted endpoint validation, not the host-local bridge.
-    const privateIpv4 =
-      isIP(host) === 4 &&
-      (host.startsWith("10.") ||
-        host.startsWith("192.168.") ||
-        /^172\.(1[6-9]|2[0-9]|3[01])\./.test(host));
-    if (
-      endpoint.protocol !== "http:" ||
-      endpoint.username ||
-      endpoint.password ||
-      endpoint.search ||
-      endpoint.hash ||
-      !endpoint.port ||
-      Number(endpoint.port) < 1024 ||
-      (host !== "host.openshell.internal" && host !== "host.docker.internal" && !privateIpv4) ||
-      !/^\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\/?$/.test(endpoint.pathname)
-    )
-      return undefined;
-    return {
-      provider: input.provider as NativeLocalProvider,
-      endpointUrl: `${endpoint.origin}${endpoint.pathname.replace(/\/$/, "")}`,
-      credentialEnv: input.credentialEnv,
-      authMode: input.authMode,
-      gatewayName: input.gatewayName,
-      sandboxName: input.sandboxName,
-      ...(typeof input.transactionId === "string" ? { transactionId: input.transactionId } : {}),
-    };
-  } catch {
-    return undefined;
-  }
+  const endpointUrl = qualifiedNativeLocalEndpointUrl(input.endpointUrl);
+  if (!endpointUrl) return undefined;
+  return {
+    provider: input.provider as NativeLocalProvider,
+    endpointUrl,
+    credentialEnv: input.credentialEnv,
+    authMode: input.authMode,
+    gatewayName: input.gatewayName,
+    sandboxName: input.sandboxName,
+    ...(typeof input.transactionId === "string" ? { transactionId: input.transactionId } : {}),
+  };
 }
 
 export function nativeLocalIdentity(binding: NativeLocalBinding) {

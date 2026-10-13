@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { ownChildProcess } from "../../helpers/child-process-lifecycle.ts";
+import { getSandboxAcrossGatewayRoots } from "../../../src/lib/state/registry/cross-port.ts";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -249,13 +251,17 @@ export async function cleanupGpu(
   sandbox: SandboxClient,
   environment: NodeJS.ProcessEnv = env(),
 ): Promise<void> {
-  await preCleanBestEffort("destroy GPU sandbox", () =>
-    host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: "cleanup-destroy-gpu",
-      env: environment,
-      timeoutMs: 120_000,
-    }),
-  );
+  // Destroying an absent sandbox starts a gateway, which can leave port 8080 occupied
+  // before the next scenario creates its own private HOME.
+  if (getSandboxAcrossGatewayRoots(SANDBOX_NAME, environment.HOME ?? os.homedir())) {
+    await preCleanBestEffort("destroy GPU sandbox", () =>
+      host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
+        artifactName: "cleanup-destroy-gpu",
+        env: environment,
+        timeoutMs: 120_000,
+      }),
+    );
+  }
   await preCleanBestEffort("delete OpenShell sandbox", () =>
     sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "cleanup-delete-gpu",

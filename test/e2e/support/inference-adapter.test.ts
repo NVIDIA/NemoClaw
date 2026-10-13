@@ -365,6 +365,31 @@ describe("E2E inference adapter", () => {
     );
   });
 
+  it("keeps mock response bodies out of persisted inference artifacts", async () => {
+    const artifactSink = artifacts();
+    const modelReply = { data: [{ id: "network-controlled-model-marker" }] };
+    const chatReply = { choices: [{ message: { content: "network-controlled-chat-marker" } }] };
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify(modelReply)))
+      .mockResolvedValueOnce(new Response(JSON.stringify(chatReply)));
+    const adapter = await createAdapter({ artifacts: artifactSink, env: {} });
+
+    expect(await adapter.probeModels("mock-models-private")).toEqual(modelReply);
+    expect(await adapter.directChat("Reply PONG", { artifactName: "mock-chat-private" })).toEqual(
+      chatReply,
+    );
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(artifactSink.rootDir, "mock-models-private.json"), "utf8"),
+      ),
+    ).toEqual({ mode: "mock", probe: "models", responseReceived: true });
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(artifactSink.rootDir, "mock-chat-private.json"), "utf8"),
+      ),
+    ).toEqual({ mode: "mock", probe: "direct-chat", responseReceived: true });
+  });
+
   it("centralizes public NVIDIA nvapi validation", async () => {
     const requests: ProviderRequest[] = [];
     const apiKey = "nvapi-public-test-key";

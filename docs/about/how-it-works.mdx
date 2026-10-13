@@ -212,7 +212,7 @@ Refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/r
 
 New NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider selections use sandbox-attached OpenShell providers.
 The agent calls the selected provider API hostname, and OpenShell permits only the approved destination and request paths.
-Existing shared-route sandboxes, user-supplied endpoints, local providers, and Model Router retain `inference.local`.
+New OpenClaw and Deep Agents Code local selections, including qualified host-local `compatible-endpoint` routes, call host-local endpoints through sandbox-attached OpenShell providers. Existing local sandboxes can keep using `inference.local` while OpenShell 0.0.116 is pinned; resume or rebuild stops before changing them and requires backup and fresh re-onboarding. Other user-supplied endpoints, Hermes local selections, and Model Router continue to use the shared route.
 Refer to [About Inference Routing](../inference/about-inference-routing) for endpoints and route inspection.
 During onboarding, NemoClaw validates the selected provider and model, configures the applicable OpenShell route or provider attachment, and writes the matching model reference into the managed agent configuration.
 In both paths, OpenShell keeps the provider credential outside the sandbox and sends only approved requests to the upstream endpoint.

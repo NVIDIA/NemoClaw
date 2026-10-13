@@ -1478,8 +1478,6 @@ export function createSetupInference(
           if (providerResult) return providerResult;
           if (selectingNativeLocal && !nativeLocalProviderAttachment)
             throw new Error("Native local provider registration was not confirmed.");
-          if (selectingNativeLocal && !nativeLocalProviderAttachment)
-            throw new Error("Native local provider registration was not confirmed.");
           if (
             !nativeNvidiaProviderAttachment &&
             !nativeHostedProviderAttachment &&

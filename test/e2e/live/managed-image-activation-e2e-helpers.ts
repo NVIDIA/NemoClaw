@@ -996,6 +996,7 @@ export async function qualifyAgent(
         receipt.endpointUrl === endpointUrl &&
         attachments.exitCode === 0 &&
         attachments.stdout.split(/\s+/u).includes(receipt.providerName),
+      `receipt=${JSON.stringify(receipt)} attachments=${resultText(attachments)}`,
     ).toBe(true);
   }
 

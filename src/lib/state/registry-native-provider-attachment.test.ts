@@ -296,3 +296,64 @@ it.each([
     }
   },
 );
+
+it.each(["malformed receipt", "different sandbox", "different gateway", "different provider"])(
+  "rejects a %s in a persisted sandbox without changing the registry (#12975)",
+  async (scenario) => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-invalid-local-attachment-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const { load, REGISTRY_FILE, save } = await import("./registry/persistence");
+      const binding = {
+        provider: "ollama-local",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        authMode: "sentinel",
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+      } as const;
+      const changedBinding = {
+        ...binding,
+        ...(scenario === "different sandbox" ? { sandboxName: "beta" } : {}),
+        ...(scenario === "different gateway" ? { gatewayName: "other" } : {}),
+        ...(scenario === "different provider" ? { provider: "compatible-endpoint" as const } : {}),
+      };
+      const attachment = {
+        ...changedBinding,
+        ...nativeLocalIdentity(changedBinding),
+        schemaVersion: 1,
+        providerId: scenario === "malformed receipt" ? "" : "provider-id",
+      };
+      const entry = {
+        name: "alpha",
+        provider: binding.provider,
+        gatewayName: binding.gatewayName,
+        nativeLocalProviderAttachment: attachment,
+      };
+      const original = JSON.stringify({ sandboxes: { alpha: entry }, defaultSandbox: null });
+      await fs.mkdir(path.dirname(REGISTRY_FILE), { recursive: true });
+      await fs.writeFile(REGISTRY_FILE, original);
+
+      expect(() => load()).toThrow(/sandbox "alpha".*native local provider attachment/i);
+      expect(() =>
+        registry.registerSandbox({ name: "unrelated", gatewayName: "nemoclaw" }),
+      ).toThrow(/sandbox "alpha".*native local provider attachment/i);
+      expect(() => save({ sandboxes: {}, defaultSandbox: null })).toThrow(
+        /sandbox "alpha".*native local provider attachment/i,
+      );
+      expect(await fs.readFile(REGISTRY_FILE, "utf8")).toBe(original);
+
+      const clean = JSON.stringify({ sandboxes: {}, defaultSandbox: null });
+      await fs.writeFile(REGISTRY_FILE, clean);
+      expect(() =>
+        save({ sandboxes: { alpha: entry }, defaultSandbox: null } as Parameters<typeof save>[0]),
+      ).toThrow(/sandbox "alpha".*native local provider attachment/i);
+      expect(await fs.readFile(REGISTRY_FILE, "utf8")).toBe(clean);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+    }
+  },
+);

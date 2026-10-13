@@ -19,7 +19,9 @@ import {
   expectAuthenticatedBaselineInventoryRequest,
   expectAuthenticatedProxyResolutionRequests,
   hasAuthenticatedProxyResolutionRequest,
+  hermesGatewayPid,
   hostedInstallModel,
+  parseHermesGatewayPid,
   inferenceLocalMaxTokens,
   installHermes,
   mockAnthropicSwitchEnabled,
@@ -42,6 +44,71 @@ import {
 
 describe("Hermes inference switch command shape", () => {
   afterEach(() => vi.unstubAllEnvs());
+
+  it.each(["123", " 123\n"])("reads one PID from a successful gateway probe: %s", (stdout) => {
+    expect(parseHermesGatewayPid({ exitCode: 0, stdout })).toBe("123");
+  });
+
+  it.each([
+    { exitCode: 1, stdout: "123" },
+    { exitCode: 0, stdout: "" },
+    { exitCode: 0, stdout: "0" },
+    { exitCode: 0, stdout: "python" },
+    { exitCode: 0, stdout: "123 456" },
+    { exitCode: 0, stdout: "123\n456" },
+  ])("rejects a failed or ambiguous gateway PID probe: %j", (probe) => {
+    expect(parseHermesGatewayPid(probe)).toBeUndefined();
+  });
+
+  it.each([
+    {
+      gatewayRows: "123 python /opt/hermes/hermes_cli/main.py gateway run\n",
+      stdout: "123\n",
+      pid: "123",
+    },
+    {
+      gatewayRows: "123 hermes.real /usr/local/bin/hermes.real gateway run\n",
+      stdout: "123\n",
+      pid: "123",
+    },
+    {
+      gatewayRows:
+        "123 python3.13 /usr/local/bin/hermes.real gateway run\n456 hermes.real /usr/local/bin/hermes.real gateway run\n",
+      stdout: "123\n456\n",
+      pid: undefined,
+    },
+    { gatewayRows: "123 python /opt/hermes/hermes_cli/main.py chat\n", stdout: "", pid: undefined },
+  ])(
+    "validates every gateway process from the actual PID probe: %j",
+    async ({ gatewayRows, stdout, pid }) => {
+      const execShell = vi.fn(async (_name: string, script: string) => {
+        const result = spawnSync("sh", ["-c", `ps() { cat; }\n${script}`], {
+          encoding: "utf8",
+          input:
+            gatewayRows +
+            "900 runuser runuser -u gateway -- /opt/hermes/bin/hermes gateway run\n" +
+            "901 sh sh -c hermes gateway run\n" +
+            "902 awk awk $0 ~ /hermes/ && $0 ~ /gateway run/ { print $1 }\n",
+        });
+        return {
+          exitCode: result.status ?? 1,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        } as ShellProbeResult;
+      });
+      const result = await hermesGatewayPid({ execShell } as unknown as SandboxClient, "pid-proof");
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stdout).toBe(stdout);
+      expect(parseHermesGatewayPid(result)).toBe(pid);
+    },
+  );
+
+  async function nativeSwitchHelpers() {
+    vi.stubEnv("NEMOCLAW_E2E_USE_HOSTED_INFERENCE", "0");
+    vi.stubEnv("NEMOCLAW_MODEL", undefined);
+    vi.resetModules();
+    return import("../live/hermes-inference-switch-helpers.ts");
+  }
 
   function matchesApiKeyShape(line: string): boolean {
     return (
@@ -156,10 +223,22 @@ describe("Hermes inference switch command shape", () => {
   });
 
   it("uses direct single-line argv for the in-sandbox API-key probe", () => {
-    const command = apiKeyShapeCommand();
+    const command = apiKeyShapeCommand("compatible-anthropic-endpoint");
 
     expect(command).toEqual(["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"]);
     expect(command.every((argument) => !/[\r\n]/u.test(argument))).toBe(true);
+  });
+
+  it("accepts only the native NVIDIA credential reference on the native route", () => {
+    const [command, ...args] = apiKeyShapeCommand(PUBLIC_NVIDIA_SWITCH_PROVIDER);
+    const matches = (input: string) =>
+      spawnSync(command, args.slice(0, -1), { input, encoding: "utf8" }).status === 0;
+    expect(matches("  api_key: ${NVIDIA_INFERENCE_API_KEY}\n")).toBe(true);
+    expect(matches('  api_key: "${NVIDIA_INFERENCE_API_KEY}"\n')).toBe(true);
+    expect(matches("  api_key: '${NVIDIA_INFERENCE_API_KEY}'\n")).toBe(true);
+    expect(matches("  api_key: sk-OPENSHELL-PROXY-REWRITE\n")).toBe(false);
+    expect(matches("  api_key: nvapi-raw-fixture-key\n")).toBe(false);
+    expect(matches("  api_key: ${NVIDIA_INFERENCE_API_KEY} trailing\n")).toBe(false);
   });
 
   it("accepts only complete sk-prefixed YAML scalars", () => {
@@ -188,6 +267,41 @@ describe("Hermes inference switch command shape", () => {
         NEMOCLAW_SWITCH_MODEL: "target-switch-model",
       }),
     ).toBe("initial-hosted-model");
+  });
+
+  it("derives the native baseline model from the install environment", async () => {
+    const { env } = await nativeSwitchHelpers();
+    const installEnv = env("nvapi-public-fixture-key");
+    expect(hostedInstallModel(installEnv)).toBe("nvidia/nemotron-3-super-120b-a12b");
+  });
+
+  it("keeps the public proxy-resolution credential on the public NVIDIA endpoint", async () => {
+    const { prepareProxyResolutionRoute } = await nativeSwitchHelpers();
+    const command = vi.fn().mockResolvedValue({
+      exitCode: 0,
+      stderr: "",
+      stdout: "Type: openai\nCredentials: NVIDIA_INFERENCE_API_KEY\nConfig: OPENAI_BASE_URL\n",
+    });
+    await prepareProxyResolutionRoute({
+      apiKey: "nvapi-public-fixture-key",
+      host: { command } as unknown as HostCliClient,
+      mockBaseline: undefined,
+      redactionValues: ["nvapi-public-fixture-key"],
+    });
+    expect(command.mock.calls[0]).toEqual([
+      "openshell",
+      expect.arrayContaining([
+        "provider",
+        "create",
+        "--credential",
+        "NVIDIA_INFERENCE_API_KEY",
+        "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1",
+      ]),
+      expect.objectContaining({
+        env: expect.objectContaining({ NVIDIA_INFERENCE_API_KEY: "nvapi-public-fixture-key" }),
+        redactionValues: ["nvapi-public-fixture-key"],
+      }),
+    ]);
   });
 
   it("keeps proxy-resolution evidence on a dedicated OpenAI provider", async () => {
