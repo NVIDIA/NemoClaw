@@ -535,10 +535,23 @@ function isStationGb300Selection(selection: ResolvedLlamaCppInferenceSelection):
   return selection.preset.metadata.id === STATION_GB300_WSL_PRESET_ID;
 }
 
+/** An unbound Station owner may be inspected and destroyed, but must never start again. */
+export function requireStationGb300StartupGpuAuthority(
+  owner: ManagedLlamaCppOwner,
+  selection: ResolvedLlamaCppInferenceSelection,
+): void {
+  if (isStationGb300Selection(selection) && owner.gpuDeviceUuid === undefined) {
+    throw new Error(
+      `Managed llama.cpp Station runtime for '${owner.sandboxName}' has a legacy unbound GPU request. Run 'nemoclaw ${owner.sandboxName} destroy --yes' to remove its exact owned runtime, then onboard again after the qualified GB300 image is available.`,
+    );
+  }
+}
+
 /**
  * Claim the owner. An owner saved before UUID persistence has no GPU binding: its runtime was
  * created with the unbound single-GPU request, so keep that authority while a receipt or unfinished
- * transaction exists. Only an owner with no runtime authority is upgraded to the proved UUID.
+ * transaction exists. Startup rejects that owner and directs exact cleanup. Only an owner with no
+ * runtime authority is upgraded to the proved UUID.
  */
 function claimStationAwareOwner(
   paths: ManagedLlamaCppStatePaths,
@@ -726,6 +739,7 @@ export async function installManagedLlamaCpp(
     );
     owner = reservation.owner;
     ownerCreated = reservation.created;
+    requireStationGb300StartupGpuAuthority(owner, selection);
     createFilePersistedEngineAuthorityStore(paths.stateDir).record(
       createPersistedEngineAuthority(operation.providerId, engine, operation.bindingSha256),
     );
@@ -875,6 +889,7 @@ export async function resumeManagedLlamaCppRuntime(
   }
 
   const selection = resolveManagedLlamaCppOwnerSelection(owner);
+  requireStationGb300StartupGpuAuthority(owner, selection);
   const operation = requireRuntimeProviderHostLocalInferenceOperation(
     options.runtimeProvider,
     "llama-cpp",

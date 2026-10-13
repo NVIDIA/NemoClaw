@@ -19,6 +19,7 @@ import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
 import {
   installManagedLlamaCpp,
   rehydrateManagedLlamaCppLifecycle,
+  requireStationGb300StartupGpuAuthority,
   resumeManagedLlamaCppRuntime,
   selectStationGb300GpuUuid,
 } from "./managed-installer";
@@ -26,7 +27,6 @@ import { engineHarness } from "./managed-installer.test-support";
 import {
   createManagedLlamaCppReceiptWriter,
   loadManagedLlamaCppOwner,
-  loadManagedLlamaCppReceipt,
   loadOrCreateManagedLlamaCppApiKey,
   managedLlamaCppStatePaths,
   reserveManagedLlamaCppOwner,
@@ -266,7 +266,7 @@ describe("Station managed llama.cpp GPU binding (#13026)", () => {
     }
   });
 
-  it("keeps a legacy Station owner unbound while its prior runtime exists", async () => {
+  it("rejects install retry for a legacy Station runtime without changing its owner", async () => {
     const selected = stationSelection();
     const fixture = setup(selected);
     try {
@@ -275,23 +275,16 @@ describe("Station managed llama.cpp GPU binding (#13026)", () => {
       seedLegacyRuntimeAuthority(selected, fixture.homeDir, fixture.operation.engine);
       const before = fs.readFileSync(paths.ownerPath);
       const result = await fixture.install();
-      expect(result).toMatchObject({ ok: true });
-      expect(fixture.createLifecycle).toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: false, reason: expect.stringContaining("destroy --yes") });
+      expect(fixture.createLifecycle).not.toHaveBeenCalled();
       expect(fs.readFileSync(paths.ownerPath)).toEqual(before);
       expect(loadManagedLlamaCppOwner(paths)?.gpuDeviceUuid).toBeUndefined();
-      expect(fixture.createLifecycle).not.toHaveBeenCalledWith(
-        expect.objectContaining({
-          bindings: expect.objectContaining({
-            gpuDeviceUuid: expect.any(String),
-          }),
-        }),
-      );
     } finally {
       fs.rmSync(fixture.homeDir, { recursive: true, force: true });
     }
   });
 
-  it("resumes a legacy Station runtime without changing its unbound GPU authority", async () => {
+  it("rejects resume for a legacy Station runtime without changing its owner", async () => {
     const selected = stationSelection();
     const fixture = setup(selected);
     try {
@@ -307,22 +300,15 @@ describe("Station managed llama.cpp GPU binding (#13026)", () => {
           runtimeProvider: fixture.runtimeProvider,
           verifyGguf: fixture.verifyGguf,
         }),
-      ).resolves.toBe(true);
+      ).rejects.toThrow("destroy --yes");
       expect(fs.readFileSync(paths.ownerPath)).toEqual(before);
-      expect(fixture.createLifecycle.mock.results[0]?.value.resume).toHaveBeenCalledWith(
-        loadManagedLlamaCppReceipt(paths),
-      );
-      expect(fixture.createLifecycle).toHaveBeenCalledWith(
-        expect.objectContaining({
-          bindings: expect.not.objectContaining({ gpuDeviceUuid: expect.any(String) }),
-        }),
-      );
+      expect(fixture.createLifecycle).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(fixture.homeDir, { recursive: true, force: true });
     }
   });
 
-  it("rehydrates a legacy Station owner with the original unbound GPU request", () => {
+  it("rehydrates a legacy Station owner for exact cleanup while rejecting startup", () => {
     const selected = stationSelection();
     const fixture = setup(selected);
     try {
@@ -354,6 +340,9 @@ describe("Station managed llama.cpp GPU binding (#13026)", () => {
         { bindings: { gpuDeviceUuid?: string } },
       ];
       expect(call.bindings.gpuDeviceUuid).toBeUndefined();
+      expect(() =>
+        requireStationGb300StartupGpuAuthority(rehydrated.owner, rehydrated.selection),
+      ).toThrow("destroy --yes");
     } finally {
       fs.rmSync(fixture.homeDir, { recursive: true, force: true });
     }
