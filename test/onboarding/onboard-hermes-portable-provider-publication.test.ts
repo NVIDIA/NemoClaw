@@ -759,7 +759,10 @@ describe("sandbox-create provider publication branches", () => {
           registryEntryGatewayPort({ name: sandboxName, gatewayName }),
         );
         const invocations = fs.readFileSync(invocationPath, "utf8");
-        assert.match(invocations, /ARGS=sandbox create -g nemoclaw --from /u);
+        assert.match(
+          invocations,
+          /ARGS=sandbox create -g nemoclaw --from 127\.0\.0\.1:5000\/nemoclaw-sandbox-local:[a-f0-9-]{36}/u,
+        );
         assert.match(invocations, /--policy .*\/policy\.[a-f0-9-]+\.yaml/u);
         assert.match(invocations, /-- env NEMOCLAW_HERMES_API_PORT=8642/u);
         assert.match(invocations, /MARKER=typed-boundary/u);

@@ -466,6 +466,8 @@ $$nemoclaw onboard --profile llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b
 
 If you omit `--profile`, onboarding uses the same provider and model defaults as an installation without this feature.
 The onboarding review screen identifies the resolved profile, recipe, declared model, served model alias, runtime image, support state, and download estimates before confirmation.
+A managed vLLM or managed llama.cpp profile installs during provider selection, before that screen, so the installer declares the selected profile ID, the recipe, the runtime image, and the pinned model download size first; the managed vLLM confirmation prompt follows that declaration.
+The managed vLLM installer adds the pinned image download size only when that image is not already cached on the host.
 
 When onboarding reuses a running vLLM server, its `/v1/models` response must match the requested profile's served alias or declared model root.
 Otherwise, onboarding stops before it records a route that the profile does not declare.
@@ -818,6 +820,7 @@ Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer
 
 On a qualifying Windows WSL N1x or Station GB300 host, Windows Express leaves provider selection to onboarding.
 During Windows Express, onboarding accepts one proof-backed N1x GPU identity or a bounded Station GB300 Windows product observation whose reconciled proof includes an `NVIDIA GB300` device, verifies the remaining readiness requirements, and automatically selects the Experimental managed Qwen 3.6 recipe.
+The managed Station recipe requires exactly one proved GB300 GPU UUID.
 The Windows chassis product name does not participate in N1x selection.
 Before onboarding, unset `DOCKER_HOST` and select Docker's `default` context.
 Onboarding also requires local Docker Desktop, Arm64, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, NVIDIA integration, and successful Docker Desktop GPU passthrough.
@@ -3113,6 +3116,8 @@ Other failures use a different nonzero status.
 The command downloads to a fresh private temporary directory on the host, verifies that OpenShell wrote an artifact, publishes the artifact to your destination, and removes the temporary directory.
 An existing destination directory is resolved to its canonical path before publication.
 The command refuses an existing file destination that is a symbolic link and a new destination below a symbolic-link parent.
+It checks every component of the destination parent, so it refuses the destination whether or not the directories below the symbolic link already exist.
+Pass the canonical path, or an existing destination directory, to publish below a symbolic link on purpose.
 Regular files are published through a private temporary entry and atomically replace an existing regular file.
 Relative host destinations resolve against the caller's working directory.
 Absolute host destinations do not use caller-working-directory resolution.

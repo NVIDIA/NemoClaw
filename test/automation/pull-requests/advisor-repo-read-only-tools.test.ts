@@ -190,7 +190,7 @@ describe("repo-confined advisor read-only tools", () => {
 
   it("reports ordinary read ranges and file size (#9949)", async () => {
     fs.writeFileSync(path.join(workspace, "ranges.txt"), "one\ntwo\nthree\n", "utf8");
-    const realPath = fs.realpathSync(path.join(workspace, "ranges.txt"));
+    const requestedPath = path.resolve(workspace, "ranges.txt");
     const observations: Parameters<
       NonNullable<Parameters<typeof createRepoConfinedReadOnlyTools>[1]>
     >[0][] = [];
@@ -204,8 +204,8 @@ describe("repo-confined advisor read-only tools", () => {
     await execute("read", { path: "ranges.txt", offset: 3 });
 
     expect(observations).toEqual([
-      { path: realPath, offset: 1, endOffset: 2, fileSize: 14, reachesEnd: false },
-      { path: realPath, offset: 3, endOffset: null, fileSize: 14, reachesEnd: true },
+      { path: requestedPath, offset: 1, endOffset: 2, fileSize: 14, reachesEnd: false },
+      { path: requestedPath, offset: 3, endOffset: null, fileSize: 14, reachesEnd: true },
     ]);
   });
 
@@ -299,7 +299,7 @@ describe("repo-confined advisor read-only tools", () => {
     );
 
     const configuredPath = await canonicalRepoReadPath(workspace, "required.txt");
-    await execute("read", { path: "required.txt" });
+    await execute("read", { path: configuredPath });
 
     expect(configuredPath).toBe(fs.realpathSync(path.join(workspace, "required.txt")));
     expect(observations[0]?.path).toBe(configuredPath);

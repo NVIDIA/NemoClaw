@@ -1387,6 +1387,23 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     );
   });
 
+  it("inspects the exact Station GPU request and rejects UUID drift (#13026)", () => {
+    const uuid = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1";
+    const fixture = dockerFixture();
+    const lifecycle = createLifecycle(
+      options(fixture, journalStore(), { ...bindings(), gpuDeviceUuid: uuid }),
+    );
+    const receipt = lifecycle.start(receiptWriter());
+    expect(lifecycle.runtime.inspectManaged(receipt)).toBeDefined();
+    expect(
+      fixture.capture.mock.calls.some(
+        ([args]) => args[0] === "create" && args.includes(`driver=nvidia,device=${uuid}`),
+      ),
+    ).toBe(true);
+    fixture.driftGpuDeviceIds(["GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee0"]);
+    expect(() => lifecycle.runtime.inspectManaged(receipt)).toThrow("exact journal authority");
+  });
+
   it.each(
     Array.from(
       [

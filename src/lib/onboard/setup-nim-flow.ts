@@ -1362,6 +1362,7 @@ export function createSetupNim(
               sandboxName,
               gatewayPort: deps.getGatewayPort(),
               runtimeProvider,
+              gpu,
               revalidateSandboxIdentity: state.revalidateSandboxIdentity,
             },
           );
