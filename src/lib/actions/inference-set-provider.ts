@@ -14,6 +14,11 @@ import type {
 } from "../adapters/openshell/provider-adapter";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { captureSanitizedResolvedOpenshellAsync } from "../adapters/openshell/sanitized-capture";
+import {
+  buildSandboxExecMarkedCommand,
+  createSandboxExecMarker,
+  extractSandboxExecCommandStdoutFromStreams,
+} from "../adapters/sandbox/sandbox-exec-output";
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { retryUntilAsync } from "../core/retry";
 import {
@@ -56,6 +61,7 @@ export async function readNativeNvidiaCredentialHandle(
       `OpenShell did not expose a provider-bound NVIDIA credential handle to sandbox '${sandboxName}'. The inference route was not changed.`,
     );
   try {
+    const marker = createSandboxExecMarker();
     const result = await captureSanitizedResolvedOpenshellAsync(
       [
         "sandbox",
@@ -67,7 +73,7 @@ export async function readNativeNvidiaCredentialHandle(
         "--",
         "sh",
         "-c",
-        NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT,
+        buildSandboxExecMarkedCommand(NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT, marker),
       ],
       {
         ignoreError: true,
@@ -77,8 +83,12 @@ export async function readNativeNvidiaCredentialHandle(
         timeout: 30_000,
       },
     );
-    const handle = result.stdout?.trim() ?? "";
-    if (result.status !== 0 || !NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN.test(handle)) {
+    const handle = extractSandboxExecCommandStdoutFromStreams(result, marker);
+    if (
+      result.status !== 0 ||
+      handle === null ||
+      !NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN.test(handle)
+    ) {
       throw failure();
     }
     return handle;

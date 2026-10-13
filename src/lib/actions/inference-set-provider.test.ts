@@ -7,6 +7,7 @@ import type {
   OpenShellProviderMetadata,
 } from "../adapters/openshell/provider-adapter";
 import { captureSanitizedResolvedOpenshellAsync } from "../adapters/openshell/sanitized-capture";
+import { SANDBOX_EXEC_STARTED_MARKER } from "../adapters/sandbox/sandbox-exec-output";
 import { NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT } from "../inference-credential";
 import {
   assertInferenceSetProviderOwnership,
@@ -23,13 +24,24 @@ vi.mock("../adapters/openshell/sanitized-capture", async (importOriginal) => ({
 const PROVIDER_ID = "11111111-2222-4333-8444-555555555555";
 const TARGET = { kind: "named", gatewayName: "nemoclaw" } as const;
 
+function markerFromCommand(args: string[]): string {
+  const marker = args
+    .at(-1)
+    ?.match(new RegExp(`${SANDBOX_EXEC_STARTED_MARKER}_[0-9a-f]{32}`, "u"))?.[0];
+  expect(marker).toBeDefined();
+  return marker ?? "";
+}
+
 describe("native NVIDIA credential handle boundary", () => {
   it.each([
     "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY",
     `openshell:resolve:env:s${"a".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
   ])("reads only the scoped handle %s from a sanitized sandbox exec", async (handle) => {
     const capture = vi.mocked(captureSanitizedResolvedOpenshellAsync);
-    capture.mockResolvedValueOnce({ status: 0, output: handle, stdout: handle, stderr: "" });
+    capture.mockImplementationOnce(async (args) => {
+      const stdout = `${markerFromCommand(args)}\n${handle}\n`;
+      return { status: 0, output: stdout, stdout, stderr: "" };
+    });
 
     await expect(readNativeNvidiaCredentialHandle("hermes-sandbox", "gateway-a")).resolves.toBe(
       handle,
@@ -45,7 +57,7 @@ describe("native NVIDIA credential handle boundary", () => {
         "--",
         "sh",
         "-c",
-        NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT,
+        expect.stringContaining(NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT),
       ],
       {
         ignoreError: true,
@@ -58,6 +70,28 @@ describe("native NVIDIA credential handle boundary", () => {
     capture.mockClear();
   });
 
+  it.each(["stdout", "stderr"])(
+    "reads a framed scoped handle from the %s stream",
+    async (stream) => {
+      const handle = "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY";
+      const capture = vi.mocked(captureSanitizedResolvedOpenshellAsync);
+      capture.mockImplementationOnce(async (args) => {
+        const framed = `stdout: ${markerFromCommand(args)}\nstdout: ${handle}\n`;
+        return {
+          status: 0,
+          output: framed,
+          stdout: stream === "stdout" ? framed : "OpenShell preamble\n",
+          stderr: stream === "stderr" ? framed : "",
+        };
+      });
+
+      await expect(readNativeNvidiaCredentialHandle("hermes-sandbox", "gateway-a")).resolves.toBe(
+        handle,
+      );
+      capture.mockClear();
+    },
+  );
+
   it.each([
     [1, "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY", ""],
     [0, "sk-raw-secret", ""],
@@ -67,7 +101,24 @@ describe("native NVIDIA credential handle boundary", () => {
     [0, "", "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY"],
   ])("rejects invalid capture status %s and stdout %s", async (status, stdout, stderr) => {
     const capture = vi.mocked(captureSanitizedResolvedOpenshellAsync);
-    capture.mockResolvedValueOnce({ status, output: `${stdout}${stderr}`, stdout, stderr });
+    capture.mockImplementationOnce(async (args) => {
+      const markedStdout = `${markerFromCommand(args)}\n${stdout}`;
+      return { status, output: `${markedStdout}${stderr}`, stdout: markedStdout, stderr };
+    });
+
+    await expect(readNativeNvidiaCredentialHandle("hermes-sandbox", "gateway-a")).rejects.toThrow(
+      "OpenShell did not expose a provider-bound NVIDIA credential handle",
+    );
+    capture.mockClear();
+  });
+
+  it("rejects duplicate marker boundaries even when one contains a valid handle", async () => {
+    const capture = vi.mocked(captureSanitizedResolvedOpenshellAsync);
+    capture.mockImplementationOnce(async (args) => {
+      const marker = markerFromCommand(args);
+      const stdout = `${marker}\nopenshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY\n`;
+      return { status: 0, output: stdout, stdout, stderr: `stdout: ${marker}\n` };
+    });
 
     await expect(readNativeNvidiaCredentialHandle("hermes-sandbox", "gateway-a")).rejects.toThrow(
       "OpenShell did not expose a provider-bound NVIDIA credential handle",
