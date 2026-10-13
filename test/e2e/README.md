@@ -2217,6 +2217,10 @@ A skipped provider is missing qualification evidence.
 OpenAI, Anthropic, Gemini, and OpenRouter onboard OpenClaw and start a fresh agent process.
 Hermes Provider onboards Hermes and submits a fresh request to its managed API.
 Each case checks the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer.
+The OpenRouter case also switches the running sandbox from its configured model to a second model
+and back, checks both recorded routes, then makes a fresh agent request to prove the provider
+credential remains usable after the two gateway restarts. It does not require a completion from
+the intermediate model, which may be rate limited upstream.
 Before the request, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
 for a salted fingerprint of the selected credential. Only the fingerprint enters the probe; reports contain
 booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
