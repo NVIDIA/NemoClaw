@@ -1107,6 +1107,18 @@ completed onboarding session remains unchanged as historical onboarding
 evidence. Deterministic startup and action tests own the corresponding launch
 environment and session non-rewrite checks.
 
+The native switch must restart the gateway to refresh provider credentials;
+the compatible fixture preserves its gateway process. The live lane requires
+successful probes that each identify one gateway PID before comparing its lifecycle.
+Support tests reject failed, empty, and ambiguous PID probes.
+
+The Hermes Slack lane accepts only correctly scoped OpenShell resolver
+placeholders for both Slack assignments in `.env` and for the API egress probes.
+The saved assignments must each match the currently injected generation.
+Support tests execute the file probe against absent, current, raw, stale, duplicate, mismatched,
+and malformed values. The live lane retains startup, policy, raw credential
+scans, both Slack API calls, and resource cleanup as required evidence.
+
 ## Native plugin and package lifecycle
 
 Issue #11766 retired the dedicated `openclaw-plugin-runtime-exdev` workflow job

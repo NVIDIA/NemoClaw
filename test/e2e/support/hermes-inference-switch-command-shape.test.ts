@@ -19,7 +19,9 @@ import {
   expectAuthenticatedBaselineInventoryRequest,
   expectAuthenticatedProxyResolutionRequests,
   hasAuthenticatedProxyResolutionRequest,
+  hermesGatewayPid,
   hostedInstallModel,
+  parseHermesGatewayPid,
   inferenceLocalMaxTokens,
   installHermes,
   mockAnthropicSwitchEnabled,
@@ -42,6 +44,64 @@ import {
 
 describe("Hermes inference switch command shape", () => {
   afterEach(() => vi.unstubAllEnvs());
+
+  it.each(["123", " 123\n"])("reads one PID from a successful gateway probe: %s", (stdout) => {
+    expect(parseHermesGatewayPid({ exitCode: 0, stdout })).toBe("123");
+  });
+
+  it.each([
+    { exitCode: 1, stdout: "123" },
+    { exitCode: 0, stdout: "" },
+    { exitCode: 0, stdout: "0" },
+    { exitCode: 0, stdout: "python" },
+    { exitCode: 0, stdout: "123 456" },
+    { exitCode: 0, stdout: "123\n456" },
+  ])("rejects a failed or ambiguous gateway PID probe: %j", (probe) => {
+    expect(parseHermesGatewayPid(probe)).toBeUndefined();
+  });
+
+  it.each([
+    {
+      gatewayRows: "123 python /opt/hermes/hermes_cli/main.py gateway run\n",
+      stdout: "123\n",
+      pid: "123",
+    },
+    {
+      gatewayRows: "123 hermes.real /usr/local/bin/hermes.real gateway run\n",
+      stdout: "123\n",
+      pid: "123",
+    },
+    {
+      gatewayRows:
+        "123 python3.13 /usr/local/bin/hermes.real gateway run\n456 hermes.real /usr/local/bin/hermes.real gateway run\n",
+      stdout: "123\n456\n",
+      pid: undefined,
+    },
+    { gatewayRows: "123 python /opt/hermes/hermes_cli/main.py chat\n", stdout: "", pid: undefined },
+  ])(
+    "validates every gateway process from the actual PID probe: %j",
+    async ({ gatewayRows, stdout, pid }) => {
+      const execShell = vi.fn(async (_name: string, script: string) => {
+        const result = spawnSync("sh", ["-c", `ps() { cat; }\n${script}`], {
+          encoding: "utf8",
+          input:
+            gatewayRows +
+            "900 runuser runuser -u gateway -- /opt/hermes/bin/hermes gateway run\n" +
+            "901 sh sh -c hermes gateway run\n" +
+            "902 awk awk $0 ~ /hermes/ && $0 ~ /gateway run/ { print $1 }\n",
+        });
+        return {
+          exitCode: result.status ?? 1,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        } as ShellProbeResult;
+      });
+      const result = await hermesGatewayPid({ execShell } as unknown as SandboxClient, "pid-proof");
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stdout).toBe(stdout);
+      expect(parseHermesGatewayPid(result)).toBe(pid);
+    },
+  );
 
   async function nativeSwitchHelpers() {
     vi.stubEnv("NEMOCLAW_E2E_USE_HOSTED_INFERENCE", "0");
