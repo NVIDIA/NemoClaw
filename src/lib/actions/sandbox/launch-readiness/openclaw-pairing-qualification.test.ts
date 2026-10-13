@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createHash, generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { createOpenClawPairingFixture } from "../../../../../test/helpers/openclaw-pairing-fixture";
 
 import {
   buildAutoPairApprovalScript,
@@ -24,6 +25,7 @@ import {
   observeOrdinaryOpenClawPairingSettlement,
   OpenClawPairingObservationRetryableError,
   OpenClawPairingQualificationError,
+  OpenClawPairingIncompatibleError,
   OPENCLAW_PAIRING_REQUEST_SCOPES,
   OPENCLAW_PAIRING_REQUIRED_SCOPES,
 } from "./openclaw-pairing-qualification";
@@ -265,68 +267,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
   let privateKeyPem: string;
 
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pairing-qualification-"));
-    stateDirectory = path.join(root, ".openclaw");
-    fs.mkdirSync(path.join(stateDirectory, "devices"), {
-      mode: 0o2770,
-      recursive: true,
-    });
-    fs.mkdirSync(path.join(stateDirectory, "identity"), {
-      mode: 0o2770,
-      recursive: true,
-    });
-    stateDirectory = fs.realpathSync(stateDirectory);
-    fs.chmodSync(stateDirectory, 0o2770);
-    fs.chmodSync(path.join(stateDirectory, "devices"), 0o2770);
-    fs.chmodSync(path.join(stateDirectory, "identity"), 0o2770);
-    const keyPair = generateKeyPairSync("ed25519");
-    const publicKeyDer = keyPair.publicKey.export({
-      type: "spki",
-      format: "der",
-    });
-    const publicKeyBytes = publicKeyDer.subarray(ED25519_SPKI_PREFIX.length);
-    publicKey = publicKeyBytes.toString("base64url");
-    deviceId = createHash("sha256").update(publicKeyBytes).digest("hex");
-    privateKeyPem = keyPair.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
-    writeJson(path.join(stateDirectory, "openclaw.json"), {
-      gateway: { mode: "local", auth: { token: TOKEN } },
-    });
-    writeJson(path.join(stateDirectory, "identity", "device.json"), {
-      deviceId,
-      publicKey,
-      privateKeyPem,
-    });
-    writeJson(path.join(stateDirectory, "identity", "device-auth.json"), {
-      version: 1,
-      deviceId,
-      tokens: {
-        operator: {
-          token: TOKEN,
-          role: "operator",
-          scopes: [...OPENCLAW_PAIRING_REQUIRED_SCOPES],
-        },
-      },
-    });
-    writeJson(path.join(stateDirectory, "devices", "paired.json"), {
-      [deviceId]: {
-        deviceId,
-        publicKey,
-        clientId: "cli",
-        clientMode: "cli",
-        role: "operator",
-        roles: ["operator"],
-        scopes: [...OPENCLAW_PAIRING_REQUEST_SCOPES],
-        approvedScopes: [...OPENCLAW_PAIRING_REQUEST_SCOPES],
-        tokens: {
-          operator: {
-            token: TOKEN,
-            role: "operator",
-            scopes: [...OPENCLAW_PAIRING_REQUIRED_SCOPES],
-          },
-        },
-      },
-    });
-    writeJson(path.join(stateDirectory, "devices", "pending.json"), {});
+    ({ root, stateDirectory, deviceId, publicKey, privateKeyPem } = createOpenClawPairingFixture());
     performance.clearMeasures("nemoclaw.openclaw-pairing.qualification");
   });
 
@@ -876,7 +817,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         paired[deviceId]!.clientMode = "probe";
         paired[deviceId]!.scopes.push(scope);
         writeJson(pairedPath, paired);
-        expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingQualificationError);
+        expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingIncompatibleError);
       },
     );
 
@@ -888,14 +829,36 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingQualificationError);
     });
 
-    it("preserves verified full permissions when a probe refreshes metadata (#13100)", () => {
+    it.each(
+      [OPENCLAW_PAIRING_REQUEST_SCOPES, OPENCLAW_PAIRING_REQUIRED_SCOPES].map((scopes) => [scopes]),
+    )("preserves qualification across cli/probe/cli metadata with %j grants (#13100)", (scopes) => {
       const pairedPath = path.join(stateDirectory, "devices", "paired.json");
       const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+      paired[deviceId]!.scopes = [...scopes];
+      paired[deviceId]!.approvedScopes = [...scopes];
+      writeJson(pairedPath, paired);
+      const beforeProbe = observe();
       paired[deviceId]!.clientMode = "probe";
       writeJson(pairedPath, paired);
       expect(observeOrdinarySettlement().state).toBe("settled");
-      expect(observe().requiredScopes).toEqual(OPENCLAW_PAIRING_REQUIRED_SCOPES);
+      expect(observe()).toEqual(beforeProbe);
+      paired[deviceId]!.clientMode = "cli";
+      writeJson(pairedPath, paired);
+      expect(observeOrdinarySettlement().state).toBe("settled");
+      expect(observe()).toEqual(beforeProbe);
     });
+
+    it.each(["pending", "paired"])(
+      "does not label malformed %s records as incompatible local pairing (#13100)",
+      (kind) => {
+        const file = path.join(stateDirectory, "devices", `${kind}.json`);
+        const records = JSON.parse(fs.readFileSync(file, "utf8"));
+        records.unrelated = null;
+        writeJson(file, records);
+        expect(() => observe()).toThrow(OpenClawPairingQualificationError);
+        expect(() => observe()).not.toThrow(OpenClawPairingIncompatibleError);
+      },
+    );
 
     it("accepts native approval preserving an explicitly granted read scope (#13100)", () => {
       const pairedPath = path.join(stateDirectory, "devices", "paired.json");

@@ -706,6 +706,7 @@ try:
     ):
         reject()
 
+    incompatible_pairing = False
     if STRICT_SETTLEMENT and pending:
         reject()
     canonical_pending_count = 0
@@ -810,6 +811,7 @@ try:
         if relevant_pending_count and (relevant_pending_count != 1 or not (pairing_only or read_baseline)):
             reject()
     if not settled and not pairing_only and not upgrade_required:
+        incompatible_pairing = True
         reject()
 
     device_identity_sha256 = hashlib.sha256(json.dumps({
@@ -834,7 +836,9 @@ try:
             'deviceId': device_id,
             'publicKey': device_public_key,
             'clientId': 'cli',
-            'clientMode': paired_device.get('clientMode'),
+            # Authenticated probes refresh connection metadata only. Both
+            # validated modes represent the same canonical CLI authority.
+            'clientMode': 'cli',
             'roles': REQUIRED_ROLES,
             'pairedRequestScopes': projected_request_scopes,
             'approvedRequestScopes': projected_request_scopes,

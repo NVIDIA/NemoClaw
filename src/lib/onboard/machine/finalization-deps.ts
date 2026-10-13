@@ -169,9 +169,10 @@ async function waitForPairingObservation(
   accept: (value: OpenClawPairingSettlementObservation) => boolean,
   deps: OrdinaryOpenClawPairingSettlementDeps,
   expectedDeviceIdentitySha256?: string,
+  initiallyIncompatible = false,
 ): Promise<PairingWaitResult> {
   let last: OpenClawPairingSettlementObservation | null = null;
-  let incompatible = false;
+  let incompatible = initiallyIncompatible;
   while (true) {
     const remaining = deadline - deps.now();
     if (remaining <= 0) return { kind: "timeout", last, incompatible };
@@ -195,7 +196,7 @@ async function waitForPairingObservation(
       if (deadline - deps.now() <= 0) return { kind: "timeout", last, incompatible };
       if (accept(value)) return { kind: "observed", value };
     } catch (error) {
-      incompatible = error instanceof OpenClawPairingIncompatibleError;
+      if (error instanceof OpenClawPairingIncompatibleError) incompatible = true;
       // Pairing state can be absent or changing while the startup watcher runs.
     }
     const remainingAfterAttempt = deadline - deps.now();
@@ -270,6 +271,7 @@ export async function settleOrdinaryOpenClawPairing(
           // Avoid creating another hidden warm-up session when re-onboarding an
           // already-settled device, and reuse an exact upgrade already pending.
           let initial: OpenClawPairingSettlementObservation | null = null;
+          let initiallyIncompatible = false;
           try {
             initial = deps.observePairing(
               name,
@@ -277,7 +279,8 @@ export async function settleOrdinaryOpenClawPairing(
               target.version,
               target.stateDirectory,
             );
-          } catch {
+          } catch (error) {
+            initiallyIncompatible = error instanceof OpenClawPairingIncompatibleError;
             // Pairing may not have appeared yet. Wait for the canonical device
             // before running the request producer.
           }
@@ -298,6 +301,8 @@ export async function settleOrdinaryOpenClawPairing(
               Math.min(settlementDeadline, deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS),
               () => true,
               deps,
+              undefined,
+              initiallyIncompatible,
             );
             if (
               pairingAppearance.kind === "target-changed" ||
