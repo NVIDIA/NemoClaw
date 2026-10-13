@@ -162,32 +162,10 @@ export function compareDottedVersions(a: string, b: string): number {
 // the sandbox); call it out instead of framing it as a routine upgrade step.
 function downgradeSuffix(current?: string | null, expected?: string | null): string {
   if (!current || !expected) return "";
-  return compareReleaseVersions(expected, current) < 0 ? " (downgrade)" : "";
-}
-
-// #13076: order NemoClaw/agent versions. `1.2.3-rc.1` is a SemVer prerelease below
-// `1.2.3`; `1.2.3-11-gabc1234` (git describe) is 11 commits after `1.2.3`. Kept out
-// of compareDottedVersions, which Docker/driver versions also use.
-function parseReleaseVersion(version: string): { core: string; pre: string[]; after: number } {
-  const text = version.trim().replace(/^v/, "").replace(/\+.*$/, "");
-  const described = /^(.+)-(\d+)-g[0-9a-f]{7,}$/.exec(text);
-  const [core, pre] = (described?.[1] ?? text).split(/-(.*)/s);
-  return { core, pre: pre ? pre.split(".") : [], after: Number(described?.[2] ?? 0) };
-}
-
-function compareReleaseVersions(a: string, b: string): number {
-  const [x, y] = [parseReleaseVersion(a), parseReleaseVersion(b)];
-  const core = compareDottedVersions(x.core, y.core);
-  if (core !== 0) return core;
-  if (!x.pre.length || !y.pre.length) return y.pre.length - x.pre.length || x.after - y.after;
-  for (let i = 0; i < Math.min(x.pre.length, y.pre.length); i += 1) {
-    const [l, r] = [x.pre[i], y.pre[i]];
-    const [ln, rn] = [/^\d+$/.test(l), /^\d+$/.test(r)];
-    if (ln && rn ? Number(l) !== Number(r) : l !== r) {
-      return ln && rn ? Number(l) - Number(r) : ln !== rn ? (ln ? -1 : 1) : l < r ? -1 : 1;
-    }
-  }
-  return x.pre.length - y.pre.length || x.after - y.after;
+  // #13076: with the same core, `X-rc.1` is below `X`; other pairs keep numeric order.
+  const [cur, exp] = [current, expected].map((v) => /^v?([^-+]+)(-[A-Za-z][^+]*)?/.exec(v));
+  if (cur && exp && cur[1] === exp[1] && !cur[2] !== !exp[2]) return exp[2] ? " (downgrade)" : "";
+  return compareDottedVersions(expected, current) < 0 ? " (downgrade)" : "";
 }
 
 /**

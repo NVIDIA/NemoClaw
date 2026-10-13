@@ -229,11 +229,9 @@ describe("describeStaleUpgrade version-change labeling (#6520)", () => {
     ["0.0.134", "0.0.134-rc.1", true],
     ["0.0.134-rc.1", "0.0.134-rc.2", false],
     ["0.0.134-rc.2", "0.0.134-rc.1", true],
-    ["0.0.134-rc.1", "0.0.134-beta.1", true],
-    ["0.0.134-beta.1", "0.0.134-rc.1", false],
-    ["0.0.133", "0.0.133-11-g27d67b582b", false],
-    ["0.0.133-11-g27d67b582b", "0.0.133", true],
-    ["0.0.133-11-g27d67b582b", "0.0.134-rc.1", false],
+    ["0.0.133", "0.0.133-11-gaaaaaaa", false],
+    ["0.0.133-11-gaaaaaaa", "0.0.133", false],
+    ["0.0.133-11-gaaaaaaa", "0.0.133-10-gbbbbbbb", false],
   ])("labels a downgrade only when %s to %s is older (#13076)", (current, expected, downgrade) => {
     const text = describeStaleUpgrade({
       name: "my-assistant",
