@@ -12,6 +12,7 @@ vi.mock("../onboard/experimental/portable-agent-lifecycle", async (importOrigina
   assertHermesPortableCommandUnavailable: portableMocks.assertUnavailable,
 }));
 import { HERMES_PROXY_REWRITE_SENTINEL } from "../hermes-managed-route";
+import { NVIDIA_HOSTED_NATIVE_PROVIDER } from "../inference/native-nvidia/contract";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps, HERMES_TARGET } from "../../../test/helpers/inference-set";
@@ -58,6 +59,8 @@ describe("runInferenceSet Hermes routing", () => {
         throw new Error("provider-bound handle unavailable");
       },
     });
+    const attachProvider = vi.spyOn(deps.providerAdapter, "attachProvider");
+    const detachProvider = vi.spyOn(deps.providerAdapter, "detachProvider");
     await expect(
       runInferenceSet(
         {
@@ -72,6 +75,24 @@ describe("runInferenceSet Hermes routing", () => {
     expect(config.model).toEqual({ default: "local-model", provider: "custom" });
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(attachProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "hermes",
+        providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+      }),
+    );
+    expect(detachProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "hermes",
+        providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+      }),
+    );
+    await expect(
+      deps.providerAdapter.listProviderAttachments({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        sandboxName: "hermes",
+      }),
+    ).resolves.toEqual({ ok: true, value: { names: [] } });
   });
 
   it("rejects schema-5 before OpenShell or registry mutation (#9203)", async () => {
