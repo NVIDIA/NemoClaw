@@ -8,7 +8,7 @@ import {
   captureSandboxFailureDiagnostics,
 } from "../fixtures/sandbox-failure-diagnostics.ts";
 import { removeSandbox } from "../../../src/lib/state/registry.ts";
-import { assertExitCode, assertExitZero, resultText } from "../fixtures/clients/command.ts";
+import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { cleanupUnlessVerified } from "../fixtures/cleanup-resources.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
@@ -163,11 +163,12 @@ test(
       timeoutMs: 120_000,
     });
     assertExitZero(stop, "OpenShell sandbox stop");
-    await sandbox.openshell(["sandbox", "start", "-g", gatewayName, SANDBOX_NAME], {
+    const start = await sandbox.openshell(["sandbox", "start", "-g", gatewayName, SANDBOX_NAME], {
       artifactName: "sandbox-operations-openshell-start",
       env,
       timeoutMs: 120_000,
     });
+    assertExitZero(start, "OpenShell sandbox start");
 
     progress.phase("prove native readiness and state survival");
     await waitForNativeOpenClaw(sandbox, redactions, "after-start");
@@ -215,7 +216,6 @@ test(
       captureGatewayLog: true,
       expectedExitCode: 1,
     });
-    assertExitCode(preserved, 1, "destroy with an unregistered live sandbox");
     expect(preservedText).toMatch(
       new RegExp(
         `Shared NemoClaw gateway left running[\\s\\S]*--cleanup-gateway was not applied[\\s\\S]*${SURVIVOR_SANDBOX_NAME}[\\s\\S]*openshell sandbox list -g ${gatewayName}[\\s\\S]*openshell gateway remove ${gatewayName}`,
