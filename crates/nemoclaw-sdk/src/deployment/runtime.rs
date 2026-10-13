@@ -165,19 +165,12 @@ fn runtime_observations(
 }
 
 fn preserve_docker_models(document: &Document, plan: &Plan) -> Result<(), Error> {
-    use crate::services::{ServiceDefinition, ServiceUpdatePolicy};
+    use crate::services::ServiceUpdatePolicy;
 
     for (name, service) in &document.spec.services {
-        let (logical, policy) = match service {
-            ServiceDefinition::Vllm(service) => (
-                format!("nemoclaw_inference_service.inference_{name}"),
-                service.update_policy,
-            ),
-            ServiceDefinition::Ollama(service) => (
-                format!("nemoclaw_ollama_service.{name}"),
-                service.update_policy,
-            ),
-            _ => continue,
+        let (Some(policy), Some(logical)) = (service.update_policy(), service.model_address(name))
+        else {
+            continue;
         };
         if policy == ServiceUpdatePolicy::Recreate {
             continue;

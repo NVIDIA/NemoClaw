@@ -35,10 +35,13 @@ pub(super) fn context_warnings(document: &Document) -> Result<Vec<String>, Confi
             let InferenceTarget::Service { name } = provider.definition.target()? else {
                 continue;
             };
-            let context = match document.spec.services.get(name) {
-                Some(ServiceDefinition::Vllm(service)) => service.serving.context_tokens,
-                Some(ServiceDefinition::Ollama(service)) => service.serving.context_tokens,
-                _ => continue,
+            let Some(context) = document
+                .spec
+                .services
+                .get(name)
+                .and_then(ServiceDefinition::context_tokens)
+            else {
+                continue;
             };
             let subject = Subject {
                 sandbox: &sandbox.name,
