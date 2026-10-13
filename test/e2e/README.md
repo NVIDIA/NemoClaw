@@ -2188,21 +2188,27 @@ The explicit `dgx-station-express` target runs the local Station Express install
 
 `live/inference-routing-provider-smoke.test.ts` owns credential-backed native inference smoke tests.
 Select `openai`, `anthropic`, `gemini`, `openrouter`, or `hermes` with
-`NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE`; `all` selects all five.
+`NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE`. Selecting `openrouter` runs both
+OpenRouter agent cases; `all` runs all six cases.
 Use an approved disposable environment and credentials from its approved source.
 These tests are outside the credential-free `inference-routing` PR lane.
 A skipped provider is missing qualification evidence.
 
 OpenAI, Anthropic, Gemini, and OpenRouter onboard OpenClaw and start a fresh agent process.
 Hermes Provider onboards Hermes and submits a fresh request to its managed API.
-Each case checks the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer.
-Before the request, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
+The `hosted-inference-openrouter` target also onboards Deep Agents Code with the same
+OpenRouter key and model. Its five-assertion case checks onboarding, the native TOML route,
+and one fresh `dcode -n --json` response. It relies on the existing cleanup fixture.
+The five existing cases check the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer.
+Before each of those requests, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
 for a salted fingerprint of the selected credential. Only the fingerprint enters the probe; reports contain
 booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
 The sample inspects up to 200 files smaller than 1 MiB, taking the first 64 KiB of each readable file.
 This is not an exhaustive filesystem scan. The scan checks only sandbox environment variables, process arguments, and sampled files.
 It does not prove credential isolation in host processes or upstream requests.
 Separate smoke assertions check native configuration and require a fresh, nonempty provider response.
+The Deep Agents Code case checks only its generated provider route and a fresh, nonempty JSON response;
+deterministic tests own its resolver handle rejection and credential binding.
 Deterministic tests own protocol/header construction, ownership collisions,
 sandbox isolation, restart, and failed-operation recovery.
 

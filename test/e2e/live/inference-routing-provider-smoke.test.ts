@@ -3,6 +3,7 @@
 
 import crypto from "node:crypto";
 import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
+import { parse as parseToml } from "smol-toml";
 import YAML from "yaml";
 import { hermesApiCommand } from "../fixtures/hermes-api-command.ts";
 import {
@@ -220,6 +221,94 @@ test(
     );
     const placeholderValue = placeholder.stdout.trim();
     await verifyCredentialPlaceholder(artifacts, placeholderValue, apiKey);
+  },
+);
+
+test(
+  "TC-INF-07D Deep Agents Code reaches native OpenRouter",
+  {
+    timeout: 15 * 60_000,
+    meta: {
+      e2ePhases: [
+        "confirm hosted OpenRouter prerequisites",
+        "onboard Deep Agents Code",
+        "verify native OpenRouter route",
+        "request a fresh Deep Agents Code response",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("confirm hosted OpenRouter prerequisites");
+    requireProviderSmokeSelected("openrouter", skip);
+    const environment = hostedProviderSmokeEnvironment("hosted-inference-openrouter", {
+      OPENROUTER_API_KEY: secrets.optional("OPENROUTER_API_KEY"),
+      NEMOCLAW_OPENROUTER_MODEL: process.env.NEMOCLAW_OPENROUTER_MODEL,
+    });
+    const apiKey = environment.OPENROUTER_API_KEY!;
+    const model = environment.NEMOCLAW_OPENROUTER_MODEL!;
+    await requireLivePrerequisites(host, runtimeProvider);
+    const sandboxName = inferenceSandboxName("e2e-openrouter-dcode");
+    cleanup.add(`best-effort Deep Agents Code cleanup for ${sandboxName}`, () =>
+      cleanupSandbox(host, sandbox, sandboxName),
+    );
+    await cleanupSandbox(host, sandbox, sandboxName);
+    await artifacts.target.declare({
+      id: "inference-routing-openrouter-dcode",
+      model,
+      contract: ["native OpenRouter configuration", "fresh Deep Agents Code response"],
+    });
+    progress.phase("onboard Deep Agents Code");
+    const onboard = await onboardSandbox(
+      artifacts,
+      sandboxName,
+      {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_PROVIDER: "openrouter",
+        OPENROUTER_API_KEY: apiKey,
+      },
+      [apiKey],
+      "tc-inf-07d-onboard",
+      progress,
+    );
+    expect(onboard.exitCode, redactedResultText(onboard)).toBe(0);
+    cleanup.add(`strict Deep Agents Code cleanup for ${sandboxName}`, () =>
+      cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+    );
+    const options = { env: buildAvailabilityProbeEnv(), redactionValues: [apiKey] };
+    progress.phase("verify native OpenRouter route");
+    const config = await sandbox.exec(sandboxName, ["cat", "/sandbox/.deepagents/config.toml"], {
+      ...options,
+      artifactName: "tc-inf-07d-native-config",
+      timeoutMs: 60_000,
+    });
+    expect(parseToml(config.stdout)).toMatchObject({
+      models: {
+        default: `openrouter:${model}`,
+        providers: {
+          openrouter: {
+            api_key_env: "OPENROUTER_API_KEY",
+            base_url: "https://openrouter.ai/api/v1",
+          },
+        },
+      },
+    });
+    progress.phase("request a fresh Deep Agents Code response");
+    const response = await sandbox.exec(
+      sandboxName,
+      ["dcode", "-n", "Reply with one short greeting. Do not use tools.", "--json"],
+      { ...options, artifactName: "tc-inf-07d-native-agent", timeoutMs: 180_000 },
+    );
+    expect(response.exitCode, resultText(response)).toBe(0);
+    const envelope = JSON.parse(response.stdout);
+    expect(envelope).toMatchObject({
+      schema_version: 1,
+      command: "non-interactive",
+      data: { status: "success", exit_code: 0 },
+    });
+    expect(
+      typeof envelope.data?.response === "string" && envelope.data.response.trim().length > 0,
+    ).toBe(true);
   },
 );
 
