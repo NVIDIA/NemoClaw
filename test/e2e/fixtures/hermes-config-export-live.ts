@@ -10,6 +10,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import { HERMES_INTERFACE_DEFAULTS } from "../../../src/lib/config/model.ts";
+import { hasExportExcludedMessaging } from "../../../src/lib/domain/config/verify-export-source.ts";
 import {
   V1ALPHA1_RUNTIME_DEFAULTS,
   V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
@@ -341,7 +342,7 @@ export async function verifyHermesConfigExportLive(
     entry.credentialEnv.length > 0 &&
     entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
   const expectedRefusals = [
-    ...(entry.messaging != null ? [MESSAGING_REFUSAL] : []),
+    ...(hasExportExcludedMessaging(entry) ? [MESSAGING_REFUSAL] : []),
     ...(entry.openshellDriver === "podman" ? [PODMAN_REFUSAL] : []),
     ...(expectsCredentialHttpRefusal ? [CREDENTIAL_HTTP_REFUSAL] : []),
   ];
