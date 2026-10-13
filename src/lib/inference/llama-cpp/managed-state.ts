@@ -137,8 +137,7 @@ function fsyncDirectory(directory: string): void {
   }
 }
 
-function publishExclusive(directory: string, target: string, value: string): boolean {
-  const temporary = path.join(directory, `.${path.basename(target)}.${randomUUID()}.tmp`);
+function writePrivateTemporaryFile(temporary: string, value: string): void {
   const noFollow = fs.constants.O_NOFOLLOW;
   if (typeof noFollow !== "number") {
     throw new Error("Managed llama.cpp requires no-follow file writes.");
@@ -152,8 +151,15 @@ function publishExclusive(directory: string, target: string, value: string): boo
     );
     fs.writeFileSync(descriptor, value, "utf8");
     fs.fsyncSync(descriptor);
-    fs.closeSync(descriptor);
-    descriptor = null;
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+  }
+}
+
+function publishExclusive(directory: string, target: string, value: string): boolean {
+  const temporary = path.join(directory, `.${path.basename(target)}.${randomUUID()}.tmp`);
+  try {
+    writePrivateTemporaryFile(temporary, value);
     try {
       fs.linkSync(temporary, target);
     } catch (error) {
@@ -164,7 +170,6 @@ function publishExclusive(directory: string, target: string, value: string): boo
     fsyncDirectory(directory);
     return true;
   } finally {
-    if (descriptor !== null) fs.closeSync(descriptor);
     fs.rmSync(temporary, { force: true });
   }
 }
@@ -289,11 +294,7 @@ export function bindLegacyManagedLlamaCppOwnerGpu(
         `.${path.basename(paths.ownerPath)}.${randomUUID()}.tmp`,
       );
       try {
-        fs.writeFileSync(temporary, serializeOwner(upgraded), {
-          encoding: "utf8",
-          flag: "wx",
-          mode: FILE_MODE,
-        });
+        writePrivateTemporaryFile(temporary, serializeOwner(upgraded));
         fs.renameSync(temporary, paths.ownerPath);
         fsyncDirectory(paths.stateDir);
       } finally {
