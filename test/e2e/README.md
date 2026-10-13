@@ -2219,8 +2219,10 @@ Hermes Provider onboards Hermes and submits a fresh request to its managed API.
 Each case checks the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer.
 The OpenRouter case also switches the running sandbox from its configured model to a second model
 and back, checks both recorded routes, then makes a fresh agent request to prove the provider
-credential remains usable after the two gateway restarts. It does not require a completion from
-the intermediate model, which may be rate limited upstream.
+credential remains usable after the two gateway restarts. Each `nemoclaw inference set` switch
+verifies its selected model with a sandbox-side inference request. An unavailable or rate-limited
+intermediate model fails the first switch. The test sends a separate fresh agent request only
+after the return switch.
 Before the request, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
 for a salted fingerprint of the selected credential. Only the fingerprint enters the probe; reports contain
 booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
