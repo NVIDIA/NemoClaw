@@ -394,11 +394,6 @@ describe("composeSandboxConfigBody", () => {
     ).toThrow("Native OpenAI configuration does not match its attached provider endpoint");
     expect(() =>
       buildOpenClawNativeConfigBatchInvocation("alpha", [
-        { ...update, value: { ...update.value, headers: {} } },
-      ]),
-    ).toThrow("Native provider identity does not match its credential placeholder");
-    expect(() =>
-      buildOpenClawNativeConfigBatchInvocation("alpha", [
         {
           dotpath: "models.providers.inference",
           value: {
@@ -444,6 +439,54 @@ describe("composeSandboxConfigBody", () => {
       fs.rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    {
+      label: "custom endpoint",
+      baseUrl: "https://user.example/v1",
+      apiKey: "openshell:resolve:env:USER_API_KEY",
+    },
+    {
+      label: "hosted endpoint without a provider marker",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "openshell:resolve:env:OPENROUTER_API_KEY",
+    },
+  ])(
+    "keeps an unmarked $label placeholder unchanged in the OpenClaw batch (#13040)",
+    ({ baseUrl, apiKey }) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unmarked-config-"));
+      try {
+        fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
+          mode: 0o700,
+        });
+        const update = {
+          dotpath: "models.providers.inference",
+          value: {
+            baseUrl,
+            apiKey,
+          },
+        };
+        const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [update]);
+        const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
+        const result = spawnSync(command[0]!, command.slice(1), {
+          input: invocation.input,
+          encoding: "utf8",
+          timeout: 5_000,
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH ?? ""}`,
+            USER_API_KEY: undefined,
+            OPENROUTER_API_KEY: undefined,
+          },
+        });
+        expect(result.status, `${result.error?.message ?? ""} ${result.stderr}`).toBe(0);
+        expect(JSON.parse(result.stdout)).toEqual([{ path: update.dotpath, value: update.value }]);
+        expect(invocation.args.join(" ")).not.toContain(apiKey);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("rejects a mismatched NVIDIA provider marker before handle pinning (#13040)", () => {
     expect(() =>

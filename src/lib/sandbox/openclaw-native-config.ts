@@ -21,9 +21,11 @@ const {
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
 }: typeof import("../inference/native-nvidia/contract") = require("../inference/native-nvidia/contract");
 const {
-  hasNativeHostedProvider,
   nativeHostedAgentConfig,
 }: typeof import("../inference/native-provider/agent-config") = require("../inference/native-provider/agent-config");
+const {
+  fixedNativeProvider,
+}: typeof import("../inference/native-provider/fixed") = require("../inference/native-provider/fixed");
 const {
   isConfigObject,
 }: typeof import("../security/credential-filter") = require("../security/credential-filter");
@@ -135,7 +137,7 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
       return false;
     const headers = isConfigObject(value.headers) ? value.headers : {};
     const provider = headers["X-NemoClaw-Upstream-Provider"];
-    return typeof provider !== "string" || hasNativeHostedProvider(provider);
+    return typeof provider === "string" && Boolean(fixedNativeProvider(provider));
   });
   if (matching.length === 0) return undefined;
   if (matching.length !== 1) throw new Error("Expected one native provider config update");
