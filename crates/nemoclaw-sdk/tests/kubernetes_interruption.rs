@@ -416,7 +416,7 @@ async fn assert_failed_connection_keeps_its_class(
 
     assert_observation(
         deployment.apply(&original(), &uncancelled()).await,
-        class,
+        class.clone(),
         "the first apply",
     );
     assert_runtime_applies(scripted, 1, "the first apply");
