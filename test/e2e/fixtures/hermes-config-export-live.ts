@@ -341,8 +341,9 @@ export async function verifyHermesConfigExportLive(
     typeof entry.credentialEnv === "string" &&
     entry.credentialEnv.length > 0 &&
     entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
+  const expectsMessagingRefusal = hasExportExcludedMessaging(entry);
   const expectedRefusals = [
-    ...(hasExportExcludedMessaging(entry) ? [MESSAGING_REFUSAL] : []),
+    ...(expectsMessagingRefusal ? [MESSAGING_REFUSAL] : []),
     ...(entry.openshellDriver === "podman" ? [PODMAN_REFUSAL] : []),
     ...(expectsCredentialHttpRefusal ? [CREDENTIAL_HTTP_REFUSAL] : []),
   ];
@@ -353,7 +354,7 @@ export async function verifyHermesConfigExportLive(
       );
       const refusalDiagnosticMatches = [nemoclawDiagnostics, nemohermesDiagnostics].every(
         (diagnostic) => {
-          if (entry.messaging == null) return diagnostic === expectedDiagnostic;
+          if (!expectsMessagingRefusal) return diagnostic === expectedDiagnostic;
           const lines = diagnostic.split("\n");
           return (
             lines[0] === "Config export failed (unsupported)." &&

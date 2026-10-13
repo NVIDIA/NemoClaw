@@ -363,6 +363,52 @@ describe("Hermes config export live evidence", () => {
     expect(mocks.save).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { plan: EMPTY_MESSAGING_PLAN, format: "full", extraMessagingRefusal: false, passed: true },
+    { plan: EMPTY_MESSAGING_PLAN, format: "full", extraMessagingRefusal: true, passed: false },
+    {
+      plan: compactSandboxMessagingPlanForPersistence(EMPTY_MESSAGING_PLAN),
+      format: "compact",
+      extraMessagingRefusal: false,
+      passed: true,
+    },
+    {
+      plan: compactSandboxMessagingPlanForPersistence(EMPTY_MESSAGING_PLAN),
+      format: "compact",
+      extraMessagingRefusal: true,
+      passed: false,
+    },
+  ])(
+    "requires only the HTTP refusal for $format empty messaging (extra messaging refusal: $extraMessagingRefusal)",
+    async ({ plan, extraMessagingRefusal, passed }) => {
+      Object.assign(mocks.load().sandboxes.hermes, {
+        name: "hermes",
+        agent: "hermes",
+        endpointUrl: "http://host.openshell.internal:35271/v1",
+        messaging: { schemaVersion: 1, plan },
+      });
+      mocks.command.mockResolvedValue({
+        exitCode: 2,
+        stdout: "",
+        stderr: [
+          "Config export failed (unsupported).",
+          ...(extraMessagingRefusal ? ["V1 export does not support messaging."] : []),
+          "V1alpha1 requires HTTPS when an inference provider declares a credential.",
+        ].join("\n"),
+      });
+
+      await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed });
+      expect(mocks.writeJson).toHaveBeenCalledWith(
+        "hermes-config-export-live-evidence.json",
+        expect.objectContaining({
+          outcome: "expected-refusal",
+          refusalDiagnosticMatches: passed,
+        }),
+      );
+      expect(mocks.writeText).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["https", "http"])(
     "accepts the exact messaging and %s export refusals from both aliases",
     async (scheme) => {
