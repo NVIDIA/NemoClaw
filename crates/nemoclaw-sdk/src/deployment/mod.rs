@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(test)]
-mod context_warnings;
-#[cfg(test)]
 mod tests;
 
 mod apply;
+mod context_advisory;
 mod export;
 mod opentofu;
 mod plan;
@@ -36,12 +35,6 @@ use std::{
 };
 
 pub use timing::StepOutcome;
-
-/// Smallest model context window the pinned Hermes Agent accepts
-/// (`MINIMUM_CONTEXT_LENGTH` in its `agent/model_metadata.py`, at the
-/// `HERMES_REVISION` in `image/fabric/Dockerfile`). Hermes reads the window from
-/// the server, not from route settings.
-const HERMES_MINIMUM_CONTEXT_TOKENS: i64 = 64_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Progress {
@@ -234,95 +227,8 @@ impl Deployment {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        for sandbox in &document.spec.sandboxes {
-            let hermes = match document.sandbox_harness(sandbox)?.kind.as_str() {
-                "nvidia.fabric.openclaw" => false,
-                "nvidia.fabric.hermes" => true,
-                _ => continue,
-            };
-            let inference = document.scoped_inference(sandbox)?;
-            for route in &inference.inference.routes {
-                let provider = document.route_provider(route, &inference)?;
-                let crate::config::InferenceTarget::Service { name } =
-                    provider.definition.target()?
-                else {
-                    continue;
-                };
-                let context = match document.spec.services.get(name) {
-                    Some(crate::services::ServiceDefinition::Vllm(service)) => {
-                        service.serving.context_tokens
-                    }
-                    Some(crate::services::ServiceDefinition::Ollama(service)) => {
-                        service.serving.context_tokens
-                    }
-                    _ => continue,
-                };
-                if hermes {
-                    if context < HERMES_MINIMUM_CONTEXT_TOKENS {
-                        (self.progress)(Progress::Warning {
-                            message: format!(
-                                "Hermes sandbox {} route {} uses managed service {name} with serving.contextTokens={context}; Hermes requires a model context window of at least {HERMES_MINIMUM_CONTEXT_TOKENS} tokens and can refuse to start or fail longer conversations below it. Set serving.contextTokens to {HERMES_MINIMUM_CONTEXT_TOKENS} or more on a model that supports that context, and size model/GPU memory for it.",
-                                sandbox.name, route.name
-                            ),
-                        });
-                    }
-                    continue;
-                }
-                let metadata = route
-                    .overrides
-                    .settings
-                    .as_ref()
-                    .and_then(|settings| settings.get("model_metadata"));
-                // The pinned OpenClaw adapter overlays model_metadata on its
-                // defaults, including maxTokens. Invalid explicit values are
-                // passed through, so they cannot be treated as omitted here.
-                let positive_integer = |field, default| match metadata {
-                    None => Some(default),
-                    Some(Value::Object(metadata)) => match metadata.get(field) {
-                        None => Some(default),
-                        Some(value) => value.as_u64().filter(|value| *value > 0),
-                    },
-                    Some(_) => None,
-                };
-                let route_context = positive_integer("contextWindow", 32768);
-                if let Some(route_context) = route_context
-                    && i128::from(route_context) > i128::from(context)
-                {
-                    (self.progress)(Progress::Warning {
-                        message: format!(
-                            "OpenClaw sandbox {} route {} advertises contextWindow={route_context}, exceeding managed service {name} serving.contextTokens={context}; longer conversations can exceed the server limit. Set overrides.settings.model_metadata.contextWindow to {context} or less, or increase the service context and size model/GPU memory accordingly.",
-                            sandbox.name, route.name
-                        ),
-                    });
-                }
-                let (Some(route_context), Some(reply_tokens)) = (
-                    route_context,
-                    positive_integer(
-                        "maxTokens",
-                        u64::from(route.overrides.tuning.max_tokens.unwrap_or(4096)),
-                    ),
-                ) else {
-                    (self.progress)(Progress::Warning {
-                        message: format!(
-                            "OpenClaw sandbox {} route {} uses managed service {name} with serving.contextTokens={context}, but cannot assess its context budget: settings.model_metadata must be an object with positive integer contextWindow and maxTokens when present.",
-                            sandbox.name, route.name
-                        ),
-                    });
-                    continue;
-                };
-                let effective_context = i128::from(context).min(i128::from(route_context));
-                // A measured initial OpenClaw prompt used 19,947 tokens; this is
-                // an advisory budget, not a universal adapter requirement.
-                let required_context = 20_000 + i128::from(reply_tokens);
-                if effective_context < required_context {
-                    (self.progress)(Progress::Warning {
-                        message: format!(
-                            "OpenClaw sandbox {} route {} uses managed service {name} with serving.contextTokens={context} and settings.model_metadata.contextWindow={route_context}; allow at least {required_context} tokens for an initial prompt of about 20,000 tokens plus {reply_tokens} reply tokens. Consider 32768 or more as needed, align both limits, and size model/GPU memory for that context.",
-                            sandbox.name, route.name
-                        ),
-                    });
-                }
-            }
+        for message in context_advisory::context_warnings(&document)? {
+            (self.progress)(Progress::Warning { message });
         }
         let (bundle, store) = self.open()?;
         let prior = store.load()?;

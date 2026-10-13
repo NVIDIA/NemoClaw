@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bindings, observations, and the safe diagnostic categories backends report.
 
-use std::fmt;
+use regex::Regex;
+use std::{fmt, sync::LazyLock};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Binding {
@@ -131,23 +132,20 @@ impl fmt::Display for ObservationError {
 
 impl std::error::Error for ObservationError {}
 
+static BEARER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+").expect("constant diagnostic bearer pattern")
+});
+static CREDENTIALS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)["']?(?:authorization|api[_-]?key|token|password|secret)["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}]+)"#)
+        .expect("constant diagnostic credential pattern")
+});
+static TOKENS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[A-Za-z0-9_+/=-]{32,}").expect("constant diagnostic token pattern")
+});
+
 impl ObservationError {
     /// Bound backend diagnostics and remove credentials before they enter public errors.
     pub fn sanitized_detail(detail: &str) -> Box<str> {
-        Self::sanitize_detail(detail, None)
-    }
-
-    /// Preserve an exact non-secret resource name obtained from the request or
-    /// verified binding, never from the diagnostic. Credential fields remain redacted.
-    pub fn sanitized_resource_detail(detail: &str, resource_name: &str) -> Box<str> {
-        Self::sanitize_detail(detail, Some(resource_name))
-    }
-
-    fn sanitize_detail(detail: &str, resource_name: Option<&str>) -> Box<str> {
-        use std::sync::OnceLock;
-        static CREDENTIALS: OnceLock<regex::Regex> = OnceLock::new();
-        static BEARER: OnceLock<regex::Regex> = OnceLock::new();
-        static TOKENS: OnceLock<regex::Regex> = OnceLock::new();
         let printable: String = detail
             .chars()
             .map(|character| {
@@ -158,29 +156,10 @@ impl ObservationError {
                 }
             })
             .collect();
-        let bearer = BEARER.get_or_init(|| {
-            regex::Regex::new(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
-                .expect("constant diagnostic bearer pattern")
-        });
-        let credentials = CREDENTIALS.get_or_init(|| {
-            regex::Regex::new(r#"(?i)["']?(?:authorization|api[_-]?key|token|password|secret)["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}]+)"#)
-                .expect("constant diagnostic credential pattern")
-        });
-        let tokens = TOKENS.get_or_init(|| {
-            regex::Regex::new(r"[A-Za-z0-9_+/=-]{32,}").expect("constant diagnostic token pattern")
-        });
         // Redact Bearer first: a key/value match alone would consume only the scheme.
-        let hidden = bearer.replace_all(&printable, "[REDACTED]");
-        let hidden = credentials.replace_all(&hidden, "[REDACTED]");
-        let hidden = tokens.replace_all(&hidden, |matched: &regex::Captures<'_>| {
-            // Long generated object names resemble tokens. Only the caller's
-            // known name is exempt, after credential values have been removed.
-            if Some(&matched[0]) == resource_name {
-                matched[0].to_owned()
-            } else {
-                "[REDACTED]".into()
-            }
-        });
+        let hidden = BEARER.replace_all(&printable, "[REDACTED]");
+        let hidden = CREDENTIALS.replace_all(&hidden, "[REDACTED]");
+        let hidden = TOKENS.replace_all(&hidden, "[REDACTED]");
         let mut result = hidden.split_whitespace().collect::<Vec<_>>().join(" ");
         if result.len() > 1024 {
             result.truncate(1021);
