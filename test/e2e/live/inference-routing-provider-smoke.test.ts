@@ -270,7 +270,7 @@ test.for(hostedCases)(
         "selected credential is absent from sandbox environment, process arguments, and sampled files",
         "fresh agent request answers with the selected model",
         ...(selected.selector === "openrouter"
-          ? ["a same-provider model switch preserves OpenRouter inference after switching back"]
+          ? ["both OpenRouter model switches preserve a fresh agent response"]
           : []),
       ],
     });
@@ -397,16 +397,36 @@ console.log(JSON.stringify({
           toAlternate.exitCode,
           "OpenRouter alternate switch failed; inspect the redacted artifact",
         ).toBe(0);
-        const alternateRoute = await host.nemoclaw([sandboxName, "inference", "get", "--json"], {
-          artifactName: `${selected.id}-alternate-route`,
-          env: buildAvailabilityProbeEnv(),
-          timeoutMs: 30_000,
-        });
-        expect(
-          alternateRoute.exitCode,
-          "OpenRouter alternate route read failed; inspect the artifact",
-        ).toBe(0);
-        expect(JSON.parse(alternateRoute.stdout).model).toBe(alternateModel);
+        const alternateResponse = await sandbox.exec(
+          sandboxName,
+          [
+            "nemoclaw-start",
+            "openclaw",
+            "agent",
+            "--agent",
+            "main",
+            "--json",
+            "--thinking",
+            "off",
+            "--session-id",
+            `native-${crypto.randomUUID()}`,
+            "-m",
+            "Reply with one short greeting. Do not use tools.",
+          ],
+          {
+            artifactName: `${selected.id}-alternate-native-agent`,
+            env: buildAvailabilityProbeEnv(),
+            redactionValues: [apiKey],
+            timeoutMs: 180_000,
+          },
+        );
+        expect(alternateResponse.exitCode, resultText(alternateResponse)).toBe(0);
+        const alternateDocument = parseOpenClawJsonDocuments(alternateResponse.stdout)
+          .map(openClawAgentResponseRecord)
+          .filter((value) => value !== null)
+          .at(-1);
+        expect(alternateDocument?.meta?.agentMeta?.model).toBe(alternateModel);
+        expect(parseOpenClawAgentText(alternateResponse.stdout).trim()).not.toBe("");
 
         const backToSelected = await host.nemoclaw(
           [
@@ -439,7 +459,6 @@ console.log(JSON.stringify({
           selectedRoute.exitCode,
           "OpenRouter selected route read failed; inspect the artifact",
         ).toBe(0);
-        expect(JSON.parse(selectedRoute.stdout).model).toBe(model);
         break;
       }
       default:

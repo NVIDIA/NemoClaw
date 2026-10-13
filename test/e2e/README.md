@@ -2217,13 +2217,14 @@ A skipped provider is missing qualification evidence.
 OpenAI, Anthropic, Gemini, and OpenRouter onboard OpenClaw and start a fresh agent process.
 Hermes Provider onboards Hermes and submits a fresh request to its managed API.
 Each case checks the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer.
-The OpenRouter case also switches the running sandbox from its configured model to a second model
-and back, checks both recorded routes, then makes a fresh agent request to prove the provider
-credential remains usable after the two gateway restarts. Each `nemoclaw inference set` switch
-verifies its selected model with a sandbox-side inference request. An unavailable or rate-limited
-intermediate model fails the first switch. The test sends a separate fresh agent request only
-after the return switch.
-Before the request, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
+The OpenRouter case switches the running sandbox to a second model and back.
+It requires a fresh agent response with that model after each switch and checks that the return route is readable.
+Each `nemoclaw inference set` switch also verifies its selected model with a sandbox-side inference request.
+An unavailable or rate-limited intermediate model fails the first switch.
+The alternate route read and return-route model assertion were removed from this live case:
+agent responses prove the effective model after each restart, while the recorded-model behavior
+belongs to the `inference get` source tests. Both switch exit checks and the return route read remain.
+Before these requests, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
 for a salted fingerprint of the selected credential. Only the fingerprint enters the probe; reports contain
 booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
 The sample inspects up to 200 files smaller than 1 MiB, taking the first 64 KiB of each readable file.
