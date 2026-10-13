@@ -366,16 +366,25 @@ async function inspectHermesToolGatewayRefreshProvider(sandboxName, runOpenshell
     target: { kind: "selected" },
     providerName,
   });
+  const providerType =
+    observed.ok &&
+    matchesGatewayCredentialOnlyProviderBinding(observed.value, {
+      name: providerName,
+      type: "generic",
+      credentialKey: HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
+    })
+      ? "generic"
+      : HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE;
   if (
     observed.ok &&
     !matchesGatewayCredentialOnlyProviderBinding(observed.value, {
       name: providerName,
-      type: HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE,
+      type: providerType,
       credentialKey: HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
     })
   ) {
     throw new Error(
-      `Existing provider '${providerName}' does not match the Hermes tool gateway profile and credential binding. Ask the gateway operator to inspect its attachments before retrying.`,
+      `Existing provider '${providerName}' does not match the Hermes tool gateway credential binding. Ask the gateway operator to inspect its attachments before retrying.`,
     );
   }
   if (
@@ -384,7 +393,7 @@ async function inspectHermesToolGatewayRefreshProvider(sandboxName, runOpenshell
   ) {
     throw new Error(`Could not inspect provider '${providerName}' before Hermes tool setup.`);
   }
-  return { adapter, exists: observed.ok, providerName };
+  return { adapter, exists: observed.ok, providerName, providerType };
 }
 
 async function isHermesToolGatewayRefreshProviderRegistered(sandboxName, runOpenshell) {
@@ -396,24 +405,28 @@ async function registerHermesToolGatewayRefreshProvider(sandboxName, refreshToke
   if (!normalized) {
     throw new Error("Hermes tool gateway refresh credential is empty");
   }
-  const { adapter, providerName } = await inspectHermesToolGatewayRefreshProvider(
+  const { adapter, providerName, providerType } = await inspectHermesToolGatewayRefreshProvider(
     sandboxName,
     runOpenshell,
   );
   const state = persistHermesToolGatewayProviderState(sandboxName, normalized);
   const result = await onboardProviders.upsertProvider(
     providerName,
-    HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE,
+    providerType,
     HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
     null,
     { [HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV]: state.brokerToken },
     runOpenshell,
-    { requireExactBinding: true, providerAdapter: adapter },
+    {
+      requireExactBinding: true,
+      providerAdapter: adapter,
+      ...(providerType === "generic" ? { knownExists: true } : {}),
+    },
   );
   if (!result.ok) {
     if (result.reason === "binding-conflict") {
       throw new Error(
-        `Existing provider '${providerName}' does not match the Hermes tool gateway profile and credential binding. Ask the gateway operator to inspect its attachments before retrying.`,
+        `Existing provider '${providerName}' does not match the Hermes tool gateway credential binding. Ask the gateway operator to inspect its attachments before retrying.`,
       );
     }
     throw new Error(result.message || `failed to upsert provider '${providerName}'`);

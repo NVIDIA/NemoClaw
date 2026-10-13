@@ -46,6 +46,10 @@ function gateway(
   options: {
     profile?: "absent" | "present" | "conflict";
     providerType?: string;
+    providerName?: string;
+    credentialKeys?: string;
+    configKeys?: string;
+    disappearOnSecondGet?: boolean;
     importFails?: boolean;
     createFails?: boolean;
     postExport?: "mismatch" | "failure";
@@ -57,6 +61,7 @@ function gateway(
   let profilePresent = options.profile !== "absent";
   let providerType = options.providerType ?? null;
   let created = false;
+  let providerGets = 0;
   const runOpenshell = vi.fn((args: string[], opts: { env?: NodeJS.ProcessEnv } = {}) => {
     calls.push({ args, env: opts.env });
     options.beforeCommand?.(args);
@@ -80,10 +85,11 @@ function gateway(
           ? { status: 1, stderr: "import failed: secret-marker" }
           : { status: 0 };
       case `provider get ${args[2]}`:
-        return providerType
+        providerGets += 1;
+        return providerType && !(options.disappearOnSecondGet && providerGets === 2)
           ? {
               status: 0,
-              stdout: `Name: ${args[2]}\nType: ${providerType}\nCredential keys: ${CREDENTIAL_ENV}\nConfig keys: <none>\n`,
+              stdout: `Name: ${options.providerName ?? args[2]}\nType: ${providerType}\nCredential keys: ${options.credentialKeys ?? CREDENTIAL_ENV}\nConfig keys: ${options.configKeys ?? "<none>"}\n`,
             }
           : { status: 1, stderr: `provider '${args[2]}' not found` };
       case `provider create ${args[2]}`:
@@ -182,14 +188,42 @@ describe("Hermes tool gateway provider profile", () => {
     });
   });
 
+  it("reopens and refreshes an exact legacy generic provider without replacing it", async () => {
+    await withBroker(async (broker) => {
+      const g = gateway({ profile: "present", providerType: "generic" });
+      await expect(
+        broker.isHermesToolGatewayRefreshProviderRegistered("alpha", g.runOpenshell),
+      ).resolves.toBe(true);
+      const result = await broker.registerHermesToolGatewayRefreshProvider(
+        "alpha",
+        "refresh-secret-marker",
+        g.runOpenshell,
+      );
+      const update = g.calls.find(({ args }) => args[1] === "update");
+      expect(update?.env?.[CREDENTIAL_ENV]).toBe(result.brokerToken);
+      expect(g.calls.filter(({ args }) => args[1] === "create" || args[1] === "delete")).toEqual(
+        [],
+      );
+      expect(JSON.stringify(g.calls)).not.toContain("refresh-secret-marker");
+      expect(broker.getHermesToolGatewayBrokerToken("alpha")).toBe(result.brokerToken);
+    });
+  });
+
   it.each([
     ["conflicting profile", { profile: "conflict" as const }, /conflicts with NemoClaw/u],
     ["failed import", { profile: "absent" as const, importFails: true }, /Could not import/u],
+    ["unrelated provider type", { providerType: "unrelated" }, /does not match/u],
     [
-      "legacy provider",
-      { profile: "present" as const, providerType: "generic" },
+      "legacy provider name",
+      { providerType: "generic", providerName: "other" },
+      /Could not inspect/u,
+    ],
+    [
+      "legacy credential keys",
+      { providerType: "generic", credentialKeys: `${CREDENTIAL_ENV}, OTHER_KEY` },
       /does not match/u,
     ],
+    ["legacy config keys", { providerType: "generic", configKeys: "OTHER_KEY" }, /does not match/u],
   ])("stops on %s before broker state or provider mutation", async (_case, options, error) => {
     await withBroker(async (broker) => {
       const g = gateway(options);
@@ -200,6 +234,18 @@ describe("Hermes tool gateway provider profile", () => {
         false,
       );
       expect(g.calls.every(({ args }) => args[1] !== "create" && args[1] !== "update")).toBe(true);
+    });
+  });
+
+  it("does not create a generic provider if it disappears before credential update", async () => {
+    await withBroker(async (broker) => {
+      const g = gateway({ providerType: "generic", disappearOnSecondGet: true });
+      await expect(
+        broker.registerHermesToolGatewayRefreshProvider("alpha", "refresh-secret", g.runOpenshell),
+      ).rejects.toThrow(/does not match/u);
+      expect(g.calls.filter(({ args }) => args[1] === "create" || args[1] === "update")).toEqual(
+        [],
+      );
     });
   });
 
