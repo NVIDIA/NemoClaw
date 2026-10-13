@@ -95,7 +95,7 @@ describe("sandbox route publication", () => {
     expect(registryEntry.reservationSessionId).toBe(session.sessionId);
   });
 
-  it("reserves the session route from the published row before a resumed recreate", async () => {
+  it("keeps the published route until the resumed recreate passes backup", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";
     const registryEntry: SandboxEntry = {
@@ -112,7 +112,10 @@ describe("sandbox route publication", () => {
       registryEntry.reservationSessionId = session.sessionId;
       return true;
     });
-    const createSandbox = vi.fn(async () => {
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      expect(registryEntry.pendingRouteReservation).toBeUndefined();
+      const intent = args.at(-2) as { reservePublishedRouteAfterBackup: () => void };
+      intent.reservePublishedRouteAfterBackup();
       expect(registryEntry).toMatchObject({
         pendingRouteReservation: true,
         reservationSessionId: session.sessionId,
@@ -146,7 +149,7 @@ describe("sandbox route publication", () => {
       reservationSessionId: session.sessionId,
     });
     expect(createSandbox).toHaveBeenCalledOnce();
-    expect(reserveSandboxInferenceRoute.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(reserveSandboxInferenceRoute.mock.invocationCallOrder[0]).toBeGreaterThan(
       createSandbox.mock.invocationCallOrder[0]!,
     );
   });

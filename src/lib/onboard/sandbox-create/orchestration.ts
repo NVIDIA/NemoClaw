@@ -2247,16 +2247,18 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       expectedEntry: SandboxEntry | null,
       source: ReturnType<typeof backupSourceObservation>,
     ): never => {
-      const recovery = recreateProtection.recoverPublishedAfterFailedBackup({
-        expectedEntry,
-        source,
-        observe: backupSourceObservation,
-        restore: (entry) =>
-          registry.restorePublishedSandboxAfterFailedBackup(
-            entry,
-            createCheckpointSession?.sessionId ?? null,
-          ),
-        abandonJournal: () => {
+      let sourceUnchanged = false;
+      try {
+        const current = backupSourceObservation();
+        sourceUnchanged =
+          expectedEntry !== null &&
+          expectedEntry.pendingRouteReservation !== true &&
+          isDeepStrictEqual(registry.getSandbox(sandboxName), expectedEntry) &&
+          source.state === "ready" &&
+          current.state === "ready" &&
+          Boolean(source.liveIdentityFingerprint) &&
+          current.liveIdentityFingerprint === source.liveIdentityFingerprint;
+        if (sourceUnchanged) {
           if ("abandon" in recreateRuntime) recreateRuntime.abandon();
           else if (createIntent?.recreateTransaction) {
             onboardSession.updateSession((session) => {
@@ -2267,13 +2269,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               return session;
             });
           }
-        },
-      });
-      if (recovery === "restored") {
+        }
+      } catch {
+        sourceUnchanged = false;
+      }
+      if (sourceUnchanged) {
         console.error(`  Existing sandbox '${sandboxName}' remains registered and available.`);
-      } else if (recovery === "ambiguous") {
+      } else {
         console.error(
-          `  Sandbox '${sandboxName}' changed during backup failure; its pending route needs recovery before another onboarding attempt.`,
+          `  Sandbox '${sandboxName}' changed during backup failure; its recreate journal needs recovery before another onboarding attempt.`,
         );
       }
       console.error(
@@ -2621,6 +2625,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         pendingStateRestore = result.backup;
       }
 
+      createIntent?.reservePublishedRouteAfterBackup?.();
       // Parse and freeze the rebuild policy while the source sandbox is still
       // intact. A malformed or raced policy must not fail after deletion.
       managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);

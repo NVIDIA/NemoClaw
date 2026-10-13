@@ -1267,6 +1267,21 @@ class SandboxStateFlow<
     );
   }
 
+  private prepareCreateRouteReservation(
+    sandboxName: string,
+    createIntent: CompleteSandboxCreateIntent,
+  ): CompleteSandboxCreateIntent {
+    const currentEntry = this.deps.getSandboxRegistryEntry(sandboxName);
+    if (currentEntry === null || currentEntry.pendingRouteReservation === true) {
+      this.reserveCreateRouteForSession(sandboxName);
+      return createIntent;
+    }
+    return {
+      ...createIntent,
+      reservePublishedRouteAfterBackup: () => this.reserveCreateRouteForSession(sandboxName),
+    };
+  }
+
   private finalizeInferenceRouteReservation(
     state: SandboxStepState<WebSearchConfig>,
     sandboxName: string,
@@ -2323,7 +2338,10 @@ class SandboxStateFlow<
 
       let sandboxName: string;
       try {
-        this.reserveCreateRouteForSession(requestedSandboxName);
+        const createIntentWithReservation = this.prepareCreateRouteReservation(
+          requestedSandboxName,
+          effectiveCreateIntent,
+        );
         sandboxName = await withSandboxPhaseTrace(
           requestedSandboxName,
           this.options.provider,
@@ -2362,7 +2380,7 @@ class SandboxStateFlow<
                     }),
                   }
                 : null,
-              effectiveCreateIntent,
+              createIntentWithReservation,
               activateVerifiedCredentialProviders
                 ? async (
                     verifiedContext: import("../../types").VerifiedSandboxCreateEffectsContext,
