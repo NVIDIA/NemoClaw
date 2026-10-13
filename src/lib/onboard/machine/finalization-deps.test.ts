@@ -114,6 +114,8 @@ describe("ordinary OpenClaw pairing settlement", () => {
       reason: "pairing-incompatible",
     });
     expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+    expect(scope.deps.observePairing).toHaveBeenCalledOnce();
+    expect(scope.deps.sleep).not.toHaveBeenCalled();
   });
 
   it.each([1, 2])(
@@ -139,6 +141,9 @@ describe("ordinary OpenClaw pairing settlement", () => {
     const scope = ordinaryPairingDeps({
       observePairing: vi
         .fn(() => SETTLED)
+        .mockImplementationOnce(() => {
+          throw new Error("state changing");
+        })
         .mockImplementationOnce(() => {
           throw new OpenClawPairingIncompatibleError();
         })

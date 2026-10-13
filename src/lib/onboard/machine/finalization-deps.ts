@@ -169,10 +169,9 @@ async function waitForPairingObservation(
   accept: (value: OpenClawPairingSettlementObservation) => boolean,
   deps: OrdinaryOpenClawPairingSettlementDeps,
   expectedDeviceIdentitySha256?: string,
-  initiallyIncompatible = false,
 ): Promise<PairingWaitResult> {
   let last: OpenClawPairingSettlementObservation | null = null;
-  let incompatible = initiallyIncompatible;
+  let incompatible = false;
   while (true) {
     const remaining = deadline - deps.now();
     if (remaining <= 0) return { kind: "timeout", last, incompatible };
@@ -287,6 +286,9 @@ export async function settleOrdinaryOpenClawPairing(
           if (!samePairingTarget(target, deps.getTarget(name))) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
+          if (initiallyIncompatible) {
+            return { kind: "incomplete", reason: "pairing-incompatible" };
+          }
           if (deps.now() >= settlementDeadline) {
             return { kind: "incomplete", reason: "pairing-unavailable" };
           }
@@ -301,8 +303,6 @@ export async function settleOrdinaryOpenClawPairing(
               Math.min(settlementDeadline, deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS),
               () => true,
               deps,
-              undefined,
-              initiallyIncompatible,
             );
             if (
               pairingAppearance.kind === "target-changed" ||

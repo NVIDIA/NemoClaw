@@ -1287,6 +1287,8 @@ if (afterList.pending.some((pending) => pending.requestId === upgrade.requestId)
   throw new Error("bounded SQLite pairing and stored auth were not published atomically");
 }
 if (${readBaseline}) {
+  if (JSON.stringify([...(afterPaired?.scopes ?? [])].toSorted()) !== JSON.stringify(expectedScopes)) throw new Error("native read-baseline approval did not settle paired scopes");
+  if (JSON.stringify([...(afterPaired?.approvedScopes ?? [])].toSorted()) !== JSON.stringify(expectedScopes)) throw new Error("native read-baseline approval did not settle approved scopes");
   await pairing.v(deviceId, { clientId: "cli", clientMode: "probe" }, stateDir);
   const reprobed = (await pairing.c(stateDir)).paired.find((device) => device.deviceId === deviceId);
   const probeStored = auth.r({ deviceId, role: "operator", env: { ...process.env, OPENCLAW_STATE_DIR: stateDir } });
