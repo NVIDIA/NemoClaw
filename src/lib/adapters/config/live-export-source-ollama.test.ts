@@ -12,6 +12,7 @@ import YAML from "yaml";
 import { describe, expect, it, vi } from "vitest";
 import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { createOllamaExportProbe } from "../../inference/ollama/proxy";
+import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
@@ -56,6 +57,7 @@ function ollamaProbe(observed: ObservedOllamaProxy) {
 function mockOllamaSource(model: string = "qwen3.5:9b") {
   vi.spyOn(os, "platform").mockReturnValue("linux");
   const { source, observed } = ollamaSource(model);
+  source.messaging = { schemaVersion: 1, plan: MessagingSetupApplier.emptyPlan(source.name) };
   mockSupportedLiveSource(3, 3, source);
   const effective = configuration();
   effective.policy.network_policies.api.endpoints = [

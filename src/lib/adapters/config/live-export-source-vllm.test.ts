@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { runConfigExport } from "../../actions/config/export";
+import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
 import {
   parseNemoClawConfigDocumentName,
   EXPORTED_VLLM_PROFILE_ID,
@@ -83,6 +84,7 @@ function mockManagedVllmSource(
   });
   const source: SandboxEntry = {
     ...entry,
+    messaging: { schemaVersion: 1, plan: MessagingSetupApplier.emptyPlan(entry.name) },
     provider: "vllm-local",
     model,
     endpointUrl: "http://host.openshell.internal:18000/v1",

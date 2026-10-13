@@ -12,6 +12,7 @@ import { fixedNativeProviderForAttachment } from "../../inference/native-provide
 import { BUILD_ENDPOINT_URL } from "../../inference/provider-models";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../inference/native-nvidia/contract";
 import type { ManagedStartupProfile } from "../../onboard/managed-startup/profile";
+import type { MessagingCompilerWorkflow } from "../../messaging/manifest";
 import {
   buildManagedStartupProfile,
   type ManagedStartupProfileBuilderInput,
@@ -57,6 +58,14 @@ import type {
 const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 const DEFAULT_DASHBOARD_URL = "http://127.0.0.1:18789";
 const HERMES_API_KEY_ENDPOINT = "https://inference-api.nousresearch.com/v1";
+const EMPTY_MESSAGING_WORKFLOWS = {
+  onboard: true,
+  "add-channel": true,
+  "remove-channel": true,
+  "start-channel": true,
+  "stop-channel": true,
+  rebuild: true,
+} satisfies Record<MessagingCompilerWorkflow, true>;
 
 type SupportedExportAgent = "hermes" | "langchain-deepagents-code" | "openclaw";
 type ManagedStartupInferenceRoute = ReturnType<typeof resolveManagedStartupInferenceRoute>;
@@ -153,6 +162,44 @@ function hasEntries(value: unknown): boolean {
   return Array.isArray(value)
     ? value.length > 0
     : value !== undefined && value !== null && value !== false;
+}
+
+function hasExportExcludedMessaging(entry: ObservedExportRegistry): boolean {
+  if (!hasEntries(entry.messaging)) return false;
+  const plan = entry.messaging?.plan;
+  if (
+    !plan ||
+    typeof plan.workflow !== "string" ||
+    !Object.hasOwn(EMPTY_MESSAGING_WORKFLOWS, plan.workflow)
+  )
+    return true;
+  const emptyDerivedFields = {
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+    ...(plan.runtimeSetup !== undefined
+      ? { runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] } }
+      : {}),
+  };
+  // Compact persistence omits derived fields. Preserve raw fields so orphaned effects still reject export.
+  return !isDeepStrictEqual(
+    { ...entry.messaging, plan: { ...emptyDerivedFields, ...plan } },
+    {
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: entry.name,
+        agent: entry.agent,
+        workflow: plan.workflow,
+        channels: [],
+        disabledChannels: [],
+        ...emptyDerivedFields,
+      },
+    },
+  );
 }
 
 function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
@@ -353,7 +400,7 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
       !exportWebSearchBinding(entry) && (entry.webSearchEnabled || entry.webSearchProvider),
       "web search",
     ],
-    ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
+    ["spec.sandboxes[].integrations.messaging", hasExportExcludedMessaging(entry), "messaging"],
     [
       "spec.sandboxes[].harness.interfaces.dashboard",
       entry.agent !== "openclaw" && entry.dashboardRemoteBindPrepared,

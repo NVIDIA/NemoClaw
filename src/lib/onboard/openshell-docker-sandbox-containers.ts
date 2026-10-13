@@ -223,12 +223,17 @@ type ExactDockerContainerCleanupDeps = {
 
 export function inspectDockerSandboxNameLabeledContainers(
   sandboxName: string,
+  inspect?: Parameters<typeof inspectDockerSandboxIdentities>[2],
 ): DockerSandboxIdentityObservation {
-  return inspectDockerSandboxIdentities(`${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`, {
-    managedBy: OPENSHELL_MANAGED_BY_LABEL,
-    workspace: OPENSHELL_SANDBOX_WORKSPACE_LABEL,
-    sandboxId: OPENSHELL_SANDBOX_ID_LABEL,
-  });
+  return inspectDockerSandboxIdentities(
+    `${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
+    {
+      managedBy: OPENSHELL_MANAGED_BY_LABEL,
+      workspace: OPENSHELL_SANDBOX_WORKSPACE_LABEL,
+      sandboxId: OPENSHELL_SANDBOX_ID_LABEL,
+    },
+    inspect,
+  );
 }
 
 function exactCleanupContainerIds(
