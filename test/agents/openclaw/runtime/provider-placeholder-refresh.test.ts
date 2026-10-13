@@ -35,7 +35,13 @@ describe.concurrent("native provider handle refresh", () => {
     env: Record<string, string> = {},
     rootMode = false,
     runtimePlan: unknown = { credentialBindings: [] },
-    options: { readOnlyDirectory?: boolean; provider?: unknown } = {},
+    options: {
+      readOnlyDirectory?: boolean;
+      provider?: unknown;
+      nvidia?: boolean;
+      group?: number;
+      failDirectorySync?: boolean;
+    } = {},
   ) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-placeholders-"));
     try {
@@ -53,11 +59,26 @@ describe.concurrent("native provider handle refresh", () => {
       const providerPath = path.join(tmpDir, "providers.cjs");
       fs.writeFileSync(
         providerPath,
-        `exports.fixedNativeProvider = () => (${JSON.stringify(options.provider ?? hostedNativeProvider("openrouter-api"))});`,
+        `exports.fixedNativeProvider = () => (${JSON.stringify(options.nvidia ? hostedNativeProvider("openrouter-api") : (options.provider ?? hostedNativeProvider("openrouter-api")))});
+exports.NVIDIA_HOSTED_NATIVE_ENDPOINT = ${JSON.stringify(options.nvidia ? options.provider.endpoint : "https://integrate.api.nvidia.com/v1")};
+exports.NVIDIA_HOSTED_CREDENTIAL_ENV = ${JSON.stringify(options.nvidia ? options.provider.credentialEnv : "NVIDIA_INFERENCE_API_KEY")};`,
       );
       fs.chmodSync(configPath, 0o640);
+      fs.chownSync(configPath, process.getuid(), options.group ?? fs.statSync(configPath).gid);
       fs.chmodSync(openclawDir, options.readOnlyDirectory ? 0o500 : 0o700);
       const fn = extractShellFunctionFromSource(src, "refresh_openclaw_provider_placeholders")
+        .replace(
+          "import tempfile",
+          options.failDirectorySync
+            ? `import tempfile
+real_fsync = os.fsync
+def sync_or_fail(fd):
+    if stat.S_ISDIR(os.fstat(fd).st_mode):
+        raise OSError("directory sync failed")
+    return real_fsync(fd)
+os.fsync = sync_or_fail`
+            : "import tempfile",
+        )
         .replaceAll("/sandbox/.openclaw", openclawDir)
         .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath)
         .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE)
@@ -102,6 +123,7 @@ describe.concurrent("native provider handle refresh", () => {
         handoffEnv,
         result,
         mode: fs.statSync(configPath).mode & 0o777,
+        group: fs.statSync(configPath).gid,
         files: fs.readdirSync(openclawDir),
       };
     } finally {
@@ -167,34 +189,69 @@ describe.concurrent("native provider handle refresh", () => {
     },
   );
 
-  it("uses the canonical OpenRouter endpoint and credential definition (#13043)", async () => {
-    const provider = {
-      ...hostedNativeProvider("openrouter-api"),
-      endpoint: "https://new.example.test/v1",
-      credentialEnv: "NEW_ROUTER_KEY",
-    };
-    const current = "openshell:resolve:env:v43_NEW_ROUTER_KEY";
-    const run = await runRefresh(
-      {
-        models: {
-          providers: {
-            inference: {
-              baseUrl: provider.endpoint,
-              apiKey: "openshell:resolve:env:v42_NEW_ROUTER_KEY",
+  it.each(["group", "directory sync"])(
+    "preserves publication safety for %s (#13043)",
+    async (boundary) => {
+      const group = process.getgroups().find((gid) => gid !== process.getgid());
+      const current = "openshell:resolve:env:v43_OPENROUTER_API_KEY";
+      const run = await runRefresh(
+        {
+          models: {
+            providers: {
+              inference: {
+                baseUrl: "https://openrouter.ai/api/v1",
+                apiKey: "openshell:resolve:env:v42_OPENROUTER_API_KEY",
+              },
             },
           },
         },
-      },
-      { NEW_ROUTER_KEY: current },
-      false,
-      undefined,
-      { provider },
-    );
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.config.models.providers.inference.apiKey).toBe(current);
-    expect(run.mode).toBe(0o640);
-    expect(run.files).toEqual(["openclaw.json"]);
-  });
+        { OPENROUTER_API_KEY: current },
+        false,
+        undefined,
+        { group, failDirectorySync: boundary === "directory sync" },
+      );
+      expect(run.config.models.providers.inference.apiKey).toBe(current);
+      expect(run.files).toEqual(["openclaw.json"]);
+      expect(run.result.status, run.result.stderr).toBe(boundary === "group" ? 0 : 1);
+      expect(run.group).toBe(group ?? process.getgid());
+      expect(run.mode).toBe(0o640);
+      expect(run.result.stderr).toContain(
+        boundary === "group" ? "Refreshed provider placeholders" : "directory sync failed",
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "uses the canonical endpoint and credential definition (NVIDIA=%s) (#13043)",
+    async (nvidia) => {
+      const provider = {
+        ...hostedNativeProvider("openrouter-api"),
+        endpoint: "https://new.example.test/v1",
+        credentialEnv: "NEW_ROUTER_KEY",
+      };
+      const current = "openshell:resolve:env:v43_NEW_ROUTER_KEY";
+      const run = await runRefresh(
+        {
+          models: {
+            providers: {
+              inference: {
+                baseUrl: provider.endpoint,
+                apiKey: "openshell:resolve:env:v42_NEW_ROUTER_KEY",
+              },
+            },
+          },
+        },
+        { NEW_ROUTER_KEY: current },
+        false,
+        undefined,
+        { provider, nvidia },
+      );
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.config.models.providers.inference.apiKey).toBe(current);
+      expect(run.mode).toBe(0o640);
+      expect(run.files).toEqual(["openclaw.json"]);
+    },
+  );
 
   describe.each([false, true])("OpenRouter refresh (root=%s)", (rootMode) => {
     it.each(["v43", `s${"a".repeat(64)}`])(

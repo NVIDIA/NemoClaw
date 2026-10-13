@@ -562,7 +562,14 @@ increases.
 
 The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
 Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
-the disabled baseline. The TUI check then runs without changing that registry baseline. The installed
+the disabled baseline. Observability turns register unique prompts before execution. Cleanup uses the
+native thread ID from a valid direct-turn result. If that result is malformed or the command fails after
+persisting state, it lists only the probe's private cwd with `--limit 2 --json` and accepts an empty list
+or exactly one thread whose recorded cwd matches. Ambiguous results fail cleanup without deleting a
+thread. Listing, deletion, and removal of the private directory each use a 30-second host timeout with
+a five-second kill grace. A failed command or timeout marks cleanup as failed, retains the private
+directory and recovery instructions, and allows policy and capture cleanup to continue.
+The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.
 On Docker, the fixture compares the registry before and after export. State validation confirms that the
@@ -643,6 +650,8 @@ Changes to shared catalogue execution paths select every catalogue target.
 
 The `openclaw-inference-switch` target owns fresh custom-image route initialization.
 Its fixture contains only a different baked model and stale limits.
+Custom Dockerfile onboarding uses the existing startup and pairing settlement checks before
+restarting the native gateway for the initial inference route, as external-image onboarding does.
 The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.
 The OpenClaw native NVIDIA and mock Anthropic switch variants start with an authenticated local OpenAI-compatible fixture.
 The native NVIDIA destination uses the public endpoint and its public credential only after switching.
@@ -1097,6 +1106,18 @@ registry remains the durable routing and credential-custody record, while the
 completed onboarding session remains unchanged as historical onboarding
 evidence. Deterministic startup and action tests own the corresponding launch
 environment and session non-rewrite checks.
+
+The native switch must restart the gateway to refresh provider credentials;
+the compatible fixture preserves its gateway process. The live lane requires
+successful probes that each identify one gateway PID before comparing its lifecycle.
+Support tests reject failed, empty, and ambiguous PID probes.
+
+The Hermes Slack lane accepts only correctly scoped OpenShell resolver
+placeholders for both Slack assignments in `.env` and for the API egress probes.
+The saved assignments must each match the currently injected generation.
+Support tests execute the file probe against absent, current, raw, stale, duplicate, mismatched,
+and malformed values. The live lane retains startup, policy, raw credential
+scans, both Slack API calls, and resource cleanup as required evidence.
 
 ## Native plugin and package lifecycle
 
@@ -1937,10 +1958,14 @@ Runs without a PR catalog require a trusted main base and managed-image publicat
 PR runs select the nearest fully successful publication on the trusted workflow commit's first-parent history.
 The publication must cover the PR base's latest reviewed image input.
 For that publication, the job binds the run ID, attempt, revision, cohort artifact ID, and artifact digest before it emits `managed_image_revision`.
-It validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that workflow attempt.
+It validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that publication attempt.
 `generate-matrix` runs first and selects whether publication is required.
 Stock-onboarding jobs still depend on publication, so incomplete publication creates no onboarding fanout.
 Direct `main` runs use the same publication workflow and artifact contract.
+
+Protected managed-image build jobs apply a separate rule to their reusable base receipt.
+The producer must be from the same workflow run and no later than the consumer attempt.
+Receipt verification remains bound to the producer attempt.
 
 The Deep Agents Code managed-image target uses the shared receipt check to verify its image digest, source revision, and cohort.
 Onboarding and fresh re-onboarding do not supply a base-image override.

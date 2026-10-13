@@ -688,13 +688,13 @@ EOF
 
   describe("double-source guard", () => {
     it("does not redefine functions when sourced twice", () => {
-      runWithLib(`
+      const { stdout } = runWithLib(`
+        emit_sandbox_sourced_file() { echo "DOUBLE_SOURCE_OK"; }
         # Source again — should be a no-op
         source ${JSON.stringify(SANDBOX_INIT)}
-        # Functions should still work
-        echo "test" | emit_sandbox_sourced_file /dev/null 2>/dev/null || true
-        echo "DOUBLE_SOURCE_OK"
+        emit_sandbox_sourced_file
       `);
+      expect(stdout).toBe("DOUBLE_SOURCE_OK");
     });
   });
 

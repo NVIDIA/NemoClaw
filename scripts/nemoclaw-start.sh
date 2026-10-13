@@ -868,10 +868,12 @@ parsed = subprocess.run(
         "/usr/local/bin/node",
         "-e",
         'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5");'
-        'const {fixedNativeProvider}=require("/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs");'
+        'const {fixedNativeProvider,NVIDIA_HOSTED_NATIVE_ENDPOINT,NVIDIA_HOSTED_CREDENTIAL_ENV}='
+        'require("/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs");'
         'process.stdout.write(JSON.stringify({'
         'config:JSON5.parse(require("node:fs").readFileSync(0,"utf8")),'
-        'openrouter:fixedNativeProvider("openrouter-api")}));',
+        'openrouter:fixedNativeProvider("openrouter-api"),'
+        'nvidia:{endpoint:NVIDIA_HOSTED_NATIVE_ENDPOINT,credentialEnv:NVIDIA_HOSTED_CREDENTIAL_ENV}}));',
     ],
     input=source,
     text=True,
@@ -882,6 +884,7 @@ parsed = subprocess.run(
 inputs = json.loads(parsed.stdout)
 config = inputs["config"]
 openrouter = inputs["openrouter"]
+nvidia = inputs["nvidia"]
 
 refreshed = set()
 native_refreshed = False
@@ -894,7 +897,7 @@ models = config.get("models") if isinstance(config, dict) else None
 providers = models.get("providers") if isinstance(models, dict) else None
 native = providers.get("inference") if isinstance(providers, dict) else None
 native_keys = {
-    "https://integrate.api.nvidia.com/v1": "NVIDIA_INFERENCE_API_KEY",
+    nvidia["endpoint"]: nvidia["credentialEnv"],
     openrouter["endpoint"]: openrouter["credentialEnv"],
 }
 endpoint = native.get("baseUrl") if isinstance(native, dict) else None
@@ -1044,8 +1047,9 @@ def walk_for_warnings(value, path):
 walk_for_warnings(updated, [])
 
 if updated != config or native_refreshed:
-    # The old configuration stays intact until the complete replacement is durable.
-    mode = stat.S_IMODE(os.stat(config_file).st_mode)
+    # Publish the complete replacement, then persist its directory entry.
+    original = os.stat(config_file)
+    mode = stat.S_IMODE(original.st_mode)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -1053,12 +1057,19 @@ if updated != config or native_refreshed:
             prefix=".provider-refresh-", delete=False,
         ) as f:
             temporary = f.name
+            os.fchown(f.fileno(), -1, original.st_gid)
             os.fchmod(f.fileno(), mode)
             json.dump(updated, f, indent=2)
             f.write("\n")
             f.flush()
             os.fsync(f.fileno())
         os.replace(temporary, config_file)
+        temporary = None
+        directory = os.open(os.path.dirname(config_file), os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
         if temporary is not None and os.path.exists(temporary):
             os.unlink(temporary)

@@ -31,6 +31,7 @@ import {
 import { persistedEngineAuthorityPath } from "../../onboard/runtime-provider/persisted-engine-authority";
 import { createPodmanRuntimeProviderBundle } from "../../onboard/runtime-provider/podman";
 import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
+import { formatStorageBytes } from "../vllm-storage";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
 import {
@@ -1094,6 +1095,48 @@ describe("managed llama.cpp installer", () => {
       });
     },
   );
+
+  it("declares the profile and download sizes before acquisition (#12207)", async () => {
+    const selected = selection();
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    const messages: string[] = [];
+    const verifyGguf = vi.fn(async () => {
+      throw new Error("not cached");
+    });
+
+    await installManagedLlamaCpp(selected, {
+      sandboxName: "spark-agent",
+      homeDir,
+      runtimeProvider: managedRuntimeProvider(harness.engine),
+      acquireGguf: vi.fn(async () => verifiedArtifact(selected, homeDir)),
+      verifyGguf,
+      checkPort: vi.fn(async () => ({ ok: true })),
+      log: (message: string) => {
+        messages.push(message);
+      },
+    });
+
+    const modelBytes = selected.recipe.spec.model.files.reduce(
+      (total, file) => total + file.sizeBytes,
+      0,
+    );
+    const acquisitionIndex = messages.findIndex((message) =>
+      message.includes("Verifying the exact llama.cpp GGUF"),
+    );
+    expect(acquisitionIndex).toBeGreaterThan(0);
+    const declared = messages.slice(0, acquisitionIndex);
+    expect(declared).toContain(`    Serving profile: ${selected.preset.metadata.id}`);
+    expect(declared).toContain(`    Recipe: ${selected.recipe.metadata.id}`);
+    expect(declared).toContain(
+      `    Image download on first run (${formatStorageBytes(
+        BigInt(selected.recipe.spec.runtime.imageDownloadSizeBytes),
+      )}), cached after`,
+    );
+    expect(declared).toContain(
+      `    Model download on first run (${formatStorageBytes(BigInt(modelBytes))}), cached after`,
+    );
+  });
 
   it("suppresses untrusted pull output from the failure reason and installer log (#10558)", async () => {
     const selected = selection();

@@ -21,11 +21,7 @@ import {
 } from "../../../tools/e2e/workflow-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "../../../tools/e2e/standard-profile-workflow-boundary.mts";
 
-import type { HostCliClient } from "../fixtures/clients/host.ts";
-import {
-  rebuildOpenRouterSmoke,
-  requireProviderSmokeSelected,
-} from "../live/inference-routing-helpers.ts";
+import { requireProviderSmokeSelected } from "../live/inference-routing-helpers.ts";
 
 const workflow = YAML.parse(readFileSync(".github/workflows/e2e.yaml", "utf8"));
 
@@ -283,41 +279,3 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label local smoke prerequisites", (
     });
   });
 });
-
-it("rebuilds the OpenRouter smoke without passing a fresh host credential", async () => {
-  vi.stubEnv("OPENROUTER_API_KEY", "host-key-canary");
-  const result = { exitCode: 1, stdout: "", stderr: "rebuild failed" };
-  const command = vi.fn().mockResolvedValue(result);
-  const observed = await rebuildOpenRouterSmoke(
-    "openrouter",
-    { command } as unknown as HostCliClient,
-    "owned-smoke",
-    "redaction-canary",
-  );
-  expect(observed).toBe(result);
-  expect(command).toHaveBeenCalledExactlyOnceWith(
-    process.execPath,
-    expect.arrayContaining(["owned-smoke", "rebuild", "--yes", "--verbose"]),
-    expect.objectContaining({
-      env: expect.not.objectContaining({ OPENROUTER_API_KEY: expect.anything() }),
-      redactionValues: ["redaction-canary"],
-      timeoutMs: 10 * 60_000,
-    }),
-  );
-});
-
-it.each(["openai", "anthropic", "gemini", "hermes"])(
-  "retains fresh onboarding for the %s smoke",
-  async (provider) => {
-    const command = vi.fn();
-    expect(
-      await rebuildOpenRouterSmoke(
-        provider,
-        { command } as unknown as HostCliClient,
-        "owned-smoke",
-        "redaction-canary",
-      ),
-    ).toBeNull();
-    expect(command).not.toHaveBeenCalled();
-  },
-);

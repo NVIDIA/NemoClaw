@@ -15,13 +15,13 @@ import {
   openClawAgentResponseRecord,
 } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   cleanupSandbox,
-  rebuildOpenRouterSmoke,
   expectOnboardSuccess,
   inferenceSandboxName,
   onboardSandbox,
@@ -292,7 +292,25 @@ test.for(HOSTED_PROVIDER_SMOKE_CASES.map((entry) => [entry.id, entry.label, entr
       cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
     );
     progress.phase("exercise the selected hosted lifecycle");
-    const rebuilt = await rebuildOpenRouterSmoke(selected.selector, host, sandboxName, apiKey);
+    // Persistence belongs to rebuild-openclaw. Reuse this smoke's routing and
+    // isolation checks after recovering credentials without a fresh host key.
+    const rebuilt =
+      selected.selector === "openrouter"
+        ? await host.command(
+            process.execPath,
+            [CLI_ENTRYPOINT, sandboxName, "rebuild", "--yes", "--verbose"],
+            {
+              artifactName: "tc-inf-07-rebuild",
+              env: {
+                ...buildAvailabilityProbeEnv(),
+                NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+                NEMOCLAW_NON_INTERACTIVE: "1",
+              },
+              redactionValues: [apiKey],
+              timeoutMs: 10 * 60_000,
+            },
+          )
+        : null;
     expect(
       rebuilt === null ? 0 : rebuilt.exitCode,
       rebuilt === null ? "fresh hosted provider lifecycle" : resultText(rebuilt),
