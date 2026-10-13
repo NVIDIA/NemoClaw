@@ -269,7 +269,9 @@ describe("Station managed llama.cpp GPU binding (#13026)", () => {
       reserveManagedLlamaCppOwner(paths, fixture.legacyOwner());
       seedLegacyRuntimeAuthority(selected, fixture.homeDir, fixture.operation.engine);
       const before = fs.readFileSync(paths.ownerPath);
-      await fixture.install().catch(() => undefined);
+      const result = await fixture.install();
+      expect(result).toMatchObject({ ok: true });
+      expect(fixture.createLifecycle).toHaveBeenCalled();
       expect(fs.readFileSync(paths.ownerPath)).toEqual(before);
       expect(loadManagedLlamaCppOwner(paths)?.gpuDeviceUuid).toBeUndefined();
       expect(fixture.createLifecycle).not.toHaveBeenCalledWith(
