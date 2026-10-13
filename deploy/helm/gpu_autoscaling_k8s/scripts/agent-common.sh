@@ -24,11 +24,11 @@ agent_common_print_laptop_client_usage() {
   echo "simpler option — from the same DGX in another terminal: E2E_USERS=${E2E_USERS:-5} ./scripts/${script_name}"
 }
 
-# Same client for both HPA metrics. GPU util does not take MAX_TOKENS
-# (OpenClaw 4096, Hermes 1024, Deep Agents 2048). Latency uses MAX_TOKENS
-# (default 64). OpenClaw GPU util uses three in-flight chats on the one
-# agent per sandbox so 1→8 stays above the HPA target; latency stays inflight 1.
-# The client holds ~60s at 8 GPUs, then stops.
+# Same client for both HPA metrics. MAX_TOKENS and INFLIGHT are client
+# flags (not metrics-proxy or HPA settings). If MAX_TOKENS is unset,
+# latency falls back to 64 and GPU util falls back per agent so provision
+# can pin a gateway. If INFLIGHT is unset, the client uses 1. The client
+# holds ~60s at 8 GPUs, then stops.
 agent_common_hpa_metric() {
   local metric="${HPA_METRIC:-}"
   if [[ -z "${metric}" ]] && command -v kubectl >/dev/null 2>&1; then
@@ -54,32 +54,24 @@ except Exception:
 
 agent_common_resolve_max_tokens() {
   local agent="${1:-openclaw}"
-  local raw=""
+  local raw="${MAX_TOKENS:-}"
   local metric
-  metric="$(agent_common_hpa_metric)"
-  case "${metric}" in
-    *latency*)
-      raw="${MAX_TOKENS:-${E2E_LATENCY_TOKEN_START:-64}}"
-      ;;
-    "")
-      if [[ -n "${MAX_TOKENS:-}" ]]; then
-        raw="${MAX_TOKENS}"
-      else
+  # MAX_TOKENS is the flag for both metrics. Fallbacks apply only when it is omitted.
+  if [[ -z "${raw}" ]]; then
+    metric="$(agent_common_hpa_metric)"
+    case "${metric}" in
+      *latency*)
+        raw="${E2E_LATENCY_TOKEN_START:-64}"
+        ;;
+      *)
         case "${agent}" in
-          openclaw) raw="${E2E_GPUUTIL_TOKEN_START:-4096}" ;;
+          openclaw) raw="${E2E_GPUUTIL_TOKEN_START:-2048}" ;;
           deepagents) raw="${E2E_GPUUTIL_TOKEN_START:-2048}" ;;
           *) raw="${E2E_GPUUTIL_TOKEN_START:-1024}" ;;
         esac
-      fi
-      ;;
-    *)
-      case "${agent}" in
-        openclaw) raw="${E2E_GPUUTIL_TOKEN_START:-4096}" ;;
-        deepagents) raw="${E2E_GPUUTIL_TOKEN_START:-2048}" ;;
-        *) raw="${E2E_GPUUTIL_TOKEN_START:-1024}" ;;
-      esac
-      ;;
-  esac
+        ;;
+    esac
+  fi
   [[ "${raw}" =~ ^[1-9][0-9]*$ ]] || {
     echo "ERROR: MAX_TOKENS must be a positive integer (got '${raw}')" >&2
     return 1
@@ -90,59 +82,35 @@ agent_common_resolve_max_tokens() {
   printf '%s\n' "${raw}"
 }
 
-# One-time client pin. GPU util ignores a leftover MAX_TOKENS in the shell.
+# One-time client pin from the MAX_TOKENS flag (both HPA metrics).
 agent_common_export_client_tokens() {
   local agent="${1:-openclaw}"
-  local metric
-  metric="$(agent_common_hpa_metric)"
   MAX_TOKENS="$(agent_common_resolve_max_tokens "${agent}")"
   export MAX_TOKENS
-  case "${metric}" in
-    *latency* | "") ;;
-    *) export E2E_GPUUTIL_TOKEN_START="${MAX_TOKENS}" ;;
-  esac
+  export E2E_GPUUTIL_TOKEN_START="${MAX_TOKENS}"
 }
 
-# One agent per sandbox. OpenClaw GPU util needs three in-flight chats:
-# five inflight-1 chats stall at 7 GPUs (~40%/40). Four chats hung the
-# gateway. Do not copy extra helpers into the sandbox to finish 7→8.
+# Concurrent chats per user on the one agent in that sandbox. INFLIGHT is
+# the client flag. It is not selected from the live HPA metric.
 agent_common_export_client_inflight() {
-  local agent="${1:-openclaw}"
-  local metric
-  metric="$(agent_common_hpa_metric)"
-  case "${metric}" in
-    *latency*)
-      export E2E_INFLIGHT_START_PER_USER=1
-      export E2E_INFLIGHT_PER_USER=1
-      ;;
-    *)
-      if [[ "${agent}" == "openclaw" ]]; then
-        local gpu_n="${E2E_GPUUTIL_INFLIGHT_MAX:-3}"
-        export E2E_INFLIGHT_START_PER_USER="${gpu_n}"
-        export E2E_INFLIGHT_PER_USER="${gpu_n}"
-        export E2E_GPUUTIL_INFLIGHT_MAX="${gpu_n}"
-        export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-120}"
-      else
-        export E2E_INFLIGHT_START_PER_USER=1
-        export E2E_INFLIGHT_PER_USER=1
-      fi
-      ;;
-  esac
+  local raw="${INFLIGHT:-${E2E_INFLIGHT_PER_USER:-1}}"
+  [[ "${raw}" =~ ^[1-9][0-9]*$ ]] || {
+    echo "ERROR: INFLIGHT must be a positive integer (got '${raw}')" >&2
+    return 1
+  }
+  export INFLIGHT="${raw}"
+  export E2E_INFLIGHT_START_PER_USER="${raw}"
+  export E2E_INFLIGHT_PER_USER="${raw}"
+  export E2E_GPUUTIL_INFLIGHT_MAX="${raw}"
+  if ((raw > 1)); then
+    export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-120}"
+  fi
 }
 
 agent_common_print_load_banner() {
   local duration="${1:?}"
   local hold="${2:?}"
-  local metric
-  metric="$(agent_common_hpa_metric)"
-  case "${metric}" in
-    *latency*)
-      echo "Sends chats for ${duration}s. Latency MAX_TOKENS=${MAX_TOKENS}. Holds ${hold}s at 8 GPUs, then stops."
-      ;;
-    *)
-      echo "Sends chats for ${duration}s. GPU util does not take MAX_TOKENS (built-in ${MAX_TOKENS}), inflight=${E2E_INFLIGHT_PER_USER:-1}. Holds ${hold}s at 8 GPUs, then stops."
-      ;;
-  esac
+  echo "Sends chats for ${duration}s. MAX_TOKENS=${MAX_TOKENS} INFLIGHT=${INFLIGHT:-${E2E_INFLIGHT_PER_USER:-1}}. Holds ${hold}s at 8 GPUs, then stops."
 }
 
 agent_common_fail_openshell_for_client() {
@@ -179,7 +147,6 @@ agent_common_start_hpa_timeline() {
   local dir="${1:?output dir}"
   local truncate="${2:-0}"
   local here pidfile pid
-  local -a extra=()
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   command -v kubectl >/dev/null 2>&1 || return 0
   command -v python3 >/dev/null 2>&1 || return 0
@@ -192,14 +159,20 @@ agent_common_start_hpa_timeline() {
     fi
     rm -f "${pidfile}"
   fi
+  # Do not expand an empty extra[@] array: macOS bash 3.2 + set -u exits.
   if [[ "${truncate}" == "1" ]]; then
-    extra+=(--truncate)
+    nohup python3 "${here}/e2e-hpa-timeline.py" \
+      --output "${dir}/hpa-timeline.jsonl" \
+      --namespace "${NAMESPACE:-nemoclaw-gpu}" \
+      --hpa-name "${HPA_NAME:-nemoclaw-gpu-metrics-proxy}" \
+      --truncate >/dev/null 2>&1 &
+  else
+    nohup python3 "${here}/e2e-hpa-timeline.py" \
+      --output "${dir}/hpa-timeline.jsonl" \
+      --namespace "${NAMESPACE:-nemoclaw-gpu}" \
+      --hpa-name "${HPA_NAME:-nemoclaw-gpu-metrics-proxy}" \
+      >/dev/null 2>&1 &
   fi
-  nohup python3 "${here}/e2e-hpa-timeline.py" \
-    --output "${dir}/hpa-timeline.jsonl" \
-    --namespace "${NAMESPACE:-nemoclaw-gpu}" \
-    --hpa-name "${HPA_NAME:-nemoclaw-gpu-metrics-proxy}" \
-    "${extra[@]}" >/dev/null 2>&1 &
   echo $! >"${pidfile}"
 }
 
@@ -610,15 +583,50 @@ else:
     options.pop("ignore_eos", None)
 models[0]["maxTokens"] = max_tokens
 tools = cfg.setdefault("tools", {})
+tools["profile"] = "minimal"
 deny = tools.get("deny")
 if not isinstance(deny, list):
     deny = []
-for name in ("message", "cron", "gateway", "nodes", "sessions_send", "exec", "process", "bash"):
+for name in (
+    "message",
+    "cron",
+    "gateway",
+    "nodes",
+    "sessions_send",
+    "exec",
+    "process",
+    "bash",
+    "write",
+    "read",
+    "edit",
+):
     if name not in deny:
         deny.append(name)
 tools["deny"] = deny
+session_cfg = cfg.setdefault("session", {})
+if not isinstance(session_cfg, dict):
+    session_cfg = {}
+    cfg["session"] = session_cfg
+maint = session_cfg.setdefault("maintenance", {})
+if not isinstance(maint, dict):
+    maint = {}
+    session_cfg["maintenance"] = maint
+maint["maxEntries"] = 100000
+maint["mode"] = "warn"
 text = json.dumps(cfg, indent=2) + "\n"
 path.write_text(text)
+# Drop leftover session files. A full store logs "capped session entry
+# count", inflight chats hang, and GPU util stays 0% so 1→8 stalls.
+import shutil
+sess = pathlib.Path("/sandbox/.openclaw/agents/main/sessions")
+if sess.is_dir():
+    shutil.rmtree(sess, ignore_errors=True)
+sess.mkdir(parents=True, exist_ok=True)
+logp = pathlib.Path("/sandbox/.openclaw/logs/gateway-persistent.log")
+try:
+    logp.write_text("")
+except OSError:
+    pass  # Truncate is best-effort; the live pin already succeeded.
 for name in (
     "openclaw.json.bak",
     "openclaw.json.last-good",

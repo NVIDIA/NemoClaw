@@ -130,9 +130,9 @@ def load_prompt() -> str:
     except ValueError:
         max_tokens = 1024
     if max_tokens <= 128:
-        return "In one sentence, what is Kubernetes HPA?"
+        return "Do not use tools. In one sentence, what is Kubernetes HPA?"
     return (
-        "Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, "
+        "Do not use tools. Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, "
         "with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long."
     )
 

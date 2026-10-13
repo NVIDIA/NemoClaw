@@ -12,16 +12,18 @@
 #   ./scripts/agentscaling_latency.sh
 #
 # Default — from a remote terminal such as your laptop (HTTP):
-#   E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client.sh
+#   E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 INFLIGHT=3 MAX_TOKENS=2048 ./scripts/client.sh
 #   UI user N: http://dgx-ip:$((18789+N))/u/0
 #
-# simpler option — from the same DGX in another terminal:
-#   E2E_USERS=5 ./scripts/client.sh
+# Record the demo on the DGX (pin + pause scale-down). GPU util then latency:
+#   env -u E2E_CLIENT_HOST INFLIGHT=3 MAX_TOKENS=2048 E2E_USERS=5 ./scripts/client.sh
+#   env -u E2E_CLIENT_HOST INFLIGHT=1 MAX_TOKENS=64 E2E_USERS=5 ./scripts/client.sh
 # Both paths send chat.send from this client to published :18789+i.
 # They do not copy a load helper into the sandbox.
-# Same client for both HPA metrics. GPU util does not take MAX_TOKENS
-# (built-in 4096) and uses three in-flight chats on the one OpenClaw per
-# sandbox. Latency: MAX_TOKENS=64 ./scripts/client.sh (inflight 1).
+# Same client for both HPA metrics. Pass INFLIGHT and MAX_TOKENS on this
+# client (not in the metrics-proxy). GPU util demo: INFLIGHT=3 MAX_TOKENS=2048.
+# Latency demo: INFLIGHT=1 MAX_TOKENS=64. The DGX client pins MAX_TOKENS on
+# OpenClaw and pauses HPA scale-down during the GPU-util climb.
 
 set -euo pipefail
 
@@ -49,7 +51,7 @@ export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
 export TARGET_PODS="${TARGET_PODS:-8}"
 export DURATION_SEC="${DURATION_SEC:-900}"
 agent_common_export_client_tokens openclaw
-agent_common_export_client_inflight openclaw
+agent_common_export_client_inflight
 export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-600}"
 # Stop new chats after ~60s at 8 GPUs.
 export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-60}"
@@ -158,7 +160,7 @@ for ((i = 0; i < E2E_USERS; i += 1)); do
     || fail "could not pin max_tokens on sandbox ${i}"
 done
 # gateway.reload=off: SIGHUP does not apply max_tokens. Restart the process
-# so 4096 is live before chats start. A file-only pin left the previous
+# so the MAX_TOKENS pin is live before chats start. A file-only pin left the previous
 # latency 64-token gateway running and GPU util stayed bursty.
 echo "Restarting OpenClaw so max_tokens=${MAX_TOKENS} is live"
 "${SCRIPT_DIR}/setup-openclaw-ollama-e2e-sandboxes.sh" stop \

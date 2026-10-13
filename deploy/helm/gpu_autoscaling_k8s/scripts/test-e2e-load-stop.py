@@ -48,6 +48,7 @@ assert "interrupt_openclaw_inflight" in source
 start_source = inspect.getsource(mod.run_test)
 assert "kill_sandbox_load_helpers" in start_source
 assert "interrupt_openclaw_inflight" in start_source
+assert "prune_stale_openclaw_sessions" not in start_source
 assert "publish_ramp_to_sandboxes" not in start_source
 assert "Each user sends chats to that user's sandbox." not in start_source
 # Start must not restart the gateway (that races the max_tokens pin).
@@ -64,6 +65,23 @@ helper = (chart / "files" / "openclaw-e2e-ws-prompt.py").read_text()
 assert 'os.environ.get("E2E_DRAIN_SEC", "0")' in helper
 assert 'os.environ.get("E2E_DRAIN_SEC", "8")' not in helper
 assert 'send_params["maxTokens"]' not in helper
+assert "Do not use tools." in helper
+assert 'f"{session_base}:w{wid}"' in helper
+assert ":t{turn}" not in helper
+assert '"sessions.delete"' in helper
+pin_src = (chart / "files" / "pin-openclaw-ollama-model.py").read_text()
+assert '"write"' in pin_src
+assert '"read"' in pin_src
+assert '"edit"' in pin_src
+assert '"agents" / "main" / "sessions"' in pin_src
+assert "import shutil" in pin_src
+assert 'maint["maxEntries"] = 100000' in pin_src
+assert 'maint["mode"] = "warn"' in pin_src
+assert 'tools["profile"] = "minimal"' in pin_src
+agent_common = (chart / "scripts" / "agent-common.sh").read_text()
+assert '"write"' in agent_common
+assert 'maint["maxEntries"] = 100000' in agent_common
+assert 'openclaw) raw="${E2E_GPUUTIL_TOKEN_START:-2048}"' in agent_common
 discovery = (chart / "files" / "e2e-http-discovery.py").read_text()
 assert 'E2E_PUBLISH_BIND' in discovery
 assert 'return "127.0.0.1"' in discovery

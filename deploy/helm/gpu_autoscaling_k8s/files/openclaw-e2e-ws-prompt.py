@@ -205,10 +205,23 @@ def send_one(
             },
         )
         send_id = None
+        delete_id = None
 
         def _stop_requested() -> bool:
             checker = getattr(stop_event, "is_set", None)
             return bool(callable(checker) and checker())
+
+        def _send_chat() -> str:
+            return send_req(
+                "chat.send",
+                {
+                    "sessionKey": session,
+                    "message": prompt,
+                    "deliver": False,
+                    "timeoutMs": int(timeout * 1000),
+                    "idempotencyKey": str(uuid.uuid4()),
+                },
+            )
 
         while time.monotonic() < deadline:
             if _stop_requested():
@@ -234,22 +247,22 @@ def send_one(
                 except json.JSONDecodeError:
                     continue
                 if frame.get("type") == "res" and frame.get("id") in pending:
+                    rid = frame["id"]
+                    # Drop the previous turn on this worker key so OpenClaw
+                    # does not queue hundreds of stalled embedded_run sessions.
+                    if rid == delete_id and send_id is None:
+                        pending.pop(rid, None)
+                        send_id = _send_chat()
+                        continue
                     if frame.get("ok") is False or frame.get("error"):
                         if not quiet:
                             print(json.dumps(frame.get("error") or frame), file=sys.stderr)
                         return 1, 0
-                    rid = frame["id"]
                     pending.pop(rid, None)
-                    if rid == "r1" and send_id is None:
-                        send_id = send_req(
-                            "chat.send",
-                            {
-                                "sessionKey": session,
-                                "message": prompt,
-                                "deliver": False,
-                                "timeoutMs": int(timeout * 1000),
-                                "idempotencyKey": str(uuid.uuid4()),
-                            },
+                    if rid == "r1" and send_id is None and delete_id is None:
+                        delete_id = send_req(
+                            "sessions.delete",
+                            {"sessionKey": session, "deleteTranscript": True},
                         )
                     payload_obj = frame.get("payload") or frame.get("result") or {}
                     text = _text(payload_obj.get("message") if isinstance(payload_obj, dict) else None)
@@ -307,16 +320,18 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
     except ValueError:
         env_max_tokens = 1024
     pause_raw = os.environ.get("E2E_CHAT_PAUSE_SEC")
+    # Every prompt must say not to use tools. Tool calls (write/exec) occupy
+    # inflight slots while GPUs sit at 0% and 1→8 stalls.
     long_prompts = [
         prompt
-        or "Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
-        "Write a detailed 2000-word summary of transformer inference on NVIDIA GPUs, covering batching, KV cache, and tensor parallelism. Keep writing until the answer is long.",
-        "Write a detailed 2000-word description of how Ollama serves models and batches concurrent chat requests, with examples. Keep writing until the answer is long.",
+        or "Do not use tools. Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long.",
+        "Do not use tools. Write a detailed 2000-word summary of transformer inference on NVIDIA GPUs, covering batching, KV cache, and tensor parallelism. Keep writing until the answer is long.",
+        "Do not use tools. Write a detailed 2000-word description of how Ollama serves models and batches concurrent chat requests, with examples. Keep writing until the answer is long.",
     ]
     short_prompts = [
-        prompt or "In one sentence, what is Kubernetes HPA?",
-        "In one sentence, what is GPU utilization?",
-        "In one sentence, what is Ollama?",
+        prompt or "Do not use tools. In one sentence, what is Kubernetes HPA?",
+        "Do not use tools. In one sentence, what is GPU utilization?",
+        "Do not use tools. In one sentence, what is Ollama?",
     ]
 
     def current_prompts_and_pause() -> tuple[list[str], float]:
@@ -369,7 +384,7 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
                 break
             prompts, pause = current_prompts_and_pause()
             text = prompts[(wid + turn) % len(prompts)]
-            session = f"{session_base}:w{wid}:t{turn}"
+            session = f"{session_base}:w{wid}"
             rc, ntok = send_or_retry(text, session)
             with lock:
                 if rc == 0:

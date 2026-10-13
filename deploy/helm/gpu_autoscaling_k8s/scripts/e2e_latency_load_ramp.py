@@ -3,12 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Same client.sh load for both HPA metrics.
 
-GPU util does not take MAX_TOKENS (OpenClaw built-in 4096). Latency uses
-MAX_TOKENS (default 64). OpenClaw GPU util uses three in-flight chats so 1→8
-can keep new 0% GPUs from diluting the HPA average. Four chats hung the
-gateway; 16384-token chats left inflight slots stuck while GPUs went idle.
-Tokens stay at that pin until 8 GPUs; the client then holds and stops. A
-failed HPA poll (0/0) is treated as 1 GPU, never as 8.
+MAX_TOKENS and INFLIGHT are client flags for both metrics. They are not
+HPA or metrics-proxy settings. GPU util keeps MAX_TOKENS until 7 GPUs,
+then drops to 64-token chats so new 0% GPUs get work. At 8 the client
+holds and stops. A failed HPA poll (0/0) is treated as 1 GPU, never as 8.
 """
 
 from __future__ import annotations
@@ -19,11 +17,11 @@ from pathlib import Path
 
 DEFAULT_START = 64
 SHORT_PROMPT_AT = 128
-DEFAULT_GPUUTIL_TOKENS = 4096
-DEFAULT_GPUUTIL_INFLIGHT = 3
 DEFAULT_TARGET = 8
 DEFAULT_HOLD_SEC = 60.0
-GPUUTIL_INFLIGHT_2_AT = 1
+# Drop GPU-util tokens once HPA is at 7 so leftover long chats do not
+# occupy inflight slots while GPU 8 stays 0%.
+GPUUTIL_NEAR_MAX_AT = 7
 RAMP_FILE = Path(os.environ.get("E2E_LATENCY_RAMP_FILE") or "/tmp/e2e-latency-ramp.json")
 
 
@@ -47,8 +45,17 @@ def env_int(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+def client_inflight() -> int:
+    """INFLIGHT is the client flag. E2E_* names are aliases from client.sh."""
+    n = env_int(
+        "INFLIGHT",
+        env_int("E2E_INFLIGHT_PER_USER", env_int("E2E_GPUUTIL_INFLIGHT_MAX", 1)),
+    )
+    return n if n >= 1 else 1
+
+
 def latency_token_start() -> int:
-    """MAX_TOKENS is the latency flag. GPU util ignores it."""
+    """MAX_TOKENS is the client flag for both metrics."""
     if os.environ.get("MAX_TOKENS"):
         return max(8, env_int("MAX_TOKENS", DEFAULT_START))
     return max(8, env_int("E2E_LATENCY_TOKEN_START", DEFAULT_START))
@@ -63,8 +70,17 @@ def token_bands(start: int | None = None) -> tuple[int, int]:
 
 
 def gpuutil_token_cap() -> int:
-    """GPU util built-in start. Does not read MAX_TOKENS."""
-    return max(8, env_int("E2E_GPUUTIL_TOKEN_START", DEFAULT_GPUUTIL_TOKENS))
+    """GPU util uses the MAX_TOKENS flag. E2E_GPUUTIL_TOKEN_START is an alias."""
+    if os.environ.get("MAX_TOKENS"):
+        return max(8, env_int("MAX_TOKENS", DEFAULT_START))
+    return max(8, env_int("E2E_GPUUTIL_TOKEN_START", DEFAULT_START))
+
+
+def gpuutil_token_near_max() -> int:
+    """Shorter pin at 7–8 GPUs. MAX_TOKENS_AT_7 overrides; default 64."""
+    if os.environ.get("MAX_TOKENS_AT_7"):
+        return max(8, env_int("MAX_TOKENS_AT_7", DEFAULT_START))
+    return DEFAULT_START
 
 
 def effective_replicas(current: int, desired: int) -> int:
@@ -87,14 +103,9 @@ def latency_tokens_for_replicas(
 
 
 def gpuutil_inflight_for_replicas(replicas: int) -> int:
-    """Concurrent chats per user on the one agent in that sandbox."""
-    inflight_max = env_int("E2E_GPUUTIL_INFLIGHT_MAX", DEFAULT_GPUUTIL_INFLIGHT)
-    if inflight_max < 1:
-        inflight_max = 1
-    two_at = env_int("E2E_GPUUTIL_INFLIGHT_2_AT", GPUUTIL_INFLIGHT_2_AT)
-    if replicas >= two_at:
-        return inflight_max
-    return 1
+    """Concurrent chats per user. INFLIGHT does not change with replica count."""
+    del replicas
+    return client_inflight()
 
 
 def gpuutil_tokens_for_replicas(
@@ -102,10 +113,13 @@ def gpuutil_tokens_for_replicas(
     *,
     target: int = DEFAULT_TARGET,
 ) -> int | None:
-    """Pinned GPU-util built-in, or None to stop new chats at the target."""
-    return latency_tokens_for_replicas(
-        replicas, target=target, start=gpuutil_token_cap()
-    )
+    """MAX_TOKENS until 7 GPUs, then a shorter pin, or None at the target."""
+    if replicas >= target:
+        return None
+    cap = gpuutil_token_cap()
+    if replicas >= GPUUTIL_NEAR_MAX_AT:
+        return min(cap, gpuutil_token_near_max())
+    return cap
 
 
 def gpuutil_load_for_replicas(
@@ -134,7 +148,7 @@ def scale_load(metric: str, replicas: int, target: int = DEFAULT_TARGET) -> dict
     return {
         "mode": "latency" if is_latency_metric(metric) else "",
         "max_tokens": 0 if stop else int(tokens),
-        "inflight": 1,
+        "inflight": 1 if stop else client_inflight(),
         "stop": stop,
         "short": False if stop else use_short_prompts(int(tokens)),
     }

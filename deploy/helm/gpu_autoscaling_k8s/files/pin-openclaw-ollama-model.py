@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -222,11 +223,24 @@ def main() -> int:
     plugins.pop("installs", None)
 
     tools = cfg.setdefault("tools", {})
+    tools["profile"] = "minimal"
     tools["toolSearch"] = False
     deny = tools.get("deny")
     if not isinstance(deny, list):
         deny = []
-    for name in ("message", "cron", "gateway", "nodes", "sessions_send", "exec", "process", "bash"):
+    for name in (
+        "message",
+        "cron",
+        "gateway",
+        "nodes",
+        "sessions_send",
+        "exec",
+        "process",
+        "bash",
+        "write",
+        "read",
+        "edit",
+    ):
         if name not in deny:
             deny.append(name)
     tools["deny"] = deny
@@ -236,6 +250,19 @@ def main() -> int:
         tools["web"] = web
     web["search"] = {"enabled": False}
     web["fetch"] = {"enabled": False, "useTrustedEnvProxy": True}
+
+    session_cfg = cfg.setdefault("session", {})
+    if not isinstance(session_cfg, dict):
+        session_cfg = {}
+        cfg["session"] = session_cfg
+    maint = session_cfg.setdefault("maintenance", {})
+    if not isinstance(maint, dict):
+        maint = {}
+        session_cfg["maintenance"] = maint
+    # Default maxEntries is 5000. Unique e2e session keys exceed that in minutes;
+    # the cap then drops in-flight chats, GPUs go idle, and 1→8 stalls.
+    maint["maxEntries"] = 100000
+    maint["mode"] = "warn"
 
     gateway = cfg.setdefault("gateway", {})
     gateway["reload"] = {"mode": "off"}
@@ -292,6 +319,17 @@ def main() -> int:
     for path in dict.fromkeys(targets):
         _own(path)
     _slim_openclaw_state()
+    sess = PATH.parent / "agents" / "main" / "sessions"
+    if sess.is_dir():
+        shutil.rmtree(sess, ignore_errors=True)
+    sess.mkdir(parents=True, exist_ok=True)
+    _own(sess)
+    logp = PATH.parent / "logs" / "gateway-persistent.log"
+    try:
+        logp.write_text("")
+        _own(logp)
+    except OSError:
+        pass  # Truncate is best-effort after the pin.
     print(f"pinned {PRIMARY} (light plugins={','.join(sorted(KEEP_PLUGINS))})")
     return 0
 
