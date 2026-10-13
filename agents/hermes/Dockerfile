@@ -63,7 +63,6 @@ COPY agents/hermes/managed_policy.py /opt/nemoclaw-hermes-config/managed_policy.
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts
 COPY src/lib/tool-disclosure.ts src/lib/providerless-inference.ts src/lib/inference-credential.ts /src/lib/
-COPY src/lib/inference/native-nvidia/contract.ts /src/lib/inference/native-nvidia/contract.ts
 COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
 COPY src/lib/messaging/ /src/lib/messaging/
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
@@ -384,7 +383,6 @@ RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
     && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/tool-disclosure.ts /src/lib/providerless-inference.ts /src/lib/inference-credential.ts \
-        /src/lib/inference/native-nvidia/contract.ts \
     && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/bundled-npm-package.mts \
         /scripts/lib/openclaw-npm-remediation.mts /scripts/lib/reviewed-npm-audit.mts \
         /scripts/lib/reviewed-npm-identity.mts \

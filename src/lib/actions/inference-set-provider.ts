@@ -19,8 +19,8 @@ import { retryUntilAsync } from "../core/retry";
 import {
   NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN,
   NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT,
-  NVIDIA_HOSTED_LOGICAL_PROVIDER,
-} from "../inference/native-nvidia/contract";
+} from "../inference-credential";
+import { NVIDIA_HOSTED_LOGICAL_PROVIDER } from "../inference/native-nvidia/contract";
 import { matchesGatewayProviderBinding } from "../onboard/gateway-provider-metadata";
 import { assertHermesPortableCommandUnavailable } from "../onboard/experimental/portable-agent-lifecycle";
 import {

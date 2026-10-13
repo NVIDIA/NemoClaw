@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { nativeHostedAgentConfig } from "./inference/native-provider/agent-config.ts";
-import { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "./inference-credential.ts";
 import {
   NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN,
-  NVIDIA_HOSTED_LOGICAL_PROVIDER,
-} from "./inference/native-nvidia/contract.ts";
+  managedInferenceApiKey,
+  NVIDIA_INFERENCE_PLACEHOLDER,
+} from "./inference-credential.ts";
 
 // Shared inference routing replaces this sentinel at egress. Native NVIDIA
 // routing instead expands the supervisor-issued environment handle.
@@ -90,7 +90,7 @@ export function applyHermesManagedRoute(
     : managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
   if (route.nativeCredentialHandle !== undefined) {
     if (
-      route.upstreamProvider !== NVIDIA_HOSTED_LOGICAL_PROVIDER ||
+      route.upstreamProvider !== "nvidia-prod" ||
       apiKey !== NVIDIA_INFERENCE_PLACEHOLDER ||
       !NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN.test(route.nativeCredentialHandle)
     ) {

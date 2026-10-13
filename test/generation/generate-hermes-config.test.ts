@@ -264,12 +264,6 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     path.join(import.meta.dirname, "../..", "src", "lib", "inference-credential.ts"),
     path.join(fixtureRoot, "src", "lib", "inference-credential.ts"),
   );
-  const nativeNvidiaConfigDir = path.join("src", "lib", "inference", "native-nvidia");
-  fs.mkdirSync(path.join(fixtureRoot, nativeNvidiaConfigDir), { recursive: true });
-  fs.copyFileSync(
-    path.join(import.meta.dirname, "../..", nativeNvidiaConfigDir, "contract.ts"),
-    path.join(fixtureRoot, nativeNvidiaConfigDir, "contract.ts"),
-  );
   fs.copyFileSync(
     path.join(import.meta.dirname, "../..", "src", "lib", "providerless-inference.ts"),
     path.join(fixtureRoot, "src", "lib", "providerless-inference.ts"),
