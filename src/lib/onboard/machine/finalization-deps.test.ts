@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { VerifyDeploymentResult } from "../../verify-deployment";
 import {
+  OpenClawPairingIncompatibleError,
   OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS,
   type OpenClawPairingSettlementObservation,
 } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
@@ -100,6 +101,38 @@ describe("ordinary OpenClaw pairing settlement", () => {
       "/sandbox/.openclaw",
     );
     expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes incompatible pairing from a missing device (#13100)", async () => {
+    const scope = ordinaryPairingDeps({
+      observePairing: vi.fn(() => {
+        throw new OpenClawPairingIncompatibleError();
+      }),
+    });
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "pairing-incompatible",
+    });
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+  });
+
+  it("warms up a verified probe baseline and reuses settlement on retry (#13100)", async () => {
+    const scope = ordinaryPairingDeps({
+      observePairing: vi
+        .fn()
+        .mockReturnValueOnce({
+          ...PAIRING_ONLY,
+          state: "scope-upgrade-required",
+        })
+        .mockReturnValue(SETTLED),
+    });
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
   it("reuses an exact pending upgrade without running another producer (#10014)", async () => {

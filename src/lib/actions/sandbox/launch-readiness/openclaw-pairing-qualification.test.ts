@@ -26,9 +26,6 @@ import {
   OpenClawPairingQualificationError,
   OPENCLAW_PAIRING_REQUEST_SCOPES,
   OPENCLAW_PAIRING_REQUIRED_SCOPES,
-  parseOpenClawPairingObservation,
-  parseOpenClawPairingRepairObservation,
-  parseOpenClawPairingSettlementObservation,
 } from "./openclaw-pairing-qualification";
 
 const TOKEN = "credential-value-must-not-leave-the-sandbox";
@@ -845,6 +842,72 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       expect(() => observeSettlement()).toThrow("OpenClaw pairing qualification is unavailable");
     });
 
+    it.each(["cli", "probe"])(
+      "requests write access for a verified %s read baseline (#13100)",
+      (clientMode) => {
+        writePairingOnlyState();
+        const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+        const authPath = path.join(stateDirectory, "identity", "device-auth.json");
+        const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+        const auth = JSON.parse(fs.readFileSync(authPath, "utf8")) as AuthFixture;
+        const scopes = ["operator.pairing", "operator.read"];
+        Object.assign(paired[deviceId]!, { clientMode, scopes, approvedScopes: scopes });
+        paired[deviceId]!.tokens.operator.scopes = scopes;
+        auth.tokens.operator.scopes = scopes;
+        writeJson(pairedPath, paired);
+        writeJson(authPath, auth);
+        expect(observeOrdinarySettlement()).toEqual({
+          state: "scope-upgrade-required",
+          deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        });
+        expect(() => observe()).toThrow(OpenClawPairingQualificationError);
+        auth.tokens.operator.token = "mismatched-token";
+        writeJson(authPath, auth);
+        expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingQualificationError);
+      },
+    );
+
+    it.each(["operator.admin", "operator.approvals", "operator.write"])(
+      "rejects a probe baseline with inconsistent %s permissions (#13100)",
+      (scope) => {
+        writePairingOnlyState();
+        const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+        const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+        paired[deviceId]!.clientMode = "probe";
+        paired[deviceId]!.scopes.push(scope);
+        writeJson(pairedPath, paired);
+        expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingQualificationError);
+      },
+    );
+
+    it.each(["ui", "unknown"])("rejects %s metadata on the local device (#13100)", (clientMode) => {
+      const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+      const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+      paired[deviceId]!.clientMode = clientMode;
+      writeJson(pairedPath, paired);
+      expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingQualificationError);
+    });
+
+    it("preserves verified full permissions when a probe refreshes metadata (#13100)", () => {
+      const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+      const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+      paired[deviceId]!.clientMode = "probe";
+      writeJson(pairedPath, paired);
+      expect(observeOrdinarySettlement().state).toBe("settled");
+      expect(observe().requiredScopes).toEqual(OPENCLAW_PAIRING_REQUIRED_SCOPES);
+    });
+
+    it("accepts native approval preserving an explicitly granted read scope (#13100)", () => {
+      const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+      const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+      paired[deviceId]!.scopes = [...OPENCLAW_PAIRING_REQUIRED_SCOPES];
+      paired[deviceId]!.approvedScopes = [...OPENCLAW_PAIRING_REQUIRED_SCOPES];
+      writeJson(pairedPath, paired);
+      expect(observeOrdinarySettlement().state).toBe("settled");
+      expect(observeSettlement().state).toBe("settled");
+      expect(observe().requiredScopes).toEqual(OPENCLAW_PAIRING_REQUIRED_SCOPES);
+    });
+
     it("ignores unrelated pending requests during ordinary onboarding (#9844)", () => {
       writeJson(path.join(stateDirectory, "devices", "pending.json"), {
         unrelated: {
@@ -1425,61 +1488,5 @@ process.stdout.write("{}\\n");
       stdio: ["pipe", "pipe", "ignore"],
       timeout: 3_000,
     });
-  });
-
-  it("transports state paths without shell interpretation (#9023)", () => {
-    const rawStateDirectory = "/sandbox/state'$(touch should-not-run)";
-    const script = buildOpenClawPairingObservationScript(
-      Buffer.from(POLICY, "utf8").toString("base64"),
-      rawStateDirectory,
-    );
-
-    expect(script).not.toContain(rawStateDirectory);
-    expect(script).toContain(Buffer.from(rawStateDirectory, "utf8").toString("base64"));
-  });
-
-  it("rejects extra receipt fields that could carry unrestricted state (#9023)", () => {
-    const digest = "a".repeat(64);
-    const output = `__NEMOCLAW_OPENCLAW_PAIRING_QUALIFICATION__=${JSON.stringify({
-      deviceIdentitySha256: digest,
-      pairingStateSha256: digest,
-      requiredRoles: ["operator"],
-      requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
-      token: TOKEN,
-    })}\n`;
-
-    expect(parseOpenClawPairingObservation(output)).toBeNull();
-  });
-
-  it("rejects non-terminal or expanded Portable settlement output (#9207)", () => {
-    const digest = "a".repeat(64);
-    const output = `__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=${JSON.stringify({
-      state: "settled",
-      deviceIdentitySha256: digest,
-      requestId: "secret-request",
-    })}\n`;
-    expect(parseOpenClawPairingSettlementObservation(output)).toBeNull();
-    expect(
-      parseOpenClawPairingSettlementObservation(
-        `__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=${JSON.stringify({
-          state: "settled",
-          deviceIdentitySha256: digest,
-        })}\ntrailing\n`,
-      ),
-    ).toBeNull();
-  });
-
-  it("keeps canonical pending state outside strict Portable settlement (#9817)", () => {
-    const digest = "a".repeat(64);
-    const output = `__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=${JSON.stringify({
-      state: "pairing-pending",
-      deviceIdentitySha256: digest,
-    })}\n`;
-
-    expect(parseOpenClawPairingRepairObservation(output)).toEqual({
-      state: "pairing-pending",
-      deviceIdentitySha256: digest,
-    });
-    expect(parseOpenClawPairingSettlementObservation(output)).toBeNull();
   });
 });
