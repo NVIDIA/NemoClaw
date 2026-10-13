@@ -1080,12 +1080,20 @@ def managed_inference_base_url() -> str:
 
 def managed_inference_api_key(base_url: str) -> str:
     """Select the non-secret credential for the validated image-owned route."""
-    if base_url != "https://integrate.api.nvidia.com/v1":
+    if base_url == "https://integrate.api.nvidia.com/v1":
+        name = "NVIDIA_INFERENCE_API_KEY"
+        provider = "NVIDIA"
+    elif (
+        base_url == "https://openrouter.ai/api/v1"
+        and _managed_upstream_provider() == "openrouter-api"
+    ):
+        name = "OPENROUTER_API_KEY"
+        provider = "OpenRouter"
+    else:
         return "nemoclaw-managed-inference"
-    name = "NVIDIA_INFERENCE_API_KEY"
     value = os.environ.get(name, "")
     if not _is_openshell_placeholder_for_name(name, value):
-        raise RuntimeError("native NVIDIA inference requires an OpenShell credential placeholder")
+        raise RuntimeError(f"native {provider} inference requires an OpenShell credential placeholder")
     return value
 
 
