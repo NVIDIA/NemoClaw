@@ -817,7 +817,7 @@ function inspectBuiltImage(
     labels["io.nvidia.nemoclaw.inference-server.cuda.runtime-base"] !==
       plan.imageBuild.cuda.runtimeBase ||
     labels["io.nvidia.nemoclaw.inference-server.cuda.architectures"] !==
-      "103-real;120-real;121a-real"
+      plan.imageBuild.platform.cudaArchitectures
   ) {
     throw new Error("candidate image identity does not match the qualification plan");
   }
