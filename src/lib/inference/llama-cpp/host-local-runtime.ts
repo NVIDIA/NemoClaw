@@ -20,6 +20,7 @@ const IMAGE_DIGEST =
   /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?\/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$/u;
 const GGUF_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}\.gguf$/u;
 const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/u;
+const GPU_UUID = /^GPU-[0-9a-f-]+$/iu;
 const CONTAINER_CHAT_TEMPLATE_FILE =
   /^\/usr\/local\/share\/nemoclaw\/llama-cpp\/chat-templates\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.jinja$/u;
 const DOCKER_BUILTIN_NETWORKS = new Set(["bridge", "host", "none"]);
@@ -102,6 +103,8 @@ export interface LlamaCppHostLocalRuntimeBindings {
   readonly apiKeyHostPath: string;
   readonly containerName: string;
   readonly imageReference: string;
+  /** Exact device selected from the provider-bound CUDA proof on Station WSL. */
+  readonly gpuDeviceUuid?: string;
   /** Fixed host bridge port for product installs; omitted only by isolated qualification. */
   readonly hostPort?: number;
   readonly model: VerifiedLocalModelArtifact;
@@ -320,7 +323,8 @@ function validateBindings(
     ) ||
     new Set(bindings.identityLabels?.map(({ name }) => name)).size !==
       (bindings.identityLabels?.length ?? 0) ||
-    !IMAGE_DIGEST.test(bindings.imageReference)
+    !IMAGE_DIGEST.test(bindings.imageReference) ||
+    (bindings.gpuDeviceUuid !== undefined && !GPU_UUID.test(bindings.gpuDeviceUuid))
   ) {
     throw new Error("llama.cpp host-local runtime binding is invalid");
   }
@@ -502,7 +506,9 @@ function buildLlamaCppHostLocalDockerRunArgv(
     "--pids-limit",
     String(resources.pidsLimit),
     "--gpus",
-    "driver=nvidia,count=1",
+    bindings.gpuDeviceUuid
+      ? `driver=nvidia,device=${bindings.gpuDeviceUuid}`
+      : "driver=nvidia,count=1",
     "--tmpfs",
     `/tmp:rw,noexec,nosuid,nodev,size=${String(resources.writableStorageBytes)},uid=${String(bindings.runtimeUid)},gid=${String(bindings.runtimeGid)},mode=1777`,
     "--mount",

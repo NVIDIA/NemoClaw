@@ -1002,7 +1002,7 @@ describe("managed workload onboard orchestration", () => {
       },
     },
     {
-      behavior: "selects native Podman for a generated source",
+      behavior: "uses a provider-bound Podman engine for a supplied generated source",
       agentName: "openclaw",
       fromDockerfile: path.join(process.cwd(), "Dockerfile"),
       preparedBuildContext: null,

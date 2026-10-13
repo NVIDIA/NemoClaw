@@ -308,7 +308,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     expect(argv).not.toContain("/work/candidate");
     expect(valuesAfter(argv, "--build-arg")).toEqual(
       expect.arrayContaining([
-        "CUDA_ARCHITECTURES=121a-real",
+        "CUDA_ARCHITECTURES=103-real;120-real;121a-real",
         `CUDA_DEV_IMAGE=${plan.imageBuild.cuda.developmentBase}`,
         `CUDA_RUNTIME_IMAGE=${plan.imageBuild.cuda.runtimeBase}`,
         `LLAMA_CPP_ARCHIVE_SHA256=${plan.imageBuild.source.archiveSha256}`,

@@ -867,6 +867,50 @@ describe("sandbox BuildKit prebuild", () => {
     expect(fs.readFileSync(path.join(dockerConfig, "config.json"), "utf-8")).toBe(originalConfig);
   });
 
+  it("keeps Docker credentials for a custom build when the WSL Desktop helper is unavailable", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const dockerConfig = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wsl-docker-config-"));
+    temporaryDirectories.push(dockerConfig);
+    const originalConfig = JSON.stringify({
+      auths: { "registry.example.com": { auth: "private-base-image" } },
+      credsStore: "desktop.exe",
+    });
+    fs.writeFileSync(path.join(dockerConfig, "config.json"), originalConfig);
+    const credentialHelperResponds = vi.fn(() => false);
+    const log = vi.fn();
+    const buildImage = vi.fn(async (_args, options) => {
+      expect(options.env.DOCKER_CONFIG).toBe(dockerConfig);
+      return 0;
+    });
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "custom",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {
+          DOCKER_CONFIG: dockerConfig,
+          NEMOCLAW_SANDBOX_PREBUILD: "1",
+          WSL_DISTRO_NAME: "Ubuntu",
+        },
+        buildImage,
+        credentialHelperResponds,
+        dockerContextIsDefault: () => true,
+        isWslHost: true,
+        inspectImageId: () => IMAGE_ID,
+        log,
+      }),
+    ).resolves.toMatchObject({ imageRef: "nemoclaw-sandbox-local:alpha-1234567890" });
+
+    expect(buildImage).toHaveBeenCalledOnce();
+    expect(credentialHelperResponds).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("isolated credential-free"));
+    expect(fs.readFileSync(path.join(dockerConfig, "config.json"), "utf-8")).toBe(originalConfig);
+  });
+
   it("overlays the isolated Docker config onto a managed-image create env (#10349)", () => {
     const dockerConfig = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wsl-docker-config-"));
     temporaryDirectories.push(dockerConfig);

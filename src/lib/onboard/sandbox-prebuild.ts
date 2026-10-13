@@ -412,6 +412,7 @@ export async function prebuildSandboxImageIfEligible(
         ? null
         : prepareDockerBuildEnvironment({
             env,
+            allowCredentialIsolation: input.origin !== "custom",
             credentialHelperResponds: input.credentialHelperResponds,
             dockerContextIsDefault: input.dockerContextIsDefault,
             isWslHost: input.isWslHost,
