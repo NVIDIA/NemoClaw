@@ -297,7 +297,7 @@ The test checks managed runtime bindings as well as the hosted agent identity ac
 
 ## Docker Live Suite
 
-`cargo ci live-docker` builds the images and writes the owned inputs for the Ollama cache, runtime image, Docker provider, standalone cache, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
+`cargo ci live-docker` builds the images and writes the owned inputs for the Ollama cache, runtime image, Docker provider, standalone cache, dummy agent, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
 To run one of them by hand, supply its inputs as its section describes.
 
 ## Model Cache Compatibility
@@ -385,6 +385,27 @@ The test removes only its labelled resources afterward and retains logs and stat
 The container's Python process simulates model reconstruction and a credential; it does not qualify the vLLM supervisor, GPU execution, model preparation, inference, or OpenShell deployment.
 
 
+## Dummy Agent Lifecycle
+
+nemoclaw-e2e's `dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle` test deploys the [reference dummy image](../build.md#reference-contract-image) through a managed Docker gateway.
+The dummy reports native health without Fabric, a model, or credentials, so apply completes its readiness check.
+The test checks plan, a successful bundled-CLI apply with supported health, an invocation that returns the configured `reply` setting, unchanged apply, export/reapply with the same runtime identity, and destroy, after which Docker holds no sandbox containers or volumes but still holds the gateway's storage.
+It requests no inference and does not qualify a production adapter's health.
+
+Supply a verified bundle and an owned document like the gateway tests', with a fresh UID, free gateway port and subnet, the local dummy image by digest, `harness.kind: org.nemoclaw.dummy`, and a `harness.settings.reply` string:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+NEMOCLAW_TEST_DUMMY_DOCUMENT=/absolute/path/to/dummy.yaml \
+cargo test -p nemoclaw-e2e --test integration \
+  dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle -- --ignored --exact
+```
+
+A successful run deletes its temporary state directory and retains the gateway's storage, initializer, and bridge.
+A failed run keeps the state directory and prints its path, because the gateway and sandbox may still be running; remove them with the bundle's `nemoclaw destroy --state-dir PATH`.
+`cargo ci live-docker` removes every resource labeled with the document's UID, and the gateway's sandbox objects, after the suite.
+To remove the retained storage after a manual run, follow [Remove Retained Resources](../usage.md#remove-retained-resources); after a successful run there is no state directory, so skip that procedure's destroy check.
+
 ## Docker Gateway Recovery
 
 nemoclaw-e2e's `managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu` test exercises only the managed runtime stage with a real gateway, Docker, both providers, and OpenTofu.
@@ -392,6 +413,7 @@ It reaches that stage through the SDK's `test-scenarios` setup, which only nemoc
 Supply a verified bundle and an owned configuration with a fresh UID, free gateway port/subnet, Docker sandboxes, external inference, and no managed services.
 The test does not create sandboxes or request inference.
 It removes its gateway process on completion but retains the database, keys, initializer, bridge, and state.
+Remove them with [Remove Retained Resources](../usage.md#remove-retained-resources), using the test bundle's `nemoclaw` and `NEMOCLAW_TEST_GATEWAY_STATE` as the state directory.
 
 From the repository root:
 
@@ -425,7 +447,7 @@ Successful completion removes both owned sandboxes and gateway processes, but re
 The test calls the provider and SDK directly and creates no OpenTofu state directory.
 Keep the input documents to identify the retained resources.
 Another run requires fresh deployment UUIDs, ports, and subnets; the test refuses the previous run's retained resources.
-There is no verified cleanup procedure yet ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+After a successful run, remove each document's `gateway storage` objects with [Remove Retained Resources](../usage.md#remove-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
 
 From the repository root, with absolute document paths and the local sandbox image's actual digest:
 
@@ -457,7 +479,7 @@ A successful run deletes the sandbox, provider registrations, profiles, and gate
 Retained gateway storage contains signing and encryption keys.
 The test creates no OpenTofu state; keep the input document to identify its resources, and use fresh inputs for another run.
 Failures retain resources for diagnosis; inspect only the printed owned gateway and its sandbox before cleanup.
-A cleanup procedure for retained storage is tracked in [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640).
+After a successful run, remove the document's `gateway storage` objects with [Remove Retained Resources](../usage.md#remove-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
 
 From the repository root, with an absolute document path and the local sandbox image's actual digest:
 

@@ -35,6 +35,8 @@ class ReferenceContract(unittest.IsolatedAsyncioTestCase):
         response = await self.call("validate")
         self.assertEqual(response["status"], "succeeded")
         self.assertTrue(response["result"]["valid"])
+        # The dummy has no Fabric, so no Fabric revision validated anything.
+        self.assertIsNone(response["result"]["fabric_revision"])
         self.assertEqual(self.host.snapshot(), before)
         invalid = await self.call(
             "validate", config={**CONFIG, "harness": {"adapter_id": "absent"}}

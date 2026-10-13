@@ -374,10 +374,14 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn sdk_apply_cli_export_sdk_reapply_and_cli_destroy_share_state() {
-    lifecycle(include_str!(
+    let lifecycle = Lifecycle::start(include_str!(
         "../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
     ))
     .await;
+    let effects = lifecycle.apply().await;
+    assert_eq!(effects, lifecycle.document.spec.sandboxes.len() + 3);
+    lifecycle.export_and_reapply_unchanged(effects).await;
+    lifecycle.destroy();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -395,12 +399,17 @@ async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
         });
         document.spec.sandboxes.push(sandbox);
     }
-    lifecycle(&document.yaml().unwrap()).await;
+    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    let effects = lifecycle.apply().await;
+    assert_eq!(effects, lifecycle.document.spec.sandboxes.len() + 3);
+    lifecycle.export_and_reapply_unchanged(effects).await;
+    lifecycle.assert_tool_policy_drift(effects).await;
+    lifecycle.destroy();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn tool_disclosure_cli_export_reapply_and_drift() {
+async fn tool_disclosure_cli_export_reapply_and_native_settings_drift() {
     // Disclosure modes are opaque native settings; agent_tools in the SDK owns
     // both modes, so one deployment covers their drift detection.
     let mut document =
@@ -414,15 +423,20 @@ async fn tool_disclosure_cli_export_reapply_and_drift() {
             {"mode":"tools","searchDefaultLimit":8,"maxSearchLimit":20}}}}))
         .unwrap(),
     );
-    // Exercise the existing launch-setting drift assertions as well as export/reapply.
+    // Export and reapply also cover an authored inference API.
     document.spec.inference_providers[0].api =
         Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions);
-    lifecycle(&document.yaml().unwrap()).await;
+    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    let effects = lifecycle.apply().await;
+    assert_eq!(effects, lifecycle.document.spec.sandboxes.len() + 3);
+    lifecycle.export_and_reapply_unchanged(effects).await;
+    lifecycle.assert_native_settings_drift(effects).await;
+    lifecycle.destroy();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn web_search_cli_export_reapply_and_destroy() {
+async fn web_search_cli_export_reapply_and_registration_drift() {
     // Every definition scope and provider compiles to the same kind of targets
     // (web_search in the SDK), and their registration drift is one code path.
     let mut document =
@@ -432,143 +446,178 @@ async fn web_search_cli_export_reapply_and_destroy() {
     }))
     .unwrap();
     document.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
-    lifecycle(&document.yaml().unwrap()).await;
+    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    let effects = lifecycle.apply().await;
+    assert_eq!(effects, lifecycle.document.spec.sandboxes.len() + 5);
+    lifecycle.export_and_reapply_unchanged(effects).await;
+    lifecycle.assert_search_registration_drift().await;
+    lifecycle.destroy();
 }
 
-async fn lifecycle(input: &str) {
-    let bundle =
-        PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));
-    assert!(bundle.is_absolute());
-    let directory = tempfile::tempdir().unwrap();
-    let fixture = Fixture::start().await;
-    let mut document = Document::parse(input.as_bytes()).unwrap();
-    if let nemoclaw_sdk::config::NetworkPolicy::Explicit(policy) =
-        &mut document.spec.sandboxes[0].network.policy
-    {
-        policy
-            .network_policies
-            .get_mut("documentation")
-            .unwrap()
-            .endpoints[0]
-            .rules
-            .as_mut()
-            .unwrap()[0]
-            .allow
-            .path = Some("/docs/${file}/%{literal}".into());
-    }
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    let search_provider = document.spec.sandboxes[0]
-        .integration_bindings(&document.spec.integrations)
-        .unwrap()
-        .first()
-        .map(|binding| match binding.definition {
-            nemoclaw_sdk::config::Integration::WebSearch(search) => search.provider,
-        });
-    let has_search = search_provider.is_some();
-    struct FixtureSecrets;
-    impl nemoclaw_sdk::Secrets for FixtureSecrets {
-        fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
-            assert!(["NOUS_API_KEY", "SEARCH_KEY"].contains(&name));
-            Ok("fixture-only-inference-key".into())
+/// Progress events that the deployment's callback records.
+type Recorded<T> = std::sync::Arc<std::sync::Mutex<Vec<T>>>;
+
+/// A deployment through the SDK and the bundle's CLI against the fixture gateway.
+/// Fields drop in declaration order: the deployment before the image engine,
+/// gateway, and state directory.
+struct Lifecycle {
+    cancel: CancellationToken,
+    deployment: Deployment,
+    resource_events: Recorded<(&'static str, &'static str, &'static str)>,
+    timings: Recorded<(&'static str, nemoclaw_sdk::StepOutcome)>,
+    _image_engine: nemoclaw_e2e::http_fixture::Fixture,
+    document: Document,
+    fixture: Fixture,
+    directory: tempfile::TempDir,
+    bundle: PathBuf,
+}
+
+impl Lifecycle {
+    /// Start the fixture gateway and image engine, and create a deployment of `input`.
+    async fn start(input: &str) -> Self {
+        let bundle =
+            PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));
+        assert!(bundle.is_absolute());
+        let directory = tempfile::tempdir().unwrap();
+        let fixture = Fixture::start().await;
+        let mut document = Document::parse(input.as_bytes()).unwrap();
+        *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+        let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
+        struct FixtureSecrets;
+        impl nemoclaw_sdk::Secrets for FixtureSecrets {
+            fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
+                assert!(["NOUS_API_KEY", "SEARCH_KEY"].contains(&name));
+                Ok("fixture-only-inference-key".into())
+            }
+        }
+        let timings = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let received = timings.clone();
+        let resource_events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let resources = resource_events.clone();
+        let deployment = Deployment::new(directory.path(), &bundle)
+            .with_secrets(std::sync::Arc::new(FixtureSecrets))
+            .with_progress(std::sync::Arc::new(move |event| {
+                if let nemoclaw_sdk::Progress::Resource {
+                    resource,
+                    action,
+                    status,
+                    ..
+                } = event
+                {
+                    resources.lock().unwrap().push((resource, action, status));
+                }
+                if let nemoclaw_sdk::Progress::Completed {
+                    operation, outcome, ..
+                } = event
+                {
+                    received.lock().unwrap().push((operation, outcome));
+                }
+            }));
+        Self {
+            cancel: CancellationToken::new(),
+            deployment,
+            resource_events,
+            timings,
+            _image_engine,
+            document,
+            fixture,
+            directory,
+            bundle,
         }
     }
-    let timings = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let received = timings.clone();
-    let resource_events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let resources = resource_events.clone();
-    let deployment = Deployment::new(directory.path(), &bundle)
-        .with_secrets(std::sync::Arc::new(FixtureSecrets))
-        .with_progress(std::sync::Arc::new(move |event| {
-            if let nemoclaw_sdk::Progress::Resource {
-                resource,
-                action,
-                status,
-                ..
-            } = event
-            {
-                resources.lock().unwrap().push((resource, action, status));
-            }
-            if let nemoclaw_sdk::Progress::Completed {
-                operation, outcome, ..
-            } = event
-            {
-                received.lock().unwrap().push((operation, outcome));
-            }
-        }));
-    let cancel = CancellationToken::new();
-    let planning = deployment.plan(&document, &cancel).await.unwrap();
-    assert_eq!(planning.outcome, Outcome::Planned);
-    assert_eq!(fixture.state.lock().unwrap().effects, 0);
-    let applied = deployment.apply(&document, &cancel).await;
-    assert!(applied.is_ok(), "{applied:?}");
-    assert!(
-        resource_events
-            .lock()
-            .unwrap()
-            .contains(&("sandbox", "create", "started"))
-    );
-    assert!(
-        resource_events
-            .lock()
-            .unwrap()
-            .contains(&("sandbox", "create", "complete"))
-    );
-    let health = applied.unwrap().health;
-    assert_eq!(health.len(), document.spec.sandboxes.len());
-    assert!(
-        health
-            .iter()
-            .all(|entry| entry.health.allows_apply_completion())
-    );
-    for operation in [
-        "bundle.verify",
-        "tofu.init",
-        "tofu.plan",
-        "tofu.show",
-        "tofu.apply",
-    ] {
+
+    /// Plan without effects, then apply and check its events, health, and timings.
+    /// Returns the gateway's effect count after the apply.
+    async fn apply(&self) -> usize {
+        let planning = self
+            .deployment
+            .plan(&self.document, &self.cancel)
+            .await
+            .unwrap();
+        assert_eq!(planning.outcome, Outcome::Planned);
+        assert_eq!(self.fixture.state.lock().unwrap().effects, 0);
+        let applied = self.deployment.apply(&self.document, &self.cancel).await;
+        assert!(applied.is_ok(), "{applied:?}");
         assert!(
-            timings
+            self.resource_events
                 .lock()
                 .unwrap()
-                .contains(&(operation, nemoclaw_sdk::StepOutcome::Succeeded)),
-            "missing timing for {operation}"
+                .contains(&("sandbox", "create", "started"))
         );
+        assert!(
+            self.resource_events
+                .lock()
+                .unwrap()
+                .contains(&("sandbox", "create", "complete"))
+        );
+        let health = applied.unwrap().health;
+        assert_eq!(health.len(), self.document.spec.sandboxes.len());
+        assert!(
+            health
+                .iter()
+                .all(|entry| entry.health.allows_apply_completion())
+        );
+        for operation in [
+            "bundle.verify",
+            "tofu.init",
+            "tofu.plan",
+            "tofu.show",
+            "tofu.apply",
+        ] {
+            assert!(
+                self.timings
+                    .lock()
+                    .unwrap()
+                    .contains(&(operation, nemoclaw_sdk::StepOutcome::Succeeded)),
+                "missing timing for {operation}"
+            );
+        }
+        self.fixture.state.lock().unwrap().effects
     }
-    let effects = fixture.state.lock().unwrap().effects;
-    assert_eq!(
-        effects,
-        document.spec.sandboxes.len() + if has_search { 5 } else { 3 }
-    );
-    let exported = Command::new(
-        bundle
-            .join("bin")
-            .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
-    )
-    .args(["export", "--state-dir"])
-    .arg(directory.path())
-    .output()
-    .unwrap();
-    assert!(
-        exported.status.success(),
-        "{}",
-        String::from_utf8_lossy(&exported.stderr)
-    );
-    let exported = Document::parse(exported.stdout.as_slice()).unwrap();
-    assert_eq!(exported, document);
-    assert!(
-        deployment
-            .apply(&exported, &cancel)
-            .await
+
+    /// The CLI exports the applied document, and reapplying the export changes nothing.
+    async fn export_and_reapply_unchanged(&self, effects: usize) {
+        let exported = Command::new(
+            self.bundle
+                .join("bin")
+                .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
+        )
+        .args(["export", "--state-dir"])
+        .arg(self.directory.path())
+        .output()
+        .unwrap();
+        assert!(
+            exported.status.success(),
+            "{}",
+            String::from_utf8_lossy(&exported.stderr)
+        );
+        let exported = Document::parse(exported.stdout.as_slice()).unwrap();
+        assert_eq!(exported, self.document);
+        assert!(
+            self.deployment
+                .apply(&exported, &self.cancel)
+                .await
+                .unwrap()
+                .changes
+                .is_empty()
+        );
+        assert_eq!(self.fixture.state.lock().unwrap().effects, effects);
+    }
+
+    /// A search profile without endpoints, or a sandbox without its provider
+    /// attachments, stops plan and export until the gateway is restored.
+    async fn assert_search_registration_drift(&self) {
+        let search_provider = self.document.spec.sandboxes[0]
+            .integration_bindings(&self.document.spec.integrations)
             .unwrap()
-            .changes
-            .is_empty()
-    );
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    if let Some(search_provider) = search_provider {
-        let state_bytes = fs::read(directory.path().join("terraform.tfstate")).unwrap();
-        let key = fixture
+            .first()
+            .map(|binding| match binding.definition {
+                nemoclaw_sdk::config::Integration::WebSearch(search) => search.provider,
+            })
+            .unwrap();
+        let state_bytes = fs::read(self.directory.path().join("terraform.tfstate")).unwrap();
+        let key = self
+            .fixture
             .state
             .lock()
             .unwrap()
@@ -580,8 +629,8 @@ async fn lifecycle(input: &str) {
             })
             .map(|(key, _)| key.clone())
             .unwrap();
-        let profile = fixture.state.lock().unwrap().profiles[&key].clone();
-        fixture
+        let profile = self.fixture.state.lock().unwrap().profiles[&key].clone();
+        self.fixture
             .state
             .lock()
             .unwrap()
@@ -590,25 +639,35 @@ async fn lifecycle(input: &str) {
             .unwrap()
             .endpoints
             .clear();
-        assert!(deployment.plan(&document, &cancel).await.is_err());
-        assert!(deployment.export(&cancel).await.is_err());
+        assert!(
+            self.deployment
+                .plan(&self.document, &self.cancel)
+                .await
+                .is_err()
+        );
+        assert!(self.deployment.export(&self.cancel).await.is_err());
         assert_eq!(
-            fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+            fs::read(self.directory.path().join("terraform.tfstate")).unwrap(),
             state_bytes
         );
-        fixture.state.lock().unwrap().profiles.insert(key, profile);
+        self.fixture
+            .state
+            .lock()
+            .unwrap()
+            .profiles
+            .insert(key, profile);
         let sandbox_key = format!(
             "{}/{}",
-            document.workspace(),
-            document.spec.sandboxes[0].name
+            self.document.workspace(),
+            self.document.spec.sandboxes[0].name
         );
-        let attached = fixture.state.lock().unwrap().sandboxes[&sandbox_key]
+        let attached = self.fixture.state.lock().unwrap().sandboxes[&sandbox_key]
             .spec
             .as_ref()
             .unwrap()
             .providers
             .clone();
-        fixture
+        self.fixture
             .state
             .lock()
             .unwrap()
@@ -620,9 +679,14 @@ async fn lifecycle(input: &str) {
             .unwrap()
             .providers
             .clear();
-        assert!(deployment.plan(&document, &cancel).await.is_err());
-        assert!(deployment.export(&cancel).await.is_err());
-        fixture
+        assert!(
+            self.deployment
+                .plan(&self.document, &self.cancel)
+                .await
+                .is_err()
+        );
+        assert!(self.deployment.export(&self.cancel).await.is_err());
+        self.fixture
             .state
             .lock()
             .unwrap()
@@ -633,13 +697,23 @@ async fn lifecycle(input: &str) {
             .as_mut()
             .unwrap()
             .providers = attached;
-        assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+        assert_eq!(
+            self.deployment.export(&self.cancel).await.unwrap(),
+            self.document
+        );
     }
-    if document.spec.sandboxes.len() > 1 {
-        let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
-        let mut broadened = document.clone();
+
+    /// Broadening one sandbox's tools plans one update, and a failed observation
+    /// stops plan and export without effects or state changes.
+    async fn assert_tool_policy_drift(&self, effects: usize) {
+        let state = fs::read(self.directory.path().join("terraform.tfstate")).unwrap();
+        let mut broadened = self.document.clone();
         broadened.spec.sandboxes[1].agent.tools = None;
-        let plan = deployment.plan(&broadened, &cancel).await.unwrap();
+        let plan = self
+            .deployment
+            .plan(&broadened, &self.cancel)
+            .await
+            .unwrap();
         assert_eq!(plan.changes.len(), 1);
         assert!(
             plan.changes[0]
@@ -647,53 +721,54 @@ async fn lifecycle(input: &str) {
                 .starts_with("fabric_agent_configuration.")
         );
         assert_eq!(plan.changes[0].actions, ["update"]);
-        fixture.state.lock().unwrap().exec_exit = 2;
-        assert!(deployment.plan(&document, &cancel).await.is_err());
-        assert!(deployment.export(&cancel).await.is_err());
-        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+        self.fixture.state.lock().unwrap().exec_exit = 2;
+        assert!(
+            self.deployment
+                .plan(&self.document, &self.cancel)
+                .await
+                .is_err()
+        );
+        assert!(self.deployment.export(&self.cancel).await.is_err());
+        assert_eq!(self.fixture.state.lock().unwrap().effects, effects);
         assert_eq!(
-            fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+            fs::read(self.directory.path().join("terraform.tfstate")).unwrap(),
             state
         );
-        fixture.state.lock().unwrap().exec_exit = 0;
-        assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+        self.fixture.state.lock().unwrap().exec_exit = 0;
+        assert_eq!(
+            self.deployment.export(&self.cancel).await.unwrap(),
+            self.document
+        );
     }
-    if document.inference_provider().unwrap().api.is_some()
-        || document.spec.sandboxes[0].agent.auth.is_some()
-        || document.spec.sandboxes[0]
-            .harness
-            .as_mut()
-            .unwrap()
-            .execution
-            .is_some()
-        || document.spec.sandboxes[0]
-            .harness
-            .as_mut()
-            .unwrap()
-            .settings
-            .is_some()
-    {
+
+    /// The first sandbox's Fabric configuration arrives on stdin without the
+    /// credential, and its drift is planned without effects.
+    async fn assert_native_settings_drift(&self, effects: usize) {
         let key = format!(
             "{}/{}",
-            document.workspace(),
-            document.spec.sandboxes[0].name
+            self.document.workspace(),
+            self.document.spec.sandboxes[0].name
         );
-        let sandbox_id = fixture.state.lock().unwrap().sandboxes[&key]
+        let sandbox_id = self.fixture.state.lock().unwrap().sandboxes[&key]
             .metadata
             .as_ref()
             .unwrap()
             .id
             .clone();
-        let original = fixture.state.lock().unwrap().fabric_configurations[&sandbox_id].clone();
+        let original =
+            self.fixture.state.lock().unwrap().fabric_configurations[&sandbox_id].clone();
         assert_eq!(
             original,
-            nemoclaw_sdk::fabric_config::for_sandbox(&document, &document.spec.sandboxes[0])
-                .unwrap()
+            nemoclaw_sdk::fabric_config::for_sandbox(
+                &self.document,
+                &self.document.spec.sandboxes[0]
+            )
+            .unwrap()
         );
         assert!(!original.to_string().contains("fixture-only-inference-key"));
         {
             // Configuration travels on the configure command's stdin, not a staged file.
-            let state = fixture.state.lock().unwrap();
+            let state = self.fixture.state.lock().unwrap();
             assert!(
                 state
                     .exec_calls
@@ -716,101 +791,55 @@ async fn lifecycle(input: &str) {
         }
         // Native settings belong to the owned Fabric configuration. Refresh must
         // detect drift without mutating either the host or durable deployment.
-        fixture
+        self.fixture
             .state
             .lock()
             .unwrap()
             .fabric_configurations
             .get_mut(&sandbox_id)
             .unwrap()["models"]["default"]["model"] = serde_json::json!("foreign-model");
-        assert!(deployment.export(&cancel).await.is_err());
-        let plan = deployment.plan(&document, &cancel).await.unwrap();
+        assert!(self.deployment.export(&self.cancel).await.is_err());
+        let plan = self
+            .deployment
+            .plan(&self.document, &self.cancel)
+            .await
+            .unwrap();
         assert!(
             plan.changes
                 .iter()
                 .any(|change| change.resource.starts_with("fabric_agent_configuration."))
         );
-        assert_eq!(fixture.state.lock().unwrap().effects, effects);
-        fixture
+        assert_eq!(self.fixture.state.lock().unwrap().effects, effects);
+        self.fixture
             .state
             .lock()
             .unwrap()
             .fabric_configurations
             .insert(sandbox_id, original);
     }
-    if matches!(
-        document.spec.sandboxes[0].network.policy,
-        nemoclaw_sdk::config::NetworkPolicy::Explicit(_)
-    ) {
-        let mut changed = document.clone();
-        let nemoclaw_sdk::config::NetworkPolicy::Explicit(policy) =
-            &mut changed.spec.sandboxes[0].network.policy
-        else {
-            unreachable!()
-        };
-        policy.network_policies.clear();
-        assert!(deployment.plan(&changed, &cancel).await.is_err());
-        assert_eq!(fixture.state.lock().unwrap().effects, effects);
-        let key = format!(
-            "{}/{}",
-            document.workspace(),
-            document.spec.sandboxes[0].name
+
+    /// The CLI destroys the deployment, leaving only the workspace on the gateway.
+    fn destroy(self) {
+        let destroyed = Command::new(
+            self.bundle
+                .join("bin")
+                .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
+        )
+        .args(["destroy", "--state-dir"])
+        .arg(self.directory.path())
+        .output()
+        .unwrap();
+        assert!(
+            destroyed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&destroyed.stderr)
         );
-        let original = fixture.state.lock().unwrap().sandboxes[&key]
-            .spec
-            .as_ref()
-            .unwrap()
-            .policy
-            .clone();
-        fixture
-            .state
-            .lock()
-            .unwrap()
-            .sandboxes
-            .get_mut(&key)
-            .unwrap()
-            .spec
-            .as_mut()
-            .unwrap()
-            .policy
-            .as_mut()
-            .unwrap()
-            .network_policies
-            .clear();
-        assert!(deployment.export(&cancel).await.is_err());
-        assert!(deployment.plan(&document, &cancel).await.is_err());
-        assert_eq!(fixture.state.lock().unwrap().effects, effects);
-        fixture
-            .state
-            .lock()
-            .unwrap()
-            .sandboxes
-            .get_mut(&key)
-            .unwrap()
-            .spec
-            .as_mut()
-            .unwrap()
-            .policy = original;
+        let state = self.fixture.state.lock().unwrap();
+        assert_eq!(state.workspaces.len(), 1);
+        assert!(state.sandboxes.is_empty());
+        assert!(state.providers.is_empty());
+        assert!(state.profiles.is_empty());
     }
-    let destroyed = Command::new(
-        bundle
-            .join("bin")
-            .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
-    )
-    .args(["destroy", "--state-dir"])
-    .arg(directory.path())
-    .output()
-    .unwrap();
-    assert!(
-        destroyed.status.success(),
-        "{}",
-        String::from_utf8_lossy(&destroyed.stderr)
-    );
-    let state = fixture.state.lock().unwrap();
-    assert_eq!(state.workspaces.len(), 1);
-    assert!(state.sandboxes.is_empty());
-    assert!(state.providers.is_empty());
-    assert!(state.profiles.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

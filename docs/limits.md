@@ -71,7 +71,9 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Backup, restore, snapshots and transfer of native agent data | [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
 | File locations for harnesses other than OpenClaw, Hermes and Pi | [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
 | Moving data from the earlier product to v1 and back | [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
-| A purge command or verified procedure to remove retained resources | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
+| A purge command | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
+| Removing retained Podman, Kubernetes, and external-gateway workspace resources | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
+| Verified removal of managed service volumes and of objects on SSH engines | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
 
 ## Security
 
