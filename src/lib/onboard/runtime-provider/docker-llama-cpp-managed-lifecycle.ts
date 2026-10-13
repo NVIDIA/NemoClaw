@@ -442,15 +442,21 @@ function parseInspection(
   const gpuOptions = gpuRequest.Options;
   const gpuCount =
     gpuRequest.Driver === "nvidia" &&
-    gpuRequest.Count === 1 &&
+    (gpuRequest.Count === 1 ||
+      (gpuRequest.Count === 0 && Array.isArray(gpuDeviceIds) && gpuDeviceIds.length === 1)) &&
     gpuCapabilities.some((group) => Array.isArray(group) && group.includes("gpu"))
       ? 1
       : 0;
   const deviceAuthorityExact =
     deviceRequests.length === 1 &&
     gpuRequest.Driver === "nvidia" &&
-    gpuRequest.Count === 1 &&
-    (gpuDeviceIds === null || (Array.isArray(gpuDeviceIds) && gpuDeviceIds.length === 0)) &&
+    (bindings.gpuDeviceUuid
+      ? gpuRequest.Count === 0 &&
+        Array.isArray(gpuDeviceIds) &&
+        gpuDeviceIds.length === 1 &&
+        gpuDeviceIds[0] === bindings.gpuDeviceUuid
+      : gpuRequest.Count === 1 &&
+        (gpuDeviceIds === null || (Array.isArray(gpuDeviceIds) && gpuDeviceIds.length === 0))) &&
     typeof gpuOptions === "object" &&
     gpuOptions !== null &&
     !Array.isArray(gpuOptions) &&
@@ -827,6 +833,7 @@ function specificationDigest(
     contract: options.contract,
     containerName: options.bindings.containerName,
     imageReference: options.bindings.imageReference,
+    ...(options.bindings.gpuDeviceUuid ? { gpuDeviceUuid: options.bindings.gpuDeviceUuid } : {}),
     model: {
       planDigest: options.plan.planDigest,
       recipeId: options.plan.recipeId,

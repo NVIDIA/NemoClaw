@@ -135,6 +135,7 @@ export function createManagedState(
     gatewayPort?: number;
     createIntentUnixMs?: number;
     sandboxName?: string;
+    recipeId?: string;
   } = {},
 ): void {
   const phase = options.phase ?? "finalized";
@@ -145,7 +146,7 @@ export function createManagedState(
     catalogDigest: `sha256:${"5".repeat(64)}`,
     presetDigest: `sha256:${"6".repeat(64)}`,
     recipeDigest: `sha256:${"7".repeat(64)}`,
-    recipeId: "llama-cpp.nemotron.spark.v1",
+    recipeId: options.recipeId ?? "llama-cpp.nemotron.spark.v1",
   });
   const engineAuthority = {
     schemaVersion: 1 as const,
@@ -174,7 +175,7 @@ export function createManagedState(
       specSha256: SPEC_SHA256,
       model: {
         planDigest: `sha256:${"b".repeat(64)}`,
-        recipeId: "llama-cpp.nemotron.spark.v1",
+        recipeId: options.recipeId ?? "llama-cpp.nemotron.spark.v1",
         generation: TRANSACTION_ID,
         digest: `sha256:${"c".repeat(64)}`,
         sizeBytes: 64,

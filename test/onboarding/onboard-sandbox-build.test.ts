@@ -408,6 +408,15 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
+const prebuildId = require.resolve(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "sandbox-prebuild.ts"))});
+const prebuild = require(prebuildId);
+prebuild.prebuildSandboxImageIfEligible = async () => ({
+    createArgs: [],
+    sourceReference: "nemoclaw-sandbox-local:fixture-hermes",
+    imageRef: "nemoclaw-sandbox-local:fixture-hermes",
+    imageId: "sha256:" + "a".repeat(64),
+});
+
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
