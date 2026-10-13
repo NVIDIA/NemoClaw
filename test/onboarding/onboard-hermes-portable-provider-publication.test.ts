@@ -337,6 +337,14 @@ require.cache[sandboxGpuCreateFlowId].exports = {
   },
 };
 
+const prebuildId = require.resolve(${modulePath("onboard/sandbox-prebuild.ts")});
+const prebuild = require(prebuildId);
+prebuild.prebuildSandboxImageIfEligible = async () => ({
+    createArgs: [],
+    sourceReference: "nemoclaw-sandbox-local:fixture-provider",
+    imageRef: "nemoclaw-sandbox-local:fixture-provider",
+    imageId: "sha256:" + "a".repeat(64),
+});
 const { createSandbox } = require(${modulePath("onboard.ts")});
 const { loadAgent } = require(${modulePath("agent/defs.ts")});
 const { resolveSandboxCreateIntent } = require(${modulePath("onboard/sandbox-create-intent.ts")});

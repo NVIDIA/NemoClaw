@@ -282,7 +282,7 @@ childProcess.spawn = (...args) => {
   // Observe the staged build context state while the sandbox create is in
   // flight — onboard deletes it once streamSandboxCreate resolves.
   const fromMatch = cmd.match(/--from\s+(\S+)/);
-  if (fromMatch) {
+  if (fromMatch && fs.existsSync(fromMatch[1])) {
     const stagedDir = path.dirname(fromMatch[1]);
     hasExtraFileAtSpawn = fs.existsSync(path.join(stagedDir, "extra.txt"));
     stagedIgnoredFilesAtSpawn = {
@@ -309,6 +309,35 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
+const prebuildId = require.resolve(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "sandbox-prebuild.ts"))});
+const prebuild = require(prebuildId);
+prebuild.prebuildSandboxImageIfEligible = async (input) => {
+    const stagedDir = input.buildCtx;
+    hasExtraFileAtSpawn = fs.existsSync(path.join(stagedDir, "extra.txt"));
+    stagedIgnoredFilesAtSpawn = {
+      nodeModules: fs.existsSync(path.join(stagedDir, "node_modules")),
+      ssh: fs.existsSync(path.join(stagedDir, ".ssh")),
+      aws: fs.existsSync(path.join(stagedDir, ".aws")),
+      secrets: fs.existsSync(path.join(stagedDir, "secrets")),
+      env: fs.existsSync(path.join(stagedDir, ".env.local")),
+      npmrc: fs.existsSync(path.join(stagedDir, ".npmrc")),
+      pem: fs.existsSync(path.join(stagedDir, "model.pem")),
+      credentialsJson: fs.existsSync(path.join(stagedDir, "credentials.json")),
+    };
+    stagedDockerignoreFilesAtSpawn = {
+      ignoredDir: fs.existsSync(path.join(stagedDir, "ignored-by-dockerignore")),
+      ignoredLog: fs.existsSync(path.join(stagedDir, "ignored.log")),
+      keepLog: fs.existsSync(path.join(stagedDir, "keep.log")),
+      negatedSecret: fs.existsSync(path.join(stagedDir, "secrets", "token.txt")),
+    };
+    return {
+      createArgs: [],
+      sourceReference: "nemoclaw-sandbox-local:fixture-custom",
+      imageRef: "nemoclaw-sandbox-local:fixture-custom",
+      imageId: "sha256:" + "a".repeat(64),
+    };
+};
+
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -317,7 +346,7 @@ const { createSandbox } = require(${onboardPath});
     [null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${customDockerfilePath}, null, null, null, null, []],
     createFixture,
   ));
-  console.log(JSON.stringify({ sandboxName, hasExtraFile: hasExtraFileAtSpawn, stagedIgnoredFiles: stagedIgnoredFilesAtSpawn, stagedDockerignoreFiles: stagedDockerignoreFilesAtSpawn }));
+  console.log(JSON.stringify({ sandboxName, commands, hasExtraFile: hasExtraFileAtSpawn, stagedIgnoredFiles: stagedIgnoredFilesAtSpawn, stagedDockerignoreFiles: stagedDockerignoreFilesAtSpawn }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -347,6 +376,14 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
       const payload = JSON.parse(payloadLine);
       assert.equal(payload.sandboxName, "my-assistant");
+      assert.ok(
+        payload.commands.some(
+          (entry: { command: string }) =>
+            entry.command.includes("sandbox create") &&
+            entry.command.includes("--from nemoclaw-sandbox-local:fixture-custom"),
+        ),
+      );
+      assert.match(result.stdout, /Creating sandbox 'my-assistant'/);
       assert.match(result.stdout, /Using custom Dockerfile:/);
       assert.match(result.stdout, /Docker build context:/);
       assert.match(result.stdout, /Docker build context:.*custom-image/);

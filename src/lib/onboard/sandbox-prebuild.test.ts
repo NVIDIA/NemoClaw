@@ -196,7 +196,9 @@ describe("sandbox BuildKit prebuild", () => {
 
   it("rejects create arguments that do not use the staged Dockerfile", async () => {
     const { buildCtx } = createBuildContext();
-    const buildImage = vi.fn(async () => 0);
+    const buildImage = vi.fn(
+      async (_args: readonly string[], _options: { env: NodeJS.ProcessEnv; stdio: "inherit" }) => 0,
+    );
     await expect(
       prebuildSandboxImageIfEligible({
         buildCtx,
@@ -212,27 +214,131 @@ describe("sandbox BuildKit prebuild", () => {
     expect(buildImage).not.toHaveBeenCalled();
   });
 
-  it("keeps user-supplied Dockerfiles on the gateway builder", async () => {
+  it("builds a custom Dockerfile in the selected local Docker engine before create", async () => {
     const { buildCtx, createArgs } = createBuildContext();
-    const buildImage = vi.fn(async () => 0);
+    const buildImage = vi.fn(
+      async (_args: readonly string[], _options: { env: NodeJS.ProcessEnv; stdio: "inherit" }) => 0,
+    );
+    const inspectImageId = vi.fn(() => IMAGE_ID);
     const log = vi.fn();
 
-    await expect(
-      prebuildSandboxImageIfEligible({
-        buildCtx,
-        buildId: BUILD_ID,
-        origin: "custom",
-        createArgs,
-        sandboxName: "alpha",
-        dockerDriverGateway: true,
-        env: {},
-        buildImage,
-        log,
-      }),
-    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
-    expect(buildImage).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("custom Dockerfile"));
+    const result = await prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: BUILD_ID,
+      origin: "custom",
+      createArgs,
+      sourceReference: path.join(buildCtx, "Dockerfile"),
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      gatewayDriver: "docker",
+      env: { NEMOCLAW_SANDBOX_PREBUILD: "1", NVIDIA_INFERENCE_API_KEY: "private-value" },
+      buildImage,
+      inspectImageId,
+      log,
+    });
+
+    expect(buildImage).toHaveBeenCalledWith(
+      [
+        "build",
+        "-t",
+        "nemoclaw-sandbox-local:alpha-1234567890",
+        "-f",
+        path.join(fs.realpathSync(buildCtx), "Dockerfile"),
+        fs.realpathSync(buildCtx),
+      ],
+      expect.objectContaining({ stdio: "inherit" }),
+    );
+    expect(buildImage.mock.calls[0]?.[1].env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+    expect(inspectImageId).toHaveBeenCalledWith("nemoclaw-sandbox-local:alpha-1234567890");
+    expect(result).toEqual({
+      createArgs: ["--from", "nemoclaw-sandbox-local:alpha-1234567890", "--name", "alpha"],
+      sourceReference: "nemoclaw-sandbox-local:alpha-1234567890",
+      imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
+      imageId: IMAGE_ID,
+    });
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("Building sandbox image with BuildKit"),
+    );
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("build completed"));
   });
+
+  it.each([
+    [
+      "remote gateway",
+      { dockerDriverGateway: false, gatewayDriver: "remote", env: {} },
+      "no image distribution path",
+    ],
+    [
+      "remote Docker host",
+      {
+        dockerDriverGateway: true,
+        gatewayDriver: "docker",
+        env: { DOCKER_HOST: "tcp://remote:2375" },
+      },
+      "supported local Docker host",
+    ],
+    [
+      "unmatched engine",
+      {
+        dockerDriverGateway: true,
+        gatewayDriver: "docker",
+        env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+      },
+      "refusing a podman build",
+    ],
+    [
+      "disabled prebuild",
+      {
+        dockerDriverGateway: true,
+        gatewayDriver: "docker",
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "0" },
+      },
+      "image build is required",
+    ],
+  ] as const)(
+    "rejects a custom Dockerfile on a %s before build",
+    async (_reason, gate, message) => {
+      const { buildCtx, createArgs } = createBuildContext();
+      const buildImage = vi.fn(async () => 0);
+      await expect(
+        prebuildSandboxImageIfEligible({
+          buildCtx,
+          buildId: BUILD_ID,
+          origin: "custom",
+          createArgs,
+          sandboxName: "alpha",
+          ...gate,
+          buildImage,
+        }),
+      ).rejects.toThrow(message);
+      expect(buildImage).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["failed build", 1, IMAGE_ID, "build failed (exit 1)"],
+    ["missing image", 0, "", "not visible in the selected docker engine"],
+  ] as const)(
+    "stops a custom Dockerfile after a %s",
+    async (_reason, buildStatus, imageId, message) => {
+      const { buildCtx, createArgs } = createBuildContext();
+      await expect(
+        prebuildSandboxImageIfEligible({
+          buildCtx,
+          buildId: BUILD_ID,
+          origin: "custom",
+          createArgs,
+          sandboxName: "alpha",
+          dockerDriverGateway: true,
+          gatewayDriver: "docker",
+          env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
+          buildImage: async () => buildStatus,
+          inspectImageId: () => imageId,
+          log: () => {},
+        }),
+      ).rejects.toThrow(message);
+    },
+  );
 
   it("rejects a remote gateway before starting a generated build", async () => {
     const { buildCtx, createArgs } = createBuildContext();
@@ -307,8 +413,8 @@ describe("sandbox BuildKit prebuild", () => {
         "-t",
         "nemoclaw-sandbox-local:alpha-1234567890",
         "-f",
-        path.join(buildCtx, "Dockerfile"),
-        buildCtx,
+        path.join(fs.realpathSync(buildCtx), "Dockerfile"),
+        fs.realpathSync(buildCtx),
       ],
       20 * 60_000,
     );
