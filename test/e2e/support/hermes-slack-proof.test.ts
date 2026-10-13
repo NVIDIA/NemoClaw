@@ -9,11 +9,14 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  HERMES_SLACK_ENV_PROBE,
-  HERMES_SLACK_INJECTED_TOKEN_PATTERN,
   assertHermesSlackApiProof,
   classifyHermesSlackApiProof,
 } from "../live/hermes-slack-proof.ts";
+
+import {
+  HERMES_SLACK_ENV_PROBE,
+  HERMES_SLACK_INJECTED_TOKEN_PATTERN,
+} from "../live/hermes-slack-e2e-helpers.ts";
 
 describe("Hermes Slack .env placeholder proof", () => {
   const bot = "openshell:resolve:env:v12_SLACK_BOT_TOKEN";

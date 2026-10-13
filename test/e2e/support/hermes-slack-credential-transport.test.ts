@@ -13,8 +13,10 @@ import {
   hermesSlackCredentialFingerprints,
   hermesSlackCredentialScanScript,
 } from "../live/hermes-slack-credential-transport.ts";
-import { HERMES_SLACK_ENV_PROBE } from "../live/hermes-slack-proof.ts";
-import { assertHermesSlackCredentialFingerprintScanResult } from "../live/hermes-slack-e2e-helpers.ts";
+import {
+  HERMES_SLACK_ENV_PROBE,
+  assertHermesSlackCredentialFingerprintScanResult,
+} from "../live/hermes-slack-e2e-helpers.ts";
 
 const temporaryDirectories: string[] = [];
 
