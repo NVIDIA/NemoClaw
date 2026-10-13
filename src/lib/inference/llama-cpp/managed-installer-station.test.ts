@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDockerRuntimeProviderBundle } from "../../onboard/runtime-provider/docker";
+import { createHostLocalCreateJournalStore } from "../../onboard/runtime-provider/host-local-create-journal";
 import { dockerLlamaCppBindingSha256 } from "../../onboard/runtime-provider/docker-llama-cpp-operation";
 import type {
   HostLocalInferenceOperation,
@@ -229,6 +230,39 @@ describe("Station managed llama.cpp GPU binding (#13026)", () => {
     );
   }
 
+  function seedLegacyUnfinishedJournal(
+    homeDir: string,
+    engine: ReturnType<typeof engineHarness>["engine"],
+  ): void {
+    const paths = managedLlamaCppStatePaths(homeDir);
+    const transactionId = "a".repeat(64);
+    createHostLocalCreateJournalStore(paths.stateDir).create({
+      schemaVersion: 1,
+      transactionId,
+      phase: "prepared",
+      providerId: "docker",
+      service: "llama-cpp",
+      containerName: "nemoclaw-llama-cpp",
+      runtimeId: null,
+      createIntentUnixMs: null,
+      specSha256: "c".repeat(64),
+      networkId: "e".repeat(64),
+      apiKeyIdentitySha256: "f".repeat(64),
+      apiKeyRootIdentitySha256: "1".repeat(64),
+      engineAuthority: {
+        schemaVersion: 1,
+        providerId: "docker",
+        operation: "host-local-inference",
+        engineId: engine.engineId,
+        authorityId: engine.authorityId,
+        bindingSha256: dockerLlamaCppBindingSha256(engine),
+      },
+      receiptTargetSha256: createManagedLlamaCppReceiptWriter(paths, transactionId).targetSha256,
+      serializedReceipt: null,
+      receiptSha256: null,
+    });
+  }
+
   it("persists the proved UUID in lifecycle authority", async () => {
     const selected = stationSelection();
     const fixture = setup(selected);
@@ -302,6 +336,34 @@ describe("Station managed llama.cpp GPU binding (#13026)", () => {
         }),
       ).rejects.toThrow("destroy --yes");
       expect(fs.readFileSync(paths.ownerPath)).toEqual(before);
+      expect(fixture.createLifecycle).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(fixture.homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("retains an unfinished legacy Station journal while rejecting retry and resume", async () => {
+    const selected = stationSelection();
+    const fixture = setup(selected);
+    try {
+      const paths = managedLlamaCppStatePaths(fixture.homeDir);
+      reserveManagedLlamaCppOwner(paths, fixture.legacyOwner());
+      seedLegacyUnfinishedJournal(fixture.homeDir, fixture.operation.engine);
+      const before = fs.readFileSync(paths.ownerPath);
+      const result = await fixture.install();
+      expect(result).toMatchObject({ ok: false, reason: expect.stringContaining("destroy --yes") });
+      await expect(
+        resumeManagedLlamaCppRuntime("station-agent", {
+          homeDir: fixture.homeDir,
+          runtimeProvider: fixture.runtimeProvider,
+          verifyGguf: fixture.verifyGguf,
+        }),
+      ).rejects.toThrow("destroy --yes");
+      expect(fs.readFileSync(paths.ownerPath)).toEqual(before);
+      expect(loadManagedLlamaCppOwner(paths)?.gpuDeviceUuid).toBeUndefined();
+      expect(createHostLocalCreateJournalStore(paths.stateDir).list()).toMatchObject([
+        { phase: "prepared" },
+      ]);
       expect(fixture.createLifecycle).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(fixture.homeDir, { recursive: true, force: true });
