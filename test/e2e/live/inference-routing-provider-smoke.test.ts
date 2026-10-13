@@ -325,7 +325,18 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES.map((entry) => [entry.id, entry.label,
           sandboxName,
           hermes
             ? ["cat", "/sandbox/.hermes/config.yaml"]
-            : ["openclaw", "config", "get", `models.providers.${selected.providerKey}`, "--json"],
+            : [
+                "node",
+                "-e",
+                // config get redacts even scoped handles. Read only the binding;
+                // never emit a raw credential if the stored value is invalid.
+                "const fs=require('node:fs');" +
+                  "const c=JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json','utf8'));" +
+                  "const p=c.models.providers[process.argv[1]];" +
+                  "const safe=/^openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?[A-Z][A-Z0-9_]{0,127}$/.test(p.apiKey);" +
+                  "console.log(JSON.stringify({baseUrl:p.baseUrl,apiKey:safe?p.apiKey:null}));",
+                selected.providerKey,
+              ],
           {
             artifactName: `${selected.id}-native-config`,
             env: buildAvailabilityProbeEnv(),
