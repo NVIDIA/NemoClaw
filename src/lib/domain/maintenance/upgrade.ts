@@ -165,30 +165,29 @@ function downgradeSuffix(current?: string | null, expected?: string | null): str
   return compareReleaseVersions(expected, current) < 0 ? " (downgrade)" : "";
 }
 
-// #13076: a prerelease (`0.0.134-rc.1`) sorts below its release (`0.0.134`), and
-// prerelease identifiers order per SemVer. Kept out of compareDottedVersions,
-// which Docker/driver versions also use.
+// #13076: order NemoClaw/agent versions. `1.2.3-rc.1` is a SemVer prerelease below
+// `1.2.3`; `1.2.3-11-gabc1234` (git describe) is 11 commits after `1.2.3`. Kept out
+// of compareDottedVersions, which Docker/driver versions also use.
+function parseReleaseVersion(version: string): { core: string; pre: string[]; after: number } {
+  const text = version.trim().replace(/^v/, "").replace(/\+.*$/, "");
+  const described = /^(.+)-(\d+)-g[0-9a-f]{7,}$/.exec(text);
+  const [core, pre] = (described?.[1] ?? text).split(/-(.*)/s);
+  return { core, pre: pre ? pre.split(".") : [], after: Number(described?.[2] ?? 0) };
+}
+
 function compareReleaseVersions(a: string, b: string): number {
-  const [aCore, aPre] = a.split(/-(.*)/s);
-  const [bCore, bPre] = b.split(/-(.*)/s);
-  const core = compareDottedVersions(aCore, bCore);
-  if (core !== 0 || aPre === bPre) return core;
-  if (aPre === undefined) return 1;
-  if (bPre === undefined) return -1;
-  const left = aPre.split(".");
-  const right = bPre.split(".");
-  for (let i = 0; i < Math.min(left.length, right.length); i += 1) {
-    const [l, r] = [left[i], right[i]];
-    const numeric = [/^\d+$/.test(l), /^\d+$/.test(r)];
-    if (numeric[0] && numeric[1]) {
-      if (Number(l) !== Number(r)) return Number(l) - Number(r);
-    } else if (numeric[0] || numeric[1]) {
-      return numeric[0] ? -1 : 1;
-    } else if (l !== r) {
-      return l < r ? -1 : 1;
+  const [x, y] = [parseReleaseVersion(a), parseReleaseVersion(b)];
+  const core = compareDottedVersions(x.core, y.core);
+  if (core !== 0) return core;
+  if (!x.pre.length || !y.pre.length) return y.pre.length - x.pre.length || x.after - y.after;
+  for (let i = 0; i < Math.min(x.pre.length, y.pre.length); i += 1) {
+    const [l, r] = [x.pre[i], y.pre[i]];
+    const [ln, rn] = [/^\d+$/.test(l), /^\d+$/.test(r)];
+    if (ln && rn ? Number(l) !== Number(r) : l !== r) {
+      return ln && rn ? Number(l) - Number(r) : ln !== rn ? (ln ? -1 : 1) : l < r ? -1 : 1;
     }
   }
-  return left.length - right.length;
+  return x.pre.length - y.pre.length || x.after - y.after;
 }
 
 /**

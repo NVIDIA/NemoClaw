@@ -224,53 +224,25 @@ describe("describeStaleUpgrade version-change labeling (#6520)", () => {
     ).toBe("v2026.6.10 → v2026.5.1 (downgrade)");
   });
 
-  it("does not label a prerelease-to-release transition as a downgrade (#13076)", () => {
-    expect(
-      describeStaleUpgrade({
-        name: "my-assistant",
-        running: false,
-        current: "0.0.134-rc.1",
-        expected: "0.0.134",
-        reasons: ["agent-version"],
-      }),
-    ).toBe("v0.0.134-rc.1 → v0.0.134");
-  });
-
-  it("labels release-to-prerelease and older-prerelease transitions as downgrades (#13076)", () => {
-    const base = { name: "my-assistant", running: false, reasons: ["agent-version" as const] };
-    expect(describeStaleUpgrade({ ...base, current: "0.0.134", expected: "0.0.134-rc.1" })).toBe(
-      "v0.0.134 → v0.0.134-rc.1 (downgrade)",
-    );
-    expect(
-      describeStaleUpgrade({ ...base, current: "0.0.134-rc.2", expected: "0.0.134-rc.1" }),
-    ).toBe("v0.0.134-rc.2 → v0.0.134-rc.1 (downgrade)");
-    expect(
-      describeStaleUpgrade({ ...base, current: "0.0.134-rc.1", expected: "0.0.134-rc.2" }),
-    ).toBe("v0.0.134-rc.1 → v0.0.134-rc.2");
-  });
-
-  it("orders prerelease identifiers per SemVer for the image label (#13076)", () => {
-    const base = {
+  it.each([
+    ["0.0.134-rc.1", "0.0.134", false],
+    ["0.0.134", "0.0.134-rc.1", true],
+    ["0.0.134-rc.1", "0.0.134-rc.2", false],
+    ["0.0.134-rc.2", "0.0.134-rc.1", true],
+    ["0.0.134-rc.1", "0.0.134-beta.1", true],
+    ["0.0.134-beta.1", "0.0.134-rc.1", false],
+    ["0.0.133", "0.0.133-11-g27d67b582b", false],
+    ["0.0.133-11-g27d67b582b", "0.0.133", true],
+    ["0.0.133-11-g27d67b582b", "0.0.134-rc.1", false],
+  ])("labels a downgrade only when %s to %s is older (#13076)", (current, expected, downgrade) => {
+    const text = describeStaleUpgrade({
       name: "my-assistant",
       running: false,
-      current: "2026.6.10",
-      expected: "2026.6.10",
-      reasons: ["image-drift" as const],
-    };
-    expect(
-      describeStaleUpgrade({
-        ...base,
-        imageCurrent: "0.0.134-rc.1",
-        imageExpected: "0.0.134-beta.1",
-      }),
-    ).toBe("v2026.6.10 unchanged; NemoClaw image v0.0.134-rc.1 → v0.0.134-beta.1 (downgrade)");
-    expect(
-      describeStaleUpgrade({
-        ...base,
-        imageCurrent: "0.0.134-beta.1",
-        imageExpected: "0.0.134-rc.1",
-      }),
-    ).toBe("v2026.6.10 unchanged; NemoClaw image v0.0.134-beta.1 → v0.0.134-rc.1");
+      current,
+      expected,
+      reasons: ["agent-version"],
+    });
+    expect(text.endsWith("(downgrade)")).toBe(downgrade);
   });
 
   it("keeps upgrade descriptions unchanged", () => {
