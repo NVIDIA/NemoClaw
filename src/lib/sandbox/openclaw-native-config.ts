@@ -89,7 +89,7 @@ export interface OpenClawConfigUpdate {
 // the actual credential remains outside the sandbox and endpoint-bound.
 const materializeNativeProviderHandle = [
   "import json, os, re, sys",
-  "credential_env, endpoint, placeholder = sys.argv[2:5]",
+  "credential_env, endpoint, placeholder, provider_path = sys.argv[2:6]",
   'handle = os.environ.get(credential_env, "")',
   "if not handle:",
   '    sys.stderr.write("NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING\\n")',
@@ -102,7 +102,7 @@ const materializeNativeProviderHandle = [
   '        raise SystemExit("Invalid OpenClaw config batch")',
   "    matched = 0",
   "    for update in updates:",
-  '        if not isinstance(update, dict) or update.get("path") != "models.providers.inference":',
+  '        if not isinstance(update, dict) or update.get("path") != provider_path:',
   "            continue",
   '        provider = update.get("value")',
   '        if not isinstance(provider, dict) or provider.get("apiKey") != placeholder:',
@@ -119,9 +119,14 @@ const materializeNativeProviderHandle = [
 ].join("\n");
 
 function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
+  const providerPaths = new Set([
+    "models.providers.inference",
+    "models.providers.openai",
+    "models.providers.anthropic",
+  ]);
   const matching = updates.filter(
     ({ dotpath, value }) =>
-      dotpath === "models.providers.inference" &&
+      providerPaths.has(dotpath) &&
       isConfigObject(value) &&
       (value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER ||
         (typeof value.apiKey === "string" &&
@@ -154,10 +159,20 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
   ) {
     throw new Error("Native provider endpoint does not match");
   }
+  const expectedPath =
+    provider === "openai-api"
+      ? "models.providers.openai"
+      : provider === "anthropic-prod"
+        ? "models.providers.anthropic"
+        : "models.providers.inference";
+  if (matching[0]!.dotpath !== expectedPath) {
+    throw new Error("Native provider config path does not match its identity");
+  }
   return {
     credentialEnv: native.credentialEnv,
     endpoint: value.baseUrl,
     placeholder: native.apiKey,
+    providerPath: expectedPath,
   };
 }
 
@@ -168,7 +183,7 @@ export function buildOpenClawNativeConfigBatchInvocation(
 ) {
   const nativeHandleUpdate = nativeProviderHandleUpdate(updates);
   const materializeCommand = nativeHandleUpdate
-    ? `python3 -c ${shellQuote(materializeNativeProviderHandle)} "$file" ${shellQuote(nativeHandleUpdate.credentialEnv)} ${shellQuote(nativeHandleUpdate.endpoint)} ${shellQuote(nativeHandleUpdate.placeholder)} || exit $?; `
+    ? `python3 -c ${shellQuote(materializeNativeProviderHandle)} "$file" ${shellQuote(nativeHandleUpdate.credentialEnv)} ${shellQuote(nativeHandleUpdate.endpoint)} ${shellQuote(nativeHandleUpdate.placeholder)} ${shellQuote(nativeHandleUpdate.providerPath)} || exit $?; `
     : "";
   return {
     nativeHandleUpdate: Boolean(nativeHandleUpdate),

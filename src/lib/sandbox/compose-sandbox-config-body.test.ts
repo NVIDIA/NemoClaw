@@ -275,10 +275,17 @@ describe("composeSandboxConfigBody", () => {
         });
         const placeholder = `openshell:resolve:env:${provider.credentialEnv}`;
         const handle = `openshell:resolve:env:v42_${provider.credentialEnv}`;
+        const providerPath =
+          provider.logicalProvider === "openai-api"
+            ? "models.providers.openai"
+            : provider.logicalProvider === "anthropic-prod"
+              ? "models.providers.anthropic"
+              : "models.providers.inference";
+        const primary = `${providerPath.split(".").at(-1)}/model-a`;
         const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [
-          { dotpath: "agents.defaults.model.primary", value: "inference/model-a" },
+          { dotpath: "agents.defaults.model.primary", value: primary },
           {
-            dotpath: "models.providers.inference",
+            dotpath: providerPath,
             value: {
               baseUrl: provider.endpoint,
               apiKey: placeholder,
@@ -299,9 +306,9 @@ describe("composeSandboxConfigBody", () => {
         });
         expect(result.status, `${result.error?.message ?? ""} ${result.stderr}`).toBe(0);
         expect(JSON.parse(result.stdout)).toEqual([
-          { path: "agents.defaults.model.primary", value: "inference/model-a" },
+          { path: "agents.defaults.model.primary", value: primary },
           {
-            path: "models.providers.inference",
+            path: providerPath,
             value: {
               baseUrl: provider.endpoint,
               apiKey: handle,
@@ -390,6 +397,18 @@ describe("composeSandboxConfigBody", () => {
         { ...update, value: { ...update.value, headers: {} } },
       ]),
     ).toThrow("Native provider identity does not match its credential placeholder");
+    expect(() =>
+      buildOpenClawNativeConfigBatchInvocation("alpha", [
+        {
+          dotpath: "models.providers.inference",
+          value: {
+            baseUrl: "https://api.openai.com/v1",
+            apiKey: "openshell:resolve:env:OPENAI_API_KEY",
+            headers: { "X-NemoClaw-Upstream-Provider": "openai-api" },
+          },
+        },
+      ]),
+    ).toThrow("Native provider config path does not match its identity");
   });
 
   it("pins a scoped handle for an authenticated Hermes endpoint (#13040)", () => {
