@@ -430,6 +430,7 @@ test(
     fs.rmSync(SESSION_FILE, { force: true });
 
     progress.phase("recreate the same name with a changed model after backup succeeds");
+    // Let the changed selection trigger recreation so restored native routing is reconciled.
     const recreated = await nemoclaw(
       host,
       ["onboard", "--non-interactive"],
@@ -437,7 +438,6 @@ test(
       onboardEnv(SANDBOX_NAME, fake.baseUrl, {
         NEMOCLAW_MODEL: "changed-test-model",
         NEMOCLAW_POLICY_MODE: "skip",
-        NEMOCLAW_RECREATE_SANDBOX: "1",
         ...corporateCa.env,
       }),
       execTimeout(20 * 60_000),
