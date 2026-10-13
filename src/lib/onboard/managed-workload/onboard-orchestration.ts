@@ -60,7 +60,6 @@ import {
 import {
   prepareSandboxRuntimeLaunch,
   prebuildSandboxImageIfEligible,
-  requiresLocalSandboxBuildKit,
   type SandboxCreateLaunchInput,
   type SandboxRuntimeLaunchWithPrebuild,
 } from "../sandbox-create-launch";
@@ -563,10 +562,6 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     );
   }
   if (input.plan.intent.sandboxGpuLogMessage) log(input.plan.intent.sandboxGpuLogMessage);
-  log(
-    `  Creating sandbox '${input.launchInput.sandboxName}' (this takes a few minutes on first run)...`,
-  );
-
   const configuredMessagingChannels =
     getChannelsFromPlan(input.plannedMessagingPlan) ?? createPlan.activeMessagingChannels;
   const initialGpuRoute = initialDockerGpuRoute(createPlan.gpuRoutePlan);
@@ -654,14 +649,30 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       ...launchInput,
       policyAttached: Boolean(createPlan.createRequest.policyPath),
     });
+    const provider = input.runtime.runtimeProvider;
+    const imageBuildSurface = provider?.containerEngine;
+    const nativePodmanCapture =
+      provider?.identity.id === "podman" &&
+      imageBuildSurface?.supported &&
+      imageBuildSurface.identities.some(
+        (identity) => identity.operation === "external-image-preparation",
+      )
+        ? (args: readonly string[], timeoutMs: number) =>
+            imageBuildSurface.capture("external-image-preparation", args, timeoutMs)
+        : undefined;
     const { createArgs: _portableArgs, ...prebuild } = await prebuildSandboxImageIfEligible({
       buildCtx: buildContext.buildCtx,
       buildId,
-      dockerDriverGateway: input.gpu.dockerDriverGateway,
+      dockerDriverGateway: ["docker", "podman"].includes(
+        input.runtime.runtimeProvider?.identity.id ?? "",
+      ),
+      gatewayDriver: input.plan.portableLifecycle
+        ? "podman"
+        : (input.runtime.runtimeProvider?.identity.id ?? "unsupported"),
+      ...(nativePodmanCapture ? { nativePodmanCapture } : {}),
       origin: buildContext.origin,
       sourceReference: createPlan.createRequest.source.reference,
       sandboxName: input.launchInput.sandboxName,
-      requiresLocalBuildKit: requiresLocalSandboxBuildKit(buildContext.origin, input.legacy.agent),
     });
     prepared = {
       createRequest: createPlan.createRequest,
@@ -681,6 +692,9 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     dashboardRemoteBindPrepared,
     legacyBuildContext,
   };
+  log(
+    `  Creating sandbox '${input.launchInput.sandboxName}' (this takes a few minutes on first run)...`,
+  );
   return {
     ...sharedLaunch,
     createRequestPlan: Object.freeze({

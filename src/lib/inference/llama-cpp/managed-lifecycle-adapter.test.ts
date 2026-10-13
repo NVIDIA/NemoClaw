@@ -102,7 +102,11 @@ describe("managed llama.cpp lifecycle adapter", () => {
             lifecycle: { resume, runtime },
             operation,
             receipt,
+            owner: { sandboxName: "spark-agent" },
             selection: {
+              preset: {
+                metadata: { id: "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b" },
+              },
               recipe: { spec: { model: { servedName: "llama-cpp-model" } } },
             },
           }) as never,
@@ -127,6 +131,33 @@ describe("managed llama.cpp lifecycle adapter", () => {
     expect(rolledBack.publicationState()).toBe("unpublished");
     expect(stopManaged).toHaveBeenCalledWith(receipt);
     expect(resume).toHaveBeenCalledTimes(2);
+
+    const legacyStationAdapter = createManagedLlamaCppLifecycleAdapter({
+      runtimeProvider,
+      runtimeOwnerSandboxName: "spark-agent",
+      expectedModel: "llama-cpp-model",
+      expectedReceipt: receipt,
+      gatewayPort,
+      homeDir,
+      operation,
+      rehydrate: vi.fn(
+        () =>
+          ({
+            lifecycle: { resume, runtime },
+            operation,
+            receipt,
+            owner: { sandboxName: "spark-agent" },
+            selection: {
+              preset: {
+                metadata: { id: "llama-cpp.station-gb300-wsl-arm64.single.qwen3-6-35b-a3b" },
+              },
+              recipe: { spec: { model: { servedName: "llama-cpp-model" } } },
+            },
+          }) as never,
+      ),
+    });
+    expect(() => legacyStationAdapter.prepareStartup()).toThrow("destroy --yes");
+    expect(legacyStationAdapter.runtime.prepareDestroy(receipt)).toEqual(receipt);
   });
 
   it("uses the retained receipt for an idempotent destroy retry after private state is gone", () => {
@@ -183,5 +214,51 @@ describe("managed llama.cpp lifecycle adapter", () => {
     });
     expect(harness.capture).toHaveBeenCalledWith(["rm", "--force", RUNTIME_ID], expect.any(Number));
     expect(harness.capture).toHaveBeenCalledWith(["network", "rm", NETWORK_ID], expect.any(Number));
+  });
+
+  it("retains exact destroy access after a recipe image changes catalog authority", () => {
+    const homeDir = temporaryHome();
+    const gatewayPort = 8080;
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine, { gatewayPort });
+    const receipt = loadManagedLlamaCppReceipt(managedLlamaCppStatePaths(homeDir, gatewayPort))!;
+    const operation: HostLocalInferenceOperation = {
+      providerId: "docker",
+      engine: harness.engine,
+      bindingSha256: receipt.engineAuthority.bindingSha256,
+      assertAuthority: vi.fn(),
+      spawn: vi.fn(),
+      createLlamaCppLifecycle: vi.fn(),
+    };
+    const runtimeProvider = createInMemoryRuntimeProviderBundle({
+      providerId: "docker",
+      workloadProfile: TEST_WORKLOAD_PROFILE,
+      hostLocalInference: {
+        services: ["llama-cpp"],
+        createOperation: () => operation,
+      },
+    });
+    const prepareCleanup = vi.fn(() => receipt);
+    const finalizeCleanup = vi.fn(() => ({ ok: true as const, removed: [], preserved: [] }));
+    const adapter = createManagedLlamaCppLifecycleAdapter({
+      runtimeProvider,
+      runtimeOwnerSandboxName: "spark-agent",
+      expectedModel: "llama-cpp-model",
+      expectedReceipt: receipt,
+      gatewayPort,
+      homeDir,
+      operation,
+      prepareCleanup,
+      finalizeCleanup,
+    });
+    expect(() => adapter.prepareStartup()).toThrow("private lifecycle state is unavailable");
+    expect(adapter.runtime.prepareDestroy(receipt)).toEqual(receipt);
+    expect(adapter.runtime.destroy(receipt)).toEqual({ status: "already-absent", receipt });
+    expect(prepareCleanup).toHaveBeenCalledWith(
+      "spark-agent",
+      receipt,
+      expect.objectContaining({ engine: harness.engine }),
+    );
+    expect(finalizeCleanup).toHaveBeenCalledOnce();
   });
 });

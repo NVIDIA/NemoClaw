@@ -31,6 +31,7 @@ export interface ContainerGpuProofResult {
   failurePhase?: "provider" | "capture" | "device-evidence" | "cleanup";
   /** Per-device identity and capacity observed inside the proved container namespace. */
   verifiedDevices?: readonly {
+    uuid?: string;
     name: string;
     totalMemoryMB: number;
     availableMemoryMB: number;
