@@ -35,7 +35,8 @@ Hermes PID and lock receipts, OpenClaw's post-upgrade doctor marker, warm-up ses
 
 Credential sanitization can increase the size of a structured configuration.
 NemoClaw expands only the private archive copy and leaves the live configuration unchanged.
-If the expansion exceeds the backup-space limit or deadline, NemoClaw stops and removes the new backup.
+If the expansion exceeds the backup-space limit or deadline, NemoClaw stops and attempts to remove the new backup.
+If cleanup fails, the error identifies the retained incomplete backup for inspection.
 
 For an eligible stopped OpenClaw or Deep Agents Code container, NemoClaw captures the provider-owned stopped state without executing in the source sandbox. The operation fails before replacement if that stopped-state authority changes during capture. Stopped Hermes rebuilds instead use the bounded OpenShell start, capture, and return-to-`Stopped` lifecycle described below.
 
