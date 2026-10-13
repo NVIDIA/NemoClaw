@@ -611,6 +611,9 @@ The `sandbox-operations` target owns live final-gateway cleanup on Docker and na
 sandbox and recovery commands, and exit nonzero. After cleanup, it onboards and destroys one final
 sandbox,
 requires the bounded command to finish, and proves both the sandbox and gateway runtime are absent.
+The survivor must reach OpenShell Ready before it is unregistered, and the gateway must still report
+connected after the preservation attempt. Native health and the retained workspace marker prove the
+earlier OpenShell start took effect; the final install's successful exit proves its onboarding phase.
 The outer destroy command deadline is twice the CLI's heavy-operation deadline so the CLI can
 finish its own timeout, absence, and gateway checks. The survivor onboarding budget stays separate.
 Deterministic destroy tests own the exact 30-second retry schedule and delayed-list sequence.

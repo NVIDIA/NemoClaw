@@ -163,12 +163,11 @@ test(
       timeoutMs: 120_000,
     });
     assertExitZero(stop, "OpenShell sandbox stop");
-    const start = await sandbox.openshell(["sandbox", "start", "-g", gatewayName, SANDBOX_NAME], {
+    await sandbox.openshell(["sandbox", "start", "-g", gatewayName, SANDBOX_NAME], {
       artifactName: "sandbox-operations-openshell-start",
       env,
       timeoutMs: 120_000,
     });
-    assertExitZero(start, "OpenShell sandbox start");
 
     progress.phase("prove native readiness and state survival");
     await waitForNativeOpenClaw(sandbox, redactions, "after-start");
@@ -193,6 +192,13 @@ test(
     survivorOnboard.exitCode !== 0 &&
       isNvidiaEndpointRateLimitFailure(resultText(survivorOnboard)) &&
       skip("NVIDIA endpoint validation was rate-limited before final cleanup assertions ran");
+    await expectSandboxReady(
+      host,
+      SURVIVOR_SANDBOX_NAME,
+      survivorEnv,
+      redactions,
+      "sandbox-operations-survivor-ready",
+    );
     removeSandbox(SURVIVOR_SANDBOX_NAME);
 
     const preserved = await host.nemoclaw([SANDBOX_NAME, "destroy", "--yes", "--cleanup-gateway"], {
@@ -215,6 +221,11 @@ test(
         `Shared NemoClaw gateway left running[\\s\\S]*--cleanup-gateway was not applied[\\s\\S]*${SURVIVOR_SANDBOX_NAME}[\\s\\S]*openshell sandbox list -g ${gatewayName}[\\s\\S]*openshell gateway remove ${gatewayName}`,
       ),
     );
+    await gateway.expectOpenshellStatusConnected(gatewayName, {
+      artifactName: "sandbox-operations-gateway-preserved",
+      env,
+      redactionValues: redactions,
+    });
     await sandbox.cleanupSandbox(SURVIVOR_SANDBOX_NAME, {
       artifactName: "sandbox-operations-remove-survivor",
       env: survivorEnv,
@@ -245,7 +256,6 @@ test(
       redactionValues: redactions,
     });
     assertExitZero(finalInstall, "final sandbox install");
-    await expectSandboxReady(host, SANDBOX_NAME, env, redactions, "sandbox-operations-final-ready");
     const finalDestroyStartedAt = Date.now();
     const finalDestroy = await host.nemoclaw(
       [SANDBOX_NAME, "destroy", "--yes", "--cleanup-gateway"],
