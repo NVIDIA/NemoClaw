@@ -1027,8 +1027,8 @@ For experimental Portable Hermes, restore its managed current-user Podman socket
 If NemoClaw reports that the managed registry is unavailable, restore it and verify that `http://127.0.0.1:5000/v2/` returns HTTP `200` before retrying onboarding.
 A successful retry publishes and inspects the generated image before sandbox creation.
 
-This requirement does not change user-supplied `--from` contexts, which continue to use the OpenShell gateway builder.
-NemoClaw does not send a generated Dockerfile to the gateway builder after a local build failure.
+The same build and image check applies to a user-supplied `--from` context on a local Docker gateway.
+NemoClaw does not send a Dockerfile to the gateway builder after a local build failure.
 
 </AgentOnly>
 
