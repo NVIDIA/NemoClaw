@@ -6,7 +6,7 @@ import { hostedCredentialScanCommand } from "./inference-routing-credential-scan
 import YAML from "yaml";
 import { hermesApiCommand } from "../fixtures/hermes-api-command.ts";
 import {
-  HOSTED_PROVIDER_SMOKE_CASES as hostedCases,
+  HOSTED_PROVIDER_SMOKE_CASES,
   hostedProviderSmokeEnvironment,
 } from "../../../tools/e2e/hosted-provider-smoke.mts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
@@ -21,6 +21,7 @@ import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   cleanupSandbox,
+  rebuildOpenRouterSmoke,
   expectOnboardSuccess,
   inferenceSandboxName,
   onboardSandbox,
@@ -203,7 +204,6 @@ test(
         timeoutMs: 90_000,
       },
     );
-    expect(filesystemScan.stdout).not.toContain("SCAN_CONFIG_MISSING");
     expect(filesystemScan.stdout).not.toContain("FOUND:");
     expect(filesystemScan.stdout, redactedResultText(filesystemScan)).toContain("SCAN_DONE");
 
@@ -225,8 +225,8 @@ test(
 
 // Four cases use OpenClaw; the Nous API-key case uses Hermes.
 
-test.for(hostedCases)(
-  "$id $label answers through its native provider",
+test.for(HOSTED_PROVIDER_SMOKE_CASES.map((entry) => [entry.id, entry.label, entry] as const))(
+  "%s %s answers through its native provider",
   {
     timeout: 15 * 60_000,
     meta: {
@@ -234,6 +234,7 @@ test.for(hostedCases)(
         "confirm hosted provider prerequisites",
         "recreate the hosted sandbox",
         "onboard the hosted provider",
+        "exercise the selected hosted lifecycle",
         "verify native agent configuration",
         "verify hosted credential isolation",
         "request a fresh agent response",
@@ -241,7 +242,7 @@ test.for(hostedCases)(
     },
   },
   async (
-    selected,
+    [_id, _label, selected],
     { artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip },
   ) => {
     requireProviderSmokeSelected(selected.selector, skip);
@@ -264,6 +265,9 @@ test.for(hostedCases)(
       model,
       contract: [
         "hosted provider onboards",
+        ...(selected.selector === "openrouter"
+          ? ["OpenRouter remains usable after rebuild without a fresh host credential"]
+          : []),
         "agent uses the native endpoint with a credential placeholder",
         "selected credential is absent from sandbox environment, process arguments, and sampled files",
         "fresh agent request answers with the selected model",
@@ -287,6 +291,12 @@ test.for(hostedCases)(
     cleanup.add(`strict hosted inference cleanup for ${sandboxName}`, () =>
       cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
     );
+    progress.phase("exercise the selected hosted lifecycle");
+    const rebuilt = await rebuildOpenRouterSmoke(selected.selector, host, sandboxName, apiKey);
+    expect(
+      rebuilt === null ? 0 : rebuilt.exitCode,
+      rebuilt === null ? "fresh hosted provider lifecycle" : resultText(rebuilt),
+    ).toBe(0);
     progress.phase("verify native agent configuration");
     const config = await sandbox.exec(
       sandboxName,

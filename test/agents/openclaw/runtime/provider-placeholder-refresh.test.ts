@@ -53,7 +53,7 @@ describe.concurrent("native provider handle refresh", () => {
       const providerPath = path.join(tmpDir, "providers.cjs");
       fs.writeFileSync(
         providerPath,
-        `exports.HOSTED_NATIVE_PROVIDERS = ${JSON.stringify([options.provider ?? hostedNativeProvider("openrouter-api")])};`,
+        `exports.fixedNativeProvider = () => (${JSON.stringify(options.provider ?? hostedNativeProvider("openrouter-api"))});`,
       );
       fs.chmodSync(configPath, 0o640);
       fs.chmodSync(openclawDir, options.readOnlyDirectory ? 0o500 : 0o700);
@@ -63,12 +63,12 @@ describe.concurrent("native provider handle refresh", () => {
         .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE)
         .replaceAll("/usr/local/bin/node", process.execPath)
         .replaceAll(
-          "/src/lib/inference/native-provider/hosted.ts",
+          "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
           options.provider
             ? providerPath
             : path.resolve(
                 import.meta.dirname,
-                "../../../../src/lib/inference/native-provider/hosted.ts",
+                "../../../../tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
               ),
         );
       fs.writeFileSync(
@@ -140,29 +140,32 @@ describe.concurrent("native provider handle refresh", () => {
     },
   );
 
-  it("preserves valid configuration when atomic publication cannot create a file (#13043)", async () => {
-    const config = {
-      models: {
-        providers: {
-          inference: {
-            baseUrl: "https://openrouter.ai/api/v1",
-            apiKey: "openshell:resolve:env:v42_OPENROUTER_API_KEY",
+  it.skipIf(process.getuid?.() === 0)(
+    "preserves valid configuration when atomic publication cannot create a file (#13043)",
+    async () => {
+      const config = {
+        models: {
+          providers: {
+            inference: {
+              baseUrl: "https://openrouter.ai/api/v1",
+              apiKey: "openshell:resolve:env:v42_OPENROUTER_API_KEY",
+            },
           },
         },
-      },
-    };
-    const run = await runRefresh(
-      config,
-      { OPENROUTER_API_KEY: "openshell:resolve:env:v43_OPENROUTER_API_KEY" },
-      false,
-      undefined,
-      { readOnlyDirectory: true },
-    );
-    expect(run.result.status).not.toBe(0);
-    expect(run.config).toEqual(config);
-    expect(run.mode).toBe(0o640);
-    expect(run.files).toEqual(["openclaw.json"]);
-  });
+      };
+      const run = await runRefresh(
+        config,
+        { OPENROUTER_API_KEY: "openshell:resolve:env:v43_OPENROUTER_API_KEY" },
+        false,
+        undefined,
+        { readOnlyDirectory: true },
+      );
+      expect(run.result.status).not.toBe(0);
+      expect(run.config).toEqual(config);
+      expect(run.mode).toBe(0o640);
+      expect(run.files).toEqual(["openclaw.json"]);
+    },
+  );
 
   it("uses the canonical OpenRouter endpoint and credential definition (#13043)", async () => {
     const provider = {

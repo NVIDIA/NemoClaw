@@ -868,10 +868,10 @@ parsed = subprocess.run(
         "/usr/local/bin/node",
         "-e",
         'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5");'
-        'const {HOSTED_NATIVE_PROVIDERS}=require("/src/lib/inference/native-provider/hosted.ts");'
+        'const {fixedNativeProvider}=require("/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs");'
         'process.stdout.write(JSON.stringify({'
         'config:JSON5.parse(require("node:fs").readFileSync(0,"utf8")),'
-        'openrouter:HOSTED_NATIVE_PROVIDERS.find(p=>p.logicalProvider==="openrouter-api")}));',
+        'openrouter:fixedNativeProvider("openrouter-api")}));',
     ],
     input=source,
     text=True,

@@ -498,3 +498,29 @@ export {
   skipLive,
   TRANSPORT_CLASSIFICATION_PATTERN,
 };
+
+/** Reuse the hosted smoke for OpenRouter rebuild; other providers retain fresh onboarding. */
+export async function rebuildOpenRouterSmoke(
+  provider: string,
+  host: HostCliClient,
+  sandboxName: string,
+  apiKey: string,
+) {
+  if (provider !== "openrouter") return null;
+  // Persistence belongs to rebuild-openclaw. The caller checks native routing
+  // and isolation after recovering credentials without a fresh host key.
+  return host.command(
+    process.execPath,
+    [CLI_ENTRYPOINT, sandboxName, "rebuild", "--yes", "--verbose"],
+    {
+      artifactName: "tc-inf-07-rebuild",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+      redactionValues: [apiKey],
+      timeoutMs: 10 * 60_000,
+    },
+  );
+}
