@@ -249,6 +249,41 @@ export function claimManagedLlamaCppOwner(
   throw new Error("Managed llama.cpp on this gateway was reserved concurrently.");
 }
 
+/**
+ * Add the proved GPU UUID to an owner saved before UUID persistence. Only valid while no runtime
+ * authority exists; the caller verifies that, and the swap is refused if the file changed.
+ */
+export function bindLegacyManagedLlamaCppOwnerGpu(
+  paths: ManagedLlamaCppStatePaths,
+  legacy: ManagedLlamaCppOwner,
+  gpuDeviceUuid: string,
+): ManagedLlamaCppOwner {
+  requirePrivateDirectory(paths.stateDir);
+  if (legacy.gpuDeviceUuid !== undefined) {
+    throw new Error("Managed llama.cpp owner state already has a GPU binding.");
+  }
+  if (readPrivateFile(paths.ownerPath) !== serializeOwner(legacy)) {
+    throw new Error("Managed llama.cpp owner state changed before its GPU binding.");
+  }
+  const upgraded = normalizeOwner({ ...legacy, gpuDeviceUuid });
+  const temporary = path.join(
+    paths.stateDir,
+    `.${path.basename(paths.ownerPath)}.${randomUUID()}.tmp`,
+  );
+  try {
+    fs.writeFileSync(temporary, serializeOwner(upgraded), {
+      encoding: "utf8",
+      flag: "wx",
+      mode: FILE_MODE,
+    });
+    fs.renameSync(temporary, paths.ownerPath);
+    fsyncDirectory(paths.stateDir);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+  return upgraded;
+}
+
 export function reserveManagedLlamaCppOwner(
   paths: ManagedLlamaCppStatePaths,
   ownerValue: ManagedLlamaCppOwner,

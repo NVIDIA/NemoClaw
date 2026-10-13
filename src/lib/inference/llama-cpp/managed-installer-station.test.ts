@@ -16,9 +16,19 @@ import type {
 import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
-import { installManagedLlamaCpp, selectStationGb300GpuUuid } from "./managed-installer";
+import {
+  installManagedLlamaCpp,
+  rehydrateManagedLlamaCppLifecycle,
+  selectStationGb300GpuUuid,
+} from "./managed-installer";
 import { engineHarness } from "./managed-installer.test-support";
-import { loadManagedLlamaCppOwner, managedLlamaCppStatePaths } from "./managed-state";
+import {
+  createManagedLlamaCppReceiptWriter,
+  loadManagedLlamaCppOwner,
+  managedLlamaCppStatePaths,
+  reserveManagedLlamaCppOwner,
+} from "./managed-state";
+import { serializeHostLocalInferenceReceipt } from "../../onboard/runtime-provider/host-local-inference";
 
 const uuid = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1";
 const gpu = {
@@ -35,7 +45,12 @@ const gpu = {
       totalMemoryMB: 24467,
       availableMemoryMB: 24000,
     },
-    { uuid, name: "NVIDIA GB300", totalMemoryMB: 256703, availableMemoryMB: 250000 },
+    {
+      uuid,
+      name: "NVIDIA GB300",
+      totalMemoryMB: 256703,
+      availableMemoryMB: 250000,
+    },
   ],
 };
 
@@ -86,48 +101,48 @@ describe("Station managed llama.cpp GPU binding (#13026)", () => {
     ).toThrow("Docker-bound CUDA proof");
   });
 
-  it("persists the proved UUID in lifecycle authority", async () => {
-    const selected = stationSelection();
+  function setup(selected: ResolvedLlamaCppInferenceSelection) {
     const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-")));
-    try {
-      const executableRoot = path.join(homeDir, "bin");
-      fs.mkdirSync(executableRoot, { mode: 0o700 });
-      fs.writeFileSync(path.join(executableRoot, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
-      vi.stubEnv("PATH", executableRoot);
-      const harness = engineHarness();
-      harness.images.add(selected.recipe.spec.runtime.image);
-      harness.images.add(selected.recipe.spec.readiness.probeImage);
-      const receipt = { schemaVersion: 1 } as HostLocalInferenceReceipt;
-      const createLifecycle = vi.fn(() => ({
-        recoverUnfinished: vi.fn(() => ({ recovered: [], failures: [] })),
-        resume: vi.fn(() => receipt),
-        runtime: {} as HostLocalLlamaCppLifecycle["runtime"],
-        start: vi.fn(() => receipt),
-      }));
-      const operation = {
+    const executableRoot = path.join(homeDir, "bin");
+    fs.mkdirSync(executableRoot, { mode: 0o700 });
+    fs.writeFileSync(path.join(executableRoot, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    vi.stubEnv("PATH", executableRoot);
+    const harness = engineHarness();
+    harness.images.add(selected.recipe.spec.runtime.image);
+    harness.images.add(selected.recipe.spec.readiness.probeImage);
+    const receipt = { schemaVersion: 1 } as HostLocalInferenceReceipt;
+    const createLifecycle = vi.fn(() => ({
+      recoverUnfinished: vi.fn(() => ({ recovered: [], failures: [] })),
+      resume: vi.fn(() => receipt),
+      runtime: {} as HostLocalLlamaCppLifecycle["runtime"],
+      start: vi.fn(() => receipt),
+    }));
+    const operation = {
+      providerId: "docker" as const,
+      engine: harness.engine,
+      bindingSha256: dockerLlamaCppBindingSha256(harness.engine),
+      assertAuthority: vi.fn(),
+      spawn: vi.fn(() => ({}) as never),
+      createLlamaCppLifecycle: createLifecycle,
+    } as HostLocalInferenceOperation;
+    const provider = createDockerRuntimeProviderBundle();
+    const runtimeProvider = {
+      ...provider,
+      hostLocalInference: {
         providerId: "docker" as const,
-        engine: harness.engine,
-        bindingSha256: dockerLlamaCppBindingSha256(harness.engine),
-        assertAuthority: vi.fn(),
-        spawn: vi.fn(() => ({}) as never),
-        createLlamaCppLifecycle: createLifecycle,
-      } as HostLocalInferenceOperation;
-      const provider = createDockerRuntimeProviderBundle();
-      const hostPath = path.join(homeDir, "model.gguf");
-      fs.writeFileSync(hostPath, "fixture", { mode: 0o600 });
-      const identity = fs.lstatSync(hostPath, { bigint: true });
-      const result = await installManagedLlamaCpp(selected, {
+        supported: true as const,
+        services: ["llama-cpp" as const],
+        createOperation: vi.fn(() => operation),
+      },
+    };
+    const hostPath = path.join(homeDir, "model.gguf");
+    fs.writeFileSync(hostPath, "fixture", { mode: 0o600 });
+    const identity = fs.lstatSync(hostPath, { bigint: true });
+    const install = () =>
+      installManagedLlamaCpp(selected, {
         sandboxName: "station-agent",
         homeDir,
-        runtimeProvider: {
-          ...provider,
-          hostLocalInference: {
-            providerId: "docker",
-            supported: true,
-            services: ["llama-cpp"],
-            createOperation: vi.fn(() => operation),
-          },
-        },
+        runtimeProvider,
         gpu,
         verifyGguf: vi.fn(async () => ({
           digest: selected.recipe.spec.model.files[0]!.digest,
@@ -144,15 +159,165 @@ describe("Station managed llama.cpp GPU binding (#13026)", () => {
         checkPort: vi.fn(async () => ({ ok: true })),
         log: vi.fn(),
       });
+    const legacyOwner = () => ({
+      schemaVersion: 1 as const,
+      sandboxName: "station-agent",
+      catalogDigest: selected.catalogDigest,
+      presetDigest: selected.presetDigest,
+      recipeDigest: selected.recipeDigest,
+      recipeId: selected.recipe.metadata.id,
+    });
+    return {
+      homeDir,
+      createLifecycle,
+      install,
+      legacyOwner,
+      runtimeProvider,
+      operation,
+    };
+  }
+
+  function seedLegacyRuntimeAuthority(
+    selected: ResolvedLlamaCppInferenceSelection,
+    homeDir: string,
+    engine: ReturnType<typeof engineHarness>["engine"],
+  ): void {
+    const paths = managedLlamaCppStatePaths(homeDir);
+    const transactionId = "a".repeat(64);
+    const engineAuthority = {
+      schemaVersion: 1 as const,
+      providerId: "docker",
+      operation: "host-local-inference" as const,
+      engineId: engine.engineId,
+      authorityId: engine.authorityId,
+      bindingSha256: dockerLlamaCppBindingSha256(engine),
+    };
+    const receipt = {
+      schemaVersion: 1,
+      providerId: "docker",
+      service: "llama-cpp",
+      engineAuthority,
+      endpoint: {
+        host: "host.openshell.internal",
+        port: 8081,
+        networkName: "nemoclaw-llama-cpp",
+      },
+      runtime: {
+        kind: "container",
+        runtimeId: "b".repeat(64),
+        name: "nemoclaw-llama-cpp",
+        imageRef: selected.recipe.spec.runtime.image,
+        probeImageRef: selected.recipe.spec.readiness.probeImage,
+        specSha256: "c".repeat(64),
+        model: {
+          planDigest: `sha256:${"d".repeat(64)}`,
+          recipeId: selected.recipe.metadata.id,
+          generation: transactionId,
+          digest: selected.recipe.spec.model.files[0]!.digest,
+          sizeBytes: selected.recipe.spec.model.files[0]!.sizeBytes,
+        },
+        gpu: { vendor: "nvidia", count: 1 },
+      },
+    } as const satisfies HostLocalInferenceReceipt;
+    createManagedLlamaCppReceiptWriter(paths, transactionId).writeExact(
+      serializeHostLocalInferenceReceipt(receipt),
+    );
+  }
+
+  it("persists the proved UUID in lifecycle authority", async () => {
+    const selected = stationSelection();
+    const fixture = setup(selected);
+    try {
+      const result = await fixture.install();
       expect(result.ok).toBe(true);
-      expect(loadManagedLlamaCppOwner(managedLlamaCppStatePaths(homeDir))?.gpuDeviceUuid).toBe(
-        uuid,
-      );
-      expect(createLifecycle).toHaveBeenCalledWith(
-        expect.objectContaining({ bindings: expect.objectContaining({ gpuDeviceUuid: uuid }) }),
+      expect(
+        loadManagedLlamaCppOwner(managedLlamaCppStatePaths(fixture.homeDir))?.gpuDeviceUuid,
+      ).toBe(uuid);
+      expect(fixture.createLifecycle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bindings: expect.objectContaining({ gpuDeviceUuid: uuid }),
+        }),
       );
     } finally {
-      fs.rmSync(homeDir, { recursive: true, force: true });
+      fs.rmSync(fixture.homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("binds a legacy Station owner to the proved UUID on retry when no runtime authority exists", async () => {
+    const selected = stationSelection();
+    const fixture = setup(selected);
+    try {
+      const paths = managedLlamaCppStatePaths(fixture.homeDir);
+      reserveManagedLlamaCppOwner(paths, fixture.legacyOwner());
+      expect((await fixture.install()).ok).toBe(true);
+      expect(loadManagedLlamaCppOwner(paths)?.gpuDeviceUuid).toBe(uuid);
+      expect(fixture.createLifecycle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bindings: expect.objectContaining({ gpuDeviceUuid: uuid }),
+        }),
+      );
+    } finally {
+      fs.rmSync(fixture.homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a legacy Station owner unbound while its prior runtime exists", async () => {
+    const selected = stationSelection();
+    const fixture = setup(selected);
+    try {
+      const paths = managedLlamaCppStatePaths(fixture.homeDir);
+      reserveManagedLlamaCppOwner(paths, fixture.legacyOwner());
+      seedLegacyRuntimeAuthority(selected, fixture.homeDir, fixture.operation.engine);
+      const before = fs.readFileSync(paths.ownerPath);
+      await fixture.install().catch(() => undefined);
+      expect(fs.readFileSync(paths.ownerPath)).toEqual(before);
+      expect(loadManagedLlamaCppOwner(paths)?.gpuDeviceUuid).toBeUndefined();
+      expect(fixture.createLifecycle).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          bindings: expect.objectContaining({
+            gpuDeviceUuid: expect.any(String),
+          }),
+        }),
+      );
+    } finally {
+      fs.rmSync(fixture.homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rehydrates a legacy Station owner with the original unbound GPU request", () => {
+    const selected = stationSelection();
+    const fixture = setup(selected);
+    try {
+      const paths = managedLlamaCppStatePaths(fixture.homeDir);
+      reserveManagedLlamaCppOwner(paths, fixture.legacyOwner());
+      seedLegacyRuntimeAuthority(selected, fixture.homeDir, fixture.operation.engine);
+      const source = selected.recipe.spec.model;
+      const file = source.files[0]!;
+      const modelPath = path.join(
+        fixture.homeDir,
+        ".cache",
+        "huggingface",
+        "hub",
+        `models--${source.id.replaceAll("/", "--")}`,
+        "snapshots",
+        source.revision,
+        file.path,
+      );
+      fs.mkdirSync(path.dirname(modelPath), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(modelPath, "legacy-station", { mode: 0o600 });
+      const rehydrated = rehydrateManagedLlamaCppLifecycle({
+        runtimeProvider: fixture.runtimeProvider,
+        runtimeOwnerSandboxName: "station-agent",
+        homeDir: fixture.homeDir,
+        operation: fixture.operation,
+      });
+      expect(rehydrated.owner.gpuDeviceUuid).toBeUndefined();
+      const [call] = fixture.createLifecycle.mock.calls[0] as unknown as [
+        { bindings: { gpuDeviceUuid?: string } },
+      ];
+      expect(call.bindings.gpuDeviceUuid).toBeUndefined();
+    } finally {
+      fs.rmSync(fixture.homeDir, { recursive: true, force: true });
     }
   });
 });

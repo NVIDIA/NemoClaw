@@ -34,12 +34,14 @@ import type {
   VerifiedLocalModelArtifact,
 } from "./host-local-runtime";
 import {
+  bindLegacyManagedLlamaCppOwnerGpu,
   claimManagedLlamaCppOwner,
   createManagedLlamaCppReceiptWriter,
   loadManagedLlamaCppApiKey,
   loadManagedLlamaCppOwner,
   loadManagedLlamaCppReceipt,
   loadOrCreateManagedLlamaCppApiKey,
+  type ManagedLlamaCppOwner,
   type ManagedLlamaCppStatePaths,
   managedLlamaCppStatePaths,
 } from "./managed-state";
@@ -381,7 +383,9 @@ function launchContract(
         requestTimeoutSeconds: recipe.spec.serve.limits.requestTimeoutSeconds,
         shutdownTimeoutSeconds: recipe.spec.serve.limits.shutdownTimeoutSeconds,
       },
-      requestGuard: { upstreamPort: recipe.spec.serve.requestGuard.upstreamPort },
+      requestGuard: {
+        upstreamPort: recipe.spec.serve.requestGuard.upstreamPort,
+      },
       microBatchSize: recipe.spec.serve.microBatchSize,
       port: recipe.spec.serve.port,
       protocol: recipe.spec.serve.protocol,
@@ -487,9 +491,6 @@ function lifecycleFor(input: {
 }): HostLocalLlamaCppLifecycle {
   const identity = runtimeIdentity();
   const recipe = input.selection.recipe;
-  if (isStationGb300Selection(input.selection) && !input.gpuDeviceUuid) {
-    throw new Error("Station GB300 llama.cpp requires a proved, persisted GB300 GPU UUID.");
-  }
   return input.operation.createLlamaCppLifecycle({
     authorityStore: createFilePersistedEngineAuthorityStore(input.paths.stateDir),
     apiKeyRootHostPath: input.paths.stateDir,
@@ -501,12 +502,20 @@ function lifecycleFor(input: {
       imageReference: recipe.spec.runtime.image,
       ...(input.gpuDeviceUuid ? { gpuDeviceUuid: input.gpuDeviceUuid } : {}),
       model: input.artifact,
-      network: { isolation: "docker-internal", name: MANAGED_LLAMA_CPP_NETWORK_NAME },
+      network: {
+        isolation: "docker-internal",
+        name: MANAGED_LLAMA_CPP_NETWORK_NAME,
+      },
       ownerLabel: {
         name: MANAGED_LLAMA_CPP_OWNER_LABEL,
         value: MANAGED_LLAMA_CPP_OWNER_VALUE,
       },
-      identityLabels: [{ name: "io.nvidia.nemoclaw.llama-cpp.recipe", value: recipe.metadata.id }],
+      identityLabels: [
+        {
+          name: "io.nvidia.nemoclaw.llama-cpp.recipe",
+          value: recipe.metadata.id,
+        },
+      ],
       runtimeGid: identity.gid,
       runtimeUid: identity.uid,
     },
@@ -524,6 +533,38 @@ const STATION_GB300_WSL_PRESET_ID = "llama-cpp.station-gb300-wsl-arm64.single.qw
 
 function isStationGb300Selection(selection: ResolvedLlamaCppInferenceSelection): boolean {
   return selection.preset.metadata.id === STATION_GB300_WSL_PRESET_ID;
+}
+
+/**
+ * Claim the owner. An owner saved before UUID persistence has no GPU binding: its runtime was
+ * created with the unbound single-GPU request, so keep that authority while a receipt or unfinished
+ * transaction exists. Only an owner with no runtime authority is upgraded to the proved UUID.
+ */
+function claimStationAwareOwner(
+  paths: ManagedLlamaCppStatePaths,
+  desired: Omit<ManagedLlamaCppOwner, "gpuDeviceUuid">,
+  provedGpuDeviceUuid: string | undefined,
+): ReturnType<typeof claimManagedLlamaCppOwner> {
+  const existing = loadManagedLlamaCppOwner(paths);
+  if (provedGpuDeviceUuid && existing && existing.gpuDeviceUuid === undefined) {
+    const { gpuDeviceUuid: _unbound, ...existingKey } = existing;
+    if (JSON.stringify(existingKey) === JSON.stringify(desired)) {
+      const hasRuntimeAuthority =
+        loadManagedLlamaCppReceipt(paths) !== null ||
+        createHostLocalCreateJournalStore(paths.stateDir)
+          .list()
+          .some(({ phase }) => phase !== "finalized");
+      if (hasRuntimeAuthority) return Object.freeze({ owner: existing, created: false });
+      return Object.freeze({
+        owner: bindLegacyManagedLlamaCppOwnerGpu(paths, existing, provedGpuDeviceUuid),
+        created: false,
+      });
+    }
+  }
+  return claimManagedLlamaCppOwner(paths, {
+    ...desired,
+    ...(provedGpuDeviceUuid ? { gpuDeviceUuid: provedGpuDeviceUuid } : {}),
+  });
 }
 
 /** Select only the uniquely proved GB300 from the active Docker provider. */
@@ -545,7 +586,10 @@ export function selectStationGb300GpuUuid(
 function currentManagedLlamaCppArtifact(
   selection: ResolvedLlamaCppInferenceSelection,
   homeDir: string,
-): { readonly artifact: VerifiedLocalModelArtifact; readonly cacheRoot: string } {
+): {
+  readonly artifact: VerifiedLocalModelArtifact;
+  readonly cacheRoot: string;
+} {
   const cacheRoot = sharedHuggingFaceCacheRoot(homeDir);
   const plan = compileLlamaCppGgufCachePlan(selection.recipe);
   const source = plan.acquisition.source;
@@ -662,7 +706,7 @@ export async function installManagedLlamaCpp(
   let ownerCreated = false;
 
   try {
-    const gpuDeviceUuid = selectStationGb300GpuUuid(selection, options.gpu);
+    const provedGpuDeviceUuid = selectStationGb300GpuUuid(selection, options.gpu);
     operation = requireRuntimeProviderHostLocalInferenceOperation(
       options.runtimeProvider,
       "llama-cpp",
@@ -670,15 +714,18 @@ export async function installManagedLlamaCpp(
     );
     engine = operation.engine;
     options.revalidateSandboxIdentity?.("reserve the managed llama.cpp runtime");
-    const reservation = claimManagedLlamaCppOwner(paths, {
-      schemaVersion: 1,
-      sandboxName: options.sandboxName,
-      catalogDigest: selection.catalogDigest,
-      presetDigest: selection.presetDigest,
-      recipeDigest: selection.recipeDigest,
-      recipeId: recipe.metadata.id,
-      ...(gpuDeviceUuid ? { gpuDeviceUuid } : {}),
-    });
+    const reservation = claimStationAwareOwner(
+      paths,
+      {
+        schemaVersion: 1,
+        sandboxName: options.sandboxName,
+        catalogDigest: selection.catalogDigest,
+        presetDigest: selection.presetDigest,
+        recipeDigest: selection.recipeDigest,
+        recipeId: recipe.metadata.id,
+      },
+      provedGpuDeviceUuid,
+    );
     owner = reservation.owner;
     ownerCreated = reservation.created;
     createFilePersistedEngineAuthorityStore(paths.stateDir).record(
