@@ -30,6 +30,8 @@ Put each test in the cheapest layer that can check its behavior, and assert only
 Unit tests check one crate's rules: configuration parsing and validation, compilation, planning, provider backends, CLI argument and output handling, and the build tool.
 They live in each crate's `src` modules and in its `integration` test binary, `tests/main.rs`; the providers' `schema` binaries also belong here.
 They use in-process fakes and temporary files and need no bundle; `openshell-provider` and `fabric-provider`, for example, test their backends against the fake OpenShell gateway in `src/fake_gateway_tests.rs` without OpenTofu.
+On Unix, the SDK's `integration` binary also runs `Deployment` over a [scripted OpenTofu](../../crates/nemoclaw-sdk/tests/support/scripted_tofu.rs): a shell script in a temporary directory with a bundle's layout and manifest, which logs its calls and replays canned plans and states.
+The SDK alone decides the stage order and the unfinished-apply and unfinished-destroy state it saves when an operation stops, so those tests need neither OpenTofu nor `NEMOCLAW_TEST_BUNDLE`.
 The shared fakes are:
 
 - [`crates/test-support/http.rs`](../../crates/test-support/http.rs) serves HTTP and Docker-style engine APIs, and [`kube_api.rs`](../../crates/test-support/kube_api.rs) an in-memory Kubernetes API; crates include them as private modules.

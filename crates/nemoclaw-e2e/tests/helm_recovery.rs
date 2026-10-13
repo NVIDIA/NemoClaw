@@ -1,12 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Helm release recovery during destroy, through the bundled OpenTofu, the
-//! Helm provider, and the public `destroy` and `plan_destroy`, against a
-//! loopback Kubernetes API that injects outages and permission failures.
+//! Helm provider, and the public `destroy`, `plan_destroy`, `export`, and
+//! `apply`, against a loopback Kubernetes API that injects outages, permission
+//! failures, and authentication failures.
 //!
 //! Installing a release through `apply` would pull the pinned chart, so each
-//! test starts from an imported release that the SDK's `test-scenarios`
-//! setup builds.
+//! test starts from an interrupted runtime apply that the SDK's
+//! `test-scenarios` setup builds, with the fixture release either imported by
+//! the Helm provider or left as a release record that OpenTofu does not bind.
+//! The tests in this file check a lost Helm binding; the child modules check a
+//! deleted or truncated receipt, a release record with no binding, and a
+//! second destroy, a 401, or a cancellation.
 
 use super::kube_api;
 use super::transport;
@@ -26,18 +31,33 @@ use std::{
     },
 };
 
+#[path = "helm_recovery/destroy_faults.rs"]
+mod destroy_faults;
+#[path = "helm_recovery/receipt.rs"]
+mod receipt;
+#[path = "helm_recovery/release_record.rs"]
+mod release_record;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Fault {
     Healthy,
     Offline,
     Forbidden,
+    /// The API server rejects the credentials on every request.
+    Unauthorized,
+    /// The API server rejects the credentials only when a ConfigMap is read.
+    /// The development issuer is the only ConfigMap reader here: Helm's
+    /// release records are Secrets.
+    ConfigMapsUnauthorized,
 }
 
 struct Api {
     objects: kube_api::Objects,
     fault: Arc<Mutex<Fault>>,
     failures: Arc<AtomicUsize>,
-    mutations: Arc<AtomicUsize>,
+    /// Every request in arrival order, as its method and path without the
+    /// query, whether or not a fault answered it.
+    log: Arc<Mutex<Vec<(String, String)>>>,
     server: transport::Fixture,
 }
 
@@ -57,19 +77,28 @@ impl Api {
             "status":{"availableReplicas":1}}));
         let fault = Arc::new(Mutex::new(Fault::Healthy));
         let failures = Arc::new(AtomicUsize::new(0));
-        let mutations = Arc::new(AtomicUsize::new(0));
+        let log = Arc::new(Mutex::new(Vec::new()));
         let state = (
             objects.clone(),
             fault.clone(),
             failures.clone(),
-            mutations.clone(),
+            log.clone(),
         );
         let server = transport::Fixture::start_tcp(move |request| {
-            let (objects, fault, failures, mutations) = &state;
-            if request.method != "GET" {
-                mutations.fetch_add(1, Ordering::Relaxed);
-            }
+            let (objects, fault, failures, log) = &state;
+            log.lock().unwrap().push((
+                request.method.clone(),
+                request.path.split('?').next().unwrap().to_owned(),
+            ));
             let fault = *fault.lock().unwrap();
+            if fault == Fault::Unauthorized
+                || (fault == Fault::ConfigMapsUnauthorized
+                    && request.method == "GET"
+                    && request.path.contains("/configmaps/"))
+            {
+                failures.fetch_add(1, Ordering::Relaxed);
+                return kube_api::status(401, "Unauthorized");
+            }
             // The independent NemoClaw metadata observation must remain healthy
             // when only Helm's full release lookup loses permission.
             let helm_lookup = request.method == "GET"
@@ -106,9 +135,38 @@ impl Api {
             objects,
             fault,
             failures,
-            mutations,
+            log,
             server,
         }
+    }
+
+    /// Every request received so far.
+    fn requests(&self) -> Vec<(String, String)> {
+        self.log.lock().unwrap().clone()
+    }
+
+    /// The requests received so far that are not reads.
+    fn writes(&self) -> Vec<(String, String)> {
+        let mut requests = self.requests();
+        requests.retain(|(method, _)| method != "GET");
+        requests
+    }
+
+    /// The number of requests received so far that are not reads.
+    fn mutations(&self) -> usize {
+        self.writes().len()
+    }
+
+    /// Delete the record of release `name`, as `helm uninstall` does.
+    fn uninstall(&self, name: &str, namespace: &str) {
+        let record = format!(
+            "{}/sh.helm.release.v1.{name}.v1",
+            kube_api::collection("v1", "Secret", namespace)
+        );
+        assert!(
+            self.objects.0.lock().unwrap().remove(&record).is_some(),
+            "release {name} has no record"
+        );
     }
 
     fn release(&self, name: &str, namespace: &str) {
@@ -190,13 +248,116 @@ fn files(directory: &Path) -> BTreeSet<String> {
 }
 
 /// Files the SDK added to a stage since `before`, other than OpenTofu's saved
-/// plans and state backups: the recovery checkpoint while one exists.
+/// plans, state backups, and lock information: the recovery checkpoint while one
+/// exists. OpenTofu removes its lock information when it exits; the SDK's kill of
+/// an OpenTofu that did not answer an interrupt leaves it behind.
 fn recovery_files(stage: &Path, before: &BTreeSet<String>) -> Vec<String> {
     files(stage)
         .difference(before)
-        .filter(|name| !name.ends_with(".plan") && !name.ends_with(".backup"))
+        .filter(|name| {
+            !name.ends_with(".plan")
+                && !name.ends_with(".backup")
+                && name.as_str() != ".terraform.tfstate.lock.info"
+        })
         .cloned()
         .collect()
+}
+
+/// The files in a stage other than OpenTofu's saved plans and state backups.
+fn durable_files(stage: &Path) -> BTreeSet<String> {
+    recovery_files(stage, &BTreeSet::new())
+        .into_iter()
+        .collect()
+}
+
+/// The progress events a deployment has reported.
+#[derive(Clone, Default)]
+struct Events(Arc<Mutex<Vec<Progress>>>);
+
+impl Events {
+    /// A progress callback that records into these events.
+    fn recording(&self) -> Arc<dyn Fn(Progress) + Send + Sync> {
+        let events = self.0.clone();
+        Arc::new(move |event| events.lock().unwrap().push(event))
+    }
+
+    fn all(&self) -> Vec<Progress> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+/// `error` is a failed OpenTofu `operation` whose diagnostic contains every
+/// one of `texts`.
+fn assert_execution(error: &Error, operation: &str, texts: &[&str]) {
+    let Error::Execution {
+        operation: failed,
+        diagnostic,
+        ..
+    } = error
+    else {
+        panic!("expected a failed OpenTofu {operation}, not: {error}");
+    };
+    assert_eq!(failed, operation, "{error}");
+    for text in texts {
+        assert!(
+            diagnostic.contains(text),
+            "the diagnostic lacks {text:?}: {diagnostic}"
+        );
+    }
+}
+
+/// What a destroy that fails, stops, or repeats must leave as it found it.
+struct Snapshot {
+    state: Vec<u8>,
+    bindings: BTreeMap<String, Value>,
+    objects: BTreeMap<String, Value>,
+    files: BTreeSet<String>,
+    receipt: Option<Vec<u8>>,
+    writes: Vec<(String, String)>,
+}
+
+impl Snapshot {
+    /// The bindings, cluster objects, receipt, and durable files of the stage
+    /// are as they were, and the cluster has received no request that is not
+    /// a read, whether or not a fault rejected it.
+    fn assert_unchanged(&self, fixture: &Fixture, context: &str) {
+        let now = fixture.snapshot();
+        assert_eq!(now.bindings, self.bindings, "{context}: bindings changed");
+        let changed = now
+            .objects
+            .keys()
+            .chain(self.objects.keys())
+            .find(|path| now.objects.get(*path) != self.objects.get(*path));
+        assert!(
+            changed.is_none(),
+            "{context}: cluster object {changed:?} changed"
+        );
+        assert_eq!(now.files, self.files, "{context}: durable files changed");
+        assert!(now.receipt == self.receipt, "{context}: receipt changed");
+        assert_eq!(
+            now.writes, self.writes,
+            "{context}: cluster received writes"
+        );
+    }
+
+    /// OpenTofu's state holds the same resources and lineage. OpenTofu may
+    /// persist the state it holds when a run stops on an interrupt, which raises
+    /// the serial and sorts the check results without changing a resource, so
+    /// the comparison is not by bytes.
+    fn assert_state_unchanged(&self, fixture: &Fixture, context: &str) {
+        let resources = |bytes: &[u8]| {
+            let state: Value = serde_json::from_slice(bytes).unwrap();
+            (state["lineage"].clone(), state["resources"].clone())
+        };
+        let before = resources(&self.state);
+        let after = resources(&fixture.snapshot().state);
+        assert!(
+            before == after,
+            "{context}: OpenTofu state changed\nbefore: {}\nafter: {}",
+            before.1,
+            after.1
+        );
+    }
 }
 
 struct Fixture {
@@ -209,10 +370,65 @@ struct Fixture {
     namespace: String,
 }
 
+/// Prepares the runtime stage's storage and authentication, which a Helm
+/// install follows.
+const PREPARE: &[&str] = &[
+    "apply",
+    "-input=false",
+    "-no-color",
+    "-auto-approve",
+    "-target=nemoclaw_kubernetes_auth.runtime",
+];
+
+/// Import starts without the dependency edges a normal installation records.
+/// A refresh-only apply records them without installing or changing the
+/// fixture release.
+const RECORD_EDGES: &[&str] = &[
+    "apply",
+    "-input=false",
+    "-no-color",
+    "-auto-approve",
+    "-refresh-only",
+    "-target=helm_release.gateway",
+];
+
 impl Fixture {
     /// A runtime apply that stopped after the Helm provider recorded the
     /// gateway release, built through the bundled providers.
     async fn create() -> Self {
+        let fixture = Self::prepare().await;
+        fixture.import_release().await;
+        fixture
+    }
+
+    /// The same runtime apply before the Helm provider imports the release:
+    /// storage and authentication are bound, and the release is only a record
+    /// in the cluster.
+    async fn prepare() -> Self {
+        let fixture = Self::interrupted().await;
+        fixture.runtime_tofu(&[PREPARE]).await;
+        fixture
+    }
+
+    /// Bind the fixture release in the runtime state.
+    async fn import_release(&self) {
+        let release = self.release_id();
+        self.runtime_tofu(&[
+            &[
+                "import",
+                "-input=false",
+                "-no-color",
+                "helm_release.gateway",
+                &release,
+            ],
+            RECORD_EDGES,
+        ])
+        .await;
+    }
+
+    /// A runtime apply that stopped before it bound any resource, with the
+    /// fixture release's record in a new API.
+    async fn interrupted() -> Self {
         let bundle = PathBuf::from(
             std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit verified bundle"),
         );
@@ -251,42 +467,20 @@ impl Fixture {
             .deployment
             .scenario_interrupt_runtime_apply(&document)
             .unwrap();
-        let release = format!("{}/{}", fixture.namespace, fixture.name);
         fixture
-            .deployment
-            .scenario_runtime_tofu(
-                &[
-                    &[
-                        "apply",
-                        "-input=false",
-                        "-no-color",
-                        "-auto-approve",
-                        "-target=nemoclaw_kubernetes_auth.runtime",
-                    ],
-                    &[
-                        "import",
-                        "-input=false",
-                        "-no-color",
-                        "helm_release.gateway",
-                        &release,
-                    ],
-                    // Import starts without the dependency edges a normal
-                    // installation records. A refresh-only apply records them
-                    // without installing or changing the fixture release.
-                    &[
-                        "apply",
-                        "-input=false",
-                        "-no-color",
-                        "-auto-approve",
-                        "-refresh-only",
-                        "-target=helm_release.gateway",
-                    ],
-                ],
-                &CancellationToken::new(),
-            )
+    }
+
+    /// Run OpenTofu `commands` in the runtime stage.
+    async fn runtime_tofu(&self, commands: &[&[&str]]) {
+        self.deployment
+            .scenario_runtime_tofu(commands, &CancellationToken::new())
             .await
             .expect("the bundled providers must read the fixture release");
-        fixture
+    }
+
+    /// The fixture release as the Helm provider names it for import.
+    fn release_id(&self) -> String {
+        format!("{}/{}", self.namespace, self.name)
     }
 
     fn deployment(&self) -> Deployment {
@@ -299,12 +493,55 @@ impl Fixture {
         self.directory.path().join("state/runtime")
     }
 
+    /// The managed Kubernetes ownership receipt (`kubernetes/receipt.json`).
+    /// Tests only copy, delete, truncate, and restore its bytes.
+    fn receipt(&self) -> PathBuf {
+        self.directory.path().join("state/kubernetes/receipt.json")
+    }
+
     fn objects(&self) -> BTreeMap<String, Value> {
         self.api.objects.0.lock().unwrap().clone()
     }
 
     fn bindings(&self) -> BTreeMap<String, Value> {
         bindings(&self.stage())
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            state: fs::read(self.stage().join("terraform.tfstate")).unwrap(),
+            bindings: self.bindings(),
+            objects: self.objects(),
+            files: durable_files(&self.stage()),
+            receipt: fs::read(self.receipt()).ok(),
+            writes: self.api.writes(),
+        }
+    }
+
+    /// A deployment whose API fails with `fault` from the moment destroy
+    /// starts mutating, which is after it saved its plan.
+    fn failing_after_plan(&self, fault: Fault) -> Deployment {
+        let arm = self.api.fault.clone();
+        self.deployment().with_progress(Arc::new(move |progress| {
+            if progress == Progress::Destroying {
+                *arm.lock().unwrap() = fault;
+            }
+        }))
+    }
+
+    /// Export refuses to run, saying `text`, while `intent.json` records an
+    /// unfinished operation.
+    async fn assert_export_refused(&self, text: &str) {
+        let refusal = self
+            .deployment
+            .export(&CancellationToken::new())
+            .await
+            .expect_err("export must be refused")
+            .to_string();
+        assert!(
+            refusal.contains(text),
+            "export was refused with {refusal:?}, not {text:?}"
+        );
     }
 
     async fn finish(&self) {
@@ -339,7 +576,7 @@ async fn outage_and_permission_failures_before_planning_preserve_release_and_ret
     let fixture = Fixture::create().await;
     let initial = fixture.objects();
     let bindings = fixture.bindings();
-    let mutations = fixture.api.mutations.load(Ordering::Relaxed);
+    let mutations = fixture.api.mutations();
     let state = fixture.stage().join("terraform.tfstate");
     let initial_state = fs::read(&state).unwrap();
     for fault in [Fault::Offline, Fault::Forbidden] {
@@ -357,7 +594,7 @@ async fn outage_and_permission_failures_before_planning_preserve_release_and_ret
             bindings,
             "failed refresh discarded a release binding"
         );
-        assert_eq!(fixture.api.mutations.load(Ordering::Relaxed), mutations);
+        assert_eq!(fixture.api.mutations(), mutations);
         assert!(
             fs::read(&state).unwrap() == initial_state,
             "failed plan changed persisted state"
@@ -387,21 +624,14 @@ async fn after_plan_failure(fault: Fault) {
     let fixture = Fixture::create().await;
     let initial = fixture.objects();
     let bindings = fixture.bindings();
-    let mutations = fixture.api.mutations.load(Ordering::Relaxed);
-    let arm = fixture.api.fault.clone();
-    let deployment = fixture
-        .deployment()
-        .with_progress(Arc::new(move |progress| {
-            if progress == Progress::Destroying {
-                *arm.lock().unwrap() = fault;
-            }
-        }));
+    let mutations = fixture.api.mutations();
+    let deployment = fixture.failing_after_plan(fault);
     assert!(deployment.destroy(&CancellationToken::new()).await.is_err());
     assert!(
         fixture.api.failures.load(Ordering::Relaxed) > 0,
         "fault did not reach provider after planning"
     );
-    assert_eq!(fixture.api.mutations.load(Ordering::Relaxed), mutations);
+    assert_eq!(fixture.api.mutations(), mutations);
     assert!(
         fixture.objects() == initial,
         "issuer or release changed after lookup failure"
@@ -444,16 +674,9 @@ async fn cancellation_after_successful_apply_retains_a_resumable_destroy_checkpo
         matches!(result, Err(Error::Cancelled)),
         "cancellation before checkpoint settlement must leave destroy resumable"
     );
-    let refusal = fixture
-        .deployment
-        .export(&CancellationToken::new())
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(
-        refusal.contains("cannot export while destroy is unfinished"),
-        "{refusal}"
-    );
+    fixture
+        .assert_export_refused("cannot export while destroy is unfinished")
+        .await;
     assert!(
         !recovery_files(&fixture.stage(), &before).is_empty(),
         "cancelled destroy keeps its recovery checkpoint"
@@ -466,10 +689,10 @@ async fn cancellation_after_successful_apply_retains_a_resumable_destroy_checkpo
             .collect::<Vec<_>>(),
         ["nemoclaw_kubernetes_storage.runtime"]
     );
-    let mutations = fixture.api.mutations.load(Ordering::Relaxed);
+    let mutations = fixture.api.mutations();
     fixture.finish().await;
     assert_eq!(
-        fixture.api.mutations.load(Ordering::Relaxed),
+        fixture.api.mutations(),
         mutations,
         "recovery must not recreate a release whose absence was confirmed"
     );
@@ -525,7 +748,7 @@ async fn an_interrupted_destroy_recovers_on_retry_without_mutating_during_previe
             .collect()
     };
     let interrupted = snapshot(&fixture.stage());
-    let mutations = fixture.api.mutations.load(Ordering::Relaxed);
+    let mutations = fixture.api.mutations();
     assert!(
         fixture
             .deployment
@@ -538,7 +761,7 @@ async fn an_interrupted_destroy_recovers_on_retry_without_mutating_during_previe
         snapshot(&fixture.stage()) == interrupted,
         "preview changed the stage's state or recovery checkpoint"
     );
-    assert_eq!(fixture.api.mutations.load(Ordering::Relaxed), mutations);
+    assert_eq!(fixture.api.mutations(), mutations);
     assert!(fixture.objects() == original_objects);
     // With the permission problem still present, retry restores locally then
     // stops at a fresh failed plan; it must not reuse the old saved plan.
@@ -550,7 +773,7 @@ async fn an_interrupted_destroy_recovers_on_retry_without_mutating_during_previe
             .is_err()
     );
     assert_eq!(fixture.bindings(), original_bindings);
-    assert_eq!(fixture.api.mutations.load(Ordering::Relaxed), mutations);
+    assert_eq!(fixture.api.mutations(), mutations);
     assert!(fixture.objects() == original_objects);
     fixture.finish().await;
     assert!(

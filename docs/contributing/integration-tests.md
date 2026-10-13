@@ -126,7 +126,7 @@ The fixtures return protocol responses; they do not establish agent inference, n
 | `inference_discovery` | Optional catalog failures that keep complete unchanged plans and report uncertainty |
 | `sandbox_readiness` | Standalone sandbox completion; see [below](#standalone-sandbox-completion) |
 | `remote_service` | Services on simulated SSH hosts; see [SSH service fixtures](#ssh-service-fixtures) |
-| `helm_recovery` | On Unix, Helm release recovery during destroy against an in-memory Kubernetes API: outages and permission failures before and after the saved plan, cancellation after the release is deleted, and an interrupted destroy that a preview leaves unchanged and a retry recovers; see [below](#helm-release-recovery) |
+| `helm_recovery` | On Unix, destroy and its recovery against an in-memory Kubernetes API, after failures, a second destroy, and cancellation; see [below](#helm-release-recovery) |
 
 In `deployment`, `cli_terminal_outputs_preserve_lifecycle_and_json_contract` checks text plans, JSON apply, unchanged text apply, JSON plan completeness, text destroy, and repeated JSON destroy against one fixture state.
 `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` changes the gateway driver after planning to check OpenTofu's apply-time check, recovery, and teardown.
@@ -135,15 +135,27 @@ In `deployment`, `cli_terminal_outputs_preserve_lifecycle_and_json_contract` che
 
 ### Helm Release Recovery
 
-The `helm_recovery` tests run the bundle's OpenTofu and Helm provider against the in-memory Kubernetes API in `crates/test-support/kube_api.rs`, then call the SDK's public `destroy`, `plan_destroy`, and `export`.
-Installing a release through `apply` would pull the pinned chart, so each test starts from a fixture release that the Helm provider imports.
+The `helm_recovery` tests run the bundle's OpenTofu and Helm provider against the in-memory Kubernetes API in `crates/test-support/kube_api.rs`, then call the SDK's public `destroy`, `plan_destroy`, `export`, and `apply`.
+Installing a release through `apply` would pull the pinned chart, so each test starts from an interrupted runtime apply with a fixture release: the Helm provider imports the release, except in `release_record`, where Kubernetes holds only its record.
 The SDK's test-only `test-scenarios` feature builds that starting state; `nemoclaw-e2e` enables it in its dev-dependencies, so the tests need no extra flag.
 On Unix, run them with:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test integration -- --ignored helm_recovery::
+  cargo test -p nemoclaw-e2e --test integration -- --ignored --test-threads=4 helm_recovery::
 ```
+
+`cargo test` runs the tests as threads of one process, and on Linux a child that one thread forks can briefly hold the deployment lock of another test, which then fails with "another operation holds the deployment lock"; `--test-threads=4` keeps that rare.
+Nextest, which CI uses, runs each test in its own process.
+
+Each test that makes destroy fail or stop ends by removing the cause, if any, and running destroy again, which must finish: a failed destroy must leave the deployment recoverable, not only unchanged.
+
+| Module | Checks |
+|---|---|
+| `helm_recovery` | An outage or a permission failure before planning keeps the Helm release binding, and after the saved plan the binding is restored; cancellation after the release is deleted keeps a resumable checkpoint; a preview leaves an interrupted destroy unchanged and a retry recovers it |
+| `helm_recovery::receipt` | A deleted or truncated receipt stops destroy and its preview while OpenTofu plans, without changing state, bindings, objects, or the receipt; the restored receipt lets destroy finish |
+| `helm_recovery::release_record` | A Helm release record with no binding stops destroy before it deletes any issuer object, and apply and export stay refused; destroy finishes once the record is gone |
+| `helm_recovery::destroy_faults` | A second destroy launches no plan or apply; an authentication failure (HTTP 401) before planning, after the saved plan, or after it on the issuer's ConfigMap reads alone stops destroy, keeps the issuer, and lets a retry finish; cancelling at the first refresh returns promptly while the API is unreachable and changes nothing |
 
 ### Standalone Sandbox Completion
 

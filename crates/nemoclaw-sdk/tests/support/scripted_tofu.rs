@@ -1,0 +1,446 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//! A scripted OpenTofu for tests that drive `Deployment` over a bundle.
+//!
+//! `Scripted::new` writes a bundle whose manifest verifies and whose
+//! `libexec/tofu` is a short shell script. The script logs each call, answers
+//! `show -json` from canned files, and ends an apply as a control file says, so
+//! a test can interrupt or fail one stage and then inspect what the SDK saved.
+//! The SDK refuses a bundle file that changed after it verified the bundle, so
+//! `Scripted::new` writes the script once; steer it with `Scripted::set`.
+
+#![cfg(unix)]
+
+use nemoclaw_sdk::{
+    CancellationToken, Deployment, ObservationError, Progress, Secrets, StepOutcome,
+    bundle::{Manifest, executable, hash_file, required_files},
+    compile::{Generations, OPENTOFU_VERSION, Target},
+    config::Document,
+    kubernetes::{GATEWAY_KIND, STORAGE_KIND, gateway::ADDRESS as HELM_RELEASE},
+};
+use serde_json::{Value, json};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
+};
+
+/// `@CONTROL@` and `@STATE@` become the control directory and the state
+/// directory. The stage is `runtime` when the working directory is `runtime/`
+/// under the state directory, else `root`, the OpenShell stage. Control files
+/// are named `STAGE.NAME`: `apply` (`ok`, `fail` or `block`, which sleeps 30 s
+/// unless the SDK interrupts it; it execs `sleep` so that the interrupt reaches
+/// the blocked process, because a shell that waits for a child can lose it),
+/// `state` (the `show -json` state), and the name
+/// of a saved plan (the `show -json PLAN` plan). A `show` without a control file
+/// prints an empty state or plan. An `apply` that finds the saved record,
+/// `intent.json`, creates the control file `STAGE.record-at-apply`.
+const SCRIPT: &str = r##"#!/bin/sh
+control='@CONTROL@'
+case "$PWD" in
+  '@STATE@'/runtime | '@STATE@'/runtime/*) stage=runtime ;;
+  *) stage=root ;;
+esac
+printf '%s\n' "$stage $*" >> "$control/calls"
+case "$1" in
+  init) ;;
+  plan) printf '{"type":"version","ui":"1.0"}\n' ;;
+  show)
+    canned="$control/$stage.${3:-state}"
+    if [ -f "$canned" ]; then cat "$canned"; else printf '{"format_version":"1.0"}\n'; fi ;;
+  apply)
+    if [ -f '@STATE@/intent.json' ]; then : > "$control/$stage.record-at-apply"; fi
+    printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"addr":"nemoclaw_kubernetes_storage.runtime","resource_type":"nemoclaw_kubernetes_storage"},"action":"create"}}'
+    mode=ok
+    [ -f "$control/$stage.apply" ] && mode=$(cat "$control/$stage.apply")
+    case "$mode" in
+      block) exec sleep 30 ;;
+      fail) printf 'provider failed\n' >&2; exit 1 ;;
+      *) printf '{"version":4,"resources":[]}\n' > terraform.tfstate ;;
+    esac ;;
+  *) printf 'unexpected command\n' >&2; exit 64 ;;
+esac
+"##;
+
+/// A bundle whose files verify; only `libexec/tofu` can execute. Adapted from
+/// `deployment.rs::write_bundle`, which keeps its own copy because it also runs
+/// on Windows. The SDK requires `rust` to be non-empty and `version` to be a
+/// semantic version, so these values need not match the toolchain or the
+/// workspace version.
+fn write_bundle(directory: &Path, script: &str) {
+    let mut manifest = Manifest {
+        version: "0.1.0".into(),
+        rust: "1.98.1".into(),
+        opentofu: OPENTOFU_VERSION.into(),
+        files: Default::default(),
+    };
+    let tofu = format!("libexec/{}", executable("tofu"));
+    for name in required_files(&manifest.version).unwrap() {
+        let path = directory.join(&name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        if name == tofu {
+            fs::write(&path, script).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        } else {
+            fs::write(&path, b"non-executable fixture").unwrap();
+        }
+        manifest.files.insert(name, hash_file(&path).unwrap());
+    }
+    fs::write(
+        directory.join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+}
+
+/// Run the script once. The kernel refuses to execute a file that any process
+/// holds open for writing, and a child that another thread forked while this
+/// one wrote the script keeps that descriptor until it executes something. After
+/// one successful run no writer remains.
+fn warm(tofu: &Path) {
+    for _ in 0..100 {
+        match std::process::Command::new(tofu).arg("init").output() {
+            Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            result => {
+                result.expect(
+                    "cannot run the scripted tofu; is the temporary directory mounted noexec?",
+                );
+                return;
+            }
+        }
+    }
+    panic!("the scripted tofu stayed busy");
+}
+
+/// Scripted tests of one process run one at a time. `Deployment` holds a lock
+/// file for each operation, and a child that another thread forks while the lock
+/// is held keeps the lock until it executes, so a test's next operation can find
+/// the lock held. Nextest runs each test in its own process, where nothing
+/// waits here; `cargo test` runs them as threads of one process.
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
+/// A temporary bundle with a scripted `tofu`, a control directory, and the path
+/// of a state directory that `Deployment` creates. A test creates one.
+pub struct Scripted {
+    _turn: MutexGuard<'static, ()>,
+    _directory: tempfile::TempDir,
+    root: PathBuf,
+}
+
+impl Scripted {
+    pub fn new() -> Self {
+        let turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+        let directory = tempfile::tempdir().unwrap();
+        // The script compares its physical working directory with the state
+        // directory, and a macOS temporary path traverses a symbolic link.
+        let root = directory.path().canonicalize().unwrap();
+        let scripted = Self {
+            _turn: turn,
+            _directory: directory,
+            root,
+        };
+        fs::create_dir(scripted.control()).unwrap();
+        let quoted = |path: PathBuf| {
+            let text = path.to_str().unwrap().to_owned();
+            assert!(
+                !text.contains('\''),
+                "the path {text} holds a quote that the script cannot quote"
+            );
+            text
+        };
+        let script = SCRIPT
+            .replace("@CONTROL@", &quoted(scripted.control()))
+            .replace("@STATE@", &quoted(scripted.state()));
+        write_bundle(&scripted.bundle(), &script);
+        warm(&scripted.bundle().join("libexec").join(executable("tofu")));
+        let _ = fs::remove_file(scripted.control().join("calls"));
+        scripted
+    }
+
+    pub fn bundle(&self) -> PathBuf {
+        self.root.join("bundle")
+    }
+
+    pub fn state(&self) -> PathBuf {
+        self.root.join("state")
+    }
+
+    /// A path in the test's temporary directory, outside the bundle and state.
+    pub fn path(&self, name: &str) -> PathBuf {
+        self.root.join(name)
+    }
+
+    fn control(&self) -> PathBuf {
+        self.path("control")
+    }
+
+    /// Set a control file: `STAGE.apply`, `STAGE.state`, or `STAGE.PLAN`.
+    pub fn set(&self, name: &str, text: impl AsRef<[u8]>) {
+        fs::write(self.control().join(name), text).unwrap();
+    }
+
+    /// Every call the script received, as `STAGE ARGUMENT...`.
+    pub fn calls(&self) -> Vec<String> {
+        fs::read_to_string(self.control().join("calls"))
+            .map(|text| text.lines().map(str::to_owned).collect())
+            .unwrap_or_default()
+    }
+
+    /// Every call as `STAGE SUBCOMMAND`, such as `runtime apply`.
+    pub fn commands(&self) -> Vec<String> {
+        self.calls()
+            .iter()
+            .map(|call| {
+                call.split_whitespace()
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect()
+    }
+
+    /// A deployment over this bundle and state directory whose
+    /// `TEST_KUBECONFIG` and `TEST_IMAGE_METADATA` references resolve, with the
+    /// kubeconfig at `kubeconfig`.
+    pub fn deployment(&self, kubeconfig: &Path) -> Deployment {
+        Deployment::new(&self.state(), &self.bundle())
+            .with_secrets(Arc::new(Values(kubeconfig.to_owned())))
+    }
+
+    /// Whether the saved record existed when an `apply` of `stage` started.
+    pub fn record_saved_before_apply(&self, stage: &str) -> bool {
+        self.control()
+            .join(format!("{stage}.record-at-apply"))
+            .exists()
+    }
+
+    /// The saved record's text, to check that an operation left it unchanged.
+    pub fn intent(&self) -> Option<String> {
+        fs::read_to_string(self.state().join("intent.json")).ok()
+    }
+
+    /// The resource generations the first apply allocated. Compiled targets,
+    /// and so the bindings and plans a test canned, carry them, and the SDK
+    /// compares them with the saved record's. This is the only decoding of the
+    /// record; every other check compares its text.
+    pub fn generations(&self) -> Generations {
+        let intent: Value = serde_json::from_str(
+            &self
+                .intent()
+                .expect("the first apply saved no record to read generations from"),
+        )
+        .unwrap();
+        serde_json::from_value(intent["generations"].clone()).unwrap()
+    }
+}
+
+/// Resolves the references of `kubernetes_document`. Every value is at least
+/// eight characters, so the SDK keeps child diagnostics and progress.
+struct Values(PathBuf);
+
+impl Secrets for Values {
+    fn resolve(&self, name: &str) -> Result<String, ObservationError> {
+        match name {
+            "TEST_KUBECONFIG" => Ok(self.0.to_string_lossy().into_owned()),
+            "TEST_IMAGE_METADATA" => Ok("/absent/image-metadata.json".into()),
+            _ => Err(ObservationError::Authentication),
+        }
+    }
+}
+
+/// A kubeconfig whose one context selects `server`.
+pub fn write_kubeconfig(path: &Path, server: &str) {
+    let config = json!({
+        "apiVersion": "v1", "kind": "Config", "current-context": "test-cluster",
+        "clusters": [{"name": "fixture", "cluster": {"server": server}}],
+        "contexts": [{"name": "test-cluster", "context": {"cluster": "fixture", "user": "fixture"}}],
+        "users": [{"name": "fixture", "user": {}}],
+    });
+    fs::write(path, serde_json::to_vec(&config).unwrap()).unwrap();
+}
+
+/// The local configuration on a managed Kubernetes gateway. The same `uid`
+/// belongs to every name and namespace, so the deployment's identity is stable
+/// while its digest changes. The name feeds no resource; the namespace feeds
+/// every platform resource.
+pub fn kubernetes_document(name: &str, namespace: &str) -> Document {
+    let mut value = crate::support::fixture("local.yaml");
+    value["metadata"]["name"] = json!(name);
+    value["spec"]["gateway"] = json!({
+        "management": "managed", "runtime": {"provider": "kubernetes"},
+        "endpoint": "https://127.0.0.1:17671",
+        "kubernetes": {
+            "kubeconfig": {"env": "TEST_KUBECONFIG"}, "context": "test-cluster",
+            "namespace": namespace, "authentication": {"profile": "development"}
+        }
+    });
+    value["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env": "TEST_IMAGE_METADATA"});
+    Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
+}
+
+/// Generations for compiling a Kubernetes runtime's targets before a deployment
+/// has allocated its own. A plan that creates resources checks only their
+/// addresses, so it needs none of the allocated ones.
+pub fn placeholder_generations() -> Generations {
+    [GATEWAY_KIND, STORAGE_KIND]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into()
+}
+
+/// A target's values and the identity its binding records: the Helm release is
+/// bound by its name, every other resource by an opaque ID.
+fn bound(target: &Target) -> Value {
+    let mut values = serde_json::to_value(&target.values).unwrap();
+    values["id"] = if target.address == HELM_RELEASE {
+        values["name"].clone()
+    } else {
+        json!(format!("physical-{}", target.kind))
+    };
+    values
+}
+
+fn change(address: &str, action: &str, before: Value, after: Value) -> Value {
+    json!({"address": address, "mode": "managed",
+        "change": {"actions": [action], "before": before, "after": after}})
+}
+
+/// `show -json PLAN` for one change of the same `action` per target, `create`
+/// or `no-op`. A bound target's no-op change repeats its binding, as OpenTofu's
+/// refreshed plan does.
+pub fn plan_json(targets: &[Target], action: &str) -> String {
+    let changes: Vec<Value> = targets
+        .iter()
+        .map(|target| {
+            let (before, after) = match action {
+                "create" => (Value::Null, serde_json::to_value(&target.values).unwrap()),
+                _ => (bound(target), bound(target)),
+            };
+            change(&target.address, action, before, after)
+        })
+        .collect();
+    json!({"format_version": "1.0", "resource_changes": changes}).to_string()
+}
+
+/// `show -json PLAN` for a destroy: the bound targets named in `retained` are
+/// no-ops, and the others are deleted.
+pub fn destroy_plan_json(targets: &[Target], retained: &[&str]) -> String {
+    let changes: Vec<Value> = targets
+        .iter()
+        .map(|target| {
+            if retained.contains(&target.address.as_str()) {
+                change(&target.address, "no-op", bound(target), bound(target))
+            } else {
+                change(&target.address, "delete", bound(target), Value::Null)
+            }
+        })
+        .collect();
+    json!({"format_version": "1.0", "resource_changes": changes}).to_string()
+}
+
+/// `show -json` state with one managed binding per target.
+pub fn state_json(targets: &[Target]) -> String {
+    let resources: Vec<Value> = targets
+        .iter()
+        .map(
+            |target| json!({"address": target.address, "mode": "managed", "values": bound(target)}),
+        )
+        .collect();
+    json!({"format_version": "1.0", "values": {"root_module": {"resources": resources}}})
+        .to_string()
+}
+
+/// `show -json` state of the OpenShell stage after a destroy kept the workspace.
+pub fn retained_workspace_state_json() -> String {
+    json!({"format_version": "1.0", "values": {"root_module": {"resources": [
+        {"address": "openshell_workspace.deployment", "mode": "managed", "values": {"id": "workspace-1"}}
+    ]}}})
+    .to_string()
+}
+
+type Hook = Arc<dyn Fn(Progress) + Send + Sync>;
+
+/// Records progress and cancels at the event a test names.
+#[derive(Clone, Default)]
+pub struct Events(Arc<Mutex<Vec<Progress>>>);
+
+impl Events {
+    pub fn recording(&self) -> Hook {
+        let events = self.0.clone();
+        Arc::new(move |event| events.lock().unwrap().push(event))
+    }
+
+    /// Records every event and cancels `token` at each one `when` accepts.
+    pub fn cancelling(
+        &self,
+        token: &CancellationToken,
+        when: impl Fn(&Progress) -> bool + Send + Sync + 'static,
+    ) -> Hook {
+        let (events, token) = (self.0.clone(), token.clone());
+        Arc::new(move |event| {
+            let stop = when(&event);
+            events.lock().unwrap().push(event);
+            if stop {
+                token.cancel();
+            }
+        })
+    }
+
+    /// The SDK started `expected` OpenTofu applies.
+    pub fn assert_mutations(&self, expected: usize, context: &str) {
+        let events = self.0.lock().unwrap();
+        let started = events
+            .iter()
+            .filter(|event| **event == Progress::MutationStarted)
+            .count();
+        assert_eq!(started, expected, "{context}: OpenTofu applies started");
+    }
+
+    pub fn contains(&self, wanted: impl Fn(&Progress) -> bool) -> bool {
+        self.0.lock().unwrap().iter().any(wanted)
+    }
+}
+
+/// OpenTofu has printed its first resource event: the apply is under way and
+/// the script has logged the call. Cancelling at `MutationStarted` instead
+/// interrupts the script before it logs, because the SDK emits that event as
+/// soon as the child exists.
+pub fn mid_apply(event: &Progress) -> bool {
+    matches!(
+        event,
+        Progress::Resource {
+            status: "started",
+            ..
+        }
+    )
+}
+
+/// A plan is about to start; the SDK has not yet spawned it.
+pub fn planning(event: &Progress) -> bool {
+    matches!(
+        event,
+        Progress::Waiting {
+            operation: "tofu.plan",
+            ..
+        }
+    )
+}
+
+/// The destroy record is saved and no stage has started.
+pub fn destroying(event: &Progress) -> bool {
+    matches!(event, Progress::Destroying)
+}
+
+/// An OpenTofu apply that failed.
+pub fn apply_failed(event: &Progress) -> bool {
+    matches!(
+        event,
+        Progress::Completed {
+            operation: "tofu.apply",
+            outcome: StepOutcome::Failed,
+            ..
+        }
+    )
+}
