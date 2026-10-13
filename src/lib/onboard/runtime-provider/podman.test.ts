@@ -1005,6 +1005,43 @@ describe("managed Podman runtime provider", () => {
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.identity.id).toBe("podman");
   });
 
+  it("uses the selected Podman socket and executable for generated image commands", () => {
+    let socketCurrent = true;
+    const capture = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const externalImagePreparation = createPodmanContainerEngine({
+      operation: "external-image-preparation",
+      socketAuthority: REAL_SOCKET_AUTHORITY,
+      executable: "/usr/bin/podman",
+      executableAuthorityDeps: podmanExecutableAuthorityDeps(),
+      assertAuthority: () => {
+        expect(socketCurrent, "selected Podman socket changed").toBe(true);
+      },
+      capture,
+    });
+    const bundle = createPodmanRuntimeProviderBundle({
+      engines: {
+        hostDoctor: realOperationEngines().hostDoctor,
+        sandboxLifecycle: realOperationEngines().sandboxLifecycle,
+        externalImagePreparation,
+      },
+    });
+    const surface = supportedContainerEngine(bundle);
+
+    expect(
+      surface.capture("external-image-preparation", ["build", "--quiet", "context"], 20_000).status,
+    ).toBe(0);
+    expect(capture).toHaveBeenCalledWith(
+      "/usr/bin/podman",
+      ["--url", `unix://${REAL_SOCKET_AUTHORITY.socketPath}`, "build", "--quiet", "context"],
+      20_000,
+    );
+    socketCurrent = false;
+    expect(() =>
+      surface.capture("external-image-preparation", ["image", "inspect", "candidate"], 5_000),
+    ).toThrow("selected Podman socket changed");
+    expect(capture).toHaveBeenCalledTimes(1);
+  });
+
   it("maps one provider-neutral NVIDIA run to Podman CDI arguments", () => {
     const inference = createPodmanHostLocalInferenceTestHarness();
     const capture = vi.fn(() => ({ status: 0, stdout: "proof", stderr: "" }));

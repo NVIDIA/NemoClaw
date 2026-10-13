@@ -103,7 +103,7 @@ spec:
       cudaArchitectures: 89-real;100-real;120-real
     - platform: linux/arm64
       runner: ubuntu-24.04-arm
-      cudaArchitectures: 121a-real
+      cudaArchitectures: 103-real;120-real;121a-real
 
   build:
     target: llama-server

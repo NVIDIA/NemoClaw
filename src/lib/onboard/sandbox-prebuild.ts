@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync, type SpawnOptions } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,7 +15,8 @@ import {
 } from "../adapters/docker/client-isolation";
 import { dockerSpawn } from "../adapters/docker/exec";
 import { dockerImageInspectFormat } from "../adapters/docker/inspect";
-import { redirectInheritedChildStdoutToStderr } from "../cli/stdout-guard";
+import { localPodmanEnvironment } from "../adapters/podman";
+import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import { LOCAL_SANDBOX_IMAGE_REPO } from "../domain/sandbox/image-tag";
 import {
   SANDBOX_BUILD_CONTEXT_PREFIX,
@@ -23,9 +24,60 @@ import {
 } from "../sandbox/build-context";
 import { isPortableExperimentalProfile, PORTABLE_LOCAL_REGISTRY } from "./docker-driver-platform";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
+import type { RuntimeProviderCommandCapture } from "./runtime-provider/contract";
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSY_FLAG_VALUES = new Set(["0", "false", "no", "off"]);
+const LOCAL_IMAGE_BUILD_TIMEOUT_MS = 20 * 60_000;
+
+class ImageCommandDeadlineError extends Error {}
+class ImageBuildFailureError extends Error {
+  constructor(
+    readonly status: number | null,
+    readonly guidance: string,
+  ) {
+    super("Local image build failed");
+  }
+}
+
+/** Classify untrusted build output without echoing Dockerfile commands or credential values. */
+export function classifyImageBuildFailure(output: string): string {
+  const diagnostic = output.slice(-8_192).toLowerCase();
+  if (
+    /failed to resolve source metadata|pull access denied|manifest unknown|unauthorized/.test(
+      diagnostic,
+    )
+  ) {
+    return "Check the base image reference and registry access before retrying.";
+  }
+  if (
+    /failed to calculate checksum|not found in build context|no such file or directory/.test(
+      diagnostic,
+    )
+  ) {
+    return "Check COPY sources and the permitted build context before retrying.";
+  }
+  if (/no space left on device/.test(diagnostic)) {
+    return "Free space in the selected engine's image store before retrying.";
+  }
+  return "Check the Dockerfile instructions and selected engine before retrying.";
+}
+
+function throwImageBuildCommandError(error: unknown, builderName: string): never {
+  if (error instanceof ImageCommandDeadlineError) {
+    throw new Error(
+      `Local ${builderName} build timed out after 20 minutes; check the selected engine before retrying.`,
+    );
+  }
+  if (error instanceof ImageBuildFailureError) {
+    const detail = error.status === null ? " without an exit status" : ` (exit ${error.status})`;
+    throw new Error(`Local ${builderName} build failed${detail}; ${error.guidance}`);
+  }
+  throw new Error(
+    `Local ${builderName} build could not start; check the selected engine and retry.`,
+    { cause: error },
+  );
+}
 
 export interface SandboxPrebuildInput {
   buildCtx: string;
@@ -35,9 +87,28 @@ export interface SandboxPrebuildInput {
   sourceReference?: string;
   sandboxName: string;
   dockerDriverGateway: boolean;
+  /** Driver selected for the gateway that will consume the image. */
+  gatewayDriver?: string;
+  /** Receipt-owned Hermes context and Podman authority under its lifecycle lock. */
+  portableReceipt?: {
+    readonly transactionId: string;
+    readonly context: {
+      readonly buildContextPath: string;
+      readonly dockerfilePath: string;
+      assertCurrent(): void;
+    };
+    readonly podman: (
+      args: readonly string[],
+      timeoutMs: number,
+    ) => { readonly status: number | null; readonly stdout: string; readonly error?: Error };
+    readonly imageAvailable: (reference: string) => Promise<boolean>;
+  };
+  /** Provider-bound native Podman operation using the selected gateway socket and executable. */
+  nativePodmanCapture?: (
+    args: readonly string[],
+    timeoutMs: number,
+  ) => RuntimeProviderCommandCapture;
   origin: SandboxBuildContextOrigin;
-  /** The selected generated Dockerfile cannot be built by OpenShell's classic Docker builder. */
-  requiresLocalBuildKit?: boolean;
   env?: NodeJS.ProcessEnv;
   buildImage?: (
     args: readonly string[],
@@ -73,17 +144,43 @@ function createHostImageCommand(
 ): NonNullable<SandboxPrebuildInput["buildImage"]> {
   return (args, options) =>
     new Promise<number | null>((resolve, reject) => {
-      const spawnOptions = {
+      const spawnOptions: SpawnOptions = {
         ...options,
-        stdio: redirectInheritedChildStdoutToStderr(options.stdio),
+        // Dockerfile commands can print arbitrary credentials. Capture only for
+        // fixed-category guidance; never pass raw output to user diagnostics.
+        stdio: ["ignore", "ignore", "pipe"],
         shell: false,
-      } as const;
+      };
       const child =
         command === "podman"
           ? spawn(command, [...args], spawnOptions)
           : dockerSpawn(args, spawnOptions);
-      child.once("error", reject);
-      child.once("close", resolve);
+      let diagnosticTail = "";
+      child.stderr?.on("data", (chunk: Buffer) => {
+        diagnosticTail = (diagnosticTail + chunk.toString("utf8")).slice(-8_192);
+      });
+      let expired = false;
+      const deadline = setTimeout(() => {
+        expired = true;
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // A failed signal still ends this build attempt without handing off an image.
+        }
+        reject(new ImageCommandDeadlineError());
+      }, LOCAL_IMAGE_BUILD_TIMEOUT_MS);
+      child.once("error", (error) => {
+        clearTimeout(deadline);
+        if (!expired) reject(error);
+      });
+      child.once("close", (status) => {
+        clearTimeout(deadline);
+        if (!expired) {
+          if (status !== 0)
+            reject(new ImageBuildFailureError(status, classifyImageBuildFailure(diagnosticTail)));
+          else resolve(status);
+        }
+      });
     });
 }
 
@@ -162,18 +259,14 @@ export function sandboxLocalImageRef(
 
 /**
  * Build a NemoClaw-generated staged context with the shared local container
- * runtime. Docker uses BuildKit; the portable profile uses native rootless
- * Podman. User-supplied Dockerfiles stay on the OpenShell gateway builder trust
- * boundary. Generated OpenClaw and Hermes Dockerfiles fail closed when their
- * required local BuildKit build cannot complete because the gateway's classic
- * Docker builder cannot preserve their archive-mode, per-step network, and
- * mount contracts.
- * Remove this bridge once OpenShell uses BuildKit for this local-driver path;
- * extraction and observable retirement criteria are tracked by #6258.
- * Portable builds require HTTP 200 from the managed IPv4 registry before any
- * build or publication operation. Unavailable registries reject without fallback.
+ * runtime. Docker uses BuildKit; native Podman and the portable profile use
+ * rootless Podman. Generated images must be present in the selected engine
+ * before OpenShell receives their image reference.
+ * Ordinary portable builds require HTTP 200 from the managed IPv4 registry
+ * before building. The receipt-owned Hermes path proves registry visibility
+ * after publication under its existing lifecycle lock.
  * @throws When the portable registry is unavailable or a required build fails.
- * @returns The prebuilt image identity, or unchanged arguments for an eligible fallback.
+ * @returns The prebuilt image identity, or unchanged arguments for a custom source.
  */
 export async function prebuildSandboxImageIfEligible(
   input: SandboxPrebuildInput,
@@ -193,61 +286,88 @@ export async function prebuildSandboxImageIfEligible(
   });
   const env = input.env ?? process.env;
   const log = input.log ?? console.log;
-  const portable = isPortableExperimentalProfile(env);
-  const requiresLocalBuildKit =
-    input.origin === "generated" &&
-    input.requiresLocalBuildKit === true &&
-    input.dockerDriverGateway &&
-    !portable;
-  if (!resolveSandboxPrebuildEnabled(env, input.dockerDriverGateway)) {
-    if (requiresLocalBuildKit) {
-      throw new Error("Local BuildKit is required for this generated sandbox image");
-    }
-    return result(initialSourceReference, null, null);
-  }
+  const portable = Boolean(input.portableReceipt) || isPortableExperimentalProfile(env);
   if (input.origin !== "generated") {
     log(
       "  Local BuildKit build skipped for a custom Dockerfile; using the gateway builder instead.",
     );
     return result(initialSourceReference, null, null);
   }
+  if (!input.dockerDriverGateway) {
+    throw new Error(
+      "Generated Dockerfile onboarding requires a local Docker or Podman gateway; no image distribution path is configured for this gateway.",
+    );
+  }
+  const selectedEngine = portable || input.gatewayDriver === "podman" ? "podman" : "docker";
+  if (input.gatewayDriver !== undefined && input.gatewayDriver !== selectedEngine) {
+    throw new Error(
+      `Generated Dockerfile build requires the selected ${input.gatewayDriver} gateway engine; refusing a ${selectedEngine} build.`,
+    );
+  }
+  if (selectedEngine === "podman" && !portable && !input.nativePodmanCapture) {
+    throw new Error(
+      "Generated Dockerfile build requires the selected Podman gateway image-build authority.",
+    );
+  }
+  const dockerHost = String(env.DOCKER_HOST ?? "").trim();
+  const dockerContext = String(env.DOCKER_CONTEXT ?? "").trim();
+  if (selectedEngine === "docker" && dockerHost && !isSupportedGatewayDockerHost(env.DOCKER_HOST)) {
+    throw new Error(
+      "Generated Dockerfile build requires a supported local Docker host; unset DOCKER_HOST or use an absolute local unix:// socket and retry.",
+    );
+  }
+  if (selectedEngine === "docker" && !dockerHost && dockerContext && dockerContext !== "default") {
+    throw new Error(
+      "Generated Dockerfile build cannot prove that the selected Docker context shares the local gateway engine.",
+    );
+  }
+  if (!resolveSandboxPrebuildEnabled(env, input.dockerDriverGateway)) {
+    throw new Error(
+      "Generated Dockerfile image build is required before sandbox creation; enable local prebuild.",
+    );
+  }
   const fromDockerfile = initialSourceReference;
   if (
     !fromDockerfile ||
     path.resolve(fromDockerfile) !== path.resolve(input.buildCtx, "Dockerfile")
   ) {
-    if (requiresLocalBuildKit) {
-      throw new Error("Local BuildKit requires the generated staged Dockerfile");
-    }
-    return result(initialSourceReference, null, null);
+    throw new Error("Generated image build requires the selected staged Dockerfile.");
   }
   let trustedContext: TrustedStagedBuildContext | null;
   try {
-    trustedContext = resolveTrustedStagedBuildContext(input.buildCtx);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    if (requiresLocalBuildKit) {
-      throw new Error(`Local BuildKit could not inspect the staged build context: ${detail}`, {
-        cause: error,
-      });
+    if (input.portableReceipt) {
+      const receipt = input.portableReceipt;
+      if (!/^[a-f0-9-]{36}$/u.test(receipt.transactionId)) {
+        throw new Error("Portable image build requires the current transaction identity.");
+      }
+      receipt.context.assertCurrent();
+      if (
+        path.resolve(input.buildCtx) !== path.resolve(receipt.context.buildContextPath) ||
+        path.resolve(fromDockerfile) !== path.resolve(receipt.context.dockerfilePath)
+      ) {
+        throw new Error("Portable image build context changed before the selected build.");
+      }
+      trustedContext = {
+        buildCtx: receipt.context.buildContextPath,
+        dockerfile: receipt.context.dockerfilePath,
+      };
+    } else {
+      trustedContext = resolveTrustedStagedBuildContext(input.buildCtx);
     }
-    log(
-      `  Local BuildKit build skipped: staged build context could not be inspected (${detail}); using the gateway builder instead.`,
+  } catch (error) {
+    throw new Error(
+      "Generated image build could not inspect the staged context; sandbox creation stopped.",
+      { cause: error },
     );
-    return result(initialSourceReference, null, null);
   }
   if (!trustedContext) {
-    if (requiresLocalBuildKit) {
-      throw new Error("Local BuildKit rejected the staged build context trust boundary");
-    }
-    log(
-      "  Local BuildKit build skipped: staged build context failed trust validation; using the gateway builder instead.",
-    );
-    return result(initialSourceReference, null, null);
+    throw new Error("Generated image build rejected the staged context trust boundary.");
   }
 
-  const imageRef = sandboxLocalImageRef(input.sandboxName, input.buildId, env);
-  if (portable) {
+  const imageRef = input.portableReceipt
+    ? `${PORTABLE_LOCAL_REGISTRY}/${LOCAL_SANDBOX_IMAGE_REPO}:${input.portableReceipt.transactionId}`
+    : sandboxLocalImageRef(input.sandboxName, input.buildId, env);
+  if (portable && !input.portableReceipt) {
     const registryUrl = new URL("/v2/", `http://${PORTABLE_LOCAL_REGISTRY}`);
     try {
       const response = await fetch(registryUrl, {
@@ -262,27 +382,50 @@ export async function prebuildSandboxImageIfEligible(
       );
     }
   }
-  const builderName = portable ? "rootless Podman" : "BuildKit";
-  const buildImage = input.buildImage ?? createHostImageCommand(portable ? "podman" : "docker");
-  log(`  Building sandbox image with ${builderName} (skips the slower in-gateway builder)...`);
+  const builderName = selectedEngine === "podman" ? "rootless Podman" : "BuildKit";
+  const buildImage = input.portableReceipt
+    ? async (args: readonly string[]) => {
+        const outcome = input.portableReceipt!.podman(
+          ["build", "--quiet", ...args.slice(1)],
+          LOCAL_IMAGE_BUILD_TIMEOUT_MS,
+        );
+        return outcome.error ? null : outcome.status;
+      }
+    : selectedEngine === "podman" && !portable
+      ? async (args: readonly string[]) => {
+          const outcome = input.nativePodmanCapture!(
+            ["build", "--quiet", ...args.slice(1)],
+            LOCAL_IMAGE_BUILD_TIMEOUT_MS,
+          );
+          if ((outcome.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+            throw new ImageCommandDeadlineError();
+          }
+          if (outcome.error) throw outcome.error;
+          return outcome.status;
+        }
+      : (input.buildImage ?? createHostImageCommand(selectedEngine));
+  log(`  Building sandbox image with ${builderName}...`);
 
   let status: number | null;
   let preparedDockerEnvironment: PreparedDockerBuildEnvironment | null = null;
   try {
-    preparedDockerEnvironment = portable
-      ? null
-      : prepareDockerBuildEnvironment({
-          env,
-          credentialHelperResponds: input.credentialHelperResponds,
-          dockerContextIsDefault: input.dockerContextIsDefault,
-          isWslHost: input.isWslHost,
-        });
-    const buildEnv = preparedDockerEnvironment?.env ?? dockerBuildSubprocessEnv(env);
+    preparedDockerEnvironment =
+      selectedEngine === "podman"
+        ? null
+        : prepareDockerBuildEnvironment({
+            env,
+            credentialHelperResponds: input.credentialHelperResponds,
+            dockerContextIsDefault: input.dockerContextIsDefault,
+            isWslHost: input.isWslHost,
+          });
+    const buildEnv =
+      preparedDockerEnvironment?.env ?? localPodmanEnvironment(dockerBuildSubprocessEnv(env));
     if (preparedDockerEnvironment?.isolatedCredentialConfig) {
       log(
         "  Docker Desktop credential helper is unavailable in this WSL session; using an isolated credential-free config for the generated sandbox image build.",
       );
     }
+    input.portableReceipt?.context.assertCurrent();
     status = await buildImage(
       ["build", "-t", imageRef, "-f", trustedContext.dockerfile, trustedContext.buildCtx],
       {
@@ -291,14 +434,7 @@ export async function prebuildSandboxImageIfEligible(
       },
     );
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    if (requiresLocalBuildKit) {
-      throw new Error(`Local BuildKit build could not start: ${detail}`, { cause: error });
-    }
-    log(
-      `  Local ${builderName} build could not start (${detail}); using the gateway builder instead.`,
-    );
-    return result(initialSourceReference, null, null);
+    throwImageBuildCommandError(error, builderName);
   } finally {
     if (preparedDockerEnvironment) {
       warnIfDockerBuildEnvironmentCleanupFailed(
@@ -310,60 +446,121 @@ export async function prebuildSandboxImageIfEligible(
 
   if (status !== 0) {
     const detail = status === null ? " without an exit status" : ` (exit ${status})`;
-    if (requiresLocalBuildKit) {
-      throw new Error(`Local BuildKit build failed${detail}`);
-    }
-    log(`  Local ${builderName} build failed${detail}; using the gateway builder instead.`);
-    return result(initialSourceReference, null, null);
+    throw new Error(
+      input.portableReceipt
+        ? `Podman image build failed${detail}; check the generated Dockerfile and selected engine before retrying.`
+        : `Local ${builderName} build failed${detail}; check the Dockerfile and selected engine before retrying.`,
+    );
   }
+  input.portableReceipt?.context.assertCurrent();
+
+  const inspectImageId =
+    selectedEngine === "podman" && !portable
+      ? (ref: string) => {
+          const inspection = input.nativePodmanCapture!(
+            ["image", "inspect", "--format", "{{.Id}}", ref],
+            5_000,
+          );
+          return inspection.status === 0 && !inspection.error ? inspection.stdout.trim() : "";
+        }
+      : (input.inspectImageId ??
+        ((ref: string) => {
+          if (input.portableReceipt) {
+            const inspection = input.portableReceipt.podman(
+              ["image", "inspect", "--format", "{{.Id}}", ref],
+              5_000,
+            );
+            return inspection.status === 0 ? inspection.stdout.trim() : "";
+          }
+          if (selectedEngine === "docker")
+            return dockerImageInspectFormat("{{.Id}}", ref, {
+              env: dockerBuildSubprocessEnv(env),
+              replaceEnv: true,
+              ignoreError: true,
+            }).trim();
+          const inspection = spawnSync("podman", ["image", "inspect", "--format", "{{.Id}}", ref], {
+            env: localPodmanEnvironment(dockerBuildSubprocessEnv(env)),
+            encoding: "utf8",
+            timeout: 5_000,
+            maxBuffer: 4096,
+            stdio: ["ignore", "pipe", "ignore"],
+          });
+          return inspection.status === 0 ? inspection.stdout.trim() : "";
+        }));
+  let imageId: string | null;
+  try {
+    const inspected = inspectImageId(imageRef).trim();
+    const normalized =
+      selectedEngine === "podman" && /^[0-9a-f]{64}$/i.test(inspected)
+        ? `sha256:${inspected}`
+        : inspected;
+    imageId = isImmutableDockerImageId(normalized) ? normalized.toLowerCase() : null;
+  } catch {
+    imageId = null;
+  }
+  if (!imageId) {
+    throw new Error(
+      input.portableReceipt
+        ? "Built image is unavailable in the selected Podman store; sandbox creation stopped."
+        : `Built image ${imageRef} is not visible in the selected ${selectedEngine} engine; sandbox creation stopped.`,
+    );
+  }
+  log(`  ${builderName} build completed for ${imageRef}.`);
 
   if (portable) {
-    const publishImage = input.publishImage ?? buildImage;
+    const publishImage =
+      input.publishImage ??
+      (input.portableReceipt
+        ? async (args: readonly string[]) => {
+            const outcome = input.portableReceipt!.podman(
+              ["push", "--quiet", ...args.slice(1)],
+              5 * 60_000,
+            );
+            return outcome.error ? null : outcome.status;
+          }
+        : buildImage);
     log("  Publishing sandbox image to the managed local registry...");
     let publishStatus: number | null;
     const credentialFreeDockerConfig = createCredentialFreeDockerConfig("portable");
     try {
       publishStatus = await publishImage(["push", imageRef], {
         env: {
-          ...dockerBuildSubprocessEnv(env),
+          ...localPodmanEnvironment(dockerBuildSubprocessEnv(env)),
           DOCKER_CONFIG: credentialFreeDockerConfig,
           REGISTRY_AUTH_FILE: path.join(credentialFreeDockerConfig, "config.json"),
         },
         stdio: "inherit",
       });
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(`Managed local registry publish could not start: ${detail}`);
+      if (error instanceof ImageCommandDeadlineError) {
+        throw new Error(
+          "Managed local registry publish timed out after 20 minutes; check the local registry before retrying.",
+        );
+      }
+      throw new Error(
+        "Managed local registry publish could not start; check the local registry and retry.",
+        { cause: error },
+      );
     } finally {
       fs.rmSync(credentialFreeDockerConfig, { recursive: true, force: true });
     }
     if (publishStatus !== 0) {
       const detail =
         publishStatus === null ? " without an exit status" : ` (exit ${publishStatus})`;
-      throw new Error(`Managed local registry publish failed${detail}`);
+      throw new Error(
+        input.portableReceipt
+          ? `Podman image publication to the managed local registry failed${detail}; sandbox creation stopped.`
+          : `Managed local registry publish failed${detail}`,
+      );
+    }
+    if (input.portableReceipt && !(await input.portableReceipt.imageAvailable(imageRef))) {
+      throw new Error(
+        "Built image is not visible in the managed local registry; sandbox creation stopped.",
+      );
     }
   }
+  input.portableReceipt?.context.assertCurrent();
 
   if (fromIndex >= 0) createArgs[fromIndex + 1] = imageRef;
-  const inspectImageId =
-    input.inspectImageId ??
-    ((ref: string) =>
-      dockerImageInspectFormat("{{.Id}}", ref, {
-        ignoreError: true,
-      }).trim());
-  let imageId: string | null = null;
-  try {
-    const inspected = inspectImageId(imageRef).trim();
-    if (isImmutableDockerImageId(inspected)) imageId = inspected.toLowerCase();
-  } catch {
-    // Native creation can still use the local tag. Automatic compatibility
-    // fallback will refuse it unless the exact container supplies an immutable
-    // image ID before cleanup.
-  }
-  if (!imageId) {
-    log(
-      "  Local image identity could not be proven; an operator-authorized GPU compatibility fallback may fail closed if no exact native container identity becomes available.",
-    );
-  }
   return result(imageRef, imageRef, imageId);
 }

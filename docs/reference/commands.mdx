@@ -819,6 +819,7 @@ Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer
 
 On a qualifying Windows WSL N1x or Station GB300 host, Windows Express leaves provider selection to onboarding.
 During Windows Express, onboarding accepts one proof-backed N1x GPU identity or a bounded Station GB300 Windows product observation whose reconciled proof includes an `NVIDIA GB300` device, verifies the remaining readiness requirements, and automatically selects the Experimental managed Qwen 3.6 recipe.
+The managed Station recipe requires exactly one proved GB300 GPU UUID.
 The Windows chassis product name does not participate in N1x selection.
 Before onboarding, unset `DOCKER_HOST` and select Docker's `default` context.
 Onboarding also requires local Docker Desktop, Arm64, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, NVIDIA integration, and successful Docker Desktop GPU passthrough.

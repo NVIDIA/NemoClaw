@@ -48,9 +48,9 @@ describe("OpenShell driver configuration for main-branch E2E", () => {
       );
 
       expect(resolveOpenShellSiblingComponents(path.join(pathDirectory, "openshell"))).toEqual({
-        cli: path.join(installDirectory, "openshell"),
-        gateway: path.join(installDirectory, "openshell-gateway"),
-        sandbox: path.join(installDirectory, "openshell-sandbox"),
+        cli: fs.realpathSync(path.join(installDirectory, "openshell")),
+        gateway: fs.realpathSync(path.join(installDirectory, "openshell-gateway")),
+        sandbox: fs.realpathSync(path.join(installDirectory, "openshell-sandbox")),
       });
     } finally {
       fs.rmSync(rootDirectory, { recursive: true, force: true });

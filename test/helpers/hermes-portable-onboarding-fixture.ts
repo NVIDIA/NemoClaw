@@ -331,8 +331,11 @@ export interface HermesPortableTransactionFixtureOptions {
   }>["compareAndSetRegistryGatewayPort"];
   registerSandbox?: HermesPortableOnboardingDeps<{ ready: true }>["registerSandbox"];
   createSandbox?: HermesPortableOnboardingDeps<{ ready: true }>["createSandbox"];
-  expectedBuildContextPath?: string;
-  expectedDockerfilePath?: string;
+  buildStatus?: number;
+  inspectImageStatus?: number;
+  inspectImageId?: string;
+  pushStatus?: number;
+  imageAvailable?: boolean;
   policySource?: string | Buffer;
 }
 
@@ -364,6 +367,31 @@ export function createHermesPortableTransactionFixture(
       string,
       () => { status: number | null; stdout: string; stderr: string }
     >([
+      [
+        "build --quiet",
+        () => {
+          events.push("image-build");
+          return { status: options.buildStatus ?? 0, stdout: "", stderr: "" };
+        },
+      ],
+      [
+        "image inspect",
+        () => {
+          events.push("image-inspect");
+          return {
+            status: options.inspectImageStatus ?? 0,
+            stdout: `${options.inspectImageId ?? `sha256:${IMAGE_ID}`}\n`,
+            stderr: "",
+          };
+        },
+      ],
+      [
+        "push --quiet",
+        () => {
+          events.push("image-push");
+          return { status: options.pushStatus ?? 0, stdout: "", stderr: "" };
+        },
+      ],
       ["ps", () => ({ status: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" })],
       [
         "container inspect",
@@ -423,6 +451,10 @@ export function createHermesPortableTransactionFixture(
       events.push(args.includes("--base") ? "policy-base" : "policy-full");
       return result(String(options.policySource ?? HERMES_PORTABLE_TEST_POLICY));
     },
+    imageAvailable: async () => {
+      events.push("image-visible");
+      return options.imageAvailable ?? true;
+    },
     observeSandbox:
       options.observeSandbox ??
       (() =>
@@ -448,12 +480,10 @@ export function createHermesPortableTransactionFixture(
       }
       expect(request.policyPath).toContain("policy.");
       expect(request.policyPath).toBe(effectivePolicySourcePath);
-      expect(request.source.reference).toBe(
-        options.expectedDockerfilePath ?? "/private/staged-hermes/Dockerfile",
+      expect(request.source.reference).toMatch(
+        /^127\.0\.0\.1:\d+\/nemoclaw-sandbox-local:[a-f0-9-]{36}$/u,
       );
-      expect(request.workingDirectory).toBe(
-        options.expectedBuildContextPath ?? "/private/staged-hermes",
-      );
+      expect(request.workingDirectory).toBeUndefined();
       present = true;
       return { ready: true };
     },

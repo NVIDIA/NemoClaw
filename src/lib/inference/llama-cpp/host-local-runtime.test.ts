@@ -178,6 +178,21 @@ describe("llama.cpp host-local runtime materializer", () => {
     expect(valuesAfter(argv, "--publish")).toEqual([]);
   });
 
+  it("binds a proved Station GPU by UUID and rejects an invalid device ID (#13026)", () => {
+    const uuid = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1";
+    const argv = buildLlamaCppHostLocalDockerArgv(contract(), {
+      ...bindings(),
+      gpuDeviceUuid: uuid,
+    });
+    expect(valuesAfter(argv, "--gpus")).toEqual([`driver=nvidia,device=${uuid}`]);
+    expect(() =>
+      buildLlamaCppHostLocalDockerArgv(contract(), {
+        ...bindings(),
+        gpuDeviceUuid: "0,1",
+      }),
+    ).toThrow("runtime binding is invalid");
+  });
+
   it("takes launch settings from the declared contract instead of code defaults (#8144)", () => {
     const input = contract();
     const changed = {

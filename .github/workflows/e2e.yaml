@@ -5205,7 +5205,7 @@ jobs:
             [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || exit 1
             if [[ "$reference" == "${candidate_prefix}${digest}" ]]; then
               local verified
-              verified="$(node scripts/checks/protected-dcode-base-receipt.mts verify \
+              verified="$(node scripts/checks/protected-dcode-base-receipt.mts verify-reusable \
                 "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base" \
                 "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base-receipt.json" "$agent")"
               [[ "$verified" == "$reference" ]] || {
