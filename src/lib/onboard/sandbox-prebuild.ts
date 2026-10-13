@@ -300,6 +300,9 @@ export async function prebuildSandboxImageIfEligible(
     );
   }
   if (input.origin === "custom" && selectedEngine === "podman") {
+    // Native Podman's workload profile has legacyDockerfileBuilds: false.
+    // Source resolution rejects custom Dockerfiles before this helper; keep
+    // direct calls fail closed under that existing admission rule (#7744).
     throw new Error("Custom Dockerfile onboarding is unavailable with native Podman.");
   }
   if (selectedEngine === "podman" && !portable && !input.nativePodmanCapture) {
