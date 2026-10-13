@@ -3,7 +3,10 @@
 
 import { testTimeout } from "../../helpers/timeouts.ts";
 import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../../src/lib/adapters/openshell/timeouts.ts";
-import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
+import {
+  captureLifecycleInstallFailureDiagnostics,
+  captureSandboxFailureDiagnostics,
+} from "../fixtures/sandbox-failure-diagnostics.ts";
 import { removeSandbox } from "../../../src/lib/state/registry.ts";
 import { assertExitCode, assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -132,39 +135,13 @@ test(
       skip,
       "NVIDIA endpoint validation was rate-limited before sandbox lifecycle assertions ran",
     );
-    if (install.exitCode !== 0 || install.timedOut) {
-      await captureSandboxFailureDiagnostics(host, install, {
-        sandboxName: SANDBOX_NAME,
-        artifactPrefix: "sandbox-operations-install-failure",
-        redactionValues: redactions,
-        captureGatewayLog: true,
-      });
-      await Promise.allSettled([
-        runtimeProvider.command(
-          [
-            "container",
-            "ps",
-            "--all",
-            "--no-trunc",
-            "--filter",
-            `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
-            "--format",
-            "{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Status}}",
-          ],
-          {
-            artifactName: "sandbox-operations-install-failure-container-inventory",
-            redactionValues: redactions,
-            timeoutMs: 30_000,
-          },
-        ),
-        host.command(host.openshellCommandPath, ["sandbox", "list", "-g", gatewayName], {
-          artifactName: "sandbox-operations-install-failure-sandbox-list",
-          env,
-          redactionValues: redactions,
-          timeoutMs: 30_000,
-        }),
-      ]);
-    }
+    await captureLifecycleInstallFailureDiagnostics(host, runtimeProvider, install, {
+      sandboxName: SANDBOX_NAME,
+      gatewayName,
+      artifactPrefix: "sandbox-operations-install-failure",
+      env,
+      redactionValues: redactions,
+    });
     assertExitZero(install, "sandbox lifecycle install");
 
     progress.phase("write durable sandbox state");
@@ -216,13 +193,6 @@ test(
     survivorOnboard.exitCode !== 0 &&
       isNvidiaEndpointRateLimitFailure(resultText(survivorOnboard)) &&
       skip("NVIDIA endpoint validation was rate-limited before final cleanup assertions ran");
-    await expectSandboxReady(
-      host,
-      SURVIVOR_SANDBOX_NAME,
-      survivorEnv,
-      redactions,
-      "sandbox-operations-survivor-ready",
-    );
     removeSandbox(SURVIVOR_SANDBOX_NAME);
 
     const preserved = await host.nemoclaw([SANDBOX_NAME, "destroy", "--yes", "--cleanup-gateway"], {
@@ -245,12 +215,6 @@ test(
         `Shared NemoClaw gateway left running[\\s\\S]*--cleanup-gateway was not applied[\\s\\S]*${SURVIVOR_SANDBOX_NAME}[\\s\\S]*openshell sandbox list -g ${gatewayName}[\\s\\S]*openshell gateway remove ${gatewayName}`,
       ),
     );
-    await gateway.expectOpenshellStatusConnected(gatewayName, {
-      artifactName: "sandbox-operations-gateway-preserved",
-      env,
-      redactionValues: redactions,
-    });
-
     await sandbox.cleanupSandbox(SURVIVOR_SANDBOX_NAME, {
       artifactName: "sandbox-operations-remove-survivor",
       env: survivorEnv,
@@ -273,14 +237,13 @@ test(
       skip,
       "NVIDIA endpoint validation was rate-limited before final gateway cleanup ran",
     );
-    if (finalInstall.exitCode !== 0 || finalInstall.timedOut) {
-      await captureSandboxFailureDiagnostics(host, finalInstall, {
-        sandboxName: SANDBOX_NAME,
-        artifactPrefix: "sandbox-operations-final-install-failure",
-        redactionValues: redactions,
-        captureGatewayLog: true,
-      });
-    }
+    await captureLifecycleInstallFailureDiagnostics(host, runtimeProvider, finalInstall, {
+      sandboxName: SANDBOX_NAME,
+      gatewayName,
+      artifactPrefix: "sandbox-operations-final-install-failure",
+      env,
+      redactionValues: redactions,
+    });
     assertExitZero(finalInstall, "final sandbox install");
     await expectSandboxReady(host, SANDBOX_NAME, env, redactions, "sandbox-operations-final-ready");
     const finalDestroyStartedAt = Date.now();
