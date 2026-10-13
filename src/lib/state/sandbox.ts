@@ -1358,6 +1358,12 @@ function sanitizedStructuredAuthority(
   return replacement;
 }
 
+function assertArchiveSanitationDeadline(deadlineMs: number | undefined): void {
+  if (backupDeadlineExpired(deadlineMs)) {
+    throw new Error("Native archive sanitation exceeded the backup deadline");
+  }
+}
+
 /** Grow a private tar member, copying the tail backwards to preserve overlapping ranges. */
 function growArchiveMember(
   descriptor: number,
@@ -1367,6 +1373,7 @@ function growArchiveMember(
   archiveSize: number,
   replacementSize: number,
   maxBytes: number,
+  deadlineMs: number | undefined,
 ): number {
   const newNextOffset =
     headerOffset + TAR_BLOCK_BYTES + Math.ceil(replacementSize / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
@@ -1380,14 +1387,17 @@ function growArchiveMember(
   }
   if (growth > 0) {
     for (let end = archiveSize; end > nextOffset;) {
+      assertArchiveSanitationDeadline(deadlineMs);
       const start = Math.max(nextOffset, end - 1024 * 1024);
       const chunk = readArchiveRange(descriptor, start, end - start);
+      assertArchiveSanitationDeadline(deadlineMs);
       if (!chunk || !writeArchiveRange(descriptor, start + growth, chunk)) {
         throw new Error("could not grow the native archive");
       }
       end = start;
     }
   }
+  assertArchiveSanitationDeadline(deadlineMs);
   const paddingOffset = headerOffset + TAR_BLOCK_BYTES + replacementSize;
   if (!writeArchiveRange(descriptor, paddingOffset, Buffer.alloc(newNextOffset - paddingOffset))) {
     throw new Error("could not pad the native archive member");
@@ -1396,6 +1406,7 @@ function growArchiveMember(
   header.fill(0x20, 148, 156);
   const checksum = header.reduce((sum, byte) => sum + byte, 0);
   header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
+  assertArchiveSanitationDeadline(deadlineMs);
   if (!writeArchiveRange(descriptor, headerOffset, header)) {
     throw new Error("could not update the native archive member size");
   }
@@ -1411,6 +1422,7 @@ function growArchiveMember(
 export function sanitizeMachineLocalArchiveConfig(
   archivePath: string,
   maxBytes = NATIVE_STATE_CAPTURE_MAX_BYTES,
+  deadlineMs?: number,
 ): string | null {
   const hermesTarget = ".hermes/.env";
   const openClawDatabaseTargets = new Set([
@@ -1432,6 +1444,7 @@ export function sanitizeMachineLocalArchiveConfig(
     let nextPath: string | null = null;
     const found = new Set<string>();
     while (offset < archiveSize) {
+      assertArchiveSanitationDeadline(deadlineMs);
       const header = readArchiveRange(descriptor, offset, TAR_BLOCK_BYTES);
       if (!header) return "could not read the native archive";
       if (header.every((byte) => byte === 0)) return null;
@@ -1511,10 +1524,12 @@ export function sanitizeMachineLocalArchiveConfig(
                 archiveSize,
                 replacement.byteLength,
                 maxBytes,
+                deadlineMs,
               );
               archiveSize += growth;
               nextOffset += growth;
             }
+            assertArchiveSanitationDeadline(deadlineMs);
             if (!writeArchiveRange(descriptor, dataOffset, replacement)) {
               return `could not sanitize the machine-local configuration at '${normalized}'`;
             }
@@ -2425,7 +2440,11 @@ function backupNativeSandboxState(
         `Native state archive validation failed: ${hardLinkViolations.join("; ")}`,
       );
     }
-    const sanitationFailure = sanitizeMachineLocalArchiveConfig(archivePath, maxBytes);
+    const sanitationFailure = sanitizeMachineLocalArchiveConfig(
+      archivePath,
+      maxBytes,
+      options.deadlineMs,
+    );
     if (sanitationFailure) {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(`Native state archive sanitation failed: ${sanitationFailure}`);

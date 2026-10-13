@@ -3,11 +3,13 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
+import { useOrderedNativeCapture } from "../helpers/native-state-ssh.js";
 
 const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-authority-"));
@@ -142,6 +144,61 @@ describe("complete native-home machine authority", () => {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
+
+  it.each([false, true])(
+    "stops archive growth at the deadline with deferred cleanup %s",
+    (deferCleanup) => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-growth-deadline-"));
+      const originalWrite = fs.writeSync;
+      let now = Date.now();
+      const deadline = now + 60_000;
+      try {
+        const nativeRoot = path.join(fixture, "native-home");
+        const source = `${Array.from({ length: 2000 }, (_, index) => `setting${index}: on\n`).join("")}api_key: private-fixture-value\n`;
+        const config = path.join(nativeRoot, ".hermes/config.yaml");
+        const saved = path.join(nativeRoot, ".hermes/backups/config/config.yml.saved");
+        fs.mkdirSync(path.dirname(saved), { recursive: true });
+        fs.writeFileSync(config, source);
+        fs.writeFileSync(saved, source);
+        const trailing = Buffer.alloc(3 * 1024 * 1024, 0x61);
+        fs.writeFileSync(path.join(nativeRoot, "workspace.txt"), trailing);
+        writeSandboxRegistry("growth-deadline", "hermes");
+        vi.spyOn(Date, "now").mockImplementation(() => now);
+        useOrderedNativeCapture(nativeRoot, [
+          ".hermes/config.yaml",
+          ".hermes/backups/config/config.yml.saved",
+          "workspace.txt",
+        ]);
+        const writes = vi.spyOn(fs, "writeSync").mockImplementationOnce((...args) => {
+          expect(args[1]).toBeInstanceOf(Buffer);
+          expect(args[1]).toHaveLength(1024 * 1024);
+          const result = Reflect.apply(originalWrite, fs, args);
+          now = deadline;
+          return result;
+        });
+        syncBuiltinESMExports();
+        const backup = sandboxState.backupSandboxState("growth-deadline", {
+          nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
+          deadlineMs: deadline,
+          deferSanitizationDeadlineCleanup: deferCleanup,
+        });
+        expect(writes, backup.error).toHaveBeenCalledTimes(1);
+        expect(backup.success).toBe(false);
+        expect(backup.error).toContain("sanitation failed");
+        expect(backup.error).toContain("backup deadline");
+        expect(backup.manifest).toBeUndefined();
+        const backups = path.join(TMP_HOME, ".nemoclaw/rebuild-backups/growth-deadline");
+        expect(fs.existsSync(backups) ? fs.readdirSync(backups) : []).toEqual([]);
+        expect(fs.readFileSync(config, "utf8")).toBe(source);
+        expect(fs.readFileSync(saved, "utf8")).toBe(source);
+        expect(fs.readFileSync(path.join(nativeRoot, "workspace.txt"))).toEqual(trailing);
+      } finally {
+        vi.restoreAllMocks();
+        syncBuiltinESMExports();
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([".openclaw", ".openclaw-data"])(
     "replaces the %s device identity with an explicit startup placeholder",

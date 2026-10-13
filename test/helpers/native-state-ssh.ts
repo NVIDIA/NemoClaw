@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { vi } from "vitest";
 
 export function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
@@ -108,4 +110,19 @@ if (command.includes("nemoclaw-native-restore")) {
 process.exit(93);
 `,
   );
+}
+
+/** Use real tar with explicit member order to exercise archive-tail movement deterministically. */
+export function useOrderedNativeCapture(directory: string, entries: string[]): void {
+  const originalSpawn = childProcess.spawnSync;
+  vi.spyOn(childProcess, "spawnSync").mockImplementation((...args) => {
+    if (Array.isArray(args[1]) && args[1].includes("nemoclaw-stopped-native-capture")) {
+      return Reflect.apply(originalSpawn, childProcess, [
+        "tar",
+        ["-C", directory, "-cf", "-", "--", ...entries],
+        args[2],
+      ]);
+    }
+    return Reflect.apply(originalSpawn, childProcess, args);
+  });
 }
