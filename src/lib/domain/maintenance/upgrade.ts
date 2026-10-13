@@ -165,8 +165,9 @@ function downgradeSuffix(current?: string | null, expected?: string | null): str
   return compareReleaseVersions(expected, current) < 0 ? " (downgrade)" : "";
 }
 
-// #13076: a prerelease (`0.0.134-rc.1`) sorts below its release (`0.0.134`).
-// Kept out of compareDottedVersions, which Docker/driver versions also use.
+// #13076: a prerelease (`0.0.134-rc.1`) sorts below its release (`0.0.134`), and
+// prerelease identifiers order per SemVer. Kept out of compareDottedVersions,
+// which Docker/driver versions also use.
 function compareReleaseVersions(a: string, b: string): number {
   const [aCore, aPre] = a.split(/-(.*)/s);
   const [bCore, bPre] = b.split(/-(.*)/s);
@@ -174,7 +175,20 @@ function compareReleaseVersions(a: string, b: string): number {
   if (core !== 0 || aPre === bPre) return core;
   if (aPre === undefined) return 1;
   if (bPre === undefined) return -1;
-  return compareDottedVersions(aPre, bPre);
+  const left = aPre.split(".");
+  const right = bPre.split(".");
+  for (let i = 0; i < Math.min(left.length, right.length); i += 1) {
+    const [l, r] = [left[i], right[i]];
+    const numeric = [/^\d+$/.test(l), /^\d+$/.test(r)];
+    if (numeric[0] && numeric[1]) {
+      if (Number(l) !== Number(r)) return Number(l) - Number(r);
+    } else if (numeric[0] || numeric[1]) {
+      return numeric[0] ? -1 : 1;
+    } else if (l !== r) {
+      return l < r ? -1 : 1;
+    }
+  }
+  return left.length - right.length;
 }
 
 /**

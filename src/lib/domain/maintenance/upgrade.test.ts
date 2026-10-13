@@ -249,6 +249,30 @@ describe("describeStaleUpgrade version-change labeling (#6520)", () => {
     ).toBe("v0.0.134-rc.1 → v0.0.134-rc.2");
   });
 
+  it("orders prerelease identifiers per SemVer for the image label (#13076)", () => {
+    const base = {
+      name: "my-assistant",
+      running: false,
+      current: "2026.6.10",
+      expected: "2026.6.10",
+      reasons: ["image-drift" as const],
+    };
+    expect(
+      describeStaleUpgrade({
+        ...base,
+        imageCurrent: "0.0.134-rc.1",
+        imageExpected: "0.0.134-beta.1",
+      }),
+    ).toBe("v2026.6.10 unchanged; NemoClaw image v0.0.134-rc.1 → v0.0.134-beta.1 (downgrade)");
+    expect(
+      describeStaleUpgrade({
+        ...base,
+        imageCurrent: "0.0.134-beta.1",
+        imageExpected: "0.0.134-rc.1",
+      }),
+    ).toBe("v2026.6.10 unchanged; NemoClaw image v0.0.134-beta.1 → v0.0.134-rc.1");
+  });
+
   it("keeps upgrade descriptions unchanged", () => {
     expect(
       describeStaleUpgrade({
