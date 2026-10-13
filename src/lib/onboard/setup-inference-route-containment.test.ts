@@ -43,6 +43,19 @@ describe("onboard shared gateway route containment", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it("keeps a published source route active until its backup succeeds (#13018)", async () => {
+    let gatewayLockHeld = false;
+    const withGatewayRouteMutationLock = async <T>(
+      _name: string,
+      operation: () => Promise<T> | T,
+    ): Promise<T> => {
+      expect(gatewayLockHeld).toBe(false);
+      gatewayLockHeld = true;
+      try {
+        return await operation();
+      } finally {
+        gatewayLockHeld = false;
+      }
+    };
     const inferenceRouteMutator = successfulInferenceRouteMutator();
     const inferenceRouteObserver = {
       observeInferenceRoute: vi.fn(async () => ({
@@ -62,8 +75,7 @@ describe("onboard shared gateway route containment", () => {
       checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
       withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
         await operation(),
-      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
-        await operation(),
+      withGatewayRouteMutationLock,
       step: vi.fn(),
       getGatewayName: () => "nemoclaw",
       getSandbox: () =>
@@ -134,7 +146,8 @@ describe("onboard shared gateway route containment", () => {
       result as { deferredInferenceRoute?: (reserve: () => void) => Promise<void> }
     ).deferredInferenceRoute;
     expect(deferredRoute).toEqual(expect.any(Function));
-    await deferredRoute?.(() => undefined);
+    await withGatewayRouteMutationLock("nemoclaw", () => deferredRoute!(() => undefined));
+    expect(gatewayLockHeld).toBe(false);
     expect(inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledWith(
       expect.objectContaining({ route: { provider: "compatible-endpoint", model: "new-model" } }),
     );

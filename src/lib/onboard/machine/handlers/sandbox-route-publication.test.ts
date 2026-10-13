@@ -159,6 +159,19 @@ describe("sandbox route publication", () => {
   it("checks peers without rejecting the published source of a deferred model change", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";
+    let gatewayLockHeld = false;
+    const withGatewayRouteMutationLock = async <T>(
+      _name: string,
+      operation: () => Promise<T> | T,
+    ): Promise<T> => {
+      expect(gatewayLockHeld).toBe(false);
+      gatewayLockHeld = true;
+      try {
+        return await operation();
+      } finally {
+        gatewayLockHeld = false;
+      }
+    };
     const registryEntry: SandboxEntry = {
       name: "saved",
       provider: "provider",
@@ -186,6 +199,7 @@ describe("sandbox route publication", () => {
       return true;
     });
     const deferredInferenceRoute = vi.fn(async (reserve: () => void) => {
+      expect(gatewayLockHeld).toBe(true);
       expect(registryEntry.model).toBe("old-model");
       reserve();
     });
@@ -202,6 +216,7 @@ describe("sandbox route publication", () => {
         checkGatewayRouteCompatibility,
         createSandbox,
         reserveSandboxInferenceRoute,
+        withGatewayRouteMutationLock,
         getSandboxReuseState: () => "ready",
         getSandboxRegistryEntry: () => registryEntry,
       },
@@ -223,6 +238,7 @@ describe("sandbox route publication", () => {
     expect(createSandbox).toHaveBeenCalledOnce();
     expect(deferredInferenceRoute).toHaveBeenCalledOnce();
     expect(reserveSandboxInferenceRoute).toHaveBeenCalledOnce();
+    expect(gatewayLockHeld).toBe(false);
   });
 
   it("does not reserve again when the session already owns the pending create reservation", async () => {
