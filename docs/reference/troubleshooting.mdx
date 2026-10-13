@@ -990,7 +990,6 @@ To silence the warning when the host is intentionally small, set `NEMOCLAW_IGNOR
 ### Generated Sandbox Image Build Requires the Selected Local Engine
 
 On a local Docker gateway, NemoClaw builds each generated OpenClaw, Hermes, or Deep Agents Code sandbox image with host-side BuildKit.
-On a native Podman gateway, it builds and inspects the image through the selected gateway's Podman socket.
 The experimental Portable Hermes profile builds with current-user rootless Podman and publishes to the managed local registry.
 NemoClaw stops before sandbox creation in these cases:
 
@@ -1021,8 +1020,6 @@ $$nemoclaw onboard --resume
 ```
 
 A passing Docker recovery completes the local BuildKit build before sandbox creation starts. If NemoClaw rejects the staged build context trust boundary, do not change its permissions or move its Dockerfile. Rerun the command so NemoClaw creates a new private staged context. If the new context is also rejected, preserve the complete error and stop instead of forcing the gateway builder.
-
-For a native Podman gateway, verify that the current-user Podman engine and socket are available, then rerun onboarding. A passing recovery builds and inspects the generated image in that engine before sandbox creation.
 
 For experimental Portable Hermes, restore its managed current-user Podman socket if onboarding reports that the socket is unavailable.
 If NemoClaw reports that the managed registry is unavailable, restore it and verify that `http://127.0.0.1:5000/v2/` returns HTTP `200` before retrying onboarding.
