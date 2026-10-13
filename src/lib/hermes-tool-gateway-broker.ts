@@ -19,7 +19,6 @@ const {
   matchesGatewayCredentialOnlyProviderBinding,
 } = require("./onboard/gateway-provider-metadata");
 const { createCliOpenShellProviderAdapter } = require("./adapters/openshell/provider-adapter-cli");
-const { endpointlessProviderProfilePath } = require("./adapters/openshell/provider-profile");
 const {
   HERMES_CLONE_CONTROL_CLIENT_TIMEOUT_MS,
   HERMES_CLONE_CONTROL_STATUS_TIMEOUT_MS,
@@ -345,7 +344,13 @@ async function inspectHermesToolGatewayRefreshProvider(sandboxName, runOpenshell
   const adapter = createCliOpenShellProviderAdapter({ run: runOpenshell });
   const profile = await adapter.importProviderProfile({
     target: { kind: "selected" },
-    profilePath: endpointlessProviderProfilePath(ROOT, HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE),
+    profilePath: path.join(
+      ROOT,
+      "agents",
+      "hermes",
+      "host",
+      `${HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE}.yaml`,
+    ),
   });
   if (!profile.ok) {
     if (profile.error.kind === "command" && profile.error.reason === "profile_incompatible") {

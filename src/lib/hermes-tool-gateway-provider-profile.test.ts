@@ -11,12 +11,7 @@ import YAML from "yaml";
 import { REPOSITORY_ROOT } from "./core/repository-root";
 
 const PROFILE_ID = "nemoclaw-hermes-tool-gateway-v1";
-const PROFILE_PATH = path.join(
-  REPOSITORY_ROOT,
-  "nemoclaw-blueprint",
-  "provider-profiles",
-  `${PROFILE_ID}.yaml`,
-);
+const PROFILE_PATH = path.join(REPOSITORY_ROOT, "agents", "hermes", "host", `${PROFILE_ID}.yaml`);
 const CREDENTIAL_ENV = "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN";
 
 type Broker = {
