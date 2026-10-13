@@ -273,11 +273,9 @@ it("captures bounded readiness status after a failed plugin invocation without r
   await captureNativePluginFailureReadiness(
     { execShell },
     { exitCode: 22 },
-    {
-      sandboxName: "owned-sandbox",
-      artifactName: "plugin",
-      env: {},
-    },
+    "owned-sandbox",
+    "plugin",
+    {},
   );
   expect(execShell).toHaveBeenCalledExactlyOnceWith("owned-sandbox", expect.anything(), {
     artifactName: "plugin-readiness-after-failure",
@@ -289,11 +287,11 @@ it("captures bounded readiness status after a failed plugin invocation without r
 
 it("skips successful plugin calls and preserves a failed result when diagnostics are unavailable", async () => {
   const execShell = vi.fn().mockRejectedValue(new Error("sandbox unavailable"));
-  const options = { sandboxName: "owned-sandbox", artifactName: "plugin", env: {} };
-  await captureNativePluginFailureReadiness({ execShell }, { exitCode: 0 }, options);
+  const args = ["owned-sandbox", "plugin", {}] as const;
+  await captureNativePluginFailureReadiness({ execShell }, { exitCode: 0 }, ...args);
   expect(execShell).not.toHaveBeenCalled();
   await expect(
-    captureNativePluginFailureReadiness({ execShell }, { exitCode: 22 }, options),
+    captureNativePluginFailureReadiness({ execShell }, { exitCode: 22 }, ...args),
   ).resolves.toBeUndefined();
   expect(execShell).toHaveBeenCalledTimes(1);
 });

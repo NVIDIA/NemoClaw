@@ -467,12 +467,17 @@ runs:
           echo "ERROR: Deep Agents Code base image build did not return a valid image ID." >&2
           exit 1
         fi
+        sandbox_user="$(jq -er '"\(.uid):\(.gid)"' src/lib/agent/deep-agents-code-runtime-identity.json)"
+        if [[ ! "$sandbox_user" =~ ^[0-9]+:[0-9]+$ ]]; then
+          echo "ERROR: Deep Agents Code runtime identity is invalid." >&2
+          exit 1
+        fi
         docker run --rm --platform "$PLATFORM" \
           --network none \
           --cap-drop ALL \
           --security-opt no-new-privileges \
           --read-only \
-          --user 999:999 \
+          --user "$sandbox_user" \
           --entrypoint /bin/sh \
           "$REFERENCE" -eu -c \
           'test -x /usr/bin/dos2unix; test "$(command -v dos2unix)" = /usr/bin/dos2unix; dos2unix --version >/dev/null'

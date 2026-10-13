@@ -276,8 +276,13 @@ RUN test -x /usr/bin/setpriv \
     && /usr/bin/setpriv --version \
     && ! command -v gosu
 
-RUN groupadd -r -g 999 sandbox \
-    && useradd -r -u 999 -g sandbox -d /sandbox -s /bin/bash sandbox \
+COPY src/lib/agent/deep-agents-code-runtime-identity.json /usr/local/share/nemoclaw/deep-agents-code-runtime-identity.json
+
+RUN sandbox_identity="$(node -e 'const { uid, gid } = require("/usr/local/share/nemoclaw/deep-agents-code-runtime-identity.json"); if (!Number.isSafeInteger(uid) || uid < 1 || !Number.isSafeInteger(gid) || gid < 1) process.exit(1); process.stdout.write(uid + ":" + gid)')" \
+    && sandbox_uid="${sandbox_identity%%:*}" \
+    && sandbox_gid="${sandbox_identity#*:}" \
+    && groupadd -r -g "$sandbox_gid" sandbox \
+    && useradd -r -l -u "$sandbox_uid" -g sandbox -d /sandbox -s /bin/bash sandbox \
     && usermod -a -G sandbox root \
     && mkdir -p /sandbox/.nemoclaw \
         /sandbox/.deepagents/.state \
@@ -290,8 +295,8 @@ RUN groupadd -r -g 999 sandbox \
     && chown -R sandbox:sandbox /sandbox \
     && chmod 2770 /sandbox/.deepagents \
     && chmod 770 /sandbox/.deepagents/.state \
-    && test "$(id -u sandbox):$(id -g sandbox)" = "999:999" \
-    && test "$(getent passwd sandbox)" = "sandbox:x:999:999::/sandbox:/bin/bash"
+    && test "$(id -u sandbox):$(id -g sandbox)" = "$sandbox_identity" \
+    && test "$(getent passwd sandbox)" = "sandbox:x:${sandbox_uid}:${sandbox_gid}::/sandbox:/bin/bash"
 
 # Pre-create shell init files for the sandbox user. OpenShell/NemoClaw writes
 # /tmp/nemoclaw-proxy-env.sh at startup so interactive sessions and dcode share
@@ -352,7 +357,7 @@ RUN python3 -m venv --copies "$VIRTUAL_ENV" \
         -r /tmp/deepagents-code-requirements.lock \
     && "$VIRTUAL_ENV/bin/pip3" check \
     && "$VIRTUAL_ENV/bin/python3" -I -c \
-        "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0', 'langgraph-checkpoint-sqlite': '3.1.1', 'mcp': '1.28.1', 'pillow': '12.3.0', 'pyasn1': '0.6.4', 'uv': '0.11.33'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
+        "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0', 'deepagents-code': '0.1.71', 'langgraph-checkpoint-sqlite': '3.1.1', 'mcp': '2.0.0', 'pillow': '12.3.0', 'pyasn1': '0.6.4', 'uv': '0.11.33'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
     && chown root:root /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py \
     && chmod 0444 /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py \
     && "$VIRTUAL_ENV/bin/python3" -I /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py \
