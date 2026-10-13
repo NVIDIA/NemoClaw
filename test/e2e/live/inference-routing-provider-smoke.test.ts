@@ -39,6 +39,41 @@ import {
 // inference-routing lane. Explicit hosted-inference catalogue targets supply
 // only the selected credential through the trusted E2E controller.
 
+// Deep Agents Code removes its server log on exit unless debug is enabled.
+// Report only fixed error categories from that log; never retain its contents.
+const DCODE_FAILURE_DIAGNOSTIC = String.raw`
+import glob, json, os
+from deepagents_code._nemoclaw_managed import managed_inference_api_key, managed_inference_base_url
+
+try:
+    handle = managed_inference_api_key(managed_inference_base_url())
+    handle_present = handle.startswith("openshell:resolve:env:") and handle.endswith("OPENROUTER_API_KEY")
+except Exception:
+    handle_present = False
+
+try:
+    fd = os.open(glob.glob("/tmp/deepagents_server_log_*.txt")[0], os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        os.lseek(fd, -min(os.fstat(fd).st_size, 131072), os.SEEK_END)
+        text = os.read(fd, 131072).decode("utf-8", "replace")
+    finally:
+        os.close(fd)
+except (IndexError, OSError):
+    text = ""
+
+error_types = ("AuthenticationError", "BadRequestError", "ConnectError", "ConnectTimeout", "HTTPStatusError", "NotFoundError", "OpenRouterError", "PermissionDeniedError", "RateLimitError", "ReadTimeout", "RemoteError", "ValidationError")
+print(json.dumps({
+    "resolverHandlePresent": handle_present,
+    "serverLogRead": bool(text),
+    "errorTypes": list(filter(lambda name: name in text, error_types)),
+    "missingAuthenticationHeader": "Missing Authentication header" in text,
+    "unauthorizedResponse": "UnauthorizedResponseError" in text or "401 Unauthorized" in text,
+    "badRequest": "BadRequestError" in text or "400 Bad Request" in text,
+    "forbidden": "ForbiddenResponseError" in text or "403 Forbidden" in text,
+    "rateLimited": "429" in text or "RateLimitError" in text,
+}))
+`;
+
 test(
   "TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and filesystem",
   {
@@ -314,9 +349,21 @@ test(
     progress.phase("request a fresh Deep Agents Code response");
     const response = await sandbox.exec(
       sandboxName,
-      ["dcode", "-n", "Reply with one short greeting. Do not use tools.", "--json"],
+      [
+        "env",
+        "DEEPAGENTS_CODE_DEBUG=1",
+        "dcode",
+        "-n",
+        "Reply with one short greeting. Do not use tools.",
+        "--json",
+      ],
       { ...options, artifactName: "tc-inf-07d-native-agent", timeoutMs: 180_000 },
     );
+    await sandbox.exec(sandboxName, ["/opt/venv/bin/python3", "-c", DCODE_FAILURE_DIAGNOSTIC], {
+      ...options,
+      artifactName: "tc-inf-07d-failure-diagnostic",
+      timeoutMs: 10_000,
+    });
     expect(response.exitCode, resultText(response)).toBe(0);
     const envelope = JSON.parse(response.stdout);
     expect(envelope).toMatchObject({
