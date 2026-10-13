@@ -10,6 +10,7 @@ import {
   hostedProviderSmokeEnvironment,
 } from "../../../tools/e2e/hosted-provider-smoke.mts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import { isObjectRecord } from "../../../src/lib/core/json-types.ts";
 import {
   parseOpenClawJsonDocuments,
   openClawAgentResponseRecord,
@@ -425,7 +426,13 @@ console.log(JSON.stringify({
           .map(openClawAgentResponseRecord)
           .filter((value) => value !== null)
           .at(-1);
-        expect(alternateDocument?.meta?.agentMeta?.model).toBe(alternateModel);
+        const alternateMeta = alternateDocument?.meta;
+        const alternateAgentMeta = isObjectRecord(alternateMeta)
+          ? alternateMeta.agentMeta
+          : undefined;
+        expect(isObjectRecord(alternateAgentMeta) ? alternateAgentMeta.model : undefined).toBe(
+          alternateModel,
+        );
         expect(parseOpenClawAgentText(alternateResponse.stdout).trim()).not.toBe("");
 
         const backToSelected = await host.nemoclaw(
