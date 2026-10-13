@@ -163,15 +163,15 @@ import os
 from deepagents_code import config
 from deepagents_code import _nemoclaw_managed as managed
 
-name = "OPENROUTER_API_KEY"
 for root_provider in ("openrouter-api", "openrouter", "compatible-endpoint"):
+    name = "COMPATIBLE_API_KEY" if root_provider == "compatible-endpoint" else "OPENROUTER_API_KEY"
     managed._UPSTREAM_PROVIDER_FILE.chmod(0o644)
     managed._UPSTREAM_PROVIDER_FILE.write_text(root_provider + "\\n")
     managed._UPSTREAM_PROVIDER_FILE.chmod(0o444)
     for value in (
-        "openshell:resolve:env:OPENROUTER_API_KEY",
-        "openshell:resolve:env:v12_OPENROUTER_API_KEY",
-        "openshell:resolve:env:s" + "a" * 64 + "_OPENROUTER_API_KEY",
+        "openshell:resolve:env:" + name,
+        "openshell:resolve:env:v12_" + name,
+        "openshell:resolve:env:s" + "a" * 64 + "_" + name,
     ):
         os.environ[name] = value
         resolved = config._get_provider_kwargs("openrouter")

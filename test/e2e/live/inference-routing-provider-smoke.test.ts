@@ -42,7 +42,7 @@ import {
 // Deep Agents Code removes its server log on exit unless debug is enabled.
 // Report only fixed error categories from that log; never retain its contents.
 const DCODE_FAILURE_DIAGNOSTIC = String.raw`
-import glob, json, os
+import glob, json, os, re
 from deepagents_code._nemoclaw_managed import managed_inference_api_key, managed_inference_base_url
 
 try:
@@ -62,10 +62,14 @@ except (IndexError, OSError):
     text = ""
 
 error_types = ("AuthenticationError", "BadRequestError", "ConnectError", "ConnectTimeout", "HTTPStatusError", "NotFoundError", "OpenRouterError", "PermissionDeniedError", "RateLimitError", "ReadTimeout", "RemoteError", "ValidationError")
+exception_classes = sorted(set(re.findall(r"(?m)^([A-Za-z_][A-Za-z0-9_.]{0,80}(?:Error|Exception))(?=:)", text)))[:12]
+http_status_codes = sorted(set(int(code) for code in re.findall(r"(?:status(?: code)?|error code|HTTP/[12](?:\.\d)?)\s*[=: ]\s*([45][0-9]{2})", text, re.I)))
 print(json.dumps({
     "resolverHandlePresent": handle_present,
     "serverLogRead": bool(text),
     "errorTypes": list(filter(lambda name: name in text, error_types)),
+    "exceptionClasses": exception_classes,
+    "httpStatusCodes": http_status_codes,
     "missingAuthenticationHeader": "Missing Authentication header" in text,
     "unauthorizedResponse": "UnauthorizedResponseError" in text or "401 Unauthorized" in text,
     "badRequest": "BadRequestError" in text or "400 Bad Request" in text,

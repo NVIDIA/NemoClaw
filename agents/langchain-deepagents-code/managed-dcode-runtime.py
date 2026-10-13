@@ -1083,12 +1083,14 @@ def managed_inference_api_key(base_url: str) -> str:
     if base_url == "https://integrate.api.nvidia.com/v1":
         name = "NVIDIA_INFERENCE_API_KEY"
         provider = "NVIDIA"
-    elif (
-        base_url == "https://openrouter.ai/api/v1"
-        and _managed_upstream_provider()
-        in _OPENROUTER_DISPLAY_PROVIDER_ALIASES | {"compatible-endpoint"}
-    ):
-        name = "OPENROUTER_API_KEY"
+    elif base_url == "https://openrouter.ai/api/v1" and (
+        upstream_provider := _managed_upstream_provider()
+    ) in _OPENROUTER_DISPLAY_PROVIDER_ALIASES | {"compatible-endpoint"}:
+        name = (
+            "COMPATIBLE_API_KEY"
+            if upstream_provider == "compatible-endpoint"
+            else "OPENROUTER_API_KEY"
+        )
         provider = "OpenRouter"
     else:
         return "nemoclaw-managed-inference"
