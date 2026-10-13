@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { NVIDIA_INFERENCE_PLACEHOLDER } from "../inference-credential";
+import { getSandboxInferenceConfig } from "../inference/config";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../inference/native-nvidia/contract";
 import { HOSTED_NATIVE_PROVIDERS } from "../inference/native-provider/hosted";
 import YAML from "yaml";
@@ -275,13 +276,9 @@ describe("composeSandboxConfigBody", () => {
         });
         const placeholder = `openshell:resolve:env:${provider.credentialEnv}`;
         const handle = `openshell:resolve:env:v42_${provider.credentialEnv}`;
-        const providerPath =
-          provider.logicalProvider === "openai-api"
-            ? "models.providers.openai"
-            : provider.logicalProvider === "anthropic-prod"
-              ? "models.providers.anthropic"
-              : "models.providers.inference";
-        const primary = `${providerPath.split(".").at(-1)}/model-a`;
+        const route = getSandboxInferenceConfig("model-a", provider.logicalProvider);
+        const providerPath = `models.providers.${route.providerKey}`;
+        const primary = route.primaryModelRef;
         const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [
           { dotpath: "agents.defaults.model.primary", value: primary },
           {

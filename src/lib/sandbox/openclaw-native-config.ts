@@ -25,6 +25,7 @@ const {
 }: typeof import("../inference/native-provider/agent-config") = require("../inference/native-provider/agent-config");
 const {
   fixedNativeProvider,
+  nativeOpenClawProviderKey,
 }: typeof import("../inference/native-provider/fixed") = require("../inference/native-provider/fixed");
 const {
   isConfigObject,
@@ -122,13 +123,8 @@ const materializeNativeProviderHandle = [
 ].join("\n");
 
 function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
-  const providerPaths = new Set([
-    "models.providers.inference",
-    "models.providers.openai",
-    "models.providers.anthropic",
-  ]);
   const matching = updates.filter(({ dotpath, value }) => {
-    if (!providerPaths.has(dotpath) || !isConfigObject(value)) return false;
+    if (!dotpath.startsWith("models.providers.") || !isConfigObject(value)) return false;
     if (value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER) return true;
     if (
       typeof value.apiKey !== "string" ||
@@ -173,14 +169,16 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
   ) {
     throw new Error("Native NVIDIA provider identity does not match its credential placeholder");
   }
-  const expectedPath =
+  const logicalProvider =
     value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER
-      ? "models.providers.inference"
-      : provider === "openai-api"
-        ? "models.providers.openai"
-        : provider === "anthropic-prod"
-          ? "models.providers.anthropic"
-          : "models.providers.inference";
+      ? "nvidia-prod"
+      : typeof provider === "string"
+        ? provider
+        : null;
+  const providerKey = nativeOpenClawProviderKey(logicalProvider);
+  if (!providerKey)
+    throw new Error("Native provider identity does not match its credential placeholder");
+  const expectedPath = `models.providers.${providerKey}`;
   if (matching[0]!.dotpath !== expectedPath) {
     throw new Error("Native provider config path does not match its identity");
   }
