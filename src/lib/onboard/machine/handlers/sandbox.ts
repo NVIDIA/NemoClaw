@@ -2346,9 +2346,11 @@ class SandboxStateFlow<
         this.options.apfInterceptorRequested === true &&
         this.options.provider.trim().length === 0 &&
         this.options.model.trim().length === 0;
+      // Fresh, non-forced selection drift resolves recreation inside createSandbox.
+      // The staged route already proves this source must remain published until backup.
       this.assertGatewayRouteCompatible(
         requestedSandboxName,
-        Boolean(this.options.deferredInferenceRoute && createIntent.recreate),
+        Boolean(this.options.deferredInferenceRoute),
       );
       await this.assertCheckpointBindingsStillLive(state);
       this.assertCheckpointCreateInputsStillMatch(

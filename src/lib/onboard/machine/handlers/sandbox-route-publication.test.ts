@@ -241,6 +241,60 @@ describe("sandbox route publication", () => {
     expect(gatewayLockHeld).toBe(false);
   });
 
+  it("checks peers before a fresh non-forced model change resolves to recreation", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    const registryEntry: SandboxEntry = {
+      name: "saved",
+      provider: "provider",
+      model: "old-model",
+      endpointUrl: null,
+      preferredInferenceApi: "openai-completions",
+      gatewayName: "nemoclaw",
+    };
+    const checkGatewayRouteCompatibility = vi.fn((request: { sandboxName: string | null }) =>
+      request.sandboxName === "saved"
+        ? { ok: true as const }
+        : {
+            ok: false as const,
+            gatewayName: "nemoclaw",
+            sandboxName: null,
+            route: { provider: "provider", model: "changed-model" },
+            conflicts: [{ sandboxName: "saved", reason: "provider-model" as const }],
+          },
+    );
+    const deferredInferenceRoute = vi.fn(async (reserve: () => void) => reserve());
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      const intent = args.at(-2) as {
+        recreate: boolean;
+        reservePublishedRouteAfterBackup: () => Promise<void>;
+      };
+      expect(intent.recreate).toBe(false);
+      await intent.reservePublishedRouteAfterBackup();
+      return "saved";
+    });
+    const { deps } = createDeps(
+      {
+        checkGatewayRouteCompatibility,
+        createSandbox,
+        getSandboxRegistryEntry: () => registryEntry,
+      },
+      session,
+    );
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      sandboxName: "saved",
+      model: "changed-model",
+      deferredInferenceRoute,
+    });
+
+    expect(checkGatewayRouteCompatibility).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: "saved" }),
+    );
+    expect(createSandbox).toHaveBeenCalledOnce();
+    expect(deferredInferenceRoute).toHaveBeenCalledOnce();
+  });
+
   it("does not reserve again when the session already owns the pending create reservation", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";
