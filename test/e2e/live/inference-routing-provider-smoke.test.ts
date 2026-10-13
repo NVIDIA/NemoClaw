@@ -297,7 +297,34 @@ test.for(hostedCases)(
       sandboxName,
       hermes
         ? ["cat", "/sandbox/.hermes/config.yaml"]
-        : ["openclaw", "config", "get", `models.providers.${selected.providerKey}`, "--json"],
+        : [
+            "node",
+            "-e",
+            String.raw`
+const fs = require("node:fs");
+let config;
+try {
+  config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));
+} catch {
+  console.error("native config unreadable or invalid");
+  process.exit(1);
+}
+const provider = config.models?.providers?.[process.argv[1]];
+const handle = provider?.apiKey;
+const normalizedHandle = typeof handle === "string"
+  ? handle.replace(/^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_/u,
+    "openshell:resolve:env:")
+  : null;
+console.log(JSON.stringify({
+  endpointMatches: provider?.baseUrl === process.argv[3],
+  credentialHandleMatches: normalizedHandle ===
+    "openshell:resolve:env:" + process.argv[2],
+}));
+`,
+            selected.providerKey,
+            selected.placeholder,
+            selected.endpoint,
+          ],
       {
         artifactName: `${selected.id}-native-config`,
         env: buildAvailabilityProbeEnv(),
@@ -307,17 +334,11 @@ test.for(hostedCases)(
     );
     expect(config.exitCode, "native provider config read failed; inspect the artifact").toBe(0);
     const providerConfig = hermes ? YAML.parse(config.stdout).model : JSON.parse(config.stdout);
-    // OpenClaw startup stamps the supervisor's current revision into the handle.
-    // Compare its credential binding independently of that runtime-generated scope.
-    providerConfig.apiKey = providerConfig.apiKey?.replace(
-      /^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_/u,
-      "openshell:resolve:env:",
-    );
     expect(providerConfig).toMatchObject({
-      [hermes ? "base_url" : "baseUrl"]: selected.endpoint,
-      [hermes ? "api_key" : "apiKey"]: hermes
+      [hermes ? "base_url" : "endpointMatches"]: hermes ? selected.endpoint : true,
+      [hermes ? "api_key" : "credentialHandleMatches"]: hermes
         ? `\${${selected.placeholder}}`
-        : `openshell:resolve:env:${selected.placeholder}`,
+        : true,
     });
     progress.phase("verify hosted credential isolation");
     const isolation = await sandbox.exec(sandboxName, hostedCredentialScanCommand(apiKey), {
