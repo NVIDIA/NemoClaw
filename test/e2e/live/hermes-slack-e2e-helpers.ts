@@ -308,7 +308,12 @@ export function registerHermesSlackCleanup(
             redactionValues: options.redactionValues,
             timeoutMs: 30_000,
           },
-          () => cleanupHermesSlackProvider({ host, apiKey: options.apiKey, provider }),
+          () =>
+            cleanupHermesSlackProvider({
+              host,
+              apiKey: options.apiKey,
+              provider,
+            }),
         ),
       );
     }
@@ -358,7 +363,11 @@ export async function runHermesSlackE2E({
 
   await requirePhase6RuntimeProvider(runtimeProvider, "Hermes Slack");
 
-  await precleanHermesSlack({ host, apiKey, artifactPrefix: "preclean-hermes-slack" });
+  await precleanHermesSlack({
+    host,
+    apiKey,
+    artifactPrefix: "preclean-hermes-slack",
+  });
   await precleanSandbox(host, SANDBOX_NAME, env, redactionValues, "preclean-hermes-slack-cli");
 
   progress.phase("install Hermes Slack sandbox");
@@ -504,29 +513,47 @@ PY`,
     sandbox,
     SANDBOX_NAME,
     String.raw`python3 - <<'PY'
+import glob
+import os
+import re
 from pathlib import Path
 text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
-lines = set(text.splitlines())
+lines = text.splitlines()
 required = {"API_SERVER_PORT=18642"}
-missing = sorted(required - lines)
-# Slack tokens must not be rendered here. OpenShell binds SLACK_* to the policy
-# endpoint and injects revision-scoped placeholders into the process
-# environment; a rendered line would shadow them, because Hermes loads this file
-# with override=True.
+missing = sorted(required - set(lines))
+# Hermes loads this file with override=True. Its startup guard intentionally
+# persists OpenShell's scoped placeholders here, so each assignment must match
+# the currently injected generation exactly. A raw, stale, or duplicate value
+# would shadow that injection and fail this boundary.
 def assignment_key(line):
     stripped = line.strip()
     if stripped.startswith("export "):
         stripped = stripped[len("export ") :].lstrip()
     return stripped.split("=", 1)[0].strip() if "=" in stripped else ""
 
-assigned = {assignment_key(line) for line in lines}
-leaked = sorted(key for key in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN") if key in assigned)
-if missing:
-    print("FAIL missing " + ", ".join(missing))
-elif leaked:
-    print("FAIL rendered " + ", ".join(leaked))
-else:
-    print("OK")
+def scoped_placeholder(value, key):
+    return re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + key, value) is not None
+
+def injected_placeholder(key):
+    direct = os.environ.get(key, "")
+    observed = {direct} - {""}
+    for entry in glob.glob("/proc/[0-9]*/environ"):
+        try:
+            items = Path(entry).read_bytes().decode("utf-8", errors="replace").split("\0")
+        except (OSError, PermissionError):
+            continue
+        observed.update(item.split("=", 1)[1] for item in items if item.startswith(key + "=") and item.split("=", 1)[1])
+    value = next(iter(observed), "")
+    return value if len(observed) == 1 and scoped_placeholder(value, key) else ""
+
+injected = {key: injected_placeholder(key) for key in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN")}
+invalid = sorted(
+    key for key in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN")
+    if [line.split("=", 1)[1].strip() for line in lines if assignment_key(line) == key] != [injected[key]]
+    or not injected[key]
+)
+failures = missing + invalid
+print("FAIL missing or unsafe " + ", ".join(failures) if failures else "OK")
 PY`,
     [],
     {
@@ -684,7 +711,7 @@ import urllib.request
 # provider egress. Upstream authentication responses prove reachability; the
 # messaging-providers target owns capture-based credential-rewrite proof.
 TLS_CONTEXT = ssl.create_default_context()
-INJECTED_RE = re.compile(r"^openshell:resolve:env:(v[0-9]+_)?(SLACK_BOT_TOKEN|SLACK_APP_TOKEN)$")
+INJECTED_RE = re.compile(r"^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_(SLACK_BOT_TOKEN|SLACK_APP_TOKEN)$")
 
 def injected_token(env_key):
     """Read the value OpenShell injected, never a fabricated alias.

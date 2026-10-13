@@ -17,6 +17,20 @@ import { assertHermesSlackCredentialFingerprintScanResult } from "../live/hermes
 
 const temporaryDirectories: string[] = [];
 
+function livePlaceholderProbeScript(): string {
+  const source = readFileSync(
+    new URL("../live/hermes-slack-e2e-helpers.ts", import.meta.url),
+    "utf8",
+  );
+  const marker = "String.raw`python3 - <<'PY'\nimport glob\n";
+  const start = source.indexOf(marker);
+  expect(start, "Hermes Slack live placeholder probe missing").toBeGreaterThanOrEqual(0);
+  const bodyStart = start + "String.raw`".length;
+  const end = source.indexOf("\nPY`", bodyStart);
+  expect(end, "Hermes Slack live placeholder probe unterminated").toBeGreaterThanOrEqual(0);
+  return `${source.slice(bodyStart, end + 3)}\n`;
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { force: true, recursive: true });
@@ -74,6 +88,49 @@ function runCredentialTransport(transportFailure = false) {
 }
 
 describe("Hermes Slack credential-fingerprint scan", () => {
+  it.each([
+    ["current scoped placeholders", "current", true],
+    ["raw token", "raw", false],
+    ["stale placeholder", "stale", false],
+    ["duplicate assignment", "duplicate", false],
+  ] as const)("validates %s in the Hermes .env boundary", (_label, kind, accepted) => {
+    const root = mkdtempSync(join(tmpdir(), "nemoclaw-hermes-slack-env-"));
+    temporaryDirectories.push(root);
+    const fixture = join(root, "hermes.env");
+    const bot = `openshell:resolve:env:s${"a".repeat(64)}_SLACK_BOT_TOKEN`;
+    const app = `openshell:resolve:env:s${"b".repeat(64)}_SLACK_APP_TOKEN`;
+    const fileBot =
+      kind === "raw"
+        ? "xoxb-raw-token"
+        : kind === "stale"
+          ? `openshell:resolve:env:s${"c".repeat(64)}_SLACK_BOT_TOKEN`
+          : bot;
+    writeFileSync(
+      fixture,
+      [
+        "API_SERVER_PORT=18642",
+        `SLACK_BOT_TOKEN=${fileBot}`,
+        `SLACK_APP_TOKEN=${app}`,
+        ...(kind === "duplicate" ? [`SLACK_BOT_TOKEN=${bot}`] : []),
+      ].join("\n"),
+    );
+    const script = livePlaceholderProbeScript()
+      .replace("/sandbox/.hermes/.env", fixture)
+      .replace('glob.glob("/proc/[0-9]*/environ")', "[]");
+    const result = spawnSync("bash", ["-c", script], {
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH ?? "",
+        SLACK_BOT_TOKEN: bot,
+        SLACK_APP_TOKEN: app,
+      },
+      timeout: 5_000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim() === "OK").toBe(accepted);
+    expect(result.stdout).not.toContain("xoxb-raw-token");
+  });
+
   it("sends only derived fingerprints through the OpenShell sandbox exec boundary", () => {
     const { calls, credentialFingerprints, credentials, result } = runCredentialTransport();
 
@@ -102,12 +159,18 @@ describe("Hermes Slack credential-fingerprint scan", () => {
     writeFileSync(fixture, `prefix ${credential} suffix`);
     const leaked = scan();
     expect(leaked.status, leaked.stderr).toBe(0);
-    expect(JSON.parse(leaked.stdout)).toEqual({ files: "LEAK", processes: "EMPTY" });
+    expect(JSON.parse(leaked.stdout)).toEqual({
+      files: "LEAK",
+      processes: "EMPTY",
+    });
 
     writeFileSync(fixture, `only openshell:resolve:env:s${"a".repeat(64)}_SLACK_BOT_TOKEN remains`);
     const clean = scan();
     expect(clean.status, clean.stderr).toBe(0);
-    expect(JSON.parse(clean.stdout)).toEqual({ files: "OK", processes: "EMPTY" });
+    expect(JSON.parse(clean.stdout)).toEqual({
+      files: "OK",
+      processes: "EMPTY",
+    });
   });
 
   it("propagates an OpenShell sandbox exec transport failure", () => {
@@ -119,7 +182,10 @@ describe("Hermes Slack credential-fingerprint scan", () => {
 
   it("rejects missing process-argument evidence", () => {
     expect(() =>
-      assertHermesSlackCredentialFingerprintScanResult({ files: "OK", processes: "EMPTY" }),
+      assertHermesSlackCredentialFingerprintScanResult({
+        files: "OK",
+        processes: "EMPTY",
+      }),
     ).toThrow(/raw Slack token absent from process arguments/);
   });
 });
