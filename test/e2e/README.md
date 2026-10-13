@@ -49,7 +49,8 @@ The install refuses package removals, preserving the runner's Docker and contain
   source commit. It reuses the reviewed native pasta, netavark, and aardvark-dns
   components. Select it with
   `jobs=portable-hermes-finalization`; the job selects Podman 5.7 regardless of
-  gateway-runtime inputs.
+  gateway-runtime inputs. The live scenario also runs the receipt-bound Hermes
+  build, registry publication, and OpenShell create transaction against those services.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
