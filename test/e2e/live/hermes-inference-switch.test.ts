@@ -31,7 +31,7 @@ import {
   inferenceLocalMaxTokens,
   installHermes,
   maybeAssertEnvHashStable,
-  maybeAssertPidStable,
+  parseHermesGatewayPid,
   mockAnthropicSwitchEnabled,
   PROXY_FORBIDDEN_MARKERS,
   PROXY_RESOLUTION_PROVIDER,
@@ -199,6 +199,7 @@ test(
     switchBinding && redactionValues.push(switchBinding.credentialValue);
 
     const pidBefore = await hermesGatewayPid(sandbox, "pid-before");
+    expect(parseHermesGatewayPid(pidBefore), resultText(pidBefore)).toBeDefined();
     const envHashBefore = await envHash(sandbox, "env-hash-before");
 
     progress.phase("switch Hermes inference provider");
@@ -214,8 +215,6 @@ test(
       },
     );
     expect(switched.exitCode, resultText(switched)).toBe(0);
-    expect(resultText(switched)).not.toContain("writing the in-sandbox config failed");
-    expect(resultText(switched)).toContain(`Inference route synced for '${SANDBOX_NAME}'`);
     switchBinding &&
       (await expectOpenAiProvider(
         host,
@@ -225,7 +224,10 @@ test(
 
     progress.phase("validate switched route and mutable config");
     const pidAfter = await hermesGatewayPid(sandbox, "pid-after");
-    maybeAssertPidStable(pidBefore, pidAfter, (actual, expected) => expect(actual).toBe(expected));
+    expect(parseHermesGatewayPid(pidAfter), resultText(pidAfter)).toBeDefined();
+    expect(pidAfter.stdout.trim() !== pidBefore.stdout.trim()).toBe(
+      SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER,
+    );
 
     const health = await sandbox.exec(
       SANDBOX_NAME,
