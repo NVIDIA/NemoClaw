@@ -616,6 +616,20 @@ function parseDarwinHostingExecutable(output: string): string | null {
     : null;
 }
 
+const LSOF_MOUNT_WARNING = /^lsof: WARNING: can't stat\(\) \S+ file system \S.*$/u;
+// lsof appends this continuation line to its mount warnings.
+const LSOF_INCOMPLETE_NOTE = "Output information may be incomplete.";
+
+function onlyBenignLsofMountWarnings(stderr: string): boolean {
+  let afterWarning = false;
+  for (const line of stderr.split(/\r?\n/u).map((l) => l.trim())) {
+    if (!line) continue;
+    if (LSOF_MOUNT_WARNING.test(line)) afterWarning = true;
+    else if (!(afterWarning && line === LSOF_INCOMPLETE_NOTE)) return false;
+  }
+  return true;
+}
+
 async function lsofListenerPids(
   port: number,
   platform: NodeJS.Platform,
@@ -631,12 +645,18 @@ async function lsofListenerPids(
     run,
   );
   if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return "unavailable";
+  // lsof exits 1 with empty stdout when nothing listens. On Linux it may still
+  // warn about unstattable fuse mounts (e.g. gvfs on Docker hosts); that known
+  // benign noise must not make a free port unprovable (#11979). Any other
+  // stderr diagnostic stays indeterminate: the reachability probe only covers
+  // loopback, so a real lsof error could hide a listener on another interface.
   if (
     result.status === 1 &&
     !result.timedOut &&
     !result.error &&
+    !result.signal &&
     !result.stdout.trim() &&
-    !result.stderr.trim()
+    (platform === "linux" ? onlyBenignLsofMountWarnings(result.stderr) : !result.stderr.trim())
   ) {
     return { ok: true, pids: [] };
   }

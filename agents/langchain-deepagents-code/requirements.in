@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 uv==0.11.33
-deepagents-code[nvidia,openrouter]==0.1.55
+deepagents-code[nvidia,openrouter]==0.1.71
 nemo-relay[langgraph]==0.4.0
 # Fix the C HTTP response parser out-of-bounds read.
 aiohttp==3.14.3
@@ -10,8 +10,8 @@ aiohttp==3.14.3
 cryptography==50.0.0
 # Fix the image parser advisories reported against the transitive 12.2.0 pin.
 pillow==12.3.0
-# Keep the managed MCP transport on the first release with Host/Origin validation.
-mcp==1.28.1
+# Keep Host/Origin validation on the MCP major version required by Deep Agents Code.
+mcp==2.0.0
 # Fix the transitive ASN.1 decoder resource-exhaustion advisories.
 pyasn1==0.6.4
 # Fix the transitive SQLite store namespace-prefix matching advisory.
