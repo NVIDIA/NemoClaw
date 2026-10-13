@@ -494,6 +494,10 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
 
       expect(gpu).toMatchObject({
         containerGpuProof: { providerId: "docker", passed: true },
+        provedGpuDevices: [
+          { uuid: GPU_UUID_0, name: "NVIDIA RTX PRO 4000 Blackwell" },
+          { uuid: GPU_UUID_1, name: "NVIDIA GB300" },
+        ],
         totalMemoryMB: 281_170,
         availableMemoryMB: 250_000,
         count: 2,
@@ -823,8 +827,13 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
           `NEMOCLAW_GPU_DEVICE=${GPU_UUID_1}, 1, NVIDIA GB300, 256703, 250000\n`,
       ),
     ).toEqual([
-      { name: "NVIDIA RTX PRO 4000 Blackwell", totalMemoryMB: 24467, availableMemoryMB: 24000 },
-      { name: "NVIDIA GB300", totalMemoryMB: 256703, availableMemoryMB: 250000 },
+      {
+        uuid: GPU_UUID_0,
+        name: "NVIDIA RTX PRO 4000 Blackwell",
+        totalMemoryMB: 24467,
+        availableMemoryMB: 24000,
+      },
+      { uuid: GPU_UUID_1, name: "NVIDIA GB300", totalMemoryMB: 256703, availableMemoryMB: 250000 },
     ]);
   });
 

@@ -15,6 +15,7 @@ export const LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID =
 export const LLAMA_CPP_DGX_SPARK_QUALIFICATION_KIND =
   "nemoclaw-llama-cpp-dgx-spark-qualification-v1" as const;
 export const LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE = "dgx-spark-gb10-single" as const;
+const LLAMA_CPP_DGX_SPARK_CUDA_ARCHITECTURES = "103-real;120-real;121a-real" as const;
 export const LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM = "linux/arm64" as const;
 export const LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE =
   "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1" as const;
@@ -180,7 +181,7 @@ export type LlamaCppDgxSparkExecutionPlan = {
       readonly runtimeBase: typeof LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE;
     };
     readonly platform: {
-      readonly cudaArchitectures: "121a-real";
+      readonly cudaArchitectures: typeof LLAMA_CPP_DGX_SPARK_CUDA_ARCHITECTURES;
       readonly platform: typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM;
     };
     readonly repository: typeof LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY;
@@ -829,7 +830,10 @@ function parseAgentQualification(value: unknown): LlamaCppDgxSparkAgentQualifica
       upstreamBaseUrl: "http://host.openshell.internal:8081/v1",
     },
     runtimeProvider: "docker",
-    sandbox: { gpuAccess: "disabled", name: LLAMA_CPP_DGX_SPARK_OPENCLAW_SANDBOX },
+    sandbox: {
+      gpuAccess: "disabled",
+      name: LLAMA_CPP_DGX_SPARK_OPENCLAW_SANDBOX,
+    },
     sessions: {
       normal: "llama-cpp-openclaw-normal",
       tool: "llama-cpp-openclaw-tool",
@@ -1058,7 +1062,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
     imageCuda.developmentBase !== LLAMA_CPP_DGX_SPARK_CUDA_DEVELOPMENT_BASE ||
     imageCuda.runtimeBase !== LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE ||
     platform.platform !== LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM ||
-    platform.cudaArchitectures !== "121a-real" ||
+    platform.cudaArchitectures !== LLAMA_CPP_DGX_SPARK_CUDA_ARCHITECTURES ||
     imageRuntime.port !== 8081 ||
     imageSource.repository !== LLAMA_CPP_DGX_SPARK_SOURCE_REPOSITORY ||
     imageSource.revision !== LLAMA_CPP_DGX_SPARK_SOURCE_REVISION ||
@@ -1405,7 +1409,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
         runtimeBase: LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE,
       },
       platform: {
-        cudaArchitectures: "121a-real",
+        cudaArchitectures: LLAMA_CPP_DGX_SPARK_CUDA_ARCHITECTURES,
         platform: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PLATFORM,
       },
       repository: LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY,
