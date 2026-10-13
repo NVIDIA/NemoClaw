@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
@@ -65,6 +66,17 @@ function executeProbe(leakIn = "none", emptyFiles = false, discoverCanary = true
 }
 
 describe("hosted credential isolation probe", () => {
+  it("discovers its nonempty canary through the real filesystem scan", () => {
+    const [program, flag, source, payload] = hostedCredentialScanCommand(credential);
+    const evidence = JSON.parse(
+      execFileSync(program!, [flag!, source!, payload!], {
+        encoding: "utf8",
+        timeout: 10_000,
+      }),
+    );
+    expect(evidence.canaryDetected).toBe(true);
+  });
+
   it.each([
     ["env", "environmentClean"],
     ["ps", "processesClean"],
