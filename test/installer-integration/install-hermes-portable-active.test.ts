@@ -17,6 +17,10 @@ import type { SandboxEntry } from "../../src/lib/state/registry/types";
 import { createHermesPortableBuildContextPlan } from "../../src/lib/onboard/experimental/hermes-portable-build-context";
 import { readHermesPortableLifecycleReceipt } from "../../src/lib/onboard/experimental/hermes-portable-receipt";
 import { runHermesPortableOnboardingTransaction } from "../../src/lib/onboard/experimental/hermes-portable-onboarding";
+import {
+  LOCAL_SANDBOX_IMAGE_REPO,
+  PORTABLE_LOCAL_REGISTRY,
+} from "../../src/lib/onboard/experimental/portable-profile";
 import { getHermesPortableSandboxRuntimeRegistryFields } from "../../src/lib/onboard/sandbox-registry-metadata";
 import { resolveSandboxGpuConfig } from "../../src/lib/onboard/sandbox-gpu-mode";
 import { completeHermesPortableSandboxRegistration } from "../../src/lib/onboard/sandbox-create/orchestration";
@@ -286,10 +290,12 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
         policySource: createPlan.initialSandboxPolicy.sourceBytes,
         readRegistry: () => registry.getSandbox(sandboxName),
         createSandbox: async (request, effectivePolicySourcePath) => {
-          expect(request.workingDirectory).toContain(
-            path.join(stateDir, "hermes-portable-build-context"),
+          expect(request.workingDirectory).toBeUndefined();
+          const transactionId = readHermesPortableLifecycleReceipt(sandboxName, stateDir)!.receipt
+            .transactionId;
+          expect(request.source.reference).toBe(
+            `${PORTABLE_LOCAL_REGISTRY}/${LOCAL_SANDBOX_IMAGE_REPO}:${transactionId}`,
           );
-          expect(request.source.reference).toBe(path.join(request.workingDirectory!, "Dockerfile"));
           expect(request.policyPath).toBe(effectivePolicySourcePath);
           expect(request.policyPath).not.toBe(basePolicyPath);
           registry.recordPendingSandboxCreateIdentity(createReservation, checkpoint);

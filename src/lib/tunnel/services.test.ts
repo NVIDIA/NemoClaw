@@ -9,6 +9,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -970,18 +971,21 @@ describe("stopAll", () => {
     "signals a verified cloudflared process through a Linux pidfd",
     () => {
       const executable = join(pidDir, "cloudflared");
-      copyFileSync("/bin/sleep", executable);
+      copyFileSync(process.execPath, executable);
       chmodSync(executable, 0o700);
-      const subprocess = childProcess.spawn(executable, ["20"], { stdio: "ignore" });
-      const pid =
-        subprocess.pid ??
-        (() => {
-          throw new Error("cloudflared test process has no PID");
-        })();
+      // An independent parent reaps the child while synchronous stopAll waits for exit.
+      const script = `"$0" -e 'console.log(process.pid); process.stdout.end(); setTimeout(() => {}, 60000)' </dev/null 2>/dev/null &`;
+      const readyOutput = childProcess.execFileSync("/bin/sh", ["-c", script, executable], {
+        encoding: "utf-8",
+        timeout: 10_000,
+      });
+      const pid = Number(readyOutput);
+      expect(Number.isSafeInteger(pid) && pid > 1).toBe(true);
       writeFileSync(join(pidDir, "cloudflared.pid"), String(pid), { mode: 0o600 });
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const unmanagedCloudflaredPids = (): number[] => [];
       try {
+        expect(readlinkSync(`/proc/${String(pid)}/exe`)).toBe(executable);
         stopAll({ pidDir, unloadOllamaModels: () => undefined, unmanagedCloudflaredPids });
         const deadline = Date.now() + 1000;
         let processStopped = false;
@@ -1012,9 +1016,11 @@ describe("stopAll", () => {
     "preserves a live cloudflared PID after its executable is removed by an upgrade",
     async () => {
       const executable = join(pidDir, "cloudflared");
-      copyFileSync("/bin/sleep", executable);
+      copyFileSync(process.execPath, executable);
       chmodSync(executable, 0o700);
-      const subprocess = childProcess.spawn(executable, ["20"], { stdio: "ignore" });
+      const subprocess = childProcess.spawn(executable, ["-e", "setInterval(() => {}, 1000)"], {
+        stdio: "ignore",
+      });
       await new Promise<void>((resolveSpawn, reject) => {
         subprocess.once("spawn", resolveSpawn);
         subprocess.once("error", reject);
@@ -1027,6 +1033,7 @@ describe("stopAll", () => {
       const pidFile = join(pidDir, "cloudflared.pid");
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       try {
+        expect(readlinkSync(`/proc/${String(pid)}/exe`)).toBe(executable);
         writeFileSync(pidFile, String(pid), { mode: 0o600 });
         rmSync(executable);
         expect(() => stopAll({ pidDir, unloadOllamaModels: () => undefined })).toThrow(

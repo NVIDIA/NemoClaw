@@ -49,7 +49,8 @@ The install refuses package removals, preserving the runner's Docker and contain
   source commit. It reuses the reviewed native pasta, netavark, and aardvark-dns
   components. Select it with
   `jobs=portable-hermes-finalization`; the job selects Podman 5.7 regardless of
-  gateway-runtime inputs.
+  gateway-runtime inputs. The live scenario also runs the receipt-bound Hermes
+  build, registry publication, and OpenShell create transaction against those services.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
@@ -1962,10 +1963,14 @@ Runs without a PR catalog require a trusted main base and managed-image publicat
 PR runs select the nearest fully successful publication on the trusted workflow commit's first-parent history.
 The publication must cover the PR base's latest reviewed image input.
 For that publication, the job binds the run ID, attempt, revision, cohort artifact ID, and artifact digest before it emits `managed_image_revision`.
-It validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that workflow attempt.
+It validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that publication attempt.
 `generate-matrix` runs first and selects whether publication is required.
 Stock-onboarding jobs still depend on publication, so incomplete publication creates no onboarding fanout.
 Direct `main` runs use the same publication workflow and artifact contract.
+
+Protected managed-image build jobs apply a separate rule to their reusable base receipt.
+The producer must be from the same workflow run and no later than the consumer attempt.
+Receipt verification remains bound to the producer attempt.
 
 The Deep Agents Code managed-image target uses the shared receipt check to verify its image digest, source revision, and cohort.
 Onboarding and fresh re-onboarding do not supply a base-image override.

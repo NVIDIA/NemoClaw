@@ -106,8 +106,8 @@ case "$*" in
       *"/langchain-deepagents-code@"*) agent=langchain-deepagents-code ;;
       *) exit 93 ;;
     esac
-    printf '[{"Id":"sha256:${DIGEST}","Config":{"User":"%s","Labels":{"io.nvidia.nemoclaw.agent":"%s","io.nvidia.nemoclaw.managed-image.contract":"1","io.nvidia.nemoclaw.managed-image.platform":"%s","io.nvidia.nemoclaw.managed-image.startup-profile":"1","io.nvidia.nemoclaw.managed-image.capabilities":"1","io.nvidia.nemoclaw.managed-image.cohort":"protected-1-1","org.opencontainers.image.revision":"${REVISION}"}}}]\n' \
-      "$NEMOCLAW_TEST_IMAGE_USER" "$agent" "$NEMOCLAW_TEST_IMAGE_PLATFORM"
+    printf '[{"Id":"sha256:${DIGEST}","Config":{"User":"%s","Labels":{"io.nvidia.nemoclaw.agent":"%s","io.nvidia.nemoclaw.managed-image.contract":"1","io.nvidia.nemoclaw.managed-image.platform":"%s","io.nvidia.nemoclaw.managed-image.startup-profile":"1","io.nvidia.nemoclaw.managed-image.capabilities":"1","io.nvidia.nemoclaw.managed-image.cohort":"%s","org.opencontainers.image.revision":"${REVISION}"}}}]\n' \
+      "$NEMOCLAW_TEST_IMAGE_USER" "$agent" "$NEMOCLAW_TEST_IMAGE_PLATFORM" "$NEMOCLAW_TEST_IMAGE_COHORT"
     ;;
   *) exit 91 ;;
 esac
@@ -357,6 +357,8 @@ function runBuild(
   const output = path.join(testRoot, "contracts.json");
   const platformOverride = extraArgs.findIndex((argument) => argument === "--platform");
   const effectivePlatform = platformOverride >= 0 ? extraArgs[platformOverride + 1] : platform;
+  const cohortOverride = extraArgs.findIndex((argument) => argument === "--cohort");
+  const effectiveCohort = cohortOverride >= 0 ? extraArgs[cohortOverride + 1] : "protected-1-1";
   return spawnSync(
     "bash",
     [
@@ -393,6 +395,7 @@ function runBuild(
         NEMOCLAW_TEST_DOCKER_BUILD_FAILURE_MODE: dockerBuildFailureMode,
         NEMOCLAW_TEST_DOCKER_LOG: dockerLog,
         NEMOCLAW_TEST_IMAGE_PLATFORM: effectivePlatform,
+        NEMOCLAW_TEST_IMAGE_COHORT: effectiveCohort,
         NEMOCLAW_TEST_IMAGE_USER: imageUser,
         NEMOCLAW_TEST_REGISTRY_CURL_EXIT: registryCurlExit,
         NEMOCLAW_TEST_REGISTRY_LOG: registryLog,
@@ -492,6 +495,8 @@ describe.each([
           fixture.reference,
           "--cache-from",
           cache,
+          "--cohort",
+          "protected-1-2",
           "--audit-evidence-from",
           audit,
         ],
@@ -508,6 +513,9 @@ describe.each([
       const calls = readFileSync(dockerLog, "utf8");
       expect(calls).not.toContain("/Dockerfile.base");
       expect(calls).not.toContain(`buildx imagetools inspect ${fixture.reference}`);
+      expect(readFileSync(seedLog, "utf8")).toContain(
+        "protected-dcode-base-receipt.mts verify-reusable",
+      );
 
       // A receipt from another controller revision must fail before Docker,
       // rather than silently selecting the published main base.
@@ -519,6 +527,8 @@ describe.each([
           fixture.reference,
           "--cache-from",
           cache,
+          "--cohort",
+          "protected-1-2",
           "--audit-evidence-from",
           audit,
         ],

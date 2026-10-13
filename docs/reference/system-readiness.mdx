@@ -186,7 +186,7 @@ The Windows chassis model is bounded diagnostic evidence only and does not estab
 
 The `host.platform.station_gb300_wsl` qualification requires a bounded Windows product observation that identifies Station GB300 and a successful selected-provider CUDA proof that reconciles every reported GPU and includes an `NVIDIA GB300` device.
 It is `qualified` only for Linux ARM64 WSL with an available NVIDIA GPU.
-Managed llama.cpp admission additionally requires Docker Desktop, its local `default` context, and the preset's driver and memory requirements.
+Managed llama.cpp admission additionally requires Docker Desktop, its local `default` context, exactly one proved GB300 GPU UUID, and the preset's driver and memory requirements.
 This qualification does not establish support for generic multi-GPU hosts or other Station products.
 
 DGX Station qualification separates hardware identity from software and runtime handling.
