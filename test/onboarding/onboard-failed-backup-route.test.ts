@@ -276,6 +276,6 @@ const { createSandbox } = require(${modulePath("src/lib/onboard.ts")});
         payload.events.findIndex((event) => event.kind === "create"),
     );
     assert.ok(payload.events.every((event) => !event.cmd?.includes("sandbox delete")));
-    assert.equal(payload.reservation.model, "new-model");
+    assert.equal(payload.reservation?.model, "new-model");
   },
 );
