@@ -224,6 +224,31 @@ describe("describeStaleUpgrade version-change labeling (#6520)", () => {
     ).toBe("v2026.6.10 → v2026.5.1 (downgrade)");
   });
 
+  it("does not label a prerelease-to-release transition as a downgrade (#13076)", () => {
+    expect(
+      describeStaleUpgrade({
+        name: "my-assistant",
+        running: false,
+        current: "0.0.134-rc.1",
+        expected: "0.0.134",
+        reasons: ["agent-version"],
+      }),
+    ).toBe("v0.0.134-rc.1 → v0.0.134");
+  });
+
+  it("labels release-to-prerelease and older-prerelease transitions as downgrades (#13076)", () => {
+    const base = { name: "my-assistant", running: false, reasons: ["agent-version" as const] };
+    expect(describeStaleUpgrade({ ...base, current: "0.0.134", expected: "0.0.134-rc.1" })).toBe(
+      "v0.0.134 → v0.0.134-rc.1 (downgrade)",
+    );
+    expect(
+      describeStaleUpgrade({ ...base, current: "0.0.134-rc.2", expected: "0.0.134-rc.1" }),
+    ).toBe("v0.0.134-rc.2 → v0.0.134-rc.1 (downgrade)");
+    expect(
+      describeStaleUpgrade({ ...base, current: "0.0.134-rc.1", expected: "0.0.134-rc.2" }),
+    ).toBe("v0.0.134-rc.1 → v0.0.134-rc.2");
+  });
+
   it("keeps upgrade descriptions unchanged", () => {
     expect(
       describeStaleUpgrade({
