@@ -617,13 +617,15 @@ function parseDarwinHostingExecutable(output: string): string | null {
 }
 
 const LSOF_MOUNT_WARNING = /^lsof: WARNING: can't stat\(\) \S+ file system \S.*$/u;
+// lsof appends this continuation line to its mount warnings.
+const LSOF_INCOMPLETE_NOTE = "Output information may be incomplete.";
 
 function onlyBenignLsofMountWarnings(stderr: string): boolean {
   return stderr
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .filter(Boolean)
-    .every((line) => LSOF_MOUNT_WARNING.test(line));
+    .every((line) => LSOF_MOUNT_WARNING.test(line) || line === LSOF_INCOMPLETE_NOTE);
 }
 
 async function lsofListenerPids(

@@ -445,7 +445,7 @@ describe("CLI OpenShell forward observations", () => {
       captured(
         1,
         "",
-        "lsof: WARNING: can't stat() fuse.gvfsd-fuse file system /run/user/1000/gvfs\n",
+        "lsof: WARNING: can't stat() fuse.gvfsd-fuse file system /run/user/1000/gvfs\n      Output information may be incomplete.\n",
       ),
     );
     const adapter = createCliOpenShellForwardAdapter({
