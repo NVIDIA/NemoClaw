@@ -8,12 +8,6 @@
 # Rules apply in order, before determinator's defaults. Keep them aligned with the
 # .dockerignore allowlist and with files the image commands read at runtime.
 
-# A workspace package under examples/: map it to its package, not the ignore rule below.
-[[path-rule]]
-globs = ["examples/onboarding-tui/**"]
-mark-changed = []
-post-rule = "skip-rules"
-
 # Image build inputs outside crates. determinator ignores .dockerignore and LICENSE by
 # default and recognizes only a toolchain file named rust-toolchain.
 [[path-rule]]

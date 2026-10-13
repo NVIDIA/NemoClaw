@@ -230,7 +230,8 @@ mod tests {
     #[test]
     fn bundled_template_is_supported_by_the_questionnaire() {
         let capabilities = Capabilities::available();
-        let template = Path::new(env!("CARGO_MANIFEST_DIR")).join("../onboarding/openclaw.yaml");
+        let template =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/onboarding/openclaw.yaml");
         let state = load_journey(Source::Template(&template), &capabilities).unwrap();
         assert_eq!(
             state

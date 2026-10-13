@@ -8,12 +8,6 @@
 # the live suites unless a rule below ignores it. Rules apply in order, before
 # determinator's defaults.
 
-# A workspace package under examples/: map it to its package.
-[[path-rule]]
-globs = ["examples/onboarding-tui/**"]
-mark-changed = []
-post-rule = "skip-rules"
-
 # Inputs the live tests and the bundle read outside crates.
 [[path-rule]]
 globs = [

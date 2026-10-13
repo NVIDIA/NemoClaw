@@ -24,7 +24,7 @@ fn visit(directory: &Path, files: &mut Vec<PathBuf>) {
 }
 
 fn main() {
-    let root = Path::new(&env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("..");
+    let root = Path::new(&env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../../examples");
     println!("cargo:rerun-if-changed={}", root.display());
     let mut files = Vec::new();
     visit(&root, &mut files);
