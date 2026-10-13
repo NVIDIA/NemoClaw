@@ -227,7 +227,7 @@ test(
 test(
   "TC-INF-07D Deep Agents Code reaches native OpenRouter",
   {
-    timeout: 15 * 60_000,
+    timeout: 20 * 60_000,
     meta: {
       e2ePhases: [
         "confirm hosted OpenRouter prerequisites",

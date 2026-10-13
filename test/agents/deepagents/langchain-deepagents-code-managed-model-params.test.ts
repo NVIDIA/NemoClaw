@@ -164,15 +164,19 @@ from deepagents_code import config
 from deepagents_code import _nemoclaw_managed as managed
 
 name = "OPENROUTER_API_KEY"
-for value in (
-    "openshell:resolve:env:OPENROUTER_API_KEY",
-    "openshell:resolve:env:v12_OPENROUTER_API_KEY",
-    "openshell:resolve:env:s" + "a" * 64 + "_OPENROUTER_API_KEY",
-):
-    os.environ[name] = value
-    resolved = config._get_provider_kwargs("openrouter")
-    assert resolved["api_key"] == value
-    assert resolved["base_url"] == "https://openrouter.ai/api/v1"
+for root_provider in ("openrouter-api", "openrouter", "compatible-endpoint"):
+    managed._UPSTREAM_PROVIDER_FILE.chmod(0o644)
+    managed._UPSTREAM_PROVIDER_FILE.write_text(root_provider + "\\n")
+    managed._UPSTREAM_PROVIDER_FILE.chmod(0o444)
+    for value in (
+        "openshell:resolve:env:OPENROUTER_API_KEY",
+        "openshell:resolve:env:v12_OPENROUTER_API_KEY",
+        "openshell:resolve:env:s" + "a" * 64 + "_OPENROUTER_API_KEY",
+    ):
+        os.environ[name] = value
+        resolved = config._get_provider_kwargs("openrouter")
+        assert resolved["api_key"] == value, root_provider
+        assert resolved["base_url"] == "https://openrouter.ai/api/v1"
 
 for value in (
     "",
@@ -198,7 +202,7 @@ else:
     raise AssertionError("native OpenRouter accepted a missing handle")
 
 managed._UPSTREAM_PROVIDER_FILE.chmod(0o644)
-managed._UPSTREAM_PROVIDER_FILE.write_text("compatible-endpoint\\n")
+managed._UPSTREAM_PROVIDER_FILE.write_text("openai\\n")
 managed._UPSTREAM_PROVIDER_FILE.chmod(0o444)
 assert config._get_provider_kwargs("openrouter")["api_key"] == "nemoclaw-managed-inference"
 print("native-openrouter-constructor-handle-ok")

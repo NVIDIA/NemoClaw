@@ -1085,7 +1085,8 @@ def managed_inference_api_key(base_url: str) -> str:
         provider = "NVIDIA"
     elif (
         base_url == "https://openrouter.ai/api/v1"
-        and _managed_upstream_provider() == "openrouter-api"
+        and _managed_upstream_provider()
+        in _OPENROUTER_DISPLAY_PROVIDER_ALIASES | {"compatible-endpoint"}
     ):
         name = "OPENROUTER_API_KEY"
         provider = "OpenRouter"
