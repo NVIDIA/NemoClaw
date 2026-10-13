@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Example Onboarding TUI
+# Onboarding TUI
 
 This crate provides the terminal questionnaire used by `nemoclaw onboard` and the standalone example.
 It is a trial authoring flow over `nemoclaw-authoring`.

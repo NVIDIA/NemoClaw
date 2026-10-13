@@ -123,7 +123,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         "versions.json",
         "LICENSE",
         "crates/sdk/src/lib.rs",
-        "examples/onboarding-tui/src/lib.rs",
+        "crates/nemoclaw-onboarding/src/lib.rs",
         "examples/onboarding/openclaw.yaml",
         "runtimes/example/Dockerfile",
         "image/fabric/catalog.json",
@@ -158,7 +158,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         nemoclaw_build::source_version(&changed_defaults)
     );
     std::fs::write(
-        root.path().join("examples/onboarding-tui/src/lib.rs"),
+        root.path().join("crates/nemoclaw-onboarding/src/lib.rs"),
         "changed questionnaire",
     )
     .unwrap();
@@ -248,7 +248,7 @@ fn supervisor_archive_contains_only_runtime_owned_sources_and_notices() {
         "image/fabric/Dockerfile",
         "image/fabric/FABRIC-LICENSE",
         "image/NOTICE.md",
-        "examples/onboarding-tui/src/lib.rs",
+        "crates/nemoclaw-onboarding/src/lib.rs",
         "examples/onboarding/openclaw.yaml",
         "runtimes/qwen38/verify_packed.py",
         "runtimes/qwen38/AGPL-3.0-or-later.txt",
@@ -486,7 +486,7 @@ fn runtime_source_identity_ignores_unrelated_inputs_and_dependency_owners() {
     for name in [
         "crates/nemoclaw-sdk/src/lib.rs",
         "image/fabric/catalog.json",
-        "examples/onboarding-tui/src/lib.rs",
+        "crates/nemoclaw-onboarding/src/lib.rs",
         "runtimes/qwen38/prepare.py",
     ] {
         let path = root.path().join(name);

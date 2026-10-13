@@ -10,7 +10,7 @@ The [accepted scope](scope.md) remains authoritative for SDK, Fabric, and target
 
 One Rust journey definition combines a partial desired-state document with guidance about which decisions to ask for or omit.
 The authoring library resolves questions using SDK and Fabric schemas, then produces an SDK document only when required decisions are complete.
-The example TUI and tree printer consume the same resolver.
+The onboarding TUI and tree printer consume the same resolver.
 No separate journey YAML format is needed for this prototype.
 
 ## Domain Model
@@ -121,7 +121,7 @@ These previews do not establish complete coverage of arbitrary partial documents
 - `discovery_queries` reads the engine, image, inference endpoint, and gateway from an SDK-valid `Document`, so those observations arrive after the choices that make the document valid. Before the first question the TUI reads the engines `nemoclaw_discovery::local_engine_candidates` names from this machine's environment: Docker where the Docker client would connect (`DOCKER_HOST`, then `DOCKER_CONTEXT`, then the configured current context) when that is a Unix socket, otherwise its default socket, and Podman at the user's socket under `XDG_RUNTIME_DIR`, then the rootful socket. When exactly one runtime answered, it becomes the suggested runtime, even over a supplied value, and the user still decides. With both or neither, the template's runtime stays the suggestion. Choosing a runtime targets the managed gateway at the engine that answered for it. When no engine answered for the chosen runtime and no engine is authored, the target assessment reports that first, ahead of the result of reading the SDK's default engine. Other target observations never change questions; only inference observations add model choices. Hardware and gateway observations are collected but do not affect questions or readiness yet.
 - The TUI offers harness choices and settings schemas from the bundled Fabric catalog for the whole run. The selected image's catalog only feeds the target assessment, where a harness the image does not advertise is a conflict that blocks `ready_document`.
 - SDK assessment and journey completion are separate: a fully supplied document can be SDK-valid while explicit `ask` questions remain. `JourneyResolution::materialized_document` returns the SDK document only when current questions are answered and Fabric schema gaps are cleared. A definition may additionally require compatible engine and image observations. `ready_document` rejects any observed target conflict and waits for compatible evidence when the definition requires it; unknown evidence otherwise remains unverified. Observations never change the authored document, and the TUI does not reject a runtime choice based on the author's workstation OS.
-- The executable example TUI loads a sparse `PartialDocument`, runs `JourneyState`, and saves only its `ready_document` result. Resolver errors surface as errors rather than appearing to finish the questionnaire. The default-path and per-example TUI tests exercise this path.
+- The onboarding TUI loads a sparse `PartialDocument`, runs `JourneyState`, and saves only its `ready_document` result. Resolver errors surface as errors rather than appearing to finish the questionnaire. The default-path and per-example TUI tests exercise this path.
 
 ## Alignment to the Intended Model
 
