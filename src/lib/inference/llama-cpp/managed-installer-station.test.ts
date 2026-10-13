@@ -19,12 +19,15 @@ import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
 import {
   installManagedLlamaCpp,
   rehydrateManagedLlamaCppLifecycle,
+  resumeManagedLlamaCppRuntime,
   selectStationGb300GpuUuid,
 } from "./managed-installer";
 import { engineHarness } from "./managed-installer.test-support";
 import {
   createManagedLlamaCppReceiptWriter,
   loadManagedLlamaCppOwner,
+  loadManagedLlamaCppReceipt,
+  loadOrCreateManagedLlamaCppApiKey,
   managedLlamaCppStatePaths,
   reserveManagedLlamaCppOwner,
 } from "./managed-state";
@@ -138,24 +141,25 @@ describe("Station managed llama.cpp GPU binding (#13026)", () => {
     const hostPath = path.join(homeDir, "model.gguf");
     fs.writeFileSync(hostPath, "fixture", { mode: 0o600 });
     const identity = fs.lstatSync(hostPath, { bigint: true });
+    const verifyGguf = vi.fn(async () => ({
+      digest: selected.recipe.spec.model.files[0]!.digest,
+      filesystemIdentity: {
+        ctimeNs: identity.ctimeNs,
+        dev: identity.dev,
+        ino: identity.ino,
+        mtimeNs: identity.mtimeNs,
+        size: identity.size,
+      },
+      hostPath,
+      sizeBytes: selected.recipe.spec.model.files[0]!.sizeBytes,
+    }));
     const install = () =>
       installManagedLlamaCpp(selected, {
         sandboxName: "station-agent",
         homeDir,
         runtimeProvider,
         gpu,
-        verifyGguf: vi.fn(async () => ({
-          digest: selected.recipe.spec.model.files[0]!.digest,
-          filesystemIdentity: {
-            ctimeNs: identity.ctimeNs,
-            dev: identity.dev,
-            ino: identity.ino,
-            mtimeNs: identity.mtimeNs,
-            size: identity.size,
-          },
-          hostPath,
-          sizeBytes: selected.recipe.spec.model.files[0]!.sizeBytes,
-        })),
+        verifyGguf,
         checkPort: vi.fn(async () => ({ ok: true })),
         log: vi.fn(),
       });
@@ -174,6 +178,7 @@ describe("Station managed llama.cpp GPU binding (#13026)", () => {
       legacyOwner,
       runtimeProvider,
       operation,
+      verifyGguf,
     };
   }
 
@@ -279,6 +284,37 @@ describe("Station managed llama.cpp GPU binding (#13026)", () => {
           bindings: expect.objectContaining({
             gpuDeviceUuid: expect.any(String),
           }),
+        }),
+      );
+    } finally {
+      fs.rmSync(fixture.homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes a legacy Station runtime without changing its unbound GPU authority", async () => {
+    const selected = stationSelection();
+    const fixture = setup(selected);
+    try {
+      const paths = managedLlamaCppStatePaths(fixture.homeDir);
+      reserveManagedLlamaCppOwner(paths, fixture.legacyOwner());
+      seedLegacyRuntimeAuthority(selected, fixture.homeDir, fixture.operation.engine);
+      loadOrCreateManagedLlamaCppApiKey(paths);
+      fixture.operation.engine.capture(["network", "create", "nemoclaw-llama-cpp-internal"]);
+      const before = fs.readFileSync(paths.ownerPath);
+      await expect(
+        resumeManagedLlamaCppRuntime("station-agent", {
+          homeDir: fixture.homeDir,
+          runtimeProvider: fixture.runtimeProvider,
+          verifyGguf: fixture.verifyGguf,
+        }),
+      ).resolves.toBe(true);
+      expect(fs.readFileSync(paths.ownerPath)).toEqual(before);
+      expect(fixture.createLifecycle.mock.results[0]?.value.resume).toHaveBeenCalledWith(
+        loadManagedLlamaCppReceipt(paths),
+      );
+      expect(fixture.createLifecycle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bindings: expect.not.objectContaining({ gpuDeviceUuid: expect.any(String) }),
         }),
       );
     } finally {
