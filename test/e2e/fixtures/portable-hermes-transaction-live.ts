@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { redactSensitiveText } from "../../../src/lib/security/redact.ts";
 
 import {
   assertHermesPortableOpenShellExecutableAuthority,
@@ -110,6 +111,8 @@ export async function proveHermesPortableOnboardingTransaction(input: {
   const cleanupPodman: {
     current: ReturnType<typeof createHermesPortableContainerDeps>["podman"] | null;
   } = { current: null };
+  let primaryFailed = false;
+  let primaryFailure: unknown;
   try {
     const transaction = await runHermesPortableOnboardingTransaction(
       {
@@ -196,6 +199,11 @@ export async function proveHermesPortableOnboardingTransaction(input: {
               waitForReadyTermination: true,
             },
           );
+          if (result.status !== 0) {
+            throw new Error(
+              `OpenShell Hermes transaction sandbox creation failed (exit ${result.status}): ${redactSensitiveText(result.output.slice(-240))}`,
+            );
+          }
           return result;
         },
         readRegistry: () => registryEntry,
@@ -258,17 +266,55 @@ export async function proveHermesPortableOnboardingTransaction(input: {
       )}\n`,
       { encoding: "utf-8", mode: 0o600 },
     );
-  } finally {
+  } catch (error) {
+    primaryFailed = true;
+    primaryFailure = error;
+  }
+  const cleanupFailures: unknown[] = [];
+  try {
     if (capture(["sandbox", "get", "-g", gatewayName, "-o", "json", sandboxName]).status === 0) {
-      capture(["sandbox", "delete", "-g", gatewayName, sandboxName], 240_000);
+      const deletion = capture(["sandbox", "delete", "-g", gatewayName, sandboxName], 240_000);
+      if (deletion.status !== 0 || deletion.error) {
+        throw new Error(
+          `OpenShell Hermes transaction sandbox deletion failed: ${redactSensitiveText(String(deletion.stderr).slice(-240))}`,
+        );
+      }
     }
+  } catch (error) {
+    cleanupFailures.push(error);
+  }
+  try {
     const receipt = readHermesPortableLifecycleReceipt(sandboxName, receiptStateDir);
     const builtImageRef =
       imageRef.value ??
       (receipt ? `${PORTABLE_LOCAL_SANDBOX_IMAGE_REPO}:${receipt.receipt.transactionId}` : null);
     if (builtImageRef && cleanupPodman.current) {
-      cleanupPodman.current(["image", "rm", "--force", builtImageRef], 15_000);
+      const removal = cleanupPodman.current(["image", "rm", "--force", builtImageRef], 15_000);
+      if (removal.status !== 0 || removal.error) {
+        throw new Error(
+          `Hermes transaction image removal failed: ${redactSensitiveText(String(removal.stderr).slice(-240))}`,
+        );
+      }
     }
+  } catch (error) {
+    cleanupFailures.push(error);
+  }
+  try {
     fs.rmSync(policyPath, { force: true });
+  } catch (error) {
+    cleanupFailures.push(error);
+  }
+  if (primaryFailed && cleanupFailures.length > 0) {
+    throw new AggregateError(
+      [primaryFailure, ...cleanupFailures],
+      "Hermes transaction and cleanup failed",
+      {
+        cause: primaryFailure,
+      },
+    );
+  }
+  if (primaryFailed) throw primaryFailure;
+  if (cleanupFailures.length > 0) {
+    throw new AggregateError(cleanupFailures, "Hermes transaction cleanup failed");
   }
 }
