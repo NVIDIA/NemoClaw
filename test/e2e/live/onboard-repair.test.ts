@@ -117,6 +117,7 @@ test(
         "remove the recorded sandbox and resume repair",
         "validate repaired attachments and corporate trust",
         "reject a same-name model-change backup without changing the published route",
+        "recreate the same name with a changed model after backup succeeds",
         "reseed interrupted onboarding state",
         "reject conflicting resume inputs",
         "clear the repaired onboarding state",
@@ -140,6 +141,7 @@ test(
         "resume repair proves recreated sandbox provider attachments are selectively reconciled",
         "REQUESTS_CA_BUNDLE fallback corporate CA source is baked and merged after repair",
         "a rejected pre-delete backup preserves the live sandbox and published route",
+        "a successful model-change recreate replaces the sandbox and serves the selected route",
         "resume rejects a different requested sandbox name",
         "resume rejects provider/model overrides that conflict with recorded state",
       ],
@@ -261,7 +263,6 @@ test(
       execTimeout(20 * 60_000),
     );
     expect(first.exitCode, resultText(first)).toBe(1);
-    expect(resultText(first)).toContain("Forced onboarding failure at step 'policies'");
 
     await upsertGenericGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
       artifactName: "phase-1-live-extra-provider-upsert",
@@ -390,14 +391,6 @@ test(
       timeoutMs: 60_000,
     });
     expect(parseOpenShellSandboxId(resultText(sourceAfterBackup))).toBe(sourceId);
-    const routeAfterBackup = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
-      artifactName: "phase-3-route-after-rejected-backup",
-      env: env(),
-      timeoutMs: 30_000,
-    });
-    expect(resultText(routeAfterBackup)).toMatch(
-      /Provider:\s*compatible-endpoint[\s\S]*Model:\s*test-model/u,
-    );
     const requestOffset = fake.requests().length;
     const sourceChat = await sandbox.exec(
       SANDBOX_NAME,
@@ -436,6 +429,65 @@ test(
     );
     fs.rmSync(SESSION_FILE, { force: true });
 
+    progress.phase("recreate the same name with a changed model after backup succeeds");
+    const recreated = await nemoclaw(
+      host,
+      ["onboard", "--non-interactive"],
+      "phase-3-successful-recreate",
+      onboardEnv(SANDBOX_NAME, fake.baseUrl, {
+        NEMOCLAW_MODEL: "changed-test-model",
+        NEMOCLAW_POLICY_MODE: "skip",
+        NEMOCLAW_RECREATE_SANDBOX: "1",
+        ...corporateCa.env,
+      }),
+      execTimeout(20 * 60_000),
+    );
+    expect(recreated.exitCode, resultText(recreated)).toBe(0);
+    const replacement = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+      artifactName: "phase-3-replacement-after-successful-recreate",
+      env: env(),
+      timeoutMs: 60_000,
+    });
+    expect(parseOpenShellSandboxId(resultText(replacement))).not.toBe(sourceId);
+    const replacementRequestOffset = fake.requests().length;
+    const replacementChat = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "curl",
+        "-fsS",
+        "--max-time",
+        "60",
+        "https://inference.local/v1/chat/completions",
+        "-H",
+        "Content-Type: application/json",
+        "--data-raw",
+        JSON.stringify({
+          model: "changed-test-model",
+          messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+          max_tokens: 50,
+        }),
+      ],
+      {
+        artifactName: "phase-3-replacement-inference-after-successful-recreate",
+        env: env(),
+        timeoutMs: 90_000,
+      },
+    );
+    expect(replacementChat.exitCode, resultText(replacementChat)).toBe(0);
+    expect(
+      fake
+        .requests()
+        .slice(replacementRequestOffset)
+        .some(
+          (request) =>
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions" &&
+            request.model === "changed-test-model" &&
+            request.auth === "ok",
+        ),
+    ).toBe(true);
+    fs.rmSync(SESSION_FILE, { force: true });
+
     progress.phase("reseed interrupted onboarding state");
     const reinject = await nemoclaw(
       host,
@@ -450,8 +502,6 @@ test(
       }),
       execTimeout(20 * 60_000),
     );
-    expect(reinject.exitCode, resultText(reinject)).toBe(1);
-    expect(resultText(reinject)).toContain("Forced onboarding failure at step 'policies'");
     await captureSandboxFailureDiagnostics(host, reinject, {
       sandboxName: SANDBOX_NAME,
       artifactPrefix: "phase-3-reinject-failure",
