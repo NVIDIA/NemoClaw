@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
+import { testTimeout } from "../../helpers/timeouts.ts";
 import { hostedCredentialScanCommand } from "../live/inference-routing-credential-scan.ts";
 
 const credential = "synthetic-hosted-credential-for-scan";
@@ -71,16 +72,20 @@ function executeProbe(
 }
 
 describe("hosted credential isolation probe", () => {
-  it("discovers its nonempty canary through the real filesystem scan", () => {
-    const [program, flag, source, payload] = hostedCredentialScanCommand(credential);
-    const evidence = JSON.parse(
-      execFileSync(program!, [flag!, source!, payload!], {
-        encoding: "utf8",
-        timeout: 10_000,
-      }),
-    );
-    expect(evidence.canaryDetected).toBe(true);
-  });
+  it(
+    "discovers its nonempty canary through the real filesystem scan",
+    () => {
+      const [program, flag, source, payload] = hostedCredentialScanCommand(credential);
+      const evidence = JSON.parse(
+        execFileSync(program!, [flag!, source!, payload!], {
+          encoding: "utf8",
+          timeout: 10_000,
+        }),
+      );
+      expect(evidence.canaryDetected).toBe(true);
+    },
+    testTimeout(15_000),
+  );
 
   it.each([
     ["env", "environmentClean"],
