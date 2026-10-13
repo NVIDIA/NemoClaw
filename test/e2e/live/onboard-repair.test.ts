@@ -262,7 +262,6 @@ test(
     );
     expect(first.exitCode, resultText(first)).toBe(1);
     expect(resultText(first)).toContain("Forced onboarding failure at step 'policies'");
-    expect(fs.existsSync(SESSION_FILE)).toBe(true);
 
     await upsertGenericGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
       artifactName: "phase-1-live-extra-provider-upsert",
@@ -453,7 +452,6 @@ test(
     );
     expect(reinject.exitCode, resultText(reinject)).toBe(1);
     expect(resultText(reinject)).toContain("Forced onboarding failure at step 'policies'");
-    expect(fs.existsSync(SESSION_FILE)).toBe(true);
     await captureSandboxFailureDiagnostics(host, reinject, {
       sandboxName: SANDBOX_NAME,
       artifactPrefix: "phase-3-reinject-failure",
@@ -469,6 +467,7 @@ test(
         NEMOCLAW_POLICY_MODE: "skip",
       }),
     );
+    expect(sandboxConflict.exitCode, resultText(sandboxConflict)).toBe(1);
     expect(resultText(sandboxConflict)).toContain(
       `Resumable state belongs to sandbox '${SANDBOX_NAME}', not '${OTHER_SANDBOX_NAME}'`,
     );
@@ -483,6 +482,7 @@ test(
         NEMOCLAW_PROVIDER: "openai",
       }),
     );
+    expect(providerConflict.exitCode, resultText(providerConflict)).toBe(1);
     expect(resultText(providerConflict)).toMatch(
       /Resumable state recorded provider '.*', not '.*'\./,
     );

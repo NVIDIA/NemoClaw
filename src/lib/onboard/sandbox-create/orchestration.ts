@@ -2628,7 +2628,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         pendingStateRestore = result.backup;
       }
 
-      await createIntent?.reservePublishedRouteAfterBackup?.();
       // Parse and freeze the rebuild policy while the source sandbox is still
       // intact. A malformed or raced policy must not fail after deletion.
       managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
@@ -2668,6 +2667,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           );
       }
       recreateRuntime.confirmDeleted();
+      // Keep the source route published through every pre-delete check. A failure
+      // before confirmed deletion must leave the live source route untouched.
+      await createIntent?.reservePublishedRouteAfterBackup?.();
       finalizeRecreatedSourceHermesVolume(
         true,
         previousEntry,

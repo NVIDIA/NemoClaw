@@ -258,9 +258,9 @@ before and after the resumed command. They retain only validated fixed-schema fa
 child output. These separate observations do not replace the production ownership decision or prove
 which predicate rejected an earlier invocation; command results and cleanup remain authoritative.
 The `onboard-repair` target also changes the model of a ready OpenClaw sandbox after placing a
-synthetic credential marker in its workspace. The pre-delete state backup must reject the marker;
-the target compares the sandbox identity and published registry route before and after the failure,
-then probes `connect` to verify the original sandbox remains usable.
+synthetic credential marker in its workspace. The pre-delete state backup must reject the marker.
+The target compares the sandbox identity and published registry route before and after the failure.
+It sends an in-sandbox request to `inference.local` to confirm the source route still handles inference.
 
 Full MCP bridge E2E also owns the supervisor's corporate-CA TLS consumer check:
 onboarding receives the fixture CA through `NEMOCLAW_CORPORATE_CA_BUNDLE`, and the
