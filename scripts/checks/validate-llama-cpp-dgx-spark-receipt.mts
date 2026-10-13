@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import {
   parseLlamaCppDgxSparkQualificationReceipt,
   verifyLlamaCppDgxSparkExecutionPlanSha256,
+  createLlamaCppDgxSparkFailureDiagnostic,
+  parseLlamaCppDgxSparkFailureDiagnostic,
 } from "./llama-cpp-dgx-spark-qualification-contract.mts";
 
 export function validateLlamaCppDgxSparkReceipt(
@@ -35,17 +37,95 @@ function readArtifact(file: string): string {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [receiptFile, planFile, digest, ...extra] = process.argv.slice(2);
-  if (!receiptFile || !planFile || !digest || extra.length) {
-    throw new Error("usage: validate-llama-cpp-dgx-spark-receipt.mts RECEIPT PLAN PLAN_SHA256");
+export function publishLlamaCppDgxSparkArtifacts(
+  directory: string,
+  planSha256: string,
+  identity: unknown,
+  executionOutcome: string,
+  cleanupOutcome: string,
+) {
+  if (
+    !["success", "failure", "cancelled"].includes(executionOutcome) ||
+    !["success", "failure", "cancelled", "skipped"].includes(cleanupOutcome)
+  )
+    throw new Error("invalid Spark execution outcome");
+  const root = path.resolve(directory);
+  if (fs.realpathSync(root) !== root || !fs.statSync(root).isDirectory())
+    throw new Error("Spark artifact directory must be a real directory");
+  const published = path.join(root, "published");
+  const outputs: Record<string, string> = {};
+  if (executionOutcome === "success" && cleanupOutcome === "success") {
+    const planSource = readArtifact(path.join(root, "plan.json"));
+    const receipt = validateLlamaCppDgxSparkReceipt(
+      readArtifact(path.join(root, "receipt.json")),
+      planSource,
+      planSha256,
+      identity,
+    );
+    outputs["receipt.json"] = JSON.stringify(receipt);
+    outputs["plan.json"] = planSource;
+    outputs["plan-sha256"] = planSha256;
+  } else {
+    const failureFile = path.join(root, "failure.json");
+    const diagnostic =
+      executionOutcome === "success"
+        ? createLlamaCppDgxSparkFailureDiagnostic(
+            identity,
+            planSha256,
+            "cleanup",
+            false,
+            "cleanup-incomplete",
+          )
+        : fs.existsSync(failureFile)
+          ? parseLlamaCppDgxSparkFailureDiagnostic(
+              JSON.parse(readArtifact(failureFile)),
+              identity,
+              planSha256,
+            )
+          : createLlamaCppDgxSparkFailureDiagnostic(identity, planSha256, "interrupted", false);
+    outputs["failure.json"] = JSON.stringify({
+      ...diagnostic,
+      cleanupComplete: diagnostic.cleanupComplete && cleanupOutcome === "success",
+    });
   }
-  validateLlamaCppDgxSparkReceipt(readArtifact(receiptFile), readArtifact(planFile), digest, {
+  // A fresh staging directory publishes only validated canonical records, not input logs.
+  fs.mkdirSync(published, { mode: 0o700 });
+  for (const [name, source] of Object.entries(outputs))
+    fs.writeFileSync(path.join(published, name), source, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+  return published;
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const identity = {
     baseSha: process.env.BASE_SHA,
     headSha: process.env.CHECKOUT_SHA,
     workflowSha: process.env.WORKFLOW_SHA,
     runId: Number(process.env.GITHUB_RUN_ID),
     runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
-  });
-  process.stdout.write("Verified DGX Spark qualification receipt and plan identity.\n");
+  };
+  if (process.argv[2] === "--publish") {
+    const [directory, execution, cleanup, digest, ...extra] = process.argv.slice(3);
+    if (!directory || !execution || !cleanup || !digest || extra.length)
+      throw new Error(
+        "usage: validate-llama-cpp-dgx-spark-receipt.mts --publish DIRECTORY EXECUTION CLEANUP PLAN_SHA256",
+      );
+    publishLlamaCppDgxSparkArtifacts(directory, digest, identity, execution, cleanup);
+    process.stdout.write("Validated bounded Spark qualification artifacts.\n");
+  } else {
+    const [receiptFile, planFile, digest, ...extra] = process.argv.slice(2);
+    if (!receiptFile || !planFile || !digest || extra.length) {
+      throw new Error("usage: validate-llama-cpp-dgx-spark-receipt.mts RECEIPT PLAN PLAN_SHA256");
+    }
+    validateLlamaCppDgxSparkReceipt(
+      readArtifact(receiptFile),
+      readArtifact(planFile),
+      digest,
+      identity,
+    );
+    process.stdout.write("Verified DGX Spark qualification receipt and plan identity.\n");
+  }
 }

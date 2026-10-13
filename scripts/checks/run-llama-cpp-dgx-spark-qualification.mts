@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -29,6 +29,9 @@ import {
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE,
   type LlamaCppDgxSparkExecutionPlan,
   parseLlamaCppDgxSparkExecutionPlan,
+  createLlamaCppDgxSparkFailureDiagnostic,
+  type LlamaCppDgxSparkFailurePhase,
+  type LlamaCppDgxSparkFailureReason,
 } from "./llama-cpp-dgx-spark-qualification-contract.mts";
 import { runLlamaCppOpenClawAgentQualification } from "./llama-cpp-openclaw-agent-qualification.mts";
 import { resolveManagedImageLocalInferenceRoute } from "./managed-image-protected-runtime-contract.ts";
@@ -468,6 +471,28 @@ export function parseNvidiaSmi(
   return { count: 1, driverVersion, name: "NVIDIA GB10" };
 }
 
+class QualificationCommandError extends Error {
+  readonly exitCode: number | null;
+  constructor(status: number | null) {
+    super("qualification command failed");
+    this.exitCode = status !== null && status > 0 && status <= 255 ? status : null;
+  }
+}
+
+const FAILURE_REASONS: Record<string, LlamaCppDgxSparkFailureReason> = {
+  "qualification requires docker": "missing-docker",
+  "qualification requires git": "missing-git",
+  "DGX Spark qualification requires a Linux ARM64 host": "unsupported-host",
+  "qualification plan digest mismatch": "plan-digest-mismatch",
+  "model file digest does not match the qualification plan": "model-digest-mismatch",
+  "model file size does not match the bounded qualification plan": "model-size-mismatch",
+  "qualification host is not the expected NVIDIA GB10 profile": "wrong-gpu",
+  "NVIDIA driver is below the qualification minimum": "driver-too-old",
+  "startup evidence reports partial GPU offload": "partial-offload",
+  "model server did not become healthy within the qualification timeout": "readiness-timeout",
+  "qualification cleanup is incomplete": "cleanup-incomplete",
+};
+
 function runCommand(
   command: string,
   args: string[],
@@ -480,8 +505,7 @@ function runCommand(
     stdio: capture ? ["ignore", "pipe", "pipe"] : ["ignore", "ignore", "ignore"],
   });
   if (result.error || result.status !== 0) {
-    const operation = args.slice(0, 2).join(" ");
-    throw new Error(`${command} ${operation} failed`);
+    throw new QualificationCommandError(result.status);
   }
   return Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.alloc(0);
 }
@@ -653,22 +677,38 @@ async function waitForRegistry(): Promise<void> {
   );
 }
 
+function dockerInspectionOwner(
+  result: SpawnSyncReturns<string>,
+  name: string,
+  kind: "container" | "network",
+): string | null {
+  if (!result.error && result.status === 0) return result.stdout.trim();
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const absent = new RegExp(
+    `^(?:Error(?: response from daemon)?:\\s*)?(?:No such (?:${kind}|object): ${escapedName}${kind === "network" ? `|network ${escapedName} not found` : ""})$`,
+    "iu",
+  );
+  if (!result.error && result.status === 1 && absent.test(String(result.stderr ?? "").trim()))
+    return null;
+  throw new QualificationCommandError(result.status);
+}
+
 function dockerContainerOwner(name: string): string | null {
   const result = spawnSync(
     "docker",
     ["container", "inspect", "--format", `{{index .Config.Labels "${registryOwnerLabel}"}}`, name],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
-  return result.status === 0 ? result.stdout.trim() : null;
+  return dockerInspectionOwner(result, name, "container");
 }
 
 function dockerNetworkOwner(name: string): string | null {
   const result = spawnSync(
     "docker",
     ["network", "inspect", "--format", `{{index .Labels "${registryOwnerLabel}"}}`, name],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
-  return result.status === 0 ? result.stdout.trim() : null;
+  return dockerInspectionOwner(result, name, "network");
 }
 
 function runtimeNames(
@@ -896,9 +936,64 @@ function writeReceipt(output: string, receipt: unknown, tempRoot: string): void 
   fs.renameSync(temporary, output);
 }
 
-async function runQualification(
+type QualificationProgress = { phase: LlamaCppDgxSparkFailurePhase; cleanupComplete: boolean };
+
+export class QualificationFailureError extends Error {
+  readonly diagnostic: ReturnType<typeof createLlamaCppDgxSparkFailureDiagnostic>;
+  constructor(diagnostic: ReturnType<typeof createLlamaCppDgxSparkFailureDiagnostic>) {
+    super(
+      `DGX Spark qualification failed at ${diagnostic.phase} for ${diagnostic.owner}: ${diagnostic.reason}${diagnostic.exitCode === null ? "" : ` (exit ${diagnostic.exitCode})`}. ${diagnostic.recovery}`,
+    );
+    this.diagnostic = diagnostic;
+  }
+}
+
+export async function runQualification(
   invocation: QualificationInvocation,
   environment: TrustedEnvironment,
+): Promise<void> {
+  const progress: QualificationProgress = { phase: "prerequisites", cleanupComplete: false };
+  try {
+    await runQualificationCore(invocation, environment, progress);
+  } catch (error) {
+    const diagnostic = createLlamaCppDgxSparkFailureDiagnostic(
+      {
+        baseSha: invocation.candidateBase,
+        headSha: invocation.candidateHead,
+        workflowSha: invocation.workflowSha,
+        runId: Number(invocation.runId),
+        runAttempt: Number(invocation.runAttempt),
+      },
+      invocation.planSha256,
+      progress.phase,
+      progress.cleanupComplete,
+      error instanceof QualificationCommandError
+        ? "command-failed"
+        : error instanceof Error && Object.hasOwn(FAILURE_REASONS, error.message)
+          ? FAILURE_REASONS[error.message]
+          : "unclassified",
+      error instanceof QualificationCommandError ? error.exitCode : null,
+    );
+    try {
+      writeReceipt(
+        path.join(path.dirname(invocation.output), "failure.json"),
+        diagnostic,
+        path.resolve(
+          environment.RUNNER_TEMP ?? path.dirname(invocation.output),
+          invocation.registryOwner,
+        ),
+      );
+    } catch {
+      process.stderr.write("Spark diagnostic artifact could not be retained.\n");
+    }
+    throw new QualificationFailureError(diagnostic);
+  }
+}
+
+async function runQualificationCore(
+  invocation: QualificationInvocation,
+  environment: TrustedEnvironment,
+  progress: QualificationProgress,
 ): Promise<void> {
   if (process.platform !== "linux" || process.arch !== "arm64") {
     throw new Error("DGX Spark qualification requires a Linux ARM64 host");
@@ -907,10 +1002,14 @@ async function runQualification(
     if (!commandSucceeds(command, ["--version"]))
       throw new Error(`qualification requires ${command}`);
   }
+  progress.phase = "candidate";
   validateCandidateCheckout(invocation);
+  progress.phase = "plan";
   const planSource = readBoundedRegularFile(invocation.planFile, maximumPlanBytes);
   const plan = validateQualificationPlan(planSource, invocation.planSha256);
+  progress.phase = "prerequisites";
   const names = runtimeNames(invocation, environment);
+  progress.phase = "credentials";
   if (fs.existsSync(names.tempRoot)) fs.rmSync(names.tempRoot, { force: true, recursive: true });
   fs.mkdirSync(names.tempRoot, { mode: 0o700 });
   const metadataFile = path.join(names.tempRoot, "build-metadata.json");
@@ -919,8 +1018,10 @@ async function runQualification(
   let relay: Awaited<ReturnType<typeof startQualificationLoopbackRelay>> | undefined;
   let successReceipt: JsonRecord | undefined;
   let failure: unknown;
+  let failurePhase: LlamaCppDgxSparkFailurePhase | undefined;
   let cleanupEvidence: CleanupEvidence | undefined;
   try {
+    progress.phase = "registry";
     if (await tcpOpen(5000)) throw new Error("refusing to reuse an existing localhost registry");
     if (
       plan.qualification.agentQualification.execution === "enabled" &&
@@ -930,14 +1031,19 @@ async function runQualification(
     }
     startRegistry(names);
     await waitForRegistry();
+    progress.phase = "image-build";
     runCommand("docker", buildCandidateImageArgv(plan, invocation, metadataFile), {
       capture: false,
     });
+    progress.phase = "image-identity";
     const image = inspectBuiltImage(plan, invocation, metadataFile);
+    progress.phase = "registry";
     await removeOwnedRegistry(names);
     fs.rmSync(names.tempRoot, { force: true, recursive: true });
     fs.mkdirSync(names.tempRoot, { mode: 0o700 });
+    progress.phase = "model";
     const model = hashModelFile(invocation.modelHostPath, plan);
+    progress.phase = "credentials";
     const apiKey = randomBytes(32).toString("hex");
     fs.writeFileSync(apiKeyHostPath, apiKey, {
       encoding: "utf8",
@@ -964,6 +1070,7 @@ async function runQualification(
     ) {
       throw new Error("API key file permissions are not mode 0600");
     }
+    progress.phase = "network";
     runCommand("docker", [
       "network",
       "create",
@@ -972,6 +1079,7 @@ async function runQualification(
       `${registryOwnerLabel}=${names.registryOwner}`,
       names.networkName,
     ]);
+    progress.phase = "server";
     runCommand(
       "docker",
       buildServerContainerArgv(plan, {
@@ -993,6 +1101,7 @@ async function runQualification(
       plan.qualification.agentQualification.execution === "enabled" ? plan.recipe.serve.port : 0,
     );
     loopbackPort = relay.port;
+    progress.phase = "gpu";
     const smi = parseNvidiaSmi(
       runCommand("docker", [
         "exec",
@@ -1003,13 +1112,16 @@ async function runQualification(
       ]).toString("utf8"),
       plan.recipe.runtime.cuda.minimumDriverVersion,
     );
+    progress.phase = "readiness";
     await waitForHealth(loopbackPort, plan.recipe.readiness.timeoutSeconds);
+    progress.phase = "gpu";
     const offload = validateStartupLog(
       runCommand("docker", ["logs", "--tail", "20000", names.containerName], {
         maximumBytes: 16 * 1024 * 1024,
       }).toString("utf8"),
     );
     const authorization = `Bearer ${apiKey}`;
+    progress.phase = "protocol";
     const probes = await runLlamaCppDgxSparkProtocolQualification({
       authorization,
       baseUrl: `http://127.0.0.1:${loopbackPort}`,
@@ -1018,6 +1130,7 @@ async function runQualification(
     let agentQualification: JsonRecord = { execution: "disabled" };
     const agentPlan = plan.qualification.agentQualification;
     if (agentPlan.execution === "enabled") {
+      progress.phase = "agent";
       if (loopbackPort !== plan.recipe.serve.port) {
         throw new Error("agent qualification requires the declarative llama.cpp loopback port");
       }
@@ -1086,6 +1199,7 @@ async function runQualification(
         else process.env[baseUrlEnvironmentName] = priorBaseUrl;
       }
     }
+    progress.phase = "redaction";
     const logRedaction = validateRuntimeLogRedaction(
       runCommand("docker", ["logs", "--tail", "20000", names.containerName], {
         maximumBytes: 16 * 1024 * 1024,
@@ -1129,7 +1243,9 @@ async function runQualification(
     };
   } catch (error) {
     failure = error;
+    failurePhase = progress.phase;
   } finally {
+    progress.phase = "cleanup";
     try {
       await relay?.close();
     } catch (cleanupError) {
@@ -1137,11 +1253,17 @@ async function runQualification(
     }
     try {
       cleanupEvidence = await cleanupOwnedRuntime(names, loopbackPort);
+      // Agent failure may include an unproven managed-gateway cleanup.
+      progress.cleanupComplete = failurePhase !== "agent";
     } catch (cleanupError) {
       failure ??= cleanupError;
     }
   }
-  if (failure) throw failure;
+  if (failure) {
+    progress.phase = failurePhase ?? "cleanup";
+    throw failure;
+  }
+  progress.phase = "receipt";
   if (!successReceipt || !cleanupEvidence)
     throw new Error("qualification did not produce evidence");
   successReceipt.cleanup = {
@@ -1158,7 +1280,26 @@ async function main(): Promise<void> {
   const invocation = parseQualificationInvocation(process.argv.slice(2));
   if (invocation.cleanupOnly) {
     const names = runtimeNames(invocation, process.env);
-    await cleanupOwnedRuntime(names);
+    try {
+      await cleanupOwnedRuntime(names);
+    } catch (error) {
+      throw new QualificationFailureError(
+        createLlamaCppDgxSparkFailureDiagnostic(
+          {
+            baseSha: process.env.BASE_SHA,
+            headSha: process.env.CHECKOUT_SHA,
+            workflowSha: process.env.WORKFLOW_SHA,
+            runId: Number(invocation.runId),
+            runAttempt: Number(invocation.runAttempt),
+          },
+          process.env.PLAN_SHA256,
+          "cleanup",
+          false,
+          error instanceof QualificationCommandError ? "command-failed" : "cleanup-incomplete",
+          error instanceof QualificationCommandError ? error.exitCode : null,
+        ),
+      );
+    }
     process.stdout.write("DGX Spark qualification cleanup complete.\n");
     return;
   }
@@ -1166,11 +1307,17 @@ async function main(): Promise<void> {
   process.stdout.write("DGX Spark qualification receipt created.\n");
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+export async function runQualificationCli(): Promise<void> {
   try {
     await main();
-  } catch {
-    process.stderr.write("ERROR: DGX Spark qualification failed.\n");
+  } catch (error) {
+    process.stderr.write(
+      error instanceof QualificationFailureError
+        ? `ERROR: ${error.message}\n`
+        : "ERROR: DGX Spark qualification failed during trusted invocation or cleanup.\n",
+    );
     process.exitCode = 1;
   }
 }
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) void runQualificationCli();

@@ -1059,7 +1059,7 @@ jobs:
           install -d -m 0700 "$artifact_dir"
           printf '%s' "$QUALIFICATION_PLAN" > "$artifact_dir/plan.json"
           printf '%s\n' "$PLAN_SHA256" > "$artifact_dir/plan-sha256"
-          node --no-warnings scripts/checks/run-llama-cpp-dgx-spark-qualification.mts \
+          node --no-warnings --import tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.cts \
             --base-sha "$BASE_SHA" --head-sha "$CHECKOUT_SHA" --workflow-sha "$WORKFLOW_SHA" \
             --candidate-root "$GITHUB_WORKSPACE/.candidate-source" \
             --model-host-path "$MODEL_HOST_PATH" \
@@ -1067,25 +1067,31 @@ jobs:
             --output "$artifact_dir/receipt.json" \
             --registry-name "nemoclaw-llama-cpp-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
             --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
-      - name: Remove owned Spark qualification resources
+      - id: cleanup
+        name: Remove owned Spark qualification resources
         if: ${{ always() && steps.qualification.outcome != 'skipped' }}
         shell: bash
         run: |
-          node --no-warnings scripts/checks/run-llama-cpp-dgx-spark-qualification.mts \
+          node --no-warnings --import tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.cts \
             --cleanup-only --registry-name "nemoclaw-llama-cpp-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
             --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
-      - name: Validate the revision-bound Spark receipt
+      - id: evidence
+        name: Validate the revision-bound Spark receipt
+        if: ${{ always() && steps.qualification.outcome != 'skipped' }}
+        env:
+          EXECUTION_OUTCOME: ${{ steps.qualification.outcome }}
+          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
         shell: bash
         run: |
           artifact_dir="$GITHUB_WORKSPACE/e2e-artifacts/live/llama-cpp-dgx-spark-qualification"
           node --no-warnings scripts/checks/validate-llama-cpp-dgx-spark-receipt.mts \
-            "$artifact_dir/receipt.json" "$artifact_dir/plan.json" "$PLAN_SHA256"
+            --publish "$artifact_dir" "$EXECUTION_OUTCOME" "$CLEANUP_OUTCOME" "$PLAN_SHA256"
       - name: Upload validated Spark qualification evidence
-        if: success()
+        if: ${{ always() && steps.evidence.outcome == 'success' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-llama-cpp-dgx-spark-qualification
-          path: e2e-artifacts/live/llama-cpp-dgx-spark-qualification/
+          path: e2e-artifacts/live/llama-cpp-dgx-spark-qualification/published/
 
   native-runtime-qualification-producer-plan:
     needs: generate-matrix

@@ -9,7 +9,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
-import { validateLlamaCppDgxSparkReceipt } from "../../../scripts/checks/validate-llama-cpp-dgx-spark-receipt.mts";
+import {
+  validateLlamaCppDgxSparkReceipt,
+  publishLlamaCppDgxSparkArtifacts,
+} from "../../../scripts/checks/validate-llama-cpp-dgx-spark-receipt.mts";
 
 import {
   LLAMA_CPP_DGX_SPARK_AGENT_PROBES,
@@ -47,6 +50,8 @@ import {
   parseLlamaCppDgxSparkQualificationPlan,
   parseLlamaCppDgxSparkQualificationReceipt as parseQualificationReceiptWithPlan,
   verifyLlamaCppDgxSparkExecutionPlanSha256,
+  createLlamaCppDgxSparkFailureDiagnostic,
+  parseLlamaCppDgxSparkFailureDiagnostic,
 } from "../../../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts";
 
 const HEAD_SHA = "a".repeat(40);
@@ -416,6 +421,177 @@ function parseLlamaCppDgxSparkQualificationReceipt(value: unknown, identity: unk
 }
 
 describe("workflow Spark qualification artifact validation (#13114)", () => {
+  it("executes failure publication through the actual artifact CLI", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-publish-cli-"));
+    try {
+      const digest = llamaCppDgxSparkExecutionPlanSha256(
+        parseLlamaCppDgxSparkExecutionPlan(executionPlan()),
+      );
+      fs.writeFileSync(
+        path.join(root, "failure.json"),
+        JSON.stringify(
+          createLlamaCppDgxSparkFailureDiagnostic(
+            evidenceIdentity(),
+            digest,
+            "model",
+            false,
+            "model-digest-mismatch",
+          ),
+        ),
+      );
+      const validator = fileURLToPath(
+        new URL(
+          "../../../scripts/checks/validate-llama-cpp-dgx-spark-receipt.mts",
+          import.meta.url,
+        ),
+      );
+      const result = spawnSync(
+        process.execPath,
+        ["--no-warnings", validator, "--publish", root, "failure", "success", digest],
+        {
+          encoding: "utf8",
+          timeout: 10000,
+          env: {
+            ...process.env,
+            BASE_SHA,
+            CHECKOUT_SHA: HEAD_SHA,
+            WORKFLOW_SHA,
+            GITHUB_RUN_ID: String(evidenceIdentity().runId),
+            GITHUB_RUN_ATTEMPT: String(evidenceIdentity().runAttempt),
+          },
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+      expect(fs.readdirSync(path.join(root, "published"))).toEqual(["failure.json"]);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(root, "published/failure.json"), "utf8")),
+      ).toMatchObject({
+        status: "failed",
+        phase: "model",
+        reason: "model-digest-mismatch",
+        cleanupComplete: false,
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("stages only verified success evidence", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-success-"));
+    try {
+      const plan = parseLlamaCppDgxSparkExecutionPlan(executionPlan());
+      const digest = llamaCppDgxSparkExecutionPlanSha256(plan);
+      fs.writeFileSync(path.join(root, "plan.json"), JSON.stringify(plan));
+      fs.writeFileSync(path.join(root, "receipt.json"), JSON.stringify(receipt()));
+      fs.writeFileSync(path.join(root, "raw.log"), "private-key-model-and-prompt");
+      const published = publishLlamaCppDgxSparkArtifacts(
+        root,
+        digest,
+        evidenceIdentity(),
+        "success",
+        "success",
+      );
+      expect(fs.readdirSync(published).sort()).toEqual([
+        "plan-sha256",
+        "plan.json",
+        "receipt.json",
+      ]);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(published, "receipt.json"), "utf8")),
+      ).toMatchObject({ headSha: HEAD_SHA });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["failure", "cancelled"])(
+    "retains sanitized %s evidence without publishing a success receipt",
+    (outcome) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-failure-"));
+      try {
+        const digest = llamaCppDgxSparkExecutionPlanSha256(
+          parseLlamaCppDgxSparkExecutionPlan(executionPlan()),
+        );
+        const diagnostic = createLlamaCppDgxSparkFailureDiagnostic(
+          evidenceIdentity(),
+          digest,
+          "protocol",
+          false,
+        );
+        fs.writeFileSync(path.join(root, "failure.json"), JSON.stringify(diagnostic));
+        fs.writeFileSync(path.join(root, "raw.log"), "private-key-model-and-prompt");
+        fs.writeFileSync(path.join(root, "receipt.json"), "unvalidated old receipt");
+        const published = publishLlamaCppDgxSparkArtifacts(
+          root,
+          digest,
+          evidenceIdentity(),
+          outcome,
+          "success",
+        );
+        expect(fs.readdirSync(published)).toEqual(["failure.json"]);
+        expect(fs.readFileSync(path.join(published, "failure.json"), "utf8")).not.toContain(
+          "private-key-model-and-prompt",
+        );
+        expect(JSON.parse(fs.readFileSync(path.join(published, "failure.json"), "utf8"))).toEqual(
+          diagnostic,
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("records incomplete cleanup and missing runner evidence as failure only", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-cleanup-failure-"));
+    try {
+      const digest = llamaCppDgxSparkExecutionPlanSha256(
+        parseLlamaCppDgxSparkExecutionPlan(executionPlan()),
+      );
+      const published = publishLlamaCppDgxSparkArtifacts(
+        root,
+        digest,
+        evidenceIdentity(),
+        "success",
+        "failure",
+      );
+      expect(
+        JSON.parse(fs.readFileSync(path.join(published, "failure.json"), "utf8")),
+      ).toMatchObject({ phase: "cleanup", cleanupComplete: false, status: "failed" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["recovery", "secret-api-key"],
+    ["owner", "another-run"],
+    ["phase", "unknown-phase"],
+    ["status", "passed"],
+    ["planSha256", `sha256:${"0".repeat(64)}`],
+    ["apiKey", "secret-api-key"],
+    ["cleanupComplete", "yes"],
+    ["reason", "secret-api-key"],
+    ["exitCode", "secret-api-key"],
+  ])("rejects substituted failure %s", (field, value) => {
+    const digest = llamaCppDgxSparkExecutionPlanSha256(
+      parseLlamaCppDgxSparkExecutionPlan(executionPlan()),
+    );
+    const diagnostic = createLlamaCppDgxSparkFailureDiagnostic(
+      evidenceIdentity(),
+      digest,
+      "model",
+      false,
+    );
+    expect(() =>
+      parseLlamaCppDgxSparkFailureDiagnostic(
+        { ...diagnostic, [field]: value },
+        evidenceIdentity(),
+        digest,
+      ),
+    ).toThrow();
+  });
+
   it("validates real receipt files and rejects unsafe artifact inputs", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-receipt-"));
     try {

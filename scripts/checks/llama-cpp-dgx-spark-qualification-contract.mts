@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
 
@@ -1595,6 +1596,95 @@ export function parseLlamaCppDgxSparkQualificationEvidenceIdentity(
     runId: safeInteger(identity.runId, "llama.cpp DGX Spark run id", Number.MAX_SAFE_INTEGER),
     workflowSha: requiredSha(identity.workflowSha, "llama.cpp DGX Spark workflow SHA"),
   };
+}
+
+const QUALIFICATION_FAILURE_RECOVERY = {
+  prerequisites: "Check the Linux ARM64 host, Docker, Git and trusted runner directories.",
+  candidate: "Check the exact candidate checkout, ancestry and trusted image source parity.",
+  plan: "Regenerate and verify the digest-bound execution plan.",
+  registry: "Inspect this run's owned registry and check loopback port availability.",
+  "image-build": "Check the pinned build inputs and builder availability.",
+  "image-identity": "Check the immutable built image digest, platform and labels.",
+  model: "Verify the staged model's size, digest and file permissions.",
+  credentials: "Check the owned temporary directory and private key-file permissions.",
+  network: "Inspect this run's owned internal network and endpoints.",
+  server: "Inspect this run's owned server container and loopback relay.",
+  gpu: "Check the physical GB10 identity, driver and complete GPU offload.",
+  readiness: "Check model startup and the bounded readiness deadline.",
+  protocol: "Check the authenticated protocol and rejection probes.",
+  agent: "Check the pinned OpenClaw image, OpenShell startup and agent probes.",
+  redaction: "Check runtime log redaction without publishing the raw log.",
+  cleanup: "Inspect and remove only this run's owned resources before retrying.",
+  receipt: "Check the bounded receipt output directory and qualification evidence.",
+  interrupted: "Inspect the failed or interrupted harness step and owned resources.",
+} as const;
+
+export type LlamaCppDgxSparkFailurePhase = keyof typeof QUALIFICATION_FAILURE_RECOVERY;
+export const LLAMA_CPP_DGX_SPARK_FAILURE_REASONS = [
+  "unclassified",
+  "command-failed",
+  "missing-docker",
+  "missing-git",
+  "unsupported-host",
+  "plan-digest-mismatch",
+  "model-digest-mismatch",
+  "model-size-mismatch",
+  "wrong-gpu",
+  "driver-too-old",
+  "partial-offload",
+  "readiness-timeout",
+  "cleanup-incomplete",
+] as const;
+export type LlamaCppDgxSparkFailureReason = (typeof LLAMA_CPP_DGX_SPARK_FAILURE_REASONS)[number];
+
+// Diagnostics contain only trusted classification and identity, never exception text.
+export function createLlamaCppDgxSparkFailureDiagnostic(
+  identityValue: unknown,
+  planSha256Value: unknown,
+  phase: LlamaCppDgxSparkFailurePhase,
+  cleanupComplete: boolean,
+  reason: LlamaCppDgxSparkFailureReason = "unclassified",
+  exitCode: number | null = null,
+) {
+  if (!Object.hasOwn(QUALIFICATION_FAILURE_RECOVERY, phase) || typeof cleanupComplete !== "boolean")
+    throw new Error("invalid Spark failure classification");
+  if (
+    !LLAMA_CPP_DGX_SPARK_FAILURE_REASONS.includes(reason) ||
+    (exitCode !== null && (!Number.isInteger(exitCode) || exitCode < 1 || exitCode > 255))
+  )
+    throw new Error("invalid Spark failure reason");
+  const identity = parseLlamaCppDgxSparkQualificationEvidenceIdentity(identityValue);
+  return {
+    kind: "nemoclaw-llama-cpp-dgx-spark-failure-v1" as const,
+    status: "failed" as const,
+    identity,
+    planSha256: requiredDigest(planSha256Value, "failure plan digest"),
+    phase,
+    reason,
+    exitCode,
+    owner: `llama-cpp-dgx-spark-${identity.runId}-${identity.runAttempt}`,
+    recovery: QUALIFICATION_FAILURE_RECOVERY[phase],
+    cleanupComplete,
+  };
+}
+
+export function parseLlamaCppDgxSparkFailureDiagnostic(
+  value: unknown,
+  expectedIdentity: unknown,
+  expectedPlanSha256: unknown,
+) {
+  const diagnostic = record(value, "Spark failure diagnostic");
+  const expected = createLlamaCppDgxSparkFailureDiagnostic(
+    expectedIdentity,
+    expectedPlanSha256,
+    diagnostic.phase as LlamaCppDgxSparkFailurePhase,
+    diagnostic.cleanupComplete as boolean,
+    diagnostic.reason as LlamaCppDgxSparkFailureReason,
+    diagnostic.exitCode as number | null,
+  );
+  if (!isDeepStrictEqual(diagnostic, expected))
+    throw new Error("Spark failure diagnostic has unsafe fields or mismatched identity");
+  return expected;
 }
 
 export function parseLlamaCppDgxSparkQualificationReceipt(

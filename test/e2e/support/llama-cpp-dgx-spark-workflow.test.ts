@@ -84,6 +84,14 @@ describe("trusted DGX Spark workflow handoff (#13114)", () => {
 
   it.each([
     ["Run the trusted Spark qualification", "run", "--head-sha", "--wrong-sha", "must pass"],
+    ["Run the trusted Spark qualification", "run", "--import tsx", "", "must pass"],
+    [
+      "Remove owned Spark qualification resources",
+      "run",
+      "--import tsx",
+      "",
+      "clean up and validate",
+    ],
     ["Run the trusted Spark qualification", "run", "--plan-sha256", "--wrong-digest", "must pass"],
     [
       "Remove owned Spark qualification resources",
@@ -109,8 +117,8 @@ describe("trusted DGX Spark workflow handoff (#13114)", () => {
     [
       "Upload validated Spark qualification evidence",
       "if",
-      "success()",
-      "always()",
+      "steps.evidence.outcome == 'success'",
+      "true",
       "clean up and validate",
     ],
   ])(
@@ -128,7 +136,9 @@ describe("trusted DGX Spark workflow handoff (#13114)", () => {
     ["working-directory", ".candidate-source"],
   ])("rejects unsafe qualification step %s", (field, value) => {
     const changed = structuredClone(workflow);
-    changed.jobs[runnerJob].steps[2][field as string] = value;
+    changed.jobs[runnerJob].steps.find(
+      (item: any) => item.name === "Run the trusted Spark qualification",
+    )[field as string] = value;
     expect(validateE2eOperationsWorkflow(changed).join("\n")).toContain(
       "must not execute candidate code or ignore step failures",
     );

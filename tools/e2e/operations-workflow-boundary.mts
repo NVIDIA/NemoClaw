@@ -1756,7 +1756,7 @@ function validateSparkQualificationBoundary(errors: string[], workflow: Operatio
       errors.push(`Spark qualification must bind ${key} to its authenticated plan`);
   const execution = findStep(qualification, "Run the trusted Spark qualification");
   for (const argument of [
-    "scripts/checks/run-llama-cpp-dgx-spark-qualification.mts",
+    "node --no-warnings --import tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.cts",
     '--head-sha "$CHECKOUT_SHA"',
     '--base-sha "$BASE_SHA"',
     '--workflow-sha "$WORKFLOW_SHA"',
@@ -1772,14 +1772,27 @@ function validateSparkQualificationBoundary(errors: string[], workflow: Operatio
   const upload = findStep(qualification, "Upload validated Spark qualification evidence");
   if (
     !String(cleanup.if).includes("always()") ||
+    cleanup.id !== "cleanup" ||
     !String(cleanup.run).includes("--cleanup-only") ||
+    !String(cleanup.run).includes(
+      "node --no-warnings --import tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.cts",
+    ) ||
     !String(validation.run).includes("scripts/checks/validate-llama-cpp-dgx-spark-receipt.mts") ||
+    !String(validation.run).includes(
+      '--publish "$artifact_dir" "$EXECUTION_OUTCOME" "$CLEANUP_OUTCOME" "$PLAN_SHA256"',
+    ) ||
+    validation.id !== "evidence" ||
+    validation.if !== "${{ always() && steps.qualification.outcome != 'skipped' }}" ||
+    !isDeepStrictEqual(validation.env, {
+      EXECUTION_OUTCOME: "${{ steps.qualification.outcome }}",
+      CLEANUP_OUTCOME: "${{ steps.cleanup.outcome }}",
+    }) ||
     !(
       steps.indexOf(execution) < steps.indexOf(cleanup) &&
       steps.indexOf(cleanup) < steps.indexOf(validation) &&
       steps.indexOf(validation) < steps.indexOf(upload)
     ) ||
-    upload.if !== "success()"
+    upload.if !== "${{ always() && steps.evidence.outcome == 'success' }}"
   )
     errors.push("Spark qualification must clean up and validate its receipt before upload");
   for (const job of [plan, qualification])

@@ -94,10 +94,16 @@ create those protections or download the model. Runs serialize without cancellin
 active qualification, use an owned loopback registry, and build the trusted CLI.
 
 The runner validates GPU identity, model and image digests, protocol and OpenClaw
-agent results, and cleanup. Only a successful, revision-bound receipt and its
-digest-bound plan are uploaded through the shared 14-day artifact retention path.
-Keys and raw runtime logs are excluded. A missing prerequisite, failed assertion,
-or incomplete cleanup fails qualification. This lane is excluded from default and
+agent results, and cleanup. Successful runs publish the revision-bound receipt and
+its digest-bound plan through the shared 14-day artifact retention path. Failed or
+interrupted runs instead publish a validated failure record identifying the phase,
+owned run scope, recovery check, and conservative cleanup state. A failure record
+never establishes qualification success. Keys, exception text, prompts, model paths,
+and raw runtime logs are excluded from failure diagnostics. Only validated records
+enter the final upload directory. A missing prerequisite, failed assertion, or
+incomplete cleanup still fails the job. The trusted CommonJS launcher uses the
+installed `tsx` loader for CommonJS and deferred ESM source imports; plain Node
+execution of that source graph is not supported. This lane is excluded from default and
 release-required suites, and does not promote an image or close hardware qualification.
 
 ### Candidate CLI Artifact

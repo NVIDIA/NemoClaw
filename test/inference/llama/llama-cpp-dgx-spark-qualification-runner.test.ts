@@ -33,6 +33,8 @@ import {
   validateQualificationPlan,
   validateRuntimeLogRedaction,
   validateStartupLog,
+  runQualification,
+  QualificationFailureError,
 } from "../../../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
 import {
   consumeDockerLoopbackPublishAuthority,
@@ -106,6 +108,72 @@ function parsedInvocation(): QualificationInvocation {
   return invocation as QualificationInvocation;
 }
 
+it("retains a phase-specific failure without leaking exception data", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-diagnostic-"));
+  const privateValue = "private-key-and-model-prompt-must-not-be-retained";
+  const spawn = vi.spyOn(childProcess, "spawnSync").mockImplementationOnce(() => {
+    throw new Error(privateValue);
+  });
+  try {
+    const invocation = { ...parsedInvocation(), output: path.join(root, "receipt.json") };
+    await expect(
+      runQualification(invocation, trustedEnvironment({ RUNNER_TEMP: root })),
+    ).rejects.toMatchObject({
+      name: "Error",
+      diagnostic: {
+        phase: "prerequisites",
+        status: "failed",
+        owner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
+      },
+    });
+    const source = fs.readFileSync(path.join(root, "failure.json"), "utf8");
+    expect(source).not.toContain(privateValue);
+    const failure = JSON.parse(source);
+    expect(new QualificationFailureError(failure).message).toContain("prerequisites");
+    expect(fs.existsSync(path.join(root, "receipt.json"))).toBe(false);
+  } finally {
+    spawn.mockRestore();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("boots the actual trusted CLI and records a failed prerequisite without running Docker", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-cli-"));
+  try {
+    const args = invocationArguments();
+    args[args.indexOf("--output") + 1] = path.join(root, "receipt.json");
+    const result = childProcess.spawnSync(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--import",
+        "tsx",
+        path.join(repoRoot, "scripts/checks/run-llama-cpp-dgx-spark-qualification.cts"),
+        ...args,
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: { ...trustedEnvironment(), RUNNER_TEMP: root, PATH: "", HOME: root },
+        timeout: 20000,
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `failed at prerequisites for ${expectedRegistryOwner(RUN_ID, RUN_ATTEMPT)}`,
+    );
+    expect(JSON.parse(fs.readFileSync(path.join(root, "failure.json"), "utf8"))).toMatchObject({
+      phase: "prerequisites",
+      status: "failed",
+      cleanupComplete: false,
+    });
+    expect(fs.existsSync(path.join(root, "receipt.json"))).toBe(false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function mutatedPlan(mutate: (value: Record<string, any>) => void): [string, string] {
   const value = JSON.parse(planSource) as Record<string, any>;
   mutate(value);
@@ -113,9 +181,107 @@ function mutatedPlan(mutate: (value: Record<string, any>) => void): [string, str
   return [source, sha256Text(source)];
 }
 
+it.each([
+  ["Cannot connect to the Docker daemon", "qualification command failed"],
+  ["permission denied for registry credentials", "qualification command failed"],
+  ["Error: No such object: unrelated-container", "qualification command failed"],
+  ["Error: No such object: owned-container", "owned container and network"],
+])("does not infer resource absence from ambiguous inspection: %s", (stderr, expected) => {
+  const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValueOnce({
+    status: 1,
+    error: undefined,
+    stdout: "",
+    stderr,
+    output: [],
+    pid: 1,
+    signal: null,
+  } as any);
+  try {
+    expect(() =>
+      resolveRequestGuardAddress({
+        containerName: "owned-container",
+        networkName: "owned-network",
+        registryOwner: "owned-run",
+      }),
+    ).toThrow(expected);
+  } finally {
+    spawn.mockRestore();
+  }
+});
+
+it("rejects cleanup when Docker inspection is unavailable and identifies the owned run", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-cleanup-cli-"));
+  try {
+    const result = childProcess.spawnSync(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--import",
+        "tsx",
+        path.join(repoRoot, "scripts/checks/run-llama-cpp-dgx-spark-qualification.cts"),
+        "--cleanup-only",
+        "--registry-name",
+        expectedRegistryName(RUN_ID, RUN_ATTEMPT),
+        "--run-id",
+        RUN_ID,
+        "--run-attempt",
+        RUN_ATTEMPT,
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: 20000,
+        env: {
+          ...trustedEnvironment(),
+          BASE_SHA,
+          CHECKOUT_SHA: HEAD_SHA,
+          WORKFLOW_SHA,
+          PLAN_SHA256: planDigest,
+          RUNNER_TEMP: root,
+          PATH: "",
+          HOME: root,
+        },
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `failed at cleanup for ${expectedRegistryOwner(RUN_ID, RUN_ATTEMPT)}: command-failed`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function valuesAfter(argv: string[], option: string): string[] {
   return argv.flatMap((value, index) => (argv[index - 1] === option ? [value] : []));
 }
+
+it("loads the deferred OpenClaw consumer dependency with the actual CLI loader", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-agent-loader-"));
+  try {
+    const source = `const {resolveManagedImageOnboardModule} = require('./scripts/checks/run-managed-image-openshell-e2e.ts');
+      import('./src/lib/onboard.ts').then(value => {
+        const onboard = resolveManagedImageOnboardModule(value);
+        process.stdout.write(JSON.stringify({ready: typeof onboard.startGatewayForRecovery === 'function'}));
+      });`;
+    const result = childProcess.spawnSync(
+      process.execPath,
+      ["--no-warnings", "--import", "tsx", "-e", source],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: 20000,
+        env: { HOME: root, PATH: process.env.PATH },
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ ready: true });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function qualificationPlanForModel(content: Buffer): QualificationPlan {
   return {
@@ -569,19 +735,19 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     });
 
     it.each([
-      "foreign container owner",
-      "foreign network owner",
-      "failed container inspection",
-      "failed network inspection",
-      "stopped container",
-      "external network",
-      "additional network",
-      "missing network endpoint",
-      "mismatched network ID",
-      "empty address",
-      "hostname address",
-      "IPv6 address",
-    ])("rejects %s before returning a relay target (#8231)", (scenario) => {
+      ["foreign container owner", /qualification relay requires/u],
+      ["foreign network owner", /qualification relay requires/u],
+      ["failed container inspection", /qualification command failed/u],
+      ["failed network inspection", /qualification command failed/u],
+      ["stopped container", /qualification relay requires/u],
+      ["external network", /qualification relay requires/u],
+      ["additional network", /qualification relay requires/u],
+      ["missing network endpoint", /qualification relay requires/u],
+      ["mismatched network ID", /qualification relay requires/u],
+      ["empty address", /qualification relay requires/u],
+      ["hostname address", /qualification relay requires/u],
+      ["IPv6 address", /qualification relay requires/u],
+    ])("rejects %s before returning a relay target (#8231)", (scenario, expectedError) => {
       const fixture = dockerInspection();
       const endpoints = fixture.container.NetworkSettings.Networks;
       const endpoint = endpoints[names.networkName]!;
@@ -625,7 +791,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         default:
           throw new Error("unknown inspection scenario");
       }
-      expect(() => resolveRequestGuardAddress(names)).toThrow(/qualification relay requires/u);
+      expect(() => resolveRequestGuardAddress(names)).toThrow(expectedError);
     });
   });
 
