@@ -31,6 +31,53 @@ const FALSY_FLAG_VALUES = new Set(["0", "false", "no", "off"]);
 const LOCAL_IMAGE_BUILD_TIMEOUT_MS = 20 * 60_000;
 
 class ImageCommandDeadlineError extends Error {}
+class ImageBuildFailureError extends Error {
+  constructor(
+    readonly status: number | null,
+    readonly guidance: string,
+  ) {
+    super("Local image build failed");
+  }
+}
+
+/** Classify untrusted build output without echoing Dockerfile commands or credential values. */
+export function classifyImageBuildFailure(output: string): string {
+  const diagnostic = output.slice(-8_192).toLowerCase();
+  if (
+    /failed to resolve source metadata|pull access denied|manifest unknown|unauthorized/.test(
+      diagnostic,
+    )
+  ) {
+    return "Check the base image reference and registry access before retrying.";
+  }
+  if (
+    /failed to calculate checksum|not found in build context|no such file or directory/.test(
+      diagnostic,
+    )
+  ) {
+    return "Check COPY sources and the permitted build context before retrying.";
+  }
+  if (/no space left on device/.test(diagnostic)) {
+    return "Free space in the selected engine's image store before retrying.";
+  }
+  return "Check the Dockerfile instructions and selected engine before retrying.";
+}
+
+function throwImageBuildCommandError(error: unknown, builderName: string): never {
+  if (error instanceof ImageCommandDeadlineError) {
+    throw new Error(
+      `Local ${builderName} build timed out after 20 minutes; check the selected engine before retrying.`,
+    );
+  }
+  if (error instanceof ImageBuildFailureError) {
+    const detail = error.status === null ? " without an exit status" : ` (exit ${error.status})`;
+    throw new Error(`Local ${builderName} build failed${detail}; ${error.guidance}`);
+  }
+  throw new Error(
+    `Local ${builderName} build could not start; check the selected engine and retry.`,
+    { cause: error },
+  );
+}
 
 export interface SandboxPrebuildInput {
   buildCtx: string;
@@ -99,15 +146,19 @@ function createHostImageCommand(
     new Promise<number | null>((resolve, reject) => {
       const spawnOptions: SpawnOptions = {
         ...options,
-        // Build output can contain values printed by a Dockerfile or client.
-        // Report only the bounded phase result, never unfiltered diagnostics.
-        stdio: ["ignore", "ignore", "ignore"],
+        // Dockerfile commands can print arbitrary credentials. Capture only for
+        // fixed-category guidance; never pass raw output to user diagnostics.
+        stdio: ["ignore", "ignore", "pipe"],
         shell: false,
       };
       const child =
         command === "podman"
           ? spawn(command, [...args], spawnOptions)
           : dockerSpawn(args, spawnOptions);
+      let diagnosticTail = "";
+      child.stderr?.on("data", (chunk: Buffer) => {
+        diagnosticTail = (diagnosticTail + chunk.toString("utf8")).slice(-8_192);
+      });
       let expired = false;
       const deadline = setTimeout(() => {
         expired = true;
@@ -124,7 +175,11 @@ function createHostImageCommand(
       });
       child.once("close", (status) => {
         clearTimeout(deadline);
-        if (!expired) resolve(status);
+        if (!expired) {
+          if (status !== 0)
+            reject(new ImageBuildFailureError(status, classifyImageBuildFailure(diagnosticTail)));
+          else resolve(status);
+        }
       });
     });
 }
@@ -379,15 +434,7 @@ export async function prebuildSandboxImageIfEligible(
       },
     );
   } catch (error) {
-    if (error instanceof ImageCommandDeadlineError) {
-      throw new Error(
-        `Local ${builderName} build timed out after 20 minutes; check the selected engine before retrying.`,
-      );
-    }
-    throw new Error(
-      `Local ${builderName} build could not start; check the selected engine and retry.`,
-      { cause: error },
-    );
+    throwImageBuildCommandError(error, builderName);
   } finally {
     if (preparedDockerEnvironment) {
       warnIfDockerBuildEnvironmentCleanupFailed(

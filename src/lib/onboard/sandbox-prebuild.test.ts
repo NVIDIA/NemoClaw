@@ -307,8 +307,8 @@ describe("sandbox BuildKit prebuild", () => {
         "-t",
         "nemoclaw-sandbox-local:alpha-1234567890",
         "-f",
-        path.join(buildCtx, "Dockerfile"),
-        buildCtx,
+        path.join(fs.realpathSync(buildCtx), "Dockerfile"),
+        fs.realpathSync(buildCtx),
       ],
       20 * 60_000,
     );
@@ -1064,7 +1064,7 @@ describe("sandbox BuildKit prebuild", () => {
     );
     expect(mocks.dockerSpawn).toHaveBeenCalledWith(
       expect.arrayContaining(["build", "nemoclaw-sandbox-local:alpha-1234567890"]),
-      expect.objectContaining({ shell: false, stdio: ["ignore", "ignore", "ignore"] }),
+      expect.objectContaining({ shell: false, stdio: ["ignore", "ignore", "pipe"] }),
     );
 
     mocks.dockerSpawn.mockClear();
@@ -1077,9 +1077,45 @@ describe("sandbox BuildKit prebuild", () => {
       expect.arrayContaining(["build", "nemoclaw-sandbox-local:alpha-1234567890"]),
       expect.objectContaining({
         shell: false,
-        stdio: ["ignore", "ignore", "ignore"],
+        stdio: ["ignore", "ignore", "pipe"],
       }),
     );
+  });
+
+  it("classifies failed build output without exposing Dockerfile text or credentials", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const inspectImageId = vi.fn(() => IMAGE_ID);
+    const stderr = new EventEmitter();
+    mocks.dockerSpawn.mockImplementation(() => {
+      const child = new EventEmitter();
+      Object.assign(child, { stderr });
+      process.nextTick(() => {
+        stderr.emit(
+          "data",
+          Buffer.from("secret-token-123 COPY private.txt: not found in build context"),
+        );
+        child.emit("close", 1);
+      });
+      return child;
+    });
+
+    const failure = await prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: BUILD_ID,
+      origin: "generated",
+      createArgs,
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      env: {},
+      inspectImageId,
+      log: () => {},
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toContain("Check COPY sources and the permitted build context");
+    expect(String(failure)).not.toContain("secret-token-123");
+    expect(String(failure)).not.toContain("private.txt");
+    expect(inspectImageId).not.toHaveBeenCalled();
   });
 
   it("stops a stalled local build before inspecting or handing off an image", async () => {
