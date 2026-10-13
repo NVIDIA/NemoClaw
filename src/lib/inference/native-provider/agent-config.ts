@@ -3,6 +3,10 @@
 
 import { hostedNativeProvider } from "./hosted.ts";
 
+export function hasNativeHostedProvider(provider: string): boolean {
+  return Boolean(hostedNativeProvider(provider));
+}
+
 /** Public configuration only. Never read the host's provider credential here. */
 export function nativeHostedAgentConfig(provider: string | null | undefined, baseUrl: string) {
   if (!hostedNativeProvider(provider)) return undefined;

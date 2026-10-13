@@ -411,6 +411,55 @@ describe("composeSandboxConfigBody", () => {
     ).toThrow("Native provider config path does not match its identity");
   });
 
+  it("keeps compatible endpoint resolver placeholders outside hosted handle pinning (#13040)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compatible-config-"));
+    try {
+      fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
+        mode: 0o700,
+      });
+      const updates = [
+        {
+          dotpath: "models.providers.inference",
+          value: {
+            baseUrl: "https://compatible.example/v1",
+            apiKey: "openshell:resolve:env:COMPATIBLE_API_KEY",
+            headers: { "X-NemoClaw-Upstream-Provider": "compatible-endpoint" },
+          },
+        },
+      ];
+      const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", updates);
+      const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
+      const result = spawnSync(command[0]!, command.slice(1), {
+        input: invocation.input,
+        encoding: "utf8",
+        timeout: 5_000,
+        env: { ...process.env, PATH: `${directory}:${process.env.PATH ?? ""}` },
+      });
+      expect(result.status, `${result.error?.message ?? ""} ${result.stderr}`).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([
+        { path: updates[0]!.dotpath, value: updates[0]!.value },
+      ]);
+      expect(invocation.args.join(" ")).not.toContain("COMPATIBLE_API_KEY");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a mismatched NVIDIA provider marker before handle pinning (#13040)", () => {
+    expect(() =>
+      buildOpenClawNativeConfigBatchInvocation("alpha", [
+        {
+          dotpath: "models.providers.openai",
+          value: {
+            baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+            apiKey: NVIDIA_INFERENCE_PLACEHOLDER,
+            headers: { "X-NemoClaw-Upstream-Provider": "openai-api" },
+          },
+        },
+      ]),
+    ).toThrow("Native NVIDIA provider identity does not match its credential placeholder");
+  });
+
   it("pins a scoped handle for an authenticated Hermes endpoint (#13040)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-config-"));
     try {

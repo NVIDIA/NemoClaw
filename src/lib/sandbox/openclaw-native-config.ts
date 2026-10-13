@@ -21,6 +21,7 @@ const {
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
 }: typeof import("../inference/native-nvidia/contract") = require("../inference/native-nvidia/contract");
 const {
+  hasNativeHostedProvider,
   nativeHostedAgentConfig,
 }: typeof import("../inference/native-provider/agent-config") = require("../inference/native-provider/agent-config");
 const {
@@ -124,14 +125,18 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
     "models.providers.openai",
     "models.providers.anthropic",
   ]);
-  const matching = updates.filter(
-    ({ dotpath, value }) =>
-      providerPaths.has(dotpath) &&
-      isConfigObject(value) &&
-      (value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER ||
-        (typeof value.apiKey === "string" &&
-          /^openshell:resolve:env:[A-Z][A-Z0-9_]*$/u.test(value.apiKey))),
-  );
+  const matching = updates.filter(({ dotpath, value }) => {
+    if (!providerPaths.has(dotpath) || !isConfigObject(value)) return false;
+    if (value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER) return true;
+    if (
+      typeof value.apiKey !== "string" ||
+      !/^openshell:resolve:env:[A-Z][A-Z0-9_]*$/u.test(value.apiKey)
+    )
+      return false;
+    const headers = isConfigObject(value.headers) ? value.headers : {};
+    const provider = headers["X-NemoClaw-Upstream-Provider"];
+    return typeof provider !== "string" || hasNativeHostedProvider(provider);
+  });
   if (matching.length === 0) return undefined;
   if (matching.length !== 1) throw new Error("Expected one native provider config update");
   const value = matching[0]!.value;
@@ -159,12 +164,21 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
   ) {
     throw new Error("Native provider endpoint does not match");
   }
+  if (
+    value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER &&
+    provider !== undefined &&
+    provider !== "nvidia-prod"
+  ) {
+    throw new Error("Native NVIDIA provider identity does not match its credential placeholder");
+  }
   const expectedPath =
-    provider === "openai-api"
-      ? "models.providers.openai"
-      : provider === "anthropic-prod"
-        ? "models.providers.anthropic"
-        : "models.providers.inference";
+    value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER
+      ? "models.providers.inference"
+      : provider === "openai-api"
+        ? "models.providers.openai"
+        : provider === "anthropic-prod"
+          ? "models.providers.anthropic"
+          : "models.providers.inference";
   if (matching[0]!.dotpath !== expectedPath) {
     throw new Error("Native provider config path does not match its identity");
   }
