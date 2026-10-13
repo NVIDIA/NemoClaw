@@ -26,14 +26,10 @@ import {
   expectOnboardSuccess,
   inferenceSandboxName,
   onboardSandbox,
-  rawOpenShellEnv,
-  redactedResultText,
   requireLivePrerequisites,
   requireProviderSmokeSelected,
-  runOpenShell,
   skipLive,
   verifyCredentialPlaceholder,
-  verifyProcessListCredentialIsolation,
 } from "./inference-routing-helpers.ts";
 
 // These credential-backed smokes are intentionally outside the PR-required
@@ -49,8 +45,7 @@ test(
         "confirm NVIDIA credential prerequisites",
         "recreate the credential-isolation sandbox",
         "onboard with the real NVIDIA credential",
-        "inspect sandbox environment and processes",
-        "scan the sandbox filesystem for the credential",
+        "verify sandbox credential isolation",
         "confirm placeholder credential injection",
       ],
     },
@@ -92,122 +87,30 @@ test(
       cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
     );
 
-    progress.phase("inspect sandbox environment and processes");
-    const sandboxEnv = await runOpenShell(["sandbox", "exec", "-n", sandboxName, "--", "env"], {
-      artifactName: "tc-inf-05-sandbox-env",
-      artifacts,
+    progress.phase("verify sandbox credential isolation");
+    const isolation = await sandbox.exec(sandboxName, hostedCredentialScanCommand(apiKey), {
+      artifactName: "tc-inf-05-credential-isolation",
       env: buildAvailabilityProbeEnv(),
-      progress,
       redactionValues: [apiKey],
-      timeoutMs: 60_000,
+      timeoutMs: 90_000,
     });
-    expect(sandboxEnv.exitCode, redactedResultText(sandboxEnv)).toBe(0);
-    expect(sandboxEnv.stdout.includes(apiKey), redactedResultText(sandboxEnv)).toBe(false);
-
-    const processList = await runOpenShell(
-      [
-        "sandbox",
-        "exec",
-        "-n",
-        sandboxName,
-        "--",
-        "sh",
-        "-lc",
-        "ps aux 2>/dev/null || ps -ef 2>/dev/null",
-      ],
-      {
-        artifactName: "tc-inf-05-sandbox-process-list",
-        artifacts,
-        env: buildAvailabilityProbeEnv(),
-        progress,
-        redactionValues: [apiKey],
-        timeoutMs: 60_000,
-      },
+    expect(isolation.exitCode, "credential isolation scan failed; inspect the artifact").toBe(0);
+    const isolationEvidence = JSON.parse(isolation.stdout);
+    expect(
+      isolationEvidence.environmentClean,
+      "real credential absent from sandbox environment",
+    ).toBe(true);
+    expect(
+      isolationEvidence.processesClean,
+      "real credential absent from sandbox process arguments",
+    ).toBe(true);
+    expect(
+      isolationEvidence.sampledFilesClean,
+      "real credential absent from sampled sandbox files",
+    ).toBe(true);
+    expect(isolationEvidence.canaryDetected, "filesystem scanner detects a planted control").toBe(
+      true,
     );
-    await verifyProcessListCredentialIsolation(artifacts, processList, apiKey);
-
-    progress.phase("scan the sandbox filesystem for the credential");
-    const scanScript = [
-      "const crypto=require('crypto')",
-      "const fs=require('fs')",
-      "const {execFileSync}=require('child_process')",
-      "const len=Number(process.env.KEY_LEN||'0')",
-      "const salt=process.env.SCAN_SALT||''",
-      "const target=process.env.TARGET_HASH||''",
-      "const digest=(value)=>crypto.createHash('sha256').update(salt).update(value).digest('hex')",
-      "if(!len||!salt||!target){console.log('SCAN_CONFIG_MISSING');process.exit(0)}",
-      "let out=''",
-      "try{out=execFileSync('sh',['-lc','find /tmp /sandbox /home -type f -size -1M 2>/dev/null | head -200'],{encoding:'utf8'})}catch{console.log('SCAN_ERROR');process.exit(0)}",
-      "for(const file of out.trim().split(/\\n/).filter(Boolean)){try{const content=fs.readFileSync(file,'utf8');for(let i=0;i<=content.length-len;i++){if(digest(content.slice(i,i+len))===target){console.log('FOUND:'+file);break}}}catch{}}",
-      "console.log('SCAN_DONE')",
-    ].join(";");
-    const leakCanary = `nemoclaw-fs-scan-canary-${crypto.randomUUID()}`;
-    const canaryPath = "/tmp/nemoclaw-fs-scan-canary.txt";
-    await sandbox.execShell(
-      sandboxName,
-      trustedSandboxShellScript(`printf '%s' '${leakCanary}' > ${canaryPath}`),
-      {
-        artifactName: "tc-inf-05-sandbox-filesystem-canary-plant",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    const canarySalt = crypto.randomUUID();
-    const canaryScan = await runOpenShell(
-      ["sandbox", "exec", "-n", sandboxName, "--", "node", "-e", scanScript],
-      {
-        artifactName: "tc-inf-05-sandbox-filesystem-canary-scan",
-        artifacts,
-        env: rawOpenShellEnv({
-          KEY_LEN: String(leakCanary.length),
-          SCAN_SALT: canarySalt,
-          TARGET_HASH: crypto
-            .createHash("sha256")
-            .update(canarySalt)
-            .update(leakCanary)
-            .digest("hex"),
-        }),
-        progress,
-        timeoutMs: 90_000,
-      },
-    );
-    expect(canaryScan.stdout, redactedResultText(canaryScan)).toContain(`FOUND:${canaryPath}`);
-
-    const canaryRemoval = await sandbox.execShell(
-      sandboxName,
-      trustedSandboxShellScript(`rm -f ${canaryPath}`),
-      {
-        artifactName: "tc-inf-05-sandbox-filesystem-canary-remove",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(canaryRemoval.exitCode, "filesystem canary removal failed; inspect the artifact").toBe(
-      0,
-    );
-
-    const secretScanSalt = crypto.randomUUID();
-    const filesystemScan = await runOpenShell(
-      ["sandbox", "exec", "-n", sandboxName, "--", "node", "-e", scanScript],
-      {
-        artifactName: "tc-inf-05-sandbox-filesystem-scan",
-        artifacts,
-        env: rawOpenShellEnv({
-          KEY_LEN: String(apiKey.length),
-          SCAN_SALT: secretScanSalt,
-          TARGET_HASH: crypto
-            .createHash("sha256")
-            .update(secretScanSalt)
-            .update(apiKey)
-            .digest("hex"),
-        }),
-        progress,
-        redactionValues: [apiKey],
-        timeoutMs: 90_000,
-      },
-    );
-    expect(filesystemScan.stdout).not.toContain("FOUND:");
-    expect(filesystemScan.stdout, redactedResultText(filesystemScan)).toContain("SCAN_DONE");
 
     progress.phase("confirm placeholder credential injection");
     const placeholder = await sandbox.execShell(

@@ -2213,6 +2213,9 @@ Select `openai`, `anthropic`, `gemini`, `openrouter`, or `hermes` with
 Use an approved disposable environment and credentials from its approved source.
 These tests are outside the credential-free `inference-routing` PR lane.
 A skipped provider is missing qualification evidence.
+TC-INF-05 uses the same probe for NVIDIA credential isolation.
+Its separate environment, process, filesystem, and canary checks are replaced by the probe results;
+support tests cover leak detection and control cleanup.
 
 OpenAI, Anthropic, Gemini, and OpenRouter onboard OpenClaw and start a fresh agent process.
 Hermes Provider onboards Hermes and submits a fresh request to its managed API.

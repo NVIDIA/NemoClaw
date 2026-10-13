@@ -11,12 +11,17 @@ import { hostedCredentialScanCommand } from "../live/inference-routing-credentia
 
 const credential = "synthetic-hosted-credential-for-scan";
 
-function executeProbe(leakIn = "none", emptyFiles = false, discoverCanary = true) {
-  const command = hostedCredentialScanCommand(credential);
+function executeProbe(
+  leakIn = "none",
+  emptyFiles = false,
+  discoverCanary = true,
+  scannedCredential = credential,
+) {
+  const command = hostedCredentialScanCommand(scannedCredential);
   const records = new Map<string, Buffer>([
     [
       "/fixture",
-      Buffer.from(leakIn === "files" ? `prefix ${credential} suffix` : "only a placeholder"),
+      Buffer.from(leakIn === "files" ? `prefix ${scannedCredential} suffix` : "only a placeholder"),
     ],
   ]);
   let output = "";
@@ -37,7 +42,7 @@ function executeProbe(leakIn = "none", emptyFiles = false, discoverCanary = true
                 .filter(Boolean)
                 .join("\n")
             : leakIn === program
-              ? `prefix ${credential} suffix`
+              ? `prefix ${scannedCredential} suffix`
               : "ordinary observation",
         ),
     },
@@ -98,6 +103,15 @@ describe("hosted credential isolation probe", () => {
       sampledFileCount: 1,
     });
     expect(result.records.has("/probe-control/canary")).toBe(false);
+  });
+
+  it("detects a synthetic NVIDIA credential in sampled files without emitting it", () => {
+    const nvidiaCredential = "nvapi-synthetic-credential-for-scan";
+    const result = executeProbe("files", false, true, nvidiaCredential);
+    expect(result.evidence.sampledFilesClean).toBe(false);
+    expect(result.evidence.canaryDetected).toBe(true);
+    expect(result.command.join(" ")).not.toContain(nvidiaCredential);
+    expect(result.output).not.toContain(nvidiaCredential);
   });
 
   it("does not call an empty filesystem sample clean", () => {
