@@ -31,6 +31,7 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label qualification selection", (se
     const target = catalogueTarget(id);
     expect(target.agentRuntime).toBe(selected.selector === "hermes" ? "hermes" : "openclaw");
     expect(target.testFile).toBe("test/e2e/live/inference-routing-provider-smoke.test.ts");
+    expect(target.timeoutMinutes).toBe(selected.selector === "openrouter" ? 45 : 30);
     expect(
       new RegExp(target.selector!).test(
         `${selected.id} ${selected.label} answers through its native provider`,

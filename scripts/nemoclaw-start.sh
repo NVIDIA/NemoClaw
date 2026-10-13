@@ -890,9 +890,9 @@ refreshed = set()
 native_refreshed = False
 
 # Restored native handles belong to the sandbox/provider revision that issued
-# them. Refresh the exact inference field before the final gateway start, also
-# when resuming an interrupted rebuild. Accept only scoped runtime handles for
-# the matching endpoint and key; leave user-managed credentials unchanged.
+# them. Refresh the exact inference field before the final gateway start.
+# Accept only scoped runtime handles for the matching endpoint and key; leave
+# user-managed credentials unchanged.
 models = config.get("models") if isinstance(config, dict) else None
 providers = models.get("providers") if isinstance(models, dict) else None
 native = providers.get("inference") if isinstance(providers, dict) else None
