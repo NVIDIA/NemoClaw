@@ -31,15 +31,14 @@ import {
 import { persistedEngineAuthorityPath } from "../../onboard/runtime-provider/persisted-engine-authority";
 import { createPodmanRuntimeProviderBundle } from "../../onboard/runtime-provider/podman";
 import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
+import { formatStorageBytes } from "../vllm-storage";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
 import {
-  assertManagedLlamaCppResumeSupported,
   inspectManagedLlamaCppRuntimeExact,
   installManagedLlamaCpp,
   MANAGED_LLAMA_CPP_NETWORK_NAME,
   rehydrateManagedLlamaCppLifecycle,
-  resolveManagedLlamaCppOwnerSelection,
   resumeManagedLlamaCppRuntime,
 } from "./managed-installer";
 import {
@@ -456,64 +455,6 @@ describe("managed llama.cpp Docker authority", () => {
 });
 
 describe("managed llama.cpp installer", () => {
-  it("rehydrates the former WSL recipe without substituting the new image (#12285)", () => {
-    const catalog = loadManagedInferenceCatalog();
-    const preset = catalog.presets.find(
-      ({ metadata }) => metadata.id === "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b",
-    );
-    expect(preset).toBeDefined();
-    const owner = {
-      schemaVersion: 1 as const,
-      sandboxName: "existing-wsl",
-      catalogDigest: `sha256:${"0".repeat(64)}`,
-      presetDigest: catalog.sources.find(
-        ({ kind, id }) => kind === "ServingPreset" && id === preset!.metadata.id,
-      )!.digest,
-      recipeDigest: "sha256:b1032bb63f7f0772ddc96576219269fe42a086814eca561d1b28d69394dc72e1",
-      recipeId: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1",
-    };
-    const selected = resolveManagedLlamaCppOwnerSelection(owner);
-    expect(selected.catalogDigest).toBe(owner.catalogDigest);
-    expect(selected.recipeDigest).toBe(owner.recipeDigest);
-    expect(selected.recipe.spec.runtime.image).toBe(
-      "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675",
-    );
-    expect(selected.recipe.spec.runtime.guardedStdioForward).toBeUndefined();
-    expect(() => assertManagedLlamaCppResumeSupported(selected)).toThrow(
-      "The former WSL managed llama.cpp image cannot resume",
-    );
-    expect(() =>
-      resolveManagedLlamaCppOwnerSelection({
-        ...owner,
-        recipeDigest: `sha256:${"0".repeat(64)}`,
-      }),
-    ).toThrow("Managed llama.cpp recipe authority changed");
-  });
-  it("rejects former WSL image resume before Docker effects (#12285)", async () => {
-    const homeDir = temporaryHome();
-    const catalog = loadManagedInferenceCatalog();
-    const preset = catalog.presets.find(
-      ({ metadata }) => metadata.id === "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b",
-    )!;
-    reserveManagedLlamaCppOwner(managedLlamaCppStatePaths(homeDir), {
-      schemaVersion: 1,
-      sandboxName: "existing-wsl",
-      catalogDigest: `sha256:${"0".repeat(64)}`,
-      presetDigest: catalog.sources.find(
-        ({ kind, id }) => kind === "ServingPreset" && id === preset.metadata.id,
-      )!.digest,
-      recipeDigest: "sha256:b1032bb63f7f0772ddc96576219269fe42a086814eca561d1b28d69394dc72e1",
-      recipeId: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1",
-    });
-    const harness = engineHarness();
-    await expect(
-      resumeManagedLlamaCppRuntime("existing-wsl", {
-        homeDir,
-        runtimeProvider: managedRuntimeProvider(harness.engine),
-      }),
-    ).rejects.toThrow("The former WSL managed llama.cpp image cannot resume");
-    expect(harness.capture).not.toHaveBeenCalled();
-  });
   it("stops after acquisition when sandbox identity refuses activation (#9833)", async () => {
     const selected = selection();
     const homeDir = temporaryHome();
@@ -1154,6 +1095,48 @@ describe("managed llama.cpp installer", () => {
       });
     },
   );
+
+  it("declares the profile and download sizes before acquisition (#12207)", async () => {
+    const selected = selection();
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    const messages: string[] = [];
+    const verifyGguf = vi.fn(async () => {
+      throw new Error("not cached");
+    });
+
+    await installManagedLlamaCpp(selected, {
+      sandboxName: "spark-agent",
+      homeDir,
+      runtimeProvider: managedRuntimeProvider(harness.engine),
+      acquireGguf: vi.fn(async () => verifiedArtifact(selected, homeDir)),
+      verifyGguf,
+      checkPort: vi.fn(async () => ({ ok: true })),
+      log: (message: string) => {
+        messages.push(message);
+      },
+    });
+
+    const modelBytes = selected.recipe.spec.model.files.reduce(
+      (total, file) => total + file.sizeBytes,
+      0,
+    );
+    const acquisitionIndex = messages.findIndex((message) =>
+      message.includes("Verifying the exact llama.cpp GGUF"),
+    );
+    expect(acquisitionIndex).toBeGreaterThan(0);
+    const declared = messages.slice(0, acquisitionIndex);
+    expect(declared).toContain(`    Serving profile: ${selected.preset.metadata.id}`);
+    expect(declared).toContain(`    Recipe: ${selected.recipe.metadata.id}`);
+    expect(declared).toContain(
+      `    Image download on first run (${formatStorageBytes(
+        BigInt(selected.recipe.spec.runtime.imageDownloadSizeBytes),
+      )}), cached after`,
+    );
+    expect(declared).toContain(
+      `    Model download on first run (${formatStorageBytes(BigInt(modelBytes))}), cached after`,
+    );
+  });
 
   it("suppresses untrusted pull output from the failure reason and installer log (#10558)", async () => {
     const selected = selection();

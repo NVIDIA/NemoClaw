@@ -152,7 +152,7 @@ For Windows WSL N1x, also confirm these requirements:
 For Windows WSL Station GB300, also confirm these requirements:
 
 - Use Arm64 WSL on a Windows product identified as Station GB300.
-- Require the Docker Desktop proof to reconcile every reported GPU and include an `NVIDIA GB300` device.
+- Require the Docker Desktop proof to reconcile every reported GPU and identify exactly one proved `NVIDIA GB300` GPU UUID.
 - Use the default local Docker Desktop context with at least 48,000 MiB of Docker memory.
 - Unset `DOCKER_HOST` and select Docker's `default` context before you select the managed recipe.
 - Provide at least 48,000 MiB of aggregate GPU memory.
@@ -361,6 +361,8 @@ The managed path does not provide an in-place model, image, recipe upgrade, down
 The installed runtime remains bound to the repository YAML authority recorded during onboarding.
 Do not edit the ownership, receipt, or recipe-digest state to force a migration.
 
+If an updated NemoClaw release changes the recorded authority, resume fails closed and preserves the existing state.
+
 An existing Windows WSL Qwen runtime with the former pinned image remains bound to its recorded recipe, receipt, and journal.
 NemoClaw can inspect and remove that runtime without replacing its image.
 The former image cannot resume or recover because it lacks the guarded transport.
@@ -368,6 +370,11 @@ Other unrecognized authority changes fail closed and preserve the existing state
 
 To use the current pinned image, run `$$nemoclaw <sandbox-name> destroy` for the existing managed runtime, then run onboarding again.
 This removes the owned runtime and network but preserves the shared model cache.
+
+For an earlier Station GB300 runtime with no recorded GPU UUID, NemoClaw also refuses startup because the old one-GPU request can select another card.
+After a qualified GB300 image is pinned in the recipe, save any sandbox files you need, run `$$nemoclaw <sandbox-name> destroy --yes`, confirm the sandbox is absent with `$$nemoclaw list`, and onboard again.
+The destroy command verifies and removes the exact owned runtime; do not edit the owner file or remove a same-name Docker resource by hand.
+Other managed llama.cpp recipe changes need release-specific migration guidance.
 
 ## Remove the Managed Runtime
 

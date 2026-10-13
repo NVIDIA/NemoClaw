@@ -103,6 +103,8 @@ export interface GpuDetection {
   // ARM64 Linux. The provider identity prevents readiness from attributing a
   // proof from one runtime to another.
   containerGpuProof?: ContainerGpuProofStatus;
+  /** Device identities from the matched provider-bound CUDA proof, for exact runtime binding. */
+  provedGpuDevices?: ContainerGpuProofResult["verifiedDevices"];
   /** Immutable Windows product observation used by the N1x WSL classification. */
   n1xWslProduct?: boolean | null;
   /** Immutable Windows product observation used by Station GB300 Ollama selection. */
@@ -776,6 +778,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
                   providerId: boundedCudaProof.providerId,
                   passed: true as const,
                 },
+                provedGpuDevices: boundedCudaProof.verifiedDevices,
               }
             : {}),
           ...wslProductObservationFromDeps(deps),

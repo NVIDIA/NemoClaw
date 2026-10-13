@@ -104,7 +104,8 @@ export function parseContainerGpuProofDevices(
   ) {
     return null;
   }
-  return devices.map(({ name, totalMemoryMB, availableMemoryMB }) => ({
+  return devices.map(({ uuid, name, totalMemoryMB, availableMemoryMB }) => ({
+    uuid,
     name,
     totalMemoryMB,
     availableMemoryMB,
