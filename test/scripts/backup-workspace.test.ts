@@ -474,4 +474,51 @@ exit 0
     );
     expect(uploaded).not.toContain("POLICY.md");
   });
+
+  it.each([
+    { name: "a workspace file", failOn: "USER.md", failed: "USER.md" },
+    { name: "a memory file", failOn: "a.md", failed: "memory/" },
+  ])(
+    "exits nonzero and names $failed when upload of $name fails (#13075)",
+    ({ failOn, failed }) => {
+      const openshellCalls = path.join(root, "openshell-calls.txt");
+      const backupDir = path.join(home, ".nemoclaw", "backups", "20260101-000000");
+      fs.mkdirSync(path.join(backupDir, "memory"), { recursive: true });
+      fs.writeFileSync(path.join(backupDir, "SOUL.md"), "saved\n");
+      fs.writeFileSync(path.join(backupDir, "USER.md"), "saved\n");
+      fs.writeFileSync(path.join(backupDir, "IDENTITY.md"), "saved\n");
+      fs.writeFileSync(path.join(backupDir, "memory", "a.md"), "saved\n");
+      fs.writeFileSync(path.join(backupDir, "memory", "b.md"), "saved\n");
+      writeExecutable(
+        path.join(bin, "openshell"),
+        `#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$NEMOCLAW_TEST_OPENSHELL_CALLS"
+if [ "$2" = "upload" ]; then
+  case "$4" in
+    */${failOn}) exit 1 ;;
+  esac
+fi
+exit 0
+`,
+      );
+
+      const result = spawnSync("bash", [sourceScript, "restore", "test-sandbox"], {
+        cwd: sourceRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: home,
+          NEMOCLAW_TEST_OPENSHELL_CALLS: openshellCalls,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+        },
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).not.toContain("Restored");
+      expect(result.stderr).toContain(`Restore incomplete: could not restore ${failed}`);
+      const uploaded = fs.readFileSync(openshellCalls, "utf8");
+      expect(uploaded).toContain(path.join(backupDir, "IDENTITY.md"));
+      expect(uploaded).toContain(path.join(backupDir, "memory", "b.md"));
+    },
+  );
 });
