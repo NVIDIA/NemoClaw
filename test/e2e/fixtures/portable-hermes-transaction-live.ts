@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { redactSensitiveText } from "../../../src/lib/security/redact.ts";
 
 import {
@@ -273,10 +274,28 @@ export async function proveHermesPortableOnboardingTransaction(input: {
   const cleanupFailures: unknown[] = [];
   try {
     if (capture(["sandbox", "get", "-g", gatewayName, "-o", "json", sandboxName]).status === 0) {
-      const deletion = capture(["sandbox", "delete", "-g", gatewayName, sandboxName], 240_000);
+      // The lifecycle capture caps every command at five seconds. Sandbox
+      // deletion can take longer while OpenShell settles its container.
+      assertHermesPortableOpenShellExecutableAuthority(
+        openshellExecutableAuthority,
+        childEnv,
+        sourceEnv,
+      );
+      const deletion = spawnSync(
+        input.openshellBin,
+        ["sandbox", "delete", "-g", gatewayName, sandboxName],
+        {
+          encoding: "utf-8",
+          env: childEnv,
+          killSignal: "SIGKILL",
+          maxBuffer: 512 * 1024,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 240_000,
+        },
+      );
       if (deletion.status !== 0 || deletion.error) {
         throw new Error(
-          `OpenShell Hermes transaction sandbox deletion failed: ${redactSensitiveText(String(deletion.stderr).slice(-240))}`,
+          `OpenShell Hermes transaction sandbox deletion failed (exit ${String(deletion.status)}): ${redactSensitiveText(`${deletion.error?.message ?? ""}\n${deletion.stderr ?? ""}\n${deletion.stdout ?? ""}`.slice(-240))}`,
         );
       }
     }
