@@ -29,7 +29,31 @@ pub struct ServiceContainer {
     pub shared_memory_gi_b: u64,
 }
 
+/// Docker resources of a managed model container.
+pub(crate) struct ContainerResources {
+    pub shared_memory_bytes: u64,
+    pub host_ipc: bool,
+    pub cpu_limit_millis: Option<u32>,
+    pub memory_bytes: u64,
+}
+
 impl ServiceContainer {
+    /// The Docker resources `container` sets, with the defaults for any it omits.
+    pub(crate) fn resources(container: Option<&Self>) -> ContainerResources {
+        let gib = nemoclaw_runtime::hardware::GIB;
+        ContainerResources {
+            shared_memory_bytes: container
+                .map_or_else(default_shm, |container| container.shared_memory_gi_b)
+                * gib,
+            host_ipc: container.is_some_and(|container| container.ipc == ServiceIpc::Host),
+            cpu_limit_millis: container.and_then(|container| container.cpu_limit_millis),
+            memory_bytes: container
+                .and_then(|container| container.memory_limit_gib)
+                .unwrap_or(DEFAULT_MEMORY_LIMIT_GIB)
+                * gib,
+        }
+    }
+
     pub(crate) fn validate_memory(
         &self,
         preparation_memory_gib: u64,

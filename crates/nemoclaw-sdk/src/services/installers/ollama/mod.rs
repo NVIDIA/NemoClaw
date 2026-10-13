@@ -172,6 +172,7 @@ fn managed_targets(
         &document.spec.gateway,
         service.serving.port,
     )?;
+    let resources = super::vllm::ServiceContainer::resources(service.container.as_ref());
     let process = Process {
         engine: placed.engine.clone(),
         image: service.image.clone(),
@@ -194,25 +195,10 @@ fn managed_targets(
         mount_target: "/data".into(),
         bind_address: placed.bind_address,
         port: service.serving.port as u16,
-        shared_memory_bytes: service
-            .container
-            .as_ref()
-            .map_or(8, |container| container.shared_memory_gi_b)
-            * nemoclaw_runtime::hardware::GIB,
-        host_ipc: service
-            .container
-            .as_ref()
-            .is_some_and(|container| container.ipc == super::vllm::ServiceIpc::Host),
-        cpu_limit_millis: service
-            .container
-            .as_ref()
-            .and_then(|container| container.cpu_limit_millis),
-        memory_bytes: service
-            .container
-            .as_ref()
-            .and_then(|container| container.memory_limit_gib)
-            .unwrap_or(super::vllm::DEFAULT_MEMORY_LIMIT_GIB)
-            * nemoclaw_runtime::hardware::GIB,
+        shared_memory_bytes: resources.shared_memory_bytes,
+        host_ipc: resources.host_ipc,
+        cpu_limit_millis: resources.cpu_limit_millis,
+        memory_bytes: resources.memory_bytes,
         gpu: true,
     };
     let spec = Spec {
