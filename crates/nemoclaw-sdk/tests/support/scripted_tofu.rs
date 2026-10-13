@@ -13,8 +13,7 @@
 
 use nemoclaw_sdk::{
     CancellationToken, Deployment, ObservationError, Progress, Secrets, StepOutcome,
-    bundle::{Manifest, executable, hash_file, required_files},
-    compile::{Generations, OPENTOFU_VERSION, Target},
+    compile::{Generations, Target},
     config::Document,
     kubernetes::{GATEWAY_KIND, STORAGE_KIND, gateway::ADDRESS as HELM_RELEASE},
 };
@@ -62,36 +61,6 @@ case "$1" in
 esac
 "##;
 
-/// A bundle whose files verify; only `libexec/tofu` can execute. Adapted from
-/// `deployment.rs::write_bundle`, which keeps its own copy because it also runs
-/// on Windows. The SDK requires `rust` to be non-empty and `version` to be a
-/// semantic version, so these values need not match the toolchain or the
-/// workspace version.
-fn write_bundle(directory: &Path, script: &str) {
-    let mut manifest = Manifest {
-        version: "0.1.0".into(),
-        rust: "1.98.1".into(),
-        opentofu: OPENTOFU_VERSION.into(),
-        files: Default::default(),
-    };
-    let tofu = format!("libexec/{}", executable("tofu"));
-    for name in required_files(&manifest.version).unwrap() {
-        let path = directory.join(&name);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        if name == tofu {
-            crate::executable::write_executable(&path, script);
-        } else {
-            fs::write(&path, b"non-executable fixture").unwrap();
-        }
-        manifest.files.insert(name, hash_file(&path).unwrap());
-    }
-    fs::write(
-        directory.join("manifest.json"),
-        serde_json::to_vec(&manifest).unwrap(),
-    )
-    .unwrap();
-}
-
 /// A temporary bundle with a scripted `tofu`, a control directory, and the path
 /// of a state directory that `Deployment` creates. A test creates one.
 pub struct Scripted {
@@ -121,7 +90,7 @@ impl Scripted {
         let script = SCRIPT
             .replace("@CONTROL@", &quoted(scripted.control()))
             .replace("@STATE@", &quoted(scripted.state()));
-        write_bundle(&scripted.bundle(), &script);
+        crate::bundle::write_bundle(&scripted.bundle(), Some(&script));
         scripted
     }
 
