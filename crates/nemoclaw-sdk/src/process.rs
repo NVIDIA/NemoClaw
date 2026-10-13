@@ -448,20 +448,18 @@ fn kubernetes_connection_environment_requires_explicit_operation_overrides() {
 #[tokio::test]
 async fn only_normal_apply_failure_can_establish_postcondition_evidence() {
     let directory = tempfile::tempdir().unwrap();
-    // Let the existing interpreter read the fixture even if another child
-    // inherited a writable descriptor while the script was being created.
-    std::fs::write(
-        directory.path().join("apply"),
+    let binary = directory.path().join("tofu");
+    crate::executable::write_executable(
+        &binary,
         r##"#!/bin/sh
 printf '%s\n' '{"type":"version","ui":"1.2"}' '{"type":"diagnostic","diagnostic":{"severity":"error","summary":"Resource postcondition failed","snippet":{"context":"data.example_readiness.main.lifecycle.postcondition[0]"}}}'
-exit "$2"
+exit "$3"
 "##,
-    )
-    .unwrap();
+    );
     for (exit, expected) in [("1", true), ("2", false)] {
         let error = run_with_progress(
             directory.path(),
-            Path::new("/bin/sh"),
+            &binary,
             &["apply", "-json", exit],
             &BTreeMap::new(),
             &CancellationToken::new(),

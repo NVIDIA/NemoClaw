@@ -13,6 +13,9 @@ pub mod schema;
 pub mod snapshot;
 pub mod vllm;
 pub use tokio_util::sync::CancellationToken;
+#[cfg(all(test, feature = "execution", target_os = "linux"))]
+#[path = "../../test-support/executable.rs"]
+mod executable;
 #[cfg(all(feature = "execution", target_os = "linux"))]
 mod execution;
 #[cfg(test)]

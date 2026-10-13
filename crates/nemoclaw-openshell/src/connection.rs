@@ -146,14 +146,33 @@ pub fn remote_error(status: &tonic::Status) -> ObservationError {
     }
 }
 
-/// Opt in only for gateway operations whose requests contain no credentials.
-pub fn remote_rejection(operation: &'static str, status: &tonic::Status) -> ObservationError {
-    if !matches!(
-        operation,
-        "CreateWorkspace" | "CreateSandbox" | "DeleteProvider" | "DeleteProviderProfile"
-    ) {
-        return remote_error(status);
+/// Gateway operations whose requests contain no credentials, so a definitive
+/// rejection can report the gateway's bounded, sanitized message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RejectableOperation {
+    CreateWorkspace,
+    CreateSandbox,
+    DeleteProvider,
+    DeleteProviderProfile,
+}
+
+impl RejectableOperation {
+    fn name(self) -> &'static str {
+        match self {
+            Self::CreateWorkspace => "CreateWorkspace",
+            Self::CreateSandbox => "CreateSandbox",
+            Self::DeleteProvider => "DeleteProvider",
+            Self::DeleteProviderProfile => "DeleteProviderProfile",
+        }
     }
+}
+
+/// A definitive rejection of `operation` with the gateway's sanitized message;
+/// any other status is classified as by [`remote_error`].
+pub fn remote_rejection(
+    operation: RejectableOperation,
+    status: &tonic::Status,
+) -> ObservationError {
     let code = match status.code() {
         tonic::Code::FailedPrecondition => "FailedPrecondition",
         tonic::Code::InvalidArgument => "InvalidArgument",
@@ -163,7 +182,7 @@ pub fn remote_rejection(operation: &'static str, status: &tonic::Status) -> Obse
         _ => return remote_error(status),
     };
     ObservationError::Rejected {
-        operation,
+        operation: operation.name(),
         code,
         detail: ObservationError::sanitized_detail(status.message()),
     }
@@ -177,7 +196,10 @@ mod tests {
     #[test]
     fn live_endpoint_ambiguity_keeps_its_conflict_kind() {
         let detail = "network endpoint ambiguity validation failed: network policies 'nemoclaw-inference-qwen-example' endpoint[0] (nc-0123456789abcdef-model-0123456789abcdef.agents.svc.cluster.local:18888/v1/**) and '_provider_qwen_example' endpoint[0] (nc-0123456789abcdef-model-0123456789abcdef.agents.svc.cluster.local:18888/v1/**) overlap on port(s) 18888 with conflicting metadata: allowed_ips=[] vs [\"10.96.189.228/32\"]";
-        let error = remote_rejection("CreateSandbox", &tonic::Status::failed_precondition(detail));
+        let error = remote_rejection(
+            RejectableOperation::CreateSandbox,
+            &tonic::Status::failed_precondition(detail),
+        );
         assert!(
             error
                 .to_string()
@@ -189,10 +211,10 @@ mod tests {
     #[test]
     fn definitive_rejections_keep_bounded_gateway_text_and_other_statuses_stay_fixed() {
         for operation in [
-            "CreateWorkspace",
-            "CreateSandbox",
-            "DeleteProvider",
-            "DeleteProviderProfile",
+            RejectableOperation::CreateWorkspace,
+            RejectableOperation::CreateSandbox,
+            RejectableOperation::DeleteProvider,
+            RejectableOperation::DeleteProviderProfile,
         ] {
             for code in [
                 tonic::Code::FailedPrecondition,
@@ -213,19 +235,6 @@ mod tests {
                 assert!(detail.bytes().all(|byte| (b' '..=b'~').contains(&byte)));
             }
         }
-        for operation in [
-            "CreateProvider",
-            "UpdateProvider",
-            "GetSandbox",
-            "ExecSandbox",
-            "ImportProviderProfiles",
-        ] {
-            let status = tonic::Status::failed_precondition("credential-sentinel");
-            assert_eq!(
-                remote_rejection(operation, &status),
-                ObservationError::Query
-            );
-        }
         for code in [
             tonic::Code::Unknown,
             tonic::Code::Internal,
@@ -238,11 +247,11 @@ mod tests {
         ] {
             let status = tonic::Status::new(code, "credential-sentinel");
             assert_eq!(
-                remote_rejection("CreateSandbox", &status),
+                remote_rejection(RejectableOperation::CreateSandbox, &status),
                 remote_error(&status)
             );
             assert!(
-                !remote_rejection("CreateSandbox", &status)
+                !remote_rejection(RejectableOperation::CreateSandbox, &status)
                     .to_string()
                     .contains("credential-sentinel")
             );

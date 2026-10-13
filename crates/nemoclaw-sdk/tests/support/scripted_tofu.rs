@@ -21,7 +21,6 @@ use nemoclaw_sdk::{
 use serde_json::{Value, json};
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
@@ -80,8 +79,7 @@ fn write_bundle(directory: &Path, script: &str) {
         let path = directory.join(&name);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         if name == tofu {
-            fs::write(&path, script).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            crate::executable::write_executable(&path, script);
         } else {
             fs::write(&path, b"non-executable fixture").unwrap();
         }
@@ -92,27 +90,6 @@ fn write_bundle(directory: &Path, script: &str) {
         serde_json::to_vec(&manifest).unwrap(),
     )
     .unwrap();
-}
-
-/// Run the script once. The kernel refuses to execute a file that any process
-/// holds open for writing, and a child that another thread forked while this
-/// one wrote the script keeps that descriptor until it executes something. After
-/// one successful run no writer remains.
-fn warm(tofu: &Path) {
-    for _ in 0..100 {
-        match std::process::Command::new(tofu).arg("init").output() {
-            Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            result => {
-                result.expect(
-                    "cannot run the scripted tofu; is the temporary directory mounted noexec?",
-                );
-                return;
-            }
-        }
-    }
-    panic!("the scripted tofu stayed busy");
 }
 
 /// Scripted tests of one process run one at a time. `Deployment` holds a lock
@@ -155,8 +132,6 @@ impl Scripted {
             .replace("@CONTROL@", &quoted(scripted.control()))
             .replace("@STATE@", &quoted(scripted.state()));
         write_bundle(&scripted.bundle(), &script);
-        warm(&scripted.bundle().join("libexec").join(executable("tofu")));
-        let _ = fs::remove_file(scripted.control().join("calls"));
         scripted
     }
 

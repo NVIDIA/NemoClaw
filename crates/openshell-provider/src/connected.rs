@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nemoclaw_openshell::search::SearchProvider;
+use nemoclaw_openshell::{RejectableOperation, remote_rejection, search::SearchProvider};
 use std::{collections::HashMap, time::Duration};
 
 fn value<'a>(row: &'a Row, field: &str) -> &'a str {
@@ -138,7 +138,7 @@ impl ConnectedOpenShellGateway {
                 ..Default::default()
             }))
             .await
-            .map_err(|error| nemoclaw_openshell::remote_rejection("CreateWorkspace", &error))?
+            .map_err(|error| remote_rejection(RejectableOperation::CreateWorkspace, &error))?
             .into_inner();
         let row = base(response.workspace.and_then(|w| w.metadata), name, false)?;
         verify_identity(want, &row)?;
@@ -207,7 +207,7 @@ impl ConnectedOpenShellGateway {
                 }),
             )
             .await
-            .map_err(|error| nemoclaw_openshell::remote_rejection("CreateSandbox", &error))?
+            .map_err(|error| remote_rejection(RejectableOperation::CreateSandbox, &error))?
             .into_inner();
         let row = base(response.sandbox.and_then(|s| s.metadata), name, false)?;
         verify_identity(want, &row)?;
@@ -340,11 +340,11 @@ impl ConnectedOpenShellGateway {
             && status.code() != tonic::Code::NotFound
         {
             let operation = if kind == "provider_profile" {
-                "DeleteProviderProfile"
+                RejectableOperation::DeleteProviderProfile
             } else {
-                "DeleteProvider"
+                RejectableOperation::DeleteProvider
             };
-            return Err(nemoclaw_openshell::remote_rejection(operation, &status));
+            return Err(remote_rejection(operation, &status));
         }
         Ok(())
     }
