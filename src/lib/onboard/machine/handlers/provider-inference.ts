@@ -120,15 +120,12 @@ export interface ProviderInferenceSetupOptions {
   allowLegacyRecordedNoAuthEndpoint?: boolean;
 }
 
-/** Defer fresh routes and incomplete native NVIDIA resumes until sandbox backup. */
+/** Defer fresh routes and incomplete resumes until sandbox backup. */
 function preBackupRouteReservationOptions(
   effectiveResume: boolean,
   sandboxStepComplete: boolean,
-  provider: string,
 ): Pick<ProviderInferenceSetupOptions, "deferPublishedRouteReservation"> {
-  return !effectiveResume || (!sandboxStepComplete && provider.trim() === "nvidia-prod")
-    ? { deferPublishedRouteReservation: true }
-    : {};
+  return !effectiveResume || !sandboxStepComplete ? { deferPublishedRouteReservation: true } : {};
 }
 
 function legacyRecordedNoAuthEndpointSetupOptions(options: {
@@ -1850,7 +1847,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             ...preBackupRouteReservationOptions(
               effectiveResume,
               session?.steps?.sandbox?.status === "complete",
-              selectedProvider,
             ),
             ...resolveCachedHostLocalInferenceSetupOptions(confirmedSandboxName),
           };
@@ -2161,7 +2157,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...preBackupRouteReservationOptions(
           effectiveResume,
           session?.steps?.sandbox?.status === "complete",
-          selectedProvider,
         ),
         ...providerRecovery.setupOptions(
           recoveredRecordedProvider,

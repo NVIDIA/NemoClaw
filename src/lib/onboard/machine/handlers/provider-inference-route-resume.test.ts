@@ -6,21 +6,35 @@ import { createSession } from "../../../state/onboard-session";
 import { handleProviderInferenceState } from "./provider-inference";
 import { baseOptions, createDeps } from "./provider-inference.test-support";
 
-describe("native NVIDIA route repair on resume (#13018)", () => {
+describe("published route repair on resume (#13018)", () => {
   it.each([
     {
-      label: "defers before resumed sandbox creation",
+      label: "defers NVIDIA before resumed sandbox creation",
+      provider: "nvidia-prod",
       sandboxStep: "pending",
       defer: true,
     },
     {
-      label: "applies after sandbox creation",
+      label: "applies NVIDIA after sandbox creation",
+      provider: "nvidia-prod",
       sandboxStep: "complete",
       defer: undefined,
     },
-  ] as const)("$label", async ({ sandboxStep, defer }) => {
+    {
+      label: "defers compatible endpoint before resumed sandbox creation",
+      provider: "compatible-endpoint",
+      sandboxStep: "pending",
+      defer: true,
+    },
+    {
+      label: "applies compatible endpoint after sandbox creation",
+      provider: "compatible-endpoint",
+      sandboxStep: "complete",
+      defer: undefined,
+    },
+  ] as const)("$label", async ({ provider, sandboxStep, defer }) => {
     const session = createSession({
-      provider: "nvidia-prod",
+      provider,
       model: "nvidia/nemotron-test",
       endpointUrl: "https://integrate.api.nvidia.com/v1",
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
