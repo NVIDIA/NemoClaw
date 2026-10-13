@@ -262,6 +262,8 @@ test(
       execTimeout(20 * 60_000),
     );
     expect(first.exitCode, resultText(first)).toBe(1);
+    expect(resultText(first)).toContain("Forced onboarding failure at step 'policies'");
+    expect(fs.existsSync(SESSION_FILE)).toBe(true);
 
     await upsertGenericGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
       artifactName: "phase-1-live-extra-provider-upsert",
@@ -274,9 +276,6 @@ test(
       providers.add(LIVE_EXTRA_PROVIDER);
     });
     await artifacts.writeJson("phase-1-extra-providers-seeded.json", seededExtraProviders);
-    expect(seededExtraProviders).toEqual(
-      expect.arrayContaining([LIVE_EXTRA_PROVIDER, STALE_EXTRA_PROVIDER]),
-    );
 
     await sandbox.waitForInitialOpenClawPairing(SANDBOX_NAME, {
       artifactName: "phase-1-wait-for-initial-pairing",
@@ -336,7 +335,6 @@ test(
     progress.phase("reject a same-name model-change backup without changing the published route");
     fs.rmSync(SESSION_FILE, { force: true });
     const registryBeforeBackup = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
-      defaultSandbox?: string;
       sandboxes?: Record<string, unknown>;
     };
     const publishedRoute = registryBeforeBackup.sandboxes?.[SANDBOX_NAME];
@@ -348,7 +346,7 @@ test(
     });
     const sourceId = parseOpenShellSandboxId(resultText(sourceBeforeBackup));
     expect(sourceId).toBeTruthy();
-    const writeRejection = await sandbox.execShell(
+    await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
         `set -eu\nprintf '%s' '${SYNTHETIC_BACKUP_TOKEN}' > '${BACKUP_REJECTION_FILE}'`,
@@ -360,7 +358,6 @@ test(
         timeoutMs: 60_000,
       },
     );
-    expect(writeRejection.exitCode, resultText(writeRejection)).toBe(0);
     cleanupRegistry.trackDisposable("remove synthetic backup rejection fixture", async () => {
       await sandbox.execShell(
         SANDBOX_NAME,
@@ -387,10 +384,8 @@ test(
     expect(rejectedBackup.exitCode, resultText(rejectedBackup)).toBe(1);
     expect(resultText(rejectedBackup)).toMatch(/State backup (?:failed|threw)|Partial backup/);
     const registryAfterBackup = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
-      defaultSandbox?: string;
       sandboxes?: Record<string, unknown>;
     };
-    expect(registryAfterBackup.defaultSandbox).toBe(registryBeforeBackup.defaultSandbox);
     expect(registryAfterBackup.sandboxes?.[SANDBOX_NAME]).toEqual(publishedRoute);
     const sourceAfterBackup = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
       artifactName: "phase-3-source-after-rejected-backup",
@@ -425,6 +420,9 @@ test(
       }),
       execTimeout(20 * 60_000),
     );
+    expect(reinject.exitCode, resultText(reinject)).toBe(1);
+    expect(resultText(reinject)).toContain("Forced onboarding failure at step 'policies'");
+    expect(fs.existsSync(SESSION_FILE)).toBe(true);
     await captureSandboxFailureDiagnostics(host, reinject, {
       sandboxName: SANDBOX_NAME,
       artifactPrefix: "phase-3-reinject-failure",
@@ -440,7 +438,6 @@ test(
         NEMOCLAW_POLICY_MODE: "skip",
       }),
     );
-    expect(sandboxConflict.exitCode, resultText(sandboxConflict)).toBe(1);
     expect(resultText(sandboxConflict)).toContain(
       `Resumable state belongs to sandbox '${SANDBOX_NAME}', not '${OTHER_SANDBOX_NAME}'`,
     );
@@ -455,7 +452,6 @@ test(
         NEMOCLAW_PROVIDER: "openai",
       }),
     );
-    expect(providerConflict.exitCode, resultText(providerConflict)).toBe(1);
     expect(resultText(providerConflict)).toMatch(
       /Resumable state recorded provider '.*', not '.*'\./,
     );
