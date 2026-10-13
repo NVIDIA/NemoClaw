@@ -4,11 +4,13 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { createHostLocalCreateJournalStore } from "../../onboard/runtime-provider/host-local-create-journal";
 import {
   type HostLocalInferenceReceipt,
   type HostLocalInferenceReceiptWriter,
   parseHostLocalInferenceReceipt,
 } from "../../onboard/runtime-provider/host-local-inference";
+import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 import {
   ensureLocalAdapterStateDir,
   resolveLocalAdapterStateRoot,
@@ -25,6 +27,7 @@ const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_SANDBOX_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const SAFE_RECIPE_ID = /^[a-z0-9][a-z0-9._-]{0,159}$/u;
 const GPU_UUID = /^GPU-[0-9a-f-]+$/iu;
+const OWNER_GPU_BINDING_LOCK = "managed-llama-cpp-owner-gpu-binding";
 
 export interface ManagedLlamaCppOwner {
   readonly schemaVersion: 1;
@@ -250,8 +253,8 @@ export function claimManagedLlamaCppOwner(
 }
 
 /**
- * Add the proved GPU UUID to an owner saved before UUID persistence. Only valid while no runtime
- * authority exists; the caller verifies that, and the swap is refused if the file changed.
+ * Serialize the legacy owner upgrade across processes. A prior runtime keeps its unbound owner;
+ * a competing upgrade returns the UUID that became durable authority.
  */
 export function bindLegacyManagedLlamaCppOwnerGpu(
   paths: ManagedLlamaCppStatePaths,
@@ -259,29 +262,47 @@ export function bindLegacyManagedLlamaCppOwnerGpu(
   gpuDeviceUuid: string,
 ): ManagedLlamaCppOwner {
   requirePrivateDirectory(paths.stateDir);
-  if (legacy.gpuDeviceUuid !== undefined) {
+  const expectedLegacy = normalizeOwner(legacy);
+  if (expectedLegacy.gpuDeviceUuid !== undefined) {
     throw new Error("Managed llama.cpp owner state already has a GPU binding.");
   }
-  if (readPrivateFile(paths.ownerPath) !== serializeOwner(legacy)) {
-    throw new Error("Managed llama.cpp owner state changed before its GPU binding.");
-  }
-  const upgraded = normalizeOwner({ ...legacy, gpuDeviceUuid });
-  const temporary = path.join(
-    paths.stateDir,
-    `.${path.basename(paths.ownerPath)}.${randomUUID()}.tmp`,
+  return withMcpLifecycleLockSync(
+    OWNER_GPU_BINDING_LOCK,
+    () => {
+      const current = loadManagedLlamaCppOwner(paths);
+      if (!current)
+        throw new Error("Managed llama.cpp owner state changed before its GPU binding.");
+      const { gpuDeviceUuid: currentUuid, ...currentKey } = current;
+      if (serializeOwner(currentKey) !== serializeOwner(expectedLegacy)) {
+        throw new Error("Managed llama.cpp owner state changed before its GPU binding.");
+      }
+      if (currentUuid !== undefined) return current;
+      const hasRuntimeAuthority =
+        loadManagedLlamaCppReceipt(paths) !== null ||
+        createHostLocalCreateJournalStore(paths.stateDir)
+          .list()
+          .some(({ phase }) => phase !== "finalized");
+      if (hasRuntimeAuthority) return current;
+      const upgraded = normalizeOwner({ ...current, gpuDeviceUuid });
+      const temporary = path.join(
+        paths.stateDir,
+        `.${path.basename(paths.ownerPath)}.${randomUUID()}.tmp`,
+      );
+      try {
+        fs.writeFileSync(temporary, serializeOwner(upgraded), {
+          encoding: "utf8",
+          flag: "wx",
+          mode: FILE_MODE,
+        });
+        fs.renameSync(temporary, paths.ownerPath);
+        fsyncDirectory(paths.stateDir);
+      } finally {
+        fs.rmSync(temporary, { force: true });
+      }
+      return upgraded;
+    },
+    { stateDir: paths.stateDir, timeoutMs: 5_000 },
   );
-  try {
-    fs.writeFileSync(temporary, serializeOwner(upgraded), {
-      encoding: "utf8",
-      flag: "wx",
-      mode: FILE_MODE,
-    });
-    fs.renameSync(temporary, paths.ownerPath);
-    fsyncDirectory(paths.stateDir);
-  } finally {
-    fs.rmSync(temporary, { force: true });
-  }
-  return upgraded;
 }
 
 export function reserveManagedLlamaCppOwner(

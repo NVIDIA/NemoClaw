@@ -549,14 +549,12 @@ function claimStationAwareOwner(
   if (provedGpuDeviceUuid && existing && existing.gpuDeviceUuid === undefined) {
     const { gpuDeviceUuid: _unbound, ...existingKey } = existing;
     if (JSON.stringify(existingKey) === JSON.stringify(desired)) {
-      const hasRuntimeAuthority =
-        loadManagedLlamaCppReceipt(paths) !== null ||
-        createHostLocalCreateJournalStore(paths.stateDir)
-          .list()
-          .some(({ phase }) => phase !== "finalized");
-      if (hasRuntimeAuthority) return Object.freeze({ owner: existing, created: false });
+      const owner = bindLegacyManagedLlamaCppOwnerGpu(paths, existing, provedGpuDeviceUuid);
+      if (owner.gpuDeviceUuid !== undefined && owner.gpuDeviceUuid !== provedGpuDeviceUuid) {
+        throw new Error("Managed llama.cpp proved GPU changed during owner binding.");
+      }
       return Object.freeze({
-        owner: bindLegacyManagedLlamaCppOwnerGpu(paths, existing, provedGpuDeviceUuid),
+        owner,
         created: false,
       });
     }
