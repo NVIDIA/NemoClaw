@@ -24,9 +24,14 @@ describe("Hermes Slack .env placeholder proof", () => {
     try {
       const file = join(directory, ".env");
       writeFileSync(file, text);
-      const result = spawnSync("python3", ["-c", HERMES_SLACK_ENV_PROBE, file], {
-        encoding: "utf8",
-      });
+      const result = spawnSync(
+        "python3",
+        ["-c", HERMES_SLACK_ENV_PROBE.replace('glob.glob("/proc/[0-9]*/environ")', "[]"), file],
+        {
+          encoding: "utf8",
+          env: { PATH: process.env.PATH ?? "", SLACK_BOT_TOKEN: bot, SLACK_APP_TOKEN: app },
+        },
+      );
       expect(result.status, result.stderr).toBe(0);
       return result.stdout.trim();
     } finally {
@@ -35,11 +40,16 @@ describe("Hermes Slack .env placeholder proof", () => {
   }
 
   it.each([
-    "",
     `SLACK_BOT_TOKEN=${bot}\nSLACK_APP_TOKEN=${app}\n`,
-    `export SLACK_BOT_TOKEN='${bot}'\nSLACK_APP_TOKEN="${app}"\n`,
-  ])("accepts absent assignments or correctly scoped placeholders", (assignments) => {
+    `export SLACK_BOT_TOKEN=${bot}\nSLACK_APP_TOKEN=${app}\n`,
+  ])("accepts the currently injected scoped placeholders", (assignments) => {
     expect(probe(`API_SERVER_PORT=18642\n${assignments}`)).toBe("OK");
+  });
+
+  it("requires both injected Slack assignments", () => {
+    expect(probe("API_SERVER_PORT=18642\n")).toBe(
+      "FAIL missing or unsafe SLACK_APP_TOKEN, SLACK_BOT_TOKEN",
+    );
   });
 
   it.each([
@@ -51,24 +61,30 @@ describe("Hermes Slack .env placeholder proof", () => {
     `openshell:resolve:env:s${"A".repeat(64)}_SLACK_BOT_TOKEN`,
     `openshell:resolve:env:v${"1".repeat(21)}_SLACK_BOT_TOKEN`,
   ])("rejects a raw or invalid credential without printing its value", (value) => {
-    const output = probe(`API_SERVER_PORT=18642\nSLACK_BOT_TOKEN=${value}\n`);
-    expect(output).toBe("FAIL invalid SLACK_BOT_TOKEN");
+    const output = probe(
+      `API_SERVER_PORT=18642\nSLACK_BOT_TOKEN=${value}\nSLACK_APP_TOKEN=${app}\n`,
+    );
+    expect(output).toBe("FAIL missing or unsafe SLACK_BOT_TOKEN");
     expect(output).not.toContain(value);
   });
 
   it("rejects an empty credential assignment", () => {
-    expect(probe("API_SERVER_PORT=18642\nSLACK_BOT_TOKEN=\n")).toBe("FAIL invalid SLACK_BOT_TOKEN");
+    expect(probe(`API_SERVER_PORT=18642\nSLACK_BOT_TOKEN=\nSLACK_APP_TOKEN=${app}\n`)).toBe(
+      "FAIL missing or unsafe SLACK_BOT_TOKEN",
+    );
   });
 
   it("rejects a raw duplicate even when another assignment is valid", () => {
     expect(
-      probe(`API_SERVER_PORT=18642\nSLACK_BOT_TOKEN=${bot}\nexport SLACK_BOT_TOKEN=raw\n`),
-    ).toBe("FAIL invalid SLACK_BOT_TOKEN");
+      probe(
+        `API_SERVER_PORT=18642\nSLACK_BOT_TOKEN=${bot}\nexport SLACK_BOT_TOKEN=raw\nSLACK_APP_TOKEN=${app}\n`,
+      ),
+    ).toBe("FAIL missing or unsafe SLACK_BOT_TOKEN");
   });
 
   it("still requires the configured API port", () => {
-    expect(probe(`API_SERVER_PORT=8642\nSLACK_BOT_TOKEN=${bot}\n`)).toBe(
-      "FAIL missing API_SERVER_PORT=18642",
+    expect(probe(`API_SERVER_PORT=8642\nSLACK_BOT_TOKEN=${bot}\nSLACK_APP_TOKEN=${app}\n`)).toBe(
+      "FAIL missing or unsafe API_SERVER_PORT=18642",
     );
   });
 

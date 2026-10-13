@@ -312,7 +312,12 @@ export function registerHermesSlackCleanup(
             redactionValues: options.redactionValues,
             timeoutMs: 30_000,
           },
-          () => cleanupHermesSlackProvider({ host, apiKey: options.apiKey, provider }),
+          () =>
+            cleanupHermesSlackProvider({
+              host,
+              apiKey: options.apiKey,
+              provider,
+            }),
         ),
       );
     }
@@ -362,7 +367,11 @@ export async function runHermesSlackE2E({
 
   await requirePhase6RuntimeProvider(runtimeProvider, "Hermes Slack");
 
-  await precleanHermesSlack({ host, apiKey, artifactPrefix: "preclean-hermes-slack" });
+  await precleanHermesSlack({
+    host,
+    apiKey,
+    artifactPrefix: "preclean-hermes-slack",
+  });
   await precleanSandbox(host, SANDBOX_NAME, env, redactionValues, "preclean-hermes-slack-cli");
 
   progress.phase("install Hermes Slack sandbox");

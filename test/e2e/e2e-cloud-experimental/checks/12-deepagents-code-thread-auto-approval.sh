@@ -237,7 +237,7 @@ expect {
 }
 
 expect {
-  -nocase -re {enter to keep auto} {
+  -nocase -re {enter switch to auto} {
     append_marker $markers "NEMOCLAW_AUTORUN_WARNING"
     send -- "\r"
   }

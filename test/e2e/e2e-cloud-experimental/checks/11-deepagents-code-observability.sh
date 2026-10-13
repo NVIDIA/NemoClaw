@@ -327,7 +327,7 @@ run_dcode_login() {
   local prompt
   prompt="Reply with exactly ${LOGIN_RESPONSE}. Do not repeat the input marker ${LOGIN_PROMPT}."
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -lc \
-    "OTEL_SERVICE_NAME=${AMBIENT_CANARY@Q} OTEL_RESOURCE_ATTRIBUTES=$(printf '%q' "ambient.canary=${AMBIENT_CANARY}") dcode -n ${prompt@Q}" \
+    "OTEL_SERVICE_NAME=$(printf '%q' "$AMBIENT_CANARY") OTEL_RESOURCE_ATTRIBUTES=$(printf '%q' "ambient.canary=${AMBIENT_CANARY}") dcode -n $(printf '%q' "$prompt")" \
     2>&1
 }
 

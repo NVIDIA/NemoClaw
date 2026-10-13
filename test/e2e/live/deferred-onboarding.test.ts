@@ -14,6 +14,7 @@ import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-deferred";
 validateSandboxName(SANDBOX_NAME);
@@ -74,9 +75,33 @@ test(
       ),
     );
     cleanup.trackDisposable(`destroy deferred sandbox ${SANDBOX_NAME}`, () =>
-      cleanupAcquiredResource(getSandbox(SANDBOX_NAME) !== null, () =>
-        host.cleanupSandbox(SANDBOX_NAME, { ...commandOptions, timeoutMs: 120_000 }),
-      ),
+      cleanupAcquiredResource(getSandbox(SANDBOX_NAME) !== null, async () => {
+        let destroyed = false;
+        try {
+          await host.cleanupSandbox(SANDBOX_NAME, { ...commandOptions, timeoutMs: 120_000 });
+          destroyed = true;
+        } finally {
+          const captureRootMetadata =
+            !destroyed && agent === "langchain-deepagents-code" && runtimeProvider.id === "podman";
+          const metadata = [
+            "id",
+            "for path in /sandbox /sandbox/.openclaw /sandbox/.openclaw/workspace /sandbox/.openclaw/workspace/POLICY.md; do",
+            '  stat -c "%n uid=%u gid=%g mode=%a dev=%d inode=%i type=%F" "$path" || true',
+            "done",
+          ].join("\n");
+          await (captureRootMetadata
+            ? runtimeProvider
+                .execSandboxAsRoot(SANDBOX_NAME, ["sh", "-c", metadata], {
+                  artifactName: "deferred-dcode-podman-cleanup-root-metadata",
+                  redactionValues,
+                  sanitizeEnvironment: true,
+                  captureLimitBytes: 4096,
+                  timeoutMs: 10_000,
+                })
+                .catch(() => undefined)
+            : undefined);
+        }
+      }),
     );
 
     progress.phase("install without inference credentials");
@@ -118,6 +143,12 @@ test(
       env: onboardEnv,
       artifactName: "deferred-public-onboard",
       timeoutMs: execTimeout(30 * 60_000),
+    });
+    await captureSandboxFailureDiagnostics(host, onboarded, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "deferred-onboard-failure",
+      redactionValues,
+      captureGatewayLog: true,
     });
     expect(onboarded.exitCode, resultText(onboarded)).toBe(0);
     expect(getSandbox(SANDBOX_NAME)?.agent).toBe(agent);

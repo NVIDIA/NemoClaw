@@ -43,6 +43,8 @@ For Hermes, the restored complete home may contain the retired `profiles/dashboa
 
 For a stopped sandbox, `backup-all` first asks OpenShell to start it in a separate bounded operation. This path is available only for a registered sandbox whose lifecycle identity resolves to a supported container provider, whose ownership probe finds exactly one attributed container, and whose container state is `exited` or `created`. After OpenShell accepts the start, one lifecycle transaction covers readiness, complete native-home capture, and returning the sandbox to `Stopped`. Other ordinary non-ready sandboxes that do not meet those conditions are skipped; strict pre-upgrade mode rejects the batch when a registered sandbox is skipped this way.
 
+If native-home capture throws after it creates a backup directory, NemoClaw removes that new directory. If cleanup fails, the error identifies the retained incomplete backup path. Preserve that path until you can inspect or remove it safely.
+
 Backups created by older NemoClaw versions from a selective per-agent path inventory are not candidates for automatic rebuild or recreation restore. Recover files from those legacy backup directories manually, then create a current complete native-home backup before replacement.
 
 ## Destroy
