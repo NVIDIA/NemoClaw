@@ -70,6 +70,36 @@ Docker and Podman through the existing runtime matrix.
 
 ## CI execution shape
 
+### Protected DGX Spark qualification
+
+The explicit-only `llama-cpp-dgx-spark-qualification` job uses the existing unified
+E2E workflow. Dispatch it against `main` with `targets` empty,
+`jobs=llama-cpp-dgx-spark-qualification`, `allow_dgx_spark_runner_queue=true`, and
+the current same-repository PR's `pr_number`, `checkout_repository=NVIDIA/NemoClaw`,
+`checkout_sha`, and `base_sha`. Set `workflow_sha` to the trusted main revision
+used by the dispatch. The workflow must contain this caller on main before it can
+run; dispatching candidate workflow code on the protected runner is not supported.
+
+The hosted plan job authenticates the open PR and exact revisions. It loads candidate
+manifest and activation data without executing candidate code. Candidate runner,
+approval environment, and staged model path must match trusted main. Executable
+llama.cpp image build inputs must also match trusted main; the candidate's digest-bound
+plan supplies the pinned source, CUDA, Go, recipe, and agent qualification inputs.
+
+The configured runner must be a physical DGX Spark with NVIDIA GB10, a supported
+Docker/NVIDIA runtime, OpenShell prerequisites, and the exact locally staged GGUF.
+Administrators must restrict the runner group to the trusted main workflow and
+protect the configured environment with required approval. The workflow does not
+create those protections or download the model. Runs serialize without cancelling
+active qualification, use an owned loopback registry, and build the trusted CLI.
+
+The runner validates GPU identity, model and image digests, protocol and OpenClaw
+agent results, and cleanup. Only a successful, revision-bound receipt and its
+digest-bound plan are uploaded through the shared 14-day artifact retention path.
+Keys and raw runtime logs are excluded. A missing prerequisite, failed assertion,
+or incomplete cleanup fails qualification. This lane is excluded from default and
+release-required suites, and does not promote an image or close hardware qualification.
+
 ### Candidate CLI Artifact
 
 The candidate CLI comes from the source commit that an E2E run tests.

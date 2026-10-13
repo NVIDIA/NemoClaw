@@ -1392,7 +1392,7 @@ describe("E2E workflow plan", () => {
       "| Repository install onboarding and hosted inference succeed | `ubuntu-repo-cloud-langchain-deepagents-code / docker`, `ubuntu-repo-cloud-openclaw / docker` | agent runtime |",
     );
     expect(complete.stdout).toContain("### Intentional exclusions");
-    expect(complete.stdout).not.toContain("llama-cpp-dgx-spark-qualification");
+    expect(complete.stdout).toContain("llama-cpp-dgx-spark-qualification");
     expect(complete.stdout).not.toContain("Unsupported or unresolved typed declarations");
     expect(complete.stdout).not.toContain("inert typed declarations");
   });

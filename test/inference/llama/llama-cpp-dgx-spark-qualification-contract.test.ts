@@ -2,8 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import { validateLlamaCppDgxSparkReceipt } from "../../../scripts/checks/validate-llama-cpp-dgx-spark-receipt.mts";
 
 import {
   LLAMA_CPP_DGX_SPARK_AGENT_PROBES,
@@ -408,6 +414,98 @@ function executionPlan() {
 function parseLlamaCppDgxSparkQualificationReceipt(value: unknown, identity: unknown) {
   return parseQualificationReceiptWithPlan(value, identity, executionPlan());
 }
+
+describe("workflow Spark qualification artifact validation (#13114)", () => {
+  it("validates real receipt files and rejects unsafe artifact inputs", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-receipt-"));
+    try {
+      const plan = parseLlamaCppDgxSparkExecutionPlan(executionPlan());
+      const planFile = path.join(root, "plan.json");
+      const receiptFile = path.join(root, "receipt.json");
+      fs.writeFileSync(planFile, JSON.stringify(plan));
+      fs.writeFileSync(receiptFile, JSON.stringify(receipt()));
+      const validator = fileURLToPath(
+        new URL(
+          "../../../scripts/checks/validate-llama-cpp-dgx-spark-receipt.mts",
+          import.meta.url,
+        ),
+      );
+      const run = (file: string, extra: string[] = []) =>
+        spawnSync(
+          process.execPath,
+          [
+            "--no-warnings",
+            validator,
+            file,
+            planFile,
+            llamaCppDgxSparkExecutionPlanSha256(plan),
+            ...extra,
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              BASE_SHA,
+              CHECKOUT_SHA: HEAD_SHA,
+              WORKFLOW_SHA,
+              GITHUB_RUN_ID: String(evidenceIdentity().runId),
+              GITHUB_RUN_ATTEMPT: String(evidenceIdentity().runAttempt),
+            },
+            timeout: 10000,
+          },
+        );
+      expect(run(receiptFile).status).toBe(0);
+      expect(run(receiptFile, ["unexpected"]).status).not.toBe(0);
+      const link = path.join(root, "linked.json");
+      fs.symlinkSync(receiptFile, link);
+      expect(run(link).status).not.toBe(0);
+      fs.writeFileSync(receiptFile, Buffer.alloc(1024 * 1024 + 1));
+      expect(run(receiptFile).status).not.toBe(0);
+      fs.writeFileSync(receiptFile, "{}");
+      expect(run(receiptFile).status).not.toBe(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts only a receipt matching the digest-bound plan and workflow identity", () => {
+    const plan = parseLlamaCppDgxSparkExecutionPlan(executionPlan());
+    const planSource = JSON.stringify(plan);
+    const digest = llamaCppDgxSparkExecutionPlanSha256(plan);
+    expect(
+      validateLlamaCppDgxSparkReceipt(
+        JSON.stringify(receipt()),
+        planSource,
+        digest,
+        evidenceIdentity(),
+      ),
+    ).toMatchObject({ headSha: receipt().headSha, cleanup: receipt().cleanup });
+    expect(() =>
+      validateLlamaCppDgxSparkReceipt(
+        JSON.stringify(receipt()),
+        planSource,
+        `sha256:${"0".repeat(64)}`,
+        evidenceIdentity(),
+      ),
+    ).toThrow(/digest/);
+    expect(() =>
+      validateLlamaCppDgxSparkReceipt(JSON.stringify(receipt()), planSource, digest, {
+        ...evidenceIdentity(),
+        headSha: "0".repeat(40),
+      }),
+    ).toThrow("identity");
+    const invalidCleanup = receipt();
+    invalidCleanup.cleanup.registryRemoved = false;
+    expect(() =>
+      validateLlamaCppDgxSparkReceipt(
+        JSON.stringify(invalidCleanup),
+        planSource,
+        digest,
+        evidenceIdentity(),
+      ),
+    ).toThrow("cleanup");
+  });
+});
 
 describe("llama.cpp DGX Spark qualification contract", () => {
   it("pins the exact protected ARM64 activation identity and patterns (#8260)", () => {
