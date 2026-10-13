@@ -677,7 +677,14 @@ describe("complete native home persistence", () => {
           ".openclaw/openclaw.json",
           JSON.stringify({
             native: true,
-            models: { providers: { "nvidia-prod": { apiKey: "${NVIDIA_INFERENCE_API_KEY}" } } },
+            models: {
+              providers: {
+                inference: {
+                  baseUrl: "https://integrate.api.nvidia.com/v1",
+                  apiKey: "${NVIDIA_INFERENCE_API_KEY}",
+                },
+              },
+            },
           }),
         ],
         [".local/share/packages/tool.txt", "package"],

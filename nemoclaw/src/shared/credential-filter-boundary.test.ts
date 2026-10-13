@@ -138,10 +138,13 @@ describe("shared credential filter", () => {
     expect(isSafeCredentialPlaceholder(value), value).toBe(true);
   });
 
-  it("preserves only the generated NVIDIA inference environment reference (#13018)", () => {
-    expect(isSafeCredentialPlaceholder("${NVIDIA_INFERENCE_API_KEY}")).toBe(true);
+  it("does not trust the NVIDIA inference environment reference outside its generated route (#13018)", () => {
+    expect(isSafeCredentialPlaceholder("${NVIDIA_INFERENCE_API_KEY}")).toBe(false);
     expect(stripCredentials({ apiKey: "${NVIDIA_INFERENCE_API_KEY}" })).toEqual({
-      apiKey: "${NVIDIA_INFERENCE_API_KEY}",
+      apiKey: CREDENTIAL_PLACEHOLDER,
+    });
+    expect(stripCredentials({ other: "${NVIDIA_INFERENCE_API_KEY}" })).toEqual({
+      other: CREDENTIAL_PLACEHOLDER,
     });
   });
 

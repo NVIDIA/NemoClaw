@@ -123,8 +123,6 @@ const SAFE_CREDENTIAL_PLACEHOLDER_PATTERNS: readonly RegExp[] = [
   /^xoxb-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+$/,
   /^xapp-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+$/,
 ];
-// Managed NVIDIA inference writes this exact environment reference into
-// OpenClaw config; the value is supplied at runtime, not stored here.
 const NVIDIA_INFERENCE_ENV_REFERENCE = "${NVIDIA_INFERENCE_API_KEY}";
 const SAFE_CREDENTIAL_PLACEHOLDER_LITERALS: ReadonlySet<string> = new Set([
   "unused",
@@ -164,7 +162,6 @@ export function valueLooksLikeSecret(value: string): boolean {
 
 export function isSafeCredentialPlaceholder(value: unknown): boolean {
   if (typeof value !== "string") return false;
-  if (value === NVIDIA_INFERENCE_ENV_REFERENCE) return true;
   const withoutScheme = value.replace(/^Bearer\s+/i, "");
   if (
     SAFE_CREDENTIAL_PLACEHOLDER_LITERALS.has(value) ||
@@ -194,6 +191,7 @@ export function isConfigValue(value: unknown): value is ConfigValue {
 function scrubConfigValue(value: unknown): unknown {
   if (typeof value === "string") {
     if (isSafeCredentialPlaceholder(value)) return value;
+    if (value === NVIDIA_INFERENCE_ENV_REFERENCE) return CREDENTIAL_PLACEHOLDER;
     let hasUrlCredentials = false;
     try {
       const url = new URL(value);
@@ -214,6 +212,7 @@ function cliFlagName(token: string): string | null {
 function scrubArrayElement(value: unknown, previous: unknown): unknown {
   if (typeof value !== "string") return stripCredentials(value);
   if (isSafeCredentialPlaceholder(value)) return value;
+  if (value === NVIDIA_INFERENCE_ENV_REFERENCE) return CREDENTIAL_PLACEHOLDER;
 
   const eq = value.indexOf("=");
   if (eq > 0 && value.startsWith("-")) {
