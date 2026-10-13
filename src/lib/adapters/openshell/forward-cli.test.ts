@@ -467,6 +467,10 @@ describe("CLI OpenShell forward observations", () => {
   it.each([
     ["an lsof error", "lsof: can't allocate memory\n"],
     [
+      "an incomplete-output note without a mount warning",
+      "Output information may be incomplete.\n",
+    ],
+    [
       "a mount warning mixed with an lsof error",
       "lsof: WARNING: can't stat() fuse.gvfsd-fuse file system /run/user/1000/gvfs\nlsof: can't allocate memory\n",
     ],

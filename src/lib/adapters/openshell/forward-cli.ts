@@ -621,11 +621,13 @@ const LSOF_MOUNT_WARNING = /^lsof: WARNING: can't stat\(\) \S+ file system \S.*$
 const LSOF_INCOMPLETE_NOTE = "Output information may be incomplete.";
 
 function onlyBenignLsofMountWarnings(stderr: string): boolean {
-  return stderr
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .every((line) => LSOF_MOUNT_WARNING.test(line) || line === LSOF_INCOMPLETE_NOTE);
+  let afterWarning = false;
+  for (const line of stderr.split(/\r?\n/u).map((l) => l.trim())) {
+    if (!line) continue;
+    if (LSOF_MOUNT_WARNING.test(line)) afterWarning = true;
+    else if (!(afterWarning && line === LSOF_INCOMPLETE_NOTE)) return false;
+  }
+  return true;
 }
 
 async function lsofListenerPids(
