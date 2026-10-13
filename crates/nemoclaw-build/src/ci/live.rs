@@ -44,6 +44,8 @@ pub struct GatewayInputs<'a> {
     pub subnet: &'a str,
     pub image: &'a str,
     pub harness: &'a str,
+    /// Native harness settings, when the test needs them.
+    pub settings: Option<&'a serde_json::Map<String, serde_json::Value>>,
 }
 
 /// A managed Docker gateway deployment with external inference and no
@@ -56,7 +58,17 @@ pub fn gateway_document(inputs: &GatewayInputs<'_>) -> String {
         subnet,
         image,
         harness,
+        settings,
     } = inputs;
+    // JSON is a YAML flow mapping, so serializing cannot produce malformed YAML.
+    let settings = settings
+        .map(|settings| {
+            format!(
+                "\n        settings: {}",
+                serde_json::Value::Object(settings.clone())
+            )
+        })
+        .unwrap_or_default();
     format!(
         "apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
@@ -82,7 +94,7 @@ spec:
       network:
         tier: isolated
       harness:
-        kind: {harness}
+        kind: {harness}{settings}
       agent:
         name: main
         inference:

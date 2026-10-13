@@ -74,7 +74,8 @@ Fabric revision remains provenance for validation responses; missing provenance 
 The [dummy backend](../../image/fabric/dummy_backend.py) is an executable reference with no Fabric, native-agent, model, or credential dependency.
 It is installed only in the separate `dummy` target; it is never a fallback for a real adapter.
 All production adapter images install the Fabric backend and use the same host and capability generation.
-The dummy image intentionally has no Fabric descriptor catalog and is not a deployable SDK harness.
+The dummy image has no Fabric to discover with; its catalog lists one explicit [descriptor](../../image/fabric/dummy.fabric-adapter.json), recorded against the pinned Fabric revision whose adapter contract it follows.
+A deployment runs it with `harness.kind: org.nemoclaw.dummy` and the image's immutable reference; the bundled catalog does not list it.
 See [building the reference image](../build.md#reference-contract-image).
 
 The dummy configuration uses `metadata.name` and `harness.adapter_id: org.nemoclaw.dummy`.

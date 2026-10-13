@@ -13,7 +13,7 @@ name = "integration"
 path = "tests/main.rs"
 
 [dependencies]
-nemoclaw-onboarding = { path = "../../examples/onboarding-tui" }
+nemoclaw-onboarding = { path = "../nemoclaw-onboarding" }
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 clap.workspace = true
 ratatui.workspace = true

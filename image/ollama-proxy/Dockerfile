@@ -9,7 +9,6 @@ RUN apk add --no-cache musl-dev
 WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml LICENSE ./
 COPY crates/ crates/
-COPY examples/onboarding-tui/ examples/onboarding-tui/
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
     cargo build --locked --release -p nemoclaw-ollama-proxy \

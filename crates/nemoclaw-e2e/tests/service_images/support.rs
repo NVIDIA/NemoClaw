@@ -3,9 +3,7 @@
 
 use nemoclaw_e2e::{http_fixture as docker, openshell::Fixture};
 use nemoclaw_sdk::{
-    CancellationToken, Deployment,
-    config::Document,
-    fabric_catalog::{FabricAdapter, FabricCatalog},
+    CancellationToken, Deployment, config::Document, fabric_catalog::FabricCatalog,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -149,46 +147,17 @@ impl Scenario {
         let proxy_image = std::env::var("NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE")
             .expect("explicit digest-pinned proxy image");
         assert!(proxy_image.contains("@sha256:"));
-        let installed = inspect("image", &image);
-        let mut catalog = if installed["Config"]["Labels"]["io.nemoclaw.fabric.reference"]
-            == "dummy"
-        {
-            // The dummy intentionally ships no catalog. This protocol fixture
-            // supplies an explicit test descriptor, never production discovery.
-            let mut catalog = nemoclaw_e2e::image_runtime::catalog();
-            catalog.adapters = vec![FabricAdapter {
-                provenance: json!([{"source":"explicit_local","path":"/fixture/dummy.json","root":"/fixture"}]),
-                descriptor: json!({"contract_version":"fabric.adapter/v1alpha2","adapter_id":"org.nemoclaw.dummy","adapter_kind":"python","runner":{"module":"dummy_backend"},
-                    "settings_schema":{"type":"object","properties":{"reply":{"type":"string"}},"additionalProperties":false},
-                    "config":{"accepts":["models","models.base_url"]},"extension_schemas":{"model":{"type":"object","properties":{"api":{"enum":["openai-completions"]},"settings":{"type":"object"}},"additionalProperties":false}}}),
-            }];
-            catalog.targets.clear();
-            catalog.runtime_files.clear();
-            catalog.runtime.as_mut().unwrap().binaries = [(
-                "org.nemoclaw.dummy".into(),
-                vec!["/opt/fabric/bin/python".into()],
-            )]
-            .into();
-            catalog
-        } else {
-            FabricCatalog::from_json(
-                installed["Config"]["Labels"]["io.nemoclaw.fabric.catalog"]
-                    .as_str()
-                    .expect("installed catalog"),
-            )
-            .unwrap()
-        };
-        catalog.bridge = Some(
-            serde_json::from_str(
-                installed["Config"]["Labels"]["io.nemoclaw.fabric.bridge"]
-                    .as_str()
-                    .unwrap(),
-            )
-            .unwrap(),
-        );
-        let mut metadata = installed;
-        metadata["Config"]["Labels"]["io.nemoclaw.fabric.catalog"] =
-            json!(serde_json::to_string(&catalog).unwrap());
+        // Discovery reads the image's own labels, served unchanged; check them
+        // here so a stale image fails with a rebuild instruction.
+        let metadata = inspect("image", &image);
+        FabricCatalog::from_json(
+            metadata["Config"]["Labels"]["io.nemoclaw.fabric.catalog"]
+                .as_str()
+                .expect(
+                    "the agent image has no Fabric catalog; rebuild it with cargo images build",
+                ),
+        )
+        .expect("the agent image's Fabric catalog is invalid; rebuild it with cargo images build");
         let metadata_server = docker::Fixture::start(move |request| {
             assert_eq!(request.method, "GET", "discovery must not mutate the engine");
             let value = if request.path == "/info" { json!({"ID":"image-fixture","Architecture":metadata["Architecture"],"OSType":"linux","ServerVersion":"28.0"}) } else {

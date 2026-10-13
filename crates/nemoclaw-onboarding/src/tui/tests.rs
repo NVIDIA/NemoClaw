@@ -118,8 +118,10 @@ fn root_adapter_alternatives_accept_json_object_input() {
     });
     catalog.adapters = vec![adapter];
     let capabilities = Capabilities::from_catalog(&catalog);
-    let mut values: Value =
-        serde_saphyr::from_slice(include_bytes!("../../../onboarding/openclaw.yaml")).unwrap();
+    let mut values: Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
+    .unwrap();
     values["spec"]["sandboxes"][0]["harness"]["kind"] = serde_json::json!("fixture-root-agent");
     values["spec"]["sandboxes"][0]["harness"]
         .as_object_mut()
@@ -154,8 +156,10 @@ fn resolver_failure_is_not_reported_as_a_finished_questionnaire() {
         serde_json::json!({"type":"object","properties":{"b":{"type":"boolean"}}});
     catalog.adapters = vec![first, second];
     let capabilities = Capabilities::from_catalog(&catalog);
-    let mut values: Value =
-        serde_saphyr::from_slice(include_bytes!("../../../onboarding/openclaw.yaml")).unwrap();
+    let mut values: Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
+    .unwrap();
     values["spec"]["sandboxes"][0]["harness"]["kind"] = serde_json::json!("fixture-schema-agent");
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let state = JourneyDefinition::new("conflicting-descriptors", base)
@@ -187,8 +191,10 @@ fn resolver_failure_is_not_reported_as_a_finished_questionnaire() {
 #[test]
 fn configured_target_prerequisite_blocks_save_until_observed() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../onboarding/openclaw.yaml")).unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
+    .unwrap();
     let state = JourneyDefinition::new("target-gated", base)
         .omit([
             "adapter:nvidia.fabric.openclaw:/agent_name",
@@ -217,8 +223,10 @@ fn configured_target_prerequisite_blocks_save_until_observed() {
 #[test]
 fn wizard_uses_the_shared_resolver_for_an_sdk_form_choice() {
     let capabilities = Capabilities::available();
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../onboarding/openclaw.yaml")).unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
+    .unwrap();
     values["spec"]["sandboxes"][0]["agent"]
         .as_object_mut()
         .unwrap()
@@ -344,8 +352,8 @@ fn default_path_reaches_a_valid_document_through_the_new_wizard() {
 
 #[test]
 fn mixed_local_and_hosted_template_reaches_review_without_losing_routes() {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spark/local-and-hosted.yaml");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/spark/local-and-hosted.yaml");
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Template(&path), &capabilities).unwrap();
     let mut wizard = JourneyWizard::new(capabilities, state);
@@ -389,7 +397,7 @@ fn mixed_local_and_hosted_template_reaches_review_without_losing_routes() {
 /// Examples with more than one sandbox are outside the single-sandbox journey.
 fn example_reaches_review(relative: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
+        .join("../../examples")
         .join(relative);
     let document = Document::parse(std::fs::read(&path).unwrap().as_slice())
         .unwrap_or_else(|error| panic!("{relative}: {error}"));
@@ -451,7 +459,8 @@ fn an_unchanged_journey_resolves_once_until_an_answer_or_observation_changes_it(
     assert_eq!(wizard.resolutions(), 3);
 
     let document =
-        Document::parse(include_bytes!("../../../managed-ollama.yaml").as_slice()).unwrap();
+        Document::parse(include_bytes!("../../../../examples/managed-ollama.yaml").as_slice())
+            .unwrap();
     let engine = discovery_queries(&document, None)
         .unwrap()
         .into_iter()
@@ -668,8 +677,10 @@ async fn enter_accepts_the_runtime_this_machine_can_run_and_targets_its_engine()
 #[test]
 fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../onboarding/openclaw.yaml")).unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
+    .unwrap();
     let state = JourneyDefinition::new("conflicted-target", base)
         .omit([
             "adapter:nvidia.fabric.openclaw:/agent_name",
@@ -827,8 +838,10 @@ async fn the_model_catalog_is_asked_when_the_model_question_comes_and_only_once(
 #[test]
 fn credential_information_keeps_controls_and_real_errors_visible() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../onboarding/openclaw.yaml")).unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
+    .unwrap();
     let state = JourneyDefinition::new("credential-note", base)
         .ask(["/metadata/name"])
         .start(&capabilities)
@@ -857,8 +870,10 @@ fn missing_catalog_key_does_not_occupy_the_error_slot_or_hide_engine_failures() 
         inference_discovery::AuthenticationStatus,
     };
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../onboarding/openclaw.yaml")).unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("catalog-note", base)
         .ask(["/spec/sandboxes/0/harness/kind", "/metadata/name"])
         .start(&capabilities)

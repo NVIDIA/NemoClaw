@@ -13,6 +13,9 @@ mod deployment;
 mod docker_fixture;
 #[path = "docker_provider_proxy.rs"]
 mod docker_provider_proxy;
+#[cfg(unix)]
+#[path = "dummy_agent.rs"]
+mod dummy_agent;
 #[path = "export_observations.rs"]
 mod export_observations;
 #[path = "fabric_deployment.rs"]

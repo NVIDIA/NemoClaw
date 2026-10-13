@@ -131,7 +131,7 @@ The fixtures return protocol responses; they do not establish agent inference, n
 In `deployment`, `cli_terminal_outputs_preserve_lifecycle_and_json_contract` checks text plans, JSON apply, unchanged text apply, JSON plan completeness, text destroy, and repeated JSON destroy against one fixture state.
 `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` changes the gateway driver after planning to check OpenTofu's apply-time check, recovery, and teardown.
 `rejected_policy_fails_promptly_with_context_and_allows_recovery_or_destroy` checks a simulated gateway admission rejection with sandbox context in text and JSON output, retained bindings, recovery, and destroy.
-`separate_agent_sandboxes_cli_export_reapply_and_policy_drift` and `tool_disclosure_cli_export_reapply_and_drift` check OpenClaw tool policies, with observation failures that change nothing.
+`separate_agent_sandboxes_cli_export_reapply_and_policy_drift` and `tool_disclosure_cli_export_reapply_and_native_settings_drift` check OpenClaw tool policies, with observation failures that change nothing.
 
 ### Helm Release Recovery
 

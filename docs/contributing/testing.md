@@ -97,7 +97,7 @@ It deletes the cluster and its image tag whether or not the tests pass; set `NEM
 [Run live tests](live-tests.md#kubernetes-gateway-without-the-helm-cli) describes what each test checks.
 
 To build the live images once for both suites, run `cargo ci live-images`.
-It builds the agent image and both proxy images under `nc-live-images`, saves them to `.build/ci/live-images.tar.zst` through the `zstd` command, and removes the local names.
+It builds the agent image, the reference dummy image, and both proxy images under `nc-live-images`, saves them to `.build/ci/live-images.tar.zst` through the `zstd` command, and removes the local names.
 Then pass `--images .build/ci/live-images.tar.zst` to `cargo ci live-docker` or `cargo ci live-kind`: each loads the archive and names the images it needs under its own fresh prefix instead of building them, so its cleanup still removes only what it created.
 
 ## Budgets and Per-Test Limits
