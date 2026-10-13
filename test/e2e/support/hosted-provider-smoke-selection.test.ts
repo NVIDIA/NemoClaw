@@ -33,7 +33,7 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label qualification selection", (se
     expect(target.testFile).toBe("test/e2e/live/inference-routing-provider-smoke.test.ts");
     expect(
       new RegExp(target.selector!).test(
-        `${selected.id} ${selected.label} answers through its native provider`,
+        `'${selected.id}' '${selected.label}' answers through its native provider`,
       ),
     ).toBe(true);
     expect(new RegExp(target.selector!).test("TC-INF-05 real NVIDIA key is isolated")).toBe(false);

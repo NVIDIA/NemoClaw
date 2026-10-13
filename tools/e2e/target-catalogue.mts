@@ -1020,7 +1020,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       profile: "hosted-inference",
       releaseRequired: false,
       testFile: "test/e2e/live/inference-routing-provider-smoke.test.ts",
-      selector: `^${selected.id}`,
+      selector: selected.id,
       timeoutMinutes: 30,
       installMode: "none",
       restoreCli: true,
