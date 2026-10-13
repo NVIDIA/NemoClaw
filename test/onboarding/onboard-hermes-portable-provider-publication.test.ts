@@ -337,6 +337,14 @@ require.cache[sandboxGpuCreateFlowId].exports = {
   },
 };
 
+const prebuildId = require.resolve(${modulePath("onboard/sandbox-prebuild.ts")});
+const prebuild = require(prebuildId);
+prebuild.prebuildSandboxImageIfEligible = async () => ({
+    createArgs: [],
+    sourceReference: "nemoclaw-sandbox-local:fixture-provider",
+    imageRef: "nemoclaw-sandbox-local:fixture-provider",
+    imageId: "sha256:" + "a".repeat(64),
+});
 const { createSandbox } = require(${modulePath("onboard.ts")});
 const { loadAgent } = require(${modulePath("agent/defs.ts")});
 const { resolveSandboxCreateIntent } = require(${modulePath("onboard/sandbox-create-intent.ts")});
@@ -511,6 +519,9 @@ describe("sandbox-create provider publication branches", () => {
       const podman = (args: readonly string[]) => {
         const operation = args[0] === "ps" ? "ps" : args.slice(0, 2).join(" ");
         const handlers = new Map([
+          ["build --quiet", () => ({ status: 0, stdout: "", stderr: "" })],
+          ["image inspect", () => ({ status: 0, stdout: `${imageId}\n`, stderr: "" })],
+          ["push --quiet", () => ({ status: 0, stdout: "", stderr: "" })],
           ["ps", () => ({ status: 0, stdout: `${containerId}\n`, stderr: "" })],
           [
             "container inspect",
@@ -559,6 +570,7 @@ describe("sandbox-create provider publication branches", () => {
       vi.stubEnv("HOME", tmpDir);
       vi.stubEnv("XDG_CONFIG_HOME", path.join(tmpDir, ".config"));
       vi.stubEnv("XDG_RUNTIME_DIR", runtimeDir);
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
       const originalLstat = fs.lstatSync;
       const sharedTemporaryRoots = new Set([path.resolve("/tmp"), fs.realpathSync("/tmp")]);
       vi.spyOn(fs, "lstatSync").mockImplementation(((target, options) => {
@@ -687,8 +699,11 @@ describe("sandbox-create provider publication branches", () => {
           ) => {
             lifecycleRequest = structuredClone(request) as Record<string, unknown>;
             assert.equal(request.target.gatewayName, gatewayName);
-            assert.equal(request.source.reference.startsWith(tmpDir), true);
-            assert.equal(request.workingDirectory?.startsWith(tmpDir), true);
+            assert.match(
+              request.source.reference,
+              /^127\.0\.0\.1:5000\/nemoclaw-sandbox-local:[a-f0-9-]{36}$/u,
+            );
+            assert.equal(request.workingDirectory, undefined);
             assert.equal(request.policyPath, effectivePolicySourcePath);
             assert.equal(request.policyPath?.startsWith(tmpDir), true);
             assert.deepEqual(request.startupCommand, startupCommand);
@@ -752,11 +767,13 @@ describe("sandbox-create provider publication branches", () => {
           registryEntryGatewayPort({ name: sandboxName, gatewayName }),
         );
         const invocations = fs.readFileSync(invocationPath, "utf8");
-        assert.match(invocations, /ARGS=sandbox create -g nemoclaw --from /u);
+        assert.match(
+          invocations,
+          /ARGS=sandbox create -g nemoclaw --from 127\.0\.0\.1:5000\/nemoclaw-sandbox-local:[a-f0-9-]{36}/u,
+        );
         assert.match(invocations, /--policy .*\/policy\.[a-f0-9-]+\.yaml/u);
         assert.match(invocations, /-- env NEMOCLAW_HERMES_API_PORT=8642/u);
         assert.match(invocations, /MARKER=typed-boundary/u);
-        assert.match(invocations, new RegExp(`PWD=${tmpDir.replaceAll("/", "\\/")}`, "u"));
         assert.ok(
           fs.existsSync(path.join(path.dirname(result.active.path), "active.json")),
           "the receipt transaction published active authority",

@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
+import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../../src/lib/sandbox/build-context";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
 type PreparedContextScenario = "create" | "custom-dockerfile";
@@ -31,11 +32,10 @@ function runPreparedContextScenario(scenario: PreparedContextScenario): Prepared
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-prepared-context-test-"));
   const fakeBin = path.join(tmpDir, "bin");
   const scriptPath = path.join(tmpDir, "scenario.js");
-  const preparedBuildCtx = path.join(tmpDir, "prepared-build-context");
+  const preparedBuildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
   const buildId = "6195000123456";
 
   fs.mkdirSync(fakeBin, { recursive: true });
-  fs.mkdirSync(preparedBuildCtx, { recursive: true });
   writeOkOpenshell(fakeBin);
   fs.writeFileSync(
     path.join(preparedBuildCtx, "Dockerfile"),
@@ -86,6 +86,7 @@ const scenario = ${JSON.stringify(scenario)};
 const buildCtx = ${JSON.stringify(preparedBuildCtx)};
 const buildId = ${JSON.stringify(buildId)};
 const sandboxName = "prepared-dcode";
+const generatedImageRef = "nemoclaw-sandbox-local:" + sandboxName + "-" + buildId;
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName });
 createdSandbox.installRuntimeObservation();
 const commands = [];
@@ -166,6 +167,9 @@ runner.runFile = (file, args = []) => {
 };
 runner.runCapture = (command) => {
   const normalized = normalize(command);
+  if (normalized === "docker image inspect --format {{.Id}} " + generatedImageRef) {
+    return "sha256:" + "a".repeat(64);
+  }
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
   if (
@@ -301,9 +305,12 @@ const { createSandbox } = require(${onboardPath});
       HOME: tmpDir,
       NEMOCLAW_HOME: path.join(tmpDir, ".nemoclaw"),
       NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_SANDBOX_PREBUILD: "1",
       PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     },
   });
+  fs.rmSync(preparedBuildCtx, { recursive: true, force: true });
+  fs.rmSync(tmpDir, { recursive: true, force: true });
 
   assert.equal(result.status, 0, result.stderr);
   const payloadLine = result.stdout
@@ -328,21 +335,15 @@ describe("onboard prepared DCode build context", () => {
       assert.equal(result.stageCalls, 0);
       assert.equal(result.patchCalls, 0);
       assert.deepEqual(result.planFromRefs, [`${result.buildCtx}/Dockerfile`]);
-      assert.deepEqual(result.resolvedBuildIds, [result.buildId]);
+      assert.deepEqual(result.resolvedBuildIds, []);
       assert.equal(result.cleanupCalls, 1);
       assert.ok(
         result.commands.some(
           (command) =>
             command.includes("sandbox create ") &&
-            command.includes(` --from ${result.buildCtx}/Dockerfile `),
+            command.includes(` --from nemoclaw-sandbox-local:prepared-dcode-${result.buildId} `),
         ),
         `expected create command to use prepared context; commands:\n${result.commands.join("\n")}`,
-      );
-      assert.ok(
-        result.registerCalls.some(
-          (entry) => entry.imageTag === `openshell/sandbox-from:${result.buildId}`,
-        ),
-        "expected the prepared build ID to determine the registered image tag",
       );
     },
   );

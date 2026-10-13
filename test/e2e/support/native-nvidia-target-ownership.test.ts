@@ -16,4 +16,12 @@ describe("native NVIDIA target ownership", () => {
       expect.arrayContaining(["hermes-inference-switch", "openclaw-inference-switch"]),
     );
   });
+
+  it("selects the live custom Docker image handoff owner when prebuild changes", () => {
+    expect(
+      catalogueTargetsForChangedFiles(["src/lib/onboard/sandbox-prebuild.ts"]).map(
+        (target) => target.id,
+      ),
+    ).toContain("openclaw-inference-switch");
+  });
 });
