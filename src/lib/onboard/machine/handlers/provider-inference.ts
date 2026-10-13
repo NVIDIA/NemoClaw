@@ -361,7 +361,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
 }
 
 export interface ProviderInferenceStateResult {
-  deferredInferenceRoute?: () => Promise<void>;
+  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
   sandboxName: string | null;
   model: string;
   provider: string;
@@ -1335,7 +1335,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   const effectiveResume = resume && !fresh;
   let hostLocalInferenceRouteOnly = false;
   let hostLocalInferenceProofAuthority: HostLocalInferenceSandboxProofAuthority | null = null;
-  let deferredInferenceRoute: (() => Promise<void>) | undefined;
+  let deferredInferenceRoute: ((reserve: () => void) => Promise<void>) | undefined;
   const hostLocalInferenceResolutionCache = new Map<
     string,
     HostLocalInferenceStartupSelection | null

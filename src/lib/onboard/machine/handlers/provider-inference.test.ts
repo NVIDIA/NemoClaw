@@ -28,6 +28,7 @@ function setupOptions(
   return {
     gatewayName: "nemoclaw",
     allowToolsIncompatible: false,
+    deferPublishedRouteReservation: true,
     endpointSource: null,
     reservationSessionId: session.sessionId,
     ...overrides,

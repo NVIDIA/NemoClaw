@@ -704,16 +704,90 @@ function createGatewayRouteStager(input: {
       const request = stagedRoute;
       return {
         ok: true,
-        deferredInferenceRoute: async () => {
-          input.revalidateSandboxIdentity?.("apply the backed-up sandbox inference route");
-          const result = await input.deps.inferenceRouteMutator.setInferenceRoute(request);
-          if (!result.ok) throw new Error(result.error.message);
-          input.deps.verifyInferenceRoute(
-            input.gatewayName,
-            request.route.provider,
-            request.route.model,
-          );
-        },
+        deferredInferenceRoute: async (reserve) =>
+          input.deps.withGatewayRouteMutationLock(input.gatewayName, async () => {
+            input.revalidateSandboxIdentity?.("apply the backed-up sandbox inference route");
+            const target = { kind: "named" as const, gatewayName: input.gatewayName };
+            const before = await input.deps.inferenceRouteObserver.observeInferenceRoute({
+              target,
+            });
+            if (!before.ok || before.value.state !== "configured") {
+              throw new Error(
+                `Cannot capture the published inference route on gateway '${input.gatewayName}' before replacement.`,
+              );
+            }
+            const sourceRoute = before.value.route;
+            let mutationStarted = false;
+            try {
+              mutationStarted = true;
+              const result = await input.deps.inferenceRouteMutator.setInferenceRoute(request);
+              if (!result.ok) throw new Error(result.error.message);
+              const after = await input.deps.inferenceRouteObserver.observeInferenceRoute({
+                target,
+              });
+              if (
+                !after.ok ||
+                after.value.state !== "configured" ||
+                after.value.route.provider !== request.route.provider ||
+                after.value.route.model !== request.route.model
+              ) {
+                throw new Error("The replacement inference route was not verified.");
+              }
+              reserve();
+            } catch (error) {
+              if (mutationStarted) {
+                const live = await input.deps.inferenceRouteObserver.observeInferenceRoute({
+                  target,
+                });
+                if (
+                  !live.ok ||
+                  live.value.state !== "configured" ||
+                  ((live.value.route.provider !== sourceRoute.provider ||
+                    live.value.route.model !== sourceRoute.model) &&
+                    (live.value.route.provider !== request.route.provider ||
+                      live.value.route.model !== request.route.model))
+                ) {
+                  throw new Error(
+                    "Cannot safely restore the published inference route after replacement failed; inspect the live gateway before retrying.",
+                    { cause: error },
+                  );
+                }
+                if (
+                  live.value.route.provider !== sourceRoute.provider ||
+                  live.value.route.model !== sourceRoute.model
+                ) {
+                  input.revalidateSandboxIdentity?.(
+                    "restore the published sandbox inference route",
+                  );
+                  const restored = await input.deps.inferenceRouteMutator.setInferenceRoute({
+                    ...request,
+                    route: sourceRoute,
+                  });
+                  if (!restored.ok) {
+                    throw new Error(
+                      `Cannot restore the published inference route: ${restored.error.message}`,
+                      { cause: error },
+                    );
+                  }
+                  const confirmed = await input.deps.inferenceRouteObserver.observeInferenceRoute({
+                    target,
+                  });
+                  if (
+                    !confirmed.ok ||
+                    confirmed.value.state !== "configured" ||
+                    confirmed.value.route.provider !== sourceRoute.provider ||
+                    confirmed.value.route.model !== sourceRoute.model
+                  ) {
+                    throw new Error(
+                      "Cannot verify restoration of the published inference route; inspect the live gateway before retrying.",
+                      { cause: error },
+                    );
+                  }
+                }
+              }
+              throw error;
+            }
+          }),
       };
     },
   };

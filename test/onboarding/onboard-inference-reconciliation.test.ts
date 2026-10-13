@@ -538,14 +538,10 @@ const { onboard } = require(${onboardPath});
         "hermes-resume",
         "resume inference persists the canonical sandbox identity before sandbox creation",
       );
-      assert.ok(
-        payload.registryUpdates.some(
-          (call) =>
-            call.name === "hermes-resume" &&
-            call.updates.provider === "hermes-provider" &&
-            call.updates.model === "moonshotai/kimi-k2.6",
-        ),
-        "Hermes setup should reconcile inference against the resolved sandbox name",
+      assert.deepEqual(
+        payload.registryUpdates,
+        [],
+        "resume must preserve the published registry route until sandbox backup succeeds",
       );
     },
   );

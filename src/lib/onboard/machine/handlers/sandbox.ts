@@ -221,7 +221,7 @@ export interface SandboxStateOptions<
   model: string;
   provider: string;
   hostLocalInferenceRouteOnly?: boolean;
-  deferredInferenceRoute?: () => Promise<void>;
+  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
   endpointUrl: string | null;
   compatibleEndpointReasoning: string | null;
   credentialEnv: string | null;
@@ -1288,8 +1288,13 @@ class SandboxStateFlow<
     return {
       ...createIntent,
       reservePublishedRouteAfterBackup: async () => {
-        await this.options.deferredInferenceRoute?.();
-        this.reserveCreateRouteForSession(sandboxName);
+        if (this.options.deferredInferenceRoute) {
+          await this.options.deferredInferenceRoute(() =>
+            this.reserveCreateRouteForSession(sandboxName),
+          );
+        } else {
+          this.reserveCreateRouteForSession(sandboxName);
+        }
       },
     };
   }
