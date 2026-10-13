@@ -519,7 +519,12 @@ NemoClaw records onboarding progress so interrupted runs can continue. Use `--re
 
 <AgentOnly variant="openclaw">
 
-OpenClaw onboarding does not enter the `complete` state until NemoClaw proves that the local CLI operator pairing is settled. Onboarding first observes the canonical local CLI device. If the device is pairing-only, the host runs one bounded request producer on the owning gateway. The in-sandbox watcher is the only component that approves the onboarding upgrade. The host observes through any same-device pending state and verifies the final settled state without sending an approval.
+OpenClaw onboarding does not enter the `complete` state until NemoClaw proves that the local CLI operator pairing is settled.
+Onboarding first observes the canonical local CLI device.
+If the verified device has pairing-only or pairing/read permissions and needs write access, the host runs one bounded request producer on the owning gateway.
+This includes a matching CLI device whose connection metadata was refreshed by a probe.
+The in-sandbox watcher is the only component that approves the onboarding upgrade.
+The host observes through any same-device pending state and verifies the final settled state without sending an approval.
 
 </AgentOnly>
 
