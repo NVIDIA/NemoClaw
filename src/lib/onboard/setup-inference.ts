@@ -809,6 +809,8 @@ export function createSetupInference(
         let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
+          // Local Ollama cleanup runs after this reservation; it must not unload
+          // a model while its source route remains published.
           const publishedSource = options.deferPublishedRouteReservation
             ? deps.getSandbox?.(name)
             : null;
@@ -817,6 +819,7 @@ export function createSetupInference(
             !hostLocalSelection &&
             credentialEnv !== deps.ollamaProxyCredentialEnv &&
             publishedSource &&
+            !isLocalOllamaRouteOwner(publishedSource) &&
             publishedSource.pendingRouteReservation !== true
           ) {
             // The sandbox phase owns the replacement reservation after its

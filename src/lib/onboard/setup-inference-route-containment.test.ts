@@ -794,6 +794,11 @@ describe("onboard shared gateway route containment", () => {
 
   it.each([
     { state: "published", entry: { name: "alpha" }, writes: 0 },
+    {
+      state: "published Ollama-owned",
+      entry: { name: "alpha", provider: "ollama-local", model: "llama3" },
+      writes: 1,
+    },
     { state: "pending", entry: { name: "alpha", pendingRouteReservation: true }, writes: 1 },
     { state: "absent", entry: null, writes: 1 },
   ])(

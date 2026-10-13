@@ -120,10 +120,15 @@ export interface ProviderInferenceSetupOptions {
   allowLegacyRecordedNoAuthEndpoint?: boolean;
 }
 
-function freshOnboardRouteReservationOptions(
+/** Defer fresh routes and incomplete native NVIDIA resumes until sandbox backup. */
+function preBackupRouteReservationOptions(
   effectiveResume: boolean,
+  sandboxStepComplete: boolean,
+  provider: string,
 ): Pick<ProviderInferenceSetupOptions, "deferPublishedRouteReservation"> {
-  return effectiveResume ? {} : { deferPublishedRouteReservation: true };
+  return !effectiveResume || (!sandboxStepComplete && provider.trim() === "nvidia-prod")
+    ? { deferPublishedRouteReservation: true }
+    : {};
 }
 
 function legacyRecordedNoAuthEndpointSetupOptions(options: {
@@ -1840,7 +1845,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
             ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
             reservationSessionId: session?.sessionId,
-            ...freshOnboardRouteReservationOptions(effectiveResume),
+            ...preBackupRouteReservationOptions(
+              effectiveResume,
+              session?.steps?.sandbox?.status === "complete",
+              selectedProvider,
+            ),
             ...resolveCachedHostLocalInferenceSetupOptions(confirmedSandboxName),
           };
           await deps.startRecordedStep("inference", { provider, model });
@@ -2146,7 +2155,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
         ...(freshManagedOllama ? { reservationSessionId: session?.sessionId } : {}),
-        ...freshOnboardRouteReservationOptions(effectiveResume),
+        ...preBackupRouteReservationOptions(
+          effectiveResume,
+          session?.steps?.sandbox?.status === "complete",
+          selectedProvider,
+        ),
         ...providerRecovery.setupOptions(
           recoveredRecordedProvider,
           confirmedSandboxName,
