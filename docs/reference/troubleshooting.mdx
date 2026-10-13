@@ -389,6 +389,8 @@ Repeated onboarding and resume keep registered ports; they stop if ownership of 
    ```
 
    A listener listing or empty output alone does not prove OpenShell ownership.
+   On Linux, NemoClaw treats known `lsof` mount warnings as harmless when `lsof` finds no listener.
+   Other `lsof` errors or unexpected output leave ownership unverified.
    NemoClaw also checks the listener's process identity and whether that identity remains stable.
    Do not stop a process or delete forwarding state whose owner you cannot verify.
 
