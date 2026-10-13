@@ -2696,6 +2696,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         ),
       );
     }
+    if (!liveExists && existingEntry) {
+      createIntent?.reservePublishedRouteAfterBackup?.();
+    }
     runForNewSandboxCreate(resumingVerifiedCreate, () => {
       revalidateSandboxIdentity(false, `creating sandbox '${sandboxName}'`);
       sandboxCreatePlanMaterialization.applyOrdinaryExtraProviderReconciliation(
