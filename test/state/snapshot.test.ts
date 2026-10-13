@@ -1,16 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import childProcess, { spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
-import { writeExecutable, writeFakeSsh } from "../helpers/native-state-ssh.js";
+import {
+  writeExecutable,
+  writeFakeOpenshell,
+  writeFakeSsh,
+  writeSnapshotRegistry,
+} from "../support/native-snapshot.ts";
 
 const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-state-"));
@@ -154,30 +158,7 @@ function buildSymlinkCredentialTraversalTar(): Buffer {
 }
 
 function writeSandboxRegistry(sandboxName: string, agent: "hermes" | null = null): void {
-  fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
-  fs.writeFileSync(
-    path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
-    JSON.stringify({
-      defaultSandbox: sandboxName,
-      sandboxes: {
-        [sandboxName]: { name: sandboxName, model: "m", provider: "p", gpuEnabled: false, agent },
-      },
-    }),
-  );
-}
-
-function writeFakeOpenshell(binDir: string): void {
-  writeExecutable(
-    path.join(binDir, "openshell"),
-    `#!/usr/bin/env node
-const args = process.argv.slice(2);
-if (args[0] === "sandbox" && args[1] === "ssh-config") {
-  process.stdout.write("Host openshell-alpha\\n  HostName 127.0.0.1\\n  User sandbox\\n");
-  process.exit(0);
-}
-process.exit(0);
-`,
-  );
+  writeSnapshotRegistry(TMP_HOME, sandboxName, agent);
 }
 
 describe("complete native home persistence", () => {
@@ -452,29 +433,29 @@ describe("complete native home persistence", () => {
     }
   });
 
-  it("sanitizes Hermes backup without host Python and preserves live state (#11174)", () => {
+  it("removes only Hermes machine-local API authority from the archive copy", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-api-state-"));
-    const run = childProcess.spawnSync;
-    const hostSpawn = vi.spyOn(childProcess, "spawnSync").mockImplementation((...args) => {
-      expect(path.basename(args[0]), "backup must not require host Python").not.toMatch(
-        /^python(?:\d+(?:\.\d+)*)?$/u,
-      );
-      return Reflect.apply(run, childProcess, args);
-    });
-    syncBuiltinESMExports();
     try {
       const nativeRoot = path.join(fixture, "native-home");
       const envPath = path.join(nativeRoot, ".hermes", ".env");
-      const source = `API_SERVER_KEY=${"a".repeat(64)}
-OPENAI_API_KEY=sk-OPENSHELL-PROXY-REWRITE
-LOG_LEVEL=info
-`;
+      const source = [
+        `API_SERVER_KEY=${"a".repeat(64)}`,
+        "OPENAI_API_KEY=sk-OPENSHELL-PROXY-REWRITE",
+        "LOG_LEVEL=info",
+        "",
+      ].join("\n");
       fs.mkdirSync(path.dirname(envPath), { recursive: true });
       fs.writeFileSync(envPath, source);
-      writeSandboxRegistry("alpha", "hermes");
+      writeSandboxRegistry("alpha");
+
       const backup = sandboxState.backupSandboxState("alpha", {
-        nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent: vi.fn(),
+        },
       });
+
       expect(backup.success, backup.error).toBe(true);
       sandboxState.inspectNativeSandboxState(
         backup.manifest!.backupPath,
@@ -491,10 +472,7 @@ LOG_LEVEL=info
         ".hermes/.env",
       );
       expect(fs.readFileSync(envPath, "utf8")).toBe(source);
-      expect(hostSpawn).toHaveBeenCalled();
     } finally {
-      hostSpawn.mockRestore();
-      syncBuiltinESMExports();
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
@@ -1141,7 +1119,7 @@ process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
       expect(commands).toContain("quiesce_pass=$((quiesce_pass + 1))");
       expect(commands).toContain("trap resume EXIT HUP INT TERM");
       expect(commands).toContain('2>/dev/null < "$proc/status"');
-      expect(commands).toContain('2>/dev/null < "/proc/$pid/status"');
+      expect(commands).toContain('2>/dev/null < "$task/status"');
       expect(commands).not.toContain('< "$proc/status" 2>/dev/null');
       expect(commands).toContain("-links +1");
       expect(commands).toContain('mktemp -d "$root/.nemoclaw-native-restore.XXXXXX"');

@@ -2,12 +2,49 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import childProcess from "node:child_process";
+import { vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { vi } from "vitest";
 
 export function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
+}
+
+export function writeSnapshotRegistry(
+  home: string,
+  sandboxName: string,
+  agent: "hermes" | null = null,
+): void {
+  fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, ".nemoclaw", "sandboxes.json"),
+    JSON.stringify({
+      defaultSandbox: sandboxName,
+      sandboxes: {
+        [sandboxName]: {
+          name: sandboxName,
+          model: "m",
+          provider: "p",
+          gpuEnabled: false,
+          agent,
+        },
+      },
+    }),
+  );
+}
+
+export function writeFakeOpenshell(binDir: string): void {
+  writeExecutable(
+    path.join(binDir, "openshell"),
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "sandbox" && args[1] === "ssh-config") {
+  process.stdout.write("Host openshell-alpha\\n  HostName 127.0.0.1\\n  User sandbox\\n");
+  process.exit(0);
+}
+process.exit(0);
+`,
+  );
 }
 
 export function writeFakeSsh(binDir: string): void {
@@ -45,6 +82,15 @@ if (command.includes("printf '%s\\\\0%s\\\\0'")) {
   process.exit(0);
 }
 if (command.includes("tar -C")) {
+  const procRoot = process.env.NEMOCLAW_TEST_NATIVE_PROC;
+  if (procRoot) {
+    const prelude = 'kill() { printf "%s\\\\n" "$*" >> "$NEMOCLAW_TEST_SIGNAL_LOG"; }; sleep() { :; }; tar() { command tar -C "$NEMOCLAW_TEST_NATIVE_ROOT" -cf - .; }; ';
+    const capture = spawnSync("sh", ["-c", prelude + command.replaceAll("/proc/", procRoot + "/")], {
+      stdio: ["ignore", "inherit", "inherit"],
+      timeout: 3000,
+    });
+    process.exit(capture.status ?? 95);
+  }
   const captureBytes = process.env.NEMOCLAW_TEST_CAPTURE_BYTES;
   if (captureBytes) {
     process.stdout.write(Buffer.alloc(Number(captureBytes), 120));
@@ -110,6 +156,28 @@ if (command.includes("nemoclaw-native-restore")) {
 process.exit(93);
 `,
   );
+}
+
+export function writeNativeQuiescenceStates(
+  procRoot: string,
+  leader: string,
+  first: string | null,
+  second: string | null,
+): void {
+  const pidRoot = path.join(procRoot, "424242");
+  fs.mkdirSync(path.join(pidRoot, "task"), { recursive: true });
+  fs.writeFileSync(
+    path.join(pidRoot, "status"),
+    `Uid:\t${process.getuid?.() ?? 0}\nState:\t${leader}\n`,
+  );
+  writeTaskState(path.join(pidRoot, "task", "424242"), first);
+  writeTaskState(path.join(pidRoot, "task", "424243"), second);
+}
+
+function writeTaskState(taskRoot: string, state: string | null): void {
+  if (state === null) return;
+  fs.mkdirSync(taskRoot);
+  if (state) fs.writeFileSync(path.join(taskRoot, "status"), `State:\t${state}\n`);
 }
 
 /** Use real tar with explicit member order to exercise archive-tail movement deterministically. */

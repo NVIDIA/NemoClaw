@@ -301,11 +301,7 @@ async function invokeNativeWeatherPlugin(
     ),
     { artifactName, env: env(), timeoutMs: 60_000 },
   );
-  await captureNativePluginFailureReadiness(sandbox, result, {
-    sandboxName: SANDBOX_NAME,
-    artifactName,
-    env: env(),
-  });
+  await captureNativePluginFailureReadiness(sandbox, result, SANDBOX_NAME, artifactName, env());
   const document = parseOpenClawJsonDocuments(result.stdout)[0] as
     | {
         ok?: boolean;
@@ -336,13 +332,15 @@ async function exerciseNativeOpenClawPluginVersion(
     },
   );
   expect(install.exitCode, resultText(install)).toBe(0);
+  const restartArtifact = `phase-4-native-plugin-gateway-restart-${version}`;
   const restart = await repoNemoclaw(
     host,
     [SANDBOX_NAME, "gateway", "restart"],
-    `phase-4-native-plugin-gateway-restart-${version}`,
+    restartArtifact,
     {},
     180_000,
   );
+  await captureNativePluginFailureReadiness(sandbox, restart, SANDBOX_NAME, restartArtifact, env());
   expect(restart.exitCode, resultText(restart)).toBe(0);
   await invokeNativeWeatherPlugin(sandbox, version, `phase-4-native-plugin-invoke-${version}`);
 }

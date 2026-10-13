@@ -9,7 +9,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
-import { useOrderedNativeCapture } from "../helpers/native-state-ssh.js";
+import { useOrderedNativeCapture } from "../support/native-snapshot.ts";
 
 const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-authority-"));

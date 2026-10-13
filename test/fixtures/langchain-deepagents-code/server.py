@@ -21,7 +21,7 @@ class ServerProcess:
         self.env = env
         self.outputs = []
         self._process = None
-        self._persistent_env_overrides = {}
+        self._persistent_env_overrides = dict(env)
         self._env_overrides = {}
         self._state_lock = threading.RLock()
 
@@ -29,9 +29,9 @@ class ServerProcess:
         with self._state_lock:
             cmd = self.cmd
             work_dir = self.work_dir
-            env = self.env
-            env.update(self._persistent_env_overrides)
-            env.update(self._env_overrides)
+            env = _server_env_with_overrides(
+                self._persistent_env_overrides, self._env_overrides
+            )
             self._log_file = subprocess.PIPE
             self._process = subprocess.Popen(  # noqa: S603
                 cmd,
@@ -40,6 +40,9 @@ class ServerProcess:
                 stdout=self._log_file,
                 stderr=subprocess.STDOUT,
                 start_new_session=(sys.platform != "win32"),
+                creationflags=(
+                    _WINDOWS_CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+                ),
             )
             process = self._process
             output, _ = process.communicate(timeout=10)
@@ -54,3 +57,10 @@ class ServerProcess:
                 process.terminate()
                 process.wait(timeout=10)
             await self.start()
+
+
+def _server_env_with_overrides(persistent, overrides):
+    env = _build_server_env()
+    env.update(persistent)
+    env.update(overrides)
+    return env
