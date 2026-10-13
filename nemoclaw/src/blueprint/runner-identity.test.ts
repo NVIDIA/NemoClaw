@@ -76,6 +76,7 @@ const { actionApply, actionPlan, actionRollback, actionStatus, loadBlueprint } =
 const matchingProvider = MATCHING_RUNTIME_PROVIDER_LISTING;
 const matchingInferenceProvider = MATCHING_INFERENCE_PROVIDER_LISTING;
 const matchingInferenceRoute = MATCHING_INFERENCE_ROUTE_LISTING;
+const runtimeIdentityProfilePath = "/blueprint/provider-profiles/okta-runtime-v1.yaml";
 
 const success = successResult();
 const providersV2Enabled = providersV2EnabledResult();
@@ -86,8 +87,16 @@ const identityPolicyAdditions = {
   },
 };
 
+function runtimeIdentityProfileExport(args: readonly string[]) {
+  return args.join(" ") === "provider profile export okta-runtime-v1 --output yaml"
+    ? { exitCode: 0, stdout: store.get(runtimeIdentityProfilePath)?.content ?? "", stderr: "" }
+    : null;
+}
+
 function responseQueue(
-  overrides: Array<[string, Array<{ exitCode?: number; stdout: string; stderr: string }>]>,
+  overrides: Array<
+    [string, Array<{ exitCode?: number; stdout: string; stderr: string; timedOut?: boolean }>]
+  >,
 ) {
   const responses = new Map([
     ["sandbox get test-sandbox", [failureResult("sandbox not found")]],
@@ -105,7 +114,11 @@ function responseQueue(
   ]);
   mockExeca.mockImplementation(async (_command: string, args: string[]) => {
     const command = args.join(" ");
-    const fallback = responses.get(command)?.shift() ?? fallbacks.get(command) ?? success;
+    const fallback =
+      responses.get(command)?.shift() ??
+      fallbacks.get(command) ??
+      runtimeIdentityProfileExport(args) ??
+      success;
     return fallback.exitCode === undefined
       ? fallback
       : resultWithBlueprintPolicy(args, {
@@ -155,8 +168,9 @@ function installPolicyIdentityResponses(policyWriteFailure?: string): void {
     runtimeProviderListing: matchingProvider,
     policyWriteFailure,
   });
-  mockExeca.mockImplementation(async (_command: string, args: string[]) =>
-    identityPolicyResult(args),
+  mockExeca.mockImplementation(
+    async (_command: string, args: string[]) =>
+      runtimeIdentityProfileExport(args) ?? identityPolicyResult(args),
   );
 }
 
@@ -170,12 +184,13 @@ describe("blueprint identity wrapper", () => {
     mockExeca.mockImplementation(async (_command: string, args: string[]) =>
       resultWithBlueprintPolicy(
         args,
-        args.join(" ") === "settings get --global --json" ? providersV2Enabled : success,
+        runtimeIdentityProfileExport(args) ??
+          (args.join(" ") === "settings get --global --json" ? providersV2Enabled : success),
       ),
     );
     process.env.NEMOCLAW_BLUEPRINT_PATH = "/blueprint";
     store.set("/blueprint", { type: "dir" });
-    store.set("/blueprint/provider-profiles/okta-runtime-v1.yaml", {
+    store.set(runtimeIdentityProfilePath, {
       type: "file",
       content: [
         "id: okta-runtime-v1",
@@ -347,6 +362,31 @@ describe("blueprint identity wrapper", () => {
       commands.indexOf(
         "provider refresh rotate acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
       ),
+    );
+  });
+
+  it("bounds a timed-out profile export before runtime provider creation", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      ["provider get acme-okta-runtime", [failureResult("provider not found")]],
+      [
+        "provider profile export okta-runtime-v1 --output yaml",
+        [{ stdout: "", stderr: "", timedOut: true }],
+      ],
+    ]);
+
+    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+      /profile 'okta-runtime-v1'.*OpenShell command timed out after 30 seconds/,
+    );
+    expect(mockExeca).toHaveBeenCalledWith(
+      "openshell",
+      ["provider", "profile", "export", "okta-runtime-v1", "--output", "yaml"],
+      expect.objectContaining({ timeout: 30_000, reject: false }),
+    );
+    expect(mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "))).not.toContain(
+      "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
     );
   });
 
@@ -1107,6 +1147,71 @@ describe("blueprint identity wrapper", () => {
     );
     expect(store.get(`/fakehome/.nemoclaw/state/runs/${plan.run_id}/rolled_back`)).toBeUndefined();
   });
+
+  it.each([true, false])(
+    "records attachment ownership before the advisory profile export when created: %s",
+    async (created) => {
+      process.env.OKTA_CLIENT_ID = "client-id";
+      process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+      process.env.OKTA_CLIENT_SECRET = "client-secret";
+      responseQueue([
+        [
+          "provider get acme-okta-runtime",
+          [
+            failureResult("provider not found"),
+            ...Array.from({ length: 5 }, () => ({
+              exitCode: 0,
+              stdout: matchingProvider,
+              stderr: "",
+            })),
+          ],
+        ],
+        [
+          "sandbox provider attach test-sandbox acme-okta-runtime",
+          [created ? success : failureResult("already attached")],
+        ],
+      ]);
+      const originalRun = mockExeca.getMockImplementation()!;
+      let attachmentSeen = false;
+      let signalExport!: () => void;
+      let releaseExport!: () => void;
+      const exportStarted = new Promise<void>((resolve) => {
+        signalExport = resolve;
+      });
+      const exportReleased = new Promise<void>((resolve) => {
+        releaseExport = resolve;
+      });
+      const pauseExport = () => {
+        signalExport();
+        return exportReleased;
+      };
+      mockExeca.mockImplementation(async (command: string, args: string[]) => {
+        const commandText = args.join(" ");
+        attachmentSeen ||= commandText === "sandbox provider attach test-sandbox acme-okta-runtime";
+        await (attachmentSeen &&
+        commandText === "provider profile export okta-runtime-v1 --output yaml"
+          ? pauseExport()
+          : Promise.resolve());
+        return originalRun(command, args);
+      });
+
+      const apply = actionApply("default", blueprint({ identity: oktaIdentity() }));
+      try {
+        await exportStarted;
+        const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
+        expect(planEntry?.content).toBeDefined();
+        expect(JSON.parse(planEntry!.content!).identity.attachment_created).toBe(created);
+        expect(
+          mockExeca.mock.calls.some(([, args]) =>
+            (args as string[]).join(" ").startsWith("provider refresh rotate "),
+          ),
+        ).toBe(false);
+      } finally {
+        releaseExport();
+      }
+      await apply;
+    },
+  );
 
   it.each([true, false])(
     "preserves runtime identity when other resources are owned: %s (#9833)",

@@ -517,12 +517,21 @@ docker container inspect \
 
 Accept the result when the command contains `--max-num-seqs 2`.
 
-NemoClaw requires all of this N1x identity evidence:
+NemoClaw requires native Linux on `arm64` and a display-class PCI device with NVIDIA vendor ID `10de`.
+It accepts either identity path:
 
-- The host runs Linux on `arm64`.
-- `/etc/fastos-release` is a regular file of 1 through 4,096 bytes that is owned by UID 0 and GID 0.
-- The marker is not a symbolic link, grants no group or world write access, and contains exactly one `NAME="N1x FASTOS"` line.
-- A display-class PCI device has NVIDIA vendor ID `10de`.
+- The legacy path requires `/etc/fastos-release` to be a regular file of 1 through 4,096 bytes, owned by UID and GID 0.
+  The marker must not be a symbolic link or grant group or world write access.
+  It must contain exactly one `NAME="N1x FASTOS"` line and no NUL or carriage-return byte.
+- If `/etc/fastos-release` is absent, the display device must match the [N1x PCI policy](https://github.com/NVIDIA/NemoClaw/blob/main/bin/lib/n1x-pci-policy.json).
+  The policy distinguishes documented N1x variants from QA-observed prototype IDs.
+  This path infers N1x identity from bounded PCI evidence.
+
+[QA confirmation](https://github.com/NVIDIA/NemoClaw/issues/12737#issuecomment-6130441611) at commit `caf6f19` reported that Deferred Express was offered and onboarding completed on one Concept ISO 1.0.2 host with prototype PCI device `2e2a`.
+This confirms that configuration's Express onboarding; N1x remains Deferred and broader platform qualification is pending.
+
+An existing invalid, linked, or unreadable marker does not enable PCI inference.
+Recognized Spark, Station, or Jetson firmware retains its existing classification.
 
 NemoClaw parses `/etc/fastos-release` as inert text and does not source it.
 The classifier does not pin a FastOS version, kernel version, driver version, firmware version, or GPU UUID.

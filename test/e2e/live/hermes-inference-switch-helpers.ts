@@ -717,7 +717,7 @@ export async function hermesGatewayPid(
   return await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
-      "ps -eo pid=,comm=,args= | awk '$0 ~ /hermes/ && $0 ~ /gateway run/ { print $1; exit }'",
+      "ps -eo pid=,comm=,args= | awk '$2 ~ /^(hermes([.]real)?|python[0-9.]*)$/ && $0 ~ /[h]ermes/ && $0 ~ /gateway[ ]run/ { print $1 }'",
     ),
     { artifactName, env: env(), timeoutMs: 30_000 },
   );
@@ -734,14 +734,11 @@ export async function envHash(
   });
 }
 
-export function maybeAssertPidStable(
-  before: ShellProbeResult,
-  after: ShellProbeResult,
-  assertStable: (a: string, b: string) => void,
-): void {
-  const beforePid = before.stdout.trim();
-  const afterPid = after.stdout.trim();
-  beforePid && afterPid && assertStable(afterPid, beforePid);
+export function parseHermesGatewayPid(
+  result: Pick<ShellProbeResult, "exitCode" | "stdout">,
+): string | undefined {
+  const pid = result.stdout.trim();
+  return result.exitCode === 0 && /^[1-9][0-9]*$/u.test(pid) ? pid : undefined;
 }
 
 export function expectedBaseUrl(): string {
