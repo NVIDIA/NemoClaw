@@ -1920,7 +1920,7 @@ $$nemoclaw <name> logs --tail 50
 
 These logs combine gateway and OpenShell entries. Match the denial's destination and time to the failed request before adding a preset. A denial for another request does not confirm this request was blocked. If the last 50 lines have no match, inspect more log lines before deciding why the request failed.
 
-Reading sandbox logs, or checking for a policy denial after a failed `$$nemoclaw <name> exec` when policy hints are enabled, attempts to enable OpenShell OCSF JSON audit logging for that sandbox. NemoClaw prints a notice before updating `ocsf_json_enabled`.
+Reading sandbox logs, or checking for a policy denial after a failed `$$nemoclaw <name> exec` when policy hints are enabled, attempts to enable OpenShell OCSF JSON audit logging for that sandbox. NemoClaw prints a notice before attempting to update `ocsf_json_enabled`.
 
 To keep the current OpenShell audit setting, set `NEMOCLAW_NO_AUTO_AUDIT_LOGS=1` before running either command. Policy denial hints may be unavailable if audit logging is disabled. You can enable it explicitly with `openshell settings set <name> --key ocsf_json_enabled --value true`.
 
