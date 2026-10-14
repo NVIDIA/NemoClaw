@@ -670,6 +670,8 @@ exit 42`,
     });
 
     expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("nim-storage-snapshot phase=readiness-1");
+    expect(result.stderr).toContain("nim-storage-snapshot phase=readiness-final");
     expect(result.stderr).toContain("provider-native-log [REDACTED]");
     expect(result.stderr).toContain("managed-image-nim-not-ready attempts=1");
     expect(result.stderr).not.toContain(sensitiveValue);
