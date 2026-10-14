@@ -1283,7 +1283,8 @@ function writePreparedReceipt(
   return committed;
 }
 
-function createDockerLlamaCppLifecycleForTopology(
+/** Configure and control the native llama.cpp Docker container. */
+export function createDockerLlamaCppManagedLifecycle(
   options: DockerLlamaCppManagedLifecycleOptions,
   dependencies: DockerLlamaCppManagedLifecycleDependencies = {},
 ): DockerLlamaCppManagedLifecycle {
@@ -1966,12 +1967,4 @@ function createDockerLlamaCppLifecycleForTopology(
       });
     },
   });
-}
-
-/** Configure and control the native llama.cpp Docker container. */
-export function createDockerLlamaCppManagedLifecycle(
-  options: DockerLlamaCppManagedLifecycleOptions,
-  dependencies: DockerLlamaCppManagedLifecycleDependencies = {},
-): DockerLlamaCppManagedLifecycle {
-  return createDockerLlamaCppLifecycleForTopology(options, dependencies);
 }

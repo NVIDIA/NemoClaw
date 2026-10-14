@@ -549,12 +549,10 @@ describe("managed llama.cpp operation probe strategy", () => {
 
     operation.createLlamaCppLifecycle({
       ...input,
-      loopbackProbe: "host-process",
     });
 
     expect(createLifecycle).toHaveBeenCalledExactlyOnceWith({
       ...input,
-      loopbackProbe: "host-process",
     });
   });
 

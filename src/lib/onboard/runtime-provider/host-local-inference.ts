@@ -294,10 +294,6 @@ export interface HostLocalLlamaCppLifecycleInput {
   readonly plan: LlamaCppGgufCachePlan;
   readonly probeImageReference: string;
   readonly readinessTimeoutSeconds: number;
-  /**
-   * Select the native host-loopback HTTP health proof from this CLI process.
-   */
-  readonly loopbackProbe?: "host-process";
 }
 
 export interface HostLocalLlamaCppLifecycle {

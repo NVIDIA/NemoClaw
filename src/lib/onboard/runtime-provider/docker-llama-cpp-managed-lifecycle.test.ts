@@ -186,7 +186,7 @@ function hostProbeLifecycle(
   const fixture = dockerFixture();
   const hostLoopbackProbe = vi.fn<HostLoopbackProbe>(probe);
   const lifecycle = createLifecycle(
-    { ...options(fixture, store), loopbackProbe: "host-process", readinessTimeoutSeconds },
+    { ...options(fixture, store), readinessTimeoutSeconds },
     { hostLoopbackProbe },
   );
   return { fixture, hostLoopbackProbe, lifecycle, store };
@@ -390,13 +390,12 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(failure?.message).not.toContain("0.0.0.0/0");
   });
 
-  it("probes the native published endpoint from the host process when the lifecycle selects it", () => {
+  it("probes the native published endpoint through the default host curl boundary", () => {
     const probe = vi.mocked(httpProbe.runCurlProbe);
     const fixture = dockerFixture();
     const store = journalStore();
     const lifecycle = createLifecycle({
       ...options(fixture, store),
-      loopbackProbe: "host-process",
       readinessTimeoutSeconds: 86_400,
     });
 
@@ -1347,7 +1346,6 @@ it("keeps a former-image WSL receipt inspectable and removable without image rep
     {
       ...former,
       bindings: { ...former.bindings },
-      loopbackProbe: "host-process",
     },
     { hostLoopbackProbe: () => ({ status: 0, stdout: "", stderr: "" }) },
   );
@@ -1375,7 +1373,6 @@ it("recovers an unfinished former-image WSL journal without creating a new runti
     {
       ...former,
       bindings: { ...former.bindings },
-      loopbackProbe: "host-process",
     },
     { hostLoopbackProbe: () => ({ status: 0, stdout: "", stderr: "" }) },
   );
@@ -1395,7 +1392,6 @@ it("accepts a newly pinned native image (#12285)", () => {
     {
       ...base,
       bindings: { ...base.bindings, imageReference: nextImage },
-      loopbackProbe: "host-process",
     },
     { hostLoopbackProbe: () => ({ status: 0, stdout: "", stderr: "" }) },
   );
