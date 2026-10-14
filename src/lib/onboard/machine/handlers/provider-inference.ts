@@ -1302,6 +1302,10 @@ function createPersistedPiRouteSelector(
     isPersistedPiSharedLocalInferenceRoute(name ? getRecorded?.(name) : null, selection);
 }
 
+function preservedPiRouteSetupOption(preserve: boolean) {
+  return preserve ? { preserveLegacyPiSharedLocalRoute: true } : {};
+}
+
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gatewayName,
   resume,
@@ -2218,11 +2222,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       );
       const inferenceOptions = {
         ...nativeLocalAgentOptions(agent, selectedProvider, endpointUrl),
-        preserveLegacyPiSharedLocalRoute: preservesLegacyPiRoute(confirmedSandboxName, {
-          provider: selectedProvider,
-          model: selectedModel,
-          endpointUrl,
-        }),
+        ...preservedPiRouteSetupOption(
+          preservesLegacyPiRoute(confirmedSandboxName, {
+            provider: selectedProvider,
+            model: selectedModel,
+            endpointUrl,
+          }),
+        ),
         gatewayName,
         allowToolsIncompatible,
         ...legacyRecordedNoAuthEndpointSetupOptions({
