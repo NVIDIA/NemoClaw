@@ -325,10 +325,14 @@ fn silent_cluster(scripted: &Scripted, document: &Document) -> (TcpListener, Pat
     (listener, kubeconfig)
 }
 
-/// The address of an API server that refuses connections.
-fn refused_server() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    format!("http://{}", listener.local_addr().unwrap())
+/// The address of an API server that refuses connections, and the socket that
+/// keeps it refusing: bound but never listening, so connections are refused and
+/// no other test's server can take the port while the socket lives.
+fn refused_server() -> (tokio::net::TcpSocket, String) {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let address = format!("http://{}", socket.local_addr().unwrap());
+    (socket, address)
 }
 
 /// A cancel that arrives while the gateway connection waits for the cluster,
@@ -454,7 +458,8 @@ async fn a_missing_receipt_after_the_runtime_stage_settles_keeps_its_error_class
     let scripted = fresh();
     // The gateway read fails at once, so the server is never contacted.
     let kubeconfig = scripted.path("kubeconfig");
-    write_kubeconfig(&kubeconfig, &refused_server());
+    let (_reserved, server) = refused_server();
+    write_kubeconfig(&kubeconfig, &server);
 
     assert_failed_connection_keeps_its_class(&scripted, &kubeconfig, ObservationError::Incomplete)
         .await;
@@ -466,7 +471,8 @@ async fn a_refused_connection_after_the_runtime_stage_settles_keeps_its_error_cl
     let scripted = fresh();
     seed_receipt(&scripted, &original());
     let kubeconfig = scripted.path("kubeconfig");
-    write_kubeconfig(&kubeconfig, &refused_server());
+    let (_reserved, server) = refused_server();
+    write_kubeconfig(&kubeconfig, &server);
 
     assert_failed_connection_keeps_its_class(&scripted, &kubeconfig, ObservationError::Transport)
         .await;

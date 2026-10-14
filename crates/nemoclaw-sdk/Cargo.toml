@@ -24,7 +24,7 @@ base64 = "0.22.1"
 nemoclaw-provider = { path = "../nemoclaw-provider" }
 reqwest.workspace = true
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["net", "test-util"] }
 
 [features]
 # Setup methods for nemoclaw-e2e's recovery scenarios; see
