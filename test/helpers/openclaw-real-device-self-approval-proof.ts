@@ -1176,8 +1176,11 @@ if (
   requireIdlePairingJournal(fixture.journalPath, "real-dist rejected-rename rollback journal");
 }
 
-function runSqliteDeviceSelfApprovalProof(options: ProofOptions): void {
-  const stateDir = path.join(options.tmp, "device-approval-sqlite-state");
+function runSqliteDeviceSelfApprovalProof(options: ProofOptions, readBaseline = false): void {
+  const stateDir = path.join(
+    options.tmp,
+    readBaseline ? "device-approval-probe-state" : "device-approval-sqlite-state",
+  );
   fs.mkdirSync(stateDir, { recursive: true });
   const proof = spawnSync(
     options.nodeExecutable,
@@ -1226,11 +1229,12 @@ const request = async (scopes) => (await pairing.h({
   roles: ["operator"],
   scopes,
 }, stateDir)).request;
-const initial = await request(["operator.pairing"]);
+const initialScopes = ${readBaseline ? '["operator.pairing", "operator.read"]' : '["operator.pairing"]'};
+const initial = await request(initialScopes);
 const initialApproval = await approval.n(initial.requestId, { callerScopes: ["operator.admin"] }, stateDir);
 if (initialApproval?.status !== "approved") throw new Error("initial SQLite pairing failed");
 const initialToken = initialApproval.device?.tokens?.operator;
-if (!initialToken?.token || JSON.stringify([...initialToken.scopes].toSorted()) !== JSON.stringify(["operator.pairing"])) throw new Error("initial SQLite token invalid");
+if (!initialToken?.token || JSON.stringify([...initialToken.scopes].toSorted()) !== JSON.stringify(initialScopes)) throw new Error("initial SQLite token invalid");
 const stored = auth.l({
   deviceId,
   role: "operator",
@@ -1239,6 +1243,12 @@ const stored = auth.l({
   env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
 });
 if (stored?.token !== initialToken.token) throw new Error("initial SQLite stored auth missing");
+// This is the native metadata operation used by the authenticated probe handshake.
+if (${readBaseline}) {
+  await pairing.v(deviceId, { clientId: "cli", clientMode: "probe" }, stateDir);
+  const probed = (await pairing.c(stateDir)).paired.find((device) => device.deviceId === deviceId);
+  if (probed?.clientMode !== "probe") throw new Error("native probe metadata refresh missing");
+}
 const upgrade = await request(["operator.pairing", "operator.write"]);
 if (upgrade.isRepair !== true) throw new Error("SQLite scope upgrade was not classified as repair");
 const identity = {
@@ -1275,6 +1285,14 @@ const afterPaired = afterList.paired.find((device) => device.deviceId === device
 const afterStored = auth.r({ deviceId, role: "operator", env: { ...process.env, OPENCLAW_STATE_DIR: stateDir } });
 if (afterList.pending.some((pending) => pending.requestId === upgrade.requestId) || afterPaired?.tokens?.operator?.token !== nextToken.token || afterStored?.token !== nextToken.token || JSON.stringify([...afterStored.scopes].toSorted()) !== JSON.stringify(expectedScopes)) {
   throw new Error("bounded SQLite pairing and stored auth were not published atomically");
+}
+if (${readBaseline}) {
+  if (JSON.stringify([...(afterPaired?.scopes ?? [])].toSorted()) !== JSON.stringify(expectedScopes)) throw new Error("native read-baseline approval did not settle paired scopes");
+  if (JSON.stringify([...(afterPaired?.approvedScopes ?? [])].toSorted()) !== JSON.stringify(expectedScopes)) throw new Error("native read-baseline approval did not settle approved scopes");
+  await pairing.v(deviceId, { clientId: "cli", clientMode: "probe" }, stateDir);
+  const reprobed = (await pairing.c(stateDir)).paired.find((device) => device.deviceId === deviceId);
+  const probeStored = auth.r({ deviceId, role: "operator", env: { ...process.env, OPENCLAW_STATE_DIR: stateDir } });
+  if (reprobed?.clientMode !== "probe" || reprobed?.tokens?.operator?.token !== nextToken.token || probeStored?.token !== nextToken.token) throw new Error("native probe changed settled credentials");
 }
 const staleRequest = await request(["operator.pairing", "operator.write"]);
 let staleRejected = false;
@@ -1729,6 +1747,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
     );
     requireSuccess(install, "install reviewed OpenClaw runtime dependencies without scripts");
     runSqliteDeviceSelfApprovalProof(options);
+    runSqliteDeviceSelfApprovalProof(options, true);
     return;
   }
   requireExactlyOneDistSource(sources, "atomic JSON state rename runtime", [

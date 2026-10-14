@@ -279,6 +279,7 @@ export function createDeps(options: {
   prepareRunOpenshell?: () => void;
   rewriteConfigUrlsWithDnsPinning?: (value: ConfigValue) => Promise<ConfigValue>;
   resolveCredentialValue?: InferenceSetDeps["resolveCredentialValue"];
+  readNativeNvidiaCredentialHandle?: InferenceSetDeps["readNativeNvidiaCredentialHandle"];
   ensureHttpsPinRuntimeAdapter?: EnsureHttpsPinRuntimeAdapterFn;
   revokeHttpsPinRuntimeAdapterRoute?: InferenceSetDeps["revokeHttpsPinRuntimeAdapterRoute"];
   probeSandboxRoute?: InferenceSetDeps["probeSandboxRoute"];
@@ -305,6 +306,7 @@ export function createDeps(options: {
     prepareRunOpenshell: ReturnType<typeof vi.fn>;
     rewriteConfigUrlsWithDnsPinning: ReturnType<typeof vi.fn>;
     resolveCredentialValue: ReturnType<typeof vi.fn>;
+    readNativeNvidiaCredentialHandle: ReturnType<typeof vi.fn>;
     ensureHttpsPinRuntimeAdapter: ReturnType<typeof vi.fn>;
     revokeHttpsPinRuntimeAdapterRoute: ReturnType<typeof vi.fn>;
     probeSandboxRoute: ReturnType<typeof vi.fn>;
@@ -355,6 +357,10 @@ export function createDeps(options: {
     resolveCredentialValue: vi.fn(
       options.resolveCredentialValue ??
         ((credentialEnv: string) => process.env[credentialEnv] ?? "test-credential-value"),
+    ),
+    readNativeNvidiaCredentialHandle: vi.fn(
+      options.readNativeNvidiaCredentialHandle ??
+        (async () => "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY"),
     ),
     ensureHttpsPinRuntimeAdapter: vi.fn(
       options.ensureHttpsPinRuntimeAdapter ??
@@ -479,6 +485,7 @@ export function createDeps(options: {
     resolveContextWindowForModel: calls.resolveContextWindowForModel,
     rewriteConfigUrlsWithDnsPinning: calls.rewriteConfigUrlsWithDnsPinning,
     resolveCredentialValue: calls.resolveCredentialValue,
+    readNativeNvidiaCredentialHandle: calls.readNativeNvidiaCredentialHandle,
     ensureHttpsPinRuntimeAdapter:
       calls.ensureHttpsPinRuntimeAdapter as unknown as EnsureHttpsPinRuntimeAdapterFn,
     revokeHttpsPinRuntimeAdapterRoute:

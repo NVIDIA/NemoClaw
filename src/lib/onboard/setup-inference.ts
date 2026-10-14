@@ -1036,8 +1036,6 @@ export function createSetupInference(
                 },
                 hermesProviderAuth: deps.hermesProviderAuth,
                 getHermesToolGatewayBroker: deps.getHermesToolGatewayBroker,
-                providerExistsInGateway: (name: string) =>
-                  deps.providerExistsInGateway(name, gatewayName),
                 normalizeHermesAuthMethod: deps.normalizeHermesAuthMethod,
                 resolveHermesNousApiKey: deps.resolveHermesNousApiKey,
                 checkHermesProviderStoreReachable: deps.checkHermesProviderStoreReachable,

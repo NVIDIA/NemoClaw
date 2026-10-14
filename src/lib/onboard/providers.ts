@@ -454,7 +454,8 @@ async function upsertProvider(
 ) {
   const operation = `inspect or change provider ${JSON.stringify(name)}`;
   const revalidate = () => options.revalidateSandboxIdentity?.(operation);
-  const adapter = createCliOpenShellProviderAdapter({ run: _runOpenshell });
+  const adapter =
+    options.providerAdapter ?? createCliOpenShellProviderAdapter({ run: _runOpenshell });
   let observed = null;
   if (options.knownExists === undefined || options.requireExactBinding) {
     revalidate();

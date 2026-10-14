@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { VerifyDeploymentResult } from "../../verify-deployment";
 import {
+  OpenClawPairingIncompatibleError,
   OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS,
   type OpenClawPairingSettlementObservation,
 } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
@@ -100,6 +101,78 @@ describe("ordinary OpenClaw pairing settlement", () => {
       "/sandbox/.openclaw",
     );
     expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes incompatible pairing from a missing device (#13100)", async () => {
+    const scope = ordinaryPairingDeps({
+      observePairing: vi.fn(() => {
+        throw new OpenClawPairingIncompatibleError();
+      }),
+    });
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "pairing-incompatible",
+    });
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+    expect(scope.deps.observePairing).toHaveBeenCalledOnce();
+    expect(scope.deps.sleep).not.toHaveBeenCalled();
+  });
+
+  it.each([1, 2])(
+    "retains incompatible evidence through transient reads after attempt %i (#13100)",
+    async (attempt) => {
+      let calls = 0;
+      const scope = ordinaryPairingDeps({
+        observePairing: vi.fn(() => {
+          throw ++calls === attempt
+            ? new OpenClawPairingIncompatibleError()
+            : new Error("state changing");
+        }),
+      });
+      await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+        kind: "incomplete",
+        reason: "pairing-incompatible",
+      });
+      expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts successful observation after incompatible and transient reads (#13100)", async () => {
+    const scope = ordinaryPairingDeps({
+      observePairing: vi
+        .fn(() => SETTLED)
+        .mockImplementationOnce(() => {
+          throw new Error("state changing");
+        })
+        .mockImplementationOnce(() => {
+          throw new OpenClawPairingIncompatibleError();
+        })
+        .mockImplementationOnce(() => {
+          throw new Error("state changing");
+        }),
+    });
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+  });
+
+  it("warms up a verified probe baseline and reuses settlement on retry (#13100)", async () => {
+    const scope = ordinaryPairingDeps({
+      observePairing: vi
+        .fn()
+        .mockReturnValueOnce({
+          ...PAIRING_ONLY,
+          state: "scope-upgrade-required",
+        })
+        .mockReturnValue(SETTLED),
+    });
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
   it("reuses an exact pending upgrade without running another producer (#10014)", async () => {
