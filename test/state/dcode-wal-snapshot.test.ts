@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wal-snapshot-"));
@@ -71,6 +71,45 @@ describe("DCode WAL snapshot persistence", () => {
       }
     },
   );
+
+  it("stops a sidecar scan at the deadline and removes the unpublished backup", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-sidecar-deadline-"));
+    const backupsRoot = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups", "alpha");
+    const before = fs.existsSync(backupsRoot) ? fs.readdirSync(backupsRoot) : [];
+    try {
+      const nativeRoot = path.join(fixture, "native-home");
+      const databasePath = path.join(nativeRoot, ".deepagents", ".state", "sessions.db");
+      fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+      const database = new DatabaseSync(databasePath);
+      database.exec("CREATE TABLE sessions (content TEXT)");
+      database.close();
+      fs.writeFileSync(`${databasePath}-wal`, Buffer.alloc(4 * 1024 * 1024));
+
+      const start = Date.now();
+      let now = start;
+      const clock = vi.spyOn(Date, "now").mockImplementation(() => (now += 100));
+      let backup: ReturnType<typeof sandboxState.backupSandboxState>;
+      try {
+        backup = sandboxState.backupSandboxState("alpha", {
+          deadlineMs: start + 2_000,
+          nativeStateSource: {
+            root: "/sandbox",
+            directory: nativeRoot,
+            assertCurrent: () => undefined,
+          },
+        });
+      } finally {
+        clock.mockRestore();
+      }
+
+      expect(backup.success).toBe(false);
+      expect(backup.error).toContain("credential scan exceeded the backup deadline");
+      expect(backup.error).toContain(".deepagents/.state/sessions.db-wal");
+      expect(fs.readdirSync(backupsRoot)).toEqual(before);
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
 
   it("validates and preserves a live database as one SQLite state family", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wal-state-"));
