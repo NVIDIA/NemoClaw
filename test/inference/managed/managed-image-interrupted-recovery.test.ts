@@ -257,6 +257,22 @@ it("preserves state when the existing volume verifier rejects a foreign volume",
   expect(fs.existsSync(path.join(scope.stateDir, "qualification-owner.json"))).toBe(true);
 });
 
+it("accepts an exact bounded marker across short descriptor reads", async () => {
+  const read = fs.readSync;
+  const partialRead = vi
+    .spyOn(fs, "readSync")
+    .mockImplementation(((
+      fd: number,
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) => read(fd, buffer, offset, Math.min(length, 7), position)) as typeof fs.readSync);
+  await cleanupInterruptedManagedImageOpenShellE2e(input, scope);
+  expect(partialRead.mock.calls.length).toBeGreaterThan(1);
+  expect(fs.existsSync(scope.stateDir)).toBe(false);
+});
+
 it("retains recovery ownership when sandbox deletion fails", async () => {
   commands.mockReset().mockReturnValueOnce({ status: 1, stdout: "", stderr: "denied" } as any);
   await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(

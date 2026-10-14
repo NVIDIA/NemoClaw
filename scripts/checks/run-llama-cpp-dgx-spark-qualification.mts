@@ -1458,12 +1458,16 @@ export async function runQualificationLauncher(): Promise<void> {
       "interrupted",
       cleanupComplete,
     );
-    writeReceipt(
-      path.join(path.dirname(invocation.output), "failure.json"),
-      diagnostic,
-      names.tempRoot,
-    );
     process.exitCode = interrupted === "SIGINT" ? 130 : 143;
+    try {
+      writeReceipt(
+        path.join(path.dirname(invocation.output), "failure.json"),
+        diagnostic,
+        names.tempRoot,
+      );
+    } catch {
+      process.stderr.write("ERROR: Spark interruption diagnostic could not be retained.\n");
+    }
   } catch {
     process.stderr.write("ERROR: Spark launcher failed; inspect this run's owned resources.\n");
     process.exitCode = 1;

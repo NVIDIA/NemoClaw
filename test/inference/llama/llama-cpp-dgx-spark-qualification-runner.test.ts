@@ -137,11 +137,34 @@ it("retains a phase-specific failure without leaking exception data", async () =
   }
 });
 
-it
-  .runIf(process.platform === "linux" && process.arch === "arm64")
-  .each(["SIGINT", "SIGTERM"] as const)(
-  "interrupts a real synchronous worker command with %s and retains only failure evidence",
-  async (signal) => {
+const readableInterruptionDiagnostic = {
+  label: "retained",
+  prepare: (_file: string) => undefined,
+  assert: (file: string, owner: string) => {
+    const source = fs.readFileSync(file, "utf8");
+    expect(source).not.toContain("private-test-key");
+    expect(JSON.parse(source)).toMatchObject({
+      phase: "interrupted",
+      status: "failed",
+      owner,
+      cleanupComplete: true,
+    });
+  },
+};
+const unavailableInterruptionDiagnostic = {
+  label: "unavailable",
+  prepare: (file: string) => fs.mkdirSync(file),
+  assert: (file: string) => expect(fs.statSync(file).isDirectory()).toBe(true),
+};
+
+it.runIf(process.platform === "linux" && process.arch === "arm64").each([
+  ["SIGINT", readableInterruptionDiagnostic],
+  ["SIGTERM", readableInterruptionDiagnostic],
+  ["SIGINT", unavailableInterruptionDiagnostic],
+  ["SIGTERM", unavailableInterruptionDiagnostic],
+] as const)(
+  "interrupts a real worker with %s (diagnostic: %s) without claiming success",
+  async (signal, diagnostic) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-signal-process-"));
     const owner = expectedRegistryOwner(RUN_ID, RUN_ATTEMPT);
     const stateFile = path.join(root, "resources.json");
@@ -155,6 +178,7 @@ it
     };
     fs.writeFileSync(stateFile, JSON.stringify(resources));
     fs.mkdirSync(tempRoot);
+    diagnostic.prepare(path.join(root, "failure.json"));
     fs.writeFileSync(path.join(tempRoot, "api-key"), "private-test-key", { mode: 0o600 });
     const docker = path.join(root, "docker");
     fs.writeFileSync(
@@ -217,14 +241,7 @@ if (args.includes("inspect")) {
       });
       expect(fs.existsSync(tempRoot)).toBe(false);
       expect(fs.existsSync(path.join(root, "receipt.json"))).toBe(false);
-      const failureSource = fs.readFileSync(path.join(root, "failure.json"), "utf8");
-      expect(failureSource).not.toContain("private-test-key");
-      expect(JSON.parse(failureSource)).toMatchObject({
-        phase: "interrupted",
-        status: "failed",
-        owner,
-        cleanupComplete: true,
-      });
+      diagnostic.assert(path.join(root, "failure.json"), owner);
       const blockedPid = JSON.parse(fs.readFileSync(marker, "utf8")).pid;
       expect(() => process.kill(blockedPid, 0)).toThrow();
       const port = JSON.parse(fs.readFileSync(marker, "utf8")).port;

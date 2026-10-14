@@ -172,7 +172,12 @@ export async function cleanupInterruptedManagedImageOpenShellE2e(
     if (!marker.isFile() || marker.size > 8192)
       throw new Error("managed recovery identity mismatch");
     const buffer = Buffer.alloc(8193);
-    const bytes = fs.readSync(descriptor, buffer, 0, buffer.length, 0);
+    let bytes = 0;
+    while (bytes < buffer.length) {
+      const count = fs.readSync(descriptor, buffer, bytes, buffer.length - bytes, bytes);
+      if (count === 0) break;
+      bytes += count;
+    }
     if (bytes > 8192 || buffer.subarray(0, bytes).toString("utf8") !== expected)
       throw new Error("managed recovery identity mismatch");
   } finally {

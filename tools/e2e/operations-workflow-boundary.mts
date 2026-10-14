@@ -1362,7 +1362,7 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       }
       if (
         job.if !==
-        "${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && (contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference') || contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'llama-cpp-dgx-spark-qualification'))))) }}"
+        "${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && (contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference') || contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'llama-cpp-dgx-spark-qualification')))) }}"
       ) {
         errors.push("report-to-pr must run only for manual workflow dispatches");
       }
