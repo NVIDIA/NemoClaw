@@ -350,7 +350,7 @@ fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
         .iter()
         .find(|target| target.kind == "sandbox")
         .unwrap();
-    assert_eq!(sandbox.values["agent_runtime"], "fabric");
+    assert!(!sandbox.values.contains_key("agent_runtime"));
     let settings: serde_json::Value = serde_json::from_str(
         &targets
             .iter()
@@ -365,9 +365,15 @@ fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
         "fixture-value"
     );
     let graph = compile(&document, &ownership_generations(), "0.1.0").unwrap();
+    // The sandbox launches what Fabric computed; it holds no agent runtime of its own.
     assert_eq!(
-        graph["resource"]["openshell_sandbox"]["assistant"]["agent_runtime"],
-        "fabric"
+        graph["resource"]["openshell_sandbox"]["assistant"]["launch_json"],
+        "${data.fabric_capabilities.sandbox_0.launch_json}"
+    );
+    assert!(
+        graph["resource"]["openshell_sandbox"]["assistant"]
+            .get("agent_runtime")
+            .is_none()
     );
 }
 
@@ -407,7 +413,7 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
     let graph = compile(&changed, &generations, "0.1.0").unwrap();
     for name in ["assistant", "second"] {
         assert!(
-            graph["resource"]["openshell_sandbox"][name]["runtime_json"]
+            graph["resource"]["openshell_sandbox"][name]["launch_json"]
                 .as_str()
                 .unwrap()
                 .contains("fabric_capabilities")

@@ -21,15 +21,13 @@ pub struct SandboxReadinessDataSource(pub Arc<GatewayClient>);
 /// The sandbox and configuration attributes readiness reads, in schema order:
 /// the sandbox's location and identity, its agent runtime, and the
 /// configuration the host must report.
-const BINDING: [&str; 9] = [
+const BINDING: [&str; 7] = [
     "workspace",
     "name",
     "id",
     "owner",
     "generation",
-    "agent_name",
-    "agent_runtime",
-    "runtime_json",
+    "launch_json",
     "config_json",
 ];
 
@@ -42,9 +40,7 @@ pub struct SandboxReadinessState {
     id: Value<String>,
     owner: Value<String>,
     generation: Value<String>,
-    agent_name: Value<String>,
-    agent_runtime: Value<String>,
-    runtime_json: Value<String>,
+    launch_json: Value<String>,
     config_json: Value<String>,
     read_trigger: Value<String>,
     health_json: Value<String>,
@@ -61,23 +57,19 @@ impl SandboxReadinessState {
             "id" => &mut self.id,
             "owner" => &mut self.owner,
             "generation" => &mut self.generation,
-            "agent_name" => &mut self.agent_name,
-            "agent_runtime" => &mut self.agent_runtime,
-            "runtime_json" => &mut self.runtime_json,
+            "launch_json" => &mut self.launch_json,
             "config_json" => &mut self.config_json,
             _ => unreachable!("readiness has no input named {name}"),
         }
     }
-    fn inputs(&self) -> [&Value<String>; 9] {
+    fn inputs(&self) -> [&Value<String>; 7] {
         [
             &self.workspace,
             &self.name,
             &self.id,
             &self.owner,
             &self.generation,
-            &self.agent_name,
-            &self.agent_runtime,
-            &self.runtime_json,
+            &self.launch_json,
             &self.config_json,
         ]
     }
@@ -196,7 +188,7 @@ impl DataSource for SandboxReadinessDataSource {
                     "sandbox readiness read trigger is not yet known",
                 ));
             }
-            let binding = binding(&config)?;
+            let binding = crate::configuration::fabric_binding(binding(&config)?)?;
             let client = self.0.client_for(&gateway_row(&config)?)?;
             client.ready(&binding, &CancellationToken::new()).await?;
             client.health(&binding).await
@@ -241,9 +233,7 @@ mod tests {
             id: known("sandbox-id"),
             owner: known("owner"),
             generation: known("generation"),
-            agent_name: known("coder"),
-            agent_runtime: known("fabric"),
-            runtime_json: known("{}"),
+            launch_json: known("{}"),
             config_json: known("{}"),
             ..Default::default()
         }

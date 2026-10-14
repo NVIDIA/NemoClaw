@@ -132,7 +132,7 @@ impl Backend for OpenShell {
             .await?;
         if kind == "sandbox"
             && let Some(row) = &observed
-            && prior.get("runtime_json") != row.get("runtime_json")
+            && prior.get("launch_json") != row.get("launch_json")
         {
             return Err(ObservationError::BindingMismatch);
         }
@@ -159,7 +159,7 @@ impl Backend for OpenShell {
                 "generation",
                 "workspace",
                 "image",
-                "agent_name",
+                "launch_json",
             ],
             _ => return Mutation::failed(ObservationError::Query),
         };

@@ -8,7 +8,7 @@ terraform {
   }
 }
 variable "endpoint" { type = string }
-variable "runtime_json" { type = string }
+variable "launch_json" { type = string }
 variable "binaries" { type = list(string) }
 variable "enabled" { default = true }
 variable "destroying" { default = false }
@@ -64,9 +64,7 @@ resource "openshell_sandbox" "agent" {
   owner               = openshell_workspace.example.owner
   generation          = "sandbox-generation"
   image               = var.image
-  agent_name          = "assistant"
-  agent_runtime       = "fabric"
-  runtime_json   = var.runtime_json
+  launch_json         = var.launch_json
   providers      = [openshell_provider_registration.inference[0].ref]
   policy {
     managed "nemoclaw-inference-local-fcb7b1f1af3733764900def4" {

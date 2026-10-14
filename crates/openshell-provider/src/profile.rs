@@ -496,7 +496,7 @@ fn cluster_grant(
     let provider = name
         .strip_prefix("nemoclaw-inference-")
         .ok_or(ObservationError::BindingMismatch)?;
-    if !inference::provider_names(&want["provider_names_json"], &want["agent_runtime"])?
+    if !inference::provider_names(&want["provider_names_json"])?
         .iter()
         .any(|name| name == provider)
     {

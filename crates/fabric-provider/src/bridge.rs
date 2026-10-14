@@ -174,7 +174,21 @@ async fn bridge(
     seconds: u32,
     stdin: Vec<u8>,
 ) -> Result<Response, Error> {
-    let runtime = openshell::agent::binding(binding)?;
+    // The agent and runtime binding must be the ones the sandbox launch
+    // records; the gateway checks that launch against the live sandbox.
+    let recorded = crate::configuration::fabric_binding(binding.clone())?;
+    if ["agent_name", "runtime_json"]
+        .iter()
+        .any(|field| recorded.get(*field) != binding.get(*field))
+    {
+        return Err(ObservationError::BindingMismatch.into());
+    }
+    let runtime = nemoclaw_openshell::runtime::RuntimeBinding::from_json(
+        binding
+            .get("runtime_json")
+            .map(String::as_str)
+            .unwrap_or_default(),
+    )?;
     let (exit, output) = client
         .exec_input(
             binding,

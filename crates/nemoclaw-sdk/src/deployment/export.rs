@@ -414,9 +414,7 @@ fn export_sandbox(expected: &Row, observed: &Row) -> Result<(), Error> {
     let value = |row: &Row, key: &str| row.get(key).map(String::as_str).unwrap_or("").to_owned();
     // JSON inputs compare as the provider records them.
     let json = |row: &Row, key: &str| recorded("sandbox", key, &value(row, key));
-    if ["image", "agent_name", "agent_runtime"]
-        .iter()
-        .any(|key| value(observed, key) != value(expected, key))
+    if value(observed, "image") != value(expected, "image")
         || ["policy_json", "provider_names_json"]
             .iter()
             .any(|key| json(observed, key) != json(expected, key))

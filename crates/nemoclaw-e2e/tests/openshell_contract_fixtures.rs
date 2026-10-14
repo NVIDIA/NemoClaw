@@ -39,7 +39,10 @@ fn fixture(mut document: Document) -> Option<String> {
             |harness| harness.kind.to_string(),
         );
         let binding = nemoclaw_e2e::image_runtime::binding(&kind);
-        let runtime = serde_json::to_string(&serde_json::to_string(&binding).unwrap()).unwrap();
+        let launch = serde_json::to_string(
+            &serde_json::to_string(&binding.launch(&sandbox.agent.name)).unwrap(),
+        )
+        .unwrap();
         encoded = encoded
             .replace(
                 &format!(
@@ -48,8 +51,8 @@ fn fixture(mut document: Document) -> Option<String> {
                 &serde_json::to_string(&binding.binaries()).unwrap(),
             )
             .replace(
-                &format!("\"${{data.fabric_capabilities.sandbox_{index}.runtime_json}}\""),
-                &runtime.replace("${", "$${"),
+                &format!("\"${{data.fabric_capabilities.sandbox_{index}.launch_json}}\""),
+                &launch.replace("${", "$${"),
             );
     }
     let mut resources = Map::new();

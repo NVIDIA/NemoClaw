@@ -10,7 +10,7 @@ provider openshell (version 0)
   destroy: bool, optional
     > Permit removing this provider's objects during explicit teardown.
 
-resource openshell_provider_profile (version 1)
+resource openshell_provider_profile (version 2)
   authenticated: string, optional, computed
   binaries: list(string), required
   cluster_source: string, optional, computed
@@ -24,7 +24,7 @@ resource openshell_provider_profile (version 1)
   ref: object({ generation = string, id = string, name = string, owner = string, type = string, workspace = string }), computed
   workspace: object({ name = string, type = string }), required
 
-resource openshell_provider_registration (version 1)
+resource openshell_provider_registration (version 2)
   credential_env: string, optional, computed
   credential_source: string, optional, computed
   endpoint: string, required
@@ -38,18 +38,16 @@ resource openshell_provider_registration (version 1)
   ref: object({ generation = string, id = string, name = string, owner = string, type = string, workspace = string }), computed
   workspace: object({ name = string, type = string }), required
 
-resource openshell_sandbox (version 1)
-  agent_name: string, required
-  agent_runtime: string, optional, computed
+resource openshell_sandbox (version 2)
   gateway: object({ credential_env = string, endpoint = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   generation: string, optional, computed
   id: string, computed
   image: string, required
+  launch_json: string, required
   name: string, required
   owner: string, optional, computed
   providers: list(object({ name = string, type = string })), optional
   ref: object({ generation = string, id = string, name = string, owner = string, type = string, workspace = string }), computed
-  runtime_json: string, required
   workspace: object({ name = string, type = string }), required
   block policy: optional
     cluster_grants: list(string), optional
@@ -247,7 +245,7 @@ resource openshell_sandbox (version 1)
               value: string, optional
                 > The value itself, instead of the other attributes.
 
-resource openshell_workspace (version 1)
+resource openshell_workspace (version 2)
   gateway: object({ credential_env = string, endpoint = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   generation: string, optional, computed
   id: string, computed

@@ -45,9 +45,11 @@ pub fn targets(
             let adapter = requirements.configuration["harness"]["adapter_id"]
                 .as_str()
                 .unwrap();
+            // The graph carries the agent in the launch, not as a sandbox input.
+            target.values.remove("agent_name");
             target.values.insert(
-                "runtime_json".into(),
-                serde_json::to_string(&binding(adapter)).unwrap(),
+                "launch_json".into(),
+                serde_json::to_string(&binding(adapter).launch(&sandbox.agent.name)).unwrap(),
             );
         }
     }

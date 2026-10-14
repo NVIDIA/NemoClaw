@@ -15,7 +15,7 @@ pub(super) fn granted_row_policy(
     row: &Row,
     grants: &ClusterGrants,
 ) -> Result<proto::SandboxPolicy, ObservationError> {
-    agent::binding(row)?.granted_policy(&policy_input(row)?, grants)
+    agent::launch(row)?.granted_policy(&policy_input(row)?, grants)
 }
 
 pub(super) fn recorded_grants(
@@ -104,7 +104,7 @@ pub(super) fn loaded_policy_matches(
 }
 
 pub(super) fn row_policy(row: &Row) -> Result<proto::SandboxPolicy, ObservationError> {
-    agent::binding(row)?.policy(&policy_input(row)?)
+    agent::launch(row)?.policy(&policy_input(row)?)
 }
 
 pub(super) fn validate_row_policy(row: &Row) -> Result<(), ObservationError> {

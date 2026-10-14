@@ -105,7 +105,9 @@ Other inputs are typed too:
   The block's attributes and blocks follow the sandbox policy model with snake_case names: optional `explicit` policy and `managed` deployment grants, whose named network rules are labeled blocks.
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
 - `openshell_provider_profile` takes a `binaries` list.
-- `runtime_json` stays the JSON string that `fabric_capabilities` returns.
+- `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables managed endpoint grants allow.
+  OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox; it does not depend on the agent runtime that produced the launch.
+  `fabric_capabilities` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
 - `owner` and `generation` are optional; when omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [service storage](#nemoclaw-resources).
 
 ```hcl
@@ -114,8 +116,7 @@ resource "openshell_sandbox" "assistant" {
   workspace    = openshell_workspace.example.ref
   name         = "assistant"
   image        = var.image
-  agent_name   = "assistant"
-  runtime_json = data.fabric_capabilities.assistant.runtime_json
+  launch_json  = data.fabric_capabilities.assistant.launch_json
   providers    = [openshell_provider_registration.local.ref]
   policy {
     explicit {
@@ -550,7 +551,7 @@ See [runtime ownership](design/runtime.md) and [recovery](models.md#diagnose-and
 ## Sandbox Completion
 
 The OpenShell graph uses `fabric_sandbox_readiness` after sandbox creation and any runtime configuration resource.
-It requires the sandbox's `workspace` (its ref's `workspace`), `name`, `id`, `owner`, `generation`, `agent_name`, `agent_runtime`, and `runtime_json`, and the agent configuration's `config_json`.
+It requires the sandbox's `workspace` (its ref's `workspace`), `name`, `id`, `owner`, `generation`, and `launch_json`, and the agent configuration's `config_json`.
 The provider checks that the sandbox still has that identity and agent runtime, waits for startup, and confirms the host applied that configuration before requesting the packaged bridge's health response.
 It does not invoke an agent or model.
 The optional string `read_trigger` uses `uuid()` in generated graphs, making the read unknown during planning and recording a fresh token on every apply.
