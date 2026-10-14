@@ -57,6 +57,7 @@ export const DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV =
   "NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE";
 
 const TERMINAL_SANDBOX_FAILURE_PHASES = new Set(["Error", "Failed", "CrashLoopBackOff"]);
+const READY_SANDBOX_PHASES = new Set(["Ready", "Running"]);
 
 type RunCaptureOpenshellFn = (args: string[], opts?: Record<string, unknown>) => string;
 
@@ -108,7 +109,7 @@ function exactReplacementIsRunning(
  * Confirm the final Docker replacement handoff through OpenShell and Docker.
  *
  * The preceding OpenShell start is the authoritative lifecycle event. Success
- * requires both an OpenShell Ready row with a working sandbox exec and a
+ * requires an OpenShell Ready/Running row with a working sandbox exec and a
  * bounded Docker proof that the exact transaction-owned replacement is the
  * sole running labeled container. Deleting is terminal after that start.
  * Error remains transient only while the exact replacement stays running.
@@ -157,7 +158,7 @@ export async function waitForOpenShellFinalHandoff(
       return { acknowledged: false, lastSandboxPhase };
     }
 
-    if (currentPhase === "Ready") {
+    if (currentPhase !== null && READY_SANDBOX_PHASES.has(currentPhase)) {
       const remainingBeforeExecMs = boundedDeadlineMs - now().getTime();
       if (remainingBeforeExecMs <= 0) break;
       const execResult = await deps.commandExecutor.runBuffered({
@@ -257,7 +258,11 @@ export async function waitForOpenShellSupervisorReconnect(
     if (Date.now() >= deadline) return false;
     // A working exec alone can coexist with an Error lifecycle row. Let the
     // caller reconcile that row before accepting the recreated container.
-    if (execReady && (!deps.runCaptureOpenshell || phase === "Ready")) return true;
+    if (
+      execReady &&
+      (!deps.runCaptureOpenshell || (phase !== null && READY_SANDBOX_PHASES.has(phase)))
+    )
+      return true;
     if (phase !== null && TERMINAL_SANDBOX_FAILURE_PHASES.has(phase)) {
       consecutiveErrorPolls += 1;
       if (consecutiveErrorPolls >= errorPhaseDebouncePolls) return false;
