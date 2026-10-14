@@ -52,6 +52,7 @@ if [ "$1 $2" = 'nextest --version' ]; then
     exit 0
 fi
 printf '%s\n' "$@" > arguments
+printf '%s\n' "${NEXTEST_TEST_THREADS-unset}" > test-threads-env
 if [ "$1" = build ]; then
     /bin/mkdir -p target/debug
     printf '#!/bin/sh\nprintf "%%s\\n" "$@" > bundled\n' > target/debug/nemoclaw-build
@@ -556,4 +557,74 @@ fn a_failed_lifecycle_partition_fails_ci() {
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("CI step lifecycle failed"));
+}
+
+#[test]
+fn local_lifecycle_uses_available_cpus_up_to_eight_workers() {
+    let available = std::thread::available_parallelism().map_or(4, usize::from);
+    for args in [
+        vec!["lifecycle"],
+        vec!["lifecycle", "--archive-file", "tests.tar.zst"],
+    ] {
+        let fixture = Fixture::new();
+        let output = fixture
+            .command(&args)
+            .env_remove("CI")
+            .env_remove("GITHUB_ACTIONS")
+            .env_remove("NEXTEST_TEST_THREADS")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let arguments = fixture.arguments();
+        let workers: usize = arguments
+            .lines()
+            .skip_while(|arg| *arg != "--test-threads")
+            .nth(1)
+            .expect("local lifecycle execution must choose its worker count")
+            .parse()
+            .unwrap();
+        match available {
+            0..=4 => assert_eq!(workers, 4, "keep the existing floor on small hosts"),
+            5..=7 => assert_eq!(workers, available, "use the available CPUs"),
+            _ => assert_eq!(workers, 8, "cap concurrency at the measured setting"),
+        }
+    }
+}
+
+#[test]
+fn lifecycle_preserves_ci_profiles_and_explicit_worker_overrides() {
+    for (ci, github, override_value) in [
+        (Some("true"), None, None),
+        (None, Some("true"), None),
+        (None, None, Some("2")),
+        (None, None, Some("num-cpus")),
+        (Some("true"), None, Some("2")),
+    ] {
+        let fixture = Fixture::new();
+        let mut command = fixture.command(&["lifecycle"]);
+        for (name, value) in [
+            ("CI", ci),
+            ("GITHUB_ACTIONS", github),
+            ("NEXTEST_TEST_THREADS", override_value),
+        ] {
+            command.env_remove(name);
+            if let Some(value) = value {
+                command.env(name, value);
+            }
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let arguments = fixture.arguments();
+        assert!(!arguments.contains("--test-threads"), "{arguments}");
+        let inherited = fs::read_to_string(fixture.0.path().join("test-threads-env")).unwrap();
+        assert_eq!(inherited.trim(), override_value.unwrap_or("unset"));
+    }
 }

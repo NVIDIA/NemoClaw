@@ -229,6 +229,16 @@ fn run_step(
             command.args(["--filterset", filter]);
         }
         if step == Step::Lifecycle {
+            if std::env::var_os("CI").is_none()
+                && std::env::var_os("GITHUB_ACTIONS").is_none()
+                && std::env::var_os("NEXTEST_TEST_THREADS").is_none()
+            {
+                let workers = std::thread::available_parallelism()
+                    .map_or(4, usize::from)
+                    .clamp(4, 8);
+                command.args(["--test-threads", &workers.to_string()]);
+                eprintln!("lifecycle: using {workers} local test workers");
+            }
             if let Some(partition) = partition {
                 command.args(["--partition", partition]);
             }
