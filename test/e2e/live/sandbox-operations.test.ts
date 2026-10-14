@@ -3,9 +3,12 @@
 
 import { testTimeout } from "../../helpers/timeouts.ts";
 import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../../src/lib/adapters/openshell/timeouts.ts";
-import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
+import {
+  captureLifecycleInstallFailureDiagnostics,
+  captureSandboxFailureDiagnostics,
+} from "../fixtures/sandbox-failure-diagnostics.ts";
 import { removeSandbox } from "../../../src/lib/state/registry.ts";
-import { assertExitCode, assertExitZero, resultText } from "../fixtures/clients/command.ts";
+import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { cleanupUnlessVerified } from "../fixtures/cleanup-resources.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
@@ -124,7 +127,7 @@ test(
     );
 
     progress.phase("onboard and prove native readiness");
-    await installSandboxOrSkipOnRateLimit(
+    const install = await installSandboxOrSkipOnRateLimit(
       host,
       env,
       redactions,
@@ -132,6 +135,14 @@ test(
       skip,
       "NVIDIA endpoint validation was rate-limited before sandbox lifecycle assertions ran",
     );
+    await captureLifecycleInstallFailureDiagnostics(host, runtimeProvider, install, {
+      sandboxName: SANDBOX_NAME,
+      gatewayName,
+      artifactPrefix: "sandbox-operations-install-failure",
+      env,
+      redactionValues: redactions,
+    });
+    assertExitZero(install, "sandbox lifecycle install");
 
     progress.phase("write durable sandbox state");
     const marker = `sandbox-operations-${Date.now()}`;
@@ -205,7 +216,6 @@ test(
       captureGatewayLog: true,
       expectedExitCode: 1,
     });
-    assertExitCode(preserved, 1, "destroy with an unregistered live sandbox");
     expect(preservedText).toMatch(
       new RegExp(
         `Shared NemoClaw gateway left running[\\s\\S]*--cleanup-gateway was not applied[\\s\\S]*${SURVIVOR_SANDBOX_NAME}[\\s\\S]*openshell sandbox list -g ${gatewayName}[\\s\\S]*openshell gateway remove ${gatewayName}`,
@@ -216,7 +226,6 @@ test(
       env,
       redactionValues: redactions,
     });
-
     await sandbox.cleanupSandbox(SURVIVOR_SANDBOX_NAME, {
       artifactName: "sandbox-operations-remove-survivor",
       env: survivorEnv,
@@ -231,7 +240,7 @@ test(
     });
 
     progress.phase("destroy the final sandbox and remove the gateway");
-    await installSandboxOrSkipOnRateLimit(
+    const finalInstall = await installSandboxOrSkipOnRateLimit(
       host,
       env,
       redactions,
@@ -239,7 +248,14 @@ test(
       skip,
       "NVIDIA endpoint validation was rate-limited before final gateway cleanup ran",
     );
-    await expectSandboxReady(host, SANDBOX_NAME, env, redactions, "sandbox-operations-final-ready");
+    await captureLifecycleInstallFailureDiagnostics(host, runtimeProvider, finalInstall, {
+      sandboxName: SANDBOX_NAME,
+      gatewayName,
+      artifactPrefix: "sandbox-operations-final-install-failure",
+      env,
+      redactionValues: redactions,
+    });
+    assertExitZero(finalInstall, "final sandbox install");
     const finalDestroyStartedAt = Date.now();
     const finalDestroy = await host.nemoclaw(
       [SANDBOX_NAME, "destroy", "--yes", "--cleanup-gateway"],

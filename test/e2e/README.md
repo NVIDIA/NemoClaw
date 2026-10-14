@@ -660,10 +660,13 @@ still verify the authenticated request, policy denials, absence of MCP URLs, pro
 credentials from the registry, and restart, rebuild and cleanup outcomes.
 
 The `sandbox-operations` target owns live final-gateway cleanup on Docker and native Podman. It leaves one sandbox live after removing only its local registry entry, then requires a
-`destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
-sandbox and recovery commands, and exit nonzero. After cleanup, it onboards and destroys one final
-sandbox,
+`destroy --cleanup-gateway` of the registered sandbox to preserve the gateway and report the live
+sandbox and recovery commands. CLI integration tests own the nonzero exit for that refusal.
+After cleanup, it onboards and destroys one final sandbox,
 requires the bounded command to finish, and proves both the sandbox and gateway runtime are absent.
+The survivor must reach OpenShell Ready before it is unregistered, and the gateway must still report
+connected after the preservation attempt. The OpenShell start exit, native health, and retained
+workspace marker prove the restart; the final install's successful exit proves its onboarding phase.
 The outer destroy command deadline is twice the CLI's heavy-operation deadline so the CLI can
 finish its own timeout, absence, and gateway checks. The survivor onboarding budget stays separate.
 Deterministic destroy tests own the exact 30-second retry schedule and delayed-list sequence.
@@ -703,6 +706,10 @@ List each additional source file or directory whose change requires the target.
 Changes to shared catalogue execution paths select every catalogue target.
 
 The `openclaw-inference-switch` target owns fresh custom-image route initialization.
+Its live `onboard --from` step exercises local Docker BuildKit and OpenShell image handoff;
+the successful onboard and authenticated baseline request require a ready sandbox from that image.
+The deterministic build, inspect, create-reference, and failed-build stop checks live in
+`test/onboarding/onboard-custom-dockerfile.test.ts`.
 Its fixture contains only a different baked model and stale limits.
 Custom Dockerfile onboarding uses the existing startup and pairing settlement checks before
 restarting the native gateway for the initial inference route, as external-image onboarding does.
@@ -2267,29 +2274,37 @@ The explicit `dgx-station-express` target runs the local Station Express install
 
 `live/inference-routing-provider-smoke.test.ts` owns credential-backed native inference smoke tests.
 Select `openai`, `anthropic`, `gemini`, `openrouter`, or `hermes` with
-`NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE`; `all` selects all five.
+`NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE`. Selecting `openrouter` runs both
+OpenRouter agent cases; `all` runs all six cases.
 Use an approved disposable environment and credentials from its approved source.
 These tests are outside the credential-free `inference-routing` PR lane.
 A skipped provider is missing qualification evidence.
 
 OpenAI, Anthropic, Gemini, and OpenRouter onboard OpenClaw and start a fresh agent process.
 Hermes Provider onboards Hermes and submits a fresh request to its managed API.
-Each case checks the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer.
-Before the request, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
+The `hosted-inference-openrouter` target also onboards Deep Agents Code with the same
+OpenRouter key and model. Its six-assertion case checks onboarding, credential isolation,
+the native TOML route, and one fresh `dcode -n --json` response.
+The five existing cases check the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer.
+Before each of those requests, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
 for a salted fingerprint of the selected credential. Only the fingerprint enters the probe; reports contain
 booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
 The sample inspects up to 200 files smaller than 1 MiB, taking the first 64 KiB of each readable file.
 This is not an exhaustive filesystem scan. The scan checks only sandbox environment variables, process arguments, and sampled files.
 It does not prove credential isolation in host processes or upstream requests.
 Separate smoke assertions check native configuration and require a fresh, nonempty provider response.
+The Deep Agents Code case uses the same bounded credential scan before checking its generated
+provider route and a fresh, nonempty JSON response. Deterministic tests own its resolver handle
+rejection and credential binding.
 Deterministic tests own protocol/header construction, ownership collisions,
 sandbox isolation, restart, and failed-operation recovery.
 
 Each selected case requires its matching approved model variable, listed below. The smoke does not select a default model.
 The Hermes smoke uses `NOUS_API_KEY`. It does not prove interactive OAuth login or token refresh.
 Credentials remain in the test host environment and OpenShell provider store; artifacts redact them.
-The existing cleanup helper destroys each test sandbox. After successful onboarding, strict cleanup checks sandbox absence only.
-Failed onboarding uses best-effort cleanup. Neither path proves removal of credentials from the OpenShell provider store.
+The cleanup helper destroys each test sandbox. The Deep Agents Code case checks sandbox absence even if onboarding fails.
+Other hosted cases check absence after successful onboarding; failed onboarding uses best-effort cleanup.
+Neither path proves removal of credentials from the OpenShell provider store.
 Discard the approved disposable gateway after each run, including failed onboarding. Use a fresh gateway for a retry.
 
 Select one explicit target with `targets=hosted-inference-openai`, `hosted-inference-anthropic`,

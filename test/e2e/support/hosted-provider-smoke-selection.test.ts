@@ -29,7 +29,13 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label qualification selection", (se
   const id = `hosted-inference-${selected.selector}`;
   it("selects only the named provider in the existing smoke owner", () => {
     const target = catalogueTarget(id);
-    expect(target.agentRuntime).toBe(selected.selector === "hermes" ? "hermes" : "openclaw");
+    expect(target.agentRuntime).toBe(
+      selected.selector === "hermes"
+        ? "hermes"
+        : selected.selector === "openrouter"
+          ? "openclaw + langchain-deepagents-code"
+          : "openclaw",
+    );
     expect(target.testFile).toBe("test/e2e/live/inference-routing-provider-smoke.test.ts");
     expect(
       new RegExp(target.selector!).test(
@@ -58,6 +64,19 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label qualification selection", (se
       hostedProviderSmokeEnvironment(id, { HOSTED_INFERENCE_API_KEY: "selected-canary" }),
     ).toThrow("requires");
   });
+});
+
+it("runs both OpenRouter agents through the existing trusted target", () => {
+  const target = catalogueTarget("hosted-inference-openrouter");
+  expect(
+    new RegExp(target.selector!).test("TC-INF-07D Deep Agents Code reaches native OpenRouter"),
+  ).toBe(true);
+  expect(
+    new RegExp(target.selector!).test(
+      "'TC-INF-07' 'OpenRouter' answers through its native provider",
+    ),
+  ).toBe(true);
+  expect(target.environment.NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE).toBe("openrouter");
 });
 
 it("does not select hosted providers for unrelated shared files or the default suite", () => {

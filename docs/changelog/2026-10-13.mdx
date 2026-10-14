@@ -10,9 +10,11 @@ Station WSL onboarding also binds managed llama.cpp to the GPU that passed host 
 
 - Managed LangChain Deep Agents Code now uses version 0.1.71 with a pinned Python dependency graph and matching startup and MCP behavior.
   Related change: [PR #12376](https://github.com/NVIDIA/NemoClaw/pull/12376).
-- Generated Dockerfile recipes on a local Docker gateway build and verify an image before sandbox creation.
+- Generated and custom Dockerfile recipes on a local Docker gateway build and verify an image before sandbox creation.
   A remote gateway, engine mismatch, failed build, or missing image stops creation.
-  Related change: [PR #13035](https://github.com/NVIDIA/NemoClaw/pull/13035).
+  Related changes: [PR #13035](https://github.com/NVIDIA/NemoClaw/pull/13035) and [PR #13077](https://github.com/NVIDIA/NemoClaw/pull/13077).
+- OpenClaw onboarding can request write access for a verified matching CLI device with pairing/read permissions after a probe refreshes its connection metadata.
+  Related change: [PR #13107](https://github.com/NVIDIA/NemoClaw/pull/13107).
 - Managed vLLM and llama.cpp installers declare the selected profile, recipe, runtime image, and model download size before acquisition.
   Managed vLLM declares the image download size when the image is not cached.
   Related change: [PR #12220](https://github.com/NVIDIA/NemoClaw/pull/12220).

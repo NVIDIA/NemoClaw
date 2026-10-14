@@ -1738,7 +1738,8 @@ const STATE_SQLITE_PERSISTENCE_REPLACEMENT = [
   '\t\t\t\tnemoclawBeforeToken?.role !== "operator" ||',
   "\t\t\t\tnemoclawBeforeToken.token !== nemoclawIdentity.deviceToken ||",
   "\t\t\t\tnemoclawAuthRow?.token !== nemoclawIdentity.deviceToken ||",
-  '\t\t\t\tJSON.stringify(nemoclawBeforeScopes) !== JSON.stringify(["operator.pairing"]) ||',
+  // A read grant can precede the CLI write request (#13100).
+  '\t\t\t\t!(JSON.stringify(nemoclawBeforeScopes) === JSON.stringify(["operator.pairing"]) || JSON.stringify(nemoclawBeforeScopes) === JSON.stringify(["operator.pairing", "operator.read"])) ||',
   "\t\t\t\tJSON.stringify(nemoclawStoredScopes) !== JSON.stringify(nemoclawBeforeScopes) ||",
   "\t\t\t\tnemoclawNextDevice?.publicKey !== nemoclawIdentity.publicKey ||",
   '\t\t\t\tnemoclawNextToken?.role !== "operator" ||',
