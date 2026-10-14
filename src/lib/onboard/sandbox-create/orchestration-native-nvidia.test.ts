@@ -4,13 +4,18 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
+import type { CliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import { createProviderEffectBoundary } from "./orchestration";
 
 const recordedProviderId = "11111111-2222-4333-8444-555555555555";
 
-function providerAdapter(providerId: string): OpenShellProviderAdapter {
+function providerAdapter(
+  providerId: string,
+): OpenShellProviderAdapter &
+  Pick<CliOpenShellProviderAdapter, "warnIfVerifiedProfilesChangedAfterSandboxCreate"> {
   return {
     importProviderProfile: vi.fn(() => ({ ok: true })),
+    warnIfVerifiedProfilesChangedAfterSandboxCreate: vi.fn(),
     getProvider: vi.fn(async () => ({
       ok: true,
       value: {
@@ -25,7 +30,8 @@ function providerAdapter(providerId: string): OpenShellProviderAdapter {
       ok: true,
       value: { names: ["nemoclaw-nvidia-prod-v1"] },
     })),
-  } as unknown as OpenShellProviderAdapter;
+  } as unknown as OpenShellProviderAdapter &
+    Pick<CliOpenShellProviderAdapter, "warnIfVerifiedProfilesChangedAfterSandboxCreate">;
 }
 
 function nativeProviderBoundary(adapter: OpenShellProviderAdapter) {
@@ -71,6 +77,41 @@ function verifiedCreateContext(revalidateSandboxIdentity = vi.fn()) {
 }
 
 describe("native NVIDIA post-create provider verification", () => {
+  it("verifies the owned profile before direct create and checks it after verified attachment", async () => {
+    const adapter = providerAdapter(recordedProviderId);
+    const boundary = nativeProviderBoundary(adapter);
+
+    await boundary.validateBeforeCreate();
+    expect(adapter.importProviderProfile).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      profilePath: expect.stringContaining("nemoclaw-nvidia-inference-v1.yaml"),
+    });
+    expect(adapter.warnIfVerifiedProfilesChangedAfterSandboxCreate).not.toHaveBeenCalled();
+
+    await boundary.runAfterVerifiedCreate?.(verifiedCreateContext());
+    expect(adapter.warnIfVerifiedProfilesChangedAfterSandboxCreate).toHaveBeenCalledExactlyOnceWith(
+      { target: { kind: "named", gatewayName: "nemoclaw" } },
+      ["nemoclaw-nvidia-inference-v1"],
+    );
+  });
+
+  it("stops a conflicting native profile before direct create", async () => {
+    const adapter = providerAdapter(recordedProviderId);
+    vi.mocked(adapter.importProviderProfile).mockReturnValue({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "profile_incompatible",
+        message: "catalog differs",
+      },
+    });
+    const boundary = nativeProviderBoundary(adapter);
+
+    await expect(boundary.validateBeforeCreate()).rejects.toThrow("conflicts");
+    expect(adapter.warnIfVerifiedProfilesChangedAfterSandboxCreate).not.toHaveBeenCalled();
+    expect(adapter.listProviderAttachments).not.toHaveBeenCalled();
+  });
+
   it("confirms the recorded provider is attached after sandbox identity is verified", async () => {
     const adapter = providerAdapter(recordedProviderId);
     const revalidateSandboxIdentity = vi.fn();
@@ -112,6 +153,10 @@ describe("native NVIDIA post-create provider verification", () => {
       providerName: "nemoclaw-nvidia-prod-v1",
     });
     expect(adapter.listProviderAttachments).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(adapter.attachProvider).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(adapter.warnIfVerifiedProfilesChangedAfterSandboxCreate).mock
+        .invocationCallOrder[0],
+    );
   });
 
   it("rejects a replaced provider before inspecting its sandbox attachments", async () => {

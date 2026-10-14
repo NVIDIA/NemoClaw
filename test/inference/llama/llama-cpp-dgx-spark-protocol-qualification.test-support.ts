@@ -105,7 +105,7 @@ export function createProtocolFixture(outcome: "stops" | "continues" | "metrics-
         return jsonResponse({ data: [{ id: MODEL }], object: "list" });
       case "http://127.0.0.1:18081/props":
         return init?.method === "POST"
-          ? jsonResponse({ error: {} }, 501)
+          ? jsonResponse({ error: {} }, 404)
           : jsonResponse(properties(plan.recipe.serve.contextSize));
       case "http://127.0.0.1:18081/metrics":
         if (nativeActive && outcome === "metrics-fail") return new Response("", { status: 503 });
@@ -120,12 +120,10 @@ export function createProtocolFixture(outcome: "stops" | "continues" | "metrics-
           : jsonResponse({ error: {} }, 401);
       case "http://127.0.0.1:18081/":
       case "http://127.0.0.1:18081/models/load":
-        return jsonResponse({ error: {} }, 404);
       case "http://127.0.0.1:18081/slots":
-        return jsonResponse({ error: {} }, 501);
       case "http://127.0.0.1:18081/cors-proxy":
       case "http://127.0.0.1:18081/tools":
-        return jsonResponse({ error: {} }, 403);
+        return jsonResponse({ error: {} }, 404);
       default:
         expect(url).toBe("http://127.0.0.1:18081/v1/chat/completions");
     }
@@ -136,6 +134,17 @@ export function createProtocolFixture(outcome: "stops" | "continues" | "metrics-
         return jsonResponse({ error: {} }, 401);
       case body === "{":
         return jsonResponse({ error: {} }, 400);
+      case Buffer.byteLength(body) > 1_048_576:
+        return jsonResponse(
+          {
+            error: {
+              code: "request_body_too_large",
+              type: "invalid_request_error",
+              message: "Request body exceeds the declared limit.",
+            },
+          },
+          413,
+        );
     }
 
     const request = JSON.parse(body) as JsonObject;

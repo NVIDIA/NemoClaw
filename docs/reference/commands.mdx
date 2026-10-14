@@ -519,7 +519,12 @@ NemoClaw records onboarding progress so interrupted runs can continue. Use `--re
 
 <AgentOnly variant="openclaw">
 
-OpenClaw onboarding does not enter the `complete` state until NemoClaw proves that the local CLI operator pairing is settled. Onboarding first observes the canonical local CLI device. If the device is pairing-only, the host runs one bounded request producer on the owning gateway. The in-sandbox watcher is the only component that approves the onboarding upgrade. The host observes through any same-device pending state and verifies the final settled state without sending an approval.
+OpenClaw onboarding does not enter the `complete` state until NemoClaw proves that the local CLI operator pairing is settled.
+Onboarding first observes the canonical local CLI device.
+If the verified device has pairing-only or pairing/read permissions and needs write access, the host runs one bounded request producer on the owning gateway.
+This includes a matching CLI device whose connection metadata was refreshed by a probe.
+The in-sandbox watcher is the only component that approves the onboarding upgrade.
+The host observes through any same-device pending state and verifies the final settled state without sending an approval.
 
 </AgentOnly>
 
@@ -1016,10 +1021,10 @@ Catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image. The supplied Dockerfile defines the complete sandbox image, and NemoClaw does not layer it on top of the stock managed runtime. The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it. When the supplied path is the selected agent's own managed Dockerfile (for example, `agents/hermes/Dockerfile` in the NemoClaw checkout the CLI runs from), NemoClaw applies one exception and stages the repository root as the build context, exactly as the managed build does, because that Dockerfile copies repository-root paths. This lets you edit the managed Dockerfile in place (for example to add Python packages) and rebuild from it with `--from`. For this managed exception, onboarding applies the `.dockerignore` from the repository root. For every other `--from` path, onboarding applies a `.dockerignore` from the Dockerfile's parent directory while calculating the context size and staging files for Docker. NemoClaw also applies additional secret-safety exclusions that override `.dockerignore` negation rules: credential-style files and directories such as `.env*`, `.ssh/`, `.aws/`, `.netrc`, `.npmrc`, `secrets/`, `*.pem`, and `*.key` are still skipped even if `.dockerignore` tries to include them. Without a `.dockerignore`, onboarding still skips common large or local-only directories (`node_modules`, `.git`, `.venv`, and `__pycache__`) while staging this context. Other build outputs such as `dist/`, `target/`, or `build/` are included unless your `.dockerignore` excludes them. If the staged context is larger than 100 MB, onboarding prints a warning before the Docker build starts. Move the Dockerfile into a smaller dedicated directory or add `.dockerignore` entries for generated artifacts to shrink the context. If the directory contains unreadable files (for example, Windows system files visible in WSL), onboarding exits with an error suggesting you move the Dockerfile to a dedicated directory.
 
 <Note>
-  NemoClaw builds user-supplied `--from` contexts with the OpenShell gateway builder. The host-side
-  local BuildKit prebuild is limited to build contexts generated entirely by NemoClaw. On a local
-  Docker-driver gateway, a `Local BuildKit build skipped` notice is expected and onboarding
-  continues with the custom image.
+  With a local Docker gateway, NemoClaw builds the staged custom context with BuildKit in the
+  gateway's Docker engine. It checks that the image is available, then passes its image reference to
+  OpenShell. A build failure stops before sandbox creation. A remote gateway without image
+  distribution cannot use `--from`. The native Podman provider does not admit custom Dockerfiles.
 </Note>
 
 ```bash
@@ -1114,7 +1119,7 @@ The flag wins over `NEMOCLAW_SANDBOX_NAME`. When prompting is possible, `NEMOCLA
 
 ### `$$nemoclaw onboard --from`
 
-Use a custom Dockerfile for the sandbox image. This variant of `$$nemoclaw onboard` accepts a `--from <Dockerfile>` argument to build the sandbox from a user-supplied Dockerfile instead of the default NemoClaw image. The user-supplied context uses the OpenShell gateway builder instead of NemoClaw's host-side local BuildKit prebuild.
+Use a custom Dockerfile for the sandbox image. This variant of `$$nemoclaw onboard` accepts a `--from <Dockerfile>` argument to build the sandbox from a user-supplied Dockerfile instead of the default NemoClaw image. NemoClaw builds the staged context in the selected local Docker engine and checks the image before sandbox creation.
 
 ```bash
 $$nemoclaw onboard --from ./Dockerfile.custom
@@ -1128,7 +1133,7 @@ Set `NEMOCLAW_DOCKER_GPU_PATCH=fallback` to explicitly authorize one native atte
 If OpenShell rejects the native `--gpu` flag before creation progress, NemoClaw proves that the sandbox and its labeled containers are absent without deleting by name.
 For another eligible failure, the retry requires verified cleanup.
 When the managed runtime requires cleanup tied to its recorded resource identities, NemoClaw stops before the compatibility retry.
-Sandbox-reported CUDA output alone never authorizes the broader compatibility envelope, even when the operator enabled fallback. That case fails closed and points to the explicit `NEMOCLAW_DOCKER_GPU_PATCH=1` compatibility-only control. NemoClaw retries only after it verifies that no OpenShell-managed Docker container labeled for that sandbox remains; if cleanup cannot be proven safe, onboarding stops and prints cleanup guidance instead. On Docker Desktop WSL and Jetson/Tegra, automatic GPU onboarding uses the compatibility path directly. On ordinary native Linux, the compatibility path uses an available NVIDIA CDI spec before falling back to Docker `--gpus all` or the NVIDIA runtime. On Docker Desktop WSL, the compatibility path skips CDI and tries Docker `--gpus all` before the NVIDIA runtime. On Jetson/Tegra hosts, the compatibility path uses the NVIDIA runtime and adds eligible host group IDs for the supported GPU device nodes. These include selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices. After compatibility recreation starts, onboarding keeps the pre-patch container as a rollback backup until the replacement passes the Ready, GPU, and applicable local-inference checks. If one of those checks fails before backup removal, onboarding prints failure diagnostics and attempts to restore the pre-patch container. To commit the replacement, NemoClaw first asks OpenShell to stop the sandbox so its durable lifecycle row reaches `Stopped` before any irreversible Docker mutation. It then stops the exact transaction-owned replacement, removes the rollback backup, and asks OpenShell to start the sandbox so OpenShell owns the `Starting` lifecycle fence. NemoClaw verifies a `Ready` row, a working sandbox exec, and that the exact replacement is the sole running labeled container within the final handoff deadline. If that final handoff cannot be confirmed, onboarding exits with the container diagnostics and cleanup guidance instead of reporting success. If rollback fails, onboarding reports that the pre-patch container was not restored and prints container-cleanup guidance. GPU-proof diagnostics are captured before rollback and can print that guidance before the final container state is known, so inspect the sandbox and its labeled Docker containers before running a deletion command.
+Sandbox-reported CUDA output alone never authorizes the broader compatibility envelope, even when the operator enabled fallback. That case fails closed and points to the explicit `NEMOCLAW_DOCKER_GPU_PATCH=1` compatibility-only control. NemoClaw retries only after it verifies that no OpenShell-managed Docker container labeled for that sandbox remains; if cleanup cannot be proven safe, onboarding stops and prints cleanup guidance instead. On Docker Desktop WSL and Jetson/Tegra, automatic GPU onboarding uses the compatibility path directly. On ordinary native Linux, the compatibility path uses an available NVIDIA CDI spec before falling back to Docker `--gpus all` or the NVIDIA runtime. On Docker Desktop WSL, the compatibility path skips CDI and tries Docker `--gpus all` before the NVIDIA runtime. On Jetson/Tegra hosts, the compatibility path uses the NVIDIA runtime and adds eligible host group IDs for the supported GPU device nodes. These include selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices. After compatibility recreation starts, onboarding keeps the pre-patch container as a rollback backup until the replacement reaches the OpenShell Ready or Running phase and passes the GPU and applicable local-inference checks. If one of those checks fails before backup removal, onboarding prints failure diagnostics and attempts to restore the pre-patch container. To commit the replacement, NemoClaw first asks OpenShell to stop the sandbox so its durable lifecycle row reaches `Stopped` before any irreversible Docker mutation. It then stops the exact transaction-owned replacement, removes the rollback backup, and asks OpenShell to start the sandbox so OpenShell owns the `Starting` lifecycle fence. NemoClaw verifies an OpenShell `Ready` or `Running` row, a working sandbox exec, and that the exact replacement is the sole running labeled container within the final handoff deadline. If that final handoff cannot be confirmed, onboarding exits with the container diagnostics and cleanup guidance instead of reporting success. If rollback fails, onboarding reports that the pre-patch container was not restored and prints container-cleanup guidance. GPU-proof diagnostics are captured before rollback and can print that guidance before the final container state is known, so inspect the sandbox and its labeled Docker containers before running a deletion command.
 
 Prerequisites:
 
@@ -3614,7 +3619,18 @@ Switch the active inference provider or model for a NemoClaw-managed OpenClaw sa
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Switch the active inference provider or model for a NemoClaw-managed Hermes sandbox. For NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider, the command attaches or updates the selected sandbox's native provider. Custom endpoints and local providers retain their existing shared OpenShell route. It then patches the selected running agent config to match the selected inference path, recomputes the config hash, and updates the NemoClaw registry. It is also available in sandbox-first form as `$$nemoclaw <name> inference set --provider <provider> --model <model>`. For Hermes, the patch updates the shared native `/sandbox/.hermes/config.yaml` (`model.default`, `model.base_url`, `model.provider: custom`, API-family mode when needed, and the OpenShell proxy API-key placeholder) and does not rebuild or restart the gateway. The gateway, CLI, TUI, and Web Dashboard read that same configuration. Keeping the placeholder preserves dashboard and API authentication after provider switches. Under the `nemohermes` alias, the command uses the registered Hermes sandbox when exactly one exists; otherwise pass `--sandbox <name>` to target one explicitly.
+Switch the active inference provider or model for a NemoClaw-managed Hermes sandbox.
+For NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider, the command attaches or updates the selected sandbox's native provider.
+Custom endpoints and local providers retain their existing shared OpenShell route.
+It then patches the shared native `/sandbox/.hermes/config.yaml`, recomputes the config hash, and updates the NemoClaw registry.
+Changes between shared routes do not rebuild or restart Hermes.
+A switch to or from a native hosted provider restarts the Hermes gateway after configuration sync, including a live NVIDIA Endpoints switch.
+Active agent requests can be interrupted during the restart.
+If the restart fails, the route and configuration remain committed. Run `$$nemoclaw <name> gateway restart` to apply the switch.
+
+Shared routes use the OpenShell proxy API-key placeholder. On a live NVIDIA Endpoints switch, NemoClaw writes the newly attached provider's scoped OpenShell credential reference into the Hermes config. Other native hosted providers use their managed credential placeholders. None of these values is a raw provider credential. The gateway, CLI, TUI, and Web Dashboard read the same configuration.
+
+The command is also available in sandbox-first form as `$$nemoclaw <name> inference set --provider <provider> --model <model>`. Under the `nemohermes` alias, it uses the registered Hermes sandbox when exactly one exists; otherwise pass `--sandbox <name>` to target one explicitly.
 
 </AgentOnly>
 

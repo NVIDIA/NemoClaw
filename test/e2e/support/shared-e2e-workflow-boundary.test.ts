@@ -144,9 +144,12 @@ const stagingReferenceVariants = [
 ];
 
 const actionMutations: Array<[string, (source: string) => string]> = [
-  ["artifact-id", (source) => source.replace('artifact-ids: "11528275310"', 'artifact-ids: "1"')],
+  ["asset-id", (source) => source.replace("602749331", "1")],
   ["digest", (source) => source.replace(/sha256:[a-f0-9]{64}/, "sha256:" + "0".repeat(64))],
-  ["source-run", (source) => source.replace('run-id: "37725998591"', 'run-id: "1"')],
+  [
+    "source-release",
+    (source) => source.replace('SOURCE_RELEASE_ID: "400756116"', 'SOURCE_RELEASE_ID: "1"'),
+  ],
   [
     "verification-order",
     (source) => {
@@ -341,6 +344,62 @@ describe("shared E2E workflow boundary", () => {
     });
     expect(errors).toContain(
       "native Podman staging must use exactly one reviewed action reference",
+    );
+  });
+
+  it(
+    "rejects a stale Portable Hermes CLI artifact restore action",
+    testTimeoutOptions(15_000),
+    () => {
+      const errors = validateMutatedWorkflow((workflow) => {
+        const restore = workflow.jobs["portable-hermes-finalization"].steps!.find(
+          (step) => step.name === "Restore exact-commit CLI artifact",
+        )!;
+        restore.uses = "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@" + "0".repeat(40);
+      });
+      expect(errors).toContain(
+        "portable-hermes-finalization must restore the exact-commit CLI artifact with the reviewed action reference",
+      );
+    },
+  );
+
+  it("requires the Portable Hermes CLI artifact restore step", testTimeoutOptions(15_000), () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const job = workflow.jobs["portable-hermes-finalization"];
+      job.steps = job.steps!.filter((step) => step.name !== "Restore exact-commit CLI artifact");
+    });
+    expect(errors).toContain(
+      "portable-hermes-finalization must restore the exact-commit CLI artifact with the reviewed action reference",
+    );
+  });
+
+  it.each([
+    { field: "if" as const, value: true },
+    { field: "if" as const, value: false },
+    { field: "if" as const, value: "${{ always() }}" },
+    { field: "continue-on-error" as const, value: true },
+    { field: "continue-on-error" as const, value: false },
+    { field: "continue-on-error" as const, value: "${{ always() }}" },
+  ])("rejects Portable Hermes CLI artifact restore $field=$value", ({ field, value }) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      workflow.jobs["portable-hermes-finalization"].steps!.find(
+        (step) => step.name === "Restore exact-commit CLI artifact",
+      )![field] = value;
+    });
+    expect(errors).toContain(
+      "portable-hermes-finalization exact-commit CLI artifact restore must run unconditionally and propagate failures",
+    );
+  });
+
+  it("binds the Portable Hermes CLI artifact restore to planned provenance", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const restore = workflow.jobs["portable-hermes-finalization"].steps!.find(
+        (step) => step.name === "Restore exact-commit CLI artifact",
+      )!;
+      restore.with!["provenance-json"] = "${{ inputs.checkout_sha }}";
+    });
+    expect(errors).toContain(
+      "portable-hermes-finalization must bind the exact-commit CLI artifact restore to the planned provenance output",
     );
   });
 

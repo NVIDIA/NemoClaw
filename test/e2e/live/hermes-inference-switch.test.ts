@@ -32,7 +32,6 @@ import {
   installHermes,
   maybeAssertEnvHashStable,
   parseHermesGatewayPid,
-  mockAnthropicSwitchEnabled,
   PROXY_FORBIDDEN_MARKERS,
   PROXY_RESOLUTION_PROVIDER,
   parseHermesModelBlock,
@@ -49,6 +48,7 @@ import {
   SWITCH_MODEL,
   SWITCH_PROVIDER,
   strictHashPerms,
+  useLocalHermesInferenceBaseline,
 } from "./hermes-inference-switch-helpers.ts";
 import {
   PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
@@ -122,7 +122,7 @@ test(
 
     // OpenShell reaches this fixture from its gateway network namespace, where
     // the runner's loopback address is not routable.
-    const mockBaseline = mockAnthropicSwitchEnabled()
+    const mockBaseline = useLocalHermesInferenceBaseline()
       ? await startFakeOpenAiCompatibleServer({
           apiKey: MOCK_BASELINE_API_KEY,
           chatContent: "PONG",
@@ -193,7 +193,6 @@ test(
     });
     const baselineState = registryState();
     const baselineSession = structuredClone(baselineState.session);
-    const baselineRegistry = structuredClone(baselineState.registry.sandboxes?.[SANDBOX_NAME]);
     const switchBinding = await prepareCompatibleAnthropicSwitchBinding(host, cleanup);
     const switchEndpointUrl = switchBinding?.endpointUrl ?? null;
     switchBinding && redactionValues.push(switchBinding.credentialValue);
@@ -252,12 +251,16 @@ test(
       model: SWITCH_MODEL,
     });
 
-    const config = await sandbox.exec(SANDBOX_NAME, ["cat", "/sandbox/.hermes/config.yaml"], {
-      artifactName: "hermes-config-yaml",
-      env: env(),
-      redactionValues,
-      timeoutMs: 30_000,
-    });
+    const config = await sandbox.exec(
+      SANDBOX_NAME,
+      ["sed", "/^[[:space:]]*api_key:/d", "/sandbox/.hermes/config.yaml"],
+      {
+        artifactName: "hermes-config-yaml",
+        env: env(),
+        redactionValues,
+        timeoutMs: 30_000,
+      },
+    );
     expect(config.exitCode, resultText(config)).toBe(0);
     const model = parseHermesModelBlock(config.stdout);
     expect(model.default).toBe(SWITCH_MODEL);
@@ -347,12 +350,12 @@ test(
     expect(state.session).toEqual(baselineSession);
     const publicSwitch = SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER;
     const durableEndpointUrl = publicSwitch
-      ? baselineRegistry?.endpointUrl
+      ? null
       : (switchEndpointUrl ??
         process.env.NEMOCLAW_ENDPOINT_URL ??
         DEFAULT_HOSTED_INFERENCE_BASE_URL);
     const durableCredentialEnv = publicSwitch
-      ? baselineRegistry?.credentialEnv
+      ? null
       : switchEndpointUrl
         ? "COMPATIBLE_ANTHROPIC_API_KEY"
         : "COMPATIBLE_API_KEY";
@@ -361,7 +364,7 @@ test(
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(durableCredentialEnv);
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(
-      publicSwitch ? baselineRegistry?.preferredInferenceApi : RUNTIME_SWITCH_API,
+      publicSwitch ? null : RUNTIME_SWITCH_API,
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.nimContainer).toBeNull();
     progress.phase("exercise sandbox inference and Hermes API");

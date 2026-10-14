@@ -5,12 +5,18 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { expect, vi } from "vitest";
-import type { DockerOperationAuthority, dockerOperationCommandArguments } from "../../../src/lib/onboard/runtime-provider/docker-operation-authority";
+import type {
+  DockerOperationAuthority,
+  dockerOperationCommandArguments,
+} from "../../../src/lib/onboard/runtime-provider/docker-operation-authority";
 
 export async function createNativeLlamaDockerFixture(
   image: string,
   modelPath: string,
-  runtime: { authority: DockerOperationAuthority; commandArguments: typeof dockerOperationCommandArguments },
+  runtime: {
+    authority: DockerOperationAuthority;
+    commandArguments: typeof dockerOperationCommandArguments;
+  },
   evidencePath?: string,
 ) {
   const authority = runtime.authority;
@@ -40,9 +46,7 @@ export async function createNativeLlamaDockerFixture(
   let sequence = 0;
   const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
   const show = (args: readonly string[]) => {
-    const command = ["docker", ...runtime.commandArguments(authority, args)]
-      .map(quote)
-      .join(" ");
+    const command = ["docker", ...runtime.commandArguments(authority, args)].map(quote).join(" ");
     commands.push(command);
     console.log(command);
   };

@@ -68,6 +68,7 @@ spec:
         - context-window
         - authentication
         - malformed-request
+        - request-body-limit
         - cancellation
         - client-timeout
         - log-redaction

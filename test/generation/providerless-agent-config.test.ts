@@ -148,6 +148,14 @@ const expectConfigured: Record<Agent, (config: any) => void> = {
     expect(config.model.api_key).toBe("${NVIDIA_INFERENCE_API_KEY}");
   },
 };
+const expectManagedConfigured: Record<Agent, (config: any) => void> = {
+  openclaw: expectConfigured.openclaw,
+  hermes(config) {
+    expect(config.model.default).toBe("fixture/model");
+    expect(config.model.provider).toBe("custom");
+    expect(config.model.api_key).toBe("openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY");
+  },
+};
 type InferenceSetCalls = ReturnType<typeof createDeps>["calls"];
 const expectCommitted: Record<Agent, (calls: InferenceSetCalls) => void> = {
   openclaw(calls) {
@@ -256,7 +264,7 @@ describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (a
       deps,
     );
     expect(result.inSandboxConfigSynced).toBe(true);
-    expectConfigured[agent](config);
+    expectManagedConfigured[agent](config);
     expectCommitted[agent](deps.calls);
     expect(
       deps.calls.captureOpenshell.mock.calls.some(

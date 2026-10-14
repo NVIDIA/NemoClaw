@@ -648,6 +648,7 @@ describe("llama.cpp image PR workflow", () => {
       .filter((uses): uses is string => uses !== undefined);
     expect(actions.filter((action) => action.startsWith("./"))).toEqual([
       "./.github/actions/setup-reviewed-npm",
+      "./.github/actions/setup-reviewed-npm",
     ]);
     actions
       .filter((action) => !action.startsWith("./"))

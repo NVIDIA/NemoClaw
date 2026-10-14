@@ -146,6 +146,74 @@ print("native-managed-constructor-placeholder-ok")
     expect(output).toContain("native-managed-constructor-placeholder-ok");
   });
 
+  it("uses only the native OpenRouter resolver handle for Deep Code requests (#13045)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const routeFile = path.join(tempDir, "managed-inference-base-url");
+    const providerFile = path.join(tempDir, "managed-upstream-provider");
+    fs.chmodSync(routeFile, 0o644);
+    fs.writeFileSync(routeFile, "https://openrouter.ai/api/v1\n");
+    fs.chmodSync(routeFile, 0o444);
+    fs.chmodSync(providerFile, 0o644);
+    fs.writeFileSync(providerFile, "openrouter-api\n");
+    fs.chmodSync(providerFile, 0o444);
+
+    const validation = `
+import os
+from deepagents_code import config
+from deepagents_code import _nemoclaw_managed as managed
+
+for root_provider in ("openrouter-api", "openrouter", "compatible-endpoint"):
+    name = "COMPATIBLE_API_KEY" if root_provider == "compatible-endpoint" else "OPENROUTER_API_KEY"
+    managed._UPSTREAM_PROVIDER_FILE.chmod(0o644)
+    managed._UPSTREAM_PROVIDER_FILE.write_text(root_provider + "\\n")
+    managed._UPSTREAM_PROVIDER_FILE.chmod(0o444)
+    for value in (
+        "openshell:resolve:env:" + name,
+        "openshell:resolve:env:v12_" + name,
+        "openshell:resolve:env:s" + "a" * 64 + "_" + name,
+    ):
+        os.environ[name] = value
+        resolved = config._get_provider_kwargs("openrouter")
+        assert resolved["api_key"] == value, root_provider
+        assert resolved["base_url"] == "https://openrouter.ai/api/v1"
+
+    for value in (
+        "",
+        "sk-or-" + "x" * 32,
+        "nemoclaw-managed-inference",
+        "openshell:resolve:env:v12_NVIDIA_INFERENCE_API_KEY",
+        "openshell:resolve:env:v12_" + name + "\\n",
+    ):
+        os.environ[name] = value
+        try:
+            config._get_provider_kwargs("openrouter")
+        except RuntimeError as error:
+            assert not value or value not in str(error)
+        else:
+            raise AssertionError("native OpenRouter accepted an invalid handle")
+
+    del os.environ[name]
+    try:
+        config._get_provider_kwargs("openrouter")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("native OpenRouter accepted a missing handle")
+
+managed._UPSTREAM_PROVIDER_FILE.chmod(0o644)
+managed._UPSTREAM_PROVIDER_FILE.write_text("openai\\n")
+managed._UPSTREAM_PROVIDER_FILE.chmod(0o444)
+assert config._get_provider_kwargs("openrouter")["api_key"] == "nemoclaw-managed-inference"
+print("native-openrouter-constructor-handle-ok")
+`;
+    const output = execFileSync("python3", ["-c", validation], {
+      env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+      encoding: "utf8",
+    });
+    expect(output).toContain("native-openrouter-constructor-handle-ok");
+  });
+
   it("binds the live Ultra E2E test to the installed resolver, not the configuration round trip (#7441)", () => {
     // The managed resolver never consumes the configuration params table, so a
     // ModelConfig.get_kwargs assertion passes with or without the fix. Keep the

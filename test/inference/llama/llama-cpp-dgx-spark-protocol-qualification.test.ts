@@ -197,6 +197,7 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
   it("records the complete native protocol inventory after cancellation and deadline recovery (#12664)", async () => {
     const fixture = createProtocolFixture();
     const { fetchImpl, requestedMaxTokens } = fixture;
+
     const evidence = await runLlamaCppDgxSparkProtocolQualification({
       authorization: AUTHORIZATION,
       baseUrl: "http://127.0.0.1:18081",
@@ -208,11 +209,12 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
       cancellation: { aborted: true, ok: true, recovered: true },
       contextWindow: { contextSize: plan.recipe.serve.contextSize, slots: 1 },
       disabledSurfaces: {
-        corsProxyHttpStatus: 403,
+        corsProxyHttpStatus: 404,
         multimodal: false,
         routerHttpStatus: 404,
-        slotsHttpStatus: 501,
-        toolsHttpStatus: 403,
+        propertiesMutationHttpStatus: 404,
+        slotsHttpStatus: 404,
+        toolsHttpStatus: 404,
         uiHttpStatus: 404,
       },
       malformedRequest: { httpStatus: 400, ok: true },
@@ -226,7 +228,7 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
       usage: { completionTokens: 2, promptTokens: 5, totalTokens: 7 },
     });
     expect(fixture.longRequest).toBe(2);
-    expect(fixture.healthProbes).toBe(1);
+    expect(fixture.healthProbes).toBe(2);
     expect(requestedMaxTokens).toEqual(
       expect.arrayContaining([
         plan.qualification.probeBounds.maxTokens.synchronousChat,

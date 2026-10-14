@@ -143,10 +143,15 @@ describe
       });
     beforeAll(async () => {
       try {
-        fixture = await createNativeLlamaDockerFixture(image!, modelPath!, {
-          authority: dockerOperations.createDockerOperationAuthority("host-local-inference"),
-          commandArguments: dockerOperations.dockerOperationCommandArguments,
-        }, evidencePath);
+        fixture = await createNativeLlamaDockerFixture(
+          image!,
+          modelPath!,
+          {
+            authority: dockerOperations.createDockerOperationAuthority("host-local-inference"),
+            commandArguments: dockerOperations.dockerOperationCommandArguments,
+          },
+          evidencePath,
+        );
         const reservation = http.createServer();
         await new Promise<void>((resolve) => reservation.listen(0, "127.0.0.1", resolve));
         const port = (reservation.address() as { port: number }).port;
