@@ -92,6 +92,14 @@ describe("fresh create identity", () => {
         expectedOutcome: "identity-mismatch-refusal" as const,
       },
       {
+        title: "retains pre-create Docker authority when no sandbox identity is returned (#13071)",
+        apfInterceptorRequested: false,
+        provider: "nvidia-prod",
+        model: "gpt-5.4",
+        agent: { name: "openclaw" },
+        expectedOutcome: "identity-free-recovery-authority" as const,
+      },
+      {
         title: "retains recovery state when the create runner fails after verification (#9833)",
         apfInterceptorRequested: true,
         provider: null,
@@ -308,8 +316,8 @@ let routeReservationCalls = 0;
 const keepAlive = setInterval(() => {}, 1000);
 const apfInterceptorRequested = ${JSON.stringify(apfInterceptorRequested)};
 const requestedAgent = ${JSON.stringify(agent)};
-const agent = requestedAgent?.name === "hermes"
-  ? require(${JSON.stringify(path.join(repoRoot, "src/lib/agent/defs.ts"))}).loadAgent("hermes")
+const agent = requestedAgent?.name === "hermes" || requestedAgent?.name === "openclaw"
+  ? require(${JSON.stringify(path.join(repoRoot, "src/lib/agent/defs.ts"))}).loadAgent(requestedAgent.name)
   : requestedAgent;
 const model = ${JSON.stringify(model)};
 const provider = ${JSON.stringify(provider)};
@@ -324,6 +332,20 @@ const recoveryReentry = process.env.NEMOCLAW_RECOVERY_REENTRY || "";
 const identityMismatchRefusal = ${JSON.stringify(expectedOutcome === "identity-mismatch-refusal")};
 const stagedMessagingRefusal = ${JSON.stringify(expectedOutcome === "staged-messaging-refusal")};
 const postCreateRunnerRefusal = ${JSON.stringify(expectedOutcome === "post-create-runner-refusal")};
+const identityFreeRecoveryAuthority = ${JSON.stringify(expectedOutcome === "identity-free-recovery-authority")};
+let daemonObserved = false;
+let daemonObservedAtCreate = false;
+if (identityFreeRecoveryAuthority) {
+  process.env.DOCKER_HOST = "unix:///var/run/docker.sock";
+  process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = ${JSON.stringify(path.join(tmpDir, "gateway-state"))};
+  require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/host-gateway-process.ts"))})
+    .resolveOwnedHostGatewayRuntimeProviderId = () => "docker";
+  require(${JSON.stringify(path.join(repoRoot, "src/lib/adapters/docker/run.ts"))}).dockerRun = (args) => {
+    require("node:assert/strict").deepEqual(args, ["--context", "default", "info", "--format", "{{.ID}}"]);
+    daemonObserved = true;
+    return { status: 0, stdout: "fixture-recovery-daemon", stderr: "" };
+  };
+}
 const postCreateRegistrationRefusal = ${JSON.stringify(
         expectedOutcome === "post-create-registration-refusal" ||
           expectedOutcome === "post-create-registration-recovery-readback-failure" ||
@@ -370,6 +392,10 @@ runner.run = (command, opts = {}) => {
 	runner.runCapture = (command) => {
 	  const cmd = _n(command);
 	  if (cmd.includes("gateway info")) return ${JSON.stringify(`Gateway endpoint: http://127.0.0.1:${gatewayPort}`)};
+  if (identityFreeRecoveryAuthority && createdSandbox.state.lifecycleState === "created" &&
+      (cmd.includes("sandbox get") || cmd.includes("--selector"))) {
+    throw Object.assign(new Error("gateway disconnected after create"), { code: 1 });
+  }
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) {
 	    if (postCreatePolicyChange && registeredSandbox) {
 	      throw new Error("final onboarding policy check failed");
@@ -467,6 +493,7 @@ managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle = (input, deps =
 	    sessionId: "session-owner",
 	    sandboxName: "my-assistant",
 	    agent: agent?.name ?? "openclaw",
+      ...(identityFreeRecoveryAuthority ? { provider, model } : {}),
 	  });
 	  retainedRecovery.saveSession(session);
 	  registry.save({
@@ -571,6 +598,7 @@ process.kill = (pid, signal) => {
 
 childProcess.spawn = (...args) => {
   const command = [args[0], ...(Array.isArray(args[1]) ? args[1] : [])];
+  daemonObservedAtCreate = daemonObserved;
   createdSandbox.create(command);
   if (_n(command).includes("sandbox create")) _deleted = false;
   const child = new EventEmitter();
@@ -600,6 +628,7 @@ childProcess.spawn = (...args) => {
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.stderr.emit("data", Buffer.from("Setting up NemoClaw...\n"));
+    if (identityFreeRecoveryAuthority) child.emit("close", 0);
   });
   return child;
 };
@@ -644,6 +673,8 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     deleted: _deleted,
     sandboxCreated: createdSandbox.state.lifecycleState === "created",
     sandboxId: createdSandbox.state.sandboxId,
+    createAttemptNonce: createdSandbox.state.createAttemptNonce,
+    daemonObservedAtCreate,
     sandboxListCalls,
     killCalls: createCommand?.child?.killCalls ?? [],
     groupKillCalls,
@@ -809,7 +840,7 @@ if (${JSON.stringify(
 	    writePayload(sandboxName, null);
 	  } catch (error) {
 	    if (cancelAfterCreate) throw error;
-	    if (!apfInterceptorRequested) throw error;
+	    if (!apfInterceptorRequested && !identityFreeRecoveryAuthority) throw error;
 	    finalCreationError = error instanceof Error ? error.message : String(error);
     writePayload(null, finalCreationError);
 	  }
@@ -1045,6 +1076,24 @@ if (${JSON.stringify(
           ),
           "expected recovery output to report the exact create-attempt label",
         );
+      };
+      const assertIdentityFreeRecoveryAuthority = () => {
+        assert.equal(payload.daemonObservedAtCreate, true);
+        assert.equal(payload.registeredSandbox, null);
+        assert.equal(payload.deleted, false);
+        assert.equal(payload.retainedRecoveryRecords.length, 1);
+        const record = payload.retainedRecoveryRecords[0];
+        assert.equal(record.schemaVersion, 2);
+        assert.equal(record.sandboxIdentityFingerprint, null);
+        assert.equal(record.createAttemptNonce, payload.createAttemptNonce);
+        assert.deepEqual(record.createAuthority, {
+          schemaVersion: 1,
+          runtime: "native-linux-default-docker",
+          reservationSessionId: "session-owner",
+          gatewayStateDir: path.join(tmpDir, "gateway-state"),
+          daemonId: "fixture-recovery-daemon",
+        });
+        assert.deepEqual(record.resources.sharedInferenceProviders, [provider]);
       };
       const assertPostCreateRunnerRefusal = () => {
         assert.equal(payload.sandboxName, null);
@@ -1306,6 +1355,7 @@ if (${JSON.stringify(
         "resolved-agent-refusal": assertUnsupportedAgentRefusal,
         "providerless-apf": assertProviderlessApfCreation,
         "identity-mismatch-refusal": assertIdentityMismatchRefusal,
+        "identity-free-recovery-authority": assertIdentityFreeRecoveryAuthority,
         "post-create-runner-refusal": assertPostCreateRunnerRefusal,
         "post-create-registration-refusal": assertPostCreateRegistrationRefusal,
         "post-create-registration-recovery-readback-failure":
