@@ -37,6 +37,8 @@ pub struct FabricCapabilitiesState {
     operating_system: Value<String>,
     compatibility_status: Value<String>,
     runtime_json: Value<String>,
+    /// The generic sandbox launch for the configured agent.
+    launch_json: Value<String>,
     binaries_json: Value<String>,
     observation_json: Value<String>,
     available: Value<bool>,
@@ -58,6 +60,7 @@ impl FabricCapabilitiesState {
         self.status = Value::Unknown;
         self.compatibility_status = Value::Unknown;
         self.runtime_json = Value::Unknown;
+        self.launch_json = Value::Unknown;
         self.binaries_json = Value::Unknown;
         self
     }
@@ -151,6 +154,7 @@ impl DataSource for FabricCapabilitiesDataSource {
                     ("status", String, Computed),
                     ("compatibility_status", String, Computed),
                     ("runtime_json", String, Computed),
+                    ("launch_json", String, Computed),
                     ("binaries_json", String, Computed),
                 ]
                 .into_iter()
@@ -211,6 +215,7 @@ impl DataSource for FabricCapabilitiesDataSource {
         }
         let (engine, image) = (engine.clone(), image.clone());
         config.runtime_json = Value::Value(String::new());
+        config.launch_json = Value::Value(String::new());
         config.binaries_json = Value::Value("[]".into());
         let mut observation = if let Value::Value(name) = &config.metadata_env {
             nemoclaw_fabric::image_metadata::observe(&EnvironmentSecrets, name, &image)
@@ -232,6 +237,12 @@ impl DataSource for FabricCapabilitiesDataSource {
                         adapter_id: adapter_id.into(),
                     };
                     config.runtime_json = Value::Value(serde_json::to_string(&binding).ok()?);
+                    // The configured agent's name selects what the bridge serves.
+                    let agent = requirements.configuration["metadata"]["name"]
+                        .as_str()
+                        .unwrap_or("");
+                    config.launch_json =
+                        Value::Value(serde_json::to_string(&binding.launch(agent)).ok()?);
                     config.binaries_json =
                         Value::Value(serde_json::to_string(binding.binaries()).ok()?);
                 }

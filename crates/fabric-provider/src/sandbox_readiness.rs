@@ -21,28 +21,26 @@ pub struct SandboxReadinessDataSource(pub Arc<GatewayClient>);
 /// The sandbox and configuration attributes readiness reads, in schema order:
 /// the sandbox's location and identity, its agent runtime, and the
 /// configuration the host must report.
-const BINDING: [&str; 9] = [
+const BINDING: [&str; 7] = [
     "workspace",
     "name",
     "id",
     "owner",
     "generation",
-    "agent_name",
-    "agent_runtime",
-    "runtime_json",
+    "launch_json",
     "config_json",
 ];
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct SandboxReadinessState {
+    /// The gateway holding the sandbox, as `data.openshell_gateway`'s `ref`.
+    gateway: Value<std::collections::BTreeMap<String, Value<String>>>,
     workspace: Value<String>,
     name: Value<String>,
     id: Value<String>,
     owner: Value<String>,
     generation: Value<String>,
-    agent_name: Value<String>,
-    agent_runtime: Value<String>,
-    runtime_json: Value<String>,
+    launch_json: Value<String>,
     config_json: Value<String>,
     read_trigger: Value<String>,
     health_json: Value<String>,
@@ -59,23 +57,19 @@ impl SandboxReadinessState {
             "id" => &mut self.id,
             "owner" => &mut self.owner,
             "generation" => &mut self.generation,
-            "agent_name" => &mut self.agent_name,
-            "agent_runtime" => &mut self.agent_runtime,
-            "runtime_json" => &mut self.runtime_json,
+            "launch_json" => &mut self.launch_json,
             "config_json" => &mut self.config_json,
             _ => unreachable!("readiness has no input named {name}"),
         }
     }
-    fn inputs(&self) -> [&Value<String>; 9] {
+    fn inputs(&self) -> [&Value<String>; 7] {
         [
             &self.workspace,
             &self.name,
             &self.id,
             &self.owner,
             &self.generation,
-            &self.agent_name,
-            &self.agent_runtime,
-            &self.runtime_json,
+            &self.launch_json,
             &self.config_json,
         ]
     }
@@ -106,6 +100,21 @@ fn binding(config: &SandboxReadinessState) -> Result<Row, Error> {
         .collect()
 }
 
+/// The gateway ref as the row fields a gateway client reads.
+fn gateway_row(config: &SandboxReadinessState) -> Result<Row, Error> {
+    let Value::Value(gateway) = &config.gateway else {
+        return Err(Error::State("sandbox readiness gateway is not yet known"));
+    };
+    nemoclaw_openshell::GATEWAY_FIELDS
+        .iter()
+        .map(|(attribute, field)| match gateway.get(*attribute) {
+            Some(Value::Value(value)) => Ok(((*field).to_owned(), value.clone())),
+            None | Some(Value::Null) => Ok(((*field).to_owned(), String::new())),
+            Some(Value::Unknown) => Err(Error::State("sandbox readiness gateway is not yet known")),
+        })
+        .collect()
+}
+
 #[async_trait]
 impl DataSource for SandboxReadinessDataSource {
     type State<'a> = SandboxReadinessState;
@@ -120,6 +129,19 @@ impl DataSource for SandboxReadinessDataSource {
                     .iter()
                     .map(|name| (*name, String, Required))
                     .chain([
+                        (
+                            "gateway",
+                            AttributeType::Object(
+                                std::iter::once(nemoclaw_tofu::REF_TYPE)
+                                    .chain(
+                                        nemoclaw_openshell::GATEWAY_FIELDS
+                                            .map(|(attribute, _)| attribute),
+                                    )
+                                    .map(|name| (name.to_owned(), String))
+                                    .collect(),
+                            ),
+                            Required,
+                        ),
                         ("read_trigger", String, Optional),
                         ("health_json", String, Computed),
                         ("error_message", String, Computed),
@@ -166,8 +188,8 @@ impl DataSource for SandboxReadinessDataSource {
                     "sandbox readiness read trigger is not yet known",
                 ));
             }
-            let binding = binding(&config)?;
-            let client = self.0.client()?;
+            let binding = crate::configuration::fabric_binding(binding(&config)?)?;
+            let client = self.0.client_for(&gateway_row(&config)?)?;
             client.ready(&binding, &CancellationToken::new()).await?;
             client.health(&binding).await
         }
@@ -211,9 +233,7 @@ mod tests {
             id: known("sandbox-id"),
             owner: known("owner"),
             generation: known("generation"),
-            agent_name: known("coder"),
-            agent_runtime: known("fabric"),
-            runtime_json: known("{}"),
+            launch_json: known("{}"),
             config_json: known("{}"),
             ..Default::default()
         }

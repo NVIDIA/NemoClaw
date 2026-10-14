@@ -165,7 +165,19 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
     assert!(!message.contains("PRIVATE_SENTINEL"), "{message}");
     assert_eq!(rejection["values"]["ready"], false);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    // Teardown omits observations so an unavailable runtime cannot block deletion.
+    // Teardown omits observations so an unavailable runtime cannot block
+    // deletion; retained objects name their gateway literally instead.
+    let current = &graph["data"]["openshell_gateway"]["current"];
+    let mut gateway = json!({"type": "openshell_gateway"});
+    for attribute in [
+        "endpoint",
+        "credential_env",
+        "tls_ca_env",
+        "tls_certificate_env",
+        "tls_key_env",
+    ] {
+        gateway[attribute] = json!(current[attribute].as_str().unwrap_or_default());
+    }
     graph.as_object_mut().unwrap().remove("data");
     graph.as_object_mut().unwrap().remove("output");
     for provider in ["nemoclaw", "openshell", "fabric"] {
@@ -177,6 +189,7 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
         .unwrap()
         .remove("depends_on");
     workspace["deployment"]["lifecycle"] = json!({"prevent_destroy":true});
+    workspace["deployment"]["gateway"] = gateway;
     graph["resource"] = json!({"openshell_workspace":workspace});
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     run(

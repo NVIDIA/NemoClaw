@@ -418,7 +418,7 @@ async fn missing_runtime_declaration_stops_planning_without_recreation() {
     for resource in state["resources"].as_array_mut().unwrap() {
         let field = match resource["type"].as_str().unwrap() {
             "openshell_provider_registration" => "provider_type",
-            "openshell_sandbox" => "agent_runtime",
+            "openshell_sandbox" => "launch_json",
             _ => continue,
         };
         resource["instances"][0]["attributes"]

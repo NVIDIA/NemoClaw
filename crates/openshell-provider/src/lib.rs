@@ -228,22 +228,13 @@ fn sandbox_row(
         .metadata
         .as_ref()
         .ok_or(ObservationError::Incomplete)?;
-    let agent = meta
-        .labels
-        .get(AGENT)
-        .filter(|v| !v.is_empty())
-        .ok_or(ObservationError::Incomplete)?;
-    let runtime = meta.labels.get(AGENT_RUNTIME).cloned().unwrap_or_default();
-    if runtime != "fabric" {
-        return Err(ObservationError::Incomplete);
-    }
     let spec = sandbox.spec.ok_or(ObservationError::Incomplete)?;
     let image = spec.template.ok_or(ObservationError::Incomplete)?.image;
     let environment: Row = spec.environment.into_iter().collect();
     let inference = environment.get(PROVIDERS_ENV).cloned().unwrap_or_default();
-    let runtime_json = meta
+    let launch_json = meta
         .annotations
-        .get(agent::RUNTIME)
+        .get(agent::LAUNCH)
         .ok_or(ObservationError::Incomplete)?
         .clone();
     let policy_input = meta
@@ -251,26 +242,23 @@ fn sandbox_row(
         .get(agent::POLICY)
         .ok_or(ObservationError::Incomplete)?
         .clone();
-    let binding = nemoclaw_openshell::runtime::RuntimeBinding::from_json(&runtime_json)?;
+    let launch = nemoclaw_openshell::runtime::Launch::from_json(&launch_json)?;
     let input: nemoclaw_openshell::runtime::PolicyInput =
         serde_json::from_str(&policy_input).map_err(|_| ObservationError::Incomplete)?;
-    let mut expected_environment = binding.environment(agent);
+    let mut expected_environment = launch.environment.clone();
     if !inference.is_empty() {
         expected_environment.insert(PROVIDERS_ENV.into(), inference.clone());
     }
     let observed_policy = spec.policy.as_ref().ok_or(ObservationError::Incomplete)?;
     let grants = network::recorded_grants(&input, observed_policy)?;
-    if policy_json(observed_policy)? != policy_json(&binding.granted_policy(&input, &grants)?)? {
+    if policy_json(observed_policy)? != policy_json(&launch.granted_policy(&input, &grants)?)? {
         return Err(ObservationError::BindingMismatch);
     }
-    let expected_providers = inference::provider_names(&inference, &runtime)?;
+    let expected_providers = inference::provider_names(&inference)?;
     if spec.providers != expected_providers {
         return Err(ObservationError::BindingMismatch);
     }
-    if image.is_empty()
-        || spec.command != binding.command("serve", &["--agent", agent])
-        || environment != expected_environment
-    {
+    if image.is_empty() || spec.command != launch.command || environment != expected_environment {
         return Err(ObservationError::BindingMismatch);
     }
     let phase = sandbox.status.ok_or(ObservationError::Incomplete)?.phase;
@@ -280,12 +268,10 @@ fn sandbox_row(
     }
     let ready = phase == proto::SandboxPhase::Ready && meta.deletion_time.is_none();
     let mut row = base(sandbox.metadata.clone(), name, removing)?;
-    row.insert("agent_name".into(), agent.clone());
-    row.insert("agent_runtime".into(), runtime);
     row.insert("provider_names_json".into(), inference);
     row.insert("image".into(), image);
     row.insert("policy_json".into(), policy_input);
-    row.insert("runtime_json".into(), runtime_json);
+    row.insert("launch_json".into(), launch_json);
     // Phase is used by active checks, but is not a Terraform schema attribute.
     Ok((row, ready, grants))
 }
@@ -408,24 +394,32 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
                 "owner",
                 "generation",
                 "image",
-                "agent_name",
-                "agent_runtime",
+                "launch_json",
                 "policy_json",
-                "runtime_json",
                 "provider_names_json",
             ],
             &[],
         )
-        .optional(&["agent_runtime", "policy_json", "provider_names_json"]),
+        .optional(&["policy_json", "provider_names_json"]),
     ]
     .map(lifecycle_rules)
     .map(|mut definition| {
+        // Each object names the gateway that holds it; the gateway does not
+        // observe how it was reached, so rows carry the connection.
+        let gateway = nemoclaw_openshell::GATEWAY_FIELDS.map(|(_, field)| field);
+        definition.fields.extend(gateway);
+        // Credential and TLS references rotate in place; another endpoint is
+        // another gateway, which retained objects refuse.
+        definition.mutable.extend(&gateway[1..]);
+        definition.optional.extend(&gateway[1..]);
+        definition.carried.extend(gateway);
         definition.structured = nemoclaw_openshell::structured_inputs(definition.kind);
         definition.export = nemoclaw_openshell::export(definition.kind);
         definition.references = nemoclaw_openshell::references(definition.kind);
-        // Version 1 takes refs instead of names; earlier state is rejected.
+        // Version 1 took refs instead of names; version 2 takes a generic
+        // launch instead of a Fabric runtime binding. Earlier state is rejected.
         definition
-            .schema_version(1)
+            .schema_version(2)
             .generated("owner", nemoclaw_backend::generate_owner)
             .generated("generation", nemoclaw_backend::generate_generation)
     })

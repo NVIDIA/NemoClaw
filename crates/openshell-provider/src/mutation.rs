@@ -96,6 +96,9 @@ impl Backend for OpenShell {
         desired: &Row,
         prior: Option<&Row>,
     ) -> Result<(), nemoclaw_backend::Error> {
+        let desired = &nemoclaw_openshell::without_gateway(desired);
+        let prior = prior.map(nemoclaw_openshell::without_gateway);
+        let prior = prior.as_ref();
         // Bound resources were refreshed by OpenTofu. New resources still need
         // an ownership check: their names may already exist in the gateway.
         if prior.is_none()
@@ -118,6 +121,7 @@ impl Backend for OpenShell {
         prior: &Row,
         removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
+        let prior = &nemoclaw_openshell::without_gateway(prior);
         let observed = self
             .observe(
                 kind,
@@ -128,7 +132,7 @@ impl Backend for OpenShell {
             .await?;
         if kind == "sandbox"
             && let Some(row) = &observed
-            && prior.get("runtime_json") != row.get("runtime_json")
+            && prior.get("launch_json") != row.get("launch_json")
         {
             return Err(ObservationError::BindingMismatch);
         }
@@ -144,6 +148,7 @@ impl Backend for OpenShell {
         Ok(observed)
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
+        let desired = &nemoclaw_openshell::without_gateway(desired);
         let fields: &[&str] = match kind {
             "workspace" => &["name", "owner", "generation"],
             "provider_profile" => &["name", "owner", "generation", "workspace"],
@@ -154,7 +159,7 @@ impl Backend for OpenShell {
                 "generation",
                 "workspace",
                 "image",
-                "agent_name",
+                "launch_json",
             ],
             _ => return Mutation::failed(ObservationError::Query),
         };
@@ -177,6 +182,7 @@ impl Backend for OpenShell {
         prior: &Row,
         destroying: bool,
     ) -> Result<(), ObservationError> {
+        let prior = &nemoclaw_openshell::without_gateway(prior);
         if !matches!(
             openshell_lifecycle(kind),
             Some(OpenShellLifecycle::Reconstructible)
