@@ -17,6 +17,14 @@ Fixes and regression coverage for those behaviors belong upstream.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
+On disposable GitHub runners, the `full-e2e` OpenClaw launch segment uses the
+final host user's home at mode `0775` with `umask 0002`. It removes only that
+test sandbox's persistent readiness receipt before the existing probe and two
+PTY launch sessions, then requires a valid lease and records its status. The fixture
+restores the original home mode and umask in cleanup. Local runs and preinstalled
+Launchable validation retain their original home permissions. Deterministic
+permission denials remain owned by `src/lib/state/launch-readiness-lease.test.ts`.
+
 The native Podman row of Hermes GPU startup installs its reviewed host prerequisites before candidate checkout.
 It uses the pinned host-dependency action for `conmon`, `fuse-overlayfs`, `golang-github-containers-common`, `iptables`, `nftables`, `slirp4netns`, and `uidmap`.
 The container configuration package supplies Podman's standard image policy and seccomp files.
@@ -69,6 +77,59 @@ file with spaces while stdin contains competing data. This target is selectable 
 Docker and Podman through the existing runtime matrix.
 
 ## CI execution shape
+
+### Protected DGX Spark qualification
+
+The explicit-only `llama-cpp-dgx-spark-qualification` job uses the existing unified
+E2E workflow. Dispatch it against `main` with `targets` empty,
+`jobs=llama-cpp-dgx-spark-qualification`, `allow_dgx_spark_runner_queue=true`, and
+the current same-repository PR's `pr_number`, `checkout_repository=NVIDIA/NemoClaw`,
+`checkout_sha`, and `base_sha`. Set `workflow_sha` to the trusted main revision
+used by the dispatch. The workflow must contain this caller on main before it can
+run; dispatching candidate workflow code on the protected runner is not supported.
+
+The hosted plan job authenticates the open PR and exact revisions. It loads candidate
+manifest and activation data without executing candidate code. Candidate runner,
+approval environment, and staged model path must match trusted main. Executable
+llama.cpp image build inputs must also match trusted main; the candidate's digest-bound
+plan supplies the pinned source, CUDA, Go, recipe, and agent qualification inputs.
+
+The configured runner must be a physical DGX Spark with NVIDIA GB10, a supported
+Docker/NVIDIA runtime, OpenShell prerequisites, and the exact locally staged GGUF.
+Administrators must restrict the runner group to the trusted main workflow and
+protect the configured environment with required approval. The workflow does not
+create those protections or download the model. Runs serialize without cancelling
+active qualification, use an owned loopback registry, and build the trusted CLI.
+
+The runner validates GPU identity, model and image digests, protocol and OpenClaw
+agent results, and cleanup. Successful runs publish the revision-bound receipt and
+its digest-bound plan through the shared 14-day artifact retention path. Failed or
+interrupted runs instead publish a validated failure record identifying the phase,
+owned run scope, recovery check, and conservative cleanup state. A failure record
+never establishes qualification success. Keys, exception text, prompts, model paths,
+and raw runtime logs are excluded from failure diagnostics. Only validated records
+enter the final upload directory. A missing prerequisite, failed assertion, or
+incomplete cleanup still fails the job. The trusted CommonJS launcher uses the
+installed `tsx` loader for CommonJS and deferred ESM source imports; plain Node
+execution of that source graph is not supported. This lane is excluded from default and
+release-required suites, and does not promote an image or close hardware qualification.
+
+The launcher handles SIGINT and SIGTERM independently of synchronous worker commands.
+It stops the worker process group before current-owner cleanup and records an interrupted
+failure, not a successful qualification. SIGKILL, host loss, or unavailable Docker can
+prevent cleanup; operators must inspect the recorded run's resources in those cases.
+Managed agent recovery uses an exact run-bound owner marker, isolated gateway state,
+and run-owned volume labels. Ordinary failure, interruption, and fallback cleanup share
+that recovery path. Foreign resources are preserved; unproven recovery retains its
+ownership evidence and still fails qualification.
+
+Scoped creation records its unique create-attempt label before submission and the
+immutable sandbox ID after confirmation. Cleanup reconfirms that ID through the isolated
+gateway before deletion. Interrupted creation can resolve its first ID from the saved
+nonce. When no attempt was submitted, cleanup skips sandbox deletion and removes only
+run-owned setup resources. Unresolved or mismatched identity requires operator inspection;
+the sandbox name alone never authorizes deletion. Legacy owner records remain unproven
+and are preserved rather than interpreted as a new transaction with no submitted create.
 
 ### Candidate CLI Artifact
 

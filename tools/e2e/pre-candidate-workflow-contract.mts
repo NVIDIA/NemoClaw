@@ -32,6 +32,7 @@ export const PRE_CANDIDATE_STEP_ENV: Readonly<Record<string, Readonly<Record<str
   },
   "Record trusted E2E dispatch receipt": {
     ACTOR: "${{ github.actor }}",
+    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
     ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     ALLOW_JETSON_RUNNER_QUEUE: "false",
     BASE_SHA: "${{ inputs.checkout_sha != '' && inputs.base_sha || github.sha }}",
