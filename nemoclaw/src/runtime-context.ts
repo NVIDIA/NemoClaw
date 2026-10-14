@@ -60,10 +60,10 @@ export function getRuntimeSummary(pluginConfig: NemoClawConfig): RuntimeSummary 
 }
 
 function buildRuntimeContextText(summary: RuntimeSummary): string {
-  const sandboxNameForCommand = isValidName(summary.sandboxName) ? summary.sandboxName : "<name>";
+  const displaySandboxName = isValidName(summary.sandboxName) ? summary.sandboxName : "<name>";
   const lines = [
     "<nemoclaw-runtime>",
-    `You are running inside OpenShell sandbox "${summary.sandboxName}" via NemoClaw.`,
+    `You are running inside OpenShell sandbox "${displaySandboxName}" via NemoClaw.`,
     "Treat this as a sandboxed environment, not unrestricted host access.",
     summary.sandboxPhase ? `Current sandbox phase: ${summary.sandboxPhase}.` : null,
     "Network policy:",
@@ -74,7 +74,7 @@ function buildRuntimeContextText(summary: RuntimeSummary): string {
     "- Do not assert that a URL or host is blocked or unreachable unless you have actually attempted it this turn; report the actual result rather than speculating.",
     "- If a tool reports `CONNECT tunnel failed, response 403`, state that the proxy refused the request.",
     "- OpenShell policy may be the cause. The error alone does not confirm a policy denial.",
-    `- Ask the operator to check \`nemoclaw ${sandboxNameForCommand} logs --tail 50\` on the host before suggesting a policy change.`,
+    `- Ask the operator to check \`nemoclaw ${displaySandboxName} logs --tail 50\` on the host before suggesting a policy change.`,
     "- Do not call a proxy 403 a generic connectivity failure. Treat proxy 407, DNS, timeout, and TLS failures separately.",
     "- Do not claim unrestricted host or internet access either. When unsure, attempt the action and rely on the real result instead of speculating about the environment.",
     "</nemoclaw-runtime>",
