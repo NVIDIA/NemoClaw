@@ -457,7 +457,9 @@ Use these details when your first-run path needs more control.
     ```
 
     `nemohermes inference set` changes the active model or provider without rebuilding the sandbox.
-    For native providers, it updates the selected sandbox attachment and patches `/sandbox/.hermes/config.yaml` without restarting Hermes.
+    For shared routes, it patches `/sandbox/.hermes/config.yaml` without restarting Hermes.
+    A switch to or from a native hosted provider restarts the Hermes gateway after configuration sync, which can interrupt active agent requests.
+    If the restart fails, the route and configuration remain committed. Run `nemohermes <sandbox-name> gateway restart` to apply the switch.
     Custom and local providers retain the shared OpenShell route.
 
     ```bash

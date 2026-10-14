@@ -23,7 +23,7 @@ try {
   const environment = execFileSync("env");
   const processes = execFileSync("ps", ["aux"]);
   const sample = execFileSync("sh", [
-    "-lc", 'find "$1" /tmp /sandbox /home -type f -size -1M 2>/dev/null | head -200',
+    "-lc", 'find "$1" /tmp /sandbox /home -type f -size -1048576c 2>/dev/null | head -200',
     "credential-scan", root,
   ]).toString().trim().split("\n").filter(Boolean);
   const observations = sample.flatMap(file => {
