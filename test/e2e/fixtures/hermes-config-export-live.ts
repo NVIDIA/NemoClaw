@@ -10,6 +10,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import { HERMES_INTERFACE_DEFAULTS } from "../../../src/lib/config/model.ts";
+import { hasExportExcludedMessaging } from "../../../src/lib/domain/config/verify-export-source.ts";
 import {
   V1ALPHA1_RUNTIME_DEFAULTS,
   V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
@@ -340,8 +341,9 @@ export async function verifyHermesConfigExportLive(
     typeof entry.credentialEnv === "string" &&
     entry.credentialEnv.length > 0 &&
     entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
+  const expectsMessagingRefusal = hasExportExcludedMessaging(entry);
   const expectedRefusals = [
-    ...(entry.messaging != null ? [MESSAGING_REFUSAL] : []),
+    ...(expectsMessagingRefusal ? [MESSAGING_REFUSAL] : []),
     ...(entry.openshellDriver === "podman" ? [PODMAN_REFUSAL] : []),
     ...(expectsCredentialHttpRefusal ? [CREDENTIAL_HTTP_REFUSAL] : []),
   ];
@@ -352,7 +354,7 @@ export async function verifyHermesConfigExportLive(
       );
       const refusalDiagnosticMatches = [nemoclawDiagnostics, nemohermesDiagnostics].every(
         (diagnostic) => {
-          if (entry.messaging == null) return diagnostic === expectedDiagnostic;
+          if (!expectsMessagingRefusal) return diagnostic === expectedDiagnostic;
           const lines = diagnostic.split("\n");
           return (
             lines[0] === "Config export failed (unsupported)." &&
