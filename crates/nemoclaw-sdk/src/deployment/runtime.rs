@@ -10,9 +10,9 @@ pub(super) mod tests;
 pub(super) use super::plan::check_plan as check_runtime_plan;
 use super::*;
 use crate::managed::{GATEWAY_KIND, Spec};
-const GATEWAY_STORAGE: &str = "nemoclaw_gateway_storage.runtime";
-const KUBERNETES_STORAGE: &str = "nemoclaw_kubernetes_storage.runtime";
-const KUBERNETES_AUTH: &str = "nemoclaw_kubernetes_auth.runtime";
+const GATEWAY_STORAGE: &str = "openshell_gateway_storage.runtime";
+const KUBERNETES_STORAGE: &str = "openshell_kubernetes_storage.runtime";
+const KUBERNETES_AUTH: &str = "openshell_kubernetes_auth.runtime";
 
 fn kubernetes_binding(
     target: &Target,

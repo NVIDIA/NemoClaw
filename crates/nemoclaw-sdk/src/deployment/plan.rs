@@ -202,7 +202,7 @@ pub(super) fn check_plan(
             .get(&change.address)
             .ok_or(Error::Conflict("plan contains an undeclared resource"))?;
         let replacement = change.change.actions == ["delete", "create"]
-            && change.address.starts_with("nemoclaw_managed_gateway.")
+            && change.address.starts_with("openshell_podman_gateway.")
             && bindings.contains_key(&change.address);
         if !seen.insert(&change.address)
             || (!replacement
@@ -281,7 +281,7 @@ pub(super) fn check_destroy_plan(
             // The Helm provider can report absence after a release lookup
             // failure. Require the authentication resource's independent
             // Secret-metadata observation before retiring this binding.
-            let auth_address = "nemoclaw_kubernetes_auth.runtime";
+            let auth_address = "openshell_kubernetes_auth.runtime";
             let confirmed = plan.resource_changes.iter().any(|change| {
                 change.address == auth_address
                     && change.mode.as_deref() == Some("managed")
@@ -512,7 +512,7 @@ mod native_helm_tests {
                 .len(),
             1
         );
-        let auth_address = "nemoclaw_kubernetes_auth.runtime";
+        let auth_address = "openshell_kubernetes_auth.runtime";
         let auth = json!({"id":"auth-uid", "spec":"retained-auth-spec"});
         allowed.insert(
             auth_address.into(),
@@ -611,9 +611,9 @@ mod kubernetes_replacement_tests {
             .filter(|target| !target.address.starts_with("data."))
             .collect();
         for platform in [
-            "nemoclaw_kubernetes_storage.runtime",
-            "nemoclaw_kubernetes_auth.runtime",
-            "nemoclaw_kubernetes_gateway.runtime",
+            "openshell_kubernetes_storage.runtime",
+            "openshell_kubernetes_auth.runtime",
+            "openshell_kubernetes_gateway.runtime",
         ] {
             assert!(
                 targets.iter().any(|target| target.address == platform),
@@ -745,12 +745,12 @@ mod reporting_tests {
     use super::*;
     #[test]
     fn inventory_reports_validated_actions_and_retention_without_copying_private_state() {
-        let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"mode":"managed","address":"nemoclaw_gateway_storage.runtime","change":{"actions":["no-op"],"before":{"id":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL"},"after":{"id":"PRIVATE_SENTINEL"}}}],"resource_drift":[{"mode":"managed","address":"nemoclaw_gateway_storage.runtime","change":{"actions":["update"],"before":{},"after":{}}}]})).unwrap();
+        let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"mode":"managed","address":"openshell_gateway_storage.runtime","change":{"actions":["no-op"],"before":{"id":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL"},"after":{"id":"PRIVATE_SENTINEL"}}}],"resource_drift":[{"mode":"managed","address":"openshell_gateway_storage.runtime","change":{"actions":["update"],"before":{},"after":{}}}]})).unwrap();
         let report = plan
             .discovery_report(
                 super::super::DiscoveryScope::Runtime,
                 &BTreeMap::new(),
-                &BTreeSet::from(["nemoclaw_gateway_storage.runtime".into()]),
+                &BTreeSet::from(["openshell_gateway_storage.runtime".into()]),
             )
             .unwrap();
         assert_eq!(report.resources.len(), 1);

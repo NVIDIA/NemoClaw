@@ -44,7 +44,7 @@ fn bindings(directory: &Path) -> BTreeMap<String, String> {
         .collect()
 }
 
-const STORAGE: &str = "nemoclaw_gateway_storage.runtime";
+const STORAGE: &str = "openshell_gateway_storage.runtime";
 
 #[tokio::test]
 #[ignore = "creates and removes only an explicitly configured test gateway; retains its storage"]
@@ -105,7 +105,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
     let compute = if docker {
         "docker_container.managed_gateway_runtime"
     } else {
-        "nemoclaw_managed_gateway.runtime"
+        "openshell_podman_gateway.runtime"
     };
     assert_eq!(first.len(), if docker { 3 } else { 2 });
     assert!(

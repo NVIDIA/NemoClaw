@@ -18,14 +18,7 @@ use http_fixture as transport;
 mod image_runtime;
 
 mod discovery;
-mod gateway_readiness;
-// Managed gateway resources take only a local engine socket, which only Unix
-// clients reach.
-#[cfg(unix)]
-mod gateway_storage;
 mod inference_capabilities;
-mod kubernetes_hcl;
-mod kubernetes_lifecycle;
 mod provider_protocol;
 mod references;
 mod runtime_image;
@@ -90,11 +83,7 @@ fn every_type_has_a_contract_test() {
         .collect();
     let sources = [
         include_str!("discovery.rs"),
-        include_str!("gateway_readiness.rs"),
-        include_str!("gateway_storage.rs"),
         include_str!("inference_capabilities.rs"),
-        include_str!("kubernetes_hcl.rs"),
-        include_str!("kubernetes_lifecycle.rs"),
         include_str!("provider_protocol.rs"),
         include_str!("runtime_image.rs"),
         include_str!("service_capacity.rs"),

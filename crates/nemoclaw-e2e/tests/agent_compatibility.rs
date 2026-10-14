@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_e2e::image_runtime::{binding, policy};
-use nemoclaw_provider::openshell::policy_json;
+use openshell_provider::policy_json;
 fn policy_matches(actual: &openshell_core::proto::SandboxPolicy) -> bool {
     policy_json(actual).ok() == policy_json(&policy()).ok()
 }

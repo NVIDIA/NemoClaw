@@ -289,7 +289,7 @@ mod live {
         removed.extend(changes(
             &runtime
                 .iter()
-                .filter(|address| address.as_str() != "nemoclaw_gateway_storage.runtime")
+                .filter(|address| address.as_str() != "openshell_gateway_storage.runtime")
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
             "delete",
@@ -300,7 +300,7 @@ mod live {
     fn retained_resources() -> Vec<String> {
         vec![
             "openshell_workspace.deployment".into(),
-            "nemoclaw_gateway_storage.runtime".into(),
+            "openshell_gateway_storage.runtime".into(),
         ]
     }
 
