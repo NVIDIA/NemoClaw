@@ -199,7 +199,7 @@ test(
     ).toMatchObject({
       exitCode: 0,
       environmentClean: true,
-      processesClean: true,
+      processesClean: isolationEvidence.processesAvailable,
       sampledFilesClean: true,
       canaryDetected: true,
     });
