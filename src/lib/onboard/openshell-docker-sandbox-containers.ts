@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dockerCapture, dockerRun } from "../adapters/docker";
+import { dockerCapture, dockerLogs, dockerRun } from "../adapters/docker";
 import {
   inspectDockerSandboxIdentities,
   type DockerSandboxIdentityObservation,
 } from "../adapters/docker/inspect";
+import { captureDockerContainerFailureEvidence } from "./compute/docker-container-failure-evidence";
 import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
@@ -78,38 +79,49 @@ export function findOpenShellDockerSandboxContainerIds(
     .filter(Boolean);
 }
 
-const SANDBOX_LOG_TAIL_TIMEOUT_MS = 10_000;
+type SandboxFailureOutputDeps = Pick<
+  DockerGpuPatchDeps,
+  "dockerCapture" | "dockerLogs" | "dockerRun"
+>;
 
 /**
- * Read recent unredacted output from the one Docker container OpenShell
- * labeled for this sandbox. Callers must redact before saving or printing.
- * OpenShell 0.0.116 writes supervisor startup failures, such as a Landlock
- * hard_requirement error, only to that container's stderr: the reason reaches
- * neither `openshell logs` nor sandbox status (#13178). OpenShell 0.1.x
- * reports the supervisor log tail in sandbox status; remove this bridge once
- * the OpenShell pin reaches 0.1.0.
+ * Capture redacted recent output from one sandbox container before rollback
+ * can remove or replace it. Use the exact replacement container when the
+ * caller owns one; otherwise require exactly one OpenShell-labeled container.
+ *
+ * SOURCE_OF_TRUTH_REVIEW
+ * invalidState: OpenShell 0.0.116 writes supervisor startup failures, such as
+ *   a Landlock hard_requirement error, only to the sandbox container's stderr;
+ *   neither `openshell logs` nor sandbox status carries the reason (#13178).
+ * sourceBoundary: captureDockerContainerFailureEvidence owns bounded Docker
+ *   inspect, log, and redaction behavior.
+ * whyNotSourceFix: the supervisor runs in the pinned external OpenShell
+ *   release; OpenShell 0.1.x reports the supervisor log tail in sandbox status.
+ * regressionTest: openshell-docker-sandbox-containers.test.ts and
+ *   onboard-sandbox-create-failure.test.ts.
+ * removalCondition: remove once the OpenShell pin reaches 0.1.0.
  */
-export function readOpenShellDockerSandboxLogTail(
+export function captureOpenShellDockerSandboxFailureOutput(
   sandboxName: string,
-  tailLines: number,
-  deps: Pick<DockerSandboxContainerQueryDeps, "dockerRun"> = {},
+  expectedContainerId: string | null,
+  deps: SandboxFailureOutputDeps = {},
 ): string | null {
-  const run = deps.dockerRun ?? dockerRun;
   try {
-    const containers = queryOpenShellDockerSandboxContainers(
-      sandboxName,
-      { dockerRun: run },
-      SANDBOX_LOG_TAIL_TIMEOUT_MS,
-    );
-    if (!containers.ok || containers.ids.length !== 1) return null;
-    const result = run(["logs", "--tail", String(tailLines), containers.ids[0]], {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: SANDBOX_LOG_TAIL_TIMEOUT_MS,
+    let containerId = expectedContainerId;
+    if (!containerId) {
+      const containers = queryOpenShellDockerSandboxContainers(
+        sandboxName,
+        { dockerRun: deps.dockerRun ?? dockerRun },
+        DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+      );
+      if (!containers.ok || containers.ids.length !== 1) return null;
+      containerId = containers.ids[0];
+    }
+    const evidence = captureDockerContainerFailureEvidence(containerId, {
+      dockerCapture: deps.dockerCapture ?? dockerCapture,
+      dockerLogs: deps.dockerLogs ?? dockerLogs,
     });
-    if (Number(result.status ?? 1) !== 0) return null;
-    const output = `${String(result.stdout ?? "")}${String(result.stderr ?? "")}`.trim();
-    return output || null;
+    return evidence.redactedLogTail || null;
   } catch {
     return null;
   }

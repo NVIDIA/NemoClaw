@@ -283,8 +283,16 @@ export interface SandboxGpuCreateFlowDeps {
   ) => boolean;
   printCreateFailureDiagnostics?: (
     sandboxName: string,
-    options: { readonly backupPath?: string | null },
+    options: {
+      readonly backupPath?: string | null;
+      readonly sandboxContainerOutput?: string | null;
+    },
   ) => void;
+  /** Test seam for failed-container output captured before rollback (#13178). */
+  captureSandboxContainerOutput?: (
+    sandboxName: string,
+    expectedContainerId: string | null,
+  ) => string | null;
   /** Production callers configure the hidden portable lifecycle through the default implementation. */
   installPortableDemoLifecycle?: typeof installPortableDemoSandboxLifecycle;
   /** Production callers omit this factory and use the runtime provider's adapter. */

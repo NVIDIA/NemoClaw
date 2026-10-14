@@ -10,13 +10,12 @@ import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
 import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
 import { resolveGatewayLogPathForPort } from "./gateway/state-dir";
-import { readOpenShellDockerSandboxLogTail } from "./openshell-docker-sandbox-containers";
+import { captureOpenShellDockerSandboxFailureOutput } from "./openshell-docker-sandbox-containers";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const MAX_RELEVANT_LOG_LINES = 120;
 const MAX_GATEWAY_TAIL_LINES = 240;
-const SANDBOX_CONTAINER_LOG_TAIL_LINES = 80;
 const SANDBOX_CONTAINER_PRINTED_LINES = 8;
 
 export type SandboxCreateFailureDiagnostics = {
@@ -41,16 +40,12 @@ export type SandboxCreateFailureDiagnosticOptions = {
   backupPath?: string | null;
   now?: Date;
   /**
-   * Returns the sandbox container's recent output, or null when unavailable.
-   * Collection skips container output when this is absent; the print path
-   * supplies the Docker reader.
+   * Sandbox container output captured before any rollback removed or
+   * replaced the failed container. `null` records that capture found none.
+   * When omitted, the print path captures from the one labeled container.
    */
-  readSandboxContainerLogs?: (sandboxName: string) => string | null;
+  sandboxContainerOutput?: string | null;
 };
-
-function readSandboxContainerLogTail(sandboxName: string): string | null {
-  return readOpenShellDockerSandboxLogTail(sandboxName, SANDBOX_CONTAINER_LOG_TAIL_LINES);
-}
 
 function stripAnsi(value: string): string {
   return String(value || "").replace(ANSI_RE, "");
@@ -217,7 +212,7 @@ export function collectSandboxCreateFailureDiagnostics(
   const stateEntries = listStateDir(stateDir);
   const backupPath = options.backupPath ?? null;
   const containerLogRedactor = createDockerGpuDiagnosticRedactor();
-  const sandboxContainerLines = (options.readSandboxContainerLogs?.(sandboxName) ?? "")
+  const sandboxContainerLines = (options.sandboxContainerOutput ?? "")
     .split(/\r?\n/)
     .map((line) => containerLogRedactor.redactText(stripAnsi(line)).trimEnd())
     .filter((line) => line.trim());
@@ -283,8 +278,11 @@ export function printSandboxCreateFailureDiagnostics(
   options: SandboxCreateFailureDiagnosticOptions = {},
 ): SandboxCreateFailureDiagnostics | null {
   const diagnostics = collectSandboxCreateFailureDiagnostics(sandboxName, {
-    readSandboxContainerLogs: readSandboxContainerLogTail,
     ...options,
+    sandboxContainerOutput:
+      options.sandboxContainerOutput !== undefined
+        ? options.sandboxContainerOutput
+        : captureOpenShellDockerSandboxFailureOutput(sandboxName, null),
   });
   if (!diagnostics) return null;
 

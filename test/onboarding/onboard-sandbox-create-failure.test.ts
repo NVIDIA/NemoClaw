@@ -5,7 +5,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const docker = vi.hoisted(() => ({
+  dockerRun: vi.fn(),
+  dockerCapture: vi.fn(),
+  dockerLogs: vi.fn(),
+}));
+
+vi.mock("../../src/lib/adapters/docker", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/adapters/docker")>()),
+  dockerRun: docker.dockerRun,
+  dockerCapture: docker.dockerCapture,
+  dockerLogs: docker.dockerLogs,
+}));
 
 import {
   collectSandboxCreateFailureDiagnostics,
@@ -29,6 +42,12 @@ function captureConsoleError<T>(action: () => T): { result: T; messages: string[
 }
 
 describe("sandbox create failure diagnostics", () => {
+  beforeEach(() => {
+    docker.dockerRun.mockReset().mockReturnValue({ status: 0, stdout: "", stderr: "" });
+    docker.dockerCapture.mockReset().mockReturnValue("");
+    docker.dockerLogs.mockReset().mockReturnValue("");
+  });
+
   it.each([
     ["default port", 8080, undefined, "openshell-docker-gateway"],
     ["non-default port", 9123, undefined, "openshell-docker-gateway-9123"],
@@ -119,7 +138,7 @@ describe("sandbox create failure diagnostics", () => {
       const diagnostics = printSandboxCreateFailureDiagnostics("my-assistant", {
         homeDir,
         backupPath: "/tmp/pre-upgrade-backup",
-        readSandboxContainerLogs: () => null,
+        sandboxContainerOutput: null,
         now: new Date("2026-05-12T20:35:00.000Z"),
       });
 
@@ -167,14 +186,23 @@ describe("sandbox create failure diagnostics", () => {
   // OpenShell 0.0.116 prints supervisor startup failures only to the sandbox
   // container's stderr; neither `openshell logs` nor sandbox status carry the
   // reason (#13178). Remove once the OpenShell pin reaches 0.1.0.
-  it("saves and prints the redacted sandbox container log tail (#13178)", () => {
+  it("captures, saves, and prints redacted sandbox container output through Docker (#13178)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-container-"));
     const homeDir = path.join(tmp, "home");
-    const secret = "nvapi-" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6";
-    const readSandboxContainerLogs = vi.fn(() =>
+    const containerId = "f".repeat(64);
+    const keyedSecret = "nvapi-" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6";
+    const opaqueSecret = "opaque-value-9f8e7d6c5b4a";
+    docker.dockerRun.mockReturnValue({ status: 0, stdout: `${containerId}\n`, stderr: "" });
+    docker.dockerCapture.mockImplementation((args: readonly string[]) =>
+      args.includes("--format")
+        ? ""
+        : JSON.stringify([{ Config: { Env: [`PROVIDER_TOKEN=${opaqueSecret}`] }, State: {} }]),
+    );
+    docker.dockerLogs.mockReturnValue(
       [
         "2026-10-14T18:32:23.679Z OCSF CONFIG:APPLYING [INFO] Applying Landlock filesystem sandbox",
-        `2026-10-14T18:32:23.680Z INFO provider env NVIDIA_API_KEY=${secret}`,
+        `2026-10-14T18:32:23.680Z INFO provider env NVIDIA_API_KEY=${keyedSecret}`,
+        `2026-10-14T18:32:23.681Z INFO provider said ${opaqueSecret}`,
         LANDLOCK_FAILURE,
       ].join("\n"),
     );
@@ -183,32 +211,52 @@ describe("sandbox create failure diagnostics", () => {
       printSandboxCreateFailureDiagnostics("my-assistant", {
         homeDir,
         now: new Date("2026-10-14T18:35:00.000Z"),
-        readSandboxContainerLogs,
       }),
     );
 
-    expect(readSandboxContainerLogs).toHaveBeenCalledWith("my-assistant");
+    expect(docker.dockerRun.mock.calls[0][0]).toEqual(
+      expect.arrayContaining(["label=openshell.ai/sandbox-name=my-assistant"]),
+    );
+    expect(docker.dockerLogs).toHaveBeenCalledWith(containerId, expect.anything());
     const savedPath = path.join(diagnostics!.dir, "sandbox-container.log");
     expect(diagnostics?.sandboxContainerLogPath).toBe(savedPath);
     const saved = fs.readFileSync(savedPath, "utf-8");
     expect(saved).toContain(LANDLOCK_FAILURE);
-    expect(saved).not.toContain(secret);
     expect(fs.statSync(savedPath).mode & 0o777).toBe(0o600);
     expect(messages).toContain("  Recent sandbox container output:");
     expect(messages).toContain(`    ${LANDLOCK_FAILURE}`);
-    expect(messages.join("\n")).not.toContain(secret);
+    const printed = messages.join("\n");
+    expect(saved).not.toContain(keyedSecret);
+    expect(saved).not.toContain(opaqueSecret);
+    expect(printed).not.toContain(keyedSecret);
+    expect(printed).not.toContain(opaqueSecret);
     expect(fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf-8")).toContain(
       `sandbox_container_log=${savedPath}`,
     );
   });
 
-  it("omits sandbox container output when no log tail is available (#13178)", () => {
+  it("uses output captured before rollback instead of reading Docker again (#13178)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-captured-"));
+    const { messages } = captureConsoleError(() =>
+      printSandboxCreateFailureDiagnostics("my-assistant", {
+        homeDir: path.join(tmp, "home"),
+        now: new Date("2026-10-14T18:35:00.000Z"),
+        sandboxContainerOutput: LANDLOCK_FAILURE,
+      }),
+    );
+
+    expect(docker.dockerRun).not.toHaveBeenCalled();
+    expect(docker.dockerLogs).not.toHaveBeenCalled();
+    expect(messages).toContain(`    ${LANDLOCK_FAILURE}`);
+  });
+
+  it("omits sandbox container output when capture found none (#13178)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-no-container-"));
     const { result: diagnostics, messages } = captureConsoleError(() =>
       printSandboxCreateFailureDiagnostics("my-assistant", {
         homeDir: path.join(tmp, "home"),
         now: new Date("2026-10-14T18:35:00.000Z"),
-        readSandboxContainerLogs: () => null,
+        sandboxContainerOutput: null,
       }),
     );
 

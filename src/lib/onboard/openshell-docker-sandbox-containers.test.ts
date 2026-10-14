@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   queryOpenShellDockerSandboxRuntimeSnapshot,
-  readOpenShellDockerSandboxLogTail,
+  captureOpenShellDockerSandboxFailureOutput,
   resolveOpenShellSandboxOwnershipLabel,
   removeExactOpenShellDockerSandboxContainers,
 } from "./openshell-docker-sandbox-containers";
@@ -150,49 +150,80 @@ function querySnapshot(fields: unknown, nvidiaVisibleDevices?: string) {
 
 // OpenShell 0.0.116 sends supervisor startup failures only to the sandbox
 // container's stderr (#13178). Remove once the OpenShell pin reaches 0.1.0.
-describe("readOpenShellDockerSandboxLogTail (#13178)", () => {
+describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
   const CONTAINER_ID = "f".repeat(64);
   const STARTUP_FAILURE =
     "Error:   × Failed to prepare sandbox: Landlock path unavailable in hard_requirement mode";
   const dockerResult = (stdout: string, status = 0, stderr = "") =>
     ({ status, stdout, stderr }) as never;
+  const inspectWithEnv = (env: string[]) => JSON.stringify([{ Config: { Env: env }, State: {} }]);
 
-  it("reads a bounded tail from the one OpenShell container labeled with the sandbox name", () => {
-    const dockerRun = vi.fn((args: readonly string[]) =>
-      args[0] === "ps" ? dockerResult(`${CONTAINER_ID}\n`) : dockerResult("", 0, STARTUP_FAILURE),
+  it("reads redacted output from the one OpenShell container labeled with the sandbox name", () => {
+    const opaqueSecret = "opaque-value-9f8e7d6c5b4a";
+    const dockerRun = vi.fn((_args: readonly string[]) => dockerResult(`${CONTAINER_ID}\n`));
+    const dockerCapture = vi.fn((args: readonly string[]) =>
+      args.includes("--format") ? "" : inspectWithEnv([`PROVIDER_TOKEN=${opaqueSecret}`]),
     );
+    const dockerLogs = vi.fn(() => `provider said ${opaqueSecret}\n${STARTUP_FAILURE}`);
 
-    expect(readOpenShellDockerSandboxLogTail("my-assistant", 80, { dockerRun })).toBe(
-      STARTUP_FAILURE,
-    );
+    const output = captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+      dockerRun,
+      dockerCapture,
+      dockerLogs,
+    });
+
     expect(dockerRun.mock.calls[0][0]).toEqual(
       expect.arrayContaining([
         "label=openshell.ai/managed-by=openshell",
         "label=openshell.ai/sandbox-name=my-assistant",
       ]),
     );
-    expect(dockerRun.mock.calls[1][0]).toEqual(["logs", "--tail", "80", CONTAINER_ID]);
+    expect(dockerLogs).toHaveBeenCalledWith(CONTAINER_ID, expect.anything());
+    expect(output).toContain(STARTUP_FAILURE);
+    expect(output).not.toContain(opaqueSecret);
+  });
+
+  it("reads the exact failed replacement without a label lookup", () => {
+    const dockerRun = vi.fn();
+    const dockerLogs = vi.fn(() => STARTUP_FAILURE);
+
+    expect(
+      captureOpenShellDockerSandboxFailureOutput("my-assistant", CONTAINER_ID, {
+        dockerRun,
+        dockerCapture: () => "",
+        dockerLogs,
+      }),
+    ).toBe(STARTUP_FAILURE);
+    expect(dockerRun).not.toHaveBeenCalled();
+    expect(dockerLogs).toHaveBeenCalledWith(CONTAINER_ID, expect.anything());
   });
 
   it.each([
     ["no labeled container", dockerResult("")],
     ["several labeled containers", dockerResult(`${CONTAINER_ID}\n${"e".repeat(64)}\n`)],
     ["a failed Docker query", dockerResult("", 1, "Cannot connect to the Docker daemon")],
-  ])("reads nothing when Docker reports %s", (_scenario, psResult) => {
-    const dockerRun = vi.fn(() => psResult);
+  ])("captures nothing when Docker reports %s", (_scenario, psResult) => {
+    const dockerLogs = vi.fn();
 
-    expect(readOpenShellDockerSandboxLogTail("my-assistant", 80, { dockerRun })).toBeNull();
-    expect(dockerRun).toHaveBeenCalledTimes(1);
+    expect(
+      captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+        dockerRun: vi.fn(() => psResult),
+        dockerCapture: () => "",
+        dockerLogs,
+      }),
+    ).toBeNull();
+    expect(dockerLogs).not.toHaveBeenCalled();
   });
 
-  it("reads nothing when docker logs fails", () => {
-    const dockerRun = vi.fn((args: readonly string[]) =>
-      args[0] === "ps"
-        ? dockerResult(`${CONTAINER_ID}\n`)
-        : dockerResult("", 1, "Error response from daemon: No such container"),
-    );
-
-    expect(readOpenShellDockerSandboxLogTail("my-assistant", 80, { dockerRun })).toBeNull();
+  it("captures nothing when docker logs fails", () => {
+    expect(
+      captureOpenShellDockerSandboxFailureOutput("my-assistant", CONTAINER_ID, {
+        dockerCapture: () => "",
+        dockerLogs: () => {
+          throw new Error("No such container");
+        },
+      }),
+    ).toBeNull();
   });
 });
 
