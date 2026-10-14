@@ -8,12 +8,16 @@ import path from "node:path";
 import { GATEWAY_PORT } from "../core/ports";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
+import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
 import { resolveGatewayLogPathForPort } from "./gateway/state-dir";
+import { readOpenShellDockerSandboxLogTail } from "./openshell-docker-sandbox-containers";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const MAX_RELEVANT_LOG_LINES = 120;
 const MAX_GATEWAY_TAIL_LINES = 240;
+const SANDBOX_CONTAINER_LOG_TAIL_LINES = 80;
+const SANDBOX_CONTAINER_PRINTED_LINES = 8;
 
 export type SandboxCreateFailureDiagnostics = {
   dir: string;
@@ -24,6 +28,8 @@ export type SandboxCreateFailureDiagnostics = {
   copiedConsoleOutput: string | null;
   gatewayTailPath: string | null;
   backupPath: string | null;
+  sandboxContainerLogPath: string | null;
+  sandboxContainerLines: string[];
   summaryLines: string[];
 };
 
@@ -34,7 +40,17 @@ export type SandboxCreateFailureDiagnosticOptions = {
   gatewayStateDir?: string;
   backupPath?: string | null;
   now?: Date;
+  /**
+   * Returns the sandbox container's recent output, or null when unavailable.
+   * Collection skips container output when this is absent; the print path
+   * supplies the Docker reader.
+   */
+  readSandboxContainerLogs?: (sandboxName: string) => string | null;
 };
+
+function readSandboxContainerLogTail(sandboxName: string): string | null {
+  return readOpenShellDockerSandboxLogTail(sandboxName, SANDBOX_CONTAINER_LOG_TAIL_LINES);
+}
 
 function stripAnsi(value: string): string {
   return String(value || "").replace(ANSI_RE, "");
@@ -200,6 +216,18 @@ export function collectSandboxCreateFailureDiagnostics(
   );
   const stateEntries = listStateDir(stateDir);
   const backupPath = options.backupPath ?? null;
+  const containerLogRedactor = createDockerGpuDiagnosticRedactor();
+  const sandboxContainerLines = (options.readSandboxContainerLogs?.(sandboxName) ?? "")
+    .split(/\r?\n/)
+    .map((line) => containerLogRedactor.redactText(stripAnsi(line)).trimEnd())
+    .filter((line) => line.trim());
+  const sandboxContainerLogPath =
+    sandboxContainerLines.length > 0 ? path.join(dir, "sandbox-container.log") : null;
+  if (sandboxContainerLogPath) {
+    fs.writeFileSync(sandboxContainerLogPath, `${sandboxContainerLines.join("\n")}\n`, {
+      mode: 0o600,
+    });
+  }
 
   if (relevantLines.length > 0) {
     fs.writeFileSync(
@@ -225,6 +253,7 @@ export function collectSandboxCreateFailureDiagnostics(
     `console_output=${consoleOutput ?? "unknown"}`,
     `copied_console_output=${copiedConsoleOutput ?? "not-copied"}`,
     `backup_path=${backupPath ?? "none"}`,
+    `sandbox_container_log=${sandboxContainerLogPath ?? "not-written"}`,
   ];
   if (stateEntries.length > 0) {
     summaryLines.push("state_dir_entries:");
@@ -243,6 +272,8 @@ export function collectSandboxCreateFailureDiagnostics(
     copiedConsoleOutput,
     gatewayTailPath,
     backupPath,
+    sandboxContainerLogPath,
+    sandboxContainerLines: sandboxContainerLines.slice(-SANDBOX_CONTAINER_PRINTED_LINES),
     summaryLines: relevantLines.length > 0 ? relevantLines.slice(-8) : gatewayTailLines.slice(-8),
   };
 }
@@ -251,13 +282,22 @@ export function printSandboxCreateFailureDiagnostics(
   sandboxName: string,
   options: SandboxCreateFailureDiagnosticOptions = {},
 ): SandboxCreateFailureDiagnostics | null {
-  const diagnostics = collectSandboxCreateFailureDiagnostics(sandboxName, options);
+  const diagnostics = collectSandboxCreateFailureDiagnostics(sandboxName, {
+    readSandboxContainerLogs: readSandboxContainerLogTail,
+    ...options,
+  });
   if (!diagnostics) return null;
 
   console.error(`  Diagnostics saved: ${diagnostics.dir}`);
   if (diagnostics.summaryLines.length > 0) {
     console.error("  Recent OpenShell gateway failure:");
     for (const line of diagnostics.summaryLines) {
+      console.error(`    ${line}`);
+    }
+  }
+  if (diagnostics.sandboxContainerLines.length > 0) {
+    console.error("  Recent sandbox container output:");
+    for (const line of diagnostics.sandboxContainerLines) {
       console.error(`    ${line}`);
     }
   }

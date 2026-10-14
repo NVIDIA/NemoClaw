@@ -78,6 +78,43 @@ export function findOpenShellDockerSandboxContainerIds(
     .filter(Boolean);
 }
 
+const SANDBOX_LOG_TAIL_TIMEOUT_MS = 10_000;
+
+/**
+ * Read recent unredacted output from the one Docker container OpenShell
+ * labeled for this sandbox. Callers must redact before saving or printing.
+ * OpenShell 0.0.116 writes supervisor startup failures, such as a Landlock
+ * hard_requirement error, only to that container's stderr: the reason reaches
+ * neither `openshell logs` nor sandbox status (#13178). OpenShell 0.1.x
+ * reports the supervisor log tail in sandbox status; remove this bridge once
+ * the OpenShell pin reaches 0.1.0.
+ */
+export function readOpenShellDockerSandboxLogTail(
+  sandboxName: string,
+  tailLines: number,
+  deps: Pick<DockerSandboxContainerQueryDeps, "dockerRun"> = {},
+): string | null {
+  const run = deps.dockerRun ?? dockerRun;
+  try {
+    const containers = queryOpenShellDockerSandboxContainers(
+      sandboxName,
+      { dockerRun: run },
+      SANDBOX_LOG_TAIL_TIMEOUT_MS,
+    );
+    if (!containers.ok || containers.ids.length !== 1) return null;
+    const result = run(["logs", "--tail", String(tailLines), containers.ids[0]], {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: SANDBOX_LOG_TAIL_TIMEOUT_MS,
+    });
+    if (Number(result.status ?? 1) !== 0) return null;
+    const output = `${String(result.stdout ?? "")}${String(result.stderr ?? "")}`.trim();
+    return output || null;
+  } catch {
+    return null;
+  }
+}
+
 export type OpenShellDockerSandboxContainerQuery =
   | { ok: true; ids: string[] }
   | { ok: false; ids: []; error: string };

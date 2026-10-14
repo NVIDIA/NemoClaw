@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   queryOpenShellDockerSandboxRuntimeSnapshot,
+  readOpenShellDockerSandboxLogTail,
   resolveOpenShellSandboxOwnershipLabel,
   removeExactOpenShellDockerSandboxContainers,
 } from "./openshell-docker-sandbox-containers";
@@ -146,6 +147,54 @@ function querySnapshot(fields: unknown, nvidiaVisibleDevices?: string) {
     result: queryOpenShellDockerSandboxRuntimeSnapshot("alpha", { dockerRun }),
   };
 }
+
+// OpenShell 0.0.116 sends supervisor startup failures only to the sandbox
+// container's stderr (#13178). Remove once the OpenShell pin reaches 0.1.0.
+describe("readOpenShellDockerSandboxLogTail (#13178)", () => {
+  const CONTAINER_ID = "f".repeat(64);
+  const STARTUP_FAILURE =
+    "Error:   × Failed to prepare sandbox: Landlock path unavailable in hard_requirement mode";
+  const dockerResult = (stdout: string, status = 0, stderr = "") =>
+    ({ status, stdout, stderr }) as never;
+
+  it("reads a bounded tail from the one OpenShell container labeled with the sandbox name", () => {
+    const dockerRun = vi.fn((args: readonly string[]) =>
+      args[0] === "ps" ? dockerResult(`${CONTAINER_ID}\n`) : dockerResult("", 0, STARTUP_FAILURE),
+    );
+
+    expect(readOpenShellDockerSandboxLogTail("my-assistant", 80, { dockerRun })).toBe(
+      STARTUP_FAILURE,
+    );
+    expect(dockerRun.mock.calls[0][0]).toEqual(
+      expect.arrayContaining([
+        "label=openshell.ai/managed-by=openshell",
+        "label=openshell.ai/sandbox-name=my-assistant",
+      ]),
+    );
+    expect(dockerRun.mock.calls[1][0]).toEqual(["logs", "--tail", "80", CONTAINER_ID]);
+  });
+
+  it.each([
+    ["no labeled container", dockerResult("")],
+    ["several labeled containers", dockerResult(`${CONTAINER_ID}\n${"e".repeat(64)}\n`)],
+    ["a failed Docker query", dockerResult("", 1, "Cannot connect to the Docker daemon")],
+  ])("reads nothing when Docker reports %s", (_scenario, psResult) => {
+    const dockerRun = vi.fn(() => psResult);
+
+    expect(readOpenShellDockerSandboxLogTail("my-assistant", 80, { dockerRun })).toBeNull();
+    expect(dockerRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads nothing when docker logs fails", () => {
+    const dockerRun = vi.fn((args: readonly string[]) =>
+      args[0] === "ps"
+        ? dockerResult(`${CONTAINER_ID}\n`)
+        : dockerResult("", 1, "Error response from daemon: No such container"),
+    );
+
+    expect(readOpenShellDockerSandboxLogTail("my-assistant", 80, { dockerRun })).toBeNull();
+  });
+});
 
 describe("queryOpenShellDockerSandboxRuntimeSnapshot", () => {
   it("does not start container discovery after the shared deadline expires", () => {
