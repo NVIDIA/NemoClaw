@@ -3,7 +3,27 @@
 
 # Tests
 
-Before pushing, run this platform's `CI / Bundle` checks from the repository root:
+## Choose Local Validation
+
+Before pushing, choose checks that cover the changed behavior and its affected callers.
+
+| Change | Local validation |
+|---|---|
+| Prose or documentation | Review the changed text; run the [documentation check](documentation-build.md#validate-locally) for documentation changes. |
+| Declarative configuration or workflow triggers | Run the applicable schema or lint checks; test affected execution paths when their behavior changes. |
+| Isolated code change | Run focused behavioral tests and nearby regression checks, plus formatting and lint checks for the affected code. |
+| Bundle construction, provider contracts, lifecycle behavior, or broad workspace dependencies | Run `cargo ci`. |
+| Impact is unclear or narrower checks cannot establish confidence | Run `cargo ci`. |
+
+For changes spanning categories, combine the applicable checks.
+A YAML or configuration file can change runtime behavior; choose by impact rather than extension.
+Report the commands and results in the PR, and name checks deferred to CI with the reason.
+Repeat validation when relevant inputs change, a check fails, or an unresolved concern requires it; a push alone does not require another run.
+Required PR checks still apply before merging.
+
+## Run the Full Local Suite
+
+Run this platform's complete `CI / Bundle` checks from the repository root:
 
 ```sh
 cargo ci
@@ -195,6 +215,11 @@ CI keeps each step's JUnit report, with per-test durations, for 14 days in the `
 
 ## How CI Runs the Tests
 
+The automatic workflows accept pull requests to any base branch, including stacked `v1` PRs targeting another feature branch.
+The PR must include these workflow changes; update existing stacks from `v1` to enable them.
+Image and live-suite checks still use their change analysis to decide which steps to run.
+Documentation previews publish only for PRs targeting `v1`.
+
 | Workflow | Checks |
 |---|---|
 | CI / Bundle | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64` |
@@ -279,7 +304,7 @@ The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-test
 
 ## Dependency Policy
 
-The [dependency workflow](../../.github/workflows/dependencies.yml) runs on every pull request targeting `v1`, so its required check is available even when no dependencies change.
+The [dependency workflow](../../.github/workflows/dependencies.yml) runs on every pull request, including stacked PRs, so its check is available even when no dependencies change.
 Pushes to `v1` run it only when Rust manifests, lockfiles, the toolchain, the policy, or the workflow change.
 It runs once on Linux, outside the native build matrix, without compiling the workspace or caching build artifacts.
 The [policy](../../deny.toml) permits the current license inventory and the explicitly listed Git sources; dependency revisions remain pinned in the manifests and lockfile.

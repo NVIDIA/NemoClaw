@@ -108,13 +108,14 @@ cargo run --locked -p nemoclaw-build -- fern delete --id nemoclaw-v1-my-branch
 
 ## GitHub Actions
 
-The [v1 workflow](../../.github/workflows/docs.yml) validates every PR targeting `v1` and every push to `v1`, including Rust changes that could stale the generated reference.
+The [v1 workflow](../../.github/workflows/docs.yml) validates every PR carrying the workflow, including stacked PRs targeting feature branches, and every push to `v1`.
+This includes Rust changes that could stale the generated reference.
 Manual runs perform validation only.
 
 | Event | Publication |
 |---|---|
-| Same-repository PR with `FERN_TOKEN` | `nemoclaw-v1-pr-N` preview, with one updated PR comment |
-| Fork PR, Dependabot PR, or PR without the token | Validation only |
+| Same-repository PR targeting `v1` with `FERN_TOKEN` | `nemoclaw-v1-pr-N` preview, with one updated PR comment |
+| PR targeting another branch, fork PR, Dependabot PR, or PR without the token | Validation only |
 | Push to `v1` | Stable `nemoclaw-v1` preview; delete associated merged v1 PR previews after success |
 | `v1.*.*` tag with public publication enabled | Both versions on the existing public site, after checking that the tagged commit is reachable from `origin/v1` |
 
