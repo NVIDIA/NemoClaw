@@ -373,6 +373,24 @@ describe("shared E2E workflow boundary", () => {
     );
   });
 
+  it.each([
+    { field: "if" as const, value: true },
+    { field: "if" as const, value: false },
+    { field: "if" as const, value: "${{ always() }}" },
+    { field: "continue-on-error" as const, value: true },
+    { field: "continue-on-error" as const, value: false },
+    { field: "continue-on-error" as const, value: "${{ always() }}" },
+  ])("rejects Portable Hermes CLI artifact restore $field=$value", ({ field, value }) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      workflow.jobs["portable-hermes-finalization"].steps!.find(
+        (step) => step.name === "Restore exact-commit CLI artifact",
+      )![field] = value;
+    });
+    expect(errors).toContain(
+      "portable-hermes-finalization exact-commit CLI artifact restore must run unconditionally and propagate failures",
+    );
+  });
+
   it("binds the Portable Hermes CLI artifact restore to planned provenance", () => {
     const errors = validateMutatedWorkflow((workflow) => {
       const restore = workflow.jobs["portable-hermes-finalization"].steps!.find(

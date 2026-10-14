@@ -672,6 +672,14 @@ export function validatePortableHermesCliArtifactRestoreAction(workflow: Workflo
     ];
   }
   if (
+    Object.hasOwn(portableHermesRestores[0], "if") ||
+    Object.hasOwn(portableHermesRestores[0], "continue-on-error")
+  ) {
+    return [
+      "portable-hermes-finalization exact-commit CLI artifact restore must run unconditionally and propagate failures",
+    ];
+  }
+  if (
     !isDeepStrictEqual(record(portableHermesRestores[0].with), {
       "provenance-json": "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
     })
