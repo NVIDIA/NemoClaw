@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { nativeHostedAgentConfig } from "./inference/native-provider/agent-config.ts";
-import { managedInferenceApiKey } from "./inference-credential.ts";
+import {
+  NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN,
+  managedInferenceApiKey,
+  NVIDIA_INFERENCE_PLACEHOLDER,
+} from "./inference-credential.ts";
 
 // Shared inference routing replaces this sentinel at egress. Native NVIDIA
 // routing instead expands the supervisor-issued environment handle.
@@ -43,6 +47,7 @@ export type HermesManagedRoute = {
   upstreamProvider: string;
   inferenceApi: string;
   contextWindow?: number | null;
+  nativeCredentialHandle?: string;
 };
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -80,9 +85,19 @@ export function applyHermesManagedRoute(
   route: HermesManagedRoute,
 ): asserts config is Record<string, unknown> & HermesManagedRouting {
   const nativeHosted = nativeHostedAgentConfig(route.upstreamProvider, route.baseUrl);
-  const apiKey = nativeHosted
+  let apiKey = nativeHosted
     ? `\${${nativeHosted.credentialEnv}}`
     : managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
+  if (route.nativeCredentialHandle !== undefined) {
+    if (
+      route.upstreamProvider !== "nvidia-prod" ||
+      apiKey !== NVIDIA_INFERENCE_PLACEHOLDER ||
+      !NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN.test(route.nativeCredentialHandle)
+    ) {
+      throw new Error("Hermes native NVIDIA route requires a provider-bound credential handle.");
+    }
+    apiKey = route.nativeCredentialHandle;
+  }
   const providerName = route.upstreamProvider || "nemoclaw-inference";
   const providerKey = hermesProviderKey(providerName);
   const apiMode = hermesApiMode(route.inferenceApi);

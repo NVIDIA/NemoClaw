@@ -174,6 +174,36 @@ describe("Hermes managed policy", () => {
     },
   );
 
+  it.each([
+    "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY",
+    `openshell:resolve:env:s${"a".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
+  ])("accepts a provider-bound native NVIDIA credential handle %s", (apiKey) => {
+    const policy = buildHermesManagedPolicy(
+      { ...SETTINGS, baseUrl: NATIVE_NVIDIA_URLS[0], upstreamProvider: "nvidia-prod" },
+      {},
+    );
+    policy.config.model!.api_key = apiKey;
+    const result = loadWithPython(policy);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it.each([
+    "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
+    "openshell:resolve:env:v7_OPENAI_API_KEY",
+    "openshell:resolve:env:v123456789012345678901_NVIDIA_INFERENCE_API_KEY",
+    `openshell:resolve:env:s${"A".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
+    "sk-raw-policy-credential",
+  ])("rejects an invalid native NVIDIA credential handle %s", (apiKey) => {
+    const policy = buildHermesManagedPolicy(
+      { ...SETTINGS, baseUrl: NATIVE_NVIDIA_URLS[0], upstreamProvider: "nvidia-prod" },
+      {},
+    );
+    policy.config.model!.api_key = apiKey;
+    const result = loadWithPython(policy);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain(apiKey);
+  });
+
   it.each(INVALID_NATIVE_NVIDIA_URLS)(
     "rejects ambiguous native NVIDIA routing at %j",
     (baseUrl) => {

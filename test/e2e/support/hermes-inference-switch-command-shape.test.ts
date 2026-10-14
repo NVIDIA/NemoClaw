@@ -13,6 +13,7 @@ import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts"
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   API_KEY_SHAPE_PATTERN,
+  NVIDIA_API_KEY_SHAPE_PATTERN,
   apiKeyShapeCommand,
   cleanupHermesSwitch,
   compatibleAnthropicMetadataArgs,
@@ -25,6 +26,7 @@ import {
   inferenceLocalMaxTokens,
   installHermes,
   mockAnthropicSwitchEnabled,
+  useLocalHermesInferenceBaseline,
   openAiSurfaceEndpointUrl,
   openshellGatewayName,
   parseInferenceRoute,
@@ -110,9 +112,9 @@ describe("Hermes inference switch command shape", () => {
     return import("../live/hermes-inference-switch-helpers.ts");
   }
 
-  function matchesApiKeyShape(line: string): boolean {
+  function matchesApiKeyShape(line: string, pattern: string = API_KEY_SHAPE_PATTERN): boolean {
     return (
-      spawnSync("grep", ["-Eq", API_KEY_SHAPE_PATTERN], {
+      spawnSync("grep", ["-Eq", pattern], {
         encoding: "utf8",
         input: `${line}\n`,
       }).status === 0
@@ -224,27 +226,24 @@ describe("Hermes inference switch command shape", () => {
 
   it("uses direct single-line argv for the in-sandbox API-key probe", () => {
     const command = apiKeyShapeCommand("compatible-anthropic-endpoint");
+    const nativeCommand = apiKeyShapeCommand(PUBLIC_NVIDIA_SWITCH_PROVIDER);
 
     expect(command).toEqual(["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"]);
-    expect(command.every((argument) => !/[\r\n]/u.test(argument))).toBe(true);
-  });
-
-  it("accepts only the native NVIDIA credential reference on the native route", () => {
-    const [command, ...args] = apiKeyShapeCommand(PUBLIC_NVIDIA_SWITCH_PROVIDER);
-    const matches = (input: string) =>
-      spawnSync(command, args.slice(0, -1), { input, encoding: "utf8" }).status === 0;
-    expect(matches("  api_key: ${NVIDIA_INFERENCE_API_KEY}\n")).toBe(true);
-    expect(matches('  api_key: "${NVIDIA_INFERENCE_API_KEY}"\n')).toBe(true);
-    expect(matches("  api_key: '${NVIDIA_INFERENCE_API_KEY}'\n")).toBe(true);
-    expect(matches("  api_key: sk-OPENSHELL-PROXY-REWRITE\n")).toBe(false);
-    expect(matches("  api_key: nvapi-raw-fixture-key\n")).toBe(false);
-    expect(matches("  api_key: ${NVIDIA_INFERENCE_API_KEY} trailing\n")).toBe(false);
+    expect(nativeCommand).toEqual([
+      "grep",
+      "-Eq",
+      NVIDIA_API_KEY_SHAPE_PATTERN,
+      "/sandbox/.hermes/config.yaml",
+    ]);
+    expect([...command, ...nativeCommand].every((argument) => !/[\r\n]/u.test(argument))).toBe(
+      true,
+    );
   });
 
   it("accepts only complete sk-prefixed YAML scalars", () => {
     expect(
-      ["  api_key: sk-value", '  api_key: "sk-value"', "  api_key: 'sk-value'"].every(
-        matchesApiKeyShape,
+      ["  api_key: sk-value", '  api_key: "sk-value"', "  api_key: 'sk-value'"].every((line) =>
+        matchesApiKeyShape(line),
       ),
     ).toBe(true);
     expect(
@@ -253,7 +252,27 @@ describe("Hermes inference switch command shape", () => {
         "  api_key: sk-value trailing",
         '  api_key: "sk-value',
         '  api_key: sk-value"',
-      ].some(matchesApiKeyShape),
+      ].some((line) => matchesApiKeyShape(line)),
+    ).toBe(false);
+  });
+
+  it("accepts only a provider-bound reference for a native NVIDIA switch", () => {
+    const reference = "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY";
+    expect(
+      [`  api_key: ${reference}`, `  api_key: "${reference}"`, `  api_key: '${reference}'`].every(
+        (line) => matchesApiKeyShape(line, NVIDIA_API_KEY_SHAPE_PATTERN),
+      ),
+    ).toBe(true);
+    expect(
+      [
+        "  api_key: sk-OPENSHELL-PROXY-REWRITE",
+        "  api_key: nvapi-raw-key",
+        "  api_key: ${NVIDIA_INFERENCE_API_KEY}",
+        "  api_key: openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
+        `  api_key: ${reference} trailing`,
+        `  api_key: "${reference}`,
+        `  api_key: ${reference}"`,
+      ].some((line) => matchesApiKeyShape(line, NVIDIA_API_KEY_SHAPE_PATTERN)),
     ).toBe(false);
   });
 
@@ -410,7 +429,7 @@ describe("Hermes inference switch command shape", () => {
     ).toThrow();
   });
 
-  it("enables local baseline inference only for the mock Anthropic lane", () => {
+  it("recognizes only the requested mock Anthropic switch", () => {
     const mockAnthropic = {
       NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
       NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
@@ -427,6 +446,20 @@ describe("Hermes inference switch command shape", () => {
       mockAnthropicSwitchEnabled({ ...mockAnthropic, NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "0" }),
     ).toBe(false);
     expect(mockAnthropicSwitchEnabled({})).toBe(false);
+  });
+
+  it("uses an authenticated local baseline before native NVIDIA or mock Anthropic switches", () => {
+    expect(useLocalHermesInferenceBaseline({ NEMOCLAW_SWITCH_PROVIDER: "nvidia-prod" })).toBe(true);
+    expect(
+      useLocalHermesInferenceBaseline({
+        NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
+        NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
+        NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",
+      }),
+    ).toBe(true);
+    expect(
+      useLocalHermesInferenceBaseline({ NEMOCLAW_SWITCH_PROVIDER: "compatible-endpoint" }),
+    ).toBe(false);
   });
 
   it("does not retry a successful Hermes response from the wrong model", async () => {
