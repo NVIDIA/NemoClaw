@@ -465,13 +465,43 @@ export function parseNvidiaSmi(
     .map((line) => line.trim())
     .filter(Boolean);
   if (lines.length !== 1) throw new Error("qualification requires exactly one visible NVIDIA GPU");
-  const match = /^(NVIDIA GB10)\s*,\s*([0-9]{3}\.[0-9]{2}\.[0-9]{2})$/u.exec(lines[0] ?? "");
+  const match = /^(NVIDIA GB10)\s*,\s*([0-9]{3}\.[0-9]{2,3}\.[0-9]{2})$/u.exec(lines[0] ?? "");
   if (!match) throw new Error("qualification host is not the expected NVIDIA GB10 profile");
   const driverVersion = match[2] as string;
   if (compareDottedVersions(driverVersion, minimumDriverVersion) < 0) {
     throw new Error("NVIDIA driver is below the qualification minimum");
   }
   return { count: 1, driverVersion, name: "NVIDIA GB10" };
+}
+
+export function parseQualificationBridgeGateway(raw: string, expectedName: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("qualification managed bridge inspection is not valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error("qualification managed bridge inspection is invalid");
+  const network = parsed as Record<string, unknown>;
+  const ipam = network.IPAM as Record<string, unknown> | undefined;
+  const configurations = ipam?.Config;
+  const entry = Array.isArray(configurations) ? configurations[0] : null;
+  const gateway =
+    entry && typeof entry === "object" ? (entry as Record<string, unknown>).Gateway : null;
+  if (
+    network.Name !== expectedName ||
+    network.Driver !== "bridge" ||
+    network.Internal !== false ||
+    !Array.isArray(configurations) ||
+    configurations.length !== 1 ||
+    typeof gateway !== "string" ||
+    net.isIP(gateway) !== 4 ||
+    !/^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/u.test(gateway)
+  ) {
+    throw new Error("qualification managed bridge has no exact private IPv4 gateway");
+  }
+  return gateway;
 }
 
 class QualificationCommandError extends Error {
@@ -499,7 +529,7 @@ const FAILURE_REASONS: Record<string, LlamaCppDgxSparkFailureReason> = {
 function runCommand(
   command: string,
   args: string[],
-  options: { capture?: boolean; maximumBytes?: number } = {},
+  options: { capture?: boolean; includeStderr?: boolean; maximumBytes?: number } = {},
 ): Buffer {
   const capture = options.capture ?? true;
   const result = spawnSync(command, args, {
@@ -510,7 +540,9 @@ function runCommand(
   if (result.error || result.status !== 0) {
     throw new QualificationCommandError(result.status);
   }
-  return Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.alloc(0);
+  const stdout = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.alloc(0);
+  const stderr = Buffer.isBuffer(result.stderr) ? result.stderr : Buffer.alloc(0);
+  return options.includeStderr ? Buffer.concat([stdout, stderr]) : stdout;
 }
 
 function commandSucceeds(command: string, args: string[]): boolean {
@@ -1057,6 +1089,7 @@ async function runQualificationCore(
   const apiKeyHostPath = path.join(names.tempRoot, "api-key");
   let loopbackPort: number | undefined;
   let relay: Awaited<ReturnType<typeof startQualificationLoopbackRelay>> | undefined;
+  let bridgeRelay: Awaited<ReturnType<typeof startQualificationLoopbackRelay>> | undefined;
   let successReceipt: JsonRecord | undefined;
   let failure: unknown;
   let failurePhase: LlamaCppDgxSparkFailurePhase | undefined;
@@ -1158,10 +1191,12 @@ async function runQualificationCore(
     progress.phase = "gpu";
     const offload = validateStartupLog(
       runCommand("docker", ["logs", "--tail", "20000", names.containerName], {
+        includeStderr: true,
         maximumBytes: 16 * 1024 * 1024,
       }).toString("utf8"),
     );
     const authorization = `Bearer ${apiKey}`;
+    const runtimeLogStart = new Date().toISOString();
     progress.phase = "protocol";
     const probes = await runLlamaCppDgxSparkProtocolQualification({
       authorization,
@@ -1212,12 +1247,31 @@ async function runQualificationCore(
             model: plan.recipe.model.servedName,
             sandbox: agentPlan.sandbox.name,
           },
-          (context) => runLlamaCppOpenClawAgentQualification(agentPlan, context),
+          async (context) => {
+            const managedNetworkName = `nemoclaw-managed-${names.registryOwner}`;
+            const gatewayAddress = parseQualificationBridgeGateway(
+              runCommand(
+                "docker",
+                ["network", "inspect", "--format", "{{json .}}", managedNetworkName],
+                { maximumBytes: 64 * 1024 },
+              ).toString("utf8"),
+              managedNetworkName,
+            );
+            bridgeRelay = await startQualificationLoopbackRelay(
+              resolveRequestGuardAddress(names),
+              plan.recipe.serve.port,
+              plan.recipe.serve.limits.requestTimeoutSeconds,
+              plan.recipe.serve.port,
+              gatewayAddress,
+            );
+            return runLlamaCppOpenClawAgentQualification(agentPlan, context);
+          },
           {
             owner: names.registryOwner,
             stateDir: path.join(names.tempRoot, "managed-openshell"),
             networkName: `nemoclaw-managed-${names.registryOwner}`,
           },
+          plan.recipe.serve.limits.maxOutputTokens,
         );
         if (!managedResult.probeEvidence) {
           throw new Error("OpenClaw qualification did not return bounded evidence");
@@ -1247,9 +1301,14 @@ async function runQualificationCore(
     }
     progress.phase = "redaction";
     const logRedaction = validateRuntimeLogRedaction(
-      runCommand("docker", ["logs", "--tail", "20000", names.containerName], {
-        maximumBytes: 16 * 1024 * 1024,
-      }).toString("utf8"),
+      runCommand(
+        "docker",
+        ["logs", "--since", runtimeLogStart, "--tail", "20000", names.containerName],
+        {
+          includeStderr: true,
+          maximumBytes: 16 * 1024 * 1024,
+        },
+      ).toString("utf8"),
       buildRuntimeLogForbiddenValues(plan, invocation, apiKey, authorization),
     );
     successReceipt = {
@@ -1292,6 +1351,11 @@ async function runQualificationCore(
     failurePhase = progress.phase;
   } finally {
     progress.phase = "cleanup";
+    try {
+      await bridgeRelay?.close();
+    } catch (cleanupError) {
+      failure ??= cleanupError;
+    }
     try {
       await relay?.close();
     } catch (cleanupError) {

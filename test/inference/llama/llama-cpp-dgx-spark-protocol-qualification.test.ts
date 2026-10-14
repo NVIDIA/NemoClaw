@@ -321,6 +321,11 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
 
       const request = JSON.parse(body) as JsonObject;
       const maxTokens = Number(request.max_tokens);
+      expect(request.chat_template_kwargs).toEqual(
+        [1, plan.qualification.probeBounds.cancellationMaxTokens].includes(maxTokens)
+          ? undefined
+          : { enable_thinking: false },
+      );
       requestedMaxTokens.push(maxTokens);
       switch (true) {
         case maxTokens === plan.qualification.probeBounds.cancellationMaxTokens:

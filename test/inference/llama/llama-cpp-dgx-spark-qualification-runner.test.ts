@@ -20,6 +20,7 @@ import {
   hashModelFile,
   resolveRequestGuardAddress,
   startQualificationLoopbackRelay,
+  parseQualificationBridgeGateway,
   parseNvidiaSmi,
   parseQualificationInvocation,
   type QualificationInvocation,
@@ -1003,6 +1004,36 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     await expect(startQualificationLoopbackRelay("example.com", 8081, 10)).rejects.toThrow(/IPv4/u);
     await expect(startQualificationLoopbackRelay("127.0.0.1", 0, 10)).rejects.toThrow(/port/u);
     await expect(startQualificationLoopbackRelay("127.0.0.1", 8081, 0)).rejects.toThrow(/timeout/u);
+    await expect(
+      startQualificationLoopbackRelay("127.0.0.1", 8081, 10, 0, "0.0.0.0"),
+    ).rejects.toThrow(/private or loopback/u);
+  });
+
+  it("accepts only the selected private Docker bridge gateway", () => {
+    const network = {
+      Name: "nemoclaw-managed-run-1",
+      Driver: "bridge",
+      Internal: false,
+      IPAM: { Config: [{ Gateway: "172.20.0.1", Subnet: "172.20.0.0/16" }] },
+    };
+    expect(parseQualificationBridgeGateway(JSON.stringify(network), network.Name)).toBe(
+      "172.20.0.1",
+    );
+    expect(() => parseQualificationBridgeGateway(JSON.stringify(network), "another-run")).toThrow(
+      /exact private IPv4 gateway/u,
+    );
+    expect(() =>
+      parseQualificationBridgeGateway(
+        JSON.stringify({ ...network, IPAM: { Config: [{ Gateway: "8.8.8.8" }] } }),
+        network.Name,
+      ),
+    ).toThrow(/exact private IPv4 gateway/u);
+    expect(() =>
+      parseQualificationBridgeGateway(
+        JSON.stringify({ ...network, Driver: "macvlan" }),
+        network.Name,
+      ),
+    ).toThrow(/exact private IPv4 gateway/u);
   });
 
   it("accepts only the exact NVIDIA OpenClaw ARM64 managed-image labels", () => {
@@ -1094,6 +1125,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     "NVIDIA GB10, 580.65.05",
     "NVIDIA H100 80GB HBM3, 580.65.06",
     "NVIDIA GB10, 580.65.06\nNVIDIA GB10, 580.65.06",
+    "NVIDIA GB10, 580.1599.03",
   ])(
     "accepts only one NVIDIA GB10 at or above the declarative driver floor [%s] (#8260)",
     (output) => {
@@ -1106,6 +1138,14 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       expect(() => parseNvidiaSmi(output, "580.65.06")).toThrow();
     },
   );
+
+  it("accepts the GB10 driver with a three-digit minor version", () => {
+    expect(parseNvidiaSmi("NVIDIA GB10, 580.159.03\n", "580.65.06")).toEqual({
+      count: 1,
+      driverVersion: "580.159.03",
+      name: "NVIDIA GB10",
+    });
+  });
 
   it("validates exact served-model and authenticated completion response shapes (#8260)", () => {
     expect(() =>

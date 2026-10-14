@@ -163,7 +163,7 @@ it("recovers only the marked isolated sandbox, gateway, volumes and network", as
   expect(mocks.stopGateway).toHaveBeenCalledWith(
     {},
     expect.objectContaining({
-      stateDir: scope.stateDir,
+      stateDir: path.join(scope.stateDir, "gateway-state"),
       scopedGatewayStop: true,
       usePgrepFallback: false,
     }),

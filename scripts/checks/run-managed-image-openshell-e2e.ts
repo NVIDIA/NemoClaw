@@ -384,7 +384,7 @@ export async function cleanupInterruptedManagedImageOpenShellE2e(
   const previousEnvironment = { ...process.env };
   Object.assign(process.env, {
     NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: scope.stateDir,
+    NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: path.join(scope.stateDir, "gateway-state"),
     NEMOCLAW_GATEWAY_PORT: String(GATEWAY_PORT),
     OPENSHELL_DOCKER_NETWORK_NAME: scope.networkName,
     XDG_CONFIG_HOME: path.join(scope.stateDir, "xdg-config"),
@@ -403,7 +403,7 @@ export async function cleanupInterruptedManagedImageOpenShellE2e(
         openShellGatewayName: GATEWAY_NAME,
         openShellGatewayPort: GATEWAY_PORT,
         scopedGatewayStop: true,
-        stateDir: scope.stateDir,
+        stateDir: path.join(scope.stateDir, "gateway-state"),
         usePgrepFallback: false,
       },
     );
@@ -1446,13 +1446,17 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
   input: Inputs,
   afterLocalInference?: (context: ManagedImageOpenShellE2eProbeContext) => Promise<T> | T,
   recoveryScope?: ManagedImageOpenShellRecoveryScope,
+  maximumOutputTokens?: number,
 ): Promise<ManagedImageOpenShellE2eResult<T>> {
   const { stateDir, networkName } = prepareManagedImageOpenShellState(input, recoveryScope);
+  // Qualification ownership records live in stateDir. OpenShell needs an empty
+  // child directory so it can establish its own managed gateway ownership marker.
+  const gatewayStateDir = path.join(stateDir, "gateway-state");
   const previousEnvironment = Object.fromEntries(
     MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS.map((key) => [key, process.env[key]]),
   ) as Record<(typeof MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS)[number], string | undefined>;
   process.env.NEMOCLAW_NON_INTERACTIVE = "1";
-  process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = stateDir;
+  process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = gatewayStateDir;
   process.env.NEMOCLAW_GATEWAY_PORT = String(GATEWAY_PORT);
   process.env.NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT = "240";
   process.env.OPENSHELL_DOCKER_NETWORK_NAME = networkName;
@@ -1506,6 +1510,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
             baseProfile,
             resolveManagedImageLocalInferenceRoute(input.localProvider),
             input.model,
+            maximumOutputTokens,
           )
         : baseProfile;
     const profile = encodeManagedStartupProfile(protectedProfile);
@@ -1780,7 +1785,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     hasPrimaryError = true;
     const diagnostics = [
       ...(onboard ? [onboard.openshellArgv(["sandbox", "get", input.sandbox])] : []),
-      ["tail", "-n", "80", path.join(stateDir, "openshell-gateway.log")],
+      ["tail", "-n", "80", path.join(gatewayStateDir, "openshell-gateway.log")],
     ];
     for (const argv of diagnostics) {
       const result = commandResult(argv, process.env, 5_000);
@@ -1814,7 +1819,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           openShellGatewayName: "nemoclaw",
           openShellGatewayPort: GATEWAY_PORT,
           scopedGatewayStop: true,
-          stateDir,
+          stateDir: gatewayStateDir,
           usePgrepFallback: false,
         },
       );

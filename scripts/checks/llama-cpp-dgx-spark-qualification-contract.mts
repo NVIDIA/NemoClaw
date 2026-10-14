@@ -90,9 +90,9 @@ export const LLAMA_CPP_DGX_SPARK_AGENT_PROBES = [
   "agent-multi-turn",
 ] as const;
 export const LLAMA_CPP_DGX_SPARK_OPENCLAW_IMAGE =
-  "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:3648441718cdd6c2bc4c8fe39fa0d04d3931656b2063af34215cc51841cd0d5e" as const;
+  "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:473643565f557517f4139b0cf6ac552160f555cfd8f6241ef221144c25e9ed4d" as const;
 export const LLAMA_CPP_DGX_SPARK_OPENCLAW_SOURCE_REVISION =
-  "eb1d2f5700393892f227ac9fd56f485fc6718bce" as const;
+  "95d6505265ba1f2cb05355f83786353e654de096" as const;
 export const LLAMA_CPP_DGX_SPARK_OPENCLAW_SANDBOX = "nmc-lcpp-oc" as const;
 export const LLAMA_CPP_DGX_SPARK_OPENCLAW_NORMAL_PROMPT =
   "Reply with exactly one word: PONG" as const;

@@ -165,6 +165,20 @@ function jsonRequest(
   };
 }
 
+function visibleChatRequest(
+  authorization: string,
+  body: JsonRecord,
+  timeoutMilliseconds: number,
+  signal = requestSignal(timeoutMilliseconds),
+): RequestInit {
+  return jsonRequest(
+    authorization,
+    { ...body, chat_template_kwargs: { enable_thinking: false } },
+    timeoutMilliseconds,
+    signal,
+  );
+}
+
 function exactSizeChatRequest(model: string, targetBytes: number): string {
   const request = {
     max_tokens: 1,
@@ -503,7 +517,7 @@ async function recoveryCompletion(
     try {
       response = await fetchImpl(
         url,
-        jsonRequest(
+        visibleChatRequest(
           authorization,
           {
             max_tokens: maxTokens,
@@ -808,7 +822,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
   );
   const bodyLimitContinuationResponse = await fetchImpl(
     chatUrl,
-    jsonRequest(
+    visibleChatRequest(
       authorization,
       {
         max_tokens: bounds.maxTokens.synchronousChat,
@@ -832,7 +846,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
 
   const synchronousResponse = await fetchImpl(
     chatUrl,
-    jsonRequest(
+    visibleChatRequest(
       authorization,
       {
         max_tokens: bounds.maxTokens.synchronousChat,
@@ -856,7 +870,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
 
   const streamingResponse = await fetchImpl(
     chatUrl,
-    jsonRequest(
+    visibleChatRequest(
       authorization,
       {
         max_tokens: bounds.maxTokens.streamingChat,
@@ -883,7 +897,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
 
   const structuredResponse = await fetchImpl(
     chatUrl,
-    jsonRequest(
+    visibleChatRequest(
       authorization,
       {
         max_tokens: bounds.maxTokens.structuredOutput,
@@ -929,7 +943,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
   ];
   const toolResponse = await fetchImpl(
     chatUrl,
-    jsonRequest(
+    visibleChatRequest(
       authorization,
       {
         max_tokens: bounds.maxTokens.toolCall,
@@ -949,7 +963,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
 
   const continuationResponse = await fetchImpl(
     chatUrl,
-    jsonRequest(
+    visibleChatRequest(
       authorization,
       {
         max_tokens: bounds.maxTokens.toolResultContinuation,
