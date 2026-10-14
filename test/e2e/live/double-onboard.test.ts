@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
+import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-local/agent-config.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -270,7 +271,10 @@ test(
         "onboard sibling sandbox with isolated dashboard",
         ...(process.env.NEMOCLAW_AGENT === "hermes"
           ? []
-          : ["verify sibling native endpoint remains isolated"]),
+          : [
+              "verify sibling native endpoint remains isolated",
+              "verify sibling native endpoint accepts authenticated requests",
+            ]),
         "stop sibling sandbox without disturbing the first forward",
         "replace sandbox after stale registry refusal",
         "remove double-onboard resources",
@@ -532,6 +536,38 @@ test(
         )
       : null;
     denied && expect(JSON.parse(denied.stdout)).toMatchObject({ error: "policy_denied" });
+
+    siblingInference &&
+      progress.phase("verify sibling native endpoint accepts authenticated requests");
+    const previousRequests = siblingInference?.requests().length ?? 0;
+    const accepted = siblingInference
+      ? await sandbox.exec(
+          SANDBOX_B,
+          [
+            "sh",
+            "-lc",
+            `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; curl -fsS --max-time 15 http://host.openshell.internal:11434/v1/chat/completions -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data '{"model":"test-model","messages":[{"role":"user","content":"ping"}]}'`,
+          ],
+          {
+            artifactName: "phase-4-sibling-native-endpoint-authenticated-post",
+            env: commandEnv(),
+            timeoutMs: 30_000,
+          },
+        )
+      : null;
+    accepted && expect(accepted.exitCode, resultText(accepted)).toBe(0);
+    siblingInference &&
+      expect(
+        siblingInference
+          .requests()
+          .slice(previousRequests)
+          .some(
+            (request) =>
+              request.auth === "ok" &&
+              request.method === "POST" &&
+              request.path === "/v1/chat/completions",
+          ),
+      ).toBe(true);
 
     const dashboardABeforeStop = await waitForDashboardReachability(
       host,

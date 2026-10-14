@@ -298,6 +298,7 @@ test(
         "prove Pi policy and credential boundaries",
         "destroy Pi and publish bounded evidence",
         "prove Pi native-local inference and credential isolation",
+        "rebuild Pi with its native-local model and credential",
       ],
     },
   },
@@ -339,7 +340,7 @@ test(
       platform,
       taskVersion: TASK_VERSION,
       contract:
-        "exact candidate onboarding, tool execution, lifecycle recovery, policy denial, and credential isolation",
+        "exact candidate onboarding, native-local rebuild, tool execution, lifecycle recovery, policy denial, and credential isolation",
     });
 
     progress.phase("validate the exact Pi candidate receipt");
@@ -668,6 +669,46 @@ test(
             request.model === nativeModel,
         ),
     ).toBe(true);
+    progress.phase("rebuild Pi with its native-local model and credential");
+    const nativeRebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
+      artifactName: "pi-native-rebuild",
+      env: nativeEnv,
+      redactionValues: [...inference.redactionValues(), nativeKey],
+      timeoutMs: 20 * 60_000,
+    });
+    expect(nativeRebuild.exitCode, resultText(nativeRebuild)).toBe(0);
+    const rebuiltRequestOffset = nativeEndpoint.requests().length;
+    const rebuiltTurn = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "pi",
+        "--no-approve",
+        "--no-context-files",
+        "--mode",
+        "json",
+        "--print",
+        "Reply with PONG. Do not use tools.",
+      ],
+      {
+        artifactName: "pi-native-turn-after-rebuild",
+        env: sandboxAccessEnv(),
+        redactionValues: [nativeKey],
+        timeoutMs: PI_COMMAND_TIMEOUT_MS,
+      },
+    );
+    expect(rebuiltTurn.exitCode, resultText(rebuiltTurn)).toBe(0);
+    expect(
+      nativeEndpoint
+        .requests()
+        .slice(rebuiltRequestOffset)
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions" &&
+            request.model === nativeModel,
+        ),
+    ).toBe(true);
     const nativeSecurity = await sandbox.exec(SANDBOX_NAME, ["node", "-e", SECURITY_PROBE], {
       artifactName: "pi-native-credential-boundary",
       env: sandboxAccessEnv(),
@@ -721,6 +762,8 @@ test(
         model: nativeModel,
         freshPiTurn: true,
         authenticatedRequest: true,
+        rebuiltPiTurn: true,
+        rebuiltAuthenticatedRequest: true,
         upstreamCredentialAbsent: true,
         destroyed: true,
       },

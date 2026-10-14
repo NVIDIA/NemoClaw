@@ -204,6 +204,7 @@ async function cleanupSandbox(
   }
 
   const cleanupEvidence: string[] = [];
+  let deletionConfirmedAbsent = false;
   try {
     const deletion = await sandbox.openshell(["sandbox", "delete", sandboxName], {
       artifactName: `cleanup-openshell-sandbox-delete-${sandboxName}`,
@@ -211,10 +212,21 @@ async function cleanupSandbox(
       timeoutMs: 60_000,
     });
     cleanupEvidence.push(probeSummary("openshell sandbox delete", deletion));
+    deletionConfirmedAbsent =
+      deletion.exitCode !== 0 &&
+      /\bmessage:\s*["']sandbox not found["']/i.test(resultText(deletion));
   } catch (error) {
     cleanupEvidence.push(
       `openshell sandbox delete threw: ${error instanceof Error ? error.message : String(error)}`,
     );
+  }
+
+  // A failed Deep Agents Code onboarding may never create the sandbox. Its
+  // explicit not-found result is sufficient absence evidence; otherwise retain
+  // the public destroy proof that retires provider ownership after success.
+  if (deletionConfirmedAbsent) {
+    clearOnboardState();
+    return;
   }
 
   // Observe absence while the gateway is still running. Public destroy may

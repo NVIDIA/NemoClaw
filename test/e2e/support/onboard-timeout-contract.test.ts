@@ -52,8 +52,8 @@ const dcodeExpectedRefusalTimeout = liveTargetTimeoutContract(
 afterEach(() => vi.unstubAllEnvs());
 
 describe("onboard final-handoff timeout contract", () => {
-  it("contains the hosted Pi lifecycle and native request, isolation, and cleanup", () => {
-    const boundedOperations = (90 + 20 + 5 + 1 + 5) * MINUTE_MS + 30_000;
+  it("contains the hosted Pi lifecycle and native requests around rebuild", () => {
+    const boundedOperations = (90 + 20 + 5 + 20 + 5 + 1 + 5) * MINUTE_MS + 30_000;
     expect(PI_QUALIFICATION_TEST_TIMEOUT_MS).toBeGreaterThan(boundedOperations);
     expect(catalogueTarget("pi-agent-qualification-amd64").timeoutMinutes).toBe(
       PI_QUALIFICATION_TARGET_TIMEOUT_MINUTES,

@@ -3,6 +3,7 @@
 
 import crypto from "node:crypto";
 import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
+import { parse as parseToml } from "smol-toml";
 import YAML from "yaml";
 import { hermesApiCommand } from "../fixtures/hermes-api-command.ts";
 import {
@@ -223,6 +224,112 @@ test(
   },
 );
 
+test(
+  "TC-INF-07D Deep Agents Code reaches native OpenRouter",
+  {
+    timeout: 20 * 60_000,
+    meta: {
+      e2ePhases: [
+        "confirm hosted OpenRouter prerequisites",
+        "onboard Deep Agents Code",
+        "verify Deep Agents Code credential isolation",
+        "verify native OpenRouter route",
+        "request a fresh Deep Agents Code response",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("confirm hosted OpenRouter prerequisites");
+    requireProviderSmokeSelected("openrouter", skip);
+    const environment = hostedProviderSmokeEnvironment("hosted-inference-openrouter", {
+      OPENROUTER_API_KEY: secrets.optional("OPENROUTER_API_KEY"),
+      NEMOCLAW_OPENROUTER_MODEL: process.env.NEMOCLAW_OPENROUTER_MODEL,
+    });
+    const apiKey = environment.OPENROUTER_API_KEY!;
+    const model = environment.NEMOCLAW_OPENROUTER_MODEL!;
+    await requireLivePrerequisites(host, runtimeProvider);
+    const sandboxName = inferenceSandboxName("e2e-or-dcode");
+    cleanup.add(`best-effort Deep Agents Code cleanup for ${sandboxName}`, () =>
+      cleanupSandbox(host, sandbox, sandboxName),
+    );
+    await cleanupSandbox(host, sandbox, sandboxName);
+    await artifacts.target.declare({
+      id: "inference-routing-openrouter-dcode",
+      model,
+      contract: ["native OpenRouter configuration", "fresh Deep Agents Code response"],
+    });
+    cleanup.add(`strict Deep Agents Code cleanup for ${sandboxName}`, () =>
+      cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+    );
+    progress.phase("onboard Deep Agents Code");
+    const onboard = await onboardSandbox(
+      artifacts,
+      sandboxName,
+      {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_PROVIDER: "openrouter",
+        OPENROUTER_API_KEY: apiKey,
+      },
+      [apiKey],
+      "tc-inf-07d-onboard",
+      progress,
+    );
+    expect(onboard.exitCode, redactedResultText(onboard)).toBe(0);
+    const options = { env: buildAvailabilityProbeEnv(), redactionValues: [apiKey] };
+    progress.phase("verify Deep Agents Code credential isolation");
+    const isolation = await sandbox.exec(sandboxName, hostedCredentialScanCommand(apiKey), {
+      ...options,
+      artifactName: "tc-inf-07d-credential-isolation",
+      timeoutMs: 90_000,
+    });
+    const isolationEvidence = JSON.parse(isolation.stdout) as Record<string, unknown>;
+    expect(
+      { exitCode: isolation.exitCode, ...isolationEvidence },
+      resultText(isolation),
+    ).toMatchObject({
+      exitCode: 0,
+      environmentClean: true,
+      processesClean: true,
+      sampledFilesClean: true,
+      canaryDetected: true,
+    });
+    progress.phase("verify native OpenRouter route");
+    const config = await sandbox.exec(sandboxName, ["cat", "/sandbox/.deepagents/config.toml"], {
+      ...options,
+      artifactName: "tc-inf-07d-native-config",
+      timeoutMs: 60_000,
+    });
+    expect(parseToml(config.stdout)).toMatchObject({
+      models: {
+        default: `openrouter:${model}`,
+        providers: {
+          openrouter: {
+            api_key_env: "OPENROUTER_API_KEY",
+            base_url: "https://openrouter.ai/api/v1",
+          },
+        },
+      },
+    });
+    progress.phase("request a fresh Deep Agents Code response");
+    const response = await sandbox.exec(
+      sandboxName,
+      ["dcode", "-n", "Reply with one short greeting. Do not use tools.", "--json"],
+      { ...options, artifactName: "tc-inf-07d-native-agent", timeoutMs: 180_000 },
+    );
+    expect(response.exitCode, resultText(response)).toBe(0);
+    const envelope = JSON.parse(response.stdout);
+    expect(envelope).toMatchObject({
+      schema_version: 1,
+      command: "non-interactive",
+      data: { status: "success", exit_code: 0 },
+    });
+    expect(
+      typeof envelope.data?.response === "string" && envelope.data.response.trim().length > 0,
+    ).toBe(true);
+  },
+);
+
 // Four cases use OpenClaw; the Nous API-key case uses Hermes.
 
 test.for(hostedCases)(
@@ -292,7 +399,20 @@ test.for(hostedCases)(
       sandboxName,
       hermes
         ? ["cat", "/sandbox/.hermes/config.yaml"]
-        : ["openclaw", "config", "get", `models.providers.${selected.providerKey}`, "--json"],
+        : [
+            "node",
+            "-e",
+            [
+              'const fs = require("node:fs");',
+              'const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));',
+              "const provider = config.models?.providers?.[process.argv[1]];",
+              'const handle = typeof provider?.apiKey === "string" ? provider.apiKey : "";',
+              'const normalized = handle.replace(/^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_/u, "openshell:resolve:env:");',
+              "process.stdout.write(JSON.stringify({ baseUrl: provider?.baseUrl, credentialBindingValid: normalized === `openshell:resolve:env:${process.argv[2]}` }));",
+            ].join(" "),
+            selected.providerKey,
+            selected.placeholder,
+          ],
       {
         artifactName: `${selected.id}-native-config`,
         env: buildAvailabilityProbeEnv(),
@@ -302,17 +422,9 @@ test.for(hostedCases)(
     );
     expect(config.exitCode, resultText(config)).toBe(0);
     const providerConfig = hermes ? YAML.parse(config.stdout).model : JSON.parse(config.stdout);
-    // OpenClaw startup stamps the supervisor's current revision into the handle.
-    // Compare its credential binding independently of that runtime-generated scope.
-    providerConfig.apiKey = providerConfig.apiKey?.replace(
-      /^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_/u,
-      "openshell:resolve:env:",
-    );
     expect(providerConfig).toMatchObject({
       [hermes ? "base_url" : "baseUrl"]: selected.endpoint,
-      [hermes ? "api_key" : "apiKey"]: hermes
-        ? `\${${selected.placeholder}}`
-        : `openshell:resolve:env:${selected.placeholder}`,
+      ...(hermes ? { api_key: `\${${selected.placeholder}}` } : { credentialBindingValid: true }),
     });
     progress.phase("verify hosted credential isolation");
     const isolation = await sandbox.exec(sandboxName, hostedCredentialScanCommand(apiKey), {

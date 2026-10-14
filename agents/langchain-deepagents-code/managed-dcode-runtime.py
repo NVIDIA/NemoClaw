@@ -1091,7 +1091,8 @@ def managed_inference_api_key(base_url: str) -> str:
     except ipaddress.AddressValueError:
         # Keep the host-alias result above; every other non-IPv4 name remains untrusted.
         pass
-    if parsed.scheme == "http" and local_host and _managed_upstream_provider() in {
+    upstream_provider = _managed_upstream_provider()
+    if parsed.scheme == "http" and local_host and upstream_provider in {
         "ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"
     }:
         value = os.environ.get("NEMOCLAW_LOCAL_INFERENCE_TOKEN", "")
@@ -1101,12 +1102,23 @@ def managed_inference_api_key(base_url: str) -> str:
         ) is None:
             raise RuntimeError("native local inference requires an issued OpenShell credential reference")
         return value
-    if base_url != "https://integrate.api.nvidia.com/v1":
+    if base_url == "https://integrate.api.nvidia.com/v1":
+        name = "NVIDIA_INFERENCE_API_KEY"
+        provider = "NVIDIA"
+    elif base_url == "https://openrouter.ai/api/v1" and upstream_provider in (
+        _OPENROUTER_DISPLAY_PROVIDER_ALIASES | {"compatible-endpoint"}
+    ):
+        name = (
+            "COMPATIBLE_API_KEY"
+            if upstream_provider == "compatible-endpoint"
+            else "OPENROUTER_API_KEY"
+        )
+        provider = "OpenRouter"
+    else:
         return "nemoclaw-managed-inference"
-    name = "NVIDIA_INFERENCE_API_KEY"
     value = os.environ.get(name, "")
     if not _is_openshell_placeholder_for_name(name, value):
-        raise RuntimeError("native NVIDIA inference requires an OpenShell credential placeholder")
+        raise RuntimeError(f"native {provider} inference requires an OpenShell credential placeholder")
     return value
 
 
