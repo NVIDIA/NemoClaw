@@ -14,6 +14,11 @@ import {
   dockerLlamaCppBindingSha256,
 } from "../../onboard/runtime-provider/docker-llama-cpp-operation";
 import {
+  createDockerLlamaCppPrivateBridgeController,
+  type DockerLlamaCppPrivateBridgeController,
+} from "../../onboard/runtime-provider/docker-llama-cpp-private-bridge";
+import { LLAMA_CPP_PORT } from "../llama-cpp/contract";
+import {
   createHostLocalCreateJournalStore,
   HOST_LOCAL_CREATE_JOURNAL_DIRECTORY,
   reconcileAndReadHostLocalCreateJournalRecords,
@@ -99,6 +104,7 @@ export interface LocalModelRuntimeCleanupOptions {
   sandboxName?: string;
   env?: NodeJS.ProcessEnv;
   engine?: ContainerEngine;
+  privateBridge?: DockerLlamaCppPrivateBridgeController;
   deps?: Partial<CleanupDeps>;
 }
 
@@ -856,6 +862,7 @@ function cleanupLlamaCpp(
     sandboxName?: string;
     env?: NodeJS.ProcessEnv;
     engine?: ContainerEngine;
+    privateBridge?: DockerLlamaCppPrivateBridgeController;
     expectedPrivateAuthority?: ManagedLlamaCppPrivateAuthority;
     executionOwnership?: ManagedLlamaCppExecutionOwnership;
   } = {},
@@ -967,6 +974,23 @@ function cleanupLlamaCpp(
     );
     executionOwnership.assert();
     requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
+    const privateBridge =
+      options.privateBridge ??
+      (process.platform === "linux"
+        ? createDockerLlamaCppPrivateBridgeController({
+            remoteRequests: {
+              engine,
+              apiKeyPath: paths.apiKeyPath,
+              targetPort: receipt?.endpoint.port ?? LLAMA_CPP_PORT,
+            },
+          })
+        : undefined);
+    if (privateBridge) {
+      inspectExactContainerForJournal(engine, journal);
+      privateBridge.stopTransaction(journal.transactionId);
+      privateBridge.assertStopped(journal.transactionId);
+    }
+    executionOwnership.assert();
     removeExactContainerForJournal(engine, journal, removed);
     executionOwnership.assert();
     requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
@@ -1016,6 +1040,7 @@ export interface ManagedLlamaCppSandboxCleanupOptions {
   readonly gatewayPort?: number;
   readonly env?: NodeJS.ProcessEnv;
   readonly engine?: ContainerEngine;
+  readonly privateBridge?: DockerLlamaCppPrivateBridgeController;
   readonly deps?: Partial<CleanupDeps>;
 }
 
@@ -1292,6 +1317,13 @@ export function finalizeManagedLlamaCppLifecycleCleanup(
       engine.capture(["info"], DOCKER_INSPECT_TIMEOUT_MS),
     );
     const transactionId = receipt.runtime.model.generation;
+    const privateBridge =
+      options.privateBridge ??
+      createDockerLlamaCppPrivateBridgeController({
+        remoteRequests: { engine, apiKeyPath: paths.apiKeyPath, targetPort: receipt.endpoint.port },
+      });
+    privateBridge.stopTransaction(transactionId);
+    privateBridge.assertStopped(transactionId);
 
     const expectedContainerLabels = {
       [LLAMA_MANAGED_LABEL]: "true",
@@ -1461,6 +1493,7 @@ function cleanupManagedLlamaCppRuntimeForSandboxInternal(
       sandboxName,
       env: options.env,
       engine: options.engine,
+      privateBridge: options.privateBridge,
       expectedPrivateAuthority,
       executionOwnership,
     });
@@ -1656,6 +1689,7 @@ export function cleanupLocalModelRuntimes(
         sandboxName: options.sandboxName,
         env: options.env,
         engine: options.engine,
+        privateBridge: options.privateBridge,
       });
     }
     preserveSharedHuggingFaceCache(homeDir, preserved);

@@ -118,13 +118,12 @@ During Windows Express, onboarding automatically selects the Qwen 3.6 35B-A3B re
 
 <Note>
   This path is an experimental implementation. It does not establish a supported agent, model, and
-  runtime tuple until the protected qualification and activation gates pass. Managed onboarding and
-  the protected qualification runner require Docker Engine `28.3.3` or newer and the trusted daemon's default
-  protected NAT and firewall behavior. That requirement supersedes older Docker 27 qualification
-  evidence. The container runs native `llama-server`, with Docker-native publication requested on
-  `127.0.0.1:8081`. Onboarding requires an active port mapping and successful host-loopback and
-  OpenShell route checks. A configured binding alone is not readiness evidence; installation fails
-  if the daemon does not activate it. The Muse Glimmer
+  runtime tuple until the protected qualification and activation gates pass.
+  The managed image must contain native `llama-server` and curl.
+  The model container has no published ports and remains on an internal Docker network.
+  NemoClaw uses its authenticated host bridge and requires successful host-loopback and OpenShell route checks before activation.
+  The protected qualification runner's temporary registry still requires Docker Engine `28.3.3` or newer with its default protected NAT and firewall behavior.
+  The Muse Glimmer
   profile remains Experimental after bounded physical DGX Spark qualification of text, separated
   reasoning, and one structured tool call.
 </Note>
@@ -133,7 +132,7 @@ Before you start, confirm these prerequisites:
 
 - Use a qualified DGX Spark Arm64 host, a Linux x86_64 host with one NVIDIA GPU, or a qualifying Windows WSL N1x or Station GB300 host.
 - Use NVIDIA driver version `580.65.06` or later on each managed host profile.
-- Confirm that Docker Engine `28.3.3` or newer is operational on the host for native loopback publication.
+- Confirm that Docker is operational and satisfies the selected profile's readiness checks.
 - Confirm that the NVIDIA Container Toolkit is operational.
 - Confirm that NVIDIA Container Device Interface support is healthy.
 - Stop any process that uses host port `8081`.
@@ -261,13 +260,17 @@ Onboarding performs these actions:
 - Verifies the GGUF size and SHA-256 digest before it starts the runtime.
 - Runs the authenticated container as the current non-root user with one NVIDIA GPU and no CPU fallback.
 - Configures native `llama-server` with its API-key file, one serving slot, and the recipe's context and socket-timeout settings.
-- Requests Docker-native publication on `127.0.0.1:8081` while retaining the container's internal network.
-- Verifies the effective Docker binding and native HTTP reachability before registering the provider.
+- Keeps the container's ports unpublished and starts the authenticated host bridge on port `8081`.
+- Verifies host-loopback and OpenShell reachability before registering the provider.
 - Registers `llama-cpp-local` and routes agent traffic through `https://inference.local/v1`.
 
 The runtime cannot download a model and has no egress on its internal Docker network.
 The recipe disables the Web UI, slot inspection, server tools, agent mode, Model Context Protocol proxy, router, and multimodal projection.
 The API key enters the container through an owner-only read-only file, not a process argument.
+Managed requests have a 1 MiB body limit, a header ceiling of 32 KiB, a 4,096-token output ceiling, and a 900-second request deadline.
+The host's stricter HTTP header limit continues to apply when present.
+On cancellation, deadline expiry, or bridge shutdown, NemoClaw verifies that the owned remote request has stopped before releasing admission.
+If cleanup cannot be verified, new requests remain unavailable.
 
 The Muse Glimmer profile enables text responses, reasoning, and structured tool calls.
 It does not load a multimodal projector or a DFlash draft model because multimodal projection and speculative decoding remain disabled.
@@ -287,8 +290,9 @@ docker inspect --format '{{json .NetworkSettings.Ports}}' nemoclaw-llama-cpp
 ```
 
 Accept the result when `status` reports `Managed llama.cpp: running`, the inference route is `healthy`, and `doctor` exits with status `0`.
-Both Docker inspection outputs must contain exactly `8081/tcp` mapped to `127.0.0.1:8081`.
-An empty or `null` effective mapping is a readiness failure.
+`HostConfig.PortBindings` must be empty.
+`NetworkSettings.Ports` must contain no host bindings; `8081/tcp` can appear with a `null` value when the image declares that port.
+The authenticated host bridge provides reachability without publishing the model container's ports.
 These checks do not establish agent and model qualification.
 
 `status` reports the recipe ID, model digest, image reference, endpoint, and lifecycle state without exposing the API key.
@@ -364,11 +368,11 @@ Do not edit the ownership, receipt, or recipe-digest state to force a migration.
 If an updated NemoClaw release changes the recorded authority, resume fails closed and preserves the existing state.
 
 An existing Windows WSL Qwen runtime with the former pinned image remains bound to its recorded recipe, receipt, and journal.
-NemoClaw can inspect and remove that runtime without replacing its image.
-The former image cannot resume or recover because NemoClaw rejects its recorded recipe before Docker effects.
+NemoClaw can remove that runtime through the existing journal-aware cleanup owner without replacing its image.
+The former image cannot start or resume.
 Other unrecognized authority changes fail closed and preserve the existing state.
 
-To use the current pinned image, run `$$nemoclaw <sandbox-name> destroy` for the existing managed runtime, then run onboarding again.
+After a qualified native image is pinned, run `$$nemoclaw <sandbox-name> destroy` for the existing managed runtime, then run onboarding again.
 This removes the owned runtime and network but preserves the shared model cache.
 
 For an earlier Station GB300 runtime with no recorded GPU UUID, NemoClaw also refuses startup because the old one-GPU request can select another card.

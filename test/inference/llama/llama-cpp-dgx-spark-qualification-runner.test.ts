@@ -337,7 +337,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it("launches native llama.cpp with loopback publication without putting the API key in Docker arguments (#8667)", () => {
+  it("launches native llama.cpp with unpublished ports and no API key in Docker arguments (#8667)", () => {
     const content = Buffer.from("qualification model fixture\n", "utf8");
     const testPlan = qualificationPlanForModel(content);
     const modelRoot = fs.realpathSync(
@@ -397,9 +397,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         ]),
       );
       expect(valuesAfter(argv, "--env")).toEqual(["LLAMA_ARG_LOG_VERBOSITY=4"]);
-      expect(valuesAfter(argv, "--publish")).toEqual([
-        `127.0.0.1:${testPlan.recipe.serve.port}:${testPlan.recipe.serve.port}`,
-      ]);
+      expect(valuesAfter(argv, "--publish")).toEqual([]);
       expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
       expect(valuesAfter(argv, "--host")).toEqual(["0.0.0.0"]);
       expect(valuesAfter(argv, "--port")).toEqual([String(testPlan.recipe.serve.port)]);
@@ -419,10 +417,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       const alternatePortArgv = buildServerContainerArgv(alternatePortPlan, {
         ...containerOptions,
       });
-      expect(valuesAfter(alternatePortArgv, "--publish")).toEqual([
-        `127.0.0.1:${alternateContainerPort}:${alternateContainerPort}`,
-      ]);
-      expect(valuesAfter(alternatePortArgv, "--port")).toEqual([String(alternateContainerPort)]);
+      expect(valuesAfter(alternatePortArgv, "--publish")).toEqual([]);
       expect(valuesAfter(alternatePortArgv, "--port")).toEqual([String(alternateContainerPort)]);
       expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
       expect(valuesAfter(argv, "--user")).toEqual(["1001:1001"]);

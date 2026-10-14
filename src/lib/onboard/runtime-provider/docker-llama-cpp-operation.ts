@@ -7,11 +7,13 @@ import {
 } from "../../adapters/container-engine";
 import { prependInstalledUserLocalOpenshellPath } from "../openshell-pin";
 import { getFutureShellPathHint } from "../remediation";
+import { detectWslDockerDesktopStatus } from "../wsl-docker-desktop-gpu";
 import { createDockerLlamaCppManagedLifecycle } from "./docker-llama-cpp-managed-lifecycle";
 import {
   createDockerOperationAuthority,
   dockerOperationBindingSha256,
   dockerOperationCommandArguments,
+  dockerOperationBridgeEnvironment,
 } from "./docker-operation-authority";
 import type {
   HostLocalInferenceCommandSpawner,
@@ -25,6 +27,7 @@ import {
 export interface DockerLlamaCppOperationAuthority {
   readonly assertAuthority: () => void;
   readonly engine: ContainerEngine;
+  readonly bridgeEnvironment: Readonly<NodeJS.ProcessEnv>;
   readonly spawn: HostLocalInferenceCommandSpawner;
 }
 
@@ -78,6 +81,7 @@ export function createDockerLlamaCppOperationAuthority(
   return Object.freeze({
     assertAuthority,
     engine: managedLlamaCppEngine(authority.engine),
+    bridgeEnvironment: dockerOperationBridgeEnvironment(authority),
     spawn: (args: readonly string[], options?: Parameters<HostLocalInferenceCommandSpawner>[1]) => {
       assertAuthority();
       return boundedSpawnCommand
@@ -108,8 +112,30 @@ export function createDockerLlamaCppHostLocalOperation(
     assertAuthority: authority.assertAuthority,
     spawn,
     createLlamaCppLifecycle: (input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0]) =>
-      createLifecycle({ ...input, ...(deadlineMs === undefined ? {} : { engine }) }),
+      createLifecycle(
+        {
+          ...dockerLlamaCppLifecycleOptions(input, engine, env),
+          ...(deadlineMs === undefined ? {} : { engine }),
+        },
+        { dockerEnvironment: authority.bridgeEnvironment },
+      ),
   });
+}
+
+function dockerLlamaCppLifecycleOptions(
+  input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0],
+  engine: ContainerEngine,
+  env: NodeJS.ProcessEnv,
+): Parameters<typeof createDockerLlamaCppManagedLifecycle>[0] {
+  const desktop =
+    detectWslDockerDesktopStatus({
+      env,
+      dockerInfoFormat: (format) => engine.capture(["info", "--format", format]).stdout,
+    }) === "docker-desktop";
+  return {
+    ...input,
+    bindings: { ...input.bindings, ...(desktop ? { bridgeLoopbackOnly: true as const } : {}) },
+  };
 }
 
 export function createManagedLlamaCppEngine(
@@ -137,6 +163,6 @@ export function createDockerLlamaCppInspectionOperation(
       throw new Error("Managed llama.cpp inspection cannot spawn container-engine commands.");
     },
     createLlamaCppLifecycle: (input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0]) =>
-      createLifecycle(input),
+      createLifecycle(dockerLlamaCppLifecycleOptions(input, engine, env)),
   });
 }

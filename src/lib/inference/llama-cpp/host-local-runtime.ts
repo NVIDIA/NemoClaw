@@ -96,8 +96,10 @@ export interface LlamaCppHostLocalRuntimeBindings {
   readonly imageReference: string;
   /** Exact device selected from the provider-bound CUDA proof on Station WSL. */
   readonly gpuDeviceUuid?: string;
-  /** Fixed native loopback publication port; omitted only by isolated qualification. */
+  /** Fixed host bridge port for product installs; omitted by isolated qualification. */
   readonly hostPort?: number;
+  /** Docker Desktop exposes the existing bridge through the distro loopback. */
+  readonly bridgeLoopbackOnly?: true;
   readonly model: VerifiedLocalModelArtifact;
   /** The caller must create this named Docker network with `--internal` before launch. */
   readonly network: {
@@ -406,9 +408,6 @@ function buildLlamaCppHostLocalDockerRunArgv(
     ]),
     "--network",
     bindings.network.name,
-    ...(bindings.hostPort === undefined
-      ? []
-      : ["--publish", `127.0.0.1:${String(bindings.hostPort)}:${String(contract.serve.port)}`]),
     "--restart",
     contract.runtime.restartPolicy,
     "--user",

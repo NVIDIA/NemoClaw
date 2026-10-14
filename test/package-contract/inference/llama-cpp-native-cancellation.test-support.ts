@@ -5,18 +5,17 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { expect, vi } from "vitest";
-import {
-  createDockerOperationAuthority,
-  dockerOperationCommandArguments,
-} from "../../../src/lib/onboard/runtime-provider/docker-operation-authority";
+import type { DockerOperationAuthority, dockerOperationCommandArguments } from "../../../src/lib/onboard/runtime-provider/docker-operation-authority";
 
 export async function createNativeLlamaDockerFixture(
   image: string,
   modelPath: string,
+  runtime: { authority: DockerOperationAuthority; commandArguments: typeof dockerOperationCommandArguments },
   evidencePath?: string,
 ) {
-  const authority = createDockerOperationAuthority("host-local-inference");
+  const authority = runtime.authority;
   const owner = randomBytes(12).toString("hex");
+  const transactionId = createHash("sha256").update(owner).digest("hex");
   const name = `nmc-native-${owner}`;
   const key = randomBytes(32).toString("hex");
   const scratch = fs.mkdtempSync(path.join(path.dirname(modelPath), ".native-cancellation-"));
@@ -24,14 +23,24 @@ export async function createNativeLlamaDockerFixture(
   let networkId: string | undefined;
   const record: Record<string, unknown> = {
     owner,
+    nodeVersion: process.version,
+    bridgeRuntimeSha256: createHash("sha256")
+      .update(
+        fs.readFileSync(
+          path.resolve(
+            "dist/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge-process.js",
+          ),
+        ),
+      )
+      .digest("hex"),
     cancellations: [],
-    backendCancellationPassed: false,
+    bridgeCancellationPassed: false,
   };
   const commands: string[] = [];
   let sequence = 0;
   const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
   const show = (args: readonly string[]) => {
-    const command = ["docker", ...dockerOperationCommandArguments(authority, args)]
+    const command = ["docker", ...runtime.commandArguments(authority, args)]
       .map(quote)
       .join(" ");
     commands.push(command);
@@ -68,7 +77,8 @@ export async function createNativeLlamaDockerFixture(
 
   const passed = new Set<string>();
   const close = () => {
-    record.backendCancellationPassed = passed.size === 8;
+    record.bridgeCancellationPassed = passed.size === 10;
+    record.passedCases = [...passed];
     record.commands = commands;
     for (const id of containers) {
       owned(id);
@@ -82,7 +92,15 @@ export async function createNativeLlamaDockerFixture(
     expect(createHash("sha256").update(fs.readFileSync(modelPath)).digest("hex")).toBe(
       "ed5fa30c487b282ec156c29062f1222e5c20875a944ac98289dbd242e947f747",
     );
-    const imageId = JSON.parse(capture(["image", "inspect", image]).stdout)[0].Id as string;
+    const selectedImage = JSON.parse(capture(["image", "inspect", image]).stdout)[0];
+    const imageId = selectedImage.Id as string;
+    expect(selectedImage.Config.Entrypoint).toHaveLength(1);
+    const serverPath = selectedImage.Config.Entrypoint[0] as string;
+    expect(["/app/llama-server", "/usr/local/bin/llama-server"]).toContain(serverPath);
+    const uid = process.getuid?.();
+    const gid = process.getgid?.();
+    if (!Number.isSafeInteger(uid) || !Number.isSafeInteger(gid) || uid! < 1 || gid! < 1)
+      throw new Error("Native Docker qualification requires a non-root host identity");
     const keyPath = path.join(scratch, "api-key");
     const curlPath = path.join(scratch, "curl-config");
     fs.writeFileSync(keyPath, `${key}\n`, { mode: 0o600 });
@@ -102,10 +120,14 @@ export async function createNativeLlamaDockerFixture(
     const server = create([
       "--name",
       name,
+      "--user",
+      `${uid}:${gid}`,
+      "--env",
+      "NVIDIA_VISIBLE_DEVICES=void",
       "--network",
       name,
-      "--publish",
-      "127.0.0.1:8081:8081",
+      "--label",
+      `io.nvidia.nemoclaw.host-local-inference.transaction-sha256=${transactionId}`,
       "--no-healthcheck",
       "--mount",
       `type=bind,src=${modelPath},dst=/models/model.gguf,readonly`,
@@ -146,8 +168,11 @@ export async function createNativeLlamaDockerFixture(
       effectivePorts: owned(server).NetworkSettings.Ports,
       authorityId: authority.engine.authorityId,
     };
-    const version = capture(["exec", server, "/app/llama-server", "--version"]);
+    const version = capture(["exec", server, serverPath, "--version"]);
     record.version = version.stdout + version.stderr;
+    record.curlVersion = capture(["exec", server, "/usr/bin/curl", "--version"]).stdout.split(
+      "\n",
+    )[0];
     expect(record.version).toContain("commit 8e7f22b67ef4667b4ddd50230771287f328cfb3f");
     record.serverProcesses = capture(["top", server, "-eo", "pid,ppid,comm,args"]).stdout;
 
@@ -285,6 +310,10 @@ export async function createNativeLlamaDockerFixture(
     record.baselineMilliseconds = baseline;
     const normalLatencyBound = Math.max(1_500, baseline[1]! * 3);
     return {
+      authority,
+      key,
+      keyPath,
+      transactionId,
       server,
       owned,
       capture,

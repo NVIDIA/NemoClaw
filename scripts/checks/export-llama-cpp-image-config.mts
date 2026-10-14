@@ -621,12 +621,14 @@ export function loadLlamaCppImageConfig(
   };
   const expectedRuntimePackages = {
     "ca-certificates": "20260601~24.04.1",
+    curl: "8.5.0-2ubuntu10.15",
     libcurl4t64: "8.5.0-2ubuntu10.15",
     libgomp1: "14.2.0-4ubuntu2~24.04.1",
     libssl3t64: "3.0.13-0ubuntu3.16",
   };
   const expectedRequiredPaths = [
     "/opt/llama.cpp/lib/libggml-cuda.so",
+    "/usr/bin/curl",
     "/usr/local/bin/llama-server",
     "/usr/local/share/licenses/llama.cpp/AUTHORS",
     "/usr/local/share/licenses/llama.cpp/LICENSE",

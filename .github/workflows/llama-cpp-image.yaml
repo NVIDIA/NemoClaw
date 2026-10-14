@@ -15,9 +15,8 @@ on:
       - "test/inference/llama/llama-cpp-image.test.ts"
       - "test/inference/llama/llama-cpp-image-publication-evidence.test.ts"
       - "test/inference/llama/llama-cpp-image-workflow.test.ts"
-      - "test/platform/images/llama-cpp-stdio-image-proof.py"
-      - "test/platform/images/llama-cpp-stdio-image-proof-test.py"
-      - "test/platform/images/fixtures/llama-cpp-stdio-upstream.c"
+      - "src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge*.ts"
+      - "test/package-contract/inference/llama-cpp-native-cancellation*.ts"
   workflow_dispatch:
     inputs:
       publish:
@@ -222,6 +221,16 @@ jobs:
             "$IMAGE" --version 2>&1 | tee "$RUNNER_TEMP/llama-server-version.txt"
           grep -F "$SOURCE_REVISION" "$RUNNER_TEMP/llama-server-version.txt"
 
+          docker run --rm \
+            --network none \
+            --read-only \
+            --user 65532:65532 \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --env NVIDIA_VISIBLE_DEVICES=void \
+            --entrypoint /usr/bin/curl \
+            "$IMAGE" --version
+
           container_id="$(docker create "$IMAGE" --version)"
           trap 'docker rm --force "$container_id" >/dev/null 2>&1 || true' EXIT
           filesystem_paths="$(docker export "$container_id" | tar --list --file - | sed 's#^\./##')"
@@ -241,6 +250,50 @@ jobs:
           done < <(jq --raw-output '.[]' <<< "$RUNTIME_FORBIDDEN_PATHS")
           docker rm "$container_id" >/dev/null
           trap - EXIT
+
+      - name: Set up Node.js for native cancellation proof
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
+      - name: Build the CLI for native cancellation proof
+        run: |
+          npm ci --ignore-scripts
+          npm --prefix nemoclaw ci --ignore-scripts
+          npm run build:cli
+
+      - name: Verify cancellation through the compiled bridge and real Docker
+        shell: bash
+        env:
+          NEMOCLAW_NATIVE_LLAMA_TEST_IMAGE: nemoclaw-llama-cpp-pr:${{ matrix.arch }}-${{ github.sha }}
+          NEMOCLAW_NATIVE_LLAMA_TEST_MODEL: ${{ runner.temp }}/SmolLM2-135M-Instruct-Q4_K_M.gguf
+          NEMOCLAW_NATIVE_LLAMA_TEST_EVIDENCE: ${{ runner.temp }}/llama-cpp-native-evidence/evidence.json
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/llama-cpp-native-evidence"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --max-time 180 \
+            'https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF/resolve/9e6855bc4be717fca1ef21360a1db4b29d5c559a/SmolLM2-135M-Instruct-Q4_K_M.gguf' \
+            --output "$NEMOCLAW_NATIVE_LLAMA_TEST_MODEL"
+          printf '%s  %s\n' \
+            'ed5fa30c487b282ec156c29062f1222e5c20875a944ac98289dbd242e947f747' \
+            "$NEMOCLAW_NATIVE_LLAMA_TEST_MODEL" | sha256sum --check --strict
+          npx --no-install vitest run --project package-contract \
+            test/package-contract/inference/llama-cpp-native-cancellation.test.ts \
+            --reporter=default --reporter=json \
+            --outputFile.json="$RUNNER_TEMP/llama-cpp-native-evidence/result.json" \
+            > "$RUNNER_TEMP/llama-cpp-native-evidence/run.log" 2>&1
+
+      - name: Retain native cancellation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: llama-cpp-native-cancellation-${{ matrix.arch }}-${{ github.sha }}
+          path: ${{ runner.temp }}/llama-cpp-native-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
 
   publication-gate:
     name: Validate trusted publication request

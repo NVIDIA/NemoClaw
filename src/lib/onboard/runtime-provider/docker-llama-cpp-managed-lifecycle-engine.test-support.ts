@@ -62,10 +62,10 @@ interface DockerFixturePaths {
 
 export function createDockerFixture(
   paths: DockerFixturePaths,
-  configuredHostPort = "8081",
+  configuredHostPort = "",
   publishedHostPort?: string,
   publishedHostIp = "127.0.0.1",
-  publishedBindingCount = 1,
+  publishedBindingCount = 0,
   imageReference = IMAGE,
 ): DockerFixture {
   const launchContract = {

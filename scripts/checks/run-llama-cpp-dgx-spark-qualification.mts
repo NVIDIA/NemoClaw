@@ -4,6 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,6 +56,39 @@ const maximumModelBytes = 128 * 1024 * 1024 * 1024;
 const relativeImageRoot = "managed-inference/images/llama-cpp";
 const trustedRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const trustedImageRoot = path.join(trustedRepoRoot, relativeImageRoot);
+const requireTrusted = createRequire(import.meta.url);
+const bridgeKeyName = "bridge-api-key";
+
+function requestTransaction(owner: string): string {
+  return createHash("sha256").update(owner).digest("hex");
+}
+
+function qualificationBridge(names: RuntimeNames, targetPort = 8081) {
+  // Use the production controller and its independent event loop. Qualification
+  // runs synchronous commands, so an inline forwarding server would stall.
+  const runtimeRoot = path.join(trustedRepoRoot, "dist/lib/onboard/runtime-provider");
+  const controllerPath = path.join(runtimeRoot, "docker-llama-cpp-private-bridge.js");
+  if (!fs.existsSync(controllerPath))
+    throw new Error("qualification requires npm run build:cli in the trusted checkout");
+  const { createDockerLlamaCppPrivateBridgeController } = requireTrusted(
+    controllerPath,
+  ) as typeof import("../../src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge.ts");
+  const { createDockerOperationAuthority, dockerOperationBridgeEnvironment } = requireTrusted(
+    path.join(runtimeRoot, "docker-operation-authority.js"),
+  ) as typeof import("../../src/lib/onboard/runtime-provider/docker-operation-authority.ts");
+  const authority = createDockerOperationAuthority("host-local-inference");
+  const apiKeyPath = path.join(names.tempRoot, bridgeKeyName);
+  const controller = createDockerLlamaCppPrivateBridgeController({
+    dockerEnvironment: dockerOperationBridgeEnvironment(authority),
+    remoteRequests: { engine: authority.engine, apiKeyPath, targetPort },
+  });
+  return {
+    authority,
+    controller,
+    apiKeyPath,
+    transactionId: requestTransaction(names.registryOwner),
+  };
+}
 
 type JsonRecord = Record<string, unknown>;
 
@@ -335,6 +369,12 @@ export function buildServerContainerArgv(
     model: options.model,
     network: { isolation: "docker-internal", name: options.networkName },
     ownerLabel: { name: registryOwnerLabel, value: options.registryOwner },
+    identityLabels: [
+      {
+        name: "io.nvidia.nemoclaw.host-local-inference.transaction-sha256",
+        value: requestTransaction(options.registryOwner),
+      },
+    ],
     runtimeGid: options.runtimeGid,
     runtimeUid: options.runtimeUid,
   });
@@ -691,6 +731,9 @@ async function cleanupOwnedRuntime(
   names: RuntimeNames,
   loopbackPort?: number,
 ): Promise<CleanupEvidence> {
+  const bridge = qualificationBridge(names, loopbackPort ?? 8081);
+  bridge.controller.stopTransaction(bridge.transactionId);
+  bridge.controller.assertStopped(bridge.transactionId);
   const registryWasOwned = dockerContainerOwner(names.registryName) === names.registryOwner;
   for (const name of [names.containerName, names.registryName]) {
     const owner = dockerContainerOwner(name);
@@ -876,6 +919,7 @@ async function runQualification(
   const planSource = readBoundedRegularFile(invocation.planFile, maximumPlanBytes);
   const plan = validateQualificationPlan(planSource, invocation.planSha256);
   const names = runtimeNames(invocation, environment);
+  const bridge = qualificationBridge(names, plan.recipe.serve.port);
   if (fs.existsSync(names.tempRoot)) fs.rmSync(names.tempRoot, { force: true, recursive: true });
   fs.mkdirSync(names.tempRoot, { mode: 0o700 });
   const metadataFile = path.join(names.tempRoot, "build-metadata.json");
@@ -908,6 +952,9 @@ async function runQualification(
       flag: "wx",
       mode: 0o600,
     });
+    // The model key can be owned by the non-root container UID. The existing
+    // bridge controller requires its inherited credential to belong to this host user.
+    fs.writeFileSync(bridge.apiKeyPath, apiKey, { encoding: "utf8", flag: "wx", mode: 0o600 });
     const hostUid = process.getuid?.();
     const hostGid = process.getgid?.();
     if (hostUid === undefined || hostGid === undefined) {
@@ -951,6 +998,26 @@ async function runQualification(
       { capture: false },
     );
     loopbackPort = plan.recipe.serve.port;
+    const inspected = bridge.authority.engine.capture([
+      "container",
+      "inspect",
+      names.containerName,
+      "--format",
+      "{{.Id}}",
+    ]);
+    const containerId = inspected.stdout.trim();
+    if (inspected.error || inspected.status !== 0 || !/^[a-f0-9]{64}$/u.test(containerId))
+      throw new Error("qualification could not bind the exact native server container");
+    bridge.controller.start({
+      transactionId: bridge.transactionId,
+      apiKeyPath: bridge.apiKeyPath,
+      targetHost: "127.0.0.1",
+      targetPort: plan.recipe.serve.port,
+      listenPort: loopbackPort,
+      containerId,
+      dockerAuthorityId: bridge.authority.engine.authorityId,
+      bindAddresses: ["127.0.0.1"],
+    });
     const smi = parseNvidiaSmi(
       runCommand("docker", [
         "exec",
@@ -1088,10 +1155,6 @@ async function runQualification(
   } catch (error) {
     failure = error;
   } finally {
-    try {
-    } catch (cleanupError) {
-      failure ??= cleanupError;
-    }
     try {
       cleanupEvidence = await cleanupOwnedRuntime(names, loopbackPort);
     } catch (cleanupError) {

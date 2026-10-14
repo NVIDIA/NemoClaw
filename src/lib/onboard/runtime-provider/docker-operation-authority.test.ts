@@ -12,14 +12,17 @@ import {
   createDriftingContextCapture,
 } from "../../../../test/helpers/docker-operation-authority-test-helpers";
 import { prependInstalledUserLocalOpenshellPath } from "../openshell-pin";
+import { detectWslDockerDesktopStatus } from "../wsl-docker-desktop-gpu";
 import { createDockerRuntimeProviderBundle } from "./docker";
 import {
   createDockerLlamaCppHostLocalOperation,
+  createDockerLlamaCppInspectionOperation,
   createDockerLlamaCppOperationAuthority,
 } from "./docker-llama-cpp-operation";
 import {
   createDockerOperationAuthority,
   dockerOperationBindingSha256,
+  dockerOperationBridgeEnvironment,
   dockerOperationCommandArguments,
 } from "./docker-operation-authority";
 
@@ -136,6 +139,17 @@ describe("Docker operation authority", () => {
     expect(dockerOperationBindingSha256(lifecycle.engine)).not.toBe(
       dockerOperationBindingSha256(cleanup.engine),
     );
+    const inference = createDockerOperationAuthority(
+      "host-local-inference",
+      { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark", UNRELATED_SECRET: "not-inherited" },
+      capture,
+    );
+    const bridgeEnvironment = dockerOperationBridgeEnvironment(inference);
+    expect(bridgeEnvironment.UNRELATED_SECRET).toBeUndefined();
+    expect(
+      createDockerOperationAuthority("host-local-inference", bridgeEnvironment, capture).engine
+        .authorityId,
+    ).toBe(inference.engine.authorityId);
     expect(dockerOperationBindingSha256(lifecycle.engine)).toBe(
       createHash("sha256")
         .update(
@@ -532,29 +546,46 @@ describe("Docker operation authority", () => {
   });
 });
 
-describe("managed llama.cpp operation probe strategy", () => {
+vi.mock("../wsl-docker-desktop-gpu", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../wsl-docker-desktop-gpu")>()),
+  detectWslDockerDesktopStatus: vi.fn(() => "not-docker-desktop" as const),
+}));
+
+describe("managed llama.cpp operation bridge topology", () => {
   const env = { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark" };
-  const input = {} as Parameters<
+  const input = { bindings: {} } as Parameters<
     ReturnType<typeof createDockerLlamaCppHostLocalOperation>["createLlamaCppLifecycle"]
   >[0];
 
-  it("keeps the caller-selected native host-process probe", () => {
-    const createLifecycle = vi.fn(() => ({}) as never);
-    const operation = createDockerLlamaCppHostLocalOperation(
-      env,
-      contextCapture("ssh://nvidia@spark.example.test"),
-      undefined,
-      createLifecycle,
-    );
+  it.each(["docker-desktop", "not-docker-desktop", "unknown"] as const)(
+    "retains the existing listener topology for %s during creation and inspection",
+    (status) => {
+      vi.mocked(detectWslDockerDesktopStatus).mockReturnValue(status);
+      const createLifecycle = vi.fn(() => ({}) as never);
+      const operation = createDockerLlamaCppHostLocalOperation(
+        env,
+        contextCapture("ssh://nvidia@spark.example.test"),
+        undefined,
+        createLifecycle,
+      );
 
-    operation.createLlamaCppLifecycle({
-      ...input,
-    });
-
-    expect(createLifecycle).toHaveBeenCalledExactlyOnceWith({
-      ...input,
-    });
-  });
+      operation.createLlamaCppLifecycle(input);
+      const expected = {
+        ...input,
+        bindings: status === "docker-desktop" ? { bridgeLoopbackOnly: true } : {},
+      };
+      expect(createLifecycle).toHaveBeenCalledExactlyOnceWith(expected, {
+        dockerEnvironment: expect.objectContaining({ DOCKER_CONTEXT: "spark" }),
+      });
+      createLifecycle.mockClear();
+      createDockerLlamaCppInspectionOperation(
+        operation.engine,
+        env,
+        createLifecycle,
+      ).createLlamaCppLifecycle(input);
+      expect(createLifecycle).toHaveBeenCalledExactlyOnceWith(expected);
+    },
+  );
 
   it("bounds the registered Docker operation factory and rejects commands after expiry", () => {
     const executableRoot = fakeExecutableRoot();

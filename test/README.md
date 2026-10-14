@@ -51,24 +51,29 @@ failure class. Fix sibling instances only when they share the cause and fit the 
 Run the opt-in cancellation regression against an approved local Docker daemon, a cached
 SmolLM2-135M Q4_K_M model, and the approved native CPU image. The image must contain stock curl
 and llama.cpp revision `8e7f22b67ef4667b4ddd50230771287f328cfb3f`; the test verifies that revision.
-Set the image and model paths explicitly:
+Build the CLI, then set the image and model paths explicitly:
 
 ```bash
+npm run build:cli
 NEMOCLAW_NATIVE_LLAMA_TEST_IMAGE='<approved-local-image-id>' \
 NEMOCLAW_NATIVE_LLAMA_TEST_MODEL='<absolute-path-to-cached-model.gguf>' \
 NEMOCLAW_NATIVE_LLAMA_TEST_EVIDENCE='<absolute-path-to-result.json>' \
-npx vitest run --project integration test/inference/llama/llama-cpp-native-cancellation.test.ts
+npx vitest run --project package-contract test/package-contract/inference/llama-cpp-native-cancellation.test.ts
 ```
 
-The test uses qualified Docker authority to create one native server and stock curl clients on
-an owned internal network. It checks bearer rejection, five stream cancellations, queued-request
-recovery, client deadline cleanup, and bounded server shutdown. It verifies remote container
-state and native generation metrics, then removes its owned containers, network, and temporary
-credentials. It retains the cached image and model.
+The test starts the compiled TypeScript bridge and one native server on an owned internal
+network, with unpublished ports. Five cancellations cross the bridge and the real Docker daemon.
+Docker events and generation metrics verify remote client exit and stopped generation; the next
+completion must recover normal latency. The suite also checks bearer rejection, request-client
+isolation, SIGTERM cleanup, and closed admission when Docker refuses remote cleanup. The deadline
+case invokes the production 900-second timer callback after consuming an SSE chunk, while cleanup
+still uses real Docker. The fixture removes its containers, network, and temporary credentials and
+retains the cached image and model.
 
-Ordinary CI skips this test when the image or model variable is absent. A passing manual run
-proves native backend cancellation within the internal network; it does not prove host/OpenShell
-reachability, production CUDA image qualification, or the complete supported E2E fanout.
+The native llama.cpp image PR workflow supplies the pinned model and runs this test against each
+image it builds, on CPU. Other jobs skip it when the image or model variable is absent.
+A passing manual run proves the bridge cancellation path with the approved CPU image; it does not prove OpenShell
+onboarding, production CUDA image qualification, or the complete supported E2E fanout.
 
 ## Test contracts
 

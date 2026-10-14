@@ -106,6 +106,7 @@ RUN test -n "${CUDA_DEV_IMAGE}" \
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates=20260601~24.04.1 \
+      curl=8.5.0-2ubuntu10.15 \
       libcurl4t64=8.5.0-2ubuntu10.15 \
       libgomp1=14.2.0-4ubuntu2~24.04.1 \
       libssl3t64=3.0.13-0ubuntu3.16 \

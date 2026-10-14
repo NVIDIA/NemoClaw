@@ -509,11 +509,15 @@ async function nativeWorkMetrics(
   authorization: string,
   maximumBytes: number,
   timeoutMilliseconds: number,
-): Promise<{ processing: number; deferred: number; decoded: number }> {
+): Promise<{ processing: number; deferred: number; decoded: number } | null> {
   const response = await fetchImpl(`${new URL(url).origin}/metrics`, {
     headers: { Authorization: authorization },
     signal: requestSignal(timeoutMilliseconds),
   });
+  if (response.status === 503 && response.headers.get("retry-after") === "1") {
+    await readBoundedBytes(response, maximumBytes);
+    return null;
+  }
   if (response.status !== 200) throw new Error("native work metrics returned an unexpected status");
   const source = new TextDecoder().decode(await readBoundedBytes(response, maximumBytes));
   validateMetricsResponse(source);
@@ -548,7 +552,7 @@ async function requireNativeWorkStopped(
       maximumBytes,
       Math.max(1, deadline - Date.now()),
     );
-    if (state.processing === 0 && state.deferred === 0) {
+    if (state !== null && state.processing === 0 && state.deferred === 0) {
       if (previousDecoded === state.decoded) return;
       previousDecoded = state.decoded;
     } else {
@@ -613,7 +617,7 @@ async function cancellationProbe(
       plan.qualification.probeBounds.maxResponseBytes,
       timeoutMilliseconds,
     );
-    if (active.processing !== 1)
+    if (active !== null && active.processing !== 1)
       throw new Error("cancellation probe did not observe an occupied native slot");
     controller.abort();
     try {

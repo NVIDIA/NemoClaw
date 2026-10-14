@@ -162,13 +162,13 @@ describe("llama.cpp host-local runtime materializer", () => {
     expect(argv.join("\n")).not.toContain("huggingface.co");
   });
 
-  it("configures Docker-native publication on the requested loopback port", () => {
+  it("keeps container ports unpublished when a host bridge port is requested", () => {
     const argv = buildLlamaCppHostLocalDockerArgv(contract(), {
       ...bindings(),
       hostPort: LLAMA_CPP_PORT,
     });
 
-    expect(valuesAfter(argv, "--publish")).toEqual(["127.0.0.1:8081:8081"]);
+    expect(valuesAfter(argv, "--publish")).toEqual([]);
   });
 
   it("binds a proved Station GPU by UUID and rejects an invalid device ID (#13026)", () => {

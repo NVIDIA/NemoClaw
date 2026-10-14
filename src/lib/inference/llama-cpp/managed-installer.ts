@@ -511,7 +511,7 @@ export function assertManagedLlamaCppResumeSupported(
 ): void {
   if (selection.recipeDigest === HISTORIC_WSL_RECIPE_DIGEST) {
     throw new Error(
-      "The former WSL managed llama.cpp image cannot resume. Inspect or remove the owned runtime, then onboard with the current pinned image.",
+      "The former WSL managed llama.cpp image cannot resume. Remove the exact owned runtime, then onboard with a qualified native image.",
     );
   }
 }

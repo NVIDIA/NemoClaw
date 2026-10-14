@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { vi } from "vitest";
 
 import { createHash } from "node:crypto";
 
@@ -278,4 +279,33 @@ export function journalStore(): TestJournalStore {
   };
 }
 
-export { createDockerLlamaCppManagedLifecycle as createTestDockerLlamaCppManagedLifecycle } from "./docker-llama-cpp-managed-lifecycle";
+import {
+  createDockerLlamaCppManagedLifecycle,
+  type DockerLlamaCppManagedLifecycleDependencies,
+  type DockerLlamaCppManagedLifecycleOptions,
+} from "./docker-llama-cpp-managed-lifecycle";
+
+export function privateBridgeFixture() {
+  let active: string | null = null;
+  const privateBridge = {
+    start: vi.fn((authority: unknown) => {
+      active = JSON.stringify(authority);
+    }),
+    assertRunning: vi.fn((authority: unknown) =>
+      invariant(active === JSON.stringify(authority), "bridge is not running"),
+    ),
+    assertStopped: vi.fn(() => invariant(active === null, "bridge is still running")),
+    stopTransaction: vi.fn(() => {
+      active = null;
+    }),
+  };
+  return privateBridge;
+}
+
+export function createTestDockerLlamaCppManagedLifecycle(
+  options: DockerLlamaCppManagedLifecycleOptions,
+  dependencies: DockerLlamaCppManagedLifecycleDependencies = {},
+  privateBridge = privateBridgeFixture(),
+) {
+  return createDockerLlamaCppManagedLifecycle(options, { privateBridge, ...dependencies });
+}

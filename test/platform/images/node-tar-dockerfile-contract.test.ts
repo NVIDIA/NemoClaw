@@ -441,7 +441,7 @@ describe("node-tar image remediation contract", () => {
         "RUN apt-get update && apt-get install -y --no-install-recommends",
         patchInputReady,
       );
-      const curlPackage = source.indexOf("curl=8.14.1-2+deb13u5", aptInstall);
+      const curlPackage = source.indexOf("curl=8.14.1-2+deb13u7", aptInstall);
       const aptInstallCleanup = source.indexOf("&& rm -rf /var/lib/apt/lists/*", curlPackage);
       expect(
         aptInstall > patchCopy &&
