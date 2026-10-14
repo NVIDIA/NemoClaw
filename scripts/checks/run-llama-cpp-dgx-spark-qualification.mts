@@ -5,13 +5,12 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
-import { startQualificationLoopbackRelay } from "./llama-cpp-qualification-relay.mts";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { compareDottedVersions } from "../../src/lib/domain/maintenance/upgrade.ts";
 import {
-  buildLlamaCppRequestGuardDockerArgv,
+  buildLlamaCppHostLocalDockerArgv,
   consumeDockerLoopbackPublishAuthority,
   type DockerLoopbackPublishAuthority,
   qualifyDockerLoopbackPublishAuthority,
@@ -35,7 +34,6 @@ import { resolveManagedImageLocalInferenceRoute } from "./managed-image-protecte
 import { runManagedImageOpenShellE2e } from "./run-managed-image-openshell-e2e.ts";
 
 export {
-  startQualificationLoopbackRelay,
   qualifyDockerLoopbackPublishAuthority,
   validateChatCompletionResponse,
   validateModelsResponse,
@@ -329,11 +327,9 @@ export function buildServerContainerArgv(
     runtimeUid: number;
   },
 ): string[] {
-  if (plan.qualification.requestGuard !== "required") {
-    throw new Error("llama.cpp qualification requires the declarative request guard");
-  }
-  const argv = buildLlamaCppRequestGuardDockerArgv(plan.recipe, {
+  const argv = buildLlamaCppHostLocalDockerArgv(plan.recipe, {
     apiKeyHostPath: options.apiKeyHostPath,
+    hostPort: plan.recipe.serve.port,
     containerName: options.containerName,
     imageReference: options.imageReference,
     model: options.model,
@@ -824,35 +820,6 @@ function inspectBuiltImage(
   return { digest, imageId, reference };
 }
 
-export function resolveRequestGuardAddress(
-  names: Pick<RuntimeNames, "containerName" | "networkName" | "registryOwner">,
-): string {
-  if (
-    dockerContainerOwner(names.containerName) !== names.registryOwner ||
-    dockerNetworkOwner(names.networkName) !== names.registryOwner
-  ) {
-    throw new Error("qualification relay requires the owned container and network");
-  }
-  const network = JSON.parse(
-    runCommand("docker", ["network", "inspect", names.networkName]).toString("utf8"),
-  )[0];
-  const container = JSON.parse(
-    runCommand("docker", ["inspect", names.containerName]).toString("utf8"),
-  )[0];
-  const endpoints = container.NetworkSettings.Networks;
-  const endpoint = endpoints[names.networkName];
-  if (
-    network.Internal !== true ||
-    !container.State.Running ||
-    Object.keys(endpoints).length !== 1 ||
-    endpoint?.NetworkID !== network.Id ||
-    net.isIP(endpoint?.IPAddress ?? "") !== 4
-  ) {
-    throw new Error("qualification relay requires one running container on its internal network");
-  }
-  return endpoint.IPAddress;
-}
-
 async function waitForHealth(port: number, timeoutSeconds: number): Promise<void> {
   const deadline = Date.now() + timeoutSeconds * 1000;
   while (Date.now() < deadline) {
@@ -914,7 +881,6 @@ async function runQualification(
   const metadataFile = path.join(names.tempRoot, "build-metadata.json");
   const apiKeyHostPath = path.join(names.tempRoot, "api-key");
   let loopbackPort: number | undefined;
-  let relay: Awaited<ReturnType<typeof startQualificationLoopbackRelay>> | undefined;
   let successReceipt: JsonRecord | undefined;
   let failure: unknown;
   let cleanupEvidence: CleanupEvidence | undefined;
@@ -984,13 +950,7 @@ async function runQualification(
       }),
       { capture: false },
     );
-    relay = await startQualificationLoopbackRelay(
-      resolveRequestGuardAddress(names),
-      plan.recipe.serve.port,
-      plan.recipe.serve.limits.requestTimeoutSeconds,
-      plan.qualification.agentQualification.execution === "enabled" ? plan.recipe.serve.port : 0,
-    );
-    loopbackPort = relay.port;
+    loopbackPort = plan.recipe.serve.port;
     const smi = parseNvidiaSmi(
       runCommand("docker", [
         "exec",
@@ -1129,7 +1089,6 @@ async function runQualification(
     failure = error;
   } finally {
     try {
-      await relay?.close();
     } catch (cleanupError) {
       failure ??= cleanupError;
     }

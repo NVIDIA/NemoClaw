@@ -14,10 +14,6 @@ import {
   dockerLlamaCppBindingSha256,
 } from "../../onboard/runtime-provider/docker-llama-cpp-operation";
 import {
-  createDockerLlamaCppPrivateBridgeController,
-  type DockerLlamaCppPrivateBridgeController,
-} from "../../onboard/runtime-provider/docker-llama-cpp-private-bridge";
-import {
   createHostLocalCreateJournalStore,
   HOST_LOCAL_CREATE_JOURNAL_DIRECTORY,
   reconcileAndReadHostLocalCreateJournalRecords,
@@ -103,7 +99,6 @@ export interface LocalModelRuntimeCleanupOptions {
   sandboxName?: string;
   env?: NodeJS.ProcessEnv;
   engine?: ContainerEngine;
-  privateBridge?: DockerLlamaCppPrivateBridgeController;
   deps?: Partial<CleanupDeps>;
 }
 
@@ -861,7 +856,6 @@ function cleanupLlamaCpp(
     sandboxName?: string;
     env?: NodeJS.ProcessEnv;
     engine?: ContainerEngine;
-    privateBridge?: DockerLlamaCppPrivateBridgeController;
     expectedPrivateAuthority?: ManagedLlamaCppPrivateAuthority;
     executionOwnership?: ManagedLlamaCppExecutionOwnership;
   } = {},
@@ -963,13 +957,7 @@ function cleanupLlamaCpp(
   try {
     executionOwnership.assert();
     requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
-    const privateBridge =
-      options.privateBridge ??
-      (process.platform === "linux" ? createDockerLlamaCppPrivateBridgeController() : undefined);
-    if (privateBridge) {
-      privateBridge.stopTransaction(journal.transactionId);
-      privateBridge.assertStopped(journal.transactionId);
-    }
+
     executionOwnership.assert();
     const engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
     requireQualifiedEngine(receipt?.engineAuthority ?? journal.engineAuthority, engine);
@@ -1028,13 +1016,10 @@ export interface ManagedLlamaCppSandboxCleanupOptions {
   readonly gatewayPort?: number;
   readonly env?: NodeJS.ProcessEnv;
   readonly engine?: ContainerEngine;
-  readonly privateBridge?: DockerLlamaCppPrivateBridgeController;
   readonly deps?: Partial<CleanupDeps>;
 }
 
-export interface ManagedLlamaCppLifecycleCleanupOptions extends ManagedLlamaCppSandboxCleanupOptions {
-  readonly privateBridge?: DockerLlamaCppPrivateBridgeController;
-}
+export interface ManagedLlamaCppLifecycleCleanupOptions extends ManagedLlamaCppSandboxCleanupOptions {}
 
 export interface PreparedManagedLlamaCppRuntimeCleanup {
   readonly abort: () => void;
@@ -1307,9 +1292,6 @@ export function finalizeManagedLlamaCppLifecycleCleanup(
       engine.capture(["info"], DOCKER_INSPECT_TIMEOUT_MS),
     );
     const transactionId = receipt.runtime.model.generation;
-    const privateBridge = options.privateBridge ?? createDockerLlamaCppPrivateBridgeController();
-    privateBridge.stopTransaction(transactionId);
-    privateBridge.assertStopped(transactionId);
 
     const expectedContainerLabels = {
       [LLAMA_MANAGED_LABEL]: "true",
@@ -1479,7 +1461,6 @@ function cleanupManagedLlamaCppRuntimeForSandboxInternal(
       sandboxName,
       env: options.env,
       engine: options.engine,
-      privateBridge: options.privateBridge,
       expectedPrivateAuthority,
       executionOwnership,
     });
@@ -1675,7 +1656,6 @@ export function cleanupLocalModelRuntimes(
         sandboxName: options.sandboxName,
         env: options.env,
         engine: options.engine,
-        privateBridge: options.privateBridge,
       });
     }
     preserveSharedHuggingFaceCache(homeDir, preserved);

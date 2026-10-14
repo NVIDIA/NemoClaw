@@ -190,19 +190,6 @@ function runCandidateIndexFilter(filter: string, candidate: unknown, amd64: stri
 }
 
 describe("llama.cpp image PR workflow", () => {
-  it("fails image proof on resource cleanup failure while preserving primary errors", () => {
-    const result = spawnSync(
-      "python3",
-      ["test/platform/images/llama-cpp-stdio-image-proof-test.py"],
-      {
-        cwd: repoRoot,
-        encoding: "utf8",
-        timeout: 10_000,
-      },
-    );
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-  });
-
   const config = required(workflow.jobs?.config, "config job is missing");
   const build = required(workflow.jobs?.["pr-build"], "native PR build job is missing");
   const buildArgGuard = namedStep(build, "Validate native PR image build args");
@@ -210,20 +197,6 @@ describe("llama.cpp image PR workflow", () => {
   const validate = namedStep(build, "Validate native PR image contract");
 
   it("keeps pull requests read-only while exposing only an explicit manual publication trigger (#8250)", () => {
-    expect(workflow.on?.pull_request?.paths).toEqual(
-      expect.arrayContaining([
-        ".github/workflows/llama-cpp-image.yaml",
-        ".github/workflows/llama-cpp-image-attest.yaml",
-        "managed-inference/images/llama-cpp/**",
-        "managed-inference/recipes/llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
-        "scripts/checks/export-llama-cpp-image-config.mts",
-        "scripts/checks/verify-llama-cpp-image-publication-evidence.sh",
-        "test/inference/llama/llama-cpp-image-publication-evidence.test.ts",
-        "test/platform/images/llama-cpp-stdio-image-proof.py",
-        "test/platform/images/llama-cpp-stdio-image-proof-test.py",
-        "test/platform/images/fixtures/llama-cpp-stdio-upstream.c",
-      ]),
-    );
     expect(Object.keys(workflow.on ?? {})).toEqual(["pull_request", "workflow_dispatch"]);
     expect(workflow.on?.workflow_dispatch?.inputs?.publish).toEqual({
       description: "Publish the declaratively enabled run-unique candidate from main",
@@ -244,10 +217,6 @@ describe("llama.cpp image PR workflow", () => {
       group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
     });
     expect(build.if).toBe("github.event_name == 'pull_request'");
-    const proof = namedStep(build, "Exercise packaged request guard through Docker exec");
-    expect(proof.env?.IMAGE).toBe("nemoclaw-llama-cpp-pr:${{ matrix.arch }}-${{ github.sha }}");
-    expect(proof.run).toContain('test/platform/images/llama-cpp-stdio-image-proof.py "$IMAGE"');
-    expect(build.steps!.indexOf(proof)).toBeGreaterThan(build.steps!.indexOf(validate));
   });
 
   it("passes declarative source, base image, runtime ID, and platform values to each image build (#8231)", () => {
@@ -260,7 +229,6 @@ describe("llama.cpp image PR workflow", () => {
       cuda_runtime_image: "${{ steps.manifest.outputs.cuda_runtime_image }}",
       image: "${{ steps.manifest.outputs.image }}",
       matrix: "${{ steps.manifest.outputs.matrix }}",
-      request_guard_go_version: "${{ steps.manifest.outputs.request_guard_go_version }}",
       runtime_forbidden_paths: "${{ steps.manifest.outputs.runtime_forbidden_paths }}",
       runtime_gid: "${{ steps.manifest.outputs.runtime_gid }}",
       runtime_required_paths: "${{ steps.manifest.outputs.runtime_required_paths }}",
@@ -309,7 +277,6 @@ describe("llama.cpp image PR workflow", () => {
         "compiler_cxx",
         "cuda_dev_image",
         "cuda_runtime_image",
-        "request_guard_go_version",
         "runtime_gid",
         "runtime_uid",
         "source_archive_sha256",
@@ -317,18 +284,6 @@ describe("llama.cpp image PR workflow", () => {
       ].every((output) => args.includes(`needs.config.outputs.${output}`)),
     ).toBe(true);
     expect(args).toContain("CUDA_ARCHITECTURES=${{ matrix.cuda_architectures }}");
-    expect(args).toContain(
-      "REQUEST_GUARD_GO_ARCHIVE_SHA256=${{ matrix.request_guard_go_archive_sha256 }}",
-    );
-    expect(validate.run).toContain(
-      'Labels["io.nvidia.nemoclaw.inference-server.request-guard.authentication"] == "managed-bearer-v1"',
-    );
-    expect(validate.run).toContain(
-      'Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.version"] == $requestGuardGoVersion',
-    );
-    expect(validate.run).toContain(
-      'Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.archive-sha256"] == $requestGuardGoArchive',
-    );
     expect(args).toContain("TARGETPLATFORM=${{ matrix.platform }}");
     expect(args).not.toMatch(/sha256:[0-9a-f]{64}/u);
     expect(args).not.toMatch(/[0-9a-f]{40}/u);
@@ -408,12 +363,6 @@ describe("llama.cpp image PR workflow", () => {
     expect(publishBuild.with?.provenance).toBe(false);
     expect(publishBuild.with?.sbom).toBe(false);
     const publishArgs = String(publishBuild.with?.["build-args"] ?? "");
-    expect(publishArgs).toContain(
-      "REQUEST_GUARD_GO_ARCHIVE_SHA256=${{ matrix.request_guard_go_archive_sha256 }}",
-    );
-    expect(publishArgs).toContain(
-      "REQUEST_GUARD_GO_VERSION=${{ needs.config.outputs.request_guard_go_version }}",
-    );
     const publishArgNames = [...publishArgs.matchAll(/^([A-Z0-9_]+)=/gmu)].map((match) => match[1]);
     const guardedArgNames = [
       ...(publishGuard.run ?? "").matchAll(/--build-arg "([A-Z0-9_]+)=/gu),
@@ -432,22 +381,6 @@ describe("llama.cpp image PR workflow", () => {
     );
     expect(publish.steps?.indexOf(logout)).toBeLessThan(
       publish.steps?.indexOf(anonymousPull) ?? Number.POSITIVE_INFINITY,
-    );
-    const publishedProof = namedStep(
-      publish,
-      "Exercise published request guard through Docker exec",
-    );
-    expect(publishedProof.env?.IMAGE).toBe(
-      "${{ needs.config.outputs.publication_repository }}@${{ steps.build.outputs.digest }}",
-    );
-    expect(publishedProof.run).toBe(
-      namedStep(build, "Exercise packaged request guard through Docker exec").run,
-    );
-    expect(publish.steps!.indexOf(anonymousPull)).toBeLessThan(
-      publish.steps!.indexOf(publishedProof),
-    );
-    expect(publish.steps!.indexOf(publishedProof)).toBeLessThan(
-      publish.steps!.indexOf(uploadAnonymousPull),
     );
     expect(publish.steps?.indexOf(uploadAnonymousPull)).toBeLessThan(
       publish.steps?.indexOf(uploadDigest) ?? Number.POSITIVE_INFINITY,

@@ -120,12 +120,11 @@ During Windows Express, onboarding automatically selects the Qwen 3.6 35B-A3B re
   This path is an experimental implementation. It does not establish a supported agent, model, and
   runtime tuple until the protected qualification and activation gates pass. The protected
   qualification runner requires Docker Engine `28.3.3` or newer and the trusted daemon's default
-  protected NAT and firewall behavior; it re-queries the live daemon and consumes a fresh single-use
-  authority immediately before each temporary loopback publication. That requirement supersedes
-  older Docker 27 qualification evidence. On native Linux, managed onboarding uses the host-owned
-  private bridge without publishing a Docker port. On Docker Desktop WSL, onboarding requires an
-  image with guarded stdio forwarding. The host-owned bridge on `127.0.0.1:8081` reaches the
-  authenticated guard through Docker exec without publishing a container port. The Muse Glimmer
+  protected NAT and firewall behavior. That requirement supersedes older Docker 27 qualification
+  evidence. The container runs native `llama-server`, with Docker-native publication requested on
+  `127.0.0.1:8081`. Onboarding requires an active port mapping and successful host-loopback and
+  OpenShell route checks. A configured binding alone is not readiness evidence; installation fails
+  if the daemon does not activate it. The Muse Glimmer
   profile remains Experimental after bounded physical DGX Spark qualification of text, separated
   reasoning, and one structured tool call.
 </Note>
@@ -261,9 +260,9 @@ Onboarding performs these actions:
 - Reuses a verified GGUF from the shared `~/.cache/huggingface/` cache, or acquires the file through the existing Hugging Face mechanism when it is absent or invalid.
 - Verifies the GGUF size and SHA-256 digest before it starts the runtime.
 - Runs the authenticated container as the current non-root user with one NVIDIA GPU and no CPU fallback.
-- Starts a host-owned private bridge on `127.0.0.1:8081` and connects the container to a Docker internal network.
-- On native Linux, connects the bridge directly to the container without publishing a Docker port.
-- On Docker Desktop WSL, connects the bridge through Docker exec to the authenticated guard inside the same container.
+- Configures native `llama-server` with its API-key file, one serving slot, and the recipe's context and socket-timeout settings.
+- Requests Docker-native publication on `127.0.0.1:8081` while retaining the container's internal network.
+- Verifies the effective Docker binding and native HTTP reachability before registering the provider.
 - Registers `llama-cpp-local` and routes agent traffic through `https://inference.local/v1`.
 
 The runtime cannot download a model and has no egress on its internal Docker network.
@@ -284,11 +283,12 @@ Run the managed runtime, route, and host-port checks:
 $$nemoclaw my-assistant status
 $$nemoclaw my-assistant doctor
 docker inspect --format '{{json .HostConfig.PortBindings}}' nemoclaw-llama-cpp
+docker inspect --format '{{json .NetworkSettings.Ports}}' nemoclaw-llama-cpp
 ```
 
 Accept the result when `status` reports `Managed llama.cpp: running`, the inference route is `healthy`, and `doctor` exits with status `0`.
-On native Linux and Docker Desktop WSL, the Docker inspection output must be `{}`.
-The host-owned private bridge still listens on loopback.
+Both Docker inspection outputs must contain exactly `8081/tcp` mapped to `127.0.0.1:8081`.
+An empty or `null` effective mapping is a readiness failure.
 These checks do not establish agent and model qualification.
 
 `status` reports the recipe ID, model digest, image reference, endpoint, and lifecycle state without exposing the API key.

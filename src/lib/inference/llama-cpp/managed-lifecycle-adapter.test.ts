@@ -7,7 +7,6 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
-import { privateBridgeFixture } from "../../onboard/runtime-provider/docker-llama-cpp-private-bridge.test-support";
 import type { RuntimeProviderWorkloadProfile } from "../../onboard/runtime-provider/contract";
 import type {
   HostLocalInferenceOperation,
@@ -216,7 +215,6 @@ describe("managed llama.cpp lifecycle adapter", () => {
         createOperation: () => operation,
       },
     });
-    const privateBridge = privateBridgeFixture();
     const adapter = createManagedLlamaCppLifecycleAdapter({
       runtimeProvider,
       runtimeOwnerSandboxName: "spark-agent",
@@ -228,7 +226,6 @@ describe("managed llama.cpp lifecycle adapter", () => {
       finalizeCleanup: (owner, expected, options) =>
         finalizeManagedLlamaCppLifecycleCleanup(owner, expected, {
           ...options,
-          privateBridge,
         }),
     });
 

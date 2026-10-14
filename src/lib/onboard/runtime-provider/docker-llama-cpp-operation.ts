@@ -7,15 +7,12 @@ import {
 } from "../../adapters/container-engine";
 import { prependInstalledUserLocalOpenshellPath } from "../openshell-pin";
 import { getFutureShellPathHint } from "../remediation";
-import { detectWslDockerDesktopStatus } from "../wsl-docker-desktop-gpu";
 import { createDockerLlamaCppManagedLifecycle } from "./docker-llama-cpp-managed-lifecycle";
 import {
   createDockerOperationAuthority,
   dockerOperationBindingSha256,
   dockerOperationCommandArguments,
-  dockerOperationBridgeEnvironment,
 } from "./docker-operation-authority";
-import { createDockerLlamaCppPrivateBridgeController } from "./docker-llama-cpp-private-bridge";
 import type {
   HostLocalInferenceCommandSpawner,
   HostLocalInferenceOperation,
@@ -28,7 +25,6 @@ import {
 export interface DockerLlamaCppOperationAuthority {
   readonly assertAuthority: () => void;
   readonly engine: ContainerEngine;
-  readonly bridgeEnvironment: Readonly<NodeJS.ProcessEnv>;
   readonly spawn: HostLocalInferenceCommandSpawner;
 }
 
@@ -82,7 +78,6 @@ export function createDockerLlamaCppOperationAuthority(
   return Object.freeze({
     assertAuthority,
     engine: managedLlamaCppEngine(authority.engine),
-    bridgeEnvironment: dockerOperationBridgeEnvironment(authority),
     spawn: (args: readonly string[], options?: Parameters<HostLocalInferenceCommandSpawner>[1]) => {
       assertAuthority();
       return boundedSpawnCommand
@@ -112,44 +107,9 @@ export function createDockerLlamaCppHostLocalOperation(
     bindingSha256: dockerLlamaCppBindingSha256(engine),
     assertAuthority: authority.assertAuthority,
     spawn,
-    // Docker Desktop WSL isolates the VM loopback from the distro loopback, so
-    // the bridge loopback proof runs from this CLI process instead of a
-    // host-network probe container.
-    createLlamaCppLifecycle: (
-      input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0],
-    ) => {
-      const options = {
-        ...dockerLlamaCppLifecycleOptions(input, engine, env),
-        ...(deadlineMs === undefined ? {} : { engine }),
-      };
-      return options.bindings?.stdioForward
-        ? createLifecycle(options, {
-            privateBridge: createDockerLlamaCppPrivateBridgeController({
-              dockerEnvironment: authority.bridgeEnvironment,
-            }),
-          })
-        : createLifecycle(options);
-    },
+    createLlamaCppLifecycle: (input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0]) =>
+      createLifecycle({ ...input, ...(deadlineMs === undefined ? {} : { engine }) }),
   });
-}
-
-function dockerLlamaCppLifecycleOptions(
-  input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0],
-  engine: ContainerEngine,
-  env: NodeJS.ProcessEnv,
-): Parameters<typeof createDockerLlamaCppManagedLifecycle>[0] {
-  const desktop =
-    detectWslDockerDesktopStatus({
-      env,
-      dockerInfoFormat: (format) => engine.capture(["info", "--format", format]).stdout,
-    }) === "docker-desktop";
-  return {
-    ...input,
-    ...(desktop && input.guardedStdioForward
-      ? { bindings: { ...input.bindings, stdioForward: true } }
-      : {}),
-    loopbackProbe: input.loopbackProbe ?? (desktop ? "host-process" : undefined),
-  };
 }
 
 export function createManagedLlamaCppEngine(
@@ -177,6 +137,6 @@ export function createDockerLlamaCppInspectionOperation(
       throw new Error("Managed llama.cpp inspection cannot spawn container-engine commands.");
     },
     createLlamaCppLifecycle: (input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0]) =>
-      createLifecycle(dockerLlamaCppLifecycleOptions(input, engine, env)),
+      createLifecycle(input),
   });
 }

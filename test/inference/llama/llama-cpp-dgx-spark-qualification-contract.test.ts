@@ -27,7 +27,6 @@ import {
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE,
-  LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES,
   LLAMA_CPP_DGX_SPARK_RUNNER_PATTERN,
   LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID,
   LLAMA_CPP_DGX_SPARK_SOURCE_ARCHIVE_SHA256,
@@ -131,7 +130,6 @@ function disabledPlan() {
     probes: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
     profile: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE,
     recipeRef: LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE,
-    requestGuard: "required",
     required: true,
     runner: null,
   };
@@ -209,17 +207,6 @@ function receipt() {
       health: { httpStatus: 200, ok: true },
       logRedaction: { ok: true },
       malformedRequest: { httpStatus: 400, ok: true },
-      requestBodyLimit: {
-        acceptedBytes: 1048576,
-        acceptedHttpStatus: 200,
-        continuationHealthHttpStatus: 200,
-        continuationHttpStatus: 200,
-        errorCode: "request_body_too_large",
-        errorType: "invalid_request_error",
-        ok: true,
-        rejectedBytes: LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES,
-        rejectedHttpStatus: 413,
-      },
       metrics: {
         httpStatus: 200,
         ok: true,
@@ -304,7 +291,6 @@ function executionPlan() {
       agentQualification: agentQualification(),
       probeBounds: probeBounds(),
       probes: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
-      requestGuard: "required",
     },
     recipe: {
       capabilities: {
@@ -373,13 +359,8 @@ function executionPlan() {
         kvCache: { key: "f16", value: "f16" },
         speculativeDecoding: "disabled",
         limits: {
-          maxRequestBodyBytes: 1048576,
-          maxRequestHeaderBytes: 32768,
-          maxOutputTokens: 4096,
           requestTimeoutSeconds: 900,
-          shutdownTimeoutSeconds: 25,
         },
-        requestGuard: { upstreamPort: 8082 },
       },
       server: {
         technology: "llama.cpp",
@@ -644,31 +625,7 @@ describe("llama.cpp DGX Spark qualification contract", () => {
         },
       }),
     ).toThrow("micro-batch size is invalid");
-    expect(() =>
-      parseLlamaCppDgxSparkExecutionPlan({
-        ...value,
-        recipe: {
-          ...value.recipe,
-          serve: {
-            ...value.recipe.serve,
-            limits: { ...value.recipe.serve.limits, maxOutputTokens: 262145 },
-          },
-        },
-      }),
-    ).toThrow("maximum output tokens is invalid");
-    expect(() =>
-      parseLlamaCppDgxSparkExecutionPlan({
-        ...value,
-        recipe: {
-          ...value.recipe,
-          serve: {
-            ...value.recipe.serve,
-            requestGuard: { upstreamPort: value.recipe.serve.port },
-          },
-        },
-      }),
-    ).toThrow("serve contract is invalid");
-    const { shutdownTimeoutSeconds: _removed, ...incompleteLimits } = value.recipe.serve.limits;
+    const { requestTimeoutSeconds: _removed, ...incompleteLimits } = value.recipe.serve.limits;
     expect(() =>
       parseLlamaCppDgxSparkExecutionPlan({
         ...value,
@@ -714,12 +671,6 @@ describe("llama.cpp DGX Spark qualification contract", () => {
         },
       }),
     ).toThrow("protocol probes are invalid");
-    expect(() =>
-      parseLlamaCppDgxSparkExecutionPlan({
-        ...value,
-        qualification: { ...value.qualification, requestGuard: "disabled" },
-      }),
-    ).toThrow("request-guard activation is invalid");
   });
 
   it("accepts one bounded receipt with only allowlisted workflow, image, model, and Spark evidence (#8260)", () => {
@@ -904,21 +855,6 @@ describe("llama.cpp DGX Spark qualification contract", () => {
         {
           ...receipt(),
           probes: { ...receipt().probes, health: { httpStatus: 503, ok: false } },
-        },
-        evidenceIdentity(),
-      ),
-    ).toThrow("probes did not pass");
-    expect(() =>
-      parseLlamaCppDgxSparkQualificationReceipt(
-        {
-          ...receipt(),
-          probes: {
-            ...receipt().probes,
-            requestBodyLimit: {
-              ...receipt().probes.requestBodyLimit,
-              continuationHealthHttpStatus: 503,
-            },
-          },
         },
         evidenceIdentity(),
       ),

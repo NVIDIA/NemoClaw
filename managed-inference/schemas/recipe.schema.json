@@ -26,8 +26,22 @@
         "execution"
       ],
       "anyOf": [
-        { "required": ["model"], "properties": { "model": {} } },
-        { "required": ["modelRef"], "properties": { "modelRef": {} } }
+        {
+          "required": [
+            "model"
+          ],
+          "properties": {
+            "model": {}
+          }
+        },
+        {
+          "required": [
+            "modelRef"
+          ],
+          "properties": {
+            "modelRef": {}
+          }
+        }
       ],
       "properties": {
         "backend": {
@@ -154,9 +168,6 @@
             },
             "imageDownloadSizeBytes": {
               "$ref": "#/$defs/positiveSafeInteger"
-            },
-            "guardedStdioForward": {
-              "const": true
             },
             "imageUnpackedSizeBytes": {
               "$ref": "#/$defs/positiveSafeInteger"
@@ -596,54 +607,13 @@
             "limits": {
               "type": "object",
               "required": [
-                "maxRequestBodyBytes",
-                "maxRequestHeaderBytes",
-                "maxOutputTokens",
-                "requestTimeoutSeconds",
-                "shutdownTimeoutSeconds"
+                "requestTimeoutSeconds"
               ],
               "properties": {
-                "maxRequestBodyBytes": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 67108864
-                },
-                "maxRequestHeaderBytes": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 1048576
-                },
-                "maxOutputTokens": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 1048576
-                },
                 "requestTimeoutSeconds": {
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 86400
-                },
-                "shutdownTimeoutSeconds": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 86400
-                }
-              },
-              "additionalProperties": false
-            },
-            "requestGuard": {
-              "type": "object",
-              "required": [
-                "upstreamPort"
-              ],
-              "properties": {
-                "upstreamPort": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 65535,
-                  "not": {
-                    "const": 8081
-                  }
                 }
               },
               "additionalProperties": false
@@ -1330,7 +1300,6 @@
             "properties": {
               "image": {},
               "imageDownloadSizeBytes": {},
-              "guardedStdioForward": {},
               "platforms": {},
               "networkExposure": {},
               "restartPolicy": {},
@@ -1403,8 +1372,7 @@
               "flashAttention",
               "kvCache",
               "speculativeDecoding",
-              "limits",
-              "requestGuard"
+              "limits"
             ],
             "properties": {
               "protocol": {},
@@ -1470,8 +1438,7 @@
               "flashAttention": {},
               "kvCache": {},
               "speculativeDecoding": {},
-              "limits": {},
-              "requestGuard": {}
+              "limits": {}
             },
             "propertyNames": {
               "not": {

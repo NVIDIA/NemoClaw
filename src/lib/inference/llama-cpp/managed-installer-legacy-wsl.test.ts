@@ -79,7 +79,6 @@ describe("former WSL managed llama.cpp recipe", () => {
     expect(selected.recipe.spec.runtime.image).toBe(
       "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675",
     );
-    expect(selected.recipe.spec.runtime.guardedStdioForward).toBeUndefined();
     expect(() => assertManagedLlamaCppResumeSupported(selected)).toThrow(
       "The former WSL managed llama.cpp image cannot resume",
     );

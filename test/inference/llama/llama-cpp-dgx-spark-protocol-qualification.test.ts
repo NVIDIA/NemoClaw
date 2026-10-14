@@ -75,13 +75,19 @@ function properties(contextSize = 262144): JsonObject {
 
 type JsonObject = Record<string, unknown>;
 
-function hangingStream(signal: AbortSignal | null | undefined): Response {
+function hangingStream(
+  signal: AbortSignal | null | undefined,
+  onAbort: () => void = () => undefined,
+): Response {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(new TextEncoder().encode('data: {"started":true}\n\n'));
       signal?.addEventListener(
         "abort",
-        () => controller.error(new DOMException("aborted", "AbortError")),
+        () => {
+          onAbort();
+          controller.error(new DOMException("aborted", "AbortError"));
+        },
         { once: true },
       );
     },
@@ -265,190 +271,194 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
     ).rejects.toThrow("declarative byte bound");
   });
 
-  it("drives every YAML-selected probe with declarative bounds and returns sanitized evidence (#8144)", async () => {
-    const requestedMaxTokens: number[] = [];
-    const requestBodySizes: number[] = [];
-    let healthProbes = 0;
-    let longRequest = 0;
-    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const url = String(input);
-      switch (url) {
-        case "http://127.0.0.1:18081/health":
-          healthProbes += 1;
-          return new Response("{}", { status: 200 });
-        case "http://127.0.0.1:18081/v1/models":
-          return jsonResponse({ data: [{ id: MODEL }], object: "list" });
-        case "http://127.0.0.1:18081/props":
-          return init?.method === "POST"
-            ? jsonResponse({ error: {} }, 501)
-            : jsonResponse(properties(plan.recipe.serve.contextSize));
-        case "http://127.0.0.1:18081/metrics":
-          return new Headers(init?.headers).get("authorization") === AUTHORIZATION
-            ? new Response(METRICS, { headers: { "Content-Type": "text/plain" }, status: 200 })
-            : jsonResponse({ error: {} }, 401);
-        case "http://127.0.0.1:18081/":
-        case "http://127.0.0.1:18081/models/load":
-          return jsonResponse({ error: {} }, 404);
-        case "http://127.0.0.1:18081/slots":
-          return jsonResponse({ error: {} }, 501);
-        case "http://127.0.0.1:18081/cors-proxy":
-        case "http://127.0.0.1:18081/tools":
-          return jsonResponse({ error: {} }, 403);
-        default:
-          expect(url).toBe("http://127.0.0.1:18081/v1/chat/completions");
-      }
-      const body = String(init?.body ?? "");
-      const requestBodyBytes = new TextEncoder().encode(body).byteLength;
-      requestBodySizes.push(requestBodyBytes);
-      const authorization = new Headers(init?.headers).get("authorization");
-      switch (true) {
-        case authorization !== AUTHORIZATION:
-          return jsonResponse({ error: {} }, 401);
-        case body === "{":
-          return jsonResponse({ error: {} }, 400);
-        case requestBodyBytes === 1_100_000:
-          return jsonResponse(
-            {
-              error: {
-                code: "request_body_too_large",
-                message: "Request body exceeds the declared limit.",
-                type: "invalid_request_error",
-              },
-            },
-            413,
-          );
-      }
+  it.each(["stops", "continues", "metrics-fail"] as const)(
+    "requires native generation to stop and aborts failed probes [%s] (#12664)",
+    async (outcome) => {
+      const requestedMaxTokens: number[] = [];
+      let healthProbes = 0;
+      let longRequest = 0;
+      let nativeActive = false;
+      let streamAborted = false;
+      const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        switch (url) {
+          case "http://127.0.0.1:18081/health":
+            healthProbes += 1;
+            return new Response("{}", { status: 200 });
+          case "http://127.0.0.1:18081/v1/models":
+            return jsonResponse({ data: [{ id: MODEL }], object: "list" });
+          case "http://127.0.0.1:18081/props":
+            return init?.method === "POST"
+              ? jsonResponse({ error: {} }, 501)
+              : jsonResponse(properties(plan.recipe.serve.contextSize));
+          case "http://127.0.0.1:18081/metrics":
+            if (nativeActive && outcome === "metrics-fail")
+              return new Response("", { status: 503 });
+            return new Headers(init?.headers).get("authorization") === AUTHORIZATION
+              ? new Response(
+                  METRICS.replace(
+                    /^llamacpp:requests_processing .+$/mu,
+                    `llamacpp:requests_processing ${nativeActive ? 1 : 0}`,
+                  ).replace(/^llamacpp:requests_deferred .+$/mu, "llamacpp:requests_deferred 0"),
+                  { headers: { "Content-Type": "text/plain" }, status: 200 },
+                )
+              : jsonResponse({ error: {} }, 401);
+          case "http://127.0.0.1:18081/":
+          case "http://127.0.0.1:18081/models/load":
+            return jsonResponse({ error: {} }, 404);
+          case "http://127.0.0.1:18081/slots":
+            return jsonResponse({ error: {} }, 501);
+          case "http://127.0.0.1:18081/cors-proxy":
+          case "http://127.0.0.1:18081/tools":
+            return jsonResponse({ error: {} }, 403);
+          default:
+            expect(url).toBe("http://127.0.0.1:18081/v1/chat/completions");
+        }
+        const body = String(init?.body ?? "");
+        const authorization = new Headers(init?.headers).get("authorization");
+        switch (true) {
+          case authorization !== AUTHORIZATION:
+            return jsonResponse({ error: {} }, 401);
+          case body === "{":
+            return jsonResponse({ error: {} }, 400);
+        }
 
-      const request = JSON.parse(body) as JsonObject;
-      const maxTokens = Number(request.max_tokens);
-      requestedMaxTokens.push(maxTokens);
-      switch (true) {
-        case maxTokens === plan.qualification.probeBounds.cancellationMaxTokens:
-          longRequest += 1;
-          return hangingStream(init?.signal);
-        case request.stream_options !== undefined:
-          return new Response(
-            [
-              `data: ${JSON.stringify({
-                choices: [
-                  {
-                    delta: { content: "ready", role: "assistant" },
-                    finish_reason: null,
-                  },
-                ],
-                model: MODEL,
-                object: "chat.completion.chunk",
-              })}`,
-              `data: ${JSON.stringify({
-                choices: [{ delta: {}, finish_reason: "stop" }],
-                model: MODEL,
-                object: "chat.completion.chunk",
-              })}`,
-              `data: ${JSON.stringify({
-                choices: [],
-                model: MODEL,
-                object: "chat.completion.chunk",
-                usage: {
-                  completion_tokens: 1,
-                  prompt_tokens: 2,
-                  total_tokens: 3,
-                },
-              })}`,
-              "data: [DONE]",
-              "",
-            ].join("\n"),
-            { headers: { "Content-Type": "text/event-stream" }, status: 200 },
-          );
-        case request.tool_choice === "none":
-          return jsonResponse(completion('{"conditions":"clear","temperature_c":21}', false));
-        case request.response_format !== undefined:
-          return jsonResponse(completion('{"status":"ready"}', false));
-        case request.tool_choice === "required":
-          return jsonResponse({
-            choices: [
-              {
-                finish_reason: "tool_calls",
-                message: {
-                  role: "assistant",
-                  tool_calls: [
+        const request = JSON.parse(body) as JsonObject;
+        const maxTokens = Number(request.max_tokens);
+        requestedMaxTokens.push(maxTokens);
+        switch (true) {
+          case maxTokens === plan.qualification.probeBounds.cancellationMaxTokens:
+            longRequest += 1;
+            nativeActive = true;
+            return hangingStream(init?.signal, () => {
+              streamAborted = true;
+              if (outcome !== "continues") nativeActive = false;
+            });
+          case request.stream_options !== undefined:
+            return new Response(
+              [
+                `data: ${JSON.stringify({
+                  choices: [
                     {
-                      function: {
-                        arguments: '{"location":"Seattle"}',
-                        name: "get_current_weather",
-                      },
-                      id: "call_1",
-                      type: "function",
+                      delta: { content: "ready", role: "assistant" },
+                      finish_reason: null,
                     },
                   ],
+                  model: MODEL,
+                  object: "chat.completion.chunk",
+                })}`,
+                `data: ${JSON.stringify({
+                  choices: [{ delta: {}, finish_reason: "stop" }],
+                  model: MODEL,
+                  object: "chat.completion.chunk",
+                })}`,
+                `data: ${JSON.stringify({
+                  choices: [],
+                  model: MODEL,
+                  object: "chat.completion.chunk",
+                  usage: {
+                    completion_tokens: 1,
+                    prompt_tokens: 2,
+                    total_tokens: 3,
+                  },
+                })}`,
+                "data: [DONE]",
+                "",
+              ].join("\n"),
+              { headers: { "Content-Type": "text/event-stream" }, status: 200 },
+            );
+          case request.tool_choice === "none":
+            return jsonResponse(completion('{"conditions":"clear","temperature_c":21}', false));
+          case request.response_format !== undefined:
+            return jsonResponse(completion('{"status":"ready"}', false));
+          case request.tool_choice === "required":
+            return jsonResponse({
+              choices: [
+                {
+                  finish_reason: "tool_calls",
+                  message: {
+                    role: "assistant",
+                    tool_calls: [
+                      {
+                        function: {
+                          arguments: '{"location":"Seattle"}',
+                          name: "get_current_weather",
+                        },
+                        id: "call_1",
+                        type: "function",
+                      },
+                    ],
+                  },
                 },
-              },
-            ],
-            model: MODEL,
-            object: "chat.completion",
-          });
-        default:
-          return jsonResponse(completion());
+              ],
+              model: MODEL,
+              object: "chat.completion",
+            });
+          default:
+            return jsonResponse(completion());
+        }
+      }) as unknown as typeof fetch;
+
+      const qualification = runLlamaCppDgxSparkProtocolQualification({
+        authorization: AUTHORIZATION,
+        baseUrl: "http://127.0.0.1:18081",
+        fetchImpl,
+        plan,
+      });
+      if (outcome === "metrics-fail") {
+        await expect(qualification).rejects.toThrow(
+          "native work metrics returned an unexpected status",
+        );
+        expect(streamAborted).toBe(true);
+        return;
       }
-    }) as unknown as typeof fetch;
+      if (outcome === "continues") {
+        await expect(qualification).rejects.toThrow(
+          "native generation remained active after cancellation",
+        );
+        return;
+      }
+      const evidence = await qualification;
 
-    const evidence = await runLlamaCppDgxSparkProtocolQualification({
-      authorization: AUTHORIZATION,
-      baseUrl: "http://127.0.0.1:18081",
-      fetchImpl,
-      plan,
-    });
-
-    expect(evidence).toMatchObject({
-      authentication: { httpStatus: 401, ok: true },
-      cancellation: { aborted: true, ok: true, recovered: true },
-      contextWindow: { contextSize: plan.recipe.serve.contextSize, slots: 1 },
-      disabledSurfaces: {
-        corsProxyHttpStatus: 403,
-        multimodal: false,
-        routerHttpStatus: 404,
-        slotsHttpStatus: 501,
-        toolsHttpStatus: 403,
-        uiHttpStatus: 404,
-      },
-      malformedRequest: { httpStatus: 400, ok: true },
-      requestBodyLimit: {
-        acceptedBytes: 1048576,
-        acceptedHttpStatus: 200,
-        continuationHealthHttpStatus: 200,
-        continuationHttpStatus: 200,
-        errorCode: "request_body_too_large",
-        errorType: "invalid_request_error",
-        rejectedBytes: 1100000,
-        rejectedHttpStatus: 413,
-      },
-      metrics: { requiredSeries: 11, unauthenticatedHttpStatus: 401 },
-      properties: { metrics: true, model: MODEL, modelPath: MODEL_FILE },
-      clientTimeout: { limitMilliseconds: 10, recovered: true },
-      streamingChat: { done: true, events: 3, model: MODEL },
-      structuredOutput: { schemaMatched: true },
-      toolCall: { argumentsValid: true, name: "get_current_weather" },
-      toolResultContinuation: { model: MODEL },
-      usage: { completionTokens: 2, promptTokens: 5, totalTokens: 7 },
-    });
-    expect(longRequest).toBe(2);
-    expect(healthProbes).toBe(2);
-    expect(
-      requestBodySizes.filter((size) => size >= plan.recipe.serve.limits.maxRequestBodyBytes),
-    ).toEqual([1048576, 1100000]);
-    expect(requestedMaxTokens).toEqual(
-      expect.arrayContaining([
-        plan.qualification.probeBounds.maxTokens.synchronousChat,
-        plan.qualification.probeBounds.maxTokens.streamingChat,
-        plan.qualification.probeBounds.maxTokens.structuredOutput,
-        plan.qualification.probeBounds.maxTokens.toolCall,
-        plan.qualification.probeBounds.maxTokens.toolResultContinuation,
-        plan.qualification.probeBounds.cancellationMaxTokens,
-      ]),
-    );
-    const serializedEvidence = JSON.stringify(evidence);
-    expect(serializedEvidence).not.toContain(AUTHORIZATION.slice("Bearer ".length));
-    expect(serializedEvidence).not.toContain("Seattle");
-    expect(serializedEvidence).not.toContain("conditions");
-    expect(serializedEvidence).not.toContain("temperature_c");
-  });
+      expect(evidence).toMatchObject({
+        authentication: { httpStatus: 401, ok: true },
+        cancellation: { aborted: true, ok: true, recovered: true },
+        contextWindow: { contextSize: plan.recipe.serve.contextSize, slots: 1 },
+        disabledSurfaces: {
+          corsProxyHttpStatus: 403,
+          multimodal: false,
+          routerHttpStatus: 404,
+          slotsHttpStatus: 501,
+          toolsHttpStatus: 403,
+          uiHttpStatus: 404,
+        },
+        malformedRequest: { httpStatus: 400, ok: true },
+        metrics: { requiredSeries: 11, unauthenticatedHttpStatus: 401 },
+        properties: { metrics: true, model: MODEL, modelPath: MODEL_FILE },
+        clientTimeout: { limitMilliseconds: 10, recovered: true },
+        streamingChat: { done: true, events: 3, model: MODEL },
+        structuredOutput: { schemaMatched: true },
+        toolCall: { argumentsValid: true, name: "get_current_weather" },
+        toolResultContinuation: { model: MODEL },
+        usage: { completionTokens: 2, promptTokens: 5, totalTokens: 7 },
+      });
+      expect(longRequest).toBe(2);
+      expect(healthProbes).toBe(1);
+      expect(requestedMaxTokens).toEqual(
+        expect.arrayContaining([
+          plan.qualification.probeBounds.maxTokens.synchronousChat,
+          plan.qualification.probeBounds.maxTokens.streamingChat,
+          plan.qualification.probeBounds.maxTokens.structuredOutput,
+          plan.qualification.probeBounds.maxTokens.toolCall,
+          plan.qualification.probeBounds.maxTokens.toolResultContinuation,
+          plan.qualification.probeBounds.cancellationMaxTokens,
+        ]),
+      );
+      const serializedEvidence = JSON.stringify(evidence);
+      expect(serializedEvidence).not.toContain(AUTHORIZATION.slice("Bearer ".length));
+      expect(serializedEvidence).not.toContain("Seattle");
+      expect(serializedEvidence).not.toContain("conditions");
+      expect(serializedEvidence).not.toContain("temperature_c");
+    },
+  );
 });

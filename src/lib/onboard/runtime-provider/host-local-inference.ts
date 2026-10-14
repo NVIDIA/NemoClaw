@@ -294,13 +294,8 @@ export interface HostLocalLlamaCppLifecycleInput {
   readonly plan: LlamaCppGgufCachePlan;
   readonly probeImageReference: string;
   readonly readinessTimeoutSeconds: number;
-  /** The selected recipe declares guarded stdio support for its pinned image. */
-  readonly guardedStdioForward?: true;
   /**
-   * When "host-process", the private bridge loopback health proof runs from
-   * this CLI process instead of a host-network container, for runtimes whose
-   * host-network containers cannot share the distro loopback (Docker Desktop
-   * WSL).
+   * Select the native host-loopback HTTP health proof from this CLI process.
    */
   readonly loopbackProbe?: "host-process";
 }

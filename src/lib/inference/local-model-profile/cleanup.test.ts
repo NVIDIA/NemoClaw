@@ -8,7 +8,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import * as dockerLlamaCppOperation from "../../onboard/runtime-provider/docker-llama-cpp-operation";
-import { privateBridgeFixture } from "../../onboard/runtime-provider/docker-llama-cpp-private-bridge.test-support";
 import {
   createHostLocalCreateJournalStore,
   HOST_LOCAL_CREATE_JOURNAL_DIRECTORY,
@@ -711,7 +710,6 @@ describe("host-local model cleanup", () => {
     const cache = path.join(homeDir, ".cache", "huggingface");
     fs.mkdirSync(cache, { recursive: true });
     fs.writeFileSync(path.join(cache, "shared-model"), "keep");
-    const privateBridge = privateBridgeFixture();
 
     expect(
       prepareManagedLlamaCppLifecycleCleanup("spark-agent", receipt, {
@@ -727,12 +725,9 @@ describe("host-local model cleanup", () => {
     const result = finalizeManagedLlamaCppLifecycleCleanup("spark-agent", receipt, {
       homeDir,
       engine: harness.engine,
-      privateBridge,
     });
 
     expect(result).toMatchObject({ ok: true });
-    expect(privateBridge.stopTransaction).toHaveBeenCalledWith(TRANSACTION_ID);
-    expect(privateBridge.assertStopped).toHaveBeenCalledWith(TRANSACTION_ID);
     expect(harness.capture).toHaveBeenCalledWith(["rm", "--force", RUNTIME_ID], expect.any(Number));
     expect(harness.capture).toHaveBeenCalledWith(["network", "rm", NETWORK_ID], expect.any(Number));
     expect(fs.existsSync(paths.stateDir)).toBe(false);
@@ -747,7 +742,6 @@ describe("host-local model cleanup", () => {
     const paths = managedLlamaCppStatePaths(homeDir);
     const receipt = loadManagedLlamaCppReceipt(paths)!;
     fs.rmSync(paths.stateDir, { recursive: true });
-    const privateBridge = privateBridgeFixture();
 
     expect(
       prepareManagedLlamaCppLifecycleCleanup("spark-agent", receipt, {
@@ -758,12 +752,10 @@ describe("host-local model cleanup", () => {
     const first = finalizeManagedLlamaCppLifecycleCleanup("spark-agent", receipt, {
       homeDir,
       engine: harness.engine,
-      privateBridge,
     });
     const second = finalizeManagedLlamaCppLifecycleCleanup("spark-agent", receipt, {
       homeDir,
       engine: harness.engine,
-      privateBridge,
     });
 
     expect(first).toMatchObject({ ok: true });
@@ -859,12 +851,10 @@ describe("host-local model cleanup", () => {
       const homeDir = temporaryHome();
       const harness = engineHarness({ containerPresent: phase !== "network-creating" });
       createManagedState(homeDir, harness.engine, { phase });
-      const privateBridge = privateBridgeFixture();
 
       const result = cleanupLocalModelRuntimes({
         homeDir,
         engine: harness.engine,
-        privateBridge,
       });
 
       expect(result).toMatchObject({ ok: true });
@@ -896,21 +886,17 @@ describe("host-local model cleanup", () => {
     const homeDir = temporaryHome();
     const original = engineHarness({ authorityId: "docker:original" });
     const changed = engineHarness({ authorityId: "docker:changed" });
-    const privateBridge = privateBridgeFixture();
     createManagedState(homeDir, original.engine);
 
     const result = cleanupLocalModelRuntimes({
       homeDir,
       engine: changed.engine,
-      privateBridge,
     });
 
     expect(result).toMatchObject({
       ok: false,
       reason: expect.stringContaining("endpoint"),
     });
-    expect(privateBridge.stopTransaction).toHaveBeenCalledExactlyOnceWith(TRANSACTION_ID);
-    expect(privateBridge.assertStopped).toHaveBeenCalledExactlyOnceWith(TRANSACTION_ID);
     expect(changed.capture).not.toHaveBeenCalled();
     expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
   });
@@ -939,7 +925,6 @@ describe("host-local model cleanup", () => {
   it("does not race cleanup against a live lifecycle execution lease", () => {
     const homeDir = temporaryHome();
     const harness = engineHarness();
-    const privateBridge = privateBridgeFixture();
     createManagedState(homeDir, harness.engine, { phase: "started" });
     const store = createHostLocalCreateJournalStore(managedLlamaCppStatePaths(homeDir).stateDir);
     const lease = store.acquireExecution(TRANSACTION_ID);
@@ -947,7 +932,6 @@ describe("host-local model cleanup", () => {
       const result = cleanupLocalModelRuntimes({
         homeDir,
         engine: harness.engine,
-        privateBridge,
       });
 
       expect(result).toMatchObject({
@@ -958,8 +942,6 @@ describe("host-local model cleanup", () => {
         ["rm", "--force", RUNTIME_ID],
         expect.any(Number),
       );
-      expect(privateBridge.stopTransaction).not.toHaveBeenCalled();
-      expect(privateBridge.assertStopped).not.toHaveBeenCalled();
       expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
     } finally {
       store.releaseExecution(lease);
@@ -1055,46 +1037,30 @@ describe("host-local model cleanup", () => {
     );
   });
 
-  it("stops the exact bridge before sandbox cleanup and leaves a different owner untouched (#9598)", () => {
+  it("removes exact owned Docker resources during sandbox cleanup and leaves a different owner untouched (#9598)", () => {
     const homeDir = temporaryHome();
     const gatewayPort = 8091;
     const harness = engineHarness();
-    const privateBridge = privateBridgeFixture();
     createManagedState(homeDir, harness.engine, { gatewayPort });
 
     const skipped = cleanupManagedLlamaCppRuntimeForSandbox("different-sandbox", {
       homeDir,
       gatewayPort,
       engine: harness.engine,
-      privateBridge,
     });
     expect(skipped).toEqual({ ok: true, removed: [], preserved: [] });
     expect(harness.capture).not.toHaveBeenCalled();
-    expect(privateBridge.stopTransaction).not.toHaveBeenCalled();
-    expect(privateBridge.assertStopped).not.toHaveBeenCalled();
 
     const removed = cleanupManagedLlamaCppRuntimeForSandbox("spark-agent", {
       homeDir,
       gatewayPort,
       engine: harness.engine,
-      privateBridge,
     });
     expect(removed).toMatchObject({ ok: true });
-    expect(privateBridge.stopTransaction).toHaveBeenCalledWith(TRANSACTION_ID);
-    expect(privateBridge.assertStopped).toHaveBeenCalledWith(TRANSACTION_ID);
     const containerRemovalCall = harness.capture.mock.calls.findIndex(
       ([argv]) => argv[0] === "rm" && argv[1] === "--force",
     );
     expect(containerRemovalCall).toBeGreaterThanOrEqual(0);
-    expect(privateBridge.stopTransaction.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.capture.mock.invocationCallOrder[containerRemovalCall]!,
-    );
-    expect(privateBridge.stopTransaction.mock.invocationCallOrder[0]).toBeLessThan(
-      privateBridge.assertStopped.mock.invocationCallOrder[0]!,
-    );
-    expect(privateBridge.assertStopped.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.capture.mock.invocationCallOrder[containerRemovalCall]!,
-    );
     expect(fs.existsSync(managedLlamaCppStatePaths(homeDir, gatewayPort).stateDir)).toBe(false);
   });
 
@@ -1102,7 +1068,6 @@ describe("host-local model cleanup", () => {
     const homeDir = temporaryHome();
     const qualified = engineHarness({ authorityId: "docker:qualified" });
     const drifted = engineHarness({ authorityId: "docker:drifted" });
-    const privateBridge = privateBridgeFixture();
     createManagedState(homeDir, qualified.engine);
     let crossedDeleteBoundary = false;
     const createEngine = (createManagedLlamaCppEngineSpy = vi
@@ -1111,14 +1076,12 @@ describe("host-local model cleanup", () => {
 
     const prepared = prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
       homeDir,
-      privateBridge,
     });
     crossedDeleteBoundary = true;
 
     expect(prepared).not.toBeNull();
     expect(prepared!.cleanup()).toMatchObject({ ok: true });
     expect(createEngine).toHaveBeenCalledOnce();
-    expect(privateBridge.stopTransaction).toHaveBeenCalledWith(TRANSACTION_ID);
     expect(qualified.capture).toHaveBeenCalledWith(
       ["rm", "--force", RUNTIME_ID],
       expect.any(Number),
@@ -1134,13 +1097,11 @@ describe("host-local model cleanup", () => {
   it("fails closed when the qualified engine becomes unavailable after preparation (#9888)", () => {
     const homeDir = temporaryHome();
     const harness = engineHarness();
-    const privateBridge = privateBridgeFixture();
     createManagedState(homeDir, harness.engine);
 
     const prepared = prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
       homeDir,
       engine: harness.engine,
-      privateBridge,
     });
     harness.capture.mockClear();
     harness.capture.mockReturnValue({
@@ -1443,56 +1404,5 @@ describe("host-local model cleanup", () => {
     expect(fs.existsSync(path.join(paths.stateDir, PERSISTED_ENGINE_AUTHORITY_DIRECTORY))).toBe(
       false,
     );
-  });
-
-  it("stops the managed llama.cpp bridge before removing the container it forwards to (#9598)", () => {
-    const homeDir = temporaryHome();
-    const harness = engineHarness();
-    createManagedState(homeDir, harness.engine);
-    const privateBridge = privateBridgeFixture();
-
-    const result = cleanupManagedLlamaCppRuntimeForSandbox("spark-agent", {
-      homeDir,
-      engine: harness.engine,
-      privateBridge,
-    });
-
-    expect(result).toMatchObject({ ok: true });
-    expect(privateBridge.stopTransaction).toHaveBeenCalledWith(TRANSACTION_ID);
-    expect(privateBridge.assertStopped).toHaveBeenCalledWith(TRANSACTION_ID);
-    const removalCall = harness.capture.mock.calls.findIndex((call) => call[0]?.[0] === "rm");
-    expect(removalCall).toBeGreaterThanOrEqual(0);
-    expect(privateBridge.stopTransaction.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.capture.mock.invocationCallOrder[removalCall]!,
-    );
-  });
-
-  it("preserves lifecycle authority when the sandbox bridge remains active (#9598)", () => {
-    const homeDir = temporaryHome();
-    const harness = engineHarness();
-    const privateBridge = privateBridgeFixture();
-    privateBridge.assertStopped.mockImplementationOnce(() => {
-      throw new Error("bridge remains active");
-    });
-    createManagedState(homeDir, harness.engine);
-
-    const result = cleanupManagedLlamaCppRuntimeForSandbox("spark-agent", {
-      homeDir,
-      engine: harness.engine,
-      privateBridge,
-    });
-
-    expect(result).toMatchObject({ ok: false, reason: "bridge remains active" });
-    expect(privateBridge.stopTransaction).toHaveBeenCalledWith(TRANSACTION_ID);
-    expect(privateBridge.assertStopped).toHaveBeenCalledWith(TRANSACTION_ID);
-    expect(harness.capture).not.toHaveBeenCalledWith(
-      ["rm", "--force", RUNTIME_ID],
-      expect.any(Number),
-    );
-    expect(harness.capture).not.toHaveBeenCalledWith(
-      ["network", "rm", NETWORK_ID],
-      expect.any(Number),
-    );
-    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
   });
 });

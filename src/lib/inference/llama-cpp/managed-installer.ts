@@ -73,7 +73,6 @@ function historicalWslRecipe(recipe: LlamaCppServingRecipe): LlamaCppServingReci
         ...recipe.spec.runtime,
         image: HISTORIC_WSL_IMAGE,
         imageDownloadSizeBytes: HISTORIC_WSL_IMAGE_DOWNLOAD_SIZE_BYTES,
-        guardedStdioForward: undefined,
       },
     },
   };
@@ -403,14 +402,7 @@ function launchContract(
       idleSleepSeconds: recipe.spec.serve.idleSleepSeconds,
       kvCache: recipe.spec.serve.kvCache,
       limits: {
-        maxRequestBodyBytes: recipe.spec.serve.limits.maxRequestBodyBytes,
-        maxRequestHeaderBytes: recipe.spec.serve.limits.maxRequestHeaderBytes,
-        maxOutputTokens: recipe.spec.serve.limits.maxOutputTokens,
         requestTimeoutSeconds: recipe.spec.serve.limits.requestTimeoutSeconds,
-        shutdownTimeoutSeconds: recipe.spec.serve.limits.shutdownTimeoutSeconds,
-      },
-      requestGuard: {
-        upstreamPort: recipe.spec.serve.requestGuard.upstreamPort,
       },
       microBatchSize: recipe.spec.serve.microBatchSize,
       port: recipe.spec.serve.port,
@@ -566,7 +558,6 @@ function lifecycleFor(input: {
     plan: compileLlamaCppGgufCachePlan(recipe),
     probeImageReference: recipe.spec.readiness.probeImage,
     readinessTimeoutSeconds: recipe.spec.readiness.timeoutSeconds,
-    ...(recipe.spec.runtime.guardedStdioForward ? { guardedStdioForward: true as const } : {}),
   });
 }
 

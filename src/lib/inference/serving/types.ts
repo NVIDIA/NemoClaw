@@ -336,8 +336,6 @@ export interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
     readonly runtime: {
       readonly image: string;
       readonly imageDownloadSizeBytes: number;
-      /** The pinned image contains the guarded Docker-exec stdio transport. */
-      readonly guardedStdioForward?: true;
       readonly platforms: readonly ("linux/amd64" | "linux/arm64")[];
       readonly networkExposure: "loopback";
       readonly restartPolicy: "unless-stopped";
@@ -394,14 +392,7 @@ export interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
       };
       readonly speculativeDecoding: "disabled";
       readonly limits: {
-        readonly maxRequestBodyBytes: number;
-        readonly maxRequestHeaderBytes: number;
-        readonly maxOutputTokens: number;
         readonly requestTimeoutSeconds: number;
-        readonly shutdownTimeoutSeconds: number;
-      };
-      readonly requestGuard: {
-        readonly upstreamPort: number;
       };
     };
     readonly readiness: {

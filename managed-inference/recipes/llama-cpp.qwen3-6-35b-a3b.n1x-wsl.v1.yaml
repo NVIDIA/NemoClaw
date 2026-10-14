@@ -45,7 +45,6 @@ spec:
   runtime:
     image: ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:884a92743c386564199e730da4389225ebc6106ebdab185c0bd9ab2974ba6d5a
     imageDownloadSizeBytes: 1827533302
-    guardedStdioForward: true
     platforms:
       - linux/amd64
       - linux/arm64
@@ -88,14 +87,7 @@ spec:
       value: f16
     speculativeDecoding: disabled
     limits:
-      maxRequestBodyBytes: 1048576
-      maxRequestHeaderBytes: 32768
-      maxOutputTokens: 4096
       requestTimeoutSeconds: 900
-      shutdownTimeoutSeconds: 25
-    requestGuard:
-      upstreamPort: 8082
-
   readiness:
     contractRef: llama-cpp.server-readiness/v1
     timeoutSeconds: 1800

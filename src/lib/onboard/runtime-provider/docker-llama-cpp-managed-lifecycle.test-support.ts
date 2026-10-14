@@ -122,13 +122,8 @@ export function contract(): LlamaCppHostLocalLaunchContract {
       idleSleepSeconds: -1,
       kvCache: { key: "f16", value: "f16" },
       limits: {
-        maxRequestBodyBytes: 1_048_576,
-        maxRequestHeaderBytes: 32_768,
-        maxOutputTokens: 4_096,
         requestTimeoutSeconds: 900,
-        shutdownTimeoutSeconds: 25,
       },
-      requestGuard: { upstreamPort: 8_082 },
       microBatchSize: 512,
       port: LLAMA_CPP_PORT,
       protocol: "openai-completions",
@@ -282,3 +277,5 @@ export function journalStore(): TestJournalStore {
     failNextFinalize: () => (finalizeFails = true),
   };
 }
+
+export { createDockerLlamaCppManagedLifecycle as createTestDockerLlamaCppManagedLifecycle } from "./docker-llama-cpp-managed-lifecycle";

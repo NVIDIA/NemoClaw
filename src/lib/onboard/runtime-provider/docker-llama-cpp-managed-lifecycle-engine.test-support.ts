@@ -5,8 +5,8 @@ import { vi } from "vitest";
 
 import type { ContainerEngine } from "../../adapters/container-engine";
 import {
-  buildLlamaCppRequestGuardCommandArgv,
-  LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
+  buildLlamaCppHostLocalServerArgv,
+  LLAMA_CPP_HOST_LOCAL_SERVER_PATH,
 } from "../../inference/llama-cpp/host-local-runtime";
 import {
   contract,
@@ -62,10 +62,10 @@ interface DockerFixturePaths {
 
 export function createDockerFixture(
   paths: DockerFixturePaths,
-  configuredHostPort = "",
+  configuredHostPort = "8081",
   publishedHostPort?: string,
   publishedHostIp = "127.0.0.1",
-  publishedBindingCount = 0,
+  publishedBindingCount = 1,
   imageReference = IMAGE,
 ): DockerFixture {
   const launchContract = {
@@ -192,6 +192,8 @@ export function createDockerFixture(
   const capture = vi.fn((args: readonly string[]) => {
     const unexpected = `unexpected Docker command: ${args.join(" ")}`;
     switch (args[0]) {
+      case "curl":
+        return { status: 0, stdout: "ok", stderr: "" };
       case "version":
         return { status: 0, stdout: "29.8.0", stderr: "" };
       case "network":
@@ -314,7 +316,9 @@ export function createDockerFixture(
           status: "created",
           transactionId: labels["io.nvidia.nemoclaw.host-local-inference.transaction-sha256"] ?? "",
           command: args.slice(args.indexOf(imageReference) + 1),
-          entrypoint: [String(args[args.indexOf("--entrypoint") + 1] ?? "")],
+          entrypoint: args.includes("--entrypoint")
+            ? [String(args[args.indexOf("--entrypoint") + 1] ?? "")]
+            : [LLAMA_CPP_HOST_LOCAL_SERVER_PATH],
         };
         createHook?.();
         return { status: 0, stdout: createStdout, stderr: "" };
@@ -388,7 +392,7 @@ export function createDockerFixture(
     driftHardening: () => (hardeningDrift = true),
     driftEntrypoint: () => {
       invariant(container !== undefined, "cannot drift an absent fixture container");
-      container.entrypoint = ["/usr/local/bin/llama-server"];
+      container.entrypoint = ["/usr/local/bin/unexpected-server"];
     },
     dropTmpfs: () => (tmpfs = null),
     driftGpuRequest: (driver, count) => {
@@ -438,8 +442,8 @@ export function createDockerFixture(
         running,
         status: running ? "running" : "created",
         transactionId: journal.transactionId,
-        command: [...buildLlamaCppRequestGuardCommandArgv(launchContract)],
-        entrypoint: [LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH],
+        command: [...buildLlamaCppHostLocalServerArgv(launchContract)],
+        entrypoint: [LLAMA_CPP_HOST_LOCAL_SERVER_PATH],
       };
     },
   };

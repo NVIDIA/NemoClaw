@@ -279,11 +279,6 @@ function validateRecipeSemantics(
   }
 
   if (!isLlamaCppServingRecipe(recipe)) {
-    if (recipe.spec.runtime && "guardedStdioForward" in recipe.spec.runtime) {
-      throw new ServingCatalogValidationError(
-        `Recipe ${recipe.metadata.id} declares guarded stdio outside llama.cpp.`,
-      );
-    }
     const argumentNames = new Set<string>();
     for (const argument of recipe.spec.serve?.arguments ?? []) {
       if (argumentNames.has(argument.name)) {
@@ -331,11 +326,7 @@ function validateRecipeSemantics(
         `Recipe ${recipe.metadata.id} serve.microBatchSize cannot exceed serve.batchSize.`,
       );
     }
-    if (recipe.spec.capabilities.toolCalls && serve.limits.maxRequestBodyBytes < 1_048_576) {
-      throw new ServingCatalogValidationError(
-        `Recipe ${recipe.metadata.id} must allow at least 1048576 request body bytes when tool calls are enabled.`,
-      );
-    }
+
     const agents = new Set<string>();
     for (const agent of recipe.spec.capabilities.agents) {
       if (agents.has(agent.id)) {

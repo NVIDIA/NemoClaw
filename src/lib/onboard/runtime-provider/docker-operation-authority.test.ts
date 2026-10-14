@@ -12,11 +12,9 @@ import {
   createDriftingContextCapture,
 } from "../../../../test/helpers/docker-operation-authority-test-helpers";
 import { prependInstalledUserLocalOpenshellPath } from "../openshell-pin";
-import { detectWslDockerDesktopStatus } from "../wsl-docker-desktop-gpu";
 import { createDockerRuntimeProviderBundle } from "./docker";
 import {
   createDockerLlamaCppHostLocalOperation,
-  createDockerLlamaCppInspectionOperation,
   createDockerLlamaCppOperationAuthority,
 } from "./docker-llama-cpp-operation";
 import {
@@ -546,83 +544,13 @@ describe("Docker operation authority", () => {
   });
 });
 
-vi.mock("../wsl-docker-desktop-gpu", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../wsl-docker-desktop-gpu")>()),
-  detectWslDockerDesktopStatus: vi.fn(() => "not-docker-desktop" as const),
-}));
-
 describe("managed llama.cpp operation probe strategy", () => {
   const env = { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark" };
-  const input = { guardedStdioForward: true } as Parameters<
+  const input = {} as Parameters<
     ReturnType<typeof createDockerLlamaCppHostLocalOperation>["createLlamaCppLifecycle"]
   >[0];
 
-  it.each([
-    { status: "docker-desktop" as const, loopbackProbe: "host-process", inspection: false },
-    { status: "docker-desktop" as const, loopbackProbe: "host-process", inspection: true },
-    { status: "not-docker-desktop" as const, loopbackProbe: undefined, inspection: false },
-    { status: "not-docker-desktop" as const, loopbackProbe: undefined, inspection: true },
-    { status: "unknown" as const, loopbackProbe: undefined, inspection: false },
-    { status: "unknown" as const, loopbackProbe: undefined, inspection: true },
-  ])(
-    "selects $loopbackProbe for WSL status $status with inspection $inspection",
-    ({ status, loopbackProbe, inspection }) => {
-      vi.mocked(detectWslDockerDesktopStatus).mockReturnValue(status);
-      const createLifecycle = vi.fn(() => ({}) as never);
-      const operation = createDockerLlamaCppHostLocalOperation(
-        env,
-        contextCapture("ssh://nvidia@spark.example.test"),
-        undefined,
-        createLifecycle,
-      );
-
-      const selected = inspection
-        ? createDockerLlamaCppInspectionOperation(operation.engine, env, createLifecycle)
-        : operation;
-      selected.createLlamaCppLifecycle(input);
-
-      expect(createLifecycle.mock.calls).toEqual([
-        [
-          {
-            ...input,
-            ...(status === "docker-desktop" ? { bindings: { stdioForward: true } } : {}),
-            loopbackProbe,
-          },
-          ...(status === "docker-desktop" && !inspection
-            ? [{ privateBridge: expect.objectContaining({ start: expect.any(Function) }) }]
-            : []),
-        ],
-      ]);
-    },
-  );
-
-  it.each([false, true])(
-    "preserves the former bridge transport for an unguarded WSL runtime with inspection %s",
-    (inspection) => {
-      vi.mocked(detectWslDockerDesktopStatus).mockReturnValue("docker-desktop");
-      const createLifecycle = vi.fn(() => ({}) as never);
-      const operation = createDockerLlamaCppHostLocalOperation(
-        env,
-        contextCapture("ssh://nvidia@spark.example.test"),
-        undefined,
-        createLifecycle,
-      );
-      const selected = inspection
-        ? createDockerLlamaCppInspectionOperation(operation.engine, env, createLifecycle)
-        : operation;
-
-      selected.createLlamaCppLifecycle({ ...input, guardedStdioForward: undefined });
-
-      expect(createLifecycle).toHaveBeenCalledExactlyOnceWith({
-        ...input,
-        guardedStdioForward: undefined,
-        loopbackProbe: "host-process",
-      });
-    },
-  );
-
-  it("keeps a caller-selected host-process probe outside Docker Desktop WSL", () => {
-    vi.mocked(detectWslDockerDesktopStatus).mockReturnValue("not-docker-desktop");
+  it("keeps the caller-selected native host-process probe", () => {
     const createLifecycle = vi.fn(() => ({}) as never);
     const operation = createDockerLlamaCppHostLocalOperation(
       env,
