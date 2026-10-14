@@ -46,6 +46,30 @@ When a defect escapes normal controls, record the product cause, detection gap, 
 prevention evidence in the issue or pull request. Search a bounded set of sibling paths for the same
 failure class. Fix sibling instances only when they share the cause and fit the current scope.
 
+### Native llama.cpp cancellation on Docker
+
+Run the opt-in cancellation regression against an approved local Docker daemon, a cached
+SmolLM2-135M Q4_K_M model, and the approved native CPU image. The image must contain stock curl
+and llama.cpp revision `8e7f22b67ef4667b4ddd50230771287f328cfb3f`; the test verifies that revision.
+Set the image and model paths explicitly:
+
+```bash
+NEMOCLAW_NATIVE_LLAMA_TEST_IMAGE='<approved-local-image-id>' \
+NEMOCLAW_NATIVE_LLAMA_TEST_MODEL='<absolute-path-to-cached-model.gguf>' \
+NEMOCLAW_NATIVE_LLAMA_TEST_EVIDENCE='<absolute-path-to-result.json>' \
+npx vitest run --project integration test/inference/llama/llama-cpp-native-cancellation.test.ts
+```
+
+The test uses qualified Docker authority to create one native server and stock curl clients on
+an owned internal network. It checks bearer rejection, five stream cancellations, queued-request
+recovery, client deadline cleanup, and bounded server shutdown. It verifies remote container
+state and native generation metrics, then removes its owned containers, network, and temporary
+credentials. It retains the cached image and model.
+
+Ordinary CI skips this test when the image or model variable is absent. A passing manual run
+proves native backend cancellation within the internal network; it does not prove host/OpenShell
+reachability, production CUDA image qualification, or the complete supported E2E fanout.
+
 ## Test contracts
 
 Do not read shipped YAML, JSON, manifests, workflows, or E2E runtime files only to assert literal

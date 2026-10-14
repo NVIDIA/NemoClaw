@@ -1271,7 +1271,7 @@ export function prepareManagedLlamaCppLifecycleCleanup(
 
 /**
  * Complete a common-lifecycle llama.cpp retirement after its provider runtime
- * has stopped the bridge, removed the exact container, and retired the journal.
+ * has removed the exact container and retired the journal.
  * The registry receipt remains the retry authority if this final phase fails.
  */
 export function finalizeManagedLlamaCppLifecycleCleanup(

@@ -20,7 +20,6 @@ import {
 import {
   createDockerOperationAuthority,
   dockerOperationBindingSha256,
-  dockerOperationBridgeEnvironment,
   dockerOperationCommandArguments,
 } from "./docker-operation-authority";
 
@@ -137,17 +136,6 @@ describe("Docker operation authority", () => {
     expect(dockerOperationBindingSha256(lifecycle.engine)).not.toBe(
       dockerOperationBindingSha256(cleanup.engine),
     );
-    const inference = createDockerOperationAuthority(
-      "host-local-inference",
-      { HOME: "/tmp/nemoclaw-home", DOCKER_CONTEXT: "spark", UNRELATED_SECRET: "not-inherited" },
-      capture,
-    );
-    const bridgeEnvironment = dockerOperationBridgeEnvironment(inference);
-    expect(bridgeEnvironment.UNRELATED_SECRET).toBeUndefined();
-    expect(
-      createDockerOperationAuthority("host-local-inference", bridgeEnvironment, capture).engine
-        .authorityId,
-    ).toBe(inference.engine.authorityId);
     expect(dockerOperationBindingSha256(lifecycle.engine)).toBe(
       createHash("sha256")
         .update(

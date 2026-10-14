@@ -96,7 +96,7 @@ export interface LlamaCppHostLocalRuntimeBindings {
   readonly imageReference: string;
   /** Exact device selected from the provider-bound CUDA proof on Station WSL. */
   readonly gpuDeviceUuid?: string;
-  /** Fixed host bridge port for product installs; omitted only by isolated qualification. */
+  /** Fixed native loopback publication port; omitted only by isolated qualification. */
   readonly hostPort?: number;
   readonly model: VerifiedLocalModelArtifact;
   /** The caller must create this named Docker network with `--internal` before launch. */
