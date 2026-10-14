@@ -68,16 +68,14 @@ impl Ui {
             Some("fabric_agent_readiness") => "sandbox readiness",
             Some("openshell_provider_registration") => "provider",
             Some("openshell_provider_profile") => "provider profile",
-            Some("nemoclaw_managed_gateway") => "gateway",
-            Some("nemoclaw_gateway_storage") => "gateway storage",
+            Some("openshell_podman_gateway") => "gateway",
+            Some("openshell_gateway_storage") => "gateway storage",
             Some("docker_container") => "container",
             Some("docker_image") => "image",
             Some("docker_volume") => "volume",
             Some("docker_network") => "network",
-            Some(kind) => {
-                let kind = kind.strip_prefix("nemoclaw_").unwrap_or(kind);
-                crate::services::resource_label(kind).unwrap_or("resource")
-            }
+            Some(kind) => crate::services::resource_label(nemoclaw_openshell::object_kind(kind))
+                .unwrap_or("resource"),
             None => return,
         };
         let action = if value["type"]

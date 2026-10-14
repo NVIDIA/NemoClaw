@@ -19,18 +19,17 @@ mod provider;
 mod readiness;
 mod runtime_contract;
 mod runtime_image;
-pub use provider::NemoClawProvider;
+pub use provider::{GatewayInstallation, NemoClawProvider};
 
-/// The definition this provider serves for a resource kind.
+/// The definition this crate implements for a resource kind, whichever
+/// provider serves it.
 pub fn resource_definition(kind: &str) -> Option<Definition> {
-    provider::definitions()
+    provider::all_definitions()
         .into_iter()
         .find(|definition| definition.kind == kind)
 }
 
 /// OpenShell resource operations owned by this provider.
-pub use openshell_provider as openshell;
-
 pub mod docker;
 pub mod hardware_observation;
 pub mod managed;

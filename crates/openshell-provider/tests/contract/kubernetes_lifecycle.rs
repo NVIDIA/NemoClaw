@@ -14,9 +14,9 @@ use std::{collections::BTreeMap, fs};
 
 const NAME: &str = "nc-0123456789abcdef-gateway";
 const NAMESPACE: &str = "agents";
-const STORAGE: &str = "nemoclaw_kubernetes_storage.platform";
-const AUTH: &str = "nemoclaw_kubernetes_auth.platform";
-const GATEWAY: &str = "nemoclaw_kubernetes_gateway.platform";
+const STORAGE: &str = "openshell_kubernetes_storage.platform";
+const AUTH: &str = "openshell_kubernetes_auth.platform";
+const GATEWAY: &str = "openshell_kubernetes_gateway.platform";
 const CHANGED: &str = "observed ownership, generation, or durable identity changed";
 
 /// The issuer objects the authentication resource creates, as
@@ -135,15 +135,15 @@ impl Platform {
 "#
         );
         let mut resources =
-            format!("resource \"nemoclaw_kubernetes_storage\" \"platform\" {{\n{target}}}\n");
+            format!("resource \"openshell_kubernetes_storage\" \"platform\" {{\n{target}}}\n");
         if stage != Stage::Teardown {
             resources.push_str(&format!(
-                "resource \"nemoclaw_kubernetes_auth\" \"platform\" {{\n{target}  owner = nemoclaw_kubernetes_storage.platform.owner\n}}\n"
+                "resource \"openshell_kubernetes_auth\" \"platform\" {{\n{target}  owner = openshell_kubernetes_storage.platform.owner\n}}\n"
             ));
         }
         if stage == Stage::Installed {
             resources.push_str(&format!(
-                "resource \"nemoclaw_kubernetes_gateway\" \"platform\" {{\n{target}  owner      = nemoclaw_kubernetes_storage.platform.owner\n  generation = nemoclaw_kubernetes_auth.platform.generation\n}}\n"
+                "resource \"openshell_kubernetes_gateway\" \"platform\" {{\n{target}  owner      = openshell_kubernetes_storage.platform.owner\n  generation = openshell_kubernetes_auth.platform.generation\n}}\n"
             ));
         }
         let destroy = if stage == Stage::Teardown {
@@ -157,10 +157,10 @@ impl Platform {
                 r#"terraform {{
   required_version = "= 1.12.6"
   required_providers {{
-    nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw" }}
+    openshell = {{ source = "registry.opentofu.org/nvidia/openshell" }}
   }}
 }}
-provider "nemoclaw" {{ {destroy} }}
+provider "openshell" {{ {destroy} }}
 {resources}"#
             ),
         )

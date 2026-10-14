@@ -42,7 +42,7 @@ async fn a_second_destroy_after_completion_launches_no_plan_or_apply_and_changes
     assert_eq!(previewed.outcome, Outcome::Planned);
     for result in [&destroyed, &previewed] {
         assert!(result.changes.is_empty(), "{:?}", result.changes);
-        assert_eq!(result.retained, ["nemoclaw_kubernetes_storage.runtime"]);
+        assert_eq!(result.retained, ["openshell_kubernetes_storage.runtime"]);
     }
     // The saved record already says the deployment is destroyed. A regression
     // that plans again refreshes the retained storage through an OpenTofu plan.
@@ -175,8 +175,8 @@ async fn an_authentication_failure_reading_the_issuer_after_the_release_is_unins
     // binding is the Helm recovery's concern, not this test's.
     let bindings = fixture.bindings();
     for address in [
-        "nemoclaw_kubernetes_auth.runtime",
-        "nemoclaw_kubernetes_storage.runtime",
+        "openshell_kubernetes_auth.runtime",
+        "openshell_kubernetes_storage.runtime",
     ] {
         assert_eq!(
             bindings.get(address),

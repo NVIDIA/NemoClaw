@@ -4,7 +4,7 @@
 use super::*;
 use crate::{deployment::tests::kubernetes_context, managed::GATEWAY_STORAGE_KIND};
 
-const GATEWAY: &str = "nemoclaw_managed_gateway.runtime";
+const GATEWAY: &str = "openshell_podman_gateway.runtime";
 
 #[test]
 fn docker_model_updates_preserve_running_containers_unless_recreation_is_explicit() {
@@ -155,7 +155,7 @@ fn kubernetes_gateway_requires_storage_and_fresh_readiness_without_replacement()
     let gateway = plan
         .resource_changes
         .iter_mut()
-        .find(|change| change.address == "nemoclaw_kubernetes_gateway.runtime")
+        .find(|change| change.address == "openshell_kubernetes_gateway.runtime")
         .unwrap();
     gateway.change.before["running"] = json!("false");
     assert!(
@@ -170,7 +170,7 @@ fn kubernetes_gateway_requires_storage_and_fresh_readiness_without_replacement()
     drift.get_mut(KUBERNETES_STORAGE).unwrap().namespace = "elsewhere".into();
     assert!(runtime_bindings(&targets, &drift).is_err());
     for change in &mut plan.resource_changes {
-        if change.address == "nemoclaw_kubernetes_gateway.runtime" {
+        if change.address == "openshell_kubernetes_gateway.runtime" {
             change.change.actions = vec!["delete".into(), "create".into()];
         }
     }
@@ -490,10 +490,10 @@ fn podman_gateway_replacement_depends_on_protected_storage_in_the_compiled_graph
             .unwrap();
     let generations = Record::new(document.clone()).unwrap().generations;
     let graph = compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
-    let process = &graph["resource"]["nemoclaw_managed_gateway"]["runtime"];
+    let process = &graph["resource"]["openshell_podman_gateway"]["runtime"];
     assert_eq!(process["depends_on"], json!([GATEWAY_STORAGE]));
     assert_eq!(
-        graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
+        graph["resource"]["openshell_gateway_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
         true
     );
 }
@@ -524,7 +524,7 @@ fn kubernetes_helm_binding_requires_auth_and_the_same_release() {
     runtime_bindings(&targets, &bindings).unwrap();
     for prerequisite in [
         KUBERNETES_STORAGE,
-        "nemoclaw_kubernetes_auth.runtime",
+        "openshell_kubernetes_auth.runtime",
         crate::kubernetes::gateway::ADDRESS,
     ] {
         let mut missing = bindings.clone();
@@ -539,7 +539,7 @@ fn kubernetes_helm_binding_requires_auth_and_the_same_release() {
     assert!(runtime_bindings(&targets, &changed).is_err());
     // Interrupted initial installation can retain just storage and authentication.
     let mut partial = bindings;
-    partial.remove("nemoclaw_kubernetes_gateway.runtime");
+    partial.remove("openshell_kubernetes_gateway.runtime");
     partial.remove(crate::kubernetes::gateway::ADDRESS);
     runtime_bindings(&targets, &partial).unwrap();
 }

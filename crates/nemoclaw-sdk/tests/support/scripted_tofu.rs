@@ -49,7 +49,7 @@ case "$1" in
     if [ -f "$canned" ]; then cat "$canned"; else printf '{"format_version":"1.0"}\n'; fi ;;
   apply)
     if [ -f '@STATE@/intent.json' ]; then : > "$control/$stage.record-at-apply"; fi
-    printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"addr":"nemoclaw_kubernetes_storage.runtime","resource_type":"nemoclaw_kubernetes_storage"},"action":"create"}}'
+    printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"addr":"openshell_kubernetes_storage.runtime","resource_type":"openshell_kubernetes_storage"},"action":"create"}}'
     mode=ok
     [ -f "$control/$stage.apply" ] && mode=$(cat "$control/$stage.apply")
     case "$mode" in

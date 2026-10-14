@@ -2613,6 +2613,7 @@ dependencies = [
  "nemoclaw-test-fixtures",
  "nemoclaw-tofu",
  "openshell-core",
+ "openshell-provider",
  "prost",
  "rcgen",
  "rustls",
@@ -3172,6 +3173,8 @@ dependencies = [
  "nemoclaw-backend",
  "nemoclaw-docker",
  "nemoclaw-openshell",
+ "nemoclaw-provider",
+ "nemoclaw-sdk",
  "nemoclaw-test-fixtures",
  "nemoclaw-tofu",
  "openshell-core",
@@ -3181,10 +3184,13 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "tar",
+ "tempfile",
  "tf-provider",
  "tokio",
  "tokio-util",
  "tonic",
+ "url",
 ]
 
 [[package]]

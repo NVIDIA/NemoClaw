@@ -377,7 +377,7 @@ const PREPARE: &[&str] = &[
     "-input=false",
     "-no-color",
     "-auto-approve",
-    "-target=nemoclaw_kubernetes_auth.runtime",
+    "-target=openshell_kubernetes_auth.runtime",
 ];
 
 /// Import starts without the dependency edges a normal installation records.
@@ -555,7 +555,7 @@ impl Fixture {
                 .keys()
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
-            ["nemoclaw_kubernetes_storage.runtime"]
+            ["openshell_kubernetes_storage.runtime"]
         );
         let objects = &self.api.objects;
         assert!(
@@ -687,7 +687,7 @@ async fn cancellation_after_successful_apply_retains_a_resumable_destroy_checkpo
             .keys()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["nemoclaw_kubernetes_storage.runtime"]
+        ["openshell_kubernetes_storage.runtime"]
     );
     let mutations = fixture.api.mutations();
     fixture.finish().await;

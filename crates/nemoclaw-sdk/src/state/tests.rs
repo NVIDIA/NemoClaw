@@ -65,12 +65,16 @@ fn legacy_intent_is_rejected_without_rewriting_recovery_state() {
     )
     .unwrap();
     let mut record = Record::new(document).unwrap();
-    record.version = 6;
-    let bytes = serde_json::to_vec(&record).unwrap();
-    let path = dir.path().join("intent.json");
-    std::fs::write(&path, &bytes).unwrap();
-    assert!(store.load().is_err());
-    assert_eq!(std::fs::read(path).unwrap(), bytes);
+    // Version 10 records bind fabric_agent_configuration resources, which no
+    // provider serves since typed Fabric agents.
+    for version in [6, 10] {
+        record.version = version;
+        let bytes = serde_json::to_vec(&record).unwrap();
+        let path = dir.path().join("intent.json");
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(store.load().is_err(), "version {version}");
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
 }
 
 #[test]
@@ -746,7 +750,7 @@ fn gateway_storage_bindings_record_their_typed_settings() {
         "image_pull_policy":null,
         "data_path":"/var/lib/docker/volumes/data/_data",
     });
-    let address = "nemoclaw_gateway_storage.runtime";
+    let address = "openshell_gateway_storage.runtime";
     let bindings = read(&state(serde_json::json!([
         {"address":address, "mode":"managed", "values":values}
     ])))

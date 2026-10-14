@@ -15,17 +15,22 @@ pub const PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/nemoclaw";
 pub const OPENSHELL_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/openshell";
 /// Registry address of the provider that configures Fabric agents in sandboxes.
 pub const FABRIC_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/fabric";
-/// Providers that reach the gateway, and so share its connection settings.
-pub const GATEWAY_PROVIDERS: [&str; 2] = ["openshell", "fabric"];
 /// This repository's providers; each takes `destroy`.
 pub const NEMOCLAW_PROVIDERS: [&str; 3] = ["nemoclaw", "openshell", "fabric"];
 
 /// The OpenTofu resource type that reconciles a resource kind.
 pub fn resource_type(kind: &str) -> String {
-    nemoclaw_openshell::resource_type(kind).unwrap_or_else(|| match kind {
-        "agent" => nemoclaw_fabric::agent::RESOURCE_TYPE.to_owned(),
-        _ => format!("nemoclaw_{kind}"),
-    })
+    nemoclaw_openshell::resource_type(kind)
+        .or_else(|| nemoclaw_openshell::installation_type(kind))
+        .unwrap_or_else(|| match kind {
+            "agent" => nemoclaw_fabric::agent::RESOURCE_TYPE.to_owned(),
+            _ => format!("nemoclaw_{kind}"),
+        })
+}
+
+/// The OpenTofu data source type for a data source kind.
+pub fn data_source_type(kind: &str) -> String {
+    nemoclaw_openshell::installation_type(kind).unwrap_or_else(|| format!("nemoclaw_{kind}"))
 }
 pub use crate::artifact_pins::OPENTOFU_VERSION;
 pub type Generations = BTreeMap<String, String>;
