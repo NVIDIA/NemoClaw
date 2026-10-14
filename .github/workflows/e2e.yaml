@@ -1327,7 +1327,7 @@ jobs:
           done
 
       - name: Download the reviewed native helper toolchain
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: native-podman-e2e-toolchain-amd64
           path: ${{ runner.temp }}/portable-podman-e2e-toolchain
@@ -1502,7 +1502,7 @@ jobs:
           }
 
       - name: Download the pinned native Podman toolchain
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: native-runtime-podman-toolchain-${{ matrix.case.architecture }}
           path: ${{ runner.temp }}/native-runtime-podman-toolchain
@@ -2685,7 +2685,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Download the exact case evidence cohort
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: native-runtime-qualification-evidence-${{ inputs.checkout_sha }}-*
           path: ${{ runner.temp }}/native-runtime-case-artifacts
@@ -2996,7 +2996,7 @@ jobs:
           build-cli: "false"
 
       - name: Download reviewed OpenShell SDK archive
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
           path: ${{ runner.temp }}/openshell-sdk
@@ -3633,7 +3633,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Download reviewed OpenShell SDK archive
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
           path: ${{ runner.temp }}/openshell-sdk
@@ -3914,7 +3914,7 @@ jobs:
           build-cli: "false"
 
       - name: Download reviewed OpenShell SDK archive
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
           path: ${{ runner.temp }}/openshell-sdk
@@ -4297,7 +4297,7 @@ jobs:
             tools/e2e/openshell-dev-artifact.mts
 
       - name: Restore immutable OpenShell dev artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.openshell-dev-artifact.outputs.artifact_name }}
           path: ${{ runner.temp }}/openshell-dev-artifact
@@ -5078,7 +5078,7 @@ jobs:
           cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
 
       - name: Download exact protected runtime build cache
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}
           path: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}
@@ -5150,7 +5150,7 @@ jobs:
           node tools/e2e/protected-openshell-workspace.mts prepare > "$E2E_ARTIFACT_DIR/openshell-projection.json"
 
       - name: Download reviewed OpenShell SDK archive
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
           path: ${{ runner.temp }}/openshell-sdk
@@ -5428,7 +5428,7 @@ jobs:
           build-cli: "false"
 
       - name: Download reviewed OpenShell SDK archive
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
           path: ${{ runner.temp }}/openshell-sdk
@@ -6521,7 +6521,7 @@ jobs:
 
       - name: Download E2E progress artifacts
         continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: ${{ runner.temp }}/e2e-runtime-audit
           pattern: e2e-*

@@ -1126,7 +1126,7 @@ jobs:
           printf 'NEMOCLAW_E2E_CORRELATION_ID=%s\n' "$correlation_id" >> "$GITHUB_ENV"
 
       - name: Download exact published all-agent contracts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: managed-pr-contract-${{ github.run_id }}-*
           path: ${{ runner.temp }}/managed-pr-contracts
@@ -1258,7 +1258,7 @@ jobs:
           printf 'NEMOCLAW_E2E_CORRELATION_ID=%s\n' "$correlation_id" >> "$GITHUB_ENV"
 
       - name: Download exact published all-agent contracts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: managed-pr-contract-${{ github.run_id }}-*
           path: ${{ runner.temp }}/managed-pr-contracts
@@ -2154,7 +2154,7 @@ jobs:
 
       - name: Download same-run npm audit evidence
         if: matrix.agent == 'openclaw'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: reviewed-npm-audit
           path: ${{ runner.temp }}/reviewed-npm-audit
@@ -2798,7 +2798,7 @@ jobs:
       packages: write
     steps:
       - name: Restore all validated managed image candidates
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: managed-image-candidate-${{ github.run_id }}-*
           path: ${{ runner.temp }}/managed-image-candidates
