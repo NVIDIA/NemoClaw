@@ -31,7 +31,6 @@ fn storage_definition(kind: &str) -> crate::Definition {
     generated_identity(schema_definition(kind).validate_attribute(crate::managed::Storage::check))
 }
 
-/// Installer-owned service storage and external model resources.
 /// The runtime a service contract describes, and so which provider reads it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ServiceRuntime {
@@ -78,6 +77,7 @@ impl ServiceRuntime {
     }
 }
 
+/// Installer-owned service storage and external model resources.
 pub(crate) fn definitions() -> [crate::Definition; 4] {
     use nemoclaw_sdk::services::installers::{ollama, vllm};
     [
