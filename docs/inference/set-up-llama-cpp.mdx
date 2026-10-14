@@ -118,8 +118,8 @@ During Windows Express, onboarding automatically selects the Qwen 3.6 35B-A3B re
 
 <Note>
   This path is an experimental implementation. It does not establish a supported agent, model, and
-  runtime tuple until the protected qualification and activation gates pass. The protected
-  qualification runner requires Docker Engine `28.3.3` or newer and the trusted daemon's default
+  runtime tuple until the protected qualification and activation gates pass. Managed onboarding and
+  the protected qualification runner require Docker Engine `28.3.3` or newer and the trusted daemon's default
   protected NAT and firewall behavior. That requirement supersedes older Docker 27 qualification
   evidence. The container runs native `llama-server`, with Docker-native publication requested on
   `127.0.0.1:8081`. Onboarding requires an active port mapping and successful host-loopback and
@@ -133,7 +133,7 @@ Before you start, confirm these prerequisites:
 
 - Use a qualified DGX Spark Arm64 host, a Linux x86_64 host with one NVIDIA GPU, or a qualifying Windows WSL N1x or Station GB300 host.
 - Use NVIDIA driver version `580.65.06` or later on each managed host profile.
-- Confirm that Docker is operational on the host.
+- Confirm that Docker Engine `28.3.3` or newer is operational on the host for native loopback publication.
 - Confirm that the NVIDIA Container Toolkit is operational.
 - Confirm that NVIDIA Container Device Interface support is healthy.
 - Stop any process that uses host port `8081`.

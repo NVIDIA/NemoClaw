@@ -9,6 +9,7 @@ import type {
   ContainerEngine,
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
+import { runCurlProbe } from "../../adapters/http/probe";
 import { assertLlamaCppGgufCachePlanDigest } from "../../inference/llama-cpp/gguf-cache-plan";
 import {
   assertLlamaCppVerifiedLocalModelArtifact,
@@ -1292,11 +1293,17 @@ function createDockerLlamaCppLifecycleForTopology(
   const qualifiedAuthority = qualifyEngine(options);
   const hostLoopbackProbe =
     dependencies.hostLoopbackProbe ??
-    ((url: string, timeoutSeconds: number) =>
-      options.engine.captureHost(
-        ["curl", "--fail", "--silent", "--show-error", "--max-time", String(timeoutSeconds), url],
-        timeoutSeconds * 1_000 + INSPECT_TIMEOUT_MS,
-      ));
+    ((url: string, timeoutSeconds: number) => {
+      const result = runCurlProbe(
+        ["--fail", "--silent", "--show-error", "--max-time", String(timeoutSeconds), url],
+        { timeoutMs: timeoutSeconds * 1_000 + INSPECT_TIMEOUT_MS, pinnedAddresses: [] },
+      );
+      return {
+        status: result.ok ? 0 : result.curlStatus || 1,
+        stdout: result.body,
+        stderr: result.stderr,
+      };
+    });
 
   const authorizeStaticReceipt = (value: HostLocalInferenceReceipt) => {
     const receipt = normalizeHostLocalInferenceReceipt(value);

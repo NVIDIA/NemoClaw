@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as httpProbe from "../../adapters/http/probe";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
 import type {
@@ -66,6 +67,14 @@ function receiptWriter(
 }
 
 beforeEach(() => {
+  vi.spyOn(httpProbe, "runCurlProbe").mockReturnValue({
+    ok: true,
+    httpStatus: 200,
+    curlStatus: 0,
+    body: "ok",
+    stderr: "",
+    message: "",
+  });
   temporaryRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-llama-life-")));
   cacheRoot = path.join(temporaryRoot, "cache");
   modelPath = path.join(
@@ -84,7 +93,10 @@ beforeEach(() => {
   fs.writeFileSync(apiKeyPath, "test-only-secret\n", { mode: 0o600 });
 });
 
-afterEach(() => fs.rmSync(temporaryRoot, { force: true, recursive: true }));
+afterEach(() => {
+  vi.restoreAllMocks();
+  fs.rmSync(temporaryRoot, { force: true, recursive: true });
+});
 
 function bindings(): DockerLlamaCppManagedLifecycleOptions["bindings"] {
   return {
@@ -379,27 +391,22 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   });
 
   it("probes the native published endpoint from the host process when the lifecycle selects it", () => {
+    const probe = vi.mocked(httpProbe.runCurlProbe);
     const fixture = dockerFixture();
+    const store = journalStore();
     const lifecycle = createLifecycle({
-      ...options(fixture),
+      ...options(fixture, store),
       loopbackProbe: "host-process",
       readinessTimeoutSeconds: 86_400,
     });
 
     const receipt = lifecycle.start(receiptWriter());
     expect(receipt.runtime).toMatchObject({ kind: "container", runtimeId: RUNTIME_ID });
-    expect(fixture.engine.captureHost).toHaveBeenCalledWith(
-      [
-        "curl",
-        "--fail",
-        "--silent",
-        "--show-error",
-        "--max-time",
-        "86400",
-        "http://127.0.0.1:8081/health",
-      ],
-      86_415_000,
+    expect(probe).toHaveBeenCalledExactlyOnceWith(
+      ["--fail", "--silent", "--show-error", "--max-time", "86400", "http://127.0.0.1:8081/health"],
+      { timeoutMs: 86_415_000, pinnedAddresses: [] },
     );
+    expect(fixture.capture.mock.calls.map(([argv]) => argv[0])).not.toContain("curl");
     expect(hostNetworkRuns(fixture)).toEqual([]);
     expect(fixture.capture.mock.calls.map(([argv]) => argv)).toContainEqual(
       expect.arrayContaining([
@@ -408,6 +415,19 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
         "http://host.openshell.internal:8081/health",
       ]),
     );
+    probe.mockReturnValue({
+      ok: false,
+      httpStatus: 0,
+      curlStatus: 28,
+      body: "",
+      stderr: "curl timed out",
+      message: "curl timed out",
+    });
+    expect(() => lifecycle.resume(receipt)).toThrow(
+      "Docker llama.cpp native loopback health probe failed (exit 28).",
+    );
+    expect(store.load(TRANSACTION_ID)?.phase).toBe("finalized");
+    expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["rm", "--force"]);
   });
 
   it.each([
