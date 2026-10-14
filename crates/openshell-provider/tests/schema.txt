@@ -20,7 +20,7 @@ provider openshell (version 0)
   tls_key_env: string, optional
     > Environment variable naming the client key file.
 
-resource openshell_provider_profile (version 0)
+resource openshell_provider_profile (version 1)
   authenticated: string, optional, computed
   binaries: list(string), required
   cluster_source: string, optional, computed
@@ -30,9 +30,10 @@ resource openshell_provider_profile (version 0)
   name: string, required
   owner: string, optional, computed
   provider_type: string, optional, computed
-  workspace: string, required
+  ref: object({ generation = string, id = string, name = string, owner = string, type = string, workspace = string }), computed
+  workspace: object({ name = string, type = string }), required
 
-resource openshell_provider_registration (version 0)
+resource openshell_provider_registration (version 1)
   credential_env: string, optional, computed
   credential_source: string, optional, computed
   endpoint: string, required
@@ -40,11 +41,12 @@ resource openshell_provider_registration (version 0)
   id: string, computed
   name: string, required
   owner: string, optional, computed
-  profile_name: string, optional, computed
+  profile: object({ name = string, type = string }), optional
   provider_type: string, optional, computed
-  workspace: string, required
+  ref: object({ generation = string, id = string, name = string, owner = string, type = string, workspace = string }), computed
+  workspace: object({ name = string, type = string }), required
 
-resource openshell_sandbox (version 0)
+resource openshell_sandbox (version 1)
   agent_name: string, required
   agent_runtime: string, optional, computed
   generation: string, optional, computed
@@ -52,9 +54,10 @@ resource openshell_sandbox (version 0)
   image: string, required
   name: string, required
   owner: string, optional, computed
-  provider_names: list(string), optional
+  providers: list(object({ name = string, type = string })), optional
+  ref: object({ generation = string, id = string, name = string, owner = string, type = string, workspace = string }), computed
   runtime_json: string, required
-  workspace: string, required
+  workspace: object({ name = string, type = string }), required
   block policy: optional
     cluster_grants: list(string), optional
       > Managed rule names whose exact addresses must come from verified Services.
@@ -251,11 +254,12 @@ resource openshell_sandbox (version 0)
               value: string, optional
                 > The value itself, instead of the other attributes.
 
-resource openshell_workspace (version 0)
+resource openshell_workspace (version 1)
   generation: string, optional, computed
   id: string, computed
   name: string, required
   owner: string, optional, computed
+  ref: object({ generation = string, id = string, name = string, owner = string, type = string }), computed
 
 data openshell_gateway (version 0)
   compatible: bool, computed

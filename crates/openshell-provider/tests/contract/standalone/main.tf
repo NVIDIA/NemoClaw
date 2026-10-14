@@ -24,7 +24,7 @@ resource "openshell_workspace" "example" {
 }
 resource "openshell_provider_profile" "inference" {
   count         = var.enabled ? 1 : 0
-  workspace     = openshell_workspace.example.name
+  workspace     = openshell_workspace.example.ref
   name          = "nemoclaw-inference-local"
   owner         = openshell_workspace.example.owner
   generation    = "provider-generation"
@@ -34,7 +34,7 @@ resource "openshell_provider_profile" "inference" {
 }
 resource "openshell_provider_registration" "inference" {
   count      = var.enabled ? 1 : 0
-  workspace  = openshell_workspace.example.name
+  workspace  = openshell_workspace.example.ref
   name       = "local"
   owner      = openshell_workspace.example.owner
   generation = "provider-generation"
@@ -42,7 +42,7 @@ resource "openshell_provider_registration" "inference" {
 }
 resource "openshell_sandbox" "agent" {
   count               = var.enabled ? 1 : 0
-  workspace           = openshell_workspace.example.name
+  workspace           = openshell_workspace.example.ref
   name                = "assistant"
   owner               = openshell_workspace.example.owner
   generation          = "sandbox-generation"
@@ -50,7 +50,7 @@ resource "openshell_sandbox" "agent" {
   agent_name          = "assistant"
   agent_runtime       = "fabric"
   runtime_json   = var.runtime_json
-  provider_names = [openshell_provider_registration.inference[0].name]
+  providers      = [openshell_provider_registration.inference[0].ref]
   policy {
     managed "nemoclaw-inference-local-fcb7b1f1af3733764900def4" {
       endpoints {

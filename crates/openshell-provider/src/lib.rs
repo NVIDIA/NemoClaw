@@ -421,7 +421,11 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
     .map(lifecycle_rules)
     .map(|mut definition| {
         definition.structured = nemoclaw_openshell::structured_inputs(definition.kind);
+        definition.export = nemoclaw_openshell::export(definition.kind);
+        definition.references = nemoclaw_openshell::references(definition.kind);
+        // Version 1 takes refs instead of names; earlier state is rejected.
         definition
+            .schema_version(1)
             .generated("owner", nemoclaw_backend::generate_owner)
             .generated("generation", nemoclaw_backend::generate_generation)
     })

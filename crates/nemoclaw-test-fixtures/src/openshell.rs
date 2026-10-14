@@ -999,10 +999,43 @@ pub fn contract_rows(
     for kind in ["workspace", "provider_profile", "provider", "sandbox"] {
         let resource = nemoclaw_openshell::resource_type(kind).unwrap();
         let structured = nemoclaw_openshell::structured_inputs(kind);
+        let references = nemoclaw_openshell::references(kind);
+        // A ref expression names another fixture resource; rows carry its name.
+        let referenced_name = |expression: &serde_json::Value| -> String {
+            let address = expression
+                .as_str()
+                .and_then(|text| text.strip_prefix("${"))
+                .and_then(|text| text.strip_suffix(".ref}"))
+                .unwrap_or_else(|| panic!("{name}: {expression} is not a ref"));
+            let (kind, label) = address.split_once('.').unwrap();
+            fixture["resource"][kind][label]["name"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
         for body in fixture["resource"][&resource].as_object().unwrap().values() {
             let mut row = std::collections::BTreeMap::new();
             for (attribute, value) in body.as_object().unwrap() {
                 if matches!(attribute.as_str(), "depends_on" | "lifecycle") {
+                    continue;
+                }
+                if let Some(reference) = references
+                    .iter()
+                    .find(|reference| reference.attribute == attribute)
+                {
+                    let field = reference.fields[0].1;
+                    let carried = if reference.list {
+                        let names: Vec<_> = value
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(referenced_name)
+                            .collect();
+                        serde_json::to_string(&names).unwrap()
+                    } else {
+                        referenced_name(value)
+                    };
+                    row.insert(field.into(), carried);
                     continue;
                 }
                 if let Some(input) = structured.iter().find(|input| input.attribute == attribute) {

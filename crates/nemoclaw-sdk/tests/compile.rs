@@ -228,9 +228,22 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
     for resource in [provider, profile, sandbox] {
         assert_eq!(
             resource["workspace"],
-            "${openshell_workspace.deployment.name}"
+            "${openshell_workspace.deployment.ref}"
         );
     }
+    // Sandboxes name their provider registrations by ref.
+    let registration = provider_scope::address(
+        &resources["openshell_provider_registration"],
+        "provider",
+        "remote",
+    );
+    assert!(
+        sandbox["providers"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(format!("${{{registration}.ref}}"))),
+        "{sandbox}"
+    );
 }
 
 #[test]

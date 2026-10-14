@@ -307,7 +307,7 @@ impl Resource for ResourceAdapter {
             })
             .collect();
         Some(Schema {
-            version: 0,
+            version: self.definition.schema_version,
             block: Block {
                 attributes,
                 ..Default::default()

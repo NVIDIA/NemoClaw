@@ -49,8 +49,18 @@ pub fn object_kind(name: &str) -> &str {
 
 /// The OpenTofu resource type for an OpenShell object kind.
 pub fn resource_type(kind: &str) -> Option<String> {
-    RESOURCE_TYPES
-        .iter()
-        .find(|(object, _)| *object == kind)
-        .map(|(_, name)| format!("openshell_{name}"))
+    let name = type_name(kind);
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
+/// The OpenTofu resource type for an OpenShell object kind, or empty for
+/// another kind. Refs name their exporting type with it.
+pub fn type_name(kind: &str) -> &'static str {
+    match kind {
+        "workspace" => "openshell_workspace",
+        "provider" => "openshell_provider_registration",
+        "provider_profile" => "openshell_provider_profile",
+        "sandbox" => "openshell_sandbox",
+        _ => "",
+    }
 }

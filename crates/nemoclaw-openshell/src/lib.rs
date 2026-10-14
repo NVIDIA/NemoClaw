@@ -22,9 +22,9 @@ pub use connection::{
     remote_rejection, request,
 };
 pub use driver::ComputeDriver;
-pub use inputs::structured_inputs;
+pub use inputs::{export, flatten, references, structured_inputs};
 pub use lifecycle::{
-    OpenShellLifecycle, RESOURCE_TYPES, object_kind, openshell_lifecycle, resource_type,
+    OpenShellLifecycle, RESOURCE_TYPES, object_kind, openshell_lifecycle, resource_type, type_name,
 };
 pub use names::{NAME_PATTERN, valid_name};
 pub use observation::GatewayObservation;

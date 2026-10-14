@@ -3,7 +3,7 @@
 # Readiness of the configured agent, read after its configuration applies.
 data "fabric_sandbox_readiness" "agent" {
   count         = var.enabled ? 1 : 0
-  workspace     = openshell_sandbox.agent[0].workspace
+  workspace     = openshell_sandbox.agent[0].ref.workspace
   name          = openshell_sandbox.agent[0].name
   id            = openshell_sandbox.agent[0].id
   owner         = openshell_sandbox.agent[0].owner

@@ -61,51 +61,109 @@ pub struct Reference {
     pub attribute: &'static str,
     /// The resource type whose `ref` this input accepts.
     pub kind: &'static str,
-    /// `(ref attribute, row field)` pairs.
+    /// `(ref attribute, row field)` pairs. A list carries one attribute, and
+    /// its row field holds a JSON list of that attribute's values.
     pub fields: Vec<(&'static str, &'static str)>,
+    /// Whether the input is a list of refs.
+    pub list: bool,
 }
 
 impl Reference {
     fn attribute_type(&self) -> AttributeType {
-        object_type(self.fields.iter().map(|(attribute, _)| *attribute))
+        let object = object_type(self.fields.iter().map(|(attribute, _)| *attribute));
+        if self.list {
+            AttributeType::List(Box::new(object))
+        } else {
+            object
+        }
     }
     fn carries(&self, field: &str) -> bool {
         self.fields.iter().any(|(_, row)| *row == field)
     }
-    /// The row fields for a configured `ref`; unknown parts stay unknown.
-    fn decompose(&self, value: &Value<Dynamic>) -> Result<Vec<(String, Value<String>)>, String> {
+    fn mismatch(&self) -> String {
+        format!("Expected a ref of {}", self.kind)
+    }
+    /// The carried attributes of one configured `ref`; unknown parts stay unknown.
+    fn values(&self, value: &Value<Dynamic>) -> Result<Vec<Value<String>>, String> {
         let entries = match value {
             Value::Value(Dynamic::Map(entries)) => entries,
             Value::Unknown | Value::Null => {
                 return Ok(self
                     .fields
                     .iter()
-                    .map(|(_, row)| ((*row).into(), value.clone().map(|_| String::new())))
+                    .map(|_| value.clone().map(|_| String::new()))
                     .collect());
             }
-            Value::Value(_) => return Err(format!("Expected a ref of {}", self.kind)),
+            Value::Value(_) => return Err(self.mismatch()),
         };
         if let Some(Value::Value(Dynamic::String(kind))) = entries.get(REF_TYPE)
             && kind != self.kind
         {
-            return Err(format!("Expected a ref of {}, not {kind}", self.kind));
+            return Err(format!("{}, not {kind}", self.mismatch()));
         }
         self.fields
             .iter()
-            .map(|(attribute, row)| {
-                let value = match entries.get(*attribute) {
-                    Some(Value::Value(Dynamic::String(value))) => Value::Value(value.clone()),
-                    Some(Value::Unknown) => Value::Unknown,
-                    None | Some(Value::Null) => Value::Null,
-                    Some(Value::Value(_)) => {
-                        return Err(format!("Expected a string {attribute} in the ref"));
-                    }
-                };
-                Ok(((*row).into(), value))
+            .map(|(attribute, _)| match entries.get(*attribute) {
+                Some(Value::Value(Dynamic::String(value))) => Ok(Value::Value(value.clone())),
+                Some(Value::Unknown) => Ok(Value::Unknown),
+                None | Some(Value::Null) => Ok(Value::Null),
+                Some(Value::Value(_)) => Err(format!("Expected a string {attribute} in the ref")),
             })
             .collect()
     }
-    /// The `ref` input recorded for a row; absent when the row carries none.
+    /// The row fields for a configured input; unknown parts stay unknown.
+    fn decompose(&self, value: &Value<Dynamic>) -> Result<Vec<(String, Value<String>)>, String> {
+        if !self.list {
+            return Ok(self
+                .fields
+                .iter()
+                .map(|(_, row)| (*row).to_owned())
+                .zip(self.values(value)?)
+                .collect());
+        }
+        let row = self.fields[0].1.to_owned();
+        let items = match value {
+            Value::Value(Dynamic::List(items)) => items,
+            Value::Unknown | Value::Null => {
+                return Ok(vec![(row, value.clone().map(|_| String::new()))]);
+            }
+            Value::Value(_) => return Err(self.mismatch()),
+        };
+        let mut names = Vec::new();
+        let mut unknown = false;
+        for item in items {
+            match self.values(item)?.pop() {
+                Some(Value::Value(name)) => names.push(name),
+                Some(Value::Unknown) | None => unknown = true,
+                Some(Value::Null) => return Err(self.mismatch()),
+            }
+        }
+        // One unknown element leaves the whole list unknown until apply.
+        let encoded = if unknown {
+            Value::Unknown
+        } else {
+            Value::Value(serde_json::to_string(&names).map_err(|_| self.mismatch())?)
+        };
+        Ok(vec![(row, encoded)])
+    }
+    fn object(
+        &self,
+        values: impl IntoIterator<Item = (&'static str, Value<String>)>,
+    ) -> Value<Dynamic> {
+        Value::Value(Dynamic::Map(
+            std::iter::once((
+                REF_TYPE.into(),
+                Value::Value(Dynamic::String(self.kind.into())),
+            ))
+            .chain(
+                values
+                    .into_iter()
+                    .map(|(attribute, value)| (attribute.into(), value.map(Dynamic::String))),
+            )
+            .collect(),
+        ))
+    }
+    /// The input recorded for a row; absent when the row carries none.
     fn compose(&self, state: &State) -> Value<Dynamic> {
         let values: Vec<_> = self
             .fields
@@ -119,18 +177,22 @@ impl Reference {
         {
             return Value::Null;
         }
-        Value::Value(Dynamic::Map(
-            std::iter::once((
-                REF_TYPE.into(),
-                Value::Value(Dynamic::String(self.kind.into())),
-            ))
-            .chain(
-                values
-                    .into_iter()
-                    .map(|(attribute, value)| (attribute.into(), value.map(Dynamic::String))),
-            )
-            .collect(),
-        ))
+        if !self.list {
+            return self.object(values);
+        }
+        let (attribute, encoded) = &values[0];
+        match encoded {
+            Value::Value(encoded) => match serde_json::from_str::<Vec<String>>(encoded) {
+                Ok(names) => Value::Value(Dynamic::List(
+                    names
+                        .into_iter()
+                        .map(|name| self.object([(*attribute, Value::Value(name))]))
+                        .collect(),
+                )),
+                Err(_) => Value::Unknown,
+            },
+            other => other.clone().map(|_| Dynamic::List(Vec::new())),
+        }
     }
 }
 
@@ -964,5 +1026,143 @@ mod tests {
             assert_eq!(state["workspace"], workspace(value(json!(expected))));
             assert!(!state.contains_key("workspace_owner"));
         }
+    }
+
+    fn registrations(backend: Arc<Recorder>) -> StructuredAdapter {
+        let definition = Definition::new("sandbox", &["name", "names_json"], &[])
+            .optional(&["names_json"])
+            .references_list("providers", "example_registration", ("name", "names_json"))
+            .schema_version(1);
+        StructuredAdapter(ResourceAdapter::new(definition, backend))
+    }
+
+    fn registration(name: &str) -> Value<Dynamic> {
+        value(json!({"type": "example_registration", "name": name}))
+    }
+
+    #[test]
+    fn a_list_of_references_is_a_list_of_objects_in_a_versioned_schema() {
+        let schema = registrations(Arc::default())
+            .schema(&mut Diagnostics::default())
+            .unwrap();
+        assert_eq!(schema.version, 1);
+        assert!(!schema.block.attributes.contains_key("names_json"));
+        let providers = &schema.block.attributes["providers"];
+        assert_eq!(
+            providers.attr_type,
+            AttributeType::List(Box::new(object_type(&["type", "name"])))
+        );
+        assert!(matches!(
+            providers.constraint,
+            AttributeConstraint::Optional
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_list_of_references_reaches_the_backend_as_a_json_list() {
+        let backend = Arc::new(Recorder::default());
+        let providers = Value::Value(Dynamic::List(vec![registration("b"), registration("a")]));
+        let proposed = StructuredState::from([
+            ("name".into(), value(json!("coder"))),
+            ("providers".into(), providers.clone()),
+            ("id".into(), Value::Null),
+        ]);
+        let mut diags = Diagnostics::default();
+        let (planned, _) = registrations(backend.clone())
+            .plan_create(
+                &mut diags,
+                proposed.clone(),
+                proposed,
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert!(diags.errors.is_empty(), "{diags:?}");
+        assert_eq!(planned["providers"], providers);
+        assert_eq!(
+            backend.planned.lock().unwrap()[0]["names_json"],
+            r#"["b","a"]"#
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_list_element_defers_backend_planning() {
+        let backend = Arc::new(Recorder::default());
+        let providers = Value::Value(Dynamic::List(vec![registration("a"), Value::Unknown]));
+        let proposed = StructuredState::from([
+            ("name".into(), value(json!("coder"))),
+            ("providers".into(), providers.clone()),
+            ("id".into(), Value::Null),
+        ]);
+        let mut diags = Diagnostics::default();
+        let (planned, _) = registrations(backend.clone())
+            .plan_create(
+                &mut diags,
+                proposed.clone(),
+                proposed,
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert!(diags.errors.is_empty(), "{diags:?}");
+        assert_eq!(planned["providers"], providers);
+        assert!(backend.planned.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_list_element_of_another_type_is_rejected() {
+        let config = StructuredState::from([
+            ("name".into(), value(json!("coder"))),
+            (
+                "providers".into(),
+                value(json!([{"type": "example_workspace", "name": "a"}])),
+            ),
+            ("id".into(), Value::Null),
+        ]);
+        let mut diags = Diagnostics::default();
+        assert!(
+            registrations(Arc::default())
+                .validate(&mut diags, config)
+                .await
+                .is_none()
+        );
+        let message = format!("{diags:?}");
+        assert!(
+            message.contains("Expected a ref of example_registration, not example_workspace"),
+            "{message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_rebuilds_a_list_of_references() {
+        let backend = Arc::new(Recorder::default());
+        *backend.observed.lock().unwrap() = Some(Row::from([
+            ("name".into(), "coder".into()),
+            ("id".into(), "sandbox-id".into()),
+            ("names_json".into(), r#"["a","c"]"#.into()),
+        ]));
+        let prior = StructuredState::from([
+            ("name".into(), value(json!("coder"))),
+            ("id".into(), value(json!("sandbox-id"))),
+            (
+                "providers".into(),
+                Value::Value(Dynamic::List(vec![registration("a")])),
+            ),
+        ]);
+        let mut diags = Diagnostics::default();
+        let (state, _) = registrations(backend)
+            .read(
+                &mut diags,
+                prior,
+                ValueEmpty::default(),
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert!(diags.errors.is_empty(), "{diags:?}");
+        assert_eq!(
+            state["providers"],
+            Value::Value(Dynamic::List(vec![registration("a"), registration("c")]))
+        );
     }
 }

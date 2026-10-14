@@ -427,9 +427,6 @@ fn compile_with_plans(
     }
     for target in targets {
         let mut attributes = serde_json::to_value(&target.values).expect("string map");
-        if target.values.contains_key("workspace") {
-            attributes["workspace"] = json!("${openshell_workspace.deployment.name}");
-        }
         if let Some(value) = attributes["credential_source"].as_str() {
             attributes["credential_source"] =
                 json!(value.replace("${", "$${").replace("%{", "%%{"));
@@ -455,6 +452,48 @@ fn compile_with_plans(
                 crate::docker_compute::literal(&mut value);
                 attributes[input.attribute] = value;
             }
+        }
+        // Rows name other objects; OpenTofu takes their refs, which also
+        // order those objects first.
+        for reference in nemoclaw_openshell::references(&target.kind) {
+            let field = reference.fields[0].1;
+            let Some(encoded) = attributes
+                .as_object_mut()
+                .expect("attribute object")
+                .remove(field)
+            else {
+                continue;
+            };
+            let encoded = encoded.as_str().unwrap_or_default();
+            if encoded.is_empty() {
+                continue;
+            }
+            let address = |name: &str| {
+                targets
+                    .iter()
+                    .find(|candidate| {
+                        nemoclaw_openshell::type_name(&candidate.kind) == reference.kind
+                            && candidate.values.get("name").map(String::as_str) == Some(name)
+                    })
+                    .map(|candidate| format!("${{{}.ref}}", candidate.address))
+                    .ok_or_else(|| {
+                        ConfigError::new(
+                            "a reference names an object the deployment does not declare",
+                        )
+                    })
+            };
+            attributes[reference.attribute] = if reference.list {
+                let names: Vec<String> = serde_json::from_str(encoded)
+                    .map_err(|_| ConfigError::new("invalid reference list"))?;
+                json!(
+                    names
+                        .iter()
+                        .map(|name| address(name))
+                        .collect::<Result<Vec<_>, _>>()?
+                )
+            } else {
+                json!(address(encoded)?)
+            };
         }
         if target.kind == "provider_profile" {
             attributes["binaries"] = json!(format!(
@@ -576,9 +615,12 @@ fn compile_with_plans(
             ]
             .into_iter()
             .map(|name| {
+                // The sandbox takes its workspace as a ref; its own ref
+                // carries the workspace name.
+                let attribute = if name == "workspace" { "ref.workspace" } else { name };
                 (
                     name.to_owned(),
-                    json!(format!("${{openshell_sandbox.{}.{name}}}", sandbox.name)),
+                    json!(format!("${{openshell_sandbox.{}.{attribute}}}", sandbox.name)),
                 )
             })
             .collect();

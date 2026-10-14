@@ -11,14 +11,41 @@ pub(super) struct Plan {
     #[serde(default)]
     pub planned_values: Value,
 }
+/// A planned change, with OpenShell refs rewritten into the row fields they
+/// carry so it compares with compiled rows.
 #[derive(Deserialize)]
+#[serde(from = "PlannedResourceChange")]
 pub(super) struct ResourceChange {
-    #[serde(default)]
     pub mode: Option<String>,
     pub address: String,
-    #[serde(default)]
     pub deposed: Option<String>,
     pub change: PlannedChange,
+}
+#[derive(Deserialize)]
+struct PlannedResourceChange {
+    #[serde(default)]
+    mode: Option<String>,
+    address: String,
+    #[serde(default)]
+    deposed: Option<String>,
+    change: PlannedChange,
+}
+impl From<PlannedResourceChange> for ResourceChange {
+    fn from(planned: PlannedResourceChange) -> Self {
+        let mut change = planned.change;
+        if planned.mode.as_deref() != Some("data")
+            && let Some((kind, _)) = planned.address.split_once('.')
+        {
+            nemoclaw_openshell::flatten(kind, &mut change.before);
+            nemoclaw_openshell::flatten(kind, &mut change.after);
+        }
+        Self {
+            mode: planned.mode,
+            address: planned.address,
+            deposed: planned.deposed,
+            change,
+        }
+    }
 }
 fn observation(
     change: &ResourceChange,

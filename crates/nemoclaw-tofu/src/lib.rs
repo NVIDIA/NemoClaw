@@ -76,6 +76,8 @@ pub struct Definition {
     pub export: Option<crate::Export>,
     /// Inputs that take another resource's `ref`.
     pub references: Vec<crate::Reference>,
+    /// The OpenTofu schema version; state from an earlier version is rejected.
+    pub schema_version: i64,
 }
 
 impl Definition {
@@ -99,6 +101,7 @@ impl Definition {
             structured: Vec::new(),
             export: None,
             references: Vec::new(),
+            schema_version: 0,
         }
     }
     pub fn optional(mut self, fields: &[&'static str]) -> Self {
@@ -181,7 +184,29 @@ impl Definition {
             attribute,
             kind,
             fields: fields.to_vec(),
+            list: false,
         });
+        self
+    }
+    /// Take a list of another resource's `ref`s of type `kind` as the input
+    /// `attribute`; `field`'s row field holds a JSON list of their `ref` attribute.
+    pub fn references_list(
+        mut self,
+        attribute: &'static str,
+        kind: &'static str,
+        field: (&'static str, &'static str),
+    ) -> Self {
+        self.references.push(crate::Reference {
+            attribute,
+            kind,
+            fields: vec![field],
+            list: true,
+        });
+        self
+    }
+    /// Set the OpenTofu schema version after an incompatible schema change.
+    pub fn schema_version(mut self, version: i64) -> Self {
+        self.schema_version = version;
         self
     }
     /// Whether the resource has typed attributes, which need the structured adapter.

@@ -100,7 +100,7 @@ impl Record {
         let mut generations = Generations::new();
         allocate_missing_generation_values(&mut generations, &document)?;
         Ok(Self {
-            version: 7,
+            version: 8,
             digest: document.digest(),
             document,
             generations,
@@ -283,9 +283,9 @@ impl Record {
         self.destroy_runtime
     }
     fn validate(&self) -> Result<(), Error> {
-        if self.version != 7 {
+        if self.version != 8 {
             return Err(Error::State(
-                "deployment predates Docker-provider model cache ownership; retain state and use the original NemoClaw version for recovery or teardown",
+                "deployment predates typed OpenShell resource references; retain state and use the original NemoClaw version for recovery or teardown",
             ));
         }
         let generations_valid = required_generation_kinds(&self.document).is_ok_and(|kinds| {
@@ -587,10 +587,13 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
                 "managed" => {}
                 _ => return Err(Error::State("unsupported OpenTofu resource mode")),
             }
-            let attributes: StateBinding =
-                serde_json::from_value(resource.values).map_err(|_| {
-                    Error::State("OpenTofu binding is unreadable; retain state for recovery")
-                })?;
+            let mut values = resource.values;
+            if let Some((kind, _)) = resource.address.split_once('.') {
+                nemoclaw_openshell::flatten(kind, &mut values);
+            }
+            let attributes: StateBinding = serde_json::from_value(values).map_err(|_| {
+                Error::State("OpenTofu binding is unreadable; retain state for recovery")
+            })?;
             if attributes.id.is_empty() {
                 return Err(Error::State("unbound resource in OpenTofu state"));
             }

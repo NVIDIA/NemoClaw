@@ -81,9 +81,21 @@ None of them exposes ephemeral resources or provider functions.
 The `openshell` provider takes the gateway `endpoint`, the `credential_env` variable holding its bearer credential, the `tls_ca_env`, `tls_certificate_env`, and `tls_key_env` variables naming mutual TLS files, and `destroy`, which permits deleting sandboxes during explicit teardown.
 When a registration names a managed vLLM or Ollama proxy credential, the provider reads the key from the owning container during apply, so the key never enters OpenTofu state.
 
-Inputs are typed:
+Each OpenShell resource exports a computed `ref` object identifying it: its `type`, `name`, `owner`, `generation`, and `id`, plus `workspace` for objects inside a workspace.
+Objects name each other by `ref`, never by separate name strings:
 
-- `openshell_sandbox` takes a `policy` block and a `provider_names` list.
+- Profiles, registrations, and sandboxes take `workspace = openshell_workspace.<label>.ref`.
+- A registration may take `profile = openshell_provider_profile.<label>.ref` for a scoped profile.
+- A sandbox takes `providers`, a list of registration refs.
+
+A consumer checks the ref's `type` and rejects a ref of another type.
+It keeps only the ref attributes it uses, so a ref can be fully known during planning before the referenced object's ID exists.
+Changing a referenced object's name or replacing it replaces its consumers, subject to the replacement protections below.
+These schemas are version 1; state recorded by an earlier provider schema is rejected rather than upgraded.
+
+Other inputs are typed too:
+
+- `openshell_sandbox` takes a `policy` block.
   The block's attributes and blocks follow the sandbox policy model with snake_case names: optional `explicit` policy and `managed` deployment grants, whose named network rules are labeled blocks.
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
 - `openshell_provider_profile` takes a `binaries` list.
@@ -92,12 +104,12 @@ Inputs are typed:
 
 ```hcl
 resource "openshell_sandbox" "assistant" {
-  workspace      = openshell_workspace.example.name
-  name           = "assistant"
-  image          = var.image
-  agent_name     = "assistant"
-  runtime_json   = data.fabric_capabilities.assistant.runtime_json
-  provider_names = [openshell_provider_registration.local.name]
+  workspace    = openshell_workspace.example.ref
+  name         = "assistant"
+  image        = var.image
+  agent_name   = "assistant"
+  runtime_json = data.fabric_capabilities.assistant.runtime_json
+  providers    = [openshell_provider_registration.local.ref]
   policy {
     explicit {
       version = 1
@@ -318,7 +330,7 @@ Generated graphs observe each sandbox image independently of resource creation o
 Managed gateways use their configured engine; external gateways require `spec.gateway.engine` for image inspection and do not run managed-gateway prerequisite checks.
 With `config_json`, image discovery also returns `runtime_json`, the selected adapter and advertised runtime layout, and `binaries_json`, its resolved executable list.
 The sandbox consumes `runtime_json`; its `policy` block retains authored policy and managed endpoint inputs, resolved against that layout before creation.
-Provider profiles require a nonempty `binaries` list, which graphs decode from `binaries_json`; search registrations retain their scoped `profile_name`.
+Provider profiles require a nonempty `binaries` list, which graphs decode from `binaries_json`; search registrations take their scoped profile's `ref` as `profile`.
 Refresh verifies the actual launch and policy against retained metadata, and export and teardown do not need another image inspection.
 
 Inference registrations are scoped by authored provider identity, image digest, and adapter ID; search registrations also include the credential reference.
@@ -531,7 +543,7 @@ See [runtime ownership](design/runtime.md) and [recovery](models.md#diagnose-and
 ## Sandbox Completion
 
 The OpenShell graph uses `fabric_sandbox_readiness` after sandbox creation and any runtime configuration resource.
-It requires the sandbox's `workspace`, `name`, `id`, `owner`, `generation`, `agent_name`, `agent_runtime`, and `runtime_json`, and the agent configuration's `config_json`.
+It requires the sandbox's `workspace` (its ref's `workspace`), `name`, `id`, `owner`, `generation`, `agent_name`, `agent_runtime`, and `runtime_json`, and the agent configuration's `config_json`.
 The provider checks that the sandbox still has that identity and agent runtime, waits for startup, and confirms the host applied that configuration before requesting the packaged bridge's health response.
 It does not invoke an agent or model.
 The optional string `read_trigger` uses `uuid()` in generated graphs, making the read unknown during planning and recording a fresh token on every apply.

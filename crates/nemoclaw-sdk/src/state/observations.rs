@@ -39,7 +39,13 @@ pub(crate) fn parse_resources(values: &Value) -> Result<BTreeMap<String, Value>,
                 return Err(Error::State("duplicate or incomplete OpenTofu observation"));
             }
             if resource.deposed_key.is_none() {
-                resources.insert(resource.address, resource.values);
+                let mut values = resource.values;
+                if resource.mode == "managed"
+                    && let Some((kind, _)) = resource.address.split_once('.')
+                {
+                    nemoclaw_openshell::flatten(kind, &mut values);
+                }
+                resources.insert(resource.address, values);
             }
         }
     }
