@@ -3,7 +3,27 @@
 
 # Tests
 
-Before pushing, run this platform's `CI / Bundle` checks from the repository root:
+## Choose Local Validation
+
+Before pushing, choose checks that cover the changed behavior and its affected callers.
+
+| Change | Local validation |
+|---|---|
+| Prose or documentation | Review the changed text; run the [documentation check](documentation-build.md#validate-locally) for documentation changes. |
+| Declarative configuration or workflow triggers | Run the applicable schema or lint checks; test affected execution paths when their behavior changes. |
+| Isolated code change | Run focused behavioral tests and nearby regression checks, plus formatting and lint checks for the affected code. |
+| Bundle construction, provider contracts, lifecycle behavior, or broad workspace dependencies | Run `cargo ci`. |
+| Impact is unclear or narrower checks cannot establish confidence | Run `cargo ci`. |
+
+For changes spanning categories, combine the applicable checks.
+A YAML or configuration file can change runtime behavior; choose by impact rather than extension.
+Report the commands and results in the PR, and name checks deferred to CI with the reason.
+Repeat validation when relevant inputs change, a check fails, or an unresolved concern requires it; a push alone does not require another run.
+Required PR checks still apply before merging.
+
+## Run the Full Local Suite
+
+Run this platform's complete `CI / Bundle` checks from the repository root:
 
 ```sh
 cargo ci
