@@ -137,6 +137,121 @@ it("retains a phase-specific failure without leaking exception data", async () =
   }
 });
 
+it.each(["SIGINT", "SIGTERM"] as const)(
+  "interrupts a real synchronous worker command with %s and retains only failure evidence",
+  async (signal) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-signal-process-"));
+    const owner = expectedRegistryOwner(RUN_ID, RUN_ATTEMPT);
+    const stateFile = path.join(root, "resources.json");
+    const marker = path.join(root, "blocked.json");
+    const tempRoot = path.join(root, owner);
+    const resources = {
+      [`nemoclaw-llama-cpp-server-${RUN_ID}-${RUN_ATTEMPT}`]: owner,
+      [`nemoclaw-llama-cpp-network-${RUN_ID}-${RUN_ATTEMPT}`]: owner,
+      [expectedRegistryName(RUN_ID, RUN_ATTEMPT)]: owner,
+      "foreign-container": "foreign-owner",
+    };
+    fs.writeFileSync(stateFile, JSON.stringify(resources));
+    fs.mkdirSync(tempRoot);
+    fs.writeFileSync(path.join(tempRoot, "api-key"), "private-test-key", { mode: 0o600 });
+    const docker = path.join(root, "docker");
+    fs.writeFileSync(
+      docker,
+      `#!${process.execPath}
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stateFile = ${JSON.stringify(stateFile)};
+if (args[0] === "--version") {
+  const listener = require("node:net").createServer();
+  listener.listen(0, "127.0.0.1", () => {
+    fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid: process.pid, port: listener.address().port}));
+    require("node:child_process").spawnSync(process.execPath, ["-e", "setInterval(() => {}, 1000)"]);
+    process.exit(0);
+  });
+} else {
+const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+const name = args.at(-1);
+if (args.includes("inspect")) {
+  if (state[name]) process.stdout.write(state[name]);
+  else { process.stderr.write("Error: No such object: " + name); process.exitCode = 1; }
+} else if (args.includes("rm") && state[name] === ${JSON.stringify(owner)}) {
+  delete state[name];
+  fs.writeFileSync(stateFile, JSON.stringify(state));
+} else process.exitCode = 1;
+}
+`,
+      { mode: 0o700 },
+    );
+    const args = invocationArguments();
+    args[args.indexOf("--output") + 1] = path.join(root, "receipt.json");
+    const launcher = childProcess.spawn(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--import",
+        "tsx",
+        path.join(repoRoot, "scripts/checks/run-llama-cpp-dgx-spark-qualification.cts"),
+        ...args,
+      ],
+      {
+        cwd: repoRoot,
+        stdio: "ignore",
+        env: { ...trustedEnvironment(), RUNNER_TEMP: root, PATH: root, HOME: root },
+      },
+    );
+    const closed = new Promise<number | null>((resolve, reject) => {
+      launcher.once("error", reject);
+      launcher.once("close", resolve);
+    });
+    try {
+      await vi.waitFor(() => expect(fs.existsSync(marker)).toBe(true), {
+        timeout: 10000,
+        interval: 25,
+      });
+      launcher.kill(signal);
+      expect(await closed).toBe(signal === "SIGINT" ? 130 : 143);
+      expect(JSON.parse(fs.readFileSync(stateFile, "utf8"))).toEqual({
+        "foreign-container": "foreign-owner",
+      });
+      expect(fs.existsSync(tempRoot)).toBe(false);
+      expect(fs.existsSync(path.join(root, "receipt.json"))).toBe(false);
+      const failureSource = fs.readFileSync(path.join(root, "failure.json"), "utf8");
+      expect(failureSource).not.toContain("private-test-key");
+      expect(JSON.parse(failureSource)).toMatchObject({
+        phase: "interrupted",
+        status: "failed",
+        owner,
+        cleanupComplete: false,
+      });
+      const blockedPid = JSON.parse(fs.readFileSync(marker, "utf8")).pid;
+      expect(() => process.kill(blockedPid, 0)).toThrow();
+      const port = JSON.parse(fs.readFileSync(marker, "utf8")).port;
+      await expect(
+        new Promise<void>((resolve, reject) => {
+          const socket = net.createConnection({ host: "127.0.0.1", port });
+          socket.once("connect", () => {
+            socket.destroy();
+            reject(new Error("interrupted listener remains open"));
+          });
+          socket.once("error", () => {
+            socket.destroy();
+            resolve();
+          });
+          socket.setTimeout(1000, () => {
+            socket.destroy();
+            reject(new Error("listener check timed out"));
+          });
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      launcher.kill("SIGTERM");
+      await closed;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+  20000,
+);
+
 it("boots the actual trusted CLI and records a failed prerequisite without running Docker", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-cli-"));
   try {

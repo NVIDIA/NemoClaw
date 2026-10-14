@@ -106,6 +106,11 @@ installed `tsx` loader for CommonJS and deferred ESM source imports; plain Node
 execution of that source graph is not supported. This lane is excluded from default and
 release-required suites, and does not promote an image or close hardware qualification.
 
+The launcher handles SIGINT and SIGTERM independently of synchronous worker commands.
+It stops the worker process group before current-owner cleanup and records an interrupted
+failure, not a successful qualification. SIGKILL, host loss, or unavailable Docker can
+prevent cleanup; operators must inspect the recorded run's resources in those cases.
+
 ### Candidate CLI Artifact
 
 The candidate CLI comes from the source commit that an E2E run tests.

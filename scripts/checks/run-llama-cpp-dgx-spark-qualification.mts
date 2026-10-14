@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { spawn, spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -1317,6 +1317,103 @@ export async function runQualificationCli(): Promise<void> {
         : "ERROR: DGX Spark qualification failed during trusted invocation or cleanup.\n",
     );
     process.exitCode = 1;
+  }
+}
+
+export async function runQualificationLauncher(): Promise<void> {
+  if (process.argv[2] === "--qualification-worker") {
+    process.argv.splice(2, 1);
+    await runQualificationCli();
+    return;
+  }
+  let invocation: QualificationInvocation | CleanupInvocation;
+  try {
+    invocation = parseQualificationInvocation(process.argv.slice(2));
+  } catch {
+    process.stderr.write("ERROR: DGX Spark qualification rejected its trusted invocation.\n");
+    process.exitCode = 1;
+    return;
+  }
+  if (invocation.cleanupOnly) {
+    await runQualificationCli();
+    return;
+  }
+  // Keep signal delivery responsive while the worker builds or hashes synchronous inputs.
+  const worker = spawn(
+    process.execPath,
+    [
+      "--no-warnings",
+      "--import",
+      "tsx",
+      process.argv[1]!,
+      "--qualification-worker",
+      ...process.argv.slice(2),
+    ],
+    { detached: process.platform === "linux", stdio: "inherit" },
+  );
+  let interrupted: NodeJS.Signals | undefined;
+  let workerStopFailed = false;
+  const interrupt = (signal: NodeJS.Signals) => {
+    if (interrupted) return;
+    interrupted = signal;
+    if (worker.pid === undefined) return;
+    try {
+      // Stop descendants too, before cleanup, so no build command can recreate owned state.
+      if (process.platform === "linux") process.kill(-worker.pid, "SIGKILL");
+      else worker.kill("SIGKILL");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+        workerStopFailed = true;
+        process.stderr.write("ERROR: Spark worker group termination was not proven.\n");
+      }
+    }
+  };
+  const onInterrupt = () => interrupt("SIGINT");
+  const onTerminate = () => interrupt("SIGTERM");
+  process.on("SIGINT", onInterrupt);
+  process.on("SIGTERM", onTerminate);
+  try {
+    const status = await new Promise<number | null>((resolve, reject) => {
+      worker.once("error", reject);
+      worker.once("close", resolve);
+    });
+    if (!interrupted) {
+      process.exitCode = status ?? 1;
+      return;
+    }
+    const names = runtimeNames(invocation, process.env);
+    try {
+      if (workerStopFailed) throw new Error("worker termination is unproven");
+      await cleanupOwnedRuntime(names);
+    } catch {
+      process.stderr.write(
+        "ERROR: Interrupted Spark cleanup is incomplete; inspect owned resources.\n",
+      );
+    }
+    const diagnostic = createLlamaCppDgxSparkFailureDiagnostic(
+      {
+        baseSha: invocation.candidateBase,
+        headSha: invocation.candidateHead,
+        workflowSha: invocation.workflowSha,
+        runId: Number(invocation.runId),
+        runAttempt: Number(invocation.runAttempt),
+      },
+      invocation.planSha256,
+      "interrupted",
+      false,
+    );
+    writeReceipt(
+      path.join(path.dirname(invocation.output), "failure.json"),
+      diagnostic,
+      names.tempRoot,
+    );
+    process.exitCode = interrupted === "SIGINT" ? 130 : 143;
+  } catch {
+    process.stderr.write("ERROR: Spark launcher failed; inspect this run's owned resources.\n");
+    process.exitCode = 1;
+  } finally {
+    process.removeListener("SIGINT", onInterrupt);
+    process.removeListener("SIGTERM", onTerminate);
   }
 }
 
