@@ -121,8 +121,24 @@ pub fn fabric_binding(mut sandbox: Row) -> Result<Row, ObservationError> {
     Ok(sandbox)
 }
 pub(crate) async fn plan(client: &OpenShell, want: &Row) -> Result<(), Error> {
-    configuration(value(want, "config_json"))?;
-    configuration_parent(client, want, false).await?;
+    let config = configuration(value(want, "config_json"))?;
+    let sandbox = configuration_parent(client, want, false)
+        .await?
+        .ok_or(ObservationError::BindingMismatch)?;
+    // The sandbox launches one agent with one harness; configure only that.
+    if config["metadata"]["name"] != value(&sandbox, "agent_name") {
+        return Err(Error::Conflict(
+            "the agent name must match the agent its sandbox launches",
+        ));
+    }
+    let binding: Value = serde_json::from_str(value(&sandbox, "runtime_json"))
+        .map_err(|_| ObservationError::BindingMismatch)?;
+    let image = value(want, "harness_image");
+    if binding["adapter_id"] != config["harness"]["adapter_id"]
+        || (!image.is_empty() && image != value(&sandbox, "image"))
+    {
+        return Err(Error::Conflict("the sandbox does not launch this harness"));
+    }
     Ok(())
 }
 pub(crate) async fn read(

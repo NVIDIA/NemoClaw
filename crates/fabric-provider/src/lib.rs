@@ -3,7 +3,7 @@
 //! The `fabric` OpenTofu provider: Fabric agents hosted in OpenShell
 //! sandboxes, reached through the sandbox's Fabric host.
 
-mod agent_configuration;
+mod agent;
 mod bridge;
 mod capabilities;
 mod configuration;
@@ -14,7 +14,7 @@ mod fixture;
 mod provider;
 mod sandbox_readiness;
 
-pub use agent_configuration::{AgentConfigurationBackend, definitions};
+pub use agent::{AgentBackend, definitions};
 pub use bridge::{AgentBridge, AgentSnapshot};
 pub use capabilities::{
     FabricCapabilitiesDataSource, FabricCapabilitiesState, FabricHarnessDataSource,

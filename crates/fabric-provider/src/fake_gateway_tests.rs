@@ -4,7 +4,7 @@
 //! gateway, without OpenTofu. Sandboxes come from the openshell provider's
 //! contract fixtures.
 
-use crate::{AgentBridge as _, AgentConfigurationBackend};
+use crate::{AgentBackend, AgentBridge as _};
 use nemoclaw_backend::{Backend, EnvironmentSecrets, ObservationError, Row};
 use nemoclaw_test_fixtures::openshell::{Fixture, contract_rows};
 use openshell_core::proto;
@@ -46,30 +46,26 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
     fixture.state.lock().unwrap().exec_exit = 2;
     let sandbox = create_sandbox(&client, "fabric-openclaw").await;
     fixture.state.lock().unwrap().exec_exit = 0;
-    let desired: Row = [
-        ("workspace", sandbox["workspace"].as_str()),
-        ("name", sandbox["name"].as_str()),
-        ("owner", sandbox["owner"].as_str()),
-        ("generation", sandbox["generation"].as_str()),
-        ("sandbox_id", sandbox["id"].as_str()),
-        (
-            "config_json",
-            &serde_json::json!({
-                "schema_version": "fabric.agent/v1alpha1",
-                "runtime": {},
-                "metadata": {"name": "main"},
-                "harness": {"adapter_id": "nvidia.fabric.openclaw"},
-                "models": {"default": {"provider": "openai", "model": "fixture-model"}},
-            })
-            .to_string(),
-        ),
-    ]
-    .into_iter()
-    .map(|(key, value)| (key.into(), value.into()))
-    .collect();
+    let mut desired = nemoclaw_fabric::agent::decompose(&serde_json::json!({
+        "schema_version": "fabric.agent/v1alpha1",
+        "runtime": {},
+        "metadata": {"name": "main"},
+        "harness": {"adapter_id": "nvidia.fabric.openclaw"},
+        "models": {"default": {"provider": "openai", "model": "fixture-model"}},
+    }));
+    desired.extend(
+        [
+            ("workspace", sandbox["workspace"].as_str()),
+            ("sandbox", sandbox["name"].as_str()),
+            ("owner", sandbox["owner"].as_str()),
+            ("generation", sandbox["generation"].as_str()),
+            ("sandbox_id", sandbox["id"].as_str()),
+        ]
+        .map(|(key, value)| (key.to_owned(), value.to_owned())),
+    );
     fixture.state.lock().unwrap().host_unavailable_checks = 1;
-    let fabric = AgentConfigurationBackend(client.clone());
-    let configured = fabric.ensure("agent_configuration", &desired).await;
+    let fabric = AgentBackend(client.clone());
+    let configured = fabric.ensure("agent", &desired).await;
     assert!(configured.error().is_none(), "{:?}", configured.error());
     let binding = configured.into_parts().0.unwrap();
     let configures = |calls: &[Vec<String>]| {
@@ -113,7 +109,7 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
     let effects = fixture.state.lock().unwrap().effects;
     let writes = configures(&fixture.state.lock().unwrap().exec_calls);
     fabric
-        .read("agent_configuration", &binding, false)
+        .read("agent", &binding, false)
         .await
         .unwrap()
         .unwrap();
@@ -129,17 +125,12 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
         );
     }
     fixture.state.lock().unwrap().exec_exit = 2;
-    assert!(
-        fabric
-            .read("agent_configuration", &binding, false)
-            .await
-            .is_err()
-    );
+    assert!(fabric.read("agent", &binding, false).await.is_err());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     // An unavailable configuration observation does not prevent owned teardown.
     assert!(
         fabric
-            .read("agent_configuration", &binding, true)
+            .read("agent", &binding, true)
             .await
             .unwrap()
             .is_some()

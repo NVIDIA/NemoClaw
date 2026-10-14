@@ -81,23 +81,32 @@ resource "openshell_sandbox" "agent" {
   }
 }
 variable "model" { default = "first-model" }
-variable "adapter" {
-  type    = any
-  default = "nvidia.fabric.pi"
+variable "mode" { default = "replace" }
+variable "catalog_json" { type = string }
+# The harness the sandbox launches, as data.fabric_harness reports it.
+locals {
+  harness = {
+    type         = "fabric_harness"
+    adapter_id   = "nvidia.fabric.pi"
+    image        = var.image
+    catalog_json = var.catalog_json
+  }
 }
-resource "fabric_agent_configuration" "agent" {
+resource "fabric_agent" "agent" {
   gateway = local.gateway
-  count      = var.enabled ? 1 : 0
-  workspace  = openshell_sandbox.agent[0].ref.workspace
-  name       = openshell_sandbox.agent[0].name
-  owner      = openshell_sandbox.agent[0].owner
-  generation = openshell_sandbox.agent[0].generation
-  sandbox_id = openshell_sandbox.agent[0].id
-  config_json = jsonencode({
-    schema_version = "fabric.agent/v1alpha1"
-    runtime        = {}
-    metadata       = { name = "assistant" }
-    harness        = { adapter_id = var.adapter }
-    models         = { default = { provider = "openai", model = var.model } }
-  })
+  count   = var.enabled ? 1 : 0
+  sandbox = openshell_sandbox.agent[0].ref
+  harness = local.harness
+  name    = "assistant"
+  instructions {
+    system {
+      content = "Answer briefly."
+      mode    = var.mode
+    }
+  }
+  models "default" {
+    provider    = "openai"
+    model       = var.model
+    api_key_env = "NEMOCLAW_ANONYMOUS_API_KEY"
+  }
 }

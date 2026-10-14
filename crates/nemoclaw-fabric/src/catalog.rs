@@ -88,6 +88,19 @@ impl FabricCatalog {
             .expect("generated Fabric catalog must be valid")
     }
 
+    /// The records of one adapter: what an agent using it is planned against.
+    pub fn for_adapter(&self, adapter_id: &str) -> Self {
+        let mut catalog = self.clone();
+        catalog
+            .adapters
+            .retain(|adapter| adapter.adapter_id() == adapter_id);
+        catalog.runtime_files.retain(|id, _| id == adapter_id);
+        if let Some(runtime) = catalog.runtime.as_mut() {
+            runtime.binaries.retain(|id, _| id == adapter_id);
+        }
+        catalog
+    }
+
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         let catalog: Self = serde_json::from_str(json)?;
         let valid_digest = |value: &str, len| {
@@ -147,6 +160,33 @@ pub fn valid_for(runtime: &ImageRuntime, adapters: &[FabricAdapter]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_catalog_for_one_adapter_keeps_only_its_records() {
+        let catalog = FabricCatalog::bundled().for_adapter("nvidia.fabric.pi");
+        assert_eq!(
+            catalog
+                .adapters
+                .iter()
+                .map(FabricAdapter::adapter_id)
+                .collect::<Vec<_>>(),
+            ["nvidia.fabric.pi"]
+        );
+        assert!(
+            catalog
+                .runtime_files
+                .keys()
+                .all(|id| id == "nvidia.fabric.pi")
+        );
+        let encoded = serde_json::to_string(&catalog).unwrap();
+        assert_eq!(FabricCatalog::from_json(&encoded).unwrap(), catalog);
+        assert!(
+            FabricCatalog::bundled()
+                .for_adapter("missing")
+                .adapters
+                .is_empty()
+        );
+    }
 
     #[test]
     fn bundled_catalog_keeps_only_canonical_descriptor_records() {

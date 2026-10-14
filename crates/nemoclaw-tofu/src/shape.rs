@@ -204,7 +204,8 @@ fn shape(root: &Value, schema: &Value, pointer: &str) -> Result<Shape, Unmappabl
         {
             "string"
         }
-        None => return Err(unmappable(pointer, "untyped schema")),
+        // A value the schema leaves open is JSON text, like an open object.
+        None => return Ok(Shape::Json),
     };
     Ok(match kind {
         "string" => Shape::String,
@@ -694,12 +695,14 @@ mod tests {
                 "settings": {"type": "object", "additionalProperties": true},
                 "extensions": {"type": "object"},
                 "closed": {"type": "object", "additionalProperties": false},
+                "anything": {"description": "Any JSON value."},
             },
         });
         let fields = fields(&root, &[]).unwrap();
         assert_eq!(fields["settings"].shape, Shape::Json);
         assert_eq!(fields["extensions"].shape, Shape::Json);
         assert_eq!(fields["closed"].shape, Shape::Object(Fields::new()));
+        assert_eq!(fields["anything"].shape, Shape::Json);
         assert_eq!(attribute_type(&Shape::Json), AttributeType::String);
         let value = json!({"settings": {"budget": 4, "nested": {"on": true}}});
         let hcl = to_hcl(&fields, &value);
@@ -727,7 +730,6 @@ mod tests {
                 json!({"type": "object", "additionalProperties": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}}}}}),
                 "map of object collections",
             ),
-            (json!({}), "untyped schema"),
         ] {
             let root = json!({"type": "object", "properties": {"value": property}});
             assert_eq!(fields(&root, &[]).unwrap_err().reason, reason);

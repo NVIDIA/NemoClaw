@@ -2640,6 +2640,7 @@ dependencies = [
  "nemoclaw-backend",
  "nemoclaw-docker",
  "nemoclaw-openshell",
+ "nemoclaw-tofu",
  "serde",
  "serde_json",
  "sha2 0.11.0",

@@ -161,6 +161,14 @@ pub fn plan_configuration(
     plan_configuration_detailed(catalog, configuration).map_err(|(kind, _)| kind)
 }
 
+/// Why the canonical planner rejects a configuration: a safe field path and
+/// reason, never a rejected value.
+pub fn configuration_rejection(catalog: &FabricCatalog, configuration: Value) -> Option<String> {
+    plan_configuration_detailed(catalog, configuration)
+        .err()
+        .map(|(_, check)| check.reason)
+}
+
 /// A field path or adapter name safe to show in a diagnostic, else `configuration`.
 ///
 /// Field paths are public identifiers, never rejected values or schema prose.

@@ -476,6 +476,18 @@ impl Resource for StructuredAdapter {
                         },
                     );
                 }
+                Shape::ObjectList(fields) => {
+                    schema.block.blocks.insert(
+                        structured.attribute.into(),
+                        NestedBlock::List(block(fields, "")),
+                    );
+                }
+                Shape::ObjectMap(fields) => {
+                    schema.block.blocks.insert(
+                        structured.attribute.into(),
+                        NestedBlock::Map(block(fields, "")),
+                    );
+                }
                 shape => {
                     schema.block.attributes.insert(
                         structured.attribute.into(),
@@ -722,6 +734,29 @@ mod tests {
 
     fn value(json: Json) -> Value<Dynamic> {
         serde_json::from_value(json).unwrap()
+    }
+
+    /// Objects keyed by name are labeled blocks, as in other providers.
+    #[test]
+    fn named_objects_are_labeled_blocks() {
+        let model = fields(
+            &json!({"type": "object", "required": ["model"], "properties": {
+                "model": {"type": "string"}, "temperature": {"type": "number"}
+            }}),
+            &[],
+        )
+        .unwrap();
+        let definition = Definition::new("agent", &["name", "models_json"], &[])
+            .optional(&["models_json"])
+            .structured("models", "models_json", Shape::ObjectMap(model));
+        let schema = StructuredAdapter(ResourceAdapter::new(
+            definition,
+            Arc::new(Recorder::default()),
+        ))
+        .schema(&mut Diagnostics::default())
+        .unwrap();
+        assert!(matches!(schema.block.blocks["models"], NestedBlock::Map(_)));
+        assert!(!schema.block.attributes.contains_key("models"));
     }
 
     /// JSON text carries an open object; its row field holds the object itself.

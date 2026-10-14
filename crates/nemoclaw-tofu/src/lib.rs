@@ -23,6 +23,11 @@ pub type ValidateSpec = fn(kind: &str, encoded: &str) -> Result<(), nemoclaw_bac
 pub type ValidateAttribute =
     fn(attribute: &str, value: &str) -> Result<(), std::borrow::Cow<'static, str>>;
 
+/// Checks inputs that constrain each other: the known ones, and the names of
+/// those still unknown. Explains a rejection without echoing values.
+pub type ValidateInputs =
+    fn(known: &Row, unknown: &[&str]) -> Result<(), std::borrow::Cow<'static, str>>;
+
 /// Generates a value for an omitted identity attribute when a resource is created.
 pub type Generate = fn() -> Result<String, nemoclaw_backend::Error>;
 
@@ -69,6 +74,7 @@ pub struct Definition {
     pub replaces: Option<Replaces>,
     pub validate_spec: Option<ValidateSpec>,
     pub validate_attribute: Option<ValidateAttribute>,
+    pub validate_inputs: Option<ValidateInputs>,
     pub describe: Option<Describe>,
     /// Typed inputs carried as JSON in row fields.
     pub structured: Vec<crate::Structured>,
@@ -100,6 +106,7 @@ impl Definition {
             replaces: None,
             validate_spec: None,
             validate_attribute: None,
+            validate_inputs: None,
             describe: None,
             structured: Vec::new(),
             export: None,
@@ -150,6 +157,10 @@ impl Definition {
     }
     pub fn validate_attribute(mut self, validate: ValidateAttribute) -> Self {
         self.validate_attribute = Some(validate);
+        self
+    }
+    pub fn validate_inputs(mut self, validate: ValidateInputs) -> Self {
+        self.validate_inputs = Some(validate);
         self
     }
     /// Expose row `field`, which holds JSON, as the typed input `attribute`.

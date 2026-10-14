@@ -86,8 +86,7 @@ pub fn gateway_reference() -> Reference {
 /// The inputs of an object kind that take other objects' `ref`s.
 pub fn references(kind: &str) -> Vec<Reference> {
     let mut references = object_references(kind);
-    // Fabric agent configurations reach their sandbox through the gateway too.
-    if !type_name(kind).is_empty() || kind == "agent_configuration" {
+    if !type_name(kind).is_empty() {
         references.insert(0, gateway_reference());
     }
     references
@@ -133,7 +132,7 @@ pub fn flatten(resource_type: &str, values: &mut Value) {
     let Some(object) = values.as_object_mut() else {
         return;
     };
-    if type_name(kind) != resource_type && resource_type != "fabric_agent_configuration" {
+    if type_name(kind) != resource_type {
         return;
     }
     object.remove(nemoclaw_tofu::REF);

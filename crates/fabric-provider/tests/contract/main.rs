@@ -56,6 +56,13 @@ impl Standalone {
         )
         .unwrap();
         variables["endpoint"] = json!(endpoint);
+        // The harness ref carries the catalog records its agents plan against.
+        variables["catalog_json"] = json!(
+            serde_json::to_string(
+                &nemoclaw_fabric::catalog::FabricCatalog::bundled().for_adapter("nvidia.fabric.pi")
+            )
+            .unwrap()
+        );
         fs::write(
             root.path().join("terraform.tfvars.json"),
             variables.to_string(),
@@ -107,7 +114,7 @@ fn every_fabric_type_has_a_contract_test() {
     }
     sources += include_str!("capabilities.rs");
     let used: BTreeSet<&str> = [
-        "fabric_agent_configuration",
+        "fabric_agent",
         "fabric_sandbox_readiness",
         "fabric_harnesses",
     ]
@@ -129,13 +136,17 @@ async fn pi_configuration_updates_without_replacing_the_sandbox() {
             "plan",
             "-input=false",
             "-var=model=PRIVATE_SENTINEL",
-            r#"-var=adapter=["PRIVATE_SENTINEL"]"#,
+            "-var=mode=PRIVATE_SENTINEL",
         ],
         false,
     );
-    let stderr = String::from_utf8_lossy(&rejected.stderr);
-    assert!(stderr.contains("Invalid config_json"), "{stderr}");
-    assert!(stderr.contains("at harness.adapter_id"), "{stderr}");
+    // OpenTofu wraps diagnostic text.
+    let stderr = String::from_utf8_lossy(&rejected.stderr)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(stderr.contains("Invalid configuration"), "{stderr}");
+    assert!(stderr.contains("at instructions.system.mode"), "{stderr}");
     assert!(!stderr.contains("PRIVATE_SENTINEL"), "{stderr}");
     assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
     tofu.run(&["plan", "-input=false"], true);

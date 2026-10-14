@@ -315,7 +315,19 @@ pub struct FabricHarnessState {
 }
 
 /// The type `fabric_harness` refs carry.
-pub const HARNESS_TYPE: &str = "fabric_harness";
+pub use nemoclaw_fabric::agent::HARNESS_TYPE;
+
+/// The image catalog's records for one adapter, which agents are planned against.
+fn adapter_catalog(observation: &Value<String>, adapter_id: &str) -> Option<String> {
+    let Value::Value(observation) = observation else {
+        return None;
+    };
+    let observation: serde_json::Value = serde_json::from_str(observation).ok()?;
+    let catalog =
+        nemoclaw_fabric::catalog::FabricCatalog::from_json(&observation["catalog"].to_string())
+            .ok()?;
+    serde_json::to_string(&catalog.for_adapter(adapter_id)).ok()
+}
 
 impl FabricHarnessState {
     /// The image read `fabric_harnesses` performs for this adapter and agent.
@@ -350,10 +362,15 @@ impl DataSource for FabricHarnessDataSource {
         use AttributeConstraint::{Computed, Optional, Required};
         use AttributeType::{Bool, String};
         let reference = AttributeType::Object(
-            [nemoclaw_tofu::REF_TYPE, "adapter_id", "image"]
-                .into_iter()
-                .map(|name| (name.to_owned(), String))
-                .collect(),
+            [
+                nemoclaw_tofu::REF_TYPE,
+                "adapter_id",
+                "image",
+                "catalog_json",
+            ]
+            .into_iter()
+            .map(|name| (name.to_owned(), String))
+            .collect(),
         );
         Some(Schema {
             version: 0,
@@ -400,17 +417,29 @@ impl DataSource for FabricHarnessDataSource {
         config.available = observed.available;
         config.status = observed.status;
         config.launch_json = observed.launch_json;
-        config.reference = match (&config.adapter_id, &config.image, &config.launch_json) {
-            (Value::Value(adapter), Value::Value(image), Value::Value(_)) => Value::Value(
-                [
-                    (nemoclaw_tofu::REF_TYPE, HARNESS_TYPE),
-                    ("adapter_id", adapter.as_str()),
-                    ("image", image.as_str()),
-                ]
-                .into_iter()
-                .map(|(name, value)| (name.to_owned(), Value::Value(value.to_owned())))
-                .collect(),
-            ),
+        let catalog = match &config.adapter_id {
+            Value::Value(adapter) => adapter_catalog(&config.observation_json, adapter),
+            _ => None,
+        };
+        config.reference = match (
+            &config.adapter_id,
+            &config.image,
+            &config.launch_json,
+            &catalog,
+        ) {
+            (Value::Value(adapter), Value::Value(image), Value::Value(_), Some(catalog)) => {
+                Value::Value(
+                    [
+                        (nemoclaw_tofu::REF_TYPE, HARNESS_TYPE),
+                        ("adapter_id", adapter.as_str()),
+                        ("image", image.as_str()),
+                        ("catalog_json", catalog.as_str()),
+                    ]
+                    .into_iter()
+                    .map(|(name, value)| (name.to_owned(), Value::Value(value.to_owned())))
+                    .collect(),
+                )
+            }
             _ => Value::Unknown,
         };
         // A known image without this adapter's runtime cannot launch it.
@@ -727,6 +756,19 @@ mod tests {
             Value::Value("nvidia.fabric.pi".into())
         );
         assert_eq!(reference["image"], Value::Value(digest.clone()));
+        // Agents using the harness are planned against its catalog records.
+        let Value::Value(catalog) = &reference["catalog_json"] else {
+            panic!("the harness ref carries its catalog")
+        };
+        let catalog = nemoclaw_fabric::catalog::FabricCatalog::from_json(catalog).unwrap();
+        assert_eq!(
+            catalog
+                .adapters
+                .iter()
+                .map(|adapter| adapter.adapter_id())
+                .collect::<Vec<_>>(),
+            ["nvidia.fabric.pi"]
+        );
         // An adapter the image does not install has no launch.
         let mut diagnostics = Diagnostics::default();
         assert!(

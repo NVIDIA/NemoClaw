@@ -3,8 +3,7 @@
 //! The `fabric` provider's configuration, resources, and data sources.
 
 use crate::{
-    AgentConfigurationBackend, FabricCapabilitiesDataSource, FabricHarnessDataSource,
-    SandboxReadinessDataSource,
+    AgentBackend, FabricCapabilitiesDataSource, FabricHarnessDataSource, SandboxReadinessDataSource,
 };
 use async_trait::async_trait;
 use nemoclaw_backend::{Backend, Error, Mutation, ObservationError, Row};
@@ -25,7 +24,7 @@ struct FabricBackend(Arc<GatewayClient>);
 #[async_trait]
 impl Backend for FabricBackend {
     async fn plan(&self, kind: &str, desired: &Row, prior: Option<&Row>) -> Result<(), Error> {
-        AgentConfigurationBackend(self.0.planning_client(desired)?)
+        AgentBackend(self.0.planning_client(desired)?)
             .plan(kind, desired, prior)
             .await
     }
@@ -35,17 +34,13 @@ impl Backend for FabricBackend {
         prior: &Row,
         removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
-        AgentConfigurationBackend(self.0.client_for(prior)?)
+        AgentBackend(self.0.client_for(prior)?)
             .read(kind, prior, removing)
             .await
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
         match self.0.client_for(desired) {
-            Ok(client) => {
-                AgentConfigurationBackend(client)
-                    .ensure(kind, desired)
-                    .await
-            }
+            Ok(client) => AgentBackend(client).ensure(kind, desired).await,
             Err(error) => Mutation::failed(error),
         }
     }
@@ -55,7 +50,7 @@ impl Backend for FabricBackend {
         prior: &Row,
         destroying: bool,
     ) -> Result<(), ObservationError> {
-        AgentConfigurationBackend(self.0.client_for(prior)?)
+        AgentBackend(self.0.client_for(prior)?)
             .remove(kind, prior, destroying)
             .await
     }
