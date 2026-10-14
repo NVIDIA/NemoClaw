@@ -539,9 +539,21 @@ const { onboard } = require(${onboardPath});
         "resume inference persists the canonical sandbox identity before sandbox creation",
       );
       assert.deepEqual(
-        payload.registryUpdates,
-        [],
-        "resume must preserve the published registry route until sandbox backup succeeds",
+        payload.registryUpdates.map(({ name, updates }) => ({
+          name,
+          provider: updates.provider,
+          model: updates.model,
+          endpointUrl: updates.endpointUrl,
+        })),
+        [
+          {
+            name: "hermes-resume",
+            provider: "hermes-provider",
+            model: "moonshotai/kimi-k2.6",
+            endpointUrl: "https://8.8.8.8/v1",
+          },
+        ],
+        "a non-staged Hermes route must keep the registry aligned with the immediate gateway update",
       );
     },
   );
