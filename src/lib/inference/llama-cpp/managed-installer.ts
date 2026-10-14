@@ -58,6 +58,9 @@ const DOCKER_INSPECT_TIMEOUT_MS = 15_000;
 const HISTORIC_WSL_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
 const HISTORIC_WSL_RECIPE_DIGEST =
   "sha256:b1032bb63f7f0772ddc96576219269fe42a086814eca561d1b28d69394dc72e1";
+// Bind the retained native fields separately from the unchanged recorded owner digest.
+const HISTORIC_WSL_NATIVE_FIELDS_DIGEST =
+  "sha256:b95c26fc6299831763be6bbd85b7735229dba91ed91f977fb3af9dff10f6a2ae";
 const HISTORIC_WSL_IMAGE =
   "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675";
 const HISTORIC_WSL_IMAGE_DOWNLOAD_SIZE_BYTES = 1_827_478_485;
@@ -76,7 +79,7 @@ function historicalWslRecipe(recipe: LlamaCppServingRecipe): LlamaCppServingReci
       },
     },
   };
-  return servingCatalogDigest(historical) === HISTORIC_WSL_RECIPE_DIGEST ? historical : null;
+  return servingCatalogDigest(historical) === HISTORIC_WSL_NATIVE_FIELDS_DIGEST ? historical : null;
 }
 
 export interface ManagedLlamaCppInstallOptions {

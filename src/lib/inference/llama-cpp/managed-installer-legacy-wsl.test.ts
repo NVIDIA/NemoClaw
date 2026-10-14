@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostLocalInferenceOperation } from "../../onboard/runtime-provider/host-local-inference";
 import { createDockerRuntimeProviderBundle } from "../../onboard/runtime-provider/docker";
 import { dockerLlamaCppBindingSha256 } from "../../onboard/runtime-provider/docker-llama-cpp-operation";
-import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
+import * as catalogLoader from "../serving/catalog-loader";
 import {
   assertManagedLlamaCppResumeSupported,
   resolveManagedLlamaCppOwnerSelection,
@@ -58,7 +58,7 @@ function managedRuntimeProvider(engine: HostLocalInferenceOperation["engine"]) {
 
 describe("former WSL managed llama.cpp recipe", () => {
   it("rehydrates the former WSL recipe without substituting the new image (#12285)", () => {
-    const catalog = loadManagedInferenceCatalog();
+    const catalog = catalogLoader.loadManagedInferenceCatalog();
     const preset = catalog.presets.find(
       ({ metadata }) => metadata.id === "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b",
     );
@@ -88,10 +88,29 @@ describe("former WSL managed llama.cpp recipe", () => {
         recipeDigest: `sha256:${"0".repeat(64)}`,
       }),
     ).toThrow("Managed llama.cpp recipe authority changed");
+    const changedRecipe = {
+      ...selected.recipe,
+      spec: {
+        ...selected.recipe.spec,
+        serve: {
+          ...selected.recipe.spec.serve,
+          contextSize: selected.recipe.spec.serve.contextSize + 1,
+        },
+      },
+    };
+    vi.spyOn(catalogLoader, "loadManagedInferenceCatalog").mockReturnValue({
+      ...catalog,
+      recipes: catalog.recipes.map((recipe) =>
+        recipe.metadata.id === owner.recipeId ? changedRecipe : recipe,
+      ),
+    });
+    expect(() => resolveManagedLlamaCppOwnerSelection(owner)).toThrow(
+      "Managed llama.cpp recipe authority changed",
+    );
   });
   it("rejects former WSL image resume before Docker effects (#12285)", async () => {
     const homeDir = temporaryHome();
-    const catalog = loadManagedInferenceCatalog();
+    const catalog = catalogLoader.loadManagedInferenceCatalog();
     const preset = catalog.presets.find(
       ({ metadata }) => metadata.id === "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b",
     )!;

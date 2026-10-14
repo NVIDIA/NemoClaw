@@ -190,7 +190,7 @@ describe("managed inference YAML profile contract", () => {
       serve: {
         authentication: "bearer",
         contextSize: 262144,
-        limits: { maxRequestBodyBytes: 1048576 },
+        limits: { requestTimeoutSeconds: 900 },
         batchSize: 2048,
         microBatchSize: 512,
         flashAttention: "enabled",
@@ -245,7 +245,7 @@ describe("managed inference YAML profile contract", () => {
         chatTemplate: "model-embedded-jinja",
         chatTemplateArguments: { reasoningStrength: "low" },
         contextSize: 131072,
-        limits: { maxRequestBodyBytes: 1048576 },
+        limits: { requestTimeoutSeconds: 900 },
         slots: 1,
         speculativeDecoding: "disabled",
       },

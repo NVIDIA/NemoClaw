@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
-import { loadLlamaCppImageConfig } from "../../../scripts/checks/export-llama-cpp-image-config.mts";
 import {
   runLlamaCppDgxSparkProtocolQualification,
   validateMetricsResponse,
@@ -14,90 +12,15 @@ import {
   validateToolResultContinuationResponse,
 } from "../../../scripts/checks/llama-cpp-dgx-spark-protocol-qualification.mts";
 import {
-  LLAMA_CPP_DGX_SPARK_REQUIRED_METRIC_SERIES,
-  parseLlamaCppDgxSparkExecutionPlan,
-} from "../../../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts";
-
-const AUTHORIZATION = `Bearer ${"a".repeat(64)}`;
-const MODEL = "nvidia-nemotron-3-nano-30b-a3b";
-const MODEL_FILE = "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf";
-const METRICS = LLAMA_CPP_DGX_SPARK_REQUIRED_METRIC_SERIES.map(
-  (name, index) => `${name} ${String(index + 1)}`,
-).join("\n");
-
-const config = loadLlamaCppImageConfig();
-const compiledPlan = parseLlamaCppDgxSparkExecutionPlan(
-  JSON.parse(config.publication_qualification_plan) as unknown,
-  config.publication_qualification_plan_sha256,
-);
-const plan = {
-  ...compiledPlan,
-  qualification: {
-    ...compiledPlan.qualification,
-    probeBounds: {
-      ...compiledPlan.qualification.probeBounds,
-      clientTimeoutMilliseconds: 10,
-    },
-  },
-};
-
-function jsonResponse(value: unknown, status = 200): Response {
-  return new Response(JSON.stringify(value), {
-    headers: { "Content-Type": "application/json" },
-    status,
-  });
-}
-
-function completion(content = "ready", usage = true): JsonObject {
-  return {
-    choices: [{ message: { content, role: "assistant" } }],
-    model: MODEL,
-    object: "chat.completion",
-    ...(usage ? { usage: { completion_tokens: 2, prompt_tokens: 5, total_tokens: 7 } } : {}),
-  };
-}
-
-function properties(contextSize = 262144): JsonObject {
-  return {
-    cors_proxy_enabled: false,
-    default_generation_settings: { n_ctx: contextSize },
-    endpoint_metrics: true,
-    endpoint_props: false,
-    endpoint_slots: false,
-    is_sleeping: false,
-    modalities: { audio: false, video: false, vision: false },
-    model_alias: MODEL,
-    model_path: `/models/${MODEL_FILE}`,
-    total_slots: 1,
-    ui: false,
-  };
-}
-
-type JsonObject = Record<string, unknown>;
-
-function hangingStream(
-  signal: AbortSignal | null | undefined,
-  onAbort: () => void = () => undefined,
-): Response {
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode('data: {"started":true}\n\n'));
-      signal?.addEventListener(
-        "abort",
-        () => {
-          onAbort();
-          controller.error(new DOMException("aborted", "AbortError"));
-        },
-        { once: true },
-      );
-    },
-  });
-  return new Response(stream, {
-    headers: { "Content-Type": "text/event-stream" },
-    status: 200,
-  });
-}
-
+  AUTHORIZATION,
+  MODEL,
+  MODEL_FILE,
+  METRICS,
+  plan,
+  completion,
+  properties,
+  createProtocolFixture,
+} from "./llama-cpp-dgx-spark-protocol-qualification.test-support";
 describe("llama.cpp DGX Spark protocol qualification", () => {
   it("accepts SSE keepalives and exact streaming, tool, and context evidence (#8144)", () => {
     const stream = [
@@ -271,194 +194,81 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
     ).rejects.toThrow("declarative byte bound");
   });
 
-  it.each(["stops", "continues", "metrics-fail"] as const)(
-    "requires native generation to stop and aborts failed probes [%s] (#12664)",
-    async (outcome) => {
-      const requestedMaxTokens: number[] = [];
-      let healthProbes = 0;
-      let longRequest = 0;
-      let nativeActive = false;
-      let streamAborted = false;
-      const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-        const url = String(input);
-        switch (url) {
-          case "http://127.0.0.1:18081/health":
-            healthProbes += 1;
-            return new Response("{}", { status: 200 });
-          case "http://127.0.0.1:18081/v1/models":
-            return jsonResponse({ data: [{ id: MODEL }], object: "list" });
-          case "http://127.0.0.1:18081/props":
-            return init?.method === "POST"
-              ? jsonResponse({ error: {} }, 501)
-              : jsonResponse(properties(plan.recipe.serve.contextSize));
-          case "http://127.0.0.1:18081/metrics":
-            if (nativeActive && outcome === "metrics-fail")
-              return new Response("", { status: 503 });
-            return new Headers(init?.headers).get("authorization") === AUTHORIZATION
-              ? new Response(
-                  METRICS.replace(
-                    /^llamacpp:requests_processing .+$/mu,
-                    `llamacpp:requests_processing ${nativeActive ? 1 : 0}`,
-                  ).replace(/^llamacpp:requests_deferred .+$/mu, "llamacpp:requests_deferred 0"),
-                  { headers: { "Content-Type": "text/plain" }, status: 200 },
-                )
-              : jsonResponse({ error: {} }, 401);
-          case "http://127.0.0.1:18081/":
-          case "http://127.0.0.1:18081/models/load":
-            return jsonResponse({ error: {} }, 404);
-          case "http://127.0.0.1:18081/slots":
-            return jsonResponse({ error: {} }, 501);
-          case "http://127.0.0.1:18081/cors-proxy":
-          case "http://127.0.0.1:18081/tools":
-            return jsonResponse({ error: {} }, 403);
-          default:
-            expect(url).toBe("http://127.0.0.1:18081/v1/chat/completions");
-        }
-        const body = String(init?.body ?? "");
-        const authorization = new Headers(init?.headers).get("authorization");
-        switch (true) {
-          case authorization !== AUTHORIZATION:
-            return jsonResponse({ error: {} }, 401);
-          case body === "{":
-            return jsonResponse({ error: {} }, 400);
-        }
+  it("records the complete native protocol inventory after cancellation and deadline recovery (#12664)", async () => {
+    const fixture = createProtocolFixture();
+    const { fetchImpl, requestedMaxTokens } = fixture;
+    const evidence = await runLlamaCppDgxSparkProtocolQualification({
+      authorization: AUTHORIZATION,
+      baseUrl: "http://127.0.0.1:18081",
+      fetchImpl,
+      plan,
+    });
+    expect(evidence).toMatchObject({
+      authentication: { httpStatus: 401, ok: true },
+      cancellation: { aborted: true, ok: true, recovered: true },
+      contextWindow: { contextSize: plan.recipe.serve.contextSize, slots: 1 },
+      disabledSurfaces: {
+        corsProxyHttpStatus: 403,
+        multimodal: false,
+        routerHttpStatus: 404,
+        slotsHttpStatus: 501,
+        toolsHttpStatus: 403,
+        uiHttpStatus: 404,
+      },
+      malformedRequest: { httpStatus: 400, ok: true },
+      metrics: { requiredSeries: 11, unauthenticatedHttpStatus: 401 },
+      properties: { metrics: true, model: MODEL, modelPath: MODEL_FILE },
+      clientTimeout: { limitMilliseconds: 10, recovered: true },
+      streamingChat: { done: true, events: 3, model: MODEL },
+      structuredOutput: { schemaMatched: true },
+      toolCall: { argumentsValid: true, name: "get_current_weather" },
+      toolResultContinuation: { model: MODEL },
+      usage: { completionTokens: 2, promptTokens: 5, totalTokens: 7 },
+    });
+    expect(fixture.longRequest).toBe(2);
+    expect(fixture.healthProbes).toBe(1);
+    expect(requestedMaxTokens).toEqual(
+      expect.arrayContaining([
+        plan.qualification.probeBounds.maxTokens.synchronousChat,
+        plan.qualification.probeBounds.maxTokens.streamingChat,
+        plan.qualification.probeBounds.maxTokens.structuredOutput,
+        plan.qualification.probeBounds.maxTokens.toolCall,
+        plan.qualification.probeBounds.maxTokens.toolResultContinuation,
+        plan.qualification.probeBounds.cancellationMaxTokens,
+      ]),
+    );
+    const serializedEvidence = JSON.stringify(evidence);
+    expect(serializedEvidence).not.toContain(AUTHORIZATION.slice("Bearer ".length));
+    expect(serializedEvidence).not.toContain("Seattle");
+    expect(serializedEvidence).not.toContain("conditions");
+    expect(serializedEvidence).not.toContain("temperature_c");
+  });
 
-        const request = JSON.parse(body) as JsonObject;
-        const maxTokens = Number(request.max_tokens);
-        requestedMaxTokens.push(maxTokens);
-        switch (true) {
-          case maxTokens === plan.qualification.probeBounds.cancellationMaxTokens:
-            longRequest += 1;
-            nativeActive = true;
-            return hangingStream(init?.signal, () => {
-              streamAborted = true;
-              if (outcome !== "continues") nativeActive = false;
-            });
-          case request.stream_options !== undefined:
-            return new Response(
-              [
-                `data: ${JSON.stringify({
-                  choices: [
-                    {
-                      delta: { content: "ready", role: "assistant" },
-                      finish_reason: null,
-                    },
-                  ],
-                  model: MODEL,
-                  object: "chat.completion.chunk",
-                })}`,
-                `data: ${JSON.stringify({
-                  choices: [{ delta: {}, finish_reason: "stop" }],
-                  model: MODEL,
-                  object: "chat.completion.chunk",
-                })}`,
-                `data: ${JSON.stringify({
-                  choices: [],
-                  model: MODEL,
-                  object: "chat.completion.chunk",
-                  usage: {
-                    completion_tokens: 1,
-                    prompt_tokens: 2,
-                    total_tokens: 3,
-                  },
-                })}`,
-                "data: [DONE]",
-                "",
-              ].join("\n"),
-              { headers: { "Content-Type": "text/event-stream" }, status: 200 },
-            );
-          case request.tool_choice === "none":
-            return jsonResponse(completion('{"conditions":"clear","temperature_c":21}', false));
-          case request.response_format !== undefined:
-            return jsonResponse(completion('{"status":"ready"}', false));
-          case request.tool_choice === "required":
-            return jsonResponse({
-              choices: [
-                {
-                  finish_reason: "tool_calls",
-                  message: {
-                    role: "assistant",
-                    tool_calls: [
-                      {
-                        function: {
-                          arguments: '{"location":"Seattle"}',
-                          name: "get_current_weather",
-                        },
-                        id: "call_1",
-                        type: "function",
-                      },
-                    ],
-                  },
-                },
-              ],
-              model: MODEL,
-              object: "chat.completion",
-            });
-          default:
-            return jsonResponse(completion());
-        }
-      }) as unknown as typeof fetch;
-
-      const qualification = runLlamaCppDgxSparkProtocolQualification({
-        authorization: AUTHORIZATION,
-        baseUrl: "http://127.0.0.1:18081",
-        fetchImpl,
-        plan,
-      });
-      if (outcome === "metrics-fail") {
-        await expect(qualification).rejects.toThrow(
-          "native work metrics returned an unexpected status",
-        );
-        expect(streamAborted).toBe(true);
-        return;
-      }
-      if (outcome === "continues") {
-        await expect(qualification).rejects.toThrow(
-          "native generation remained active after cancellation",
-        );
-        return;
-      }
-      const evidence = await qualification;
-
-      expect(evidence).toMatchObject({
-        authentication: { httpStatus: 401, ok: true },
-        cancellation: { aborted: true, ok: true, recovered: true },
-        contextWindow: { contextSize: plan.recipe.serve.contextSize, slots: 1 },
-        disabledSurfaces: {
-          corsProxyHttpStatus: 403,
-          multimodal: false,
-          routerHttpStatus: 404,
-          slotsHttpStatus: 501,
-          toolsHttpStatus: 403,
-          uiHttpStatus: 404,
-        },
-        malformedRequest: { httpStatus: 400, ok: true },
-        metrics: { requiredSeries: 11, unauthenticatedHttpStatus: 401 },
-        properties: { metrics: true, model: MODEL, modelPath: MODEL_FILE },
-        clientTimeout: { limitMilliseconds: 10, recovered: true },
-        streamingChat: { done: true, events: 3, model: MODEL },
-        structuredOutput: { schemaMatched: true },
-        toolCall: { argumentsValid: true, name: "get_current_weather" },
-        toolResultContinuation: { model: MODEL },
-        usage: { completionTokens: 2, promptTokens: 5, totalTokens: 7 },
-      });
-      expect(longRequest).toBe(2);
-      expect(healthProbes).toBe(1);
-      expect(requestedMaxTokens).toEqual(
-        expect.arrayContaining([
-          plan.qualification.probeBounds.maxTokens.synchronousChat,
-          plan.qualification.probeBounds.maxTokens.streamingChat,
-          plan.qualification.probeBounds.maxTokens.structuredOutput,
-          plan.qualification.probeBounds.maxTokens.toolCall,
-          plan.qualification.probeBounds.maxTokens.toolResultContinuation,
-          plan.qualification.probeBounds.cancellationMaxTokens,
-        ]),
-      );
-      const serializedEvidence = JSON.stringify(evidence);
-      expect(serializedEvidence).not.toContain(AUTHORIZATION.slice("Bearer ".length));
-      expect(serializedEvidence).not.toContain("Seattle");
-      expect(serializedEvidence).not.toContain("conditions");
-      expect(serializedEvidence).not.toContain("temperature_c");
+  it.each([
+    {
+      outcome: "continues" as const,
+      message: "native generation remained active after cancellation",
+      nativeActive: true,
+    },
+    {
+      outcome: "metrics-fail" as const,
+      message: "native work metrics returned an unexpected status",
+      nativeActive: false,
+    },
+  ])(
+    "rejects incomplete native cancellation evidence and aborts its stream [$outcome] (#12664)",
+    async ({ outcome, message, nativeActive }) => {
+      const fixture = createProtocolFixture(outcome);
+      await expect(
+        runLlamaCppDgxSparkProtocolQualification({
+          authorization: AUTHORIZATION,
+          baseUrl: "http://127.0.0.1:18081",
+          fetchImpl: fixture.fetchImpl,
+          plan,
+        }),
+      ).rejects.toThrow(message);
+      expect(fixture.streamAborted).toBe(true);
+      expect(fixture.nativeActive).toBe(nativeActive);
     },
   );
 });
