@@ -389,6 +389,7 @@
     {
       "live": "test/e2e/live/onboard-repair.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/gateway-providers.ts",
         "test/e2e/fixtures/podman-owner-diagnostic.ts",
         "test/e2e/fixtures/podman-owner-snapshot.ts",
         "test/e2e/fixtures/onboard-precleanup.ts",
@@ -396,6 +397,7 @@
         "test/e2e/fixtures/sandbox-failure-diagnostics.ts"
       ],
       "fast": [
+        "test/e2e/support/gateway-extra-provider-profile.test.ts",
         "test/e2e/support/podman-owner-diagnostic.test.ts",
         "test/e2e/support/podman-owner-snapshot.test.ts",
         "test/e2e/support/onboard-precleanup.test.ts",
@@ -417,6 +419,7 @@
     {
       "live": "test/e2e/live/onboard-resume.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/gateway-providers.ts",
         "test/e2e/fixtures/podman-owner-diagnostic.ts",
         "test/e2e/fixtures/podman-owner-snapshot.ts",
         "test/e2e/fixtures/onboard-precleanup.ts",
@@ -424,6 +427,7 @@
         "test/e2e/fixtures/sandbox-failure-diagnostics.ts"
       ],
       "fast": [
+        "test/e2e/support/gateway-extra-provider-profile.test.ts",
         "test/e2e/support/podman-owner-diagnostic.test.ts",
         "test/e2e/support/podman-owner-snapshot.test.ts",
         "test/e2e/support/onboard-precleanup.test.ts",

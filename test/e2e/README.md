@@ -2221,29 +2221,37 @@ The explicit `dgx-station-express` target runs the local Station Express install
 
 `live/inference-routing-provider-smoke.test.ts` owns credential-backed native inference smoke tests.
 Select `openai`, `anthropic`, `gemini`, `openrouter`, or `hermes` with
-`NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE`; `all` selects all five.
+`NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE`. Selecting `openrouter` runs both
+OpenRouter agent cases; `all` runs all six cases.
 Use an approved disposable environment and credentials from its approved source.
 These tests are outside the credential-free `inference-routing` PR lane.
 A skipped provider is missing qualification evidence.
 
 OpenAI, Anthropic, Gemini, and OpenRouter onboard OpenClaw and start a fresh agent process.
 Hermes Provider onboards Hermes and submits a fresh request to its managed API.
-Each case checks the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer.
-Before the request, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
+The `hosted-inference-openrouter` target also onboards Deep Agents Code with the same
+OpenRouter key and model. Its six-assertion case checks onboarding, credential isolation,
+the native TOML route, and one fresh `dcode -n --json` response.
+The five existing cases check the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer.
+Before each of those requests, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
 for a salted fingerprint of the selected credential. Only the fingerprint enters the probe; reports contain
 booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
 The sample inspects up to 200 files smaller than 1 MiB, taking the first 64 KiB of each readable file.
 This is not an exhaustive filesystem scan. The scan checks only sandbox environment variables, process arguments, and sampled files.
 It does not prove credential isolation in host processes or upstream requests.
 Separate smoke assertions check native configuration and require a fresh, nonempty provider response.
+The Deep Agents Code case uses the same bounded credential scan before checking its generated
+provider route and a fresh, nonempty JSON response. Deterministic tests own its resolver handle
+rejection and credential binding.
 Deterministic tests own protocol/header construction, ownership collisions,
 sandbox isolation, restart, and failed-operation recovery.
 
 Each selected case requires its matching approved model variable, listed below. The smoke does not select a default model.
 The Hermes smoke uses `NOUS_API_KEY`. It does not prove interactive OAuth login or token refresh.
 Credentials remain in the test host environment and OpenShell provider store; artifacts redact them.
-The existing cleanup helper destroys each test sandbox. After successful onboarding, strict cleanup checks sandbox absence only.
-Failed onboarding uses best-effort cleanup. Neither path proves removal of credentials from the OpenShell provider store.
+The cleanup helper destroys each test sandbox. The Deep Agents Code case checks sandbox absence even if onboarding fails.
+Other hosted cases check absence after successful onboarding; failed onboarding uses best-effort cleanup.
+Neither path proves removal of credentials from the OpenShell provider store.
 Discard the approved disposable gateway after each run, including failed onboarding. Use a fresh gateway for a retry.
 
 Select one explicit target with `targets=hosted-inference-openai`, `hosted-inference-anthropic`,

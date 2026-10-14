@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+id: nemoclaw-e2e-extra-provider-v1
+display_name: NemoClaw E2E Extra Provider
+description: Endpointless credential for onboarding repair and resume tests
+category: agent
+credentials:
+  - name: fixture_token
+    description: Synthetic E2E extra-provider token
+    env_vars:
+      - NEMOCLAW_E2E_EXTRA_PROVIDER_TOKEN
+    required: true
+    auth_style: header
+    header_name: Authorization
+    query_param: ''
+endpoints: []
+binaries: []
+inference_capable: false
