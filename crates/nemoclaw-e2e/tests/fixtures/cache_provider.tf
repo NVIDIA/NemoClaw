@@ -22,7 +22,7 @@ resource "docker_volume" "cache" {
   }
   lifecycle { prevent_destroy = true }
 }
-resource "nemoclaw_inference_storage" "credentials" {
+resource "vllm_credential_storage" "credentials" {
   name       = "${var.name}-auth"
   owner      = var.owner
   generation = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -58,5 +58,5 @@ resource "docker_container" "runtime" {
     source = "${var.name}-auth"
     target = "/credentials"
   }
-  depends_on = [nemoclaw_inference_storage.credentials]
+  depends_on = [vllm_credential_storage.credentials]
 }

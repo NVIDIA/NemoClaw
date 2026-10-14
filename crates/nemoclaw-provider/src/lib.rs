@@ -19,7 +19,7 @@ mod provider;
 mod readiness;
 mod runtime_contract;
 mod runtime_image;
-pub use provider::{GatewayInstallation, NemoClawProvider};
+pub use provider::{GatewayInstallation, NemoClawProvider, ServiceProvider};
 
 /// The definition this crate implements for a resource kind, whichever
 /// provider serves it.

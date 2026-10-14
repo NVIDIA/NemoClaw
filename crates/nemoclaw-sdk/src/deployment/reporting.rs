@@ -281,7 +281,9 @@ impl Plan {
                     result
                         .entry(name)
                         .or_insert_with(|| resource["values"]["observation_json"].clone());
-                } else if let Some(name) = address.strip_prefix("data.nemoclaw_service_readiness.")
+                } else if let Some(name) = crate::services::provider_types::READINESS_TYPES
+                    .iter()
+                    .find_map(|(_, source)| address.strip_prefix(&format!("data.{source}.")))
                 {
                     result.insert(
                         format!("service_{name}"),

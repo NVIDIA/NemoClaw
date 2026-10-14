@@ -13,7 +13,8 @@ use tf_provider::{
     value::{Value, ValueEmpty},
 };
 
-pub(crate) struct ReadinessDataSource(pub Arc<ConfiguredBackend>);
+/// Data source for one runtime's service readiness.
+pub(crate) struct ReadinessDataSource(pub Arc<ConfiguredBackend>, pub services::ServiceRuntime);
 #[derive(Default, Serialize, Deserialize)]
 pub(crate) struct ReadinessState {
     engine: Value<String>,
@@ -25,7 +26,10 @@ pub(crate) struct ReadinessState {
     ready: Value<bool>,
 }
 /// The readiness inputs, or `None` while any is unknown.
-fn readiness(config: &ReadinessState) -> Result<Option<services::Readiness>, Error> {
+fn readiness(
+    config: &ReadinessState,
+    runtime: services::ServiceRuntime,
+) -> Result<Option<services::Readiness>, Error> {
     let mut known = Vec::new();
     for (value, required) in [
         (&config.engine, "service readiness engine is required"),
@@ -39,12 +43,15 @@ fn readiness(config: &ReadinessState) -> Result<Option<services::Readiness>, Err
         }
     }
     match known[..] {
-        [engine, name, contract] => services::Readiness::new(engine, name, contract).map(Some),
+        [engine, name, contract] => {
+            runtime.check(contract)?;
+            services::Readiness::new(engine, name, contract).map(Some)
+        }
         _ => Ok(None),
     }
 }
-fn validate(config: &ReadinessState) -> Result<(), Error> {
-    readiness(config)?;
+fn validate(config: &ReadinessState, runtime: services::ServiceRuntime) -> Result<(), Error> {
+    readiness(config, runtime)?;
     if matches!(&config.container_id, Value::Null)
         || matches!(&config.container_id, Value::Value(id) if id.is_empty())
     {
@@ -95,7 +102,7 @@ impl DataSource for ReadinessDataSource {
         })
     }
     async fn validate<'a>(&self, diags: &mut Diagnostics, config: ReadinessState) -> Option<()> {
-        match validate(&config) {
+        match validate(&config, self.1) {
             Ok(()) => Some(()),
             Err(error) => {
                 diags.root_error("Invalid service readiness requirements", error.to_string());
@@ -110,8 +117,9 @@ impl DataSource for ReadinessDataSource {
         _: ValueEmpty,
     ) -> Option<ReadinessState> {
         let work = async {
-            validate(&config)?;
-            let (Some(readiness), Value::Value(id)) = (readiness(&config)?, &config.container_id)
+            validate(&config, self.1)?;
+            let (Some(readiness), Value::Value(id)) =
+                (readiness(&config, self.1)?, &config.container_id)
             else {
                 return Err(Error::State("service readiness identity is not yet known"));
             };
@@ -153,9 +161,55 @@ impl DataSource for ReadinessDataSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each runtime's readiness reads only that runtime's contracts, and says
+    /// which runtime a mismatched contract belongs to without echoing it.
+    #[tokio::test]
+    async fn readiness_rejects_another_runtimes_contract() {
+        use services::ServiceRuntime::{Ollama, OllamaProxy, Vllm};
+        for (runtime, contract, expected) in [
+            (
+                Ollama,
+                r#"{"kind":"vllm","PRIVATE_SENTINEL":1}"#,
+                "a vLLM contract",
+            ),
+            (
+                Vllm,
+                r#"{"kind":"ollama","PRIVATE_SENTINEL":1}"#,
+                "an Ollama contract",
+            ),
+            (
+                Vllm,
+                r#"{"upstream":"PRIVATE_SENTINEL"}"#,
+                "an Ollama proxy contract",
+            ),
+            (
+                OllamaProxy,
+                r#"{"kind":"ollama","PRIVATE_SENTINEL":1}"#,
+                "an Ollama contract",
+            ),
+        ] {
+            let source = ReadinessDataSource(Arc::new(ConfiguredBackend::default()), runtime);
+            let mut diags = Diagnostics::default();
+            let state = ReadinessState {
+                engine: Value::Value("unix:///var/run/docker.sock".into()),
+                name: Value::Value("qwen".into()),
+                contract: Value::Value(contract.into()),
+                container_id: Value::Unknown,
+                ..Default::default()
+            };
+            assert!(source.validate(&mut diags, state).await.is_none());
+            let message = format!("{diags:?}");
+            assert!(message.contains(expected), "{message}");
+            assert!(!message.contains("PRIVATE_SENTINEL"), "{message}");
+        }
+    }
     #[tokio::test]
     async fn readiness_validates_offline_and_defers_unknowns_without_echoing_inputs() {
-        let source = ReadinessDataSource(Arc::new(ConfiguredBackend::default()));
+        let source = ReadinessDataSource(
+            Arc::new(ConfiguredBackend::default()),
+            services::ServiceRuntime::Vllm,
+        );
         for (contract, id, timeout, valid) in [
             (Value::Unknown, Value::Unknown, Value::Unknown, true),
             (

@@ -163,7 +163,7 @@ mod tests {
             .into_iter()
             .filter(|address| {
                 address.starts_with("docker_volume.")
-                    || address.starts_with("nemoclaw_inference_storage.")
+                    || address.starts_with("vllm_credential_storage.")
                     || address == "openshell_gateway_storage.runtime"
             })
             .collect();

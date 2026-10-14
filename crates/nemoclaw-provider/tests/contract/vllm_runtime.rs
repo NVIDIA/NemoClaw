@@ -39,13 +39,13 @@ impl Workspace {
         Self::with(
             engine,
             &format!(
-                r#"data "nemoclaw_{source}" "qwen" {{
+                r#"data "{source}" "qwen" {{
 {settings}}}
 
 resource "docker_container" "qwen" {{
   name       = "qwen"
   image      = "runtime@sha256:{digest}"
-  env        = ["{variable}=${{data.nemoclaw_{source}.qwen.spec}}"]
+  env        = ["{variable}=${{data.{source}.qwen.spec}}"]
 }}
 "#,
                 digest = "a".repeat(64),
@@ -80,11 +80,15 @@ resource "docker_container" "qwen" {{
                 r#"terraform {{
   required_providers {{
     nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw", version = "= {version}" }}
+    vllm     = {{ source = "registry.opentofu.org/nvidia/vllm", version = "= {version}" }}
+    ollama   = {{ source = "registry.opentofu.org/nvidia/ollama", version = "= {version}" }}
     docker   = {{ source = "registry.opentofu.org/kreuzwerker/docker", version = "= 4.6.0" }}
   }}
 }}
 
 provider "nemoclaw" {{}}
+provider "vllm" {{}}
+provider "ollama" {{}}
 
 provider "docker" {{
   host = "{engine}"

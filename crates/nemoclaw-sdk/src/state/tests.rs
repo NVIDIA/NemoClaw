@@ -66,8 +66,10 @@ fn legacy_intent_is_rejected_without_rewriting_recovery_state() {
     .unwrap();
     let mut record = Record::new(document).unwrap();
     // Version 10 records bind fabric_agent_configuration resources, which no
-    // provider serves since typed Fabric agents.
-    for version in [6, 10] {
+    // provider serves since typed Fabric agents; version 11 records bind
+    // nemoclaw_inference_storage and nemoclaw_ollama_proxy_storage, which moved
+    // to the vllm and ollama providers.
+    for version in [6, 10, 11] {
         record.version = version;
         let bytes = serde_json::to_vec(&record).unwrap();
         let path = dir.path().join("intent.json");
@@ -720,7 +722,7 @@ fn typed_storage_bindings_compare_their_complete_identity() {
         "generation":"b".repeat(32),
         "engine":"unix:///var/run/docker.sock",
     });
-    let address = "nemoclaw_inference_storage.inference_qwen_auth";
+    let address = "vllm_credential_storage.inference_qwen_auth";
     let bindings = read(&state(serde_json::json!([
         {"address":address, "mode":"managed", "values":values}
     ])))

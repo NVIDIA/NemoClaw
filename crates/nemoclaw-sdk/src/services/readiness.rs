@@ -13,14 +13,17 @@ pub(crate) fn configure_proxy_readiness(
     {
         let container = crate::docker_compute::address(&target.address);
         let logical = container.split_once('.').unwrap().1;
-        let address = format!("data.nemoclaw_service_readiness.{logical}");
+        let readiness = super::provider_types::readiness_type(ollama::proxy::PROXY)
+            .expect("the proxy has readiness");
+        let address = format!("data.{readiness}.{logical}");
+        let source = crate::compile::data_source_type(ollama::proxy::RUNTIME_DATA_SOURCE);
         let proxy = ollama::proxy::row_spec(&target.values)?;
         let literal = |value: &str| value.replace("${", "$${").replace("%{", "%%{");
         // Readiness checks the contract the container runs with.
-        graph["data"]["nemoclaw_service_readiness"][logical] = json!({
+        graph["data"][readiness][logical] = json!({
             "engine":literal(&target.values["engine"]),
             "name":literal(&proxy.name),
-            "contract":format!("${{data.nemoclaw_{}.{logical}.spec}}", ollama::proxy::RUNTIME_DATA_SOURCE),
+            "contract":format!("${{data.{source}.{logical}.spec}}"),
             "container_id":format!("${{{container}.id}}"),
             "read_trigger":"${timestamp() != \"\"}", "wait_timeout_seconds":30
         });

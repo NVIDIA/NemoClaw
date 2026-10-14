@@ -113,7 +113,7 @@ pub fn targets(
             }
             Target {
                 kind: kind.into(),
-                address: format!("nemoclaw_{kind}.{service_name}"),
+                address: format!("{}.{service_name}", crate::compile::resource_type(kind)),
                 values,
             }
         })

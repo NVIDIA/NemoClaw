@@ -26,8 +26,8 @@ pub struct TofuWorkspace {
 
 impl TofuWorkspace {
     /// A workspace whose OpenTofu is the bundle's and uses the `nemoclaw`
-    /// provider at `nemoclaw` and the bundle's `openshell` and `fabric`
-    /// providers.
+    /// provider at `nemoclaw` and the bundle's other NVIDIA providers, so
+    /// compiled graphs find every provider they require.
     pub fn new(bundle: &Bundle, nemoclaw: impl AsRef<Path>) -> Self {
         Self::with_providers(
             bundle.tofu(),
@@ -35,6 +35,8 @@ impl TofuWorkspace {
                 ("nemoclaw", nemoclaw.as_ref()),
                 ("openshell", &bundle.provider("openshell")),
                 ("fabric", &bundle.provider("fabric")),
+                ("vllm", &bundle.provider("vllm")),
+                ("ollama", &bundle.provider("ollama")),
             ],
         )
     }

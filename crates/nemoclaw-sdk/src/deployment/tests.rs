@@ -825,7 +825,7 @@ fn runtime_plans_accept_only_declared_local_image_observations_and_teardown_dele
             valid
         );
     }
-    let foreign = "data.nemoclaw_service_capacity.undeclared";
+    let foreign = "data.vllm_capacity.undeclared";
     for (address, valid) in [(address.as_str(), true), (foreign, false)] {
         let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"mode":"data", "address":address, "change":{"actions":["delete"]}}]})).unwrap();
         assert_eq!(
@@ -857,7 +857,7 @@ fn disposable_docker_compute_reconciles_while_durable_storage_does_not_recreate(
         let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"address":compute,"change":{"actions":actions,"before":{"id":"old-container"}}}]})).unwrap();
         assert_eq!(check_plan(&plan, &allowed, &bound).unwrap().len(), 1);
     }
-    let storage = "nemoclaw_inference_storage.model";
+    let storage = "vllm_credential_storage.model";
     let allowed = [(storage.into(), Row::new())].into();
     let bound = [(
         storage.into(),
@@ -1031,10 +1031,7 @@ fn replacement_cleanup_reports_opentofu_objects_within_deployment_scope() {
         .is_empty()
     );
     assert!(check_plan(&plan(json!([current])), &allowed, &bindings).is_ok());
-    for durable in [
-        "docker_volume.cache",
-        "nemoclaw_inference_storage.credentials",
-    ] {
+    for durable in ["docker_volume.cache", "vllm_credential_storage.credentials"] {
         let bound = BTreeMap::from([(durable.into(), bindings[address].clone())]);
         let mut forbidden = old.clone();
         forbidden["address"] = json!(durable);

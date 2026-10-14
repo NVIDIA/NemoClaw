@@ -416,7 +416,7 @@ async fn removing_the_last_runtime_cannot_orphan_retained_state() {
     let stage = directory.path().join("runtime");
     fs::create_dir(&stage).unwrap();
     let state = stage.join("terraform.tfstate");
-    let bytes = serde_json::to_vec(&json!({"resources":[{"type":"nemoclaw_inference_storage","name":"model","instances":[{"attributes":{"id":"daemon/volume/created","spec":"retained"}}]}]})).unwrap();
+    let bytes = serde_json::to_vec(&json!({"resources":[{"type":"vllm_credential_storage","name":"model","instances":[{"attributes":{"id":"daemon/volume/created","spec":"retained"}}]}]})).unwrap();
     fs::write(&state, &bytes).unwrap();
     let (document, _) = context();
     let mut record = Record::new(document).unwrap();

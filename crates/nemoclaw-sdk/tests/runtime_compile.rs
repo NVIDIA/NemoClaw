@@ -237,7 +237,10 @@ fn multiple_services_share_image_acquisition_without_custom_capacity_gates() {
     .map(|kind| (kind.into(), "b".repeat(32)))
     .into();
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    assert!(graph["data"].get("nemoclaw_service_capacity").is_none());
+    assert!(
+        graph["data"].get("vllm_capacity").is_none()
+            && graph["data"].get("ollama_capacity").is_none()
+    );
     assert!(
         graph["data"].get("fabric_agent_readiness").is_none(),
         "the runtime graph cannot observe sandboxes owned by the deployment graph"
@@ -500,7 +503,10 @@ fn docker_provider_owns_disposable_compute_and_image_acquisition() {
             .unwrap()
             .starts_with("${docker_image.")
     );
-    assert!(graph["data"].get("nemoclaw_service_capacity").is_none());
+    assert!(
+        graph["data"].get("vllm_capacity").is_none()
+            && graph["data"].get("ollama_capacity").is_none()
+    );
     assert!(container.get("lifecycle").is_none());
     let targets = runtime_targets(&document, &generations).unwrap();
     assert!(targets.iter().any(|target| target.address
@@ -523,8 +529,7 @@ fn service_readiness_follows_provider_identity_and_is_fresh_on_unchanged_apply()
     .map(|kind| (kind.into(), "a".repeat(32)))
     .into();
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    let readiness =
-        &graph["data"]["nemoclaw_service_readiness"]["inference_service_inference_qwen"];
+    let readiness = &graph["data"]["vllm_readiness"]["inference_service_inference_qwen"];
     assert_eq!(
         readiness["container_id"],
         "${docker_container.inference_service_inference_qwen.id}"
@@ -532,7 +537,7 @@ fn service_readiness_follows_provider_identity_and_is_fresh_on_unchanged_apply()
     assert_eq!(readiness["read_trigger"], "${timestamp() != \"\"}");
     assert_eq!(
         readiness["contract"],
-        "${data.nemoclaw_vllm_runtime.inference_service_inference_qwen.spec}"
+        "${data.vllm_runtime.inference_service_inference_qwen.spec}"
     );
     let container = &graph["resource"]["docker_container"]["inference_service_inference_qwen"];
     assert_eq!(readiness["name"], container["name"]);

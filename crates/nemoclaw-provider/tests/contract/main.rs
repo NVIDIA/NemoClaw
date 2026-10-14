@@ -37,10 +37,27 @@ pub fn provider() -> std::path::PathBuf {
     nemoclaw_test_fixtures::package_executable!("terraform-provider-nemoclaw")
 }
 
-/// A workspace with the provider under test, and OpenTofu and the openshell
-/// and fabric providers from the bundle.
+/// A workspace with this package's providers under test (nemoclaw, vllm,
+/// and ollama), and OpenTofu and the openshell and fabric providers from the
+/// bundle.
 pub fn workspace() -> tofu::TofuWorkspace {
-    tofu::TofuWorkspace::new(&nemoclaw_test_fixtures::Bundle::from_env(), provider())
+    let bundle = nemoclaw_test_fixtures::Bundle::from_env();
+    tofu::TofuWorkspace::with_providers(
+        bundle.tofu(),
+        &[
+            ("nemoclaw", &provider()),
+            (
+                "vllm",
+                &nemoclaw_test_fixtures::package_executable!("terraform-provider-vllm"),
+            ),
+            (
+                "ollama",
+                &nemoclaw_test_fixtures::package_executable!("terraform-provider-ollama"),
+            ),
+            ("openshell", &bundle.provider("openshell")),
+            ("fabric", &bundle.provider("fabric")),
+        ],
+    )
 }
 
 /// Failed apply may record new data-source observations and condition
@@ -68,18 +85,29 @@ const ELSEWHERE: [(&str, &str); 0] = [];
 #[test]
 fn every_type_has_a_contract_test() {
     use tf_provider::Provider;
-    let provider = nemoclaw_provider::NemoClawProvider::default();
-    let mut diagnostics = tf_provider::Diagnostics::default();
-    let types: Vec<String> = provider
-        .get_resources(&mut diagnostics)
-        .unwrap()
-        .into_keys()
-        .chain(
-            provider
-                .get_data_sources(&mut diagnostics)
-                .unwrap()
-                .into_keys(),
-        )
+    fn served(prefix: &str, provider: impl Provider) -> Vec<String> {
+        let mut diagnostics = tf_provider::Diagnostics::default();
+        provider
+            .get_resources(&mut diagnostics)
+            .unwrap()
+            .into_keys()
+            .chain(
+                provider
+                    .get_data_sources(&mut diagnostics)
+                    .unwrap()
+                    .into_keys(),
+            )
+            .map(|name| format!("{prefix}_{name}"))
+            .collect()
+    }
+    // Every type this package's providers serve, by full type name.
+    let types: Vec<String> = served("nemoclaw", nemoclaw_provider::NemoClawProvider::default())
+        .into_iter()
+        .chain(served("vllm", nemoclaw_provider::ServiceProvider::vllm()))
+        .chain(served(
+            "ollama",
+            nemoclaw_provider::ServiceProvider::ollama(),
+        ))
         .collect();
     let sources = [
         include_str!("discovery.rs"),
@@ -94,10 +122,11 @@ fn every_type_has_a_contract_test() {
     .concat();
     let missing: Vec<_> = types
         .iter()
-        .filter(|kind| {
-            !sources.contains(&format!("nemoclaw_{kind}"))
+        .filter(|name| {
+            let kind = name.strip_prefix("nemoclaw_").unwrap_or(name);
+            !sources.contains(name.as_str())
                 && !sources.contains(&format!("\"{kind}\""))
-                && !ELSEWHERE.iter().any(|(elsewhere, _)| elsewhere == kind)
+                && !ELSEWHERE.iter().any(|(elsewhere, _)| *elsewhere == kind)
         })
         .collect();
     for (kind, _) in ELSEWHERE {

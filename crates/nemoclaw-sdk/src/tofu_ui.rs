@@ -74,8 +74,11 @@ impl Ui {
             Some("docker_image") => "image",
             Some("docker_volume") => "volume",
             Some("docker_network") => "network",
-            Some(kind) => crate::services::resource_label(nemoclaw_openshell::object_kind(kind))
-                .unwrap_or("resource"),
+            Some(kind) => crate::services::resource_label(
+                crate::services::provider_types::runtime_kind(kind)
+                    .unwrap_or_else(|| nemoclaw_openshell::object_kind(kind)),
+            )
+            .unwrap_or("resource"),
             None => return,
         };
         let action = if value["type"]

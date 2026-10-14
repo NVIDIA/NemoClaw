@@ -15,13 +15,16 @@ pub const PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/nemoclaw";
 pub const OPENSHELL_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/openshell";
 /// Registry address of the provider that configures Fabric agents in sandboxes.
 pub const FABRIC_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/fabric";
+pub const VLLM_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/vllm";
+pub const OLLAMA_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/ollama";
 /// This repository's providers; each takes `destroy`.
-pub const NEMOCLAW_PROVIDERS: [&str; 3] = ["nemoclaw", "openshell", "fabric"];
+pub const NEMOCLAW_PROVIDERS: [&str; 5] = ["nemoclaw", "openshell", "fabric", "vllm", "ollama"];
 
 /// The OpenTofu resource type that reconciles a resource kind.
 pub fn resource_type(kind: &str) -> String {
     nemoclaw_openshell::resource_type(kind)
         .or_else(|| nemoclaw_openshell::installation_type(kind))
+        .or_else(|| crate::services::provider_types::runtime_type(kind).map(str::to_owned))
         .unwrap_or_else(|| match kind {
             "agent" => nemoclaw_fabric::agent::RESOURCE_TYPE.to_owned(),
             _ => format!("nemoclaw_{kind}"),
@@ -30,7 +33,9 @@ pub fn resource_type(kind: &str) -> String {
 
 /// The OpenTofu data source type for a data source kind.
 pub fn data_source_type(kind: &str) -> String {
-    nemoclaw_openshell::installation_type(kind).unwrap_or_else(|| format!("nemoclaw_{kind}"))
+    nemoclaw_openshell::installation_type(kind)
+        .or_else(|| crate::services::provider_types::runtime_type(kind).map(str::to_owned))
+        .unwrap_or_else(|| format!("nemoclaw_{kind}"))
 }
 pub use crate::artifact_pins::OPENTOFU_VERSION;
 pub type Generations = BTreeMap<String, String>;
@@ -440,11 +445,13 @@ fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> 
         "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{
             "nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")},
             "openshell":{"source":OPENSHELL_PROVIDER_ADDRESS,"version":format!("= {version}")},
-            "fabric":{"source":FABRIC_PROVIDER_ADDRESS,"version":format!("= {version}")}
+            "fabric":{"source":FABRIC_PROVIDER_ADDRESS,"version":format!("= {version}")},
+            "vllm":{"source":VLLM_PROVIDER_ADDRESS,"version":format!("= {version}")},
+            "ollama":{"source":OLLAMA_PROVIDER_ADDRESS,"version":format!("= {version}")}
         }},
-        // The nemoclaw provider reaches engines and clusters named on each
-        // resource; only the gateway providers take the connection.
-        "provider":{"nemoclaw":{},"openshell":{},"fabric":{}}, "resource":{},
+        // Each provider reaches the engines, clusters, and gateways named on
+        // its resources; providers take only `destroy`.
+        "provider":{"nemoclaw":{},"openshell":{},"fabric":{},"vllm":{},"ollama":{}}, "resource":{},
         "data":{"openshell_gateway":{"current":gateway_data(&connection, json!(drivers))}}
     });
     crate::discovery_graph::populate(&mut graph, document)?;

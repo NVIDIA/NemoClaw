@@ -96,11 +96,9 @@ fn runtime_preserves_literal_recipe_environment_without_copying_it_into_credenti
     assert!(!credential.contains("VLLM_LITERAL"));
     assert_eq!(
         runtime["resource"]["docker_container"]["inference_service_inference_qwen"]["env"],
-        json!([
-            "NEMOCLAW_RUNTIME_SPEC=${data.nemoclaw_vllm_runtime.inference_service_inference_qwen.spec}"
-        ])
+        json!(["NEMOCLAW_RUNTIME_SPEC=${data.vllm_runtime.inference_service_inference_qwen.spec}"])
     );
-    let settings = &runtime["data"]["nemoclaw_vllm_runtime"]["inference_service_inference_qwen"];
+    let settings = &runtime["data"]["vllm_runtime"]["inference_service_inference_qwen"];
     assert_eq!(
         settings["recipe"]["serving"]["environment"]["VLLM_LITERAL"],
         "$${literal.value} %%{if untouched}"

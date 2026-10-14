@@ -58,7 +58,7 @@ Its modules run the `nemoclaw` types against fake Docker engines, gateways, mode
 | Module | Checks |
 |---|---|
 | `provider_protocol` | The fixture provider from `nemoclaw-fixture-provider`, and on Unix the provider against a fake Docker API: network and image planning, including prerequisite changes before saved-plan application |
-| `service_capacity` | Combined service capacity through an isolated SSH simulator: shared-host overcommit, deferred reads, state kept after failed observations, and cleanup without capacity checks |
+| `service_capacity` | `vllm_capacity` through an isolated SSH simulator (shared-host overcommit, deferred reads, state kept after failed observations, and cleanup without capacity checks), and Ollama readiness and capacity rejecting a vLLM contract |
 | `service_readiness` | Standalone service readiness; see [below](#standalone-service-readiness) |
 | `service_storage`, `gateway_storage` | Retained service storage and, on Unix, Docker gateway storage against a fake engine |
 | `gateway_readiness` | Managed-gateway exit diagnostics, bootstrap state kept after failure, corrected retry, unchanged-apply rechecks, and teardown without the readiness data source |

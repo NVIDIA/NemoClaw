@@ -258,17 +258,17 @@ mod tests {
         for (kind, data, yaml) in [
             (
                 "inference_service",
-                "nemoclaw_vllm_runtime",
+                "vllm_runtime",
                 include_str!("../../../examples/spark/vllm.yaml"),
             ),
             (
                 "inference_service",
-                "nemoclaw_vllm_runtime",
+                "vllm_runtime",
                 include_str!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml"),
             ),
             (
                 "ollama_service",
-                "nemoclaw_ollama_runtime",
+                "ollama_runtime",
                 include_str!("../../../examples/managed-ollama.yaml"),
             ),
         ] {

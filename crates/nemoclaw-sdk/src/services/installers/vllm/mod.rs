@@ -63,7 +63,7 @@ pub(crate) fn service_address(name: &str) -> String {
 }
 
 fn address(kind: &str, name: &str) -> String {
-    format!("nemoclaw_{kind}.inference_{name}")
+    format!("{}.inference_{name}", crate::compile::resource_type(kind))
 }
 
 fn targets(

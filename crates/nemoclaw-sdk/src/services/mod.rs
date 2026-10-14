@@ -11,6 +11,7 @@ pub mod authentication;
 mod contract;
 pub mod installers;
 pub mod placement;
+pub mod provider_types;
 mod readiness;
 mod registry;
 mod update_policy;

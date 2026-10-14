@@ -269,11 +269,14 @@ pub(crate) fn compiled_runtime(
         } else {
             crate::services::installers::ollama::RUNTIME_DATA_SOURCE
         };
+        let readiness = crate::services::provider_types::readiness_type(&target.kind)
+            .expect("service containers have readiness");
+        let source = crate::compile::data_source_type(source);
         // Readiness checks the contract the container runs with.
-        graph["data"]["nemoclaw_service_readiness"][logical] = json!({
+        graph["data"][readiness][logical] = json!({
             "engine":literal(spec.engine()),
             "name":literal(&spec.name),
-            "contract":format!("${{data.nemoclaw_{source}.{logical}.spec}}"),
+            "contract":format!("${{data.{source}.{logical}.spec}}"),
             "container_id":format!("${{{container}.id}}"),
             "read_trigger":"${timestamp() != \"\"}",
             "wait_timeout_seconds":9 * 3600

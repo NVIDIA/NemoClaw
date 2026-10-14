@@ -18,7 +18,8 @@ fn process(target: &Target) -> bool {
 }
 pub(crate) fn address(logical: &str) -> String {
     for kind in ["inference_storage", "ollama_service_storage"] {
-        if let Some(name) = logical.strip_prefix(&format!("nemoclaw_{kind}."))
+        if let Some(name) =
+            logical.strip_prefix(&format!("{}.", crate::compile::resource_type(kind)))
             && !name.ends_with("_auth")
         {
             return format!("docker_volume.{kind}_{name}");
@@ -372,10 +373,9 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
                 .1
                 .to_owned();
             literal(&mut settings);
-            graph["data"][format!("nemoclaw_{source}")][&logical] = settings;
-            attrs["env"] = json!([format!(
-                "{variable}=${{data.nemoclaw_{source}.{logical}.spec}}"
-            )]);
+            let source = crate::compile::data_source_type(source);
+            graph["data"][&source][&logical] = settings;
+            attrs["env"] = json!([format!("{variable}=${{data.{source}.{logical}.spec}}")]);
         }
         if target.kind == crate::managed::GATEWAY_KIND {
             // The launch comes from typed settings and the storage's data path.
@@ -566,7 +566,7 @@ mod tests {
         let cache = &graph["resource"]["docker_volume"]["inference_storage_inference_qwen"];
         assert!(cache["name"].as_str().unwrap().ends_with("-data"));
         assert_eq!(cache["lifecycle"]["prevent_destroy"], true);
-        assert!(graph["resource"]["nemoclaw_inference_storage"].is_null());
+        assert!(graph["resource"]["vllm_credential_storage"].is_null());
         let mounts =
             &graph["resource"]["docker_container"]["inference_service_inference_qwen"]["mounts"];
         assert_eq!(
@@ -595,7 +595,7 @@ mod tests {
         assert_eq!(mounts[0]["target"], "/data");
         assert_eq!(mounts[1]["target"], "/credentials");
         assert_ne!(mounts[0]["source"], mounts[1]["source"]);
-        let auth = &graph["resource"]["nemoclaw_inference_storage"]["inference_qwen_auth"];
+        let auth = &graph["resource"]["vllm_credential_storage"]["inference_qwen_auth"];
         assert!(auth["name"].as_str().unwrap().ends_with("-auth"));
         assert_eq!(auth["lifecycle"]["prevent_destroy"], true);
     }
@@ -789,7 +789,7 @@ mod tests {
         assert!(is_disposable(
             "docker_container.inference_service_inference_qwen"
         ));
-        assert!(!is_disposable("nemoclaw_inference_storage.inference_qwen"));
+        assert!(!is_disposable("vllm_credential_storage.inference_qwen"));
     }
     #[test]
     fn omitted_image_policy_uses_provider_acquisition_and_never_only_reads_local_images() {

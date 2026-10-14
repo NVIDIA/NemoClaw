@@ -377,7 +377,7 @@ NEMOCLAW_TEST_CACHE_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
   cargo test -p nemoclaw-e2e --test integration cache_provider:: -- --ignored
 ```
 
-The [hand-written HCL](../../crates/nemoclaw-e2e/tests/fixtures/cache_provider.tf) composes `docker_volume`, `docker_container`, and `nemoclaw_inference_storage`; no SDK compiler or deployment coordinator runs.
+The [hand-written HCL](../../crates/nemoclaw-e2e/tests/fixtures/cache_provider.tf) composes `docker_volume`, `docker_container`, and `vllm_credential_storage`; no SDK compiler or deployment coordinator runs.
 The fixture creates fresh owned resources, checks no-op, replacement, failed-start recovery, retained teardown/reapply, and cache reconstruction with the same credential.
 Missing or substituted credential volumes must stop apply before compute creation and preserve state.
 Teardown sets the container count to zero while keeping both volume declarations; `tofu destroy` is deliberately blocked by their retention rules.

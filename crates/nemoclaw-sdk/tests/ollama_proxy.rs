@@ -93,7 +93,7 @@ fn proxy_readiness_is_fresh_and_orders_only_its_selected_consumer() {
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let graph = compile(&document, &generations, "0.1.0").unwrap();
-    let readiness = &graph["data"]["nemoclaw_service_readiness"]["ollama_proxy_ollama-auth"];
+    let readiness = &graph["data"]["ollama_proxy_readiness"]["ollama_proxy_ollama-auth"];
     assert_eq!(
         readiness["container_id"],
         "${docker_container.ollama_proxy_ollama-auth.id}"
@@ -102,7 +102,7 @@ fn proxy_readiness_is_fresh_and_orders_only_its_selected_consumer() {
     assert_eq!(readiness["wait_timeout_seconds"], 30);
     assert_eq!(
         readiness["contract"],
-        "${data.nemoclaw_ollama_proxy_runtime.ollama_proxy_ollama-auth.spec}"
+        "${data.ollama_proxy_runtime.ollama_proxy_ollama-auth.spec}"
     );
     assert_eq!(
         readiness["name"],
@@ -116,7 +116,7 @@ fn proxy_readiness_is_fresh_and_orders_only_its_selected_consumer() {
             .as_array()
             .unwrap()
             .contains(&json!(
-                "data.nemoclaw_service_readiness.ollama_proxy_ollama-auth"
+                "data.ollama_proxy_readiness.ollama_proxy_ollama-auth"
             ))
     );
     assert!(
@@ -127,7 +127,7 @@ fn proxy_readiness_is_fresh_and_orders_only_its_selected_consumer() {
             .as_array()
             .unwrap()
             .contains(&json!(
-                "data.nemoclaw_service_readiness.ollama_proxy_ollama-auth"
+                "data.ollama_proxy_readiness.ollama_proxy_ollama-auth"
             ))
     );
 }
@@ -177,7 +177,7 @@ fn proxy_pull_policy_preserves_credentials_and_other_resource_settings() {
         );
         let after = compile(&document, &gens, "0.1.0").unwrap();
         for kind in [
-            "nemoclaw_ollama_proxy_storage",
+            "ollama_proxy_credential_storage",
             "nemoclaw_ollama_external_model",
         ] {
             assert_eq!(after["resource"][kind], before["resource"][kind]);
@@ -207,8 +207,8 @@ fn proxy_pull_policy_preserves_credentials_and_other_resource_settings() {
                 before["resource"]["openshell_provider_registration"]
             );
             assert_eq!(
-                after["resource"]["nemoclaw_ollama_proxy_storage"],
-                before["resource"]["nemoclaw_ollama_proxy_storage"]
+                after["resource"]["ollama_proxy_credential_storage"],
+                before["resource"]["ollama_proxy_credential_storage"]
             );
         }
     }
@@ -272,7 +272,7 @@ fn external_ollama_compiles_only_proxy_and_external_model_observation() {
             ),
             "docker_container.ollama_proxy_ollama-auth",
             "data.openshell_gateway.apply",
-            "data.nemoclaw_service_readiness.ollama_proxy_ollama-auth"
+            "data.ollama_proxy_readiness.ollama_proxy_ollama-auth"
         ])
     );
     assert!(
@@ -360,7 +360,7 @@ fn named_proxies_have_distinct_containers_storage_and_credentials() {
             "ollama_proxy_ollama-auth",
             "ollama_proxy_second",
         ),
-        ("nemoclaw_ollama_proxy_storage", "ollama-auth", "second"),
+        ("ollama_proxy_credential_storage", "ollama-auth", "second"),
     ] {
         assert_ne!(
             graph["resource"][kind][first]["name"],
@@ -398,7 +398,7 @@ fn proxy_requires_a_managed_docker_gateway_and_uses_its_engine() {
         "unix:///tmp/proxy-engine.sock"
     );
     for kind in [
-        "nemoclaw_ollama_proxy_storage",
+        "ollama_proxy_credential_storage",
         "nemoclaw_ollama_external_model",
     ] {
         assert_eq!(

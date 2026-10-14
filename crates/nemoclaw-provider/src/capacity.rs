@@ -11,7 +11,11 @@ use tf_provider::{
     value::{Value, ValueEmpty},
 };
 
-pub(crate) struct CapacityDataSource(pub Arc<ConfiguredBackend>);
+/// Data source for the capacity one runtime's services need on an engine.
+pub(crate) struct CapacityDataSource(
+    pub Arc<ConfiguredBackend>,
+    pub crate::services::ServiceRuntime,
+);
 #[derive(Serialize, Deserialize)]
 pub(crate) struct CapacityState {
     engine: Value<String>,
@@ -20,7 +24,10 @@ pub(crate) struct CapacityState {
     observed_bytes: Value<u64>,
     compatible: Value<bool>,
 }
-fn requirements(config: &CapacityState) -> Result<(), nemoclaw_sdk::Error> {
+fn requirements(
+    config: &CapacityState,
+    runtime: crate::services::ServiceRuntime,
+) -> Result<(), nemoclaw_sdk::Error> {
     use crate::{Error, services::validate_capacity_contracts};
     let engine = match &config.engine {
         Value::Value(engine) => {
@@ -42,7 +49,10 @@ fn requirements(config: &CapacityState) -> Result<(), nemoclaw_sdk::Error> {
     let mut known = Vec::new();
     for contract in contracts {
         match contract {
-            Value::Value(contract) => known.push(contract.clone()),
+            Value::Value(contract) => {
+                runtime.check(contract)?;
+                known.push(contract.clone());
+            }
             Value::Unknown => {}
             Value::Null => return Err(Error::Conflict("capacity runtime contract is required")),
         }
@@ -104,7 +114,7 @@ impl DataSource for CapacityDataSource {
         })
     }
     async fn validate<'a>(&self, diags: &mut Diagnostics, config: CapacityState) -> Option<()> {
-        match requirements(&config) {
+        match requirements(&config, self.1) {
             Ok(()) => Some(()),
             Err(error) => {
                 diags.error(
@@ -123,7 +133,7 @@ impl DataSource for CapacityDataSource {
         _: ValueEmpty,
     ) -> Option<CapacityState> {
         let work = async {
-            requirements(&config)?;
+            requirements(&config, self.1)?;
             let (Value::Value(engine), Value::Value(contracts)) =
                 (&config.engine, &config.contracts)
             else {
@@ -164,7 +174,10 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn capacity_inputs_validate_offline_and_defer_unknown_values_without_echoing_input() {
-        let source = CapacityDataSource(Arc::new(ConfiguredBackend::default()));
+        let source = CapacityDataSource(
+            Arc::new(ConfiguredBackend::default()),
+            crate::services::ServiceRuntime::Vllm,
+        );
         for (engine, contracts, valid) in [
             (Value::Unknown, Value::Unknown, true),
             (
@@ -205,6 +218,39 @@ mod tests {
                 .await;
             assert_eq!(result.is_some(), valid);
             assert!(!format!("{diagnostics:?}").contains("PRIVATE_SENTINEL"));
+        }
+    }
+
+    /// Each runtime's capacity counts only that runtime's services; a combined
+    /// check across runtimes has no provider.
+    #[tokio::test]
+    async fn capacity_rejects_another_runtimes_contract() {
+        use crate::services::ServiceRuntime::{Ollama, Vllm};
+        for (runtime, contract, expected) in [
+            (
+                Vllm,
+                r#"{"kind":"ollama","PRIVATE_SENTINEL":1}"#,
+                "an Ollama contract",
+            ),
+            (
+                Ollama,
+                r#"{"kind":"vllm","PRIVATE_SENTINEL":1}"#,
+                "a vLLM contract",
+            ),
+        ] {
+            let source = CapacityDataSource(Arc::new(ConfiguredBackend::default()), runtime);
+            let mut diagnostics = Diagnostics::default();
+            let state = CapacityState {
+                engine: Value::Value("unix:///var/run/docker.sock".into()),
+                contracts: Value::Value(vec![Value::Value(contract.into())]),
+                required_bytes: Value::Null,
+                observed_bytes: Value::Null,
+                compatible: Value::Null,
+            };
+            assert!(source.validate(&mut diagnostics, state).await.is_none());
+            let message = format!("{diagnostics:?}");
+            assert!(message.contains(expected), "{message}");
+            assert!(!message.contains("PRIVATE_SENTINEL"), "{message}");
         }
     }
 }

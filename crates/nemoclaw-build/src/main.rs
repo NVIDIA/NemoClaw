@@ -365,6 +365,11 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
     fs::create_dir_all(root.join(&openshell))?;
     let fabric = format!("providers/registry.opentofu.org/nvidia/fabric/{version}/{platform}");
     fs::create_dir_all(root.join(&fabric))?;
+    // The vllm and ollama providers build from the nemoclaw-provider package.
+    let vllm = format!("providers/registry.opentofu.org/nvidia/vllm/{version}/{platform}");
+    fs::create_dir_all(root.join(&vllm))?;
+    let ollama = format!("providers/registry.opentofu.org/nvidia/ollama/{version}/{platform}");
+    fs::create_dir_all(root.join(&ollama))?;
     let extension = if platform.starts_with("windows") {
         ".exe"
     } else {
@@ -394,6 +399,14 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
         (
             format!("terraform-provider-fabric{extension}"),
             format!("{fabric}/terraform-provider-fabric_v{version}{extension}"),
+        ),
+        (
+            format!("terraform-provider-vllm{extension}"),
+            format!("{vllm}/terraform-provider-vllm_v{version}{extension}"),
+        ),
+        (
+            format!("terraform-provider-ollama{extension}"),
+            format!("{ollama}/terraform-provider-ollama_v{version}{extension}"),
         ),
     ] {
         fs::copy(

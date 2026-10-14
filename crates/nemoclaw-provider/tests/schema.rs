@@ -4,7 +4,7 @@
 //! attributes; these tests check that snapshot and the rules across types.
 
 use fabric_provider::FabricProvider;
-use nemoclaw_provider::NemoClawProvider;
+use nemoclaw_provider::{NemoClawProvider, ServiceProvider};
 use openshell_provider::OpenShellProvider;
 use std::{collections::BTreeSet, path::Path};
 use tf_provider::{Diagnostics, DynamicProvider, schema::AttributeConstraint};
@@ -17,6 +17,21 @@ fn schema_matches_the_checked_in_snapshot() {
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/schema.txt"),
         "cargo test -p nemoclaw-provider --test integration schema::",
     );
+}
+
+#[test]
+fn runtime_provider_schemas_match_their_snapshots() {
+    for (name, provider) in [
+        ("vllm", ServiceProvider::vllm()),
+        ("ollama", ServiceProvider::ollama()),
+    ] {
+        nemoclaw_test_fixtures::schema::assert_snapshot(
+            name,
+            &provider,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/schema-{name}.txt")),
+            "cargo test -p nemoclaw-provider --test integration schema::",
+        );
+    }
 }
 
 fn type_names(provider: &dyn DynamicProvider) -> BTreeSet<String> {
@@ -47,9 +62,15 @@ fn no_type_name_is_served_by_two_providers() {
 #[test]
 fn every_resource_generates_an_omitted_owner_and_generation() {
     let mut diagnostics = Diagnostics::default();
-    let resources = NemoClawProvider::default()
-        .get_resources(&mut diagnostics)
-        .unwrap();
+    let providers: [&dyn DynamicProvider; 3] = [
+        &NemoClawProvider::default(),
+        &ServiceProvider::vllm(),
+        &ServiceProvider::ollama(),
+    ];
+    let resources: Vec<_> = providers
+        .iter()
+        .flat_map(|provider| provider.get_resources(&mut diagnostics).unwrap())
+        .collect();
     for (kind, resource) in &resources {
         let schema = resource.schema(&mut diagnostics).unwrap();
         for attribute in ["owner", "generation"] {

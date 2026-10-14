@@ -32,6 +32,52 @@ fn storage_definition(kind: &str) -> crate::Definition {
 }
 
 /// Installer-owned service storage and external model resources.
+/// The runtime a service contract describes, and so which provider reads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServiceRuntime {
+    Vllm,
+    Ollama,
+    OllamaProxy,
+}
+
+impl ServiceRuntime {
+    /// The runtime `contract` describes: runtime contracts name their kind;
+    /// the Ollama proxy contract does not.
+    ///
+    /// # Errors
+    /// Returns an error when `contract` is not a runtime contract.
+    pub fn of_contract(contract: &str) -> Result<Self, crate::Error> {
+        let invalid =
+            || crate::Error::Conflict("contract must be a runtime contract data source's spec");
+        let value: serde_json::Value = serde_json::from_str(contract).map_err(|_| invalid())?;
+        match value.get("kind").map(|kind| kind.as_str()) {
+            None => Ok(Self::OllamaProxy),
+            Some(Some("vllm")) => Ok(Self::Vllm),
+            Some(Some("ollama")) => Ok(Self::Ollama),
+            Some(_) => Err(invalid()),
+        }
+    }
+
+    /// Reject a contract for another runtime, naming the runtime it is for.
+    ///
+    /// # Errors
+    /// Returns an error when `contract` is invalid or for another runtime.
+    pub fn check(self, contract: &str) -> Result<(), crate::Error> {
+        match Self::of_contract(contract)? {
+            found if found == self => Ok(()),
+            Self::Vllm => Err(crate::Error::Conflict(
+                "contract is a vLLM contract; read it with the vllm provider's data sources",
+            )),
+            Self::Ollama => Err(crate::Error::Conflict(
+                "contract is an Ollama contract; read it with the ollama provider's ollama_* data sources",
+            )),
+            Self::OllamaProxy => Err(crate::Error::Conflict(
+                "contract is an Ollama proxy contract; read it with ollama_proxy_readiness",
+            )),
+        }
+    }
+}
+
 pub(crate) fn definitions() -> [crate::Definition; 4] {
     use nemoclaw_sdk::services::installers::{ollama, vllm};
     [

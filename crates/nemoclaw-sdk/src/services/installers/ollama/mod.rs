@@ -132,7 +132,7 @@ pub(crate) fn service_address(name: &str) -> String {
 }
 
 fn address(kind: &str, name: &str) -> String {
-    format!("nemoclaw_{kind}.{name}")
+    format!("{}.{name}", crate::compile::resource_type(kind))
 }
 
 pub const SERVICE_KIND: &str = "ollama_service";

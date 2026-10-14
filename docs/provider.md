@@ -36,9 +36,12 @@ The generated graphs manage these objects and observations:
 | Fabric provider | Fabric runtime configuration |
 | Fabric provider data source | Fabric image capabilities and sandbox completion |
 | OpenShell provider | Podman gateway process (`openshell_podman_gateway`); gateway storage, initialization, and retained bridge (`openshell_gateway_storage`) |
-| NemoClaw provider | Retained inference credentials and proxy storage; external Ollama model observation |
+| vLLM provider | Retained vLLM credentials (`vllm_credential_storage`) |
+| Ollama provider | Retained Ollama proxy credentials (`ollama_proxy_credential_storage`) |
+| vLLM and Ollama provider data sources | Runtime contracts, and service or proxy readiness |
+| NemoClaw provider | External Ollama model observation |
 | OpenShell provider | Kubernetes namespace and encryption key (`openshell_kubernetes_storage`), development issuer (`openshell_kubernetes_auth`), and gateway readiness (`openshell_kubernetes_gateway`) |
-| NemoClaw provider data source | Engine capabilities, managed runtime-image compatibility, and vLLM/Ollama service or proxy readiness |
+| NemoClaw provider data source | Engine capabilities and managed runtime-image compatibility |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 | Helm provider | The managed Kubernetes gateway's OpenShell chart release (`helm_release.gateway`) |
@@ -63,6 +66,8 @@ The bundle pins these providers:
 | NemoClaw | `registry.opentofu.org/nvidia/nemoclaw` | Source-derived |
 | OpenShell | `registry.opentofu.org/nvidia/openshell` | Source-derived, matching NemoClaw |
 | Fabric | `registry.opentofu.org/nvidia/fabric` | Source-derived, matching NemoClaw |
+| vLLM | `registry.opentofu.org/nvidia/vllm` | Source-derived, matching NemoClaw |
+| Ollama | `registry.opentofu.org/nvidia/ollama` | Source-derived, matching NemoClaw |
 | Docker | `registry.opentofu.org/kreuzwerker/docker` | 4.6.0 |
 | Helm | `registry.opentofu.org/hashicorp/helm` | 3.3.0 |
 
@@ -220,21 +225,38 @@ Removing the resource releases its binding without changing the sandbox.
 `fabric_agent` exports a `ref` with its sandbox's `workspace`, `sandbox` name, `sandbox_id`, `owner`, and `generation`, its own `name`, and `config_sha256`.
 `config_sha256` is `sha256:<hex>` over the composed document's JSON with object keys sorted; it is known while planning once the agent's inputs are.
 
+### vLLM and Ollama Types
+
+The `vllm` and `ollama` providers serve one runtime each: its credential storage, the runtime contract its container runs with, and its readiness and capacity reads.
+Each provider's only setting is `destroy`, which permits deleting its credential storage during explicit teardown.
+Each type names the engine it uses.
+
+| Type | Manages or observes |
+|---|---|
+| `vllm_credential_storage` | vLLM credential storage |
+| `vllm_runtime` data source | Nothing; [computes the vLLM runtime contract](#vllm-runtime-contract) |
+| `vllm_readiness` data source | [vLLM service readiness](#runtime-capacity-and-readiness) |
+| `vllm_capacity` data source | [vLLM service capacity](#service-capacity) |
+| `ollama_proxy_credential_storage` | Ollama proxy credential storage |
+| `ollama_runtime` data source | Nothing; [computes the Ollama runtime contract](#ollama-runtime-contracts) |
+| `ollama_proxy_runtime` data source | Nothing; [computes the Ollama proxy contract](#ollama-runtime-contracts) |
+| `ollama_readiness` data source | [Managed Ollama readiness](#runtime-capacity-and-readiness) |
+| `ollama_proxy_readiness` data source | [Ollama proxy readiness](#runtime-capacity-and-readiness) |
+| `ollama_capacity` data source | [Managed Ollama capacity](#service-capacity) |
+
 ### NemoClaw Resources
 
-The `nemoclaw` provider's only setting is `destroy`, which permits deleting proxies during explicit teardown.
-Each resource names the engine or cluster it uses.
+The `nemoclaw` provider's only setting is `destroy`, which permits deleting its storage during explicit teardown.
+Each resource names the engine it uses.
 
 | Resource | Manages |
 |---|---|
-| `nemoclaw_inference_storage` | vLLM credential storage |
 | `nemoclaw_ollama_service_storage` | Managed Ollama model storage |
-| `nemoclaw_ollama_proxy_storage` | Ollama proxy credential storage |
 | `nemoclaw_ollama_external_model` | Upstream Ollama model digest |
 
 Generated graphs place vLLM and Ollama model caches in `docker_volume` resources and do not declare `nemoclaw_ollama_service_storage`.
 
-`nemoclaw_inference_storage` and `nemoclaw_ollama_service_storage` take `name` and `engine`, and optionally `owner` and `generation`.
+`vllm_credential_storage` and `nemoclaw_ollama_service_storage` take `name` and `engine`, and optionally `owner` and `generation`.
 The provider creates a local volume with that name on that engine and labels it with the owner and generation.
 It rejects a same-named volume with other labels, and never recreates a bound volume that disappears.
 Validation reports an invalid value at its attribute:
@@ -250,7 +272,7 @@ If a create succeeds but its reply is lost, OpenTofu state has no record of a ge
 The next apply generates another, finds the volume labelled with the lost one, and stops.
 To keep the volume, set `owner` and `generation` to its `nemoclaw.nvidia.com/uid` and `nemoclaw.nvidia.com/generation` labels and apply again.
 
-`nemoclaw_ollama_proxy_storage` takes `name` and `engine`, and keeps the proxy credential in a volume named `<name>-auth`.
+`ollama_proxy_credential_storage` takes `name` and `engine`, and keeps the proxy credential in a volume named `<name>-auth`.
 `nemoclaw_ollama_external_model` takes `name`, `engine`, `upstream`, `model`, and `digest`.
 Both take optional `owner` and `generation`, generated the same way; generated graphs give the external model its proxy storage's values.
 
@@ -262,11 +284,6 @@ Both take optional `owner` and `generation`, generated the same way; generated g
 | `nemoclaw_target_hardware` | [Engine-advertised hardware](#target-hardware) |
 | `nemoclaw_inference_capabilities` | [Inference model catalog](#inference-endpoint-metadata) |
 | `nemoclaw_runtime_image` | [Managed runtime image labels](#runtime-image-compatibility) |
-| `nemoclaw_service_readiness` | [vLLM, Ollama, and proxy readiness](#runtime-capacity-and-readiness) |
-| `nemoclaw_service_capacity` | [Combined service capacity](#combined-service-capacity) |
-| `nemoclaw_vllm_runtime` | Nothing; [computes the vLLM runtime contract](#vllm-runtime-contract) |
-| `nemoclaw_ollama_runtime` | Nothing; [computes the Ollama runtime contract](#ollama-runtime-contracts) |
-| `nemoclaw_ollama_proxy_runtime` | Nothing; [computes the Ollama proxy contract](#ollama-runtime-contracts) |
 
 ### Docker and Helm Types
 
@@ -487,14 +504,14 @@ Its inputs compose the canonical public Fabric configuration, separate from immu
 
 ## vLLM Runtime Contract
 
-`nemoclaw_vllm_runtime` computes the settings that a vLLM container's runtime supervisor reads, without contacting any host.
+`vllm_runtime` computes the settings that a vLLM container's runtime supervisor reads, without contacting any host.
 Its blocks and attributes follow the runtime contract with snake_case names: `model`, `serving`, `memory`, `hardware`, `authentication`, and `recipe`.
 `model` is required, and the contract requires either `hardware` or `recipe`.
 Omitted or zero settings select the same defaults as service YAML.
 Validation reports a rejected setting at its attribute, and the `spec` output is the validated specification.
 
 ```hcl
-data "nemoclaw_vllm_runtime" "qwen" {
+data "vllm_runtime" "qwen" {
   hardware {
     profile = "dgx-spark"
   }
@@ -511,8 +528,8 @@ data "nemoclaw_vllm_runtime" "qwen" {
 A vLLM `docker_container` passes `spec` as `NEMOCLAW_RUNTIME_SPEC` and declares the rest of its configuration directly.
 Generated graphs declare:
 
-- `entrypoint = ["/usr/local/bin/nemoclaw-runtime"]` and `env = ["NEMOCLAW_RUNTIME_SPEC=${data.nemoclaw_vllm_runtime.NAME.spec}"]`.
-- The model cache volume at `/data` and, with bearer authentication, the `nemoclaw_inference_storage` credential volume at `/credentials`.
+- `entrypoint = ["/usr/local/bin/nemoclaw-runtime"]` and `env = ["NEMOCLAW_RUNTIME_SPEC=${data.vllm_runtime.NAME.spec}"]`.
+- The model cache volume at `/data` and, with bearer authentication, the `vllm_credential_storage` credential volume at `/credentials`.
 - The serving port, published on the service's bind address.
 - `gpus = "all"`; `memory` and `memory_swap` follow `container.memoryLimitGiB`, defaulting to 106496 MiB (104 GiB); `shm_size` defaults to 8192 MiB unless the service sets another size.
 - No CPU cap unless `container.cpuLimitMillis` is supplied; Docker then enforces `cpu_quota = cpuLimitMillis × 100` microseconds per `cpu_period = 100000` (100 ms, as on Kubernetes), with a minimum quota of 1000 microseconds.
@@ -527,10 +544,10 @@ See [container limits and update policy](inference.md#set-container-limits-and-u
 
 ## Ollama Runtime Contracts
 
-`nemoclaw_ollama_runtime` computes the managed Ollama runtime's `NEMOCLAW_RUNTIME_SPEC` the same way.
+`ollama_runtime` computes the managed Ollama runtime's `NEMOCLAW_RUNTIME_SPEC` the same way.
 Its blocks follow the Ollama runtime contract with snake_case names: `hardware`, `model` with `name` and `digest`, `serving`, and `memory`.
 
-`nemoclaw_ollama_proxy_runtime` computes the external Ollama proxy's `NEMOCLAW_OLLAMA_PROXY` value from `bind_address`, `upstream`, `model`, and `digest`.
+`ollama_proxy_runtime` computes the external Ollama proxy's `NEMOCLAW_OLLAMA_PROXY` value from `bind_address`, `upstream`, `model`, and `digest`.
 `bind_address` is a loopback or private address with a port, and `upstream` a loopback HTTP endpoint ending in `/v1`; the output `spec` names the endpoint the proxy serves on `bind_address`.
 Generated graphs pass each `spec` to its container's environment variable.
 
@@ -586,19 +603,20 @@ A successful plan therefore does not establish that a model will fit or load.
 
 The hosted runtime checks its hardware, startup headroom, model artifacts, and available memory before serving.
 Its resident supervisor continues protecting host memory after the CLI exits and does not automatically restart a stopped workload.
-The runtime graph uses `nemoclaw_service_readiness` to wait for current application status from the Docker provider's container ID.
-The data source validates the runtime contract and container identity, reads the service's status contract, and checks generated vLLM credential permissions when the contract enables authentication.
+The runtime graph uses `vllm_readiness` and `ollama_readiness` to wait for current application status from the Docker provider's container ID.
+Each validates the runtime contract and container identity, reads the service's status contract, and checks generated vLLM credential permissions when the contract enables authentication.
 It does not repeat model-file verification, collect hardware inventory, or request model responses.
 Startup phases may be polled; stopped services, failed observations, and malformed status fail the read.
 
-The data source requires the container's `engine`, `name`, and `container_id`, and its `contract`: the `spec` of the `nemoclaw_vllm_runtime`, `nemoclaw_ollama_runtime`, or `nemoclaw_ollama_proxy_runtime` data source the container runs with.
+Each readiness data source requires the container's `engine`, `name`, and `container_id`, and its `contract`: the `spec` of the runtime contract data source the container runs with, `vllm_runtime` for `vllm_readiness`, `ollama_runtime` for `ollama_readiness`, and `ollama_proxy_runtime` for `ollama_proxy_readiness`.
+A contract for another runtime fails validation, naming the provider that reads it.
 Its optional `wait_timeout_seconds` accepts zero to 32400 seconds; omission means 32400 seconds, and zero requests one bounded observation.
 Successful reads return `ready: true`; unsuccessful reads report an error.
 The optional `read_trigger` has the same scheduling semantics as the gateway trigger above.
 The compiler references the container's `id` and uses `timestamp() != ""` to defer readiness until apply, including unchanged apply.
 This apply-time read appears as `unverified` in SDK plan results; it does not make an otherwise resolved resource plan incomplete or relax the apply gate.
 The runtime graph must succeed before the SDK proceeds to the OpenShell graph.
-The OpenShell graph uses the same data source for Ollama proxies, with a 30-second wait and dependencies from their selected provider registrations.
+The OpenShell graph uses `ollama_proxy_readiness` for Ollama proxies, with a 30-second wait and dependencies from their selected provider registrations.
 For a proxy contract, the observation verifies the recorded container ID and name, running state, credential file permissions, and the upstream model digest through read-only metadata.
 It waits for an initially missing key only while the container runs and the volume has no initialization marker; initialized missing keys and invalid permissions fail immediately.
 The SDK runs no readiness loop of its own.
@@ -636,10 +654,11 @@ Existing sandbox resource refresh still verifies configuration.
 The [standalone sandbox fixture](contributing/integration-tests.md#standalone-sandbox-completion) checks this contract through the production provider without SDK deployment orchestration.
 The shared backend compares public Fabric configuration and runtime handle state; fresh native configuration and health remain subject to [Fabric observation limits](design/fabric-management.md#observation-limits).
 
-## Combined Service Capacity
+## Service Capacity
 
-The optional `nemoclaw_service_capacity` data source remains available for explicit capacity observation.
-It takes an `engine` and `contracts`, the `spec` of each `nemoclaw_vllm_runtime` or `nemoclaw_ollama_runtime` data source on that engine, and rejects a contract listed twice.
+The optional `vllm_capacity` and `ollama_capacity` data sources observe capacity for one runtime's services on an engine.
+Each takes an `engine` and `contracts`, the `spec` of each of that runtime's contract data sources on the engine, and rejects a contract listed twice or one for another runtime.
+No data source combines services of different runtimes on one host.
 It reports required and observed bytes and compatibility using the selected execution host's measurements.
 The SDK's default service graph does not use it as an admission gate.
 Per-service runtime protection does not reserve capacity across deployments or schedule shared GPUs.

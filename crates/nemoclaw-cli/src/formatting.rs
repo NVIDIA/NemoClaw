@@ -198,7 +198,7 @@ pub(crate) fn resource_label(address: &str) -> String {
                 return "web search provider/tavily".into();
             }
             if let Some(name) = address
-                .strip_prefix("nemoclaw_inference_storage.inference_")
+                .strip_prefix("vllm_credential_storage.inference_")
                 .and_then(|name| name.strip_suffix("_auth"))
             {
                 return terminal_text(&format!("inference credentials/{name}"));
@@ -210,13 +210,13 @@ pub(crate) fn resource_label(address: &str) -> String {
                     "web search profile/",
                 ),
                 ("nemoclaw_ollama_external_model.", "external Ollama model/"),
-                ("nemoclaw_ollama_proxy_storage.", "proxy credentials/"),
+                ("ollama_proxy_credential_storage.", "proxy credentials/"),
                 ("docker_container.ollama_proxy_", "ollama proxy/"),
                 ("docker_container.ollama_service_", "ollama/"),
                 ("docker_volume.ollama_service_storage_", "model cache/"),
                 ("nemoclaw_ollama_service_storage.", "ollama credentials/"),
                 (
-                    "nemoclaw_inference_storage.inference_",
+                    "vllm_credential_storage.inference_",
                     "inference credentials/",
                 ),
                 (
@@ -817,11 +817,11 @@ mod tests {
             {"resource":"openshell_provider_registration.inference_local-1234", "actions":["update"]},
             {"resource":"openshell_provider_registration.web_search_tavily_1234", "actions":["create"]},
             {"resource":"openshell_provider_profile.web_search_tavily", "actions":["create"]},
-            {"resource":"nemoclaw_inference_storage.inference_tiny_auth", "actions":["create"]}
+            {"resource":"vllm_credential_storage.inference_tiny_auth", "actions":["create"]}
         ], "resourceSources": {
             "openshell_provider_registration.inference_local-1234":{"name":"responses", "path":"spec.sandboxes[host].inferenceProviders[responses]"}
         }, "deferred":["Gateway is required"], "deferredResources":[
-            "docker_container.ollama_proxy_local", "nemoclaw_ollama_external_model.local", "nemoclaw_ollama_proxy_storage.local", "docker_image.image_1234"
+            "docker_container.ollama_proxy_local", "nemoclaw_ollama_external_model.local", "ollama_proxy_credential_storage.local", "docker_image.image_1234"
         ], "discovery":{"resources":[
             {"address":"fabric_agent.host", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":true, "retained":false, "reusePlanned":false, "agentRunning":false},
             {"address":"openshell_provider_registration.inference_local-1234", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":false, "retained":false, "reusePlanned":false},

@@ -94,35 +94,9 @@ impl Provider for NemoClawProvider {
     type MetaState<'a> = ValueEmpty;
     fn get_data_sources(
         &self,
-        diags: &mut Diagnostics,
+        _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
-        use crate::runtime_contract::RuntimeDataSource;
-        use nemoclaw_sdk::services::installers::{ollama, vllm};
-        let (vllm_runtime, ollama_runtime) =
-            match (RuntimeDataSource::vllm(), RuntimeDataSource::ollama()) {
-                (Ok(vllm), Ok(ollama)) => (vllm, ollama),
-                (Err(error), _) | (_, Err(error)) => {
-                    diags.root_error(
-                        "A runtime contract has no OpenTofu schema",
-                        error.to_string(),
-                    );
-                    return None;
-                }
-            };
         Some(HashMap::from([
-            (
-                vllm::RUNTIME_DATA_SOURCE.into(),
-                Box::new(vllm_runtime) as Box<dyn DynamicDataSource>,
-            ),
-            (
-                ollama::RUNTIME_DATA_SOURCE.into(),
-                Box::new(ollama_runtime) as Box<dyn DynamicDataSource>,
-            ),
-            (
-                ollama::proxy::RUNTIME_DATA_SOURCE.into(),
-                Box::new(crate::services::installers::ollama::ProxyRuntimeDataSource)
-                    as Box<dyn DynamicDataSource>,
-            ),
             (
                 "inference_capabilities".into(),
                 Box::new(crate::inference_discovery::InferenceDataSource)
@@ -146,35 +120,10 @@ impl Provider for NemoClawProvider {
                     self.backend.clone(),
                 )) as Box<dyn DynamicDataSource>,
             ),
-            (
-                "service_readiness".into(),
-                Box::new(crate::readiness::ReadinessDataSource(self.backend.clone()))
-                    as Box<dyn DynamicDataSource>,
-            ),
-            (
-                "service_capacity".into(),
-                Box::new(crate::capacity::CapacityDataSource(self.backend.clone()))
-                    as Box<dyn DynamicDataSource>,
-            ),
         ]))
     }
     fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
-        let mut attributes = HashMap::new();
-        attributes.insert(
-            "destroy".into(),
-            Attribute {
-                attr_type: AttributeType::Bool,
-                constraint: AttributeConstraint::Optional,
-                ..Default::default()
-            },
-        );
-        Some(Schema {
-            version: 0,
-            block: Block {
-                attributes,
-                ..Default::default()
-            },
-        })
+        Some(destroy_schema())
     }
     async fn configure<'a>(
         &self,
@@ -182,12 +131,7 @@ impl Provider for NemoClawProvider {
         _: String,
         config: ProviderConfig,
     ) -> Option<()> {
-        // Reconfiguration must not retain teardown permission from an earlier
-        // configuration when the input becomes unknown.
-        self.destroying.store(
-            matches!(config.destroy, Value::Value(true)),
-            Ordering::Release,
-        );
+        configure_destroy(&self.destroying, &config);
         Some(())
     }
     fn get_resources(
@@ -237,12 +181,158 @@ fn installs_gateway(definition: &Definition) -> bool {
     nemoclaw_openshell::installation_type(definition.kind).is_some()
 }
 
+/// The teardown permission, the only setting of this crate's providers.
+fn destroy_schema() -> Schema {
+    let mut attributes = HashMap::new();
+    attributes.insert(
+        "destroy".into(),
+        Attribute {
+            attr_type: AttributeType::Bool,
+            constraint: AttributeConstraint::Optional,
+            ..Default::default()
+        },
+    );
+    Schema {
+        version: 0,
+        block: Block {
+            attributes,
+            ..Default::default()
+        },
+    }
+}
+
+/// Grant teardown only for an explicit `destroy = true`. Reconfiguration must
+/// not retain permission from an earlier configuration when the input becomes
+/// unknown.
+fn configure_destroy(destroying: &AtomicBool, config: &ProviderConfig) {
+    destroying.store(
+        matches!(config.destroy, Value::Value(true)),
+        Ordering::Release,
+    );
+}
+
+/// The vllm or ollama type a service kind's definition serves, if any.
+fn runtime_type(definition: &Definition) -> Option<&'static str> {
+    nemoclaw_sdk::services::provider_types::runtime_type(definition.kind)
+}
+
 /// Resource definitions served by this provider.
 pub(crate) fn definitions() -> Vec<Definition> {
     all_definitions()
         .into_iter()
-        .filter(|definition| !installs_gateway(definition))
+        .filter(|definition| !installs_gateway(definition) && runtime_type(definition).is_none())
         .collect()
+}
+
+/// The `vllm` or `ollama` provider: one runtime's credential storage, runtime
+/// contracts, readiness, and capacity.
+pub struct ServiceProvider {
+    name: &'static str,
+    backend: Arc<ConfiguredBackend>,
+    destroying: Arc<AtomicBool>,
+}
+
+impl ServiceProvider {
+    fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            backend: Arc::default(),
+            destroying: Arc::default(),
+        }
+    }
+
+    /// The `vllm` provider.
+    pub fn vllm() -> Self {
+        Self::new("vllm")
+    }
+
+    /// The `ollama` provider.
+    pub fn ollama() -> Self {
+        Self::new("ollama")
+    }
+
+    /// A type name without this provider's prefix, if this provider serves it.
+    fn local(&self, name: &str) -> Option<String> {
+        name.strip_prefix(self.name)
+            .and_then(|name| name.strip_prefix('_'))
+            .map(str::to_owned)
+    }
+}
+
+#[async_trait]
+impl Provider for ServiceProvider {
+    type Config<'a> = ProviderConfig;
+    type MetaState<'a> = ValueEmpty;
+    fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
+        Some(destroy_schema())
+    }
+    async fn configure<'a>(
+        &self,
+        _: &mut Diagnostics,
+        _: String,
+        config: ProviderConfig,
+    ) -> Option<()> {
+        configure_destroy(&self.destroying, &config);
+        Some(())
+    }
+    fn get_resources(
+        &self,
+        _: &mut Diagnostics,
+    ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
+        Some(
+            all_definitions()
+                .into_iter()
+                .filter_map(|definition| {
+                    let name = self.local(runtime_type(&definition)?)?;
+                    Some((name, adapter(definition, &self.backend, &self.destroying)))
+                })
+                .collect(),
+        )
+    }
+    fn get_data_sources(
+        &self,
+        diags: &mut Diagnostics,
+    ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
+        use crate::runtime_contract::RuntimeDataSource;
+        use crate::services::ServiceRuntime::{Ollama, OllamaProxy, Vllm};
+        use crate::{capacity::CapacityDataSource, readiness::ReadinessDataSource};
+        let backend = &self.backend;
+        let runtime = match self.name {
+            "vllm" => RuntimeDataSource::vllm(),
+            _ => RuntimeDataSource::ollama(),
+        };
+        let runtime = match runtime {
+            Ok(runtime) => Box::new(runtime) as Box<dyn DynamicDataSource>,
+            Err(error) => {
+                diags.root_error(
+                    "A runtime contract has no OpenTofu schema",
+                    error.to_string(),
+                );
+                return None;
+            }
+        };
+        let mut sources: HashMap<String, Box<dyn DynamicDataSource>> =
+            HashMap::from([("runtime".into(), runtime)]);
+        let readiness = |runtime| {
+            Box::new(ReadinessDataSource(backend.clone(), runtime)) as Box<dyn DynamicDataSource>
+        };
+        let capacity = |runtime| {
+            Box::new(CapacityDataSource(backend.clone(), runtime)) as Box<dyn DynamicDataSource>
+        };
+        if self.name == "vllm" {
+            sources.insert("readiness".into(), readiness(Vllm));
+            sources.insert("capacity".into(), capacity(Vllm));
+        } else {
+            sources.insert(
+                "proxy_runtime".into(),
+                Box::new(crate::services::installers::ollama::ProxyRuntimeDataSource),
+            );
+            sources.insert("readiness".into(), readiness(Ollama));
+            sources.insert("proxy_readiness".into(), readiness(OllamaProxy));
+            sources.insert("capacity".into(), capacity(Ollama));
+        }
+        Some(sources)
+    }
 }
 
 /// The gateway installation types: Podman and Kubernetes gateways, their

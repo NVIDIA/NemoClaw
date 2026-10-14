@@ -11,10 +11,7 @@ use std::{
 };
 
 const OWNER: &str = "302ff5e1-088d-42ce-959f-4ff4c3570c13";
-const KINDS: [&str; 2] = [
-    "nemoclaw_inference_storage",
-    "nemoclaw_ollama_service_storage",
-];
+const KINDS: [&str; 2] = ["vllm_credential_storage", "nemoclaw_ollama_service_storage"];
 
 #[derive(Default)]
 struct Volumes {
@@ -79,10 +76,14 @@ fn configure(
             r#"terraform {{
   required_providers {{
     nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw" }}
+    vllm     = {{ source = "registry.opentofu.org/nvidia/vllm" }}
+    ollama   = {{ source = "registry.opentofu.org/nvidia/ollama" }}
   }}
 }}
 
 provider "nemoclaw" {{}}
+provider "vllm" {{}}
+provider "ollama" {{}}
 
 resource "{kind}" "credentials" {{
   name       = "{name}"
@@ -114,7 +115,7 @@ fn success(workspace: &TofuWorkspace, args: &[&str]) -> std::process::Output {
 async fn authored_service_storage_applies_refreshes_and_names_invalid_attributes() {
     for (kind, name) in [
         (
-            "nemoclaw_inference_storage",
+            "vllm_credential_storage",
             "nc-0123456789abcdef-inference-qwen-auth",
         ),
         (
@@ -378,7 +379,7 @@ async fn omitted_proxy_storage_identity_is_generated_and_labels_its_credential_v
     let workspace = workspace();
     configure(
         &workspace,
-        "nemoclaw_ollama_proxy_storage",
+        "ollama_proxy_credential_storage",
         "authored-proxy",
         None,
         &engine.endpoint,
@@ -436,21 +437,24 @@ async fn authored_external_model_shares_proxy_identity_and_rechecks_its_digest()
             r#"terraform {{
   required_providers {{
     nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw" }}
+    vllm     = {{ source = "registry.opentofu.org/nvidia/vllm" }}
+    ollama   = {{ source = "registry.opentofu.org/nvidia/ollama" }}
   }}
 }}
 
 provider "nemoclaw" {{}}
+provider "ollama" {{}}
 
-resource "nemoclaw_ollama_proxy_storage" "credentials" {{
+resource "ollama_proxy_credential_storage" "credentials" {{
   name   = "nc-0123456789abcdef-ollama-proxy-local"
   engine = "{engine}"
 }}
 
 # The model shares its proxy's identity, so a new proxy re-verifies it.
 resource "nemoclaw_ollama_external_model" "model" {{
-  name       = nemoclaw_ollama_proxy_storage.credentials.name
-  owner      = nemoclaw_ollama_proxy_storage.credentials.owner
-  generation = nemoclaw_ollama_proxy_storage.credentials.generation
+  name       = ollama_proxy_credential_storage.credentials.name
+  owner      = ollama_proxy_credential_storage.credentials.owner
+  generation = ollama_proxy_credential_storage.credentials.generation
   engine     = "{engine}"
   upstream   = "{upstream}/v1"
   model      = "qwen3:0.6b"
@@ -487,7 +491,7 @@ resource "nemoclaw_ollama_external_model" "model" {{
             .clone()
     };
     let (storage, model) = (
-        attributes("nemoclaw_ollama_proxy_storage"),
+        attributes("ollama_proxy_credential_storage"),
         attributes("nemoclaw_ollama_external_model"),
     );
     assert_eq!(model["owner"], storage["owner"]);

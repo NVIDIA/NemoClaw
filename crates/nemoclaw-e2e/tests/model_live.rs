@@ -223,7 +223,7 @@ async fn exercise(fresh: bool) {
         "openshell_gateway_storage.runtime",
         before
             .keys()
-            .find(|address| address.starts_with("nemoclaw_inference_storage."))
+            .find(|address| address.starts_with("vllm_credential_storage."))
             .unwrap()
             .as_str(),
     ] {

@@ -299,7 +299,7 @@ fn managed_services_have_independent_storage_credentials_and_dependencies() {
             .as_array()
             .unwrap();
         assert!(dependencies.contains(&json!(format!(
-            "nemoclaw_inference_storage.inference_{name}_auth"
+            "vllm_credential_storage.inference_{name}_auth"
         ))));
     }
     // Duplicate bind ports must fail before creating either service.
