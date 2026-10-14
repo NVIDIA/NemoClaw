@@ -136,7 +136,13 @@ impl Step {
                 "-D",
                 "warnings",
             ]],
-            Step::Build => &[&["build", "--locked", "--workspace", "--all-targets"]],
+            Step::Build => &[&[
+                "build",
+                "--locked",
+                "--workspace",
+                "--all-targets",
+                "--timings",
+            ]],
             // Nextest does not run doctests, so Cargo runs them separately.
             Step::Test => &[
                 &[

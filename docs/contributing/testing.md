@@ -151,6 +151,31 @@ They fail when a step that writes a JUnit report has no budget, a provider's con
 
 ## Timing Reports
 
+### Build Timings
+
+`cargo ci build` enables Cargo's stable HTML timings with `cargo build --locked --workspace --all-targets --timings` (the default dev profile, including test executables).
+The bundle's Rust compilation uses `cargo build --locked --release --target TARGET --timings` for the CLI and three providers.
+Neither command changes the package graph or features for measurement.
+
+In `CI / Bundle`, download `build-workspace-PLATFORM-ATTEMPT` or `build-bundle-PLATFORM-ATTEMPT` from the workflow run's artifacts and open `cargo-timing.html` in a browser.
+CI retains these artifacts for 14 days, including any reports Cargo writes before a build fails.
+Each job clears cached timing reports before building, so an early failure cannot upload an older build's report.
+The jobs upload separately, before later commands can replace a report; timestamped HTML copies are retained too.
+Locally, Cargo writes both reports under `target/cargo-timings`; `cargo-timing.html` names the latest invocation, and older timestamped reports remain.
+
+The job summary also reports the existing `build` and `bundle` step wall durations and whether each passed or failed.
+The build duration covers the workspace build; the bundle duration includes its build tool compilation, downloads, release compilation, assembly, and verification.
+Both exclude the runner's initial tool installation and compilation of the CI runner itself.
+These measurements are report-only and do not affect test budgets.
+
+Use the HTML's compiler/build metadata, compilation units, dependency paths, build scripts, and concurrency graph to compare where compilation time goes.
+Use the workflow commit, platform, job, and attempt to identify the run, and compare the same command/profile and cache conditions.
+The workspace build follows Clippy, so it is not a cold build; a cache action hit does not prove Cargo reused every unit.
+Cargo timings are not a standalone linker profiler and do not explain downloads, bundle assembly, or all causes of elapsed time.
+See [Cargo's timing guide](https://doc.rust-lang.org/cargo/reference/timings.html) for graph interpretation.
+
+### Test Timings
+
 After each test step, `cargo ci` prints where the time went and, in GitHub Actions, adds it to the job summary:
 
 - the step's test count, wall time, and summed test time;

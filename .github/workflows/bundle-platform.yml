@@ -48,8 +48,19 @@ jobs:
         run: cargo ci fmt
       - name: Lint Rust
         run: cargo ci clippy
+      - name: Clear cached build timings
+        id: timings
+        run: rm -rf target/cargo-timings
       - name: Build test executables
         run: cargo ci build
+      - name: Upload workspace build timings
+        if: always() && steps.timings.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-workspace-${{ inputs.platform }}-${{ github.run_attempt }}
+          path: target/cargo-timings/*.html
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Run tests
         run: cargo ci test
       - name: Upload test timings
@@ -95,8 +106,19 @@ jobs:
         with:
           platform: ${{ inputs.platform }}
           cache-prefix: native-bundle-v1
+      - name: Clear cached build timings
+        id: timings
+        run: rm -rf target/cargo-timings
       - name: Build and verify bundle
         run: cargo ci bundle
+      - name: Upload release bundle build timings
+        if: always() && steps.timings.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-bundle-${{ inputs.platform }}-${{ github.run_attempt }}
+          path: target/cargo-timings/*.html
+          if-no-files-found: ignore
+          retention-days: 14
       # Tar preserves the executable permissions that artifact transfer drops.
       - name: Pack bundle
         run: |

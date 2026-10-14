@@ -10,6 +10,33 @@ use std::{
 
 struct Fixture(tempfile::TempDir);
 
+#[test]
+fn build_steps_publish_wall_time_and_outcome_even_on_failure() {
+    for step in ["build", "bundle"] {
+        for failed in [false, true] {
+            let fixture = Fixture::new();
+            let summary = fixture.0.path().join("summary.md");
+            let output = fixture
+                .command(&[step])
+                .env("CARGO_RESULT", if failed { "1" } else { "0" })
+                .env("GITHUB_STEP_SUMMARY", &summary)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.success(), !failed);
+            let report = fs::read_to_string(summary).unwrap_or_default();
+            assert!(
+                report.contains(&format!("{step} (linux_arm64)")),
+                "{report}"
+            );
+            assert!(report.contains(" s wall"), "{report}");
+            assert!(
+                report.contains(if failed { "failed" } else { "passed" }),
+                "{report}"
+            );
+        }
+    }
+}
+
 impl Fixture {
     fn new() -> Self {
         let root = tempfile::tempdir().unwrap();
@@ -29,7 +56,7 @@ if [ "$1" = build ]; then
     /bin/mkdir -p target/debug
     printf '#!/bin/sh\nprintf "%%s\\n" "$@" > bundled\n' > target/debug/nemoclaw-build
     /bin/chmod +x target/debug/nemoclaw-build
-    exit 0
+    exit "${CARGO_RESULT:-0}"
 fi
 if [ "$1 $2" = 'nextest list' ]; then
     previous=
@@ -76,7 +103,8 @@ exit "${CARGO_RESULT:-0}"
             .env_remove("NEMOCLAW_TEST_TOFU")
             .env_remove("NEMOCLAW_TEST_PROVIDER")
             .env_remove("GITHUB_ENV")
-            .env_remove("GITHUB_PATH");
+            .env_remove("GITHUB_PATH")
+            .env_remove("GITHUB_STEP_SUMMARY");
         command
     }
 

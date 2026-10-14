@@ -492,6 +492,13 @@ pub(super) async fn run_steps(
             run_step(&tools, &platform, step, partition, archive_file, images)
         };
         let elapsed = begun.elapsed().as_secs();
+        if matches!(step, Step::Build | Step::Bundle) {
+            let outcome = if result.is_ok() { "passed" } else { "failed" };
+            publish(&format!(
+                "### Build step: {} ({platform})\n\n{elapsed} s wall; {outcome}.\n",
+                step.name()
+            ));
+        }
         let over = report_timing(step, partition, begun);
         let result = result.and_then(|()| {
             if over.is_empty() {

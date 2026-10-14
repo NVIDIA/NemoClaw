@@ -272,7 +272,14 @@ fn target(platform: &str) -> Result<&'static str> {
 fn build(packages: &[&str], target: &str) -> Result<()> {
     let root = std::env::current_dir()?;
     let mut command = cargo();
-    command.args(["build", "--locked", "--release", "--target", target]);
+    command.args([
+        "build",
+        "--locked",
+        "--release",
+        "--target",
+        target,
+        "--timings",
+    ]);
     for package in packages {
         command.args(["-p", package]);
     }
