@@ -12,8 +12,8 @@ interface RuntimeSummary {
 }
 
 const STATIC_NETWORK_LINES = [
-  "outbound network is deny-by-default, but allowed endpoints work, so verify by attempting a request rather than assuming a host is unreachable",
-  "attempting a restricted endpoint is productive: a proxy or policy denial raises an operator approval request in OpenShell, so make the request rather than refusing preemptively; if it fails, report the actual error and distinguish a policy denial (which the operator can approve) from other network errors such as DNS, timeout, or TLS failures",
+  "Outbound network access is deny-by-default, but allowed endpoints work. Try the request before declaring a host unreachable.",
+  "OpenShell policy denials can raise operator approval requests. Report the actual error when a request fails.",
 ];
 
 const STATIC_FILESYSTEM_LINES = [
@@ -65,7 +65,10 @@ function buildRuntimeContextText(summary: RuntimeSummary): string {
     ...summary.filesystemLines.map((line) => `- ${line}`),
     "Behavior:",
     "- Do not assert that a URL or host is blocked or unreachable unless you have actually attempted it this turn; report the actual result rather than speculating.",
-    "- Distinguish a proxy/policy denial, which raises an operator approval request in OpenShell, from other failures such as DNS, timeout, or TLS errors; only a policy denial is something the operator can approve.",
+    "- If a tool reports `CONNECT tunnel failed, response 403`, state that the proxy refused the request.",
+    "- OpenShell policy may be the cause. The error alone does not confirm a policy denial.",
+    "- Ask the operator to check `nemoclaw <sandbox> logs --tail 50` on the host before suggesting a policy change.",
+    "- Do not call a proxy 403 a generic connectivity failure. Treat proxy 407, DNS, timeout, and TLS failures separately.",
     "- Do not claim unrestricted host or internet access either. When unsure, attempt the action and rely on the real result instead of speculating about the environment.",
     "</nemoclaw-runtime>",
   ].filter((line): line is string => Boolean(line));

@@ -77,8 +77,9 @@ describe("getRuntimeSummary", () => {
 
     expect(summary.sandboxName).toBe("openclaw");
     expect(summary.sandboxPhase).toBeNull();
-    expect(summary.networkLines).toContain(
-      "outbound network is deny-by-default, but allowed endpoints work, so verify by attempting a request rather than assuming a host is unreachable",
+    expect(summary.networkLines.join(" ")).toContain("deny-by-default");
+    expect(summary.networkLines.join(" ")).toContain(
+      "Try the request before declaring a host unreachable",
     );
     expect(summary.filesystemLines).toContain(
       "filesystem and process access are scoped to the sandbox, not the host; do not assume access to host paths outside it",
@@ -137,7 +138,11 @@ describe("registerRuntimeContext", () => {
     expect(result.prependSystemContext).toContain(
       "unless you have actually attempted it this turn",
     );
-    expect(result.prependSystemContext).toContain("raises an operator approval request");
+    expect(result.prependSystemContext).toContain("can raise operator approval requests");
+    expect(result.prependSystemContext).toContain("CONNECT tunnel failed, response 403");
+    expect(result.prependSystemContext).toContain("The error alone does not confirm");
+    expect(result.prependSystemContext).toContain("nemoclaw <sandbox> logs --tail 50");
+    expect(result.prependSystemContext).toContain("Treat proxy 407, DNS, timeout, and TLS");
   });
 
   it("uses the persisted sandbox name in the injected context", async () => {
