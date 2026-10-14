@@ -363,6 +363,16 @@ describe("shared E2E workflow boundary", () => {
     },
   );
 
+  it("requires the Portable Hermes CLI artifact restore step", testTimeoutOptions(15_000), () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const job = workflow.jobs["portable-hermes-finalization"];
+      job.steps = job.steps!.filter((step) => step.name !== "Restore exact-commit CLI artifact");
+    });
+    expect(errors).toContain(
+      "portable-hermes-finalization must restore the exact-commit CLI artifact with the reviewed action reference",
+    );
+  });
+
   it("keeps action paths case-sensitive when classifying staging references", () => {
     const errors = validateMutatedWorkflow((workflow) => {
       workflow.jobs["generate-matrix"].steps!.push({
