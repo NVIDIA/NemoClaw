@@ -10,12 +10,15 @@ import os
 import re
 import stat
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 MANAGED_POLICY_PATH = Path("/usr/local/share/nemoclaw/hermes-managed-policy.json")
 MANAGED_POLICY_SCHEMA_VERSION = 3
 HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE"
 NVIDIA_INFERENCE_PLACEHOLDER = "${NVIDIA_INFERENCE_API_KEY}"
+NVIDIA_SCOPED_CREDENTIAL_HANDLE = re.compile(
+    r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY"
+)
 
 
 class ManagedPolicyError(Exception):
@@ -162,10 +165,29 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
             _ = url.port
         except (TypeError, ValueError):
             raise ManagedPolicyError("managed policy model.base_url is invalid") from None
+        if (
+            not native_nvidia
+            and url.scheme.lower() == "https"
+            and unquote(url.hostname or "").lower().rstrip(".")
+            == "integrate.api.nvidia.com"
+            and url.port in (None, 443)
+        ):
+            raise ManagedPolicyError(
+                "Native NVIDIA inference requires https://integrate.api.nvidia.com/v1."
+            )
         expected_key = NVIDIA_INFERENCE_PLACEHOLDER if native_nvidia else HERMES_PROXY_REWRITE_SENTINEL
         api_key = policy_value(config, "model.api_key")
         hosted_placeholder = None if native_nvidia else _native_hosted_placeholder(config, base_url)
-        if api_key != expected_key and (hosted_placeholder is None or api_key != hosted_placeholder):
+        scoped_nvidia_handle = (
+            native_nvidia
+            and isinstance(api_key, str)
+            and NVIDIA_SCOPED_CREDENTIAL_HANDLE.fullmatch(api_key) is not None
+        )
+        if (
+            api_key != expected_key
+            and (hosted_placeholder is None or api_key != hosted_placeholder)
+            and not scoped_nvidia_handle
+        ):
             raise ManagedPolicyError(
                 "managed policy model.api_key must use an OpenShell credential placeholder or proxy rewrite sentinel "
                 "matching its route"

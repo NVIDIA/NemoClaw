@@ -32,6 +32,7 @@ import { agentVariants, renderAgentVariantPage } from "./sync-agent-variant-docs
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const docsRoot = path.join(repoRoot, "docs");
+const readmePath = path.join(repoRoot, "README.md");
 type AgentVariant = (typeof agentVariants)[number];
 const LEGACY_REDIRECT_VARIANTS = [
   "openclaw",
@@ -420,6 +421,43 @@ export function extractMarkdownLinks(body: string): MarkdownLink[] {
   return links.sort((left, right) => left.line - right.line);
 }
 
+export type ReadmeDocsRouteViolation = MarkdownLink & { resolved: string };
+
+/** Validate official documentation links in README.md against published Fern routes. */
+export function findBrokenReadmeDocsRoutes(
+  index: PublishedRouteIndex,
+  readme: string = readFileSync(readmePath, "utf8"),
+): ReadmeDocsRouteViolation[] {
+  const docsOrigin = "https://docs.nvidia.com";
+  const docsBasePath = "/nemoclaw/latest";
+  const violations: ReadmeDocsRouteViolation[] = [];
+
+  for (const link of extractMarkdownLinks(readme)) {
+    let url: URL;
+    try {
+      url = new URL(link.target);
+    } catch {
+      continue;
+    }
+    if (
+      url.origin !== docsOrigin ||
+      (url.pathname !== docsBasePath && !url.pathname.startsWith(`${docsBasePath}/`))
+    ) {
+      continue;
+    }
+
+    const resolved =
+      url.pathname
+        .slice(docsBasePath.length)
+        .replace(/\.html$/, "")
+        .replace(/\/$/, "") || "/";
+    if (resolved !== "/" && !index.routes.has(resolved)) {
+      violations.push({ ...link, resolved });
+    }
+  }
+  return violations;
+}
+
 function isInternalRouteLink(target: string): boolean {
   if (target.startsWith("#")) return false; // same-page anchor
   if (target.startsWith("//")) return false; // protocol-relative external URL
@@ -603,10 +641,12 @@ function main(): void {
     ...findMissingDirectLegacyManageSandboxRedirects(),
     ...findMissingDirectLegacyReleaseNotesRedirects(),
   ];
+  const readmeDocsRouteViolations = findBrokenReadmeDocsRoutes(index);
   if (
     violations.length > 0 ||
     redirectViolations.length > 0 ||
-    legacyHtmlRedirectViolations.length > 0
+    legacyHtmlRedirectViolations.length > 0 ||
+    readmeDocsRouteViolations.length > 0
   ) {
     console.error(
       "check-docs-published-routes: internal links resolve to no published Fern route.",
@@ -636,10 +676,16 @@ function main(): void {
           (v.mustPrecede ? ` before ${v.mustPrecede}` : ""),
       );
     }
+    for (const v of readmeDocsRouteViolations) {
+      console.error(
+        `  README.md:${v.line} [${v.text}](${v.target})\n` +
+          `    resolves to ${v.resolved} — not a published route`,
+      );
+    }
     process.exit(1);
   }
   console.log(
-    `check-docs-published-routes: OK — ${sources.length} published page(s), native changelog links, and direct legacy redirects`,
+    `check-docs-published-routes: OK — ${sources.length} published page(s), README docs links, native changelog links, and direct legacy redirects`,
   );
 }
 
