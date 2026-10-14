@@ -124,6 +124,18 @@ describe("E2E extra-provider profile", () => {
     expect(fixture.events).toEqual(["import", "export"]);
   });
 
+  it("stops when provider creation fails after profile verification (#12940)", async () => {
+    const fixture = gateway([
+      { operation: "import", result: probe(0) },
+      { operation: "export", result: probe(0, matchingExport()) },
+      { operation: "create", result: probe(1, "", "create failed") },
+    ]);
+    await expect(fixture.create()).rejects.toThrow("Could not create the E2E extra provider.");
+    expect(fixture.events).toEqual(["import", "export", "create"]);
+    expect(fixture.command).toHaveBeenCalledTimes(3);
+    expect(fixture.remaining).toEqual([]);
+  });
+
   it("stops before profile import when the credential is absent (#12940)", async () => {
     const fixture = gateway([]);
     await expect(
