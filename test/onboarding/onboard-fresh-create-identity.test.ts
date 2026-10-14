@@ -92,7 +92,7 @@ describe("fresh create identity", () => {
         expectedOutcome: "identity-mismatch-refusal" as const,
       },
       {
-        title: "retains pre-create Docker authority when no sandbox identity is returned (#13071)",
+        title: "retires the persisted identity-free recovery record after gateway restart (#13071)",
         apfInterceptorRequested: false,
         provider: "nvidia-prod",
         model: "gpt-5.4",
@@ -171,19 +171,25 @@ describe("fresh create identity", () => {
         agent: null,
         expectedOutcome: "cancel-after-create-custom-presets" as const,
       },
-    ].flatMap(
-      (testCase): (Omit<typeof testCase, "agent"> & { agent: { name: string } | null })[] =>
-        testCase.agent || testCase.expectedOutcome.startsWith("cancel-after-create-")
-          ? [testCase]
-          : [
-              testCase,
-              {
-                ...testCase,
-                title: testCase.title.replace(/ \(#\d+\)$/, " for Hermes (#11548)"),
-                agent: { name: "hermes" },
-              },
-            ],
-    ),
+    ]
+      .filter(
+        (testCase) =>
+          testCase.expectedOutcome !== "identity-free-recovery-authority" ||
+          process.platform === "linux",
+      )
+      .flatMap(
+        (testCase): (Omit<typeof testCase, "agent"> & { agent: { name: string } | null })[] =>
+          testCase.agent || testCase.expectedOutcome.startsWith("cancel-after-create-")
+            ? [testCase]
+            : [
+                testCase,
+                {
+                  ...testCase,
+                  title: testCase.title.replace(/ \(#\d+\)$/, " for Hermes (#11548)"),
+                  agent: { name: "hermes" },
+                },
+              ],
+      ),
   )(
     "$title",
     {
@@ -338,8 +344,11 @@ let daemonObservedAtCreate = false;
 if (identityFreeRecoveryAuthority) {
   process.env.DOCKER_HOST = "unix:///var/run/docker.sock";
   process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = ${JSON.stringify(path.join(tmpDir, "gateway-state"))};
-  require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/host-gateway-process.ts"))})
-    .resolveOwnedHostGatewayRuntimeProviderId = () => "docker";
+  require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/docker-driver-gateway-runtime-marker.ts"))})
+    .writeDockerDriverGatewayRuntimeMarkerForStateDir(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR, {
+      pid: 4242, desiredEnv: {}, endpoint: ${JSON.stringify(`https://127.0.0.1:${gatewayPort}`)},
+      createdAt: new Date(Date.now() - 1000).toISOString(), runtimeProviderId: "docker",
+    });
   require(${JSON.stringify(path.join(repoRoot, "src/lib/adapters/docker/run.ts"))}).dockerRun = (args) => {
     require("node:assert/strict").deepEqual(args, ["--context", "default", "info", "--format", "{{.ID}}"]);
     daemonObserved = true;
@@ -540,6 +549,7 @@ managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle = (input, deps =
 	}
 	const durableGetSandbox = registry.getSandbox.bind(registry);
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+    durableRegistry: identityFreeRecoveryAuthority,
 	  sandboxName: "my-assistant",
 	  gatewayName: ${JSON.stringify(gatewayName)},
 	  gatewayPort: ${String(gatewayPort)},
@@ -1077,7 +1087,7 @@ if (${JSON.stringify(
           "expected recovery output to report the exact create-attempt label",
         );
       };
-      const assertIdentityFreeRecoveryAuthority = () => {
+      const assertIdentityFreeRecoveryAuthority = async () => {
         assert.equal(payload.daemonObservedAtCreate, true);
         assert.equal(payload.registeredSandbox, null);
         assert.equal(payload.deleted, false);
@@ -1094,6 +1104,83 @@ if (${JSON.stringify(
           daemonId: "fixture-recovery-daemon",
         });
         assert.deepEqual(record.resources.sharedInferenceProviders, [provider]);
+        const recoveryScriptPath = path.join(tmpDir, "destroy-retained-recovery.js");
+        fs.writeFileSync(
+          recoveryScriptPath,
+          String.raw`
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const session = require(${retainedRecoveryPath});
+const registry = require(${registryPath});
+const producer = JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8"));
+const original = producer.retainedRecoveryRecords[0];
+const persisted = fs.readFileSync(session.RETAINED_SANDBOX_RECOVERY_FILE, "utf8");
+assert.deepEqual(session.listRetainedSandboxRecoveryRecords(), [original]);
+assert.equal(fs.readFileSync(session.RETAINED_SANDBOX_RECOVERY_FILE, "utf8"), persisted);
+assert.deepEqual(registry.getSandbox("my-assistant"), producer.recoveryRegistryEntry);
+const marker = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/docker-driver-gateway-runtime-marker.ts"))});
+marker.writeDockerDriverGatewayRuntimeMarkerForStateDir(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR, {
+  pid: 4243, desiredEnv: {}, endpoint: ${JSON.stringify(`https://127.0.0.1:${gatewayPort}`)},
+  createdAt: new Date(Date.parse(original.recordedAt) + 1000).toISOString(), runtimeProviderId: "docker",
+});
+session.saveSession(session.createSession({
+  sessionId: "other-session", sandboxName: "other-sandbox", agent: "openclaw",
+  provider: ${JSON.stringify(provider)}, model: ${JSON.stringify(model)},
+}));
+registry.reserveSandboxInferenceRoute("other-sandbox", {
+  gatewayName: ${JSON.stringify(gatewayName)}, reservationSessionId: "other-session",
+  provider: ${JSON.stringify(provider)}, model: ${JSON.stringify(model)},
+  endpointUrl: null, credentialEnv: null, preferredInferenceApi: null,
+});
+session.markRetainedSandboxRecovery("other-sandbox", "unrelated recovery", undefined, {
+  gatewayName: ${JSON.stringify(gatewayName)}, gatewayPort: ${String(gatewayPort)},
+  lifecycleGeneration: "other-generation", createAttemptNonce: "b".repeat(62),
+});
+const controlRecord = session.listRetainedSandboxRecoveryRecords().find((entry) => entry.sandboxName === "other-sandbox");
+const controlReservation = registry.getSandbox("other-sandbox");
+const controlSession = fs.readFileSync(session.SESSION_FILE, "utf8");
+const runtimeFile = marker.getDockerDriverGatewayRuntimeMarkerPath(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR);
+const runtimeBefore = fs.readFileSync(runtimeFile, "utf8");
+assert.deepEqual(session.listRetainedSandboxRecoveryRecords().find((entry) => entry.sandboxName === "my-assistant"), original);
+let cleanupCalls = 0;
+const forbidCleanup = () => { cleanupCalls += 1; throw new Error("Unexpected resource cleanup"); };
+require(${runnerPath}).run = forbidCleanup;
+const runtime = require(${JSON.stringify(path.join(repoRoot, "src/lib/adapters/openshell/runtime.ts"))});
+runtime.runOpenshell = forbidCleanup;
+runtime.captureOpenshell = (args) => {
+  assert.deepEqual(args, ["sandbox", "list", "-g", ${JSON.stringify(gatewayName)}, "--output", "json"]);
+  return { status: 0, output: "[]", stdout: "[]", stderr: "" };
+};
+require(${JSON.stringify(path.join(repoRoot, "src/lib/adapters/docker/run.ts"))}).dockerRun = (args) => {
+  assert.deepEqual(args.slice(0, 2), ["--context", "default"]);
+  if (args[2] !== "info" && args[2] !== "ps" && !(args[2] === "volume" && args[3] === "ls")) return forbidCleanup();
+  return { status: 0, stdout: args[2] === "info" ? "fixture-recovery-daemon" : "", stderr: "" };
+};
+require(${JSON.stringify(path.join(repoRoot, "src/lib/actions/sandbox/destroy-preflight.ts"))}).prepareSandboxDestroy = forbidCleanup;
+require(${JSON.stringify(path.join(repoRoot, "src/lib/actions/sandbox/destroy-confirmation.ts"))}).confirmSandboxDestroy = async () => true;
+(async () => {
+  await require(${JSON.stringify(path.join(repoRoot, "src/lib/actions/sandbox/destroy.ts"))}).destroySandbox("my-assistant", { yes: true });
+  assert.equal(registry.getSandbox("my-assistant"), null);
+  assert.deepEqual(session.listRetainedSandboxRecoveryRecords(), [controlRecord]);
+  assert.deepEqual(registry.getSandbox("other-sandbox"), controlReservation);
+  assert.equal(fs.readFileSync(session.SESSION_FILE, "utf8"), controlSession);
+  assert.equal(fs.readFileSync(runtimeFile, "utf8"), runtimeBefore);
+  assert.equal(cleanupCalls, 0);
+  assert.equal(fs.existsSync(path.join(path.dirname(session.RETAINED_SANDBOX_RECOVERY_FILE), ".retained-recovery-archive")), false);
+})().catch((error) => { console.error(error); process.exit(1); });
+`,
+        );
+        const recovery = await runNodeScript(recoveryScriptPath, {
+          cwd: repoRoot,
+          env: {
+            ...childEnv,
+            DOCKER_HOST: "unix:///var/run/docker.sock",
+            NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: path.join(tmpDir, "gateway-state"),
+          },
+          timeout: 30000,
+        });
+        assert.equal(recovery.status, 0, `${recovery.stdout}\n${recovery.stderr}`);
       };
       const assertPostCreateRunnerRefusal = () => {
         assert.equal(payload.sandboxName, null);
