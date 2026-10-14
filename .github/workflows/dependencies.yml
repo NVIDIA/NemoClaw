@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 name: CI / Dependencies
 on:
+  # Stacked v1 PRs target feature branches, so do not filter by base branch.
   pull_request:
-    branches: [v1]
   push:
     branches: [v1]
     paths:
