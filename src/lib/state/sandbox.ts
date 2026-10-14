@@ -1609,7 +1609,7 @@ function shouldScanNativeOpaqueAssignments(
   const structuredKind = nativeStructuredAuthorityKind(normalized, fileName);
   return (
     providerProfileSchema ||
-    (structuredKind !== null && structuredKind !== "openclaw-config") ||
+    structuredKind !== null ||
     fileName === ".env" ||
     fileName.endsWith(".env") ||
     /^\.openclaw\/agents\/[^/]+\/(?:history|session)\.log$/u.test(normalized)
@@ -1623,6 +1623,7 @@ function scanNativeTarFilePayload(
   opaqueAssignments: boolean,
   npmConfig: boolean,
   providerProfileSchema: boolean,
+  openclawConfig: boolean,
   privateKeyHeader: boolean,
   dependencyBinary: boolean,
 ): boolean | null {
@@ -1647,7 +1648,9 @@ function scanNativeTarFilePayload(
           /^([ \t]*(?:"secret"|secret)[ \t]*:[ \t]*)(?:true|false)([ \t]*,?[ \t]*(?:#.*)?)$/gimu,
           "$1unused$2",
         )
-      : raw;
+      : openclawConfig
+        ? raw.replace(/("apiKey"\s*:\s*")\$\{NVIDIA_INFERENCE_API_KEY\}(")/gu, "$1unused$2")
+        : raw;
     if (
       textContainsCredential(credentialScanInput, {
         opaqueAssignments,
@@ -1716,6 +1719,11 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
             // manifests still receive a structure-aware scan below.
             const providerProfileSchema = isBundledProviderProfileSchema(entry);
             const dependencyTree = isNativeDependencyTreeEntry(entry);
+            const openclawConfig =
+              nativeStructuredAuthorityKind(
+                path.posix.normalize(entry.replace(/^\.\//u, "")),
+                fileName,
+              ) === "openclaw-config";
             const violation = scanNativeTarFilePayload(
               descriptor,
               dataOffset,
@@ -1723,6 +1731,7 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
               shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
               fileName === ".npmrc",
               providerProfileSchema,
+              openclawConfig,
               !dependencyTree,
               dependencyTree,
             );

@@ -11,6 +11,7 @@ async function backupWithOpenClawApiKey(
   providerName = "inference",
   baseUrl = "https://integrate.api.nvidia.com/v1",
   otherProviders: Record<string, { apiKey: string; baseUrl: string }> = {},
+  additionalConfig: Record<string, unknown> = {},
 ) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-nvidia-backup-"));
   vi.stubEnv("HOME", home);
@@ -25,6 +26,7 @@ async function backupWithOpenClawApiKey(
         ...otherProviders,
       },
     },
+    ...additionalConfig,
   };
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(config));
@@ -70,6 +72,25 @@ it("archives the generated NVIDIA inference reference without machine-local auth
       ".openclaw/openclaw.json",
     );
     expect(JSON.parse(fs.readFileSync(result.configPath, "utf8"))).toEqual(result.config);
+  } finally {
+    cleanup(result.home);
+  }
+});
+
+it("rejects an opaque credential assignment beside the approved NVIDIA reference (#13018)", async () => {
+  const result = await backupWithOpenClawApiKey(
+    "${NVIDIA_INFERENCE_API_KEY}",
+    "inference",
+    "https://integrate.api.nvidia.com/v1",
+    {},
+    { notes: "PASSWORD=abc12345" },
+  );
+  try {
+    expect(result.backup.success).toBe(false);
+    expect(result.backup.error).toContain("credential-bearing or uninspectable content");
+    expect(result.backup.error).toContain("./.openclaw/openclaw.json");
+    const backupRoot = path.join(result.home, ".nemoclaw", "rebuild-backups", "alpha");
+    expect(fs.existsSync(backupRoot) ? fs.readdirSync(backupRoot) : []).toEqual([]);
   } finally {
     cleanup(result.home);
   }

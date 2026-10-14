@@ -1010,11 +1010,13 @@ export function createSetupInference(
             : null;
           if (
             options.deferPublishedRouteReservation &&
-            !hostLocalSelection &&
-            credentialEnv !== deps.ollamaProxyCredentialEnv &&
-            publishedSource &&
-            !isLocalOllamaRouteOwner(publishedSource) &&
-            publishedSource.pendingRouteReservation !== true
+            shouldStageGatewayRouteAfterBackup(
+              provider,
+              publishedSource,
+              hostLocalSelection,
+              credentialEnv,
+              deps.ollamaProxyCredentialEnv,
+            )
           ) {
             // The sandbox phase owns the replacement reservation after its
             // pre-delete backup succeeds. Keep the current source connectable

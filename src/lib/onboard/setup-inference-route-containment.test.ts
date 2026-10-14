@@ -1070,19 +1070,37 @@ describe("onboard shared gateway route containment", () => {
   });
 
   it.each([
-    { state: "published", entry: { name: "alpha" }, writes: 0 },
+    {
+      state: "published",
+      entry: { name: "alpha" },
+      writes: 0,
+      selectedProvider: "compatible-endpoint",
+    },
     {
       state: "published Ollama-owned",
       entry: { name: "alpha", provider: "ollama-local", model: "llama3" },
       writes: 1,
+      selectedProvider: "compatible-endpoint",
     },
-    { state: "pending", entry: { name: "alpha", pendingRouteReservation: true }, writes: 1 },
-    { state: "absent", entry: null, writes: 1 },
+    {
+      state: "published with a nonremote selection",
+      entry: { name: "alpha", provider: "compatible-endpoint" },
+      writes: 1,
+      selectedProvider: "vllm-local",
+    },
+    {
+      state: "pending",
+      entry: { name: "alpha", pendingRouteReservation: true },
+      writes: 1,
+      selectedProvider: "compatible-endpoint",
+    },
+    { state: "absent", entry: null, writes: 1, selectedProvider: "compatible-endpoint" },
   ])(
     "defers a $state route only while its source is published (#13018)",
-    async ({ entry, writes }) => {
+    async ({ entry, writes, selectedProvider }) => {
       releaseAbandonedRouteReservation.mockReset().mockReturnValue(false);
       const updateSandbox = vi.fn(() => true);
+      const inferenceRouteMutator = successfulInferenceRouteMutator();
       const setupInference = createSetupInference({
         checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
         withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
@@ -1104,7 +1122,7 @@ describe("onboard shared gateway route containment", () => {
             : "",
           stderr: "",
         })),
-        inferenceRouteMutator: successfulInferenceRouteMutator(),
+        inferenceRouteMutator,
         inferenceRouteObserver: successfulInferenceRouteObserver(),
         updateSandbox,
         getSandbox: vi.fn(() => entry as SandboxEntry | null),
@@ -1134,6 +1152,10 @@ describe("onboard shared gateway route containment", () => {
         promptValidationRecovery: vi.fn(),
         classifyApplyFailure: vi.fn(),
         localInferenceTimeoutSecs: 60,
+        validateLocalProvider: vi.fn(() => ({ ok: true })),
+        getLocalProviderBaseUrl: vi.fn(() => "http://host.openshell.internal:8000/v1"),
+        getManagedVllmProviderBinding: vi.fn(() => null),
+        vllmLocalCredentialEnv: "NEMOCLAW_VLLM_LOCAL_TOKEN",
         bedrockRuntimeOnboard: {
           setupBedrockRuntimeInference: vi.fn(async () => ({ handled: false as const })),
         },
@@ -1152,9 +1174,9 @@ describe("onboard shared gateway route containment", () => {
       const result = await setupInference(
         "alpha",
         "new-model",
-        "compatible-endpoint",
-        "https://public-name.example/v1",
-        "COMPATIBLE_API_KEY",
+        selectedProvider,
+        selectedProvider === "vllm-local" ? null : "https://public-name.example/v1",
+        selectedProvider === "vllm-local" ? null : "COMPATIBLE_API_KEY",
         null,
         [],
         { deferPublishedRouteReservation: true, skipHostInferenceSmoke: true },
@@ -1163,6 +1185,7 @@ describe("onboard shared gateway route containment", () => {
         writes === 0 ? { ok: true, deferredInferenceRoute: expect.any(Function) } : { ok: true },
       );
       expect(updateSandbox).toHaveBeenCalledTimes(writes);
+      expect(inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledTimes(writes);
     },
   );
 });
