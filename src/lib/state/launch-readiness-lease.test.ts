@@ -510,6 +510,40 @@ describe("launch readiness lease storage", () => {
     ).toBe("changed");
   });
 
+  it.each([8080, 18080])(
+    "publishes and reloads readiness under a group-writable home on gateway port %s",
+    (gatewayPort) => {
+      fs.chmodSync(home, 0o775);
+      const previousUmask = process.umask(0o002);
+      try {
+        const fence = fenceLaunchReadinessLease(SANDBOX, gatewayPort, options());
+        expect(
+          checkLaunchReadinessMutationAuthority(
+            SANDBOX,
+            GATEWAY_NAME,
+            gatewayPort,
+            fence.epochId,
+            options(),
+          ),
+        ).toBe("current");
+        const lease = publishLaunchReadinessLease(
+          SANDBOX,
+          gatewayPort,
+          fence.epochId,
+          identity(),
+          options(),
+        );
+        expect(readLaunchReadinessLease(SANDBOX, gatewayPort, options())).toEqual({
+          kind: "valid",
+          lease,
+        });
+        expect(fs.statSync(home).mode & 0o777).toBe(0o775);
+      } finally {
+        process.umask(previousUmask);
+      }
+    },
+  );
+
   it("reports bounded persistent receipt permission evidence without authorizing mutation (#10638)", () => {
     publish();
     const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
@@ -779,6 +813,7 @@ describe("launch readiness lease storage", () => {
   });
 
   it("rejects unsafe receipt permissions and foreign ownership authority", () => {
+    fs.chmodSync(home, 0o775);
     publish();
     const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
     const receiptDir = path.dirname(receiptPath);
@@ -793,10 +828,14 @@ describe("launch readiness lease storage", () => {
     expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
     fs.chmodSync(receiptDir, 0o700);
 
-    const stateAncestor = path.dirname(path.dirname(receiptDir));
+    const stateAncestor = path.dirname(receiptDir);
     fs.chmodSync(stateAncestor, 0o770);
     expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
     fs.chmodSync(stateAncestor, 0o700);
+
+    fs.chmodSync(home, 0o777);
+    expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
+    fs.chmodSync(home, 0o775);
 
     expect(
       readLaunchReadinessLease(
