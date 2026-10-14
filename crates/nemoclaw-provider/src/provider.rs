@@ -124,10 +124,6 @@ impl Provider for NemoClawProvider {
                     as Box<dyn DynamicDataSource>,
             ),
             (
-                nemoclaw_sdk::managed::GATEWAY_RUNTIME_DATA_SOURCE.into(),
-                Box::new(crate::gateway::GatewayRuntimeDataSource) as Box<dyn DynamicDataSource>,
-            ),
-            (
                 "inference_capabilities".into(),
                 Box::new(crate::inference_discovery::InferenceDataSource)
                     as Box<dyn DynamicDataSource>,
@@ -159,12 +155,6 @@ impl Provider for NemoClawProvider {
                 "service_capacity".into(),
                 Box::new(crate::capacity::CapacityDataSource(self.backend.clone()))
                     as Box<dyn DynamicDataSource>,
-            ),
-            (
-                "gateway_readiness".into(),
-                Box::new(crate::gateway::GatewayReadinessDataSource(
-                    self.backend.clone(),
-                )) as Box<dyn DynamicDataSource>,
             ),
         ]))
     }
@@ -204,35 +194,108 @@ impl Provider for NemoClawProvider {
         &self,
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
-        let definitions = definitions();
         Some(
-            definitions
+            definitions()
                 .into_iter()
                 .map(|definition| {
                     let name = definition.kind.into();
-                    let structured = definition.is_structured();
-                    let mut resource = ResourceAdapter::new(definition, self.backend.clone());
-                    resource.destroying = self.destroying.clone();
-                    // Typed list and block inputs need the structured adapter.
-                    let resource: Box<dyn DynamicResource> = if structured {
-                        Box::new(nemoclaw_tofu::StructuredAdapter(resource))
-                    } else {
-                        Box::new(resource)
-                    };
-                    (name, resource)
+                    (name, adapter(definition, &self.backend, &self.destroying))
                 })
                 .collect(),
         )
     }
 }
 
-/// Resource definitions served by this provider.
-pub(crate) fn definitions() -> Vec<Definition> {
+/// A resource for `definition`, reconciled by `backend`.
+fn adapter(
+    definition: Definition,
+    backend: &Arc<ConfiguredBackend>,
+    destroying: &Arc<AtomicBool>,
+) -> Box<dyn DynamicResource> {
+    let structured = definition.is_structured();
+    let mut resource = ResourceAdapter::new(definition, backend.clone());
+    resource.destroying = destroying.clone();
+    // Typed list and block inputs need the structured adapter.
+    if structured {
+        Box::new(nemoclaw_tofu::StructuredAdapter(resource))
+    } else {
+        Box::new(resource)
+    }
+}
+
+/// Every resource definition this crate implements.
+pub(crate) fn all_definitions() -> Vec<Definition> {
     let mut definitions = Vec::new();
     definitions.extend(crate::kubernetes::definitions());
     definitions.extend(crate::services::definitions());
     definitions.extend(crate::managed::definitions());
     definitions
+}
+
+/// Whether the openshell provider serves a kind: gateway installation.
+fn installs_gateway(definition: &Definition) -> bool {
+    nemoclaw_openshell::installation_type(definition.kind).is_some()
+}
+
+/// Resource definitions served by this provider.
+pub(crate) fn definitions() -> Vec<Definition> {
+    all_definitions()
+        .into_iter()
+        .filter(|definition| !installs_gateway(definition))
+        .collect()
+}
+
+/// The gateway installation types: Podman and Kubernetes gateways, their
+/// storage and credentials, and Docker gateway reads. The openshell provider
+/// serves them, sharing its teardown permission.
+pub struct GatewayInstallation {
+    backend: Arc<ConfiguredBackend>,
+    destroying: Arc<AtomicBool>,
+}
+
+impl GatewayInstallation {
+    /// Installation types that may tear down only while `destroying` holds.
+    pub fn new(destroying: Arc<AtomicBool>) -> Self {
+        Self {
+            backend: Arc::default(),
+            destroying,
+        }
+    }
+
+    /// The type name, without the provider prefix, for an installation kind.
+    fn name(kind: &str) -> String {
+        nemoclaw_openshell::installation_type(kind)
+            .and_then(|name| name.strip_prefix("openshell_").map(str::to_owned))
+            .expect("an installation kind")
+    }
+
+    /// Resources by type name, without the provider prefix.
+    pub fn resources(&self) -> HashMap<String, Box<dyn DynamicResource>> {
+        all_definitions()
+            .into_iter()
+            .filter(installs_gateway)
+            .map(|definition| {
+                let name = Self::name(definition.kind);
+                (name, adapter(definition, &self.backend, &self.destroying))
+            })
+            .collect()
+    }
+
+    /// Data sources by type name, without the provider prefix.
+    pub fn data_sources(&self) -> HashMap<String, Box<dyn DynamicDataSource>> {
+        HashMap::from([
+            (
+                Self::name(nemoclaw_sdk::managed::GATEWAY_RUNTIME_DATA_SOURCE),
+                Box::new(crate::gateway::GatewayRuntimeDataSource) as Box<dyn DynamicDataSource>,
+            ),
+            (
+                Self::name("gateway_readiness"),
+                Box::new(crate::gateway::GatewayReadinessDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
+            ),
+        ])
+    }
 }
 
 #[cfg(test)]
@@ -241,7 +304,7 @@ mod tests {
 
     #[test]
     fn every_sdk_resource_schema_is_served_once_with_its_fields() {
-        let served = definitions();
+        let served = all_definitions();
         for schema in nemoclaw_sdk::services::resource_schemas() {
             let matching: Vec<_> = served
                 .iter()

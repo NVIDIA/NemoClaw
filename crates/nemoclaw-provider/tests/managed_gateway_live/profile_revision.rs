@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nemoclaw_provider::openshell::{OpenShell, verify_identity};
 use nemoclaw_sdk::{
     ObservationError, Secrets,
     backend::{Backend, Row},
     config::{Gateway, SearchProvider, search_provider_name},
 };
+use openshell_provider::{OpenShell, verify_identity};
 use openshell_sdk::raw::proto;
 use std::sync::Arc;
 

@@ -15,6 +15,7 @@ pub mod policy;
 pub mod profile;
 pub mod runtime;
 pub mod search;
+mod wait;
 
 pub use capabilities::{GatewayCapabilities, OPENSHELL_VERSION};
 pub use connection::{
@@ -27,7 +28,9 @@ pub use inputs::{
     structured_inputs, without_gateway,
 };
 pub use lifecycle::{
-    OpenShellLifecycle, RESOURCE_TYPES, object_kind, openshell_lifecycle, resource_type, type_name,
+    INSTALLATION_TYPES, OpenShellLifecycle, RESOURCE_TYPES, installation_type, object_kind,
+    openshell_lifecycle, resource_type, type_name,
 };
 pub use names::{NAME_PATTERN, valid_name};
 pub use observation::GatewayObservation;
+pub use wait::observe_with_wait;

@@ -3,8 +3,8 @@
 use fabric_provider::AgentBridge as _;
 
 use nemoclaw_e2e::openshell::Fixture;
-use nemoclaw_provider::openshell::OpenShell;
 use nemoclaw_sdk::{backend::Backend, config::Document};
+use openshell_provider::OpenShell;
 use std::{collections::BTreeMap, sync::Arc};
 
 async fn sandbox() -> (Fixture, OpenShell, nemoclaw_sdk::backend::Row) {

@@ -14,10 +14,10 @@ fn workspace(resources: &str) -> TofuWorkspace {
             r#"terraform {{
   required_version = "= 1.12.6"
   required_providers {{
-    nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw" }}
+    openshell = {{ source = "registry.opentofu.org/nvidia/openshell" }}
   }}
 }}
-provider "nemoclaw" {{}}
+provider "openshell" {{}}
 {resources}"#
         ),
     )
@@ -47,18 +47,18 @@ fn platform(namespace: &str, owner: Option<&str>) -> String {
         }
         None => (
             String::new(),
-            "  owner = nemoclaw_kubernetes_storage.platform.owner\n".to_owned(),
-            "  owner      = nemoclaw_kubernetes_storage.platform.owner\n  generation = nemoclaw_kubernetes_auth.platform.generation\n".to_owned(),
+            "  owner = openshell_kubernetes_storage.platform.owner\n".to_owned(),
+            "  owner      = openshell_kubernetes_storage.platform.owner\n  generation = openshell_kubernetes_auth.platform.generation\n".to_owned(),
         ),
     };
     format!(
-        r#"resource "nemoclaw_kubernetes_storage" "platform" {{
+        r#"resource "openshell_kubernetes_storage" "platform" {{
 {target}{storage}}}
 
-resource "nemoclaw_kubernetes_auth" "platform" {{
+resource "openshell_kubernetes_auth" "platform" {{
 {target}{auth}}}
 
-resource "nemoclaw_kubernetes_gateway" "platform" {{
+resource "openshell_kubernetes_gateway" "platform" {{
 {target}{gateway}}}
 "#
     )
@@ -99,9 +99,9 @@ fn kubernetes_resources_plan_from_typed_settings_and_reject_invalid_ones() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     for kind in [
-        "nemoclaw_kubernetes_storage",
-        "nemoclaw_kubernetes_auth",
-        "nemoclaw_kubernetes_gateway",
+        "openshell_kubernetes_storage",
+        "openshell_kubernetes_auth",
+        "openshell_kubernetes_gateway",
     ] {
         assert!(
             stderr.contains(&format!("{kind}.platform")),

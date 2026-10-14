@@ -8,12 +8,12 @@
 //! not qualify a production adapter's health.
 
 use fabric_provider::AgentBridge as _;
-use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
 use nemoclaw_sdk::{
     CancellationToken, Deployment, OperationResult, Outcome,
     backend::Row,
     config::{ComputeDriver, Document, Gateway},
 };
+use openshell_provider::{EnvironmentSecrets, OpenShell};
 use serde_json::Value;
 use std::{fs, path::Path, process::Command, sync::Arc};
 
@@ -153,7 +153,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     assert!(
         plan.changes
             .iter()
-            .any(|change| change.resource == "nemoclaw_gateway_storage.runtime"),
+            .any(|change| change.resource == "openshell_gateway_storage.runtime"),
         "plan must create the gateway storage: {:?}",
         plan.changes
     );
@@ -247,7 +247,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     assert_eq!(
         retained,
         [
-            "nemoclaw_gateway_storage.runtime",
+            "openshell_gateway_storage.runtime",
             "openshell_workspace.deployment"
         ]
     );

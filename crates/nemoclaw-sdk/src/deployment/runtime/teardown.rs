@@ -457,11 +457,11 @@ mod tests {
         );
         let graph = compiled.graph;
         assert_eq!(graph["provider"]["nemoclaw"], json!({"destroy": true}));
-        assert!(graph["provider"].get("openshell").is_none());
+        assert_eq!(graph["provider"]["openshell"], json!({"destroy": true}));
         assert!(graph["provider"].get("fabric").is_none());
         assert_eq!(graph["resource"].as_object().unwrap().len(), 1);
         assert_eq!(
-            graph["resource"]["nemoclaw_kubernetes_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
+            graph["resource"]["openshell_kubernetes_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
             true
         );
         assert!(graph.get("data").is_none());

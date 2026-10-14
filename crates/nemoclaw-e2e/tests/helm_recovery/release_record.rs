@@ -23,8 +23,8 @@ async fn destroy_keeps_the_issuer_while_a_release_record_has_no_binding_and_fini
             .map(String::as_str)
             .collect::<Vec<_>>(),
         [
-            "nemoclaw_kubernetes_auth.runtime",
-            "nemoclaw_kubernetes_storage.runtime"
+            "openshell_kubernetes_auth.runtime",
+            "openshell_kubernetes_storage.runtime"
         ]
     );
     let before = fixture.snapshot();

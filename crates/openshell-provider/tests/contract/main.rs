@@ -9,7 +9,28 @@ use nemoclaw_test_fixtures::{openshell::Fixture, tofu::TofuWorkspace};
 use serde_json::Value;
 use std::{collections::BTreeSet, fs, path::Path, process::Output};
 
+#[path = "../../../test-support/http.rs"]
+mod http_fixture;
+/// The in-memory Kubernetes API shared with the SDK tests, which reaches its
+/// HTTP server as `transport`.
+#[path = "../../../test-support/kube_api.rs"]
+mod kube_api;
+use http_fixture as transport;
+pub use nemoclaw_test_fixtures::{openshell, tofu};
+
 mod capabilities;
+// Gateway installation: Docker gateway reads, the Podman gateway and its
+// storage, and the Kubernetes gateway types.
+// A managed gateway needs a local engine, which only Unix clients reach.
+#[cfg(unix)]
+mod gateway_installation;
+mod gateway_readiness;
+// Managed gateway resources take only a local engine socket, which only Unix
+// clients reach.
+#[cfg(unix)]
+mod gateway_storage;
+mod kubernetes_hcl;
+mod kubernetes_lifecycle;
 mod standalone;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract/fixtures");
@@ -22,6 +43,37 @@ fn tofu() -> std::path::PathBuf {
 /// The openshell provider Cargo built from this checkout, the one under test.
 fn provider() -> std::path::PathBuf {
     nemoclaw_test_fixtures::package_executable!("terraform-provider-openshell")
+}
+
+/// A workspace with the openshell provider under test, and OpenTofu and the
+/// other providers from the bundle.
+pub fn workspace() -> TofuWorkspace {
+    let bundle = nemoclaw_test_fixtures::Bundle::from_env();
+    TofuWorkspace::with_providers(
+        bundle.tofu(),
+        &[
+            ("nemoclaw", &bundle.provider("nemoclaw")),
+            ("openshell", &provider()),
+            ("fabric", &bundle.provider("fabric")),
+        ],
+    )
+}
+
+/// Failed apply may record new data-source observations and condition
+/// results; its managed resources and lineage must still be preserved.
+pub fn assert_same_managed_resources(actual: &[u8], expected: &[u8]) {
+    fn managed(bytes: &[u8]) -> (String, Vec<Value>) {
+        let state: Value = serde_json::from_slice(bytes).unwrap();
+        let resources = state["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|resource| resource["mode"] == "managed")
+            .cloned()
+            .collect();
+        (state["lineage"].as_str().unwrap().into(), resources)
+    }
+    assert_eq!(managed(actual), managed(expected));
 }
 
 /// Credential variables the fixture's registrations name, with fixture values.
@@ -112,6 +164,47 @@ async fn reads_back_unchanged(name: &str) {
     assert!(state.sandboxes.is_empty(), "{name}");
     assert!(state.providers.is_empty(), "{name}");
     assert!(state.profiles.is_empty(), "{name}");
+}
+
+/// Every resource and data source the provider serves appears in a contract
+/// test or a fixture.
+#[test]
+fn every_type_has_a_contract_test() {
+    use tf_provider::Provider;
+    let provider = openshell_provider::OpenShellProvider::default();
+    let mut diagnostics = tf_provider::Diagnostics::default();
+    let types: Vec<String> = provider
+        .get_resources(&mut diagnostics)
+        .unwrap()
+        .into_keys()
+        .chain(
+            provider
+                .get_data_sources(&mut diagnostics)
+                .unwrap()
+                .into_keys(),
+        )
+        .collect();
+    let mut sources = [
+        include_str!("capabilities.rs"),
+        include_str!("gateway_installation.rs"),
+        include_str!("gateway_readiness.rs"),
+        include_str!("gateway_storage.rs"),
+        include_str!("kubernetes_hcl.rs"),
+        include_str!("kubernetes_lifecycle.rs"),
+        include_str!("standalone.rs"),
+    ]
+    .concat();
+    for entry in fs::read_dir(FIXTURES).unwrap() {
+        sources.push_str(&fs::read_to_string(entry.unwrap().path()).unwrap());
+    }
+    let missing: Vec<_> = types
+        .iter()
+        .filter(|kind| !sources.contains(&format!("openshell_{kind}")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "types without a contract test: {missing:?}"
+    );
 }
 
 macro_rules! fixtures {

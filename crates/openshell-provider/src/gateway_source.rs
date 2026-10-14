@@ -4,13 +4,12 @@
 
 use crate::client::{GatewayClient, GatewaySettings};
 use async_trait::async_trait;
-use nemoclaw_backend::ObservationError;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
-use std::{future::Future, time::Duration};
 use tf_provider::{
     AttributePath, DataSource, Diagnostics,
     schema::{Attribute, AttributeConstraint, AttributeType, Block, Schema},
@@ -122,27 +121,7 @@ fn requirements(diags: &mut Diagnostics, config: &GatewayState) -> Option<()> {
     Some(())
 }
 
-/// Retry transport failures until `timeout`; any other failure ends the wait.
-pub async fn observe_with_wait<T, F: Future<Output = Result<T, ObservationError>>>(
-    timeout: Duration,
-    mut observe: impl FnMut() -> F,
-) -> Result<T, ObservationError> {
-    if timeout.is_zero() {
-        return observe().await;
-    }
-    tokio::time::timeout(timeout, async {
-        loop {
-            match observe().await {
-                Err(ObservationError::Transport) => {
-                    tokio::time::sleep(Duration::from_millis(200)).await
-                }
-                result => return result,
-            }
-        }
-    })
-    .await
-    .unwrap_or(Err(ObservationError::Transport))
-}
+pub use nemoclaw_openshell::observe_with_wait;
 
 #[async_trait]
 impl DataSource for GatewayDataSource {
@@ -404,6 +383,7 @@ mod tests {
 #[cfg(test)]
 mod wait_tests {
     use super::*;
+    use nemoclaw_backend::ObservationError;
     use std::sync::atomic::{AtomicUsize, Ordering};
     #[tokio::test]
     async fn wait_timeout_is_optional_deferred_or_bounded() {

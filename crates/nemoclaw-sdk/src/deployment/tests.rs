@@ -661,7 +661,7 @@ fn gateway_observation_resolves_only_gateway_credentials() {
 
 #[test]
 fn gateway_replacement_preserves_the_old_binding_and_rejects_other_actions() {
-    let address = "nemoclaw_managed_gateway.runtime";
+    let address = "openshell_podman_gateway.runtime";
     let expected = [(address.into(), Row::from([("spec".into(), "old".into())]))].into();
     let bindings = [(
         address.into(),

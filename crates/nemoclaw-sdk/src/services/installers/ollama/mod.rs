@@ -249,7 +249,7 @@ impl Installer for ManagedOllama {
         let service = address(SERVICE_KIND, name);
         let mut dependencies = vec![address(STORAGE_KIND, name)];
         if document.spec.gateway.as_managed().is_some() && self.placement.is_none() {
-            dependencies.insert(0, "nemoclaw_managed_gateway.runtime".into());
+            dependencies.insert(0, "openshell_podman_gateway.runtime".into());
         }
         Ok(InstallPlan {
             targets: managed_targets(document, name, self, generations)?,

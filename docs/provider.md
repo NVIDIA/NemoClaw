@@ -32,13 +32,13 @@ The generated graphs manage these objects and observations:
 | Owner | Managed objects and observations |
 |---|---|
 | OpenShell provider | Workspace, provider registration, provider profile, and sandbox |
-| OpenShell provider data source | Gateway version and compute drivers |
+| OpenShell provider data source | Gateway version and compute drivers; managed Docker gateway readiness |
 | Fabric provider | Fabric runtime configuration |
 | Fabric provider data source | Fabric image capabilities and sandbox completion |
-| NemoClaw provider | Podman gateway process (`nemoclaw_managed_gateway`); gateway storage, initialization, and retained bridge (`nemoclaw_gateway_storage`) |
+| OpenShell provider | Podman gateway process (`openshell_podman_gateway`); gateway storage, initialization, and retained bridge (`openshell_gateway_storage`) |
 | NemoClaw provider | Retained inference credentials and proxy storage; external Ollama model observation |
-| NemoClaw provider | Kubernetes namespace and encryption key (`nemoclaw_kubernetes_storage`), development issuer (`nemoclaw_kubernetes_auth`), and gateway readiness (`nemoclaw_kubernetes_gateway`) |
-| NemoClaw provider data source | Engine capabilities, managed runtime-image compatibility, managed gateway readiness, and vLLM/Ollama service or proxy readiness |
+| OpenShell provider | Kubernetes namespace and encryption key (`openshell_kubernetes_storage`), development issuer (`openshell_kubernetes_auth`), and gateway readiness (`openshell_kubernetes_gateway`) |
+| NemoClaw provider data source | Engine capabilities, managed runtime-image compatibility, and vLLM/Ollama service or proxy readiness |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 | Helm provider | The managed Kubernetes gateway's OpenShell chart release (`helm_release.gateway`) |
@@ -136,6 +136,31 @@ resource "openshell_sandbox" "assistant" {
 }
 ```
 
+### OpenShell Gateway Installation
+
+The `openshell` provider also installs gateways.
+These types name the engine or cluster they use instead of taking a gateway `ref`, and the provider's `destroy` setting permits deleting gateways during explicit teardown.
+
+| Type | Manages or observes |
+|---|---|
+| `openshell_podman_gateway` | Podman gateway process |
+| `openshell_gateway_storage` | Gateway storage, initialization, and retained bridge |
+| `openshell_kubernetes_storage` | Kubernetes namespace and encryption key |
+| `openshell_kubernetes_auth` | Kubernetes development token issuer and OpenShift chart overrides |
+| `openshell_kubernetes_gateway` | Kubernetes gateway StatefulSet identity and readiness |
+| `openshell_docker_gateway_readiness` data source | [Managed Docker gateway process and health](#gateway-capabilities) |
+| `openshell_docker_gateway_runtime` data source | Nothing; [computes a Docker gateway's launch](#docker-gateway-launch) |
+
+`openshell_gateway_storage` and `openshell_podman_gateway` take the gateway's `name`, `compute_driver` (`docker` or `podman`), `engine`, `image`, and `network_cidr`, optional `owner` and `generation`, generated during apply when omitted and kept in state, and optional `image_pull_policy`:
+
+- `name` is `nc-`, 16 lowercase hexadecimal characters, a hyphen, and a lowercase name.
+- `engine` is a local Unix engine socket; Podman requires its API service socket.
+- `network_cidr` is a private IPv4 `/24`.
+
+`openshell_podman_gateway` also requires the gateway `endpoint`, an HTTP origin with an unprivileged loopback port.
+`openshell_gateway_storage` requires `endpoint` for Podman and rejects it for Docker, whose gateway data does not depend on the listen port; it returns the volume's `data_path`.
+The storage volume, bridge network, and initialization labels derive from `name`, `owner`, and the other settings, so changing any of them requires new storage.
+
 ### Fabric Resource and Data Source
 
 | Type | Manages or observes |
@@ -151,16 +176,11 @@ It reaches each sandbox's Fabric host by running commands in the sandbox through
 
 ### NemoClaw Resources
 
-The `nemoclaw` provider's only setting is `destroy`, which permits deleting gateways and proxies during explicit teardown.
+The `nemoclaw` provider's only setting is `destroy`, which permits deleting proxies during explicit teardown.
 Each resource names the engine or cluster it uses.
 
 | Resource | Manages |
 |---|---|
-| `nemoclaw_managed_gateway` | Podman gateway process |
-| `nemoclaw_gateway_storage` | Gateway storage, initialization, and retained bridge |
-| `nemoclaw_kubernetes_storage` | Kubernetes namespace and encryption key |
-| `nemoclaw_kubernetes_auth` | Kubernetes development token issuer and OpenShift chart overrides |
-| `nemoclaw_kubernetes_gateway` | Kubernetes gateway StatefulSet identity and readiness |
 | `nemoclaw_inference_storage` | vLLM credential storage |
 | `nemoclaw_ollama_service_storage` | Managed Ollama model storage |
 | `nemoclaw_ollama_proxy_storage` | Ollama proxy credential storage |
@@ -188,16 +208,6 @@ To keep the volume, set `owner` and `generation` to its `nemoclaw.nvidia.com/uid
 `nemoclaw_ollama_external_model` takes `name`, `engine`, `upstream`, `model`, and `digest`.
 Both take optional `owner` and `generation`, generated the same way; generated graphs give the external model its proxy storage's values.
 
-`nemoclaw_gateway_storage` and `nemoclaw_managed_gateway` take the gateway's `name`, `compute_driver` (`docker` or `podman`), `engine`, `image`, and `network_cidr`, optional `owner` and `generation`, generated the same way, and optional `image_pull_policy`:
-
-- `name` is `nc-`, 16 lowercase hexadecimal characters, a hyphen, and a lowercase name.
-- `engine` is a local Unix engine socket; Podman requires its API service socket.
-- `network_cidr` is a private IPv4 `/24`.
-
-`nemoclaw_managed_gateway` also requires the gateway `endpoint`, an HTTP origin with an unprivileged loopback port.
-`nemoclaw_gateway_storage` requires `endpoint` for Podman and rejects it for Docker, whose gateway data does not depend on the listen port; it returns the volume's `data_path`.
-The storage volume, bridge network, and initialization labels derive from `name`, `owner`, and the other settings, so changing any of them requires new storage.
-
 ### NemoClaw Data Sources
 
 | Data source | Observes |
@@ -205,14 +215,12 @@ The storage volume, bridge network, and initialization labels derive from `name`
 | `nemoclaw_engine_capabilities` | [Engine prerequisites](#engine-and-fabric-discovery) |
 | `nemoclaw_target_hardware` | [Engine-advertised hardware](#target-hardware) |
 | `nemoclaw_inference_capabilities` | [Inference model catalog](#inference-endpoint-metadata) |
-| `nemoclaw_gateway_readiness` | [Managed Docker gateway process and health](#gateway-capabilities) |
 | `nemoclaw_runtime_image` | [Managed runtime image labels](#runtime-image-compatibility) |
 | `nemoclaw_service_readiness` | [vLLM, Ollama, and proxy readiness](#runtime-capacity-and-readiness) |
 | `nemoclaw_service_capacity` | [Combined service capacity](#combined-service-capacity) |
 | `nemoclaw_vllm_runtime` | Nothing; [computes the vLLM runtime contract](#vllm-runtime-contract) |
 | `nemoclaw_ollama_runtime` | Nothing; [computes the Ollama runtime contract](#ollama-runtime-contracts) |
 | `nemoclaw_ollama_proxy_runtime` | Nothing; [computes the Ollama proxy contract](#ollama-runtime-contracts) |
-| `nemoclaw_gateway_runtime` | Nothing; [computes a Docker gateway's launch](#docker-gateway-launch) |
 
 ### Docker and Helm Types
 
@@ -398,8 +406,8 @@ A positive timeout retries only transport failures, not authentication failures,
 For a managed gateway, the runtime stage sets this timeout to 90 seconds and reads capabilities after gateway reconciliation.
 The capability postcondition must succeed before OpenShell resource refresh proceeds.
 
-For managed Docker gateways, the runtime graph first reads `data.nemoclaw_gateway_readiness.current` and orders the capability read after it.
-`nemoclaw_gateway_readiness` takes the container's `engine`, `container_id`, `name`, and `owner`, the gateway `endpoint`, and optional `wait_timeout_seconds` and `read_trigger`.
+For managed Docker gateways, the runtime graph first reads `data.openshell_docker_gateway_readiness.current` and orders the capability read after it.
+`openshell_docker_gateway_readiness` takes the container's `engine`, `container_id`, `name`, and `owner`, the gateway `endpoint`, and optional `wait_timeout_seconds` and `read_trigger`.
 The runtime graph waits 90 seconds and takes `container_id` from the Docker provider's process resource, so the read waits until apply.
 The data source checks the exact container ID, name, and owner through read-only engine inspection while waiting for the gateway to answer its OpenShell health call without credentials, then returns `ready`.
 Two matching stopped or absent observations, separated by 200 milliseconds, stop a positive readiness wait; a restarting process can recover within the existing timeout.
@@ -478,21 +486,21 @@ Generated graphs pass each `spec` to its container's environment variable.
 
 ## Docker Gateway Launch
 
-`nemoclaw_gateway_runtime` computes a Docker gateway container's `entrypoint`, `command`, and `env` without contacting any host.
-It takes the gateway's `name` and `endpoint`, validated as for `nemoclaw_managed_gateway`, and the `data_path` returned by its `nemoclaw_gateway_storage`, an absolute path:
+`openshell_docker_gateway_runtime` computes a Docker gateway container's `entrypoint`, `command`, and `env` without contacting any host.
+It takes the gateway's `name` and `endpoint`, validated as for `openshell_podman_gateway`, and the `data_path` returned by its `openshell_gateway_storage`, an absolute path:
 
 ```hcl
-data "nemoclaw_gateway_runtime" "gateway" {
-  name      = nemoclaw_gateway_storage.gateway.name
+data "openshell_docker_gateway_runtime" "gateway" {
+  name      = openshell_gateway_storage.gateway.name
   endpoint  = "http://127.0.0.1:17670"
-  data_path = nemoclaw_gateway_storage.gateway.data_path
+  data_path = openshell_gateway_storage.gateway.data_path
 }
 
 resource "docker_container" "gateway" {
   # name, image, network, ports, and mounts as described below
-  entrypoint = data.nemoclaw_gateway_runtime.gateway.entrypoint
-  command    = data.nemoclaw_gateway_runtime.gateway.command
-  env        = data.nemoclaw_gateway_runtime.gateway.env
+  entrypoint = data.openshell_docker_gateway_runtime.gateway.entrypoint
+  command    = data.openshell_docker_gateway_runtime.gateway.command
+  env        = data.openshell_docker_gateway_runtime.gateway.env
 }
 ```
 
@@ -612,11 +620,11 @@ The deployment lock excludes other NemoClaw operations using the same state dire
 
 The runtime graph for a managed Kubernetes or OpenShift gateway declares four resources in this order:
 
-1. `nemoclaw_kubernetes_storage.runtime` creates and retains the namespace and encryption key, with `prevent_destroy`.
-2. `nemoclaw_kubernetes_auth.runtime` prepares the development token issuer.
+1. `openshell_kubernetes_storage.runtime` creates and retains the namespace and encryption key, with `prevent_destroy`.
+2. `openshell_kubernetes_auth.runtime` prepares the development token issuer.
    For OpenShift, its computed `gateway_values` carries the namespace's UID and group ranges as chart overrides.
 3. `helm_release.gateway` installs the pinned OpenShell chart into the prepared namespace without creating the namespace or taking ownership of existing objects.
-4. `nemoclaw_kubernetes_gateway.runtime` records the chart's StatefulSet identity and reports readiness in `running`.
+4. `openshell_kubernetes_gateway.runtime` records the chart's StatefulSet identity and reports readiness in `running`.
 
 The three NemoClaw resources take the same cluster target and identity:
 
@@ -629,7 +637,7 @@ The three NemoClaw resources take the same cluster target and identity:
 - Optional `environment`: the names of the environment variables the kubeconfig's exec credential plugin needs.
 - Optional `owner` and `generation`, generated on create when omitted.
 
-The three resources share one private receipt, keyed by `owner` and `name`, so give `nemoclaw_kubernetes_auth` and `nemoclaw_kubernetes_gateway` the storage's `owner`, for example `owner = nemoclaw_kubernetes_storage.platform.owner`.
+The three resources share one private receipt, keyed by `owner` and `name`, so give `openshell_kubernetes_auth` and `openshell_kubernetes_gateway` the storage's `owner`, for example `owner = openshell_kubernetes_storage.platform.owner`.
 Generated graphs also give the authentication resource the gateway's `generation`.
 Changing any of these settings after creation fails planning and leaves the resources unchanged.
 

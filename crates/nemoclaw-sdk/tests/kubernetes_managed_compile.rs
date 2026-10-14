@@ -65,15 +65,15 @@ fn managed_gateway_uses_a_pinned_helm_provider_between_auth_and_readiness() {
     assert_eq!(release["wait"], true);
     assert_eq!(release["wait_for_jobs"], true);
     assert_eq!(
-        graph["resource"]["nemoclaw_kubernetes_auth"]["runtime"]["depends_on"],
-        json!(["nemoclaw_kubernetes_storage.runtime"])
+        graph["resource"]["openshell_kubernetes_auth"]["runtime"]["depends_on"],
+        json!(["openshell_kubernetes_storage.runtime"])
     );
     assert_eq!(
         release["depends_on"],
-        json!(["nemoclaw_kubernetes_auth.runtime"])
+        json!(["openshell_kubernetes_auth.runtime"])
     );
     assert_eq!(
-        graph["resource"]["nemoclaw_kubernetes_gateway"]["runtime"]["depends_on"],
+        graph["resource"]["openshell_kubernetes_gateway"]["runtime"]["depends_on"],
         json!(["helm_release.gateway"])
     );
     assert_eq!(
@@ -85,9 +85,9 @@ fn managed_gateway_uses_a_pinned_helm_provider_between_auth_and_readiness() {
             .collect::<Vec<_>>(),
         [
             "helm_release",
-            "nemoclaw_kubernetes_auth",
-            "nemoclaw_kubernetes_gateway",
-            "nemoclaw_kubernetes_storage",
+            "openshell_kubernetes_auth",
+            "openshell_kubernetes_gateway",
+            "openshell_kubernetes_storage",
         ],
         "one native release owns chart resources; prerequisites and readiness stay separate"
     );
@@ -127,7 +127,7 @@ fn openshift_chart_values_wait_for_the_observed_namespace_identity() {
     assert_eq!(values.as_array().unwrap().len(), 2);
     assert_eq!(
         values[1],
-        "${nemoclaw_kubernetes_auth.runtime.gateway_values}"
+        "${openshell_kubernetes_auth.runtime.gateway_values}"
     );
     assert_eq!(
         values[0],
@@ -156,17 +156,16 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
             .iter()
             .all(|target| target.kind.starts_with("kubernetes_") || target.kind == "helm_release")
     );
-    // The platform stage has no gateway, so it omits the gateway providers.
+    // The platform stage installs the gateway: openshell serves the Kubernetes
+    // gateway types; fabric needs a running gateway, so the stage omits it.
     assert_eq!(platform["provider"]["nemoclaw"], json!({}));
-    for provider in ["openshell", "fabric"] {
-        assert!(platform["provider"].get(provider).is_none(), "{provider}");
-        assert!(
-            platform["terraform"]["required_providers"]
-                .get(provider)
-                .is_none(),
-            "{provider}"
-        );
-    }
+    assert_eq!(platform["provider"]["openshell"], json!({}));
+    assert!(platform["provider"].get("fabric").is_none());
+    assert!(
+        platform["terraform"]["required_providers"]
+            .get("fabric")
+            .is_none()
+    );
     assert!(platform.get("data").is_none());
     assert!(
         platform["terraform"]["required_providers"]
@@ -174,17 +173,17 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
             .is_none()
     );
     assert_eq!(
-        platform["resource"]["nemoclaw_kubernetes_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
+        platform["resource"]["openshell_kubernetes_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
         true
     );
     assert_eq!(
-        platform["resource"]["nemoclaw_kubernetes_gateway"]["runtime"]["depends_on"],
+        platform["resource"]["openshell_kubernetes_gateway"]["runtime"]["depends_on"],
         json!(["helm_release.gateway"])
     );
     for kind in [
-        "nemoclaw_kubernetes_storage",
-        "nemoclaw_kubernetes_auth",
-        "nemoclaw_kubernetes_gateway",
+        "openshell_kubernetes_storage",
+        "openshell_kubernetes_auth",
+        "openshell_kubernetes_gateway",
     ] {
         assert_eq!(
             platform["resource"][kind]["runtime"]["lifecycle"]["postcondition"][0]["condition"],
@@ -193,9 +192,9 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
     }
     // Every platform resource takes the cluster target as typed attributes.
     for kind in [
-        "nemoclaw_kubernetes_storage",
-        "nemoclaw_kubernetes_auth",
-        "nemoclaw_kubernetes_gateway",
+        "openshell_kubernetes_storage",
+        "openshell_kubernetes_auth",
+        "openshell_kubernetes_gateway",
     ] {
         let resource = &platform["resource"][kind]["runtime"];
         assert!(resource.get("spec").is_none(), "{kind}");
@@ -227,7 +226,7 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
     }
     assert!(
         agents["resource"]
-            .get("nemoclaw_kubernetes_gateway")
+            .get("openshell_kubernetes_gateway")
             .is_none()
     );
     assert!(agents["provider"].get("docker").is_none());
