@@ -314,7 +314,12 @@ describe("compatible endpoint sandbox smoke helpers", () => {
         stderr: "",
       })),
     };
-    const smoke = createCompatibleEndpointSmoke(defaultRun, executor, (value) => value);
+    const smoke = createCompatibleEndpointSmoke(
+      defaultRun,
+      executor,
+      (value) => value,
+      () => null,
+    );
     await smoke.verify(
       { sandboxName: "smoke-sandbox", provider: "compatible-endpoint", model: "baseline" },
       scopedRun,
@@ -346,6 +351,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       () => ({ status: testCase.status, stdout: providerMetadata("compatible-endpoint") }),
       executor,
       (value) => value,
+      () => null,
     );
     try {
       await expect(

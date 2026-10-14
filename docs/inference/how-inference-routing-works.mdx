@@ -37,7 +37,7 @@ For an endpoint returned by Hermes login, NemoClaw records its accepted public I
 A different destination cannot gain access through a later DNS change.
 
 Existing sandboxes without a native attachment retain their recorded shared route.
-User-supplied endpoints, local inference, and Model Router also retain the shared route in this migration.
+New Deep Agents Code local-inference selections use a sandbox-attached provider for the qualified host-local endpoint. OpenClaw, Pi, Hermes, Local NVIDIA NIM, other custom endpoints, and Model Router retain the shared route.
 
 ```text
 Sandbox agent -> inference.local -> shared OpenShell route -> selected provider and model
@@ -61,7 +61,7 @@ When a rebuild reuses an automatically bridged compatible-endpoint route without
 
 ## Deep Agents Configuration
 
-For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with a managed OpenAI-compatible provider, a scoped placeholder API key, and `use_responses_api = false`. Supported native hosted selections use the endpoints above. Shared-route selections retain `https://inference.local/v1`.
+For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with a managed OpenAI-compatible provider, a scoped placeholder API key, and `use_responses_api = false`. Supported native hosted selections use the endpoints above. New local selections use their qualified host-local endpoint through an attached provider. Other shared-route selections retain `https://inference.local/v1`.
 The managed `dcode` runtime uses Chat Completions through OpenShell even when a compatible endpoint also supports the Responses API.
 
 </AgentOnly>

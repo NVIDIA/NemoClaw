@@ -97,6 +97,7 @@ export type Registry = {
 };
 
 export type CommonDeps = {
+  nativeLocalInference?: boolean;
   runOpenshell: RunOpenshell;
   upsertProvider: UpsertProvider;
   verifyInferenceRoute: VerifyInferenceRoute;

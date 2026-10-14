@@ -429,6 +429,27 @@ function llamaFixture(application: HostLocalInferenceApplication) {
 }
 
 describe("onboard host-local inference routing", () => {
+  it("retires an unreserved Deep Agents Code native provider after managed runtime pre-commit fails (#13197)", async () => {
+    const route = fixture("langchain-deepagents-code", "vllm", {
+      validationError: new Error("managed runtime pre-commit refused"),
+    });
+    const harness = createHarness({
+      overrides: {
+        applyLocalInferenceRoute: undefined,
+      },
+    });
+    await expect(
+      harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
+        agentName: "langchain-deepagents-code",
+        gatewayName: "nemoclaw",
+        hostLocalInference: route.selection,
+      }),
+    ).rejects.toThrow("EXIT_CALLED:1");
+    expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(harness.native.adapter.deleteProvider).toHaveBeenCalledOnce();
+    expect(harness.native.authorities.size).toBe(0);
+  });
+
   it("explicitly clears stale host-local ownership for a remote route", async () => {
     const harness = createHarness({
       overrides: {

@@ -213,13 +213,19 @@ describe("provider route containment", () => {
     };
 
     expect(
-      guardProviderInferenceRouteSelection(containmentDeps, "nemoclaw-9090", "target-sandbox", {
-        provider: "llama-cpp-local",
-        model: "team/model-alias",
-        endpointUrl: null,
-        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
-        preferredInferenceApi: null,
-      }),
+      guardProviderInferenceRouteSelection(
+        containmentDeps,
+        "nemoclaw-9090",
+        "target-sandbox",
+        false,
+        {
+          provider: "llama-cpp-local",
+          model: "team/model-alias",
+          endpointUrl: null,
+          credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+          preferredInferenceApi: null,
+        },
+      ),
     ).toEqual({
       requiredModel: null,
       requiredEndpointUrl: null,

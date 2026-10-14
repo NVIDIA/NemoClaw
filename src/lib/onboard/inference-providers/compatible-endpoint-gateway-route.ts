@@ -1,17 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isProtectedNemoClawHostPort } from "../../core/protected-host-ports";
+import { isProtectedLocalInferencePort } from "../../inference/gateway/local-endpoint-ports";
 import { DEFAULT_OLLAMA_PROXY_PORT, OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
 import { VLLM_PORT } from "../../core/vllm-port";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import { isLoopbackHostname } from "../../private-networks";
-import {
-  listRecordedGatewayPorts,
-  listRecordedModelRouterPorts,
-  resolveHome,
-} from "../../state/gateway-registry";
 import type { RunOpenshell, UpsertProvider, UpsertProviderResult } from "./types";
 
 // Keep this list aligned with the materialized host.openshell.internal endpoints
@@ -71,12 +66,10 @@ export function isLoopbackNoAuthCompatibleEndpointUrl(
   endpointUrl: string | null | undefined,
 ): boolean {
   const port = loopbackNoAuthCompatibleEndpointPort(provider, endpointUrl);
-  const home = resolveHome();
   return (
     port !== null &&
     COMPATIBLE_ENDPOINT_GATEWAY_PORT_SET.has(port) &&
-    !isProtectedNemoClawHostPort(port, listRecordedModelRouterPorts(home)) &&
-    !listRecordedGatewayPorts(home).includes(port)
+    !isProtectedLocalInferencePort(port)
   );
 }
 
@@ -102,14 +95,10 @@ export function isLegacyRecordedLoopbackNoAuthCompatibleEndpointUrl(
   provider: string,
   endpointUrl: string | null | undefined,
 ): boolean {
-  const home = resolveHome();
   return (
     OLLAMA_PROXY_PORT !== DEFAULT_OLLAMA_PROXY_PORT &&
     loopbackNoAuthCompatibleEndpointPort(provider, endpointUrl) === DEFAULT_OLLAMA_PROXY_PORT &&
-    !isProtectedNemoClawHostPort(DEFAULT_OLLAMA_PROXY_PORT, listRecordedModelRouterPorts(home), {
-      allowLegacyProxyDefault: true,
-    }) &&
-    !listRecordedGatewayPorts(home).includes(DEFAULT_OLLAMA_PROXY_PORT)
+    !isProtectedLocalInferencePort(DEFAULT_OLLAMA_PROXY_PORT, { allowLegacyProxyDefault: true })
   );
 }
 

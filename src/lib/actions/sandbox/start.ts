@@ -178,6 +178,9 @@ async function checkStartedSandboxInference(
     provider,
     model,
     preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
+    ...(sandbox.nativeLocalProviderAttachment
+      ? { nativeLocalProviderAttachment: sandbox.nativeLocalProviderAttachment }
+      : {}),
     ...(nativeProvider ? { nativeProvider: true } : {}),
     ...(nativeEndpointUrl ? { nativeEndpointUrl } : {}),
   };

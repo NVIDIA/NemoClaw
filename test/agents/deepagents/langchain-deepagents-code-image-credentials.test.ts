@@ -869,3 +869,51 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     },
   );
 });
+
+it.each(["v42", `s${"a".repeat(64)}`])(
+  "passes the issued native local identity %s to DCode unchanged",
+  (identity) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-identity-"));
+    try {
+      const fixture = makeWrapperFixture(dir);
+      fs.writeFileSync(
+        fixture.wrapperPath,
+        fs
+          .readFileSync(fixture.wrapperPath, "utf8")
+          .replace("echo dcode-stub-ran", 'printf "%s\\n" "$NEMOCLAW_LOCAL_INFERENCE_TOKEN"'),
+      );
+      const reference = `openshell:resolve:env:${identity}_NEMOCLAW_LOCAL_INFERENCE_TOKEN`;
+      const result = runWrapper(fixture.wrapperPath, ["-n", "hi"], {
+        NEMOCLAW_LOCAL_INFERENCE_TOKEN: reference,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe(reference);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each([
+  "",
+  "short",
+  "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  "openshell:resolve:env:v42_OTHER_KEY",
+  "opaque-host-secret-must-not-leak",
+])("refuses invalid native local credential candidate %# before DCode launch", (reference) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-denial-"));
+  try {
+    const fixture = makeWrapperFixture(dir);
+    const result = runWrapper(fixture.wrapperPath, ["-n", "hi"], {
+      NEMOCLAW_LOCAL_INFERENCE_TOKEN: reference,
+    });
+    expect(result.status).toBe(2);
+    expect(fs.existsSync(fixture.ranMarker)).toBe(false);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "dcode: refusing to start — runtime environment variable contains an invalid OpenShell credential placeholder in NEMOCLAW_LOCAL_INFERENCE_TOKEN.\n  Use only the exact placeholder for that same environment variable.\n",
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

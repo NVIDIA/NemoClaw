@@ -9,6 +9,7 @@ import {
   cleanupPackageFixtures,
   createPackageFixture,
   patchFixture,
+  managedUpstreamProviderPath,
 } from "../../helpers/langchain-deepagents-code-patch-fixture";
 
 afterEach(cleanupPackageFixtures);
@@ -89,6 +90,63 @@ print("managed-ultra-template-argument-ok")
       encoding: "utf8",
     });
     expect(output).toContain("managed-ultra-template-argument-ok");
+  });
+
+  it("passes the issued native-local reference to the actual model constructor (#12558)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const routeFile = path.join(tempDir, "managed-inference-base-url");
+    const providerFile = managedUpstreamProviderPath(tempDir);
+    const validation = `
+import os
+from pathlib import Path
+from deepagents_code import config
+
+def write_owned(file, value):
+    path = Path(file)
+    path.chmod(0o644)
+    path.write_text(value + "\\n")
+    path.chmod(0o444)
+
+name = "NEMOCLAW_LOCAL_INFERENCE_TOKEN"
+for upstream in ("ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"):
+    write_owned(${JSON.stringify(providerFile)}, upstream)
+    for endpoint in ("http://host.openshell.internal:8000/v1", "http://host.docker.internal:11434/v1", "http://10.2.3.4:8000/v1", "http://172.16.2.3:8000/v1", "http://192.168.2.3:8000/v1"):
+        write_owned(${JSON.stringify(routeFile)}, endpoint)
+        for identity in ("v42", "s" + "a" * 64):
+            reference = "openshell:resolve:env:" + identity + "_" + name
+            os.environ[name] = reference
+            for adapter in ("openai", "openrouter"):
+                resolved = config._get_provider_kwargs(adapter, model_name="local-model")
+                assert resolved["api_key"] == reference
+                assert resolved["base_url"] == endpoint
+    for invalid in (None, "", "raw-secret", "openshell:resolve:env:" + name, "openshell:resolve:env:v42_OTHER_KEY", "openshell:resolve:env:v42_" + name + "\\n"):
+        if invalid is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = invalid
+        try:
+            config._get_provider_kwargs("openai")
+        except RuntimeError as error:
+            assert not invalid or invalid not in str(error)
+        else:
+            raise AssertionError("invalid native-local reference accepted")
+
+# Ambient local credentials cannot replace the managed hosted-route token.
+os.environ[name] = "openshell:resolve:env:v42_" + name
+for endpoint in ("https://inference.local/v1", "https://host.openshell.internal:8000/v1", "http://172.32.2.3:8000/v1"):
+    write_owned(${JSON.stringify(routeFile)}, endpoint)
+    assert config._get_provider_kwargs("openai")["api_key"] == "nemoclaw-managed-inference"
+write_owned(${JSON.stringify(routeFile)}, "http://host.openshell.internal:8000/v1")
+write_owned(${JSON.stringify(providerFile)}, "nvidia-prod")
+assert config._get_provider_kwargs("openai")["api_key"] == "nemoclaw-managed-inference"
+print("native-local-constructor-reference-ok")
+`;
+    const output = execFileSync("python3", ["-c", validation], {
+      env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+      encoding: "utf8",
+    });
+    expect(output).toContain("native-local-constructor-reference-ok");
   });
 
   it("passes only the matching OpenShell placeholder to the native NVIDIA constructor (#11847)", () => {

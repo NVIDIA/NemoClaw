@@ -10,6 +10,7 @@ import {
   verify,
 } from "node:crypto";
 import fs from "node:fs";
+import { prepareNativeGatewayCreation } from "./gateway/native-creation";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse as parseToml } from "smol-toml";
@@ -1143,6 +1144,21 @@ export function prepareDockerDriverGatewayConfigEnv(
     gatewayRuntime?: RuntimeProviderGatewayHostRuntime;
     externalComponent?: ExternalComponentGatewayConfiguration | null;
   } = {},
+): Record<string, string> {
+  return prepareNativeGatewayCreation(stateDir, gatewayEnv.OPENSHELL_GRPC_ENDPOINT ?? "", () =>
+    prepareGatewayConfig(gatewayEnv, stateDir, sandboxBin, options),
+  );
+}
+
+function prepareGatewayConfig(
+  gatewayEnv: Record<string, string>,
+  stateDir: string,
+  sandboxBin: string | null | undefined,
+  options: {
+    allowOpenShell0044PreAuthDatabase?: boolean;
+    gatewayRuntime?: RuntimeProviderGatewayHostRuntime;
+    externalComponent?: ExternalComponentGatewayConfiguration | null;
+  },
 ): Record<string, string> {
   const runtime = resolveGatewayRuntimeProjection(gatewayEnv, options.gatewayRuntime);
   const identity = resolveDockerDriverGatewayIdentity(

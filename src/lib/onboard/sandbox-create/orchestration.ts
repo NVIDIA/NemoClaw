@@ -91,6 +91,7 @@ import {
   usesNativeHostedProvider,
   verifyNativeHostedAttachmentAfterCreate,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
+  verifyNativeLocalAttachmentAfterCreate,
   verifyNativeNvidiaAttachmentAfterCreate,
 } from "./provider-publication";
 import {
@@ -1433,6 +1434,7 @@ export function createProviderEffectBoundary(input: {
   readonly deferred: boolean;
   readonly sandboxName: string;
   readonly gatewayName: string;
+  readonly expectedNativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   readonly expectedNativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   readonly expectedNativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
   readonly preparationInput: ProviderPreparationInput;
@@ -1456,6 +1458,18 @@ export function createProviderEffectBoundary(input: {
   const attachAndVerifyNativeInferenceProvider = async (
     context: VerifiedSandboxCreateEffectsContext,
   ) => {
+    if (input.expectedNativeLocalProviderAttachment) {
+      context.revalidateSandboxIdentity(
+        `attaching native local provider for sandbox '${input.sandboxName}'`,
+      );
+      await verifyNativeLocalAttachmentAfterCreate({
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        expected: input.expectedNativeLocalProviderAttachment,
+        deps: input.preparationDeps,
+      });
+      return;
+    }
     if (
       !usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) &&
       !usesNativeHostedProvider(input.preparationInput.inferenceProvider)
@@ -1487,6 +1501,7 @@ export function createProviderEffectBoundary(input: {
         await publish();
       },
       runAfterVerifiedCreate:
+        input.expectedNativeLocalProviderAttachment ||
         usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) ||
         usesNativeHostedProvider(input.preparationInput.inferenceProvider)
           ? attachAndVerifyNativeInferenceProvider
@@ -2043,7 +2058,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           provider,
           preferredInferenceApi,
           endpointUrl: createIntent?.endpointUrl ?? null,
+          nativeLocalProviderAttachment: resolvedCreateIntent.nativeLocalProviderAttachment,
           nativeProvider: Boolean(
+            resolvedCreateIntent.nativeLocalProviderAttachment ||
             resolvedCreateIntent.nativeHostedProviderAttachment ||
             resolvedCreateIntent.nativeNvidiaProviderAttachment,
           ),
@@ -3594,6 +3611,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       deferred: createIntent?.deferSandboxEffectsUntilIdentityVerification === true,
       sandboxName,
       gatewayName: GATEWAY_NAME,
+      expectedNativeLocalProviderAttachment: resolvedCreateIntent.nativeLocalProviderAttachment,
       expectedNativeNvidiaProviderAttachment: resolvedCreateIntent.nativeNvidiaProviderAttachment,
       expectedNativeHostedProviderAttachment: resolvedCreateIntent.nativeHostedProviderAttachment,
       preparationInput: providerPreparationInput,

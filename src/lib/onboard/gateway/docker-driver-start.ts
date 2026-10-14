@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { consumeNativeGatewayCreation } from "./native-creation";
+import { initializeNativeProviderPolicy } from "../../adapters/openshell/provider-policy";
+import { captureSanitizedResolvedOpenshellAsync } from "../../adapters/openshell/sanitized-capture";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -46,6 +49,7 @@ type DynamicGatewayHelpers = ReturnType<
 >;
 
 export interface DockerDriverGatewayStartDeps {
+  initializeNativeProviderPolicy?: typeof initializeNativeProviderPolicy;
   observer: import("../../adapters/openshell/gateway-reuse").OpenShellGatewayReuseObserver;
   SUPPORTED_OPENSHELL_FALLBACK_VERSION: string;
   checkGatewayPortAvailable(): Promise<import("../preflight").PortProbeResult>;
@@ -208,7 +212,7 @@ export function createDockerDriverGatewayStart(
     const runtimeOptions = selectedRuntimeEnv
       ? {
           env: selectedRuntimeEnv,
-          replaceEnv: true,
+          replaceEnv: true as const,
         }
       : {};
     const runCaptureOpenshell: DockerDriverGatewayStartDeps["runCaptureOpenshell"] = (
@@ -232,6 +236,8 @@ export function createDockerDriverGatewayStart(
       home: os.homedir(),
       port: deps.gatewayPort(),
     });
+    const creationGatewayName = deps.gatewayName();
+    const creationGatewayPort = deps.gatewayPort();
     const configuredStateDir = binding.stateDir?.trim();
     const stateLifecycleLock = configuredStateDir
       ? gatewayStateLifecycleLock.acquireManagedGatewayStateLifecycleLock(stateDir)
@@ -298,7 +304,43 @@ export function createDockerDriverGatewayStart(
       );
       const driftGatewayEnv = runtimeIdentity?.desiredEnv ?? gatewayEnv;
       const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
+      const creation = consumeNativeGatewayCreation(
+        stateDir,
+        gatewayEnv.OPENSHELL_GRPC_ENDPOINT ?? "",
+      );
       const initialPortCheck = await deps.checkGatewayPortAvailable();
+      const initializeFreshGateway = async () => {
+        if (!creation || !initialPortCheck.ok || initialPortCheck.warning) return;
+        if (
+          deps.gatewayName() !== creationGatewayName ||
+          deps.gatewayPort() !== creationGatewayPort ||
+          !creation()
+        )
+          throw new Error("Fresh gateway configuration changed before policy initialization.");
+        const policy = await (
+          deps.initializeNativeProviderPolicy ?? initializeNativeProviderPolicy
+        )(creationGatewayName, (args) =>
+          captureSanitizedResolvedOpenshellAsync(args, {
+            ...runtimeOptions,
+            ignoreError: true,
+            includeStreams: true,
+            includeStderr: true,
+            timeout: 30_000,
+            outputLimitBytes: 65_536,
+          }),
+        );
+        if (policy === "disabled") {
+          if (
+            deps.gatewayName() !== creationGatewayName ||
+            deps.gatewayPort() !== creationGatewayPort ||
+            !creation()
+          )
+            throw new Error("Fresh gateway configuration changed during policy initialization.");
+          (output?.warn ?? console.warn)(
+            "Native local inference is unavailable because provider composition remains disabled. Hosted provider onboarding can continue.",
+          );
+        }
+      };
       const servicePortOwnership = deps.createGatewayServicePortOwnership(initialPortCheck, {
         exitOnFailure,
         gatewayBin: identityGatewayBin,
@@ -416,6 +458,7 @@ export function createDockerDriverGatewayStart(
           ),
       );
       if (cutover !== "launch") {
+        if (cutover === "managed") await initializeFreshGateway();
         rememberBinding();
         return;
       }
@@ -475,6 +518,7 @@ export function createDockerDriverGatewayStart(
         sleepSeconds: deps.sleepSeconds,
       });
       if (startup === "healthy") {
+        await initializeFreshGateway();
         rememberBinding();
         (output?.log ?? console.log)("  ✓ Docker-driver gateway is healthy");
         return;

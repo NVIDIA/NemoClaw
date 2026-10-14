@@ -20,6 +20,7 @@ import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
   getLlamaCppRouteDetails,
   normalizeNativeNvidiaProviderAttachment,
+  normalizeNativeLocalProviderAttachment,
   type GatewayInference,
   type LlamaCppRouteDetails,
   planInferenceRouteReconcile,
@@ -60,7 +61,9 @@ import {
   probeSandboxInferenceGatewayHealth,
   runSandboxInferenceInvocationProbe,
   verifyNativeNvidiaStatusAttachment,
+  verifyNativeLocalStatusAttachment,
   verifyNativeHostedStatusAttachment,
+  type VerifyNativeLocalStatusAttachment,
   type VerifyNativeHostedStatusAttachment,
   type VerifyNativeNvidiaStatusAttachment,
 } from "./inference-route-health";
@@ -336,6 +339,7 @@ interface CollectSandboxStatusSnapshotDeps {
   getGatewayPresets?: GetGatewayPresets;
   inspectManagedLlamaCppOwnership?: typeof inspectManagedLlamaCppOwnership;
   verifyNativeNvidiaProviderAttachmentImpl?: VerifyNativeNvidiaStatusAttachment;
+  verifyNativeLocalProviderAttachmentImpl?: VerifyNativeLocalStatusAttachment;
   verifyNativeHostedProviderAttachmentImpl?: VerifyNativeHostedStatusAttachment;
 }
 
@@ -626,7 +630,19 @@ export async function collectSandboxStatusSnapshot(
     } else {
       try {
         const nvidia = normalizeNativeNvidiaProviderAttachment(expected);
-        if (nvidia) {
+        const local =
+          sb.nativeLocalProviderAttachment === undefined
+            ? undefined
+            : normalizeNativeLocalProviderAttachment(sb.nativeLocalProviderAttachment);
+        if (local) {
+          await (
+            opts.deps?.verifyNativeLocalProviderAttachmentImpl ?? verifyNativeLocalStatusAttachment
+          )({
+            gatewayName,
+            sandboxName,
+            expected: local,
+          });
+        } else if (nvidia) {
           await verifyNativeNvidiaStatusAttachment({
             gatewayName,
             sandboxName,
@@ -648,7 +664,7 @@ export async function collectSandboxStatusSnapshot(
       } catch (error) {
         const detail = sanitizedStatusDetail(error);
         nativeAttachmentFailure =
-          `Native ${nativeLabel} provider attachment is unavailable for sandbox '${sandboxName}'` +
+          `Native ${nativeLabel} provider '${nativeAttachment.providerName}' is unavailable for sandbox '${sandboxName}'` +
           `${detail ? `: ${detail}` : "."} Recreate the sandbox to restore native ${nativeLabel} inference.`;
       }
     }
@@ -757,6 +773,9 @@ export async function collectSandboxStatusSnapshot(
                     model: invocationModel,
                     preferredInferenceApi: invocationRoute.preferredInferenceApi,
                     ...(nativeProvider ? { nativeProvider: true } : {}),
+                    ...(sb?.nativeLocalProviderAttachment
+                      ? { nativeLocalProviderAttachment: sb.nativeLocalProviderAttachment }
+                      : {}),
                     ...(nativeAttachment?.endpointUrl
                       ? { nativeEndpointUrl: nativeAttachment.endpointUrl }
                       : {}),
@@ -821,6 +840,10 @@ export async function collectSandboxStatusSnapshot(
           provider: invocationRoute.provider ?? null,
           nativeProvider,
           nativeEndpointUrl: nativeAttachment?.endpointUrl,
+          nativeLocalEndpoint:
+            sb?.nativeLocalProviderAttachment === undefined
+              ? undefined
+              : nativeAttachment?.endpointUrl,
           model: invocationRoute.model ?? null,
           preferredInferenceApi: sb?.preferredInferenceApi ?? null,
         });
@@ -938,7 +961,8 @@ async function buildSandboxStatusReport(
   const nativeProvider = Boolean(
     sb &&
     (sb.nativeNvidiaProviderAttachment !== undefined ||
-      sb.nativeHostedProviderAttachment !== undefined),
+      sb.nativeHostedProviderAttachment !== undefined ||
+      sb.nativeLocalProviderAttachment !== undefined),
   );
   return {
     schemaVersion: 1,

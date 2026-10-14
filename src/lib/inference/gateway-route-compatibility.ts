@@ -71,6 +71,7 @@ export type GatewayRouteDiscoveryResult =
 export type CurrentGatewayRouteDiscoveryPreflight = (
   request: Omit<CurrentGatewayRouteCompatibilityRequest, "route"> & {
     route: Omit<GatewayInferenceRoute, "model"> & { model: string | null };
+    nativeLocalSelection?: boolean;
   },
 ) => GatewayRouteDiscoveryResult;
 
@@ -206,8 +207,20 @@ export function preflightGatewayRouteDiscovery(
       continue;
     }
     if (recordedGatewayName !== request.gatewayName) continue;
-    if (configuredRoute(sandbox)) peers.push(sandbox);
-    else {
+    const recorded = configuredRoute(sandbox);
+    if (recorded) {
+      peers.push(sandbox);
+      if (
+        request.nativeLocalSelection &&
+        gatewayRouteIdentityConflictReasons(sandbox, sandbox).includes("incomplete-custom-route")
+      ) {
+        discoveryConflicts.push({
+          sandboxName: sandbox.name,
+          reason: "incomplete-custom-route",
+          scope: "registered",
+        });
+      }
+    } else {
       discoveryConflicts.push({
         sandboxName: sandbox.name,
         reason: "incomplete-route",
@@ -226,6 +239,16 @@ export function preflightGatewayRouteDiscovery(
         route: { provider, model: requestedModel ?? "model discovery pending" },
         conflicts: discoveryConflicts,
       },
+    };
+  }
+  // A native provider does not change the gateway-wide inference route, but
+  // malformed shared peers must still be rejected before selection.
+  if (request.nativeLocalSelection) {
+    return {
+      ok: true,
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
     };
   }
   if (peers.length === 0) {
@@ -499,3 +522,5 @@ export function assertGatewayRouteCompatibility(request: GatewayRouteCompatibili
   const result = checkGatewayRouteCompatibility(request);
   if (!result.ok) throw new GatewayRouteConflictError(result);
 }
+
+export { normalizeNativeLocalProviderAttachment } from "./native-local/contract";

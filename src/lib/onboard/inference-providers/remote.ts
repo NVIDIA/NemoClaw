@@ -292,7 +292,15 @@ export async function setupRemoteProviderInference(
         const gatewayEndpointUrl =
           proxy?.baseUrl ?? gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
         let providerResult;
-        if (reuseGatewayCredentialWithoutLocalKey) {
+        if (deps.nativeLocalInference && reuseGatewayCredentialWithoutLocalKey) {
+          providerResult = await upsertProvider(
+            provider,
+            config.providerType,
+            resolvedCredentialEnv,
+            gatewayEndpointUrl,
+            {},
+          );
+        } else if (reuseGatewayCredentialWithoutLocalKey) {
           providerResult = await reuseRegisteredProviderWithGatewayEndpoint({
             provider,
             providerType: config.providerType,
@@ -402,6 +410,34 @@ export async function setupRemoteProviderInference(
           }
           restoreUncommittedProxy();
           return exitProcess(providerResult.status || 1);
+        }
+        if (deps.nativeLocalInference) {
+          if (proxy && sandboxName) {
+            // Preserve the proxy owner before releasing its lifecycle lock.
+            // A failed registry write may already have committed, so retain it.
+            proxy.persist();
+            proxySettled = true;
+            let reservationFailure: string | null = null;
+            try {
+              if (!reserveSandboxInferenceRoute(sandboxName, { model, provider })) {
+                reservationFailure = "reservation returned false";
+              }
+            } catch (reservationError) {
+              reservationFailure = compactText(
+                redact(
+                  reservationError instanceof Error
+                    ? reservationError.message
+                    : String(reservationError),
+                ),
+              );
+            }
+            if (reservationFailure) {
+              throw new Error(
+                `Native local inference could not publish its proxy owner: ${reservationFailure}. The proxy was retained.`,
+              );
+            }
+          }
+          break;
         }
         const applyResult = await inferenceRouteMutator.setInferenceRoute({
           target: { kind: "named", gatewayName },

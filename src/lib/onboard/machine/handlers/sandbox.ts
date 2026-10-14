@@ -99,6 +99,7 @@ import {
 } from "../../sandbox-recreate-transaction";
 import {
   nativeInferenceCreateIntentFields,
+  nativeLocalReservationStatus,
   sandboxCreateInferenceSelection,
   withSandboxImageRegistrationFence,
 } from "../../sandbox-registration";
@@ -356,6 +357,7 @@ export interface SandboxStateOptions<
     resolveSandboxCreateIntent(input: {
       sandboxName: string;
       inferenceProvider?: string | null;
+      nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
       nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
       nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
       hostLocalInferenceRouteOnly?: boolean;
@@ -1225,6 +1227,7 @@ class SandboxStateFlow<
         `  Error: sandbox '${sandboxName}' changed OpenShell gateways while onboarding was in progress. Retry onboarding.`,
       );
     }
+    if (this.acceptsNativeLocalReservation(targetEntry, sandboxName)) return;
     const compatibility = this.deps.checkGatewayRouteCompatibility({
       gatewayName: this.options.gatewayName,
       sandboxName: null,
@@ -1240,6 +1243,29 @@ class SandboxStateFlow<
     // The target registry row is the route reservation this transaction owns.
     // A changed target is a lost-reservation race, not an advisory peer drift.
     this.failGatewayRouteCheck(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+  }
+
+  private acceptsNativeLocalReservation(targetEntry: SandboxEntry, sandboxName: string): boolean {
+    if (!targetEntry.nativeLocalProviderAttachment) return false;
+    const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
+    const nativeLocalReservation = nativeLocalReservationStatus({
+      entry: targetEntry,
+      agentName,
+      sandboxName,
+      gatewayName: this.options.gatewayName,
+      provider: this.options.provider,
+      model: this.options.model,
+      endpointUrl: this.options.endpointUrl,
+      endpointSource: this.options.endpointSource ?? null,
+      credentialEnv: this.options.credentialEnv ?? null,
+      preferredInferenceApi: this.options.preferredInferenceApi ?? null,
+    });
+    if (nativeLocalReservation === "changed") {
+      this.failGatewayRouteCheck(
+        `  Error: native local inference reservation for sandbox '${sandboxName}' changed while onboarding was in progress. Retry onboarding.`,
+      );
+    }
+    return nativeLocalReservation === "exact";
   }
 
   private failGatewayRouteCheck(message: string): never {
@@ -1881,6 +1907,8 @@ class SandboxStateFlow<
       hostMounts: this.options.hostMounts,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
     });
+    const endpointUrl =
+      resolved.nativeLocalProviderAttachment?.endpointUrl ?? this.options.endpointUrl;
     const recreate = requiresSandboxRecreation(decision, this.options.recreateSandbox(false));
     return {
       resolved,
@@ -1903,7 +1931,7 @@ class SandboxStateFlow<
         }) ?? toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
-      ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
+      ...(endpointUrl ? { endpointUrl } : {}),
       ...compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
       endpointSource: this.options.endpointSource ?? null,
       ...(this.options.deferredN1xManagedVllmPreviewIntent === true

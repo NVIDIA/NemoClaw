@@ -62,7 +62,7 @@ const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
 const {
-  createCompatibleEndpointSmoke,
+  createCompatibleEndpointSmoke: createSmoke,
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
   verifyCompatibleEndpointSandboxSmoke,
@@ -673,7 +673,7 @@ const {
 });
 const sandboxExec = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
 
-const compatibleSmoke = createCompatibleEndpointSmoke(runOpenshell, sandboxExec, redact);
+const compatibleSmoke = createSmoke(runOpenshell, sandboxExec, redact, registry.getSandbox);
 
 const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatewayState;
 const waitForSandboxReady = sandboxReadinessTracing.createCliSandboxReadyWaiter({
@@ -3206,8 +3206,14 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
           buildVerifyChain: (chatUiUrl, name) => buildAgentVerifyChain(chatUiUrl, name, agent),
           verifyDeployment: async (name, chain) => {
-            const recordedSandbox = registry.getSandbox(name);
             const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
+            const inference = verifyDeploymentModule.onboardInferenceVerificationContext(
+              name,
+              GATEWAY_NAME,
+              agent?.name ?? "openclaw",
+              liveFinalFlowContext,
+              registry.getSandbox(name),
+            );
             return verifyDeploymentModule.verifyDeployment(
               name,
               chain,
@@ -3219,13 +3225,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 providerExistsInGateway: (providerName: string) =>
                   providerExistsInGateway(providerName),
                 probeInferenceInvocation: () =>
-                  verifyDeploymentModule.probeOnboardInferenceInvocation({
-                    ...recordedSandbox,
-                    ...liveFinalFlowContext,
-                    sandboxName: name,
-                    gatewayName: GATEWAY_NAME,
-                    agentName: agent?.name,
-                  }),
+                  verifyDeploymentModule.probeOnboardInferenceInvocation(inference.invocation),
               },
               {
                 diagnoseCustomOpenClawRuntime:
@@ -3233,7 +3233,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                     liveFinalFlowContext.fromDockerfile,
                     agent?.name,
                   ),
-                inferenceRouteContext: recordedSandbox ?? liveFinalFlowContext,
+                inferenceRouteContext: inference.route,
               },
             );
           },
