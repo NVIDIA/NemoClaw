@@ -1215,7 +1215,9 @@ function validatePrGateEvidenceProducers(errors: string[], workflow: OperationsW
 }
 
 function validateAggregation(errors: string[], workflow: OperationsWorkflow): void {
-  const executionJobs = Object.keys(workflow.jobs).filter((name) => !META_JOBS.has(name));
+  const executionJobs = Object.keys(workflow.jobs).filter(
+    (name) => !META_JOBS.has(name) || name === "llama-cpp-dgx-spark-plan",
+  );
   const reportNeeds = needs(workflow.jobs["report-to-pr"] ?? {});
   for (const name of executionJobs) {
     if (!reportNeeds.includes(name)) errors.push(`report-to-pr must wait for ${name}`);
@@ -1360,7 +1362,7 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       }
       if (
         job.if !==
-        "${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference'))) }}"
+        "${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && (contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference') || contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'llama-cpp-dgx-spark-qualification'))))) }}"
       ) {
         errors.push("report-to-pr must run only for manual workflow dispatches");
       }

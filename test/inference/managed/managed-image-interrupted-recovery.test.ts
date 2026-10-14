@@ -42,6 +42,8 @@ vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:child_process")>()),
 }));
 
+const realSpawnSync = childProcess.spawnSync;
+
 const input = {
   agent: "openclaw" as const,
   image: `ghcr.io/nvidia/nemoclaw/openclaw@sha256:${"a".repeat(64)}`,
@@ -166,6 +168,43 @@ it.each(["foreign marker", "oversized marker"])(
   },
 );
 
+it.runIf(process.platform === "linux")(
+  "rejects a symlink marker without touching its target",
+  async () => {
+    const marker = path.join(scope.stateDir, "qualification-owner.json");
+    const target = path.join(root, "foreign-marker.json");
+    fs.writeFileSync(target, "foreign-owner");
+    fs.unlinkSync(marker);
+    fs.symlinkSync(target, marker);
+    await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toMatchObject({
+      code: "ELOOP",
+    });
+    expect(commands).not.toHaveBeenCalled();
+    expect(fs.readFileSync(target, "utf8")).toBe("foreign-owner");
+  },
+);
+
+it.runIf(process.platform === "linux")("rejects a FIFO marker without waiting for a writer", () => {
+  const marker = path.join(scope.stateDir, "qualification-owner.json");
+  fs.unlinkSync(marker);
+  expect(realSpawnSync("mkfifo", [marker]).status).toBe(0);
+  const source = `require('./scripts/checks/run-managed-image-openshell-e2e.ts').cleanupInterruptedManagedImageOpenShellE2e(${JSON.stringify(input)}, ${JSON.stringify(scope)}).then(() => { process.exitCode = 1; }, error => { process.exitCode = error.message === 'managed recovery identity mismatch' ? 2 : 3; });`;
+  const result = realSpawnSync(
+    process.execPath,
+    ["--no-warnings", "--import", "tsx", "--eval", source],
+    {
+      cwd: path.resolve(import.meta.dirname, "../../.."),
+      encoding: "utf8",
+      timeout: 10000,
+      env: { PATH: "", HOME: root },
+      killSignal: "SIGKILL",
+    },
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(2);
+  expect(commands).not.toHaveBeenCalled();
+});
+
 it("preserves recovery evidence when gateway ownership cannot be proven", async () => {
   mocks.stopGateway.mockReturnValue({
     failed: [],
@@ -218,10 +257,21 @@ it("preserves state when the existing volume verifier rejects a foreign volume",
   expect(fs.existsSync(path.join(scope.stateDir, "qualification-owner.json"))).toBe(true);
 });
 
+it("retains recovery ownership when sandbox deletion fails", async () => {
+  commands.mockReset().mockReturnValueOnce({ status: 1, stdout: "", stderr: "denied" } as any);
+  await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
+    "could not verify sandbox deletion",
+  );
+  expect(commands).toHaveBeenCalledTimes(1);
+  expect(mocks.stopGateway).not.toHaveBeenCalled();
+  expect(mocks.removeVolumes).not.toHaveBeenCalled();
+  expect(fs.existsSync(path.join(scope.stateDir, "qualification-owner.json"))).toBe(true);
+});
+
 it("cleans partial setup when no exact sandbox container was created", async () => {
   commands
     .mockReset()
-    .mockReturnValueOnce({ status: 1, stdout: "", stderr: "sandbox was not created" } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: `sha256:${"b".repeat(64)}`, stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)

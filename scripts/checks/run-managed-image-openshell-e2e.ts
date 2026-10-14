@@ -163,16 +163,17 @@ export async function cleanupInterruptedManagedImageOpenShellE2e(
   )
     throw new Error("managed recovery state directory is not owned");
   const markerPath = path.join(scope.stateDir, "qualification-owner.json");
-  const markerStatus = fs.lstatSync(markerPath);
-  if (!markerStatus.isFile() || markerStatus.isSymbolicLink())
-    throw new Error("managed recovery identity must be a regular file");
   const descriptor = fs.openSync(
     markerPath,
     fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
   );
   try {
     const marker = fs.fstatSync(descriptor);
-    if (!marker.isFile() || marker.size > 8192 || fs.readFileSync(descriptor, "utf8") !== expected)
+    if (!marker.isFile() || marker.size > 8192)
+      throw new Error("managed recovery identity mismatch");
+    const buffer = Buffer.alloc(8193);
+    const bytes = fs.readSync(descriptor, buffer, 0, buffer.length, 0);
+    if (bytes > 8192 || buffer.subarray(0, bytes).toString("utf8") !== expected)
       throw new Error("managed recovery identity mismatch");
   } finally {
     fs.closeSync(descriptor);
@@ -190,7 +191,13 @@ export async function cleanupInterruptedManagedImageOpenShellE2e(
   });
   try {
     const onboard = resolveManagedImageOnboardModule(await import("../../src/lib/onboard.ts"));
-    commandResult(onboard.openshellArgv(["sandbox", "delete", input.sandbox]), process.env, 15000);
+    const sandboxDeletion = commandResult(
+      onboard.openshellArgv(["sandbox", "delete", input.sandbox]),
+      process.env,
+      15000,
+    );
+    if (sandboxDeletion.status !== 0)
+      throw new Error("managed-image recovery could not verify sandbox deletion");
     const gatewayStop = stopHostGatewayProcesses(
       {},
       {
@@ -606,8 +613,11 @@ export function removeManagedImageGatewayStateIfSafe(
   stateDir: string,
   gatewayStop: Pick<StopHostGatewayResult, "failed" | "ownershipFailures">,
   gatewayRemovalStatus: number | null,
+  cleanupErrors: readonly string[] = [],
+  retainRecoveryErrors = true,
 ): boolean {
   if (
+    (retainRecoveryErrors && cleanupErrors.length > 0) ||
     gatewayStop.failed.length > 0 ||
     (gatewayStop.ownershipFailures?.length ?? 0) > 0 ||
     gatewayRemovalStatus !== 0
@@ -1713,7 +1723,15 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       cleanupErrors.push(error instanceof Error ? error.message : String(error));
     }
     try {
-      if (!removeManagedImageGatewayStateIfSafe(stateDir, gatewayStop, gatewayRemovalStatus)) {
+      if (
+        !removeManagedImageGatewayStateIfSafe(
+          stateDir,
+          gatewayStop,
+          gatewayRemovalStatus,
+          cleanupErrors,
+          Boolean(recoveryScope),
+        )
+      ) {
         cleanupErrors.push(
           `OpenShell gateway ownership evidence remains at ${stateDir} because gateway cleanup did not complete`,
         );

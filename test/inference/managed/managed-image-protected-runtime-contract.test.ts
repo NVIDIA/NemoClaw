@@ -496,6 +496,22 @@ describe("protected managed-image runtime contract", () => {
     expect(fs.existsSync(stateDir)).toBe(false);
   });
 
+  it("retains scoped recovery state when another resource cleanup failed", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-state-retain-"));
+    const marker = path.join(stateDir, "qualification-owner.json");
+    fs.writeFileSync(marker, "owned");
+    try {
+      expect(
+        removeManagedImageGatewayStateIfSafe(stateDir, { failed: [], ownershipFailures: [] }, 0, [
+          "volume removal failed",
+        ]),
+      ).toBe(false);
+      expect(fs.readFileSync(marker, "utf8")).toBe("owned");
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("accepts an exact retained OpenShell sandbox name", () => {
     const expectedSandboxId = "sandbox-id-123";
     const input = parseManagedImageOpenShellE2eInputs([

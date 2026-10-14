@@ -11,6 +11,18 @@ type WorkflowNeed = {
 const CONTROLLER_JOBS = ["base-image-publication", "generate-matrix"] as const;
 const JOB_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 
+function requiredResultJobs(selectedJobs: readonly string[]): string[] {
+  return [
+    ...new Set([
+      ...CONTROLLER_JOBS,
+      ...selectedJobs,
+      ...(selectedJobs.includes("llama-cpp-dgx-spark-qualification")
+        ? ["llama-cpp-dgx-spark-plan"]
+        : []),
+    ]),
+  ];
+}
+
 function parseJobIds(value: string, label: string, invalidLabel = label.toLowerCase()): string[] {
   const jobs = JSON.parse(value) as unknown;
   if (!Array.isArray(jobs)) {
@@ -31,7 +43,7 @@ export function failedReleaseQualificationJobs(
   releaseRequiredJobs: readonly string[],
   managedImageRequired = true,
 ): string[] {
-  return [...CONTROLLER_JOBS, ...releaseRequiredJobs].filter(
+  return requiredResultJobs(releaseRequiredJobs).filter(
     (job) =>
       needs[job]?.result !== "success" &&
       !(
@@ -73,7 +85,7 @@ export function assertReleaseQualification(
     ) {
       throw new Error("PR evidence requires a nonempty bounded selection");
     }
-    const results = [...new Set([...CONTROLLER_JOBS, ...releaseRequiredJobs])].map((job) => ({
+    const results = requiredResultJobs(releaseRequiredJobs).map((job) => ({
       job,
       result: needs[job]?.result ?? null,
     }));

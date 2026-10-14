@@ -1302,8 +1302,7 @@ async function runQualificationCore(
         source: planSource,
         digest: invocation.planSha256,
       });
-      // Agent failure may include an unproven managed-gateway cleanup.
-      progress.cleanupComplete = failurePhase !== "agent";
+      progress.cleanupComplete = true;
     } catch (cleanupError) {
       failure ??= cleanupError;
     }
@@ -1434,12 +1433,14 @@ export async function runQualificationLauncher(): Promise<void> {
       return;
     }
     const names = runtimeNames(invocation, process.env);
+    let cleanupComplete = false;
     try {
       if (workerStopFailed) throw new Error("worker termination is unproven");
       const source = fs.existsSync(path.join(names.tempRoot, "managed-openshell"))
         ? readBoundedRegularFile(invocation.planFile, maximumPlanBytes)
         : "";
       await cleanupOwnedRuntime(names, undefined, { source, digest: invocation.planSha256 });
+      cleanupComplete = true;
     } catch {
       process.stderr.write(
         "ERROR: Interrupted Spark cleanup is incomplete; inspect owned resources.\n",
@@ -1455,7 +1456,7 @@ export async function runQualificationLauncher(): Promise<void> {
       },
       invocation.planSha256,
       "interrupted",
-      false,
+      cleanupComplete,
     );
     writeReceipt(
       path.join(path.dirname(invocation.output), "failure.json"),

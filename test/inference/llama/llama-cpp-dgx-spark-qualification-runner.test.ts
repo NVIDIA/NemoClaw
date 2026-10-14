@@ -223,7 +223,7 @@ if (args.includes("inspect")) {
         phase: "interrupted",
         status: "failed",
         owner,
-        cleanupComplete: false,
+        cleanupComplete: true,
       });
       const blockedPid = JSON.parse(fs.readFileSync(marker, "utf8")).pid;
       expect(() => process.kill(blockedPid, 0)).toThrow();
