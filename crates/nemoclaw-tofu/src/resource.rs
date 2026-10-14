@@ -195,6 +195,13 @@ impl ResourceAdapter {
             .collect()
     }
     fn checked(&self, prior: &Row, observed: Row) -> Result<Row, ObservationError> {
+        for field in &self.definition.bound_fields {
+            if prior.get(*field).map(String::as_str).unwrap_or("")
+                != observed.get(*field).map(String::as_str).unwrap_or("")
+            {
+                return Err(ObservationError::BindingMismatch);
+            }
+        }
         for field in self.definition.attributes() {
             if observed
                 .get(field)
@@ -526,5 +533,43 @@ impl Resource for ResourceAdapter {
                 None
             }
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct UnusedBackend;
+    #[async_trait]
+    impl Backend for UnusedBackend {
+        async fn read(&self, _: &str, _: &Row, _: bool) -> Result<Option<Row>, ObservationError> {
+            unreachable!("binding checks do not contact the backend")
+        }
+        async fn ensure(&self, _: &str, _: &Row) -> Mutation {
+            unreachable!("binding checks do not mutate resources")
+        }
+        async fn remove(&self, _: &str, _: &Row, _: bool) -> Result<(), ObservationError> {
+            unreachable!("binding checks do not mutate resources")
+        }
+    }
+
+    #[test]
+    fn refresh_preserves_declared_bound_fields() {
+        let definition = Definition::new("profile", &["name", "workspace", "source"], &[])
+            .optional(&["source"])
+            .bound_fields(&["source"]);
+        let adapter = ResourceAdapter::new(definition, Arc::new(UnusedBackend));
+        let prior: Row = [
+            ("id", "profile/1"),
+            ("name", "model"),
+            ("workspace", "owned"),
+            ("source", "bound-service"),
+        ]
+        .map(|(key, value)| (key.into(), value.into()))
+        .into();
+        assert!(adapter.checked(&prior, prior.clone()).is_ok());
+        let mut changed = prior.clone();
+        changed.insert("source".into(), "substituted-service".into());
+        assert!(adapter.checked(&prior, changed).is_err());
     }
 }
