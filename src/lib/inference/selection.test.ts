@@ -27,10 +27,13 @@ describe("published Pi shared local route", () => {
     ).toBe(false);
   });
 
-  it("retains a published route during reservation but rejects unpublished or attached selections", () => {
+  it("rejects pending, unpublished, or attached selections", () => {
     expect(
-      isPersistedPiSharedLocalInferenceRoute({ ...recorded, pendingRouteReservation: true }),
-    ).toBe(true);
+      isPersistedPiSharedLocalInferenceRoute(
+        { ...recorded, pendingRouteReservation: true },
+        recorded,
+      ),
+    ).toBe(false);
     expect(
       isPersistedPiSharedLocalInferenceRoute({
         ...recorded,

@@ -185,6 +185,7 @@ export function isPersistedPiSharedLocalInferenceRoute(
   return Boolean(
     recorded?.agent === "pi" &&
     typeof recorded.createdAt === "string" &&
+    recorded.pendingRouteReservation !== true &&
     recorded.nativeLocalProviderAttachment === undefined &&
     usesNativeLocalInferenceForAgent("pi", recorded.provider, recorded.endpointUrl) &&
     (!selected ||

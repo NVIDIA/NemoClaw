@@ -212,7 +212,7 @@ Refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/r
 
 New NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider selections use sandbox-attached OpenShell providers.
 The agent calls the selected provider API hostname, and OpenShell permits only the approved destination and request paths.
-New OpenClaw and Deep Agents Code local selections that qualify for native provider attachment use sandbox-attached OpenShell providers.
+New OpenClaw, Deep Agents Code, and Pi local selections that qualify for native provider attachment use sandbox-attached OpenShell providers.
 Existing local sandboxes can keep using `inference.local` while OpenShell 0.0.116 is pinned.
 If an OpenClaw or Deep Agents Code sandbox records a local route that qualifies for native attachment but lacks that attachment, resume or rebuild stops before changing the sandbox.
 Back up that sandbox, then re-onboard it with `--fresh --name <name> --recreate-sandbox`.
