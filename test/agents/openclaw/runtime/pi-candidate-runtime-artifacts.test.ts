@@ -203,7 +203,7 @@ describe("Pi managed model catalog generation", () => {
     expect(header.stderr).toBe("");
   });
 
-  it("selects the native-local model for a fresh Pi process without replacing user settings", () => {
+  it("updates Pi's managed defaults when the native-local model changes and preserves other settings", () => {
     const selected = {
       NEMOCLAW_MODEL: "selected-local-model",
       NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
@@ -217,15 +217,49 @@ describe("Pi managed model catalog generation", () => {
         defaultProvider: "openshell",
         defaultModel: "selected-local-model",
       });
-      const userSettings = '{"defaultProvider":"other","futurePiSetting":true}\n';
+      const userSettings =
+        '{"defaultProvider":"other","defaultModel":"old-model","futurePiSetting":true}\n';
       fs.writeFileSync(settingsPath, userSettings);
       const rerun = spawnSync(process.execPath, [path.join(root, "agents/pi/generate-config.ts")], {
         cwd: root,
         encoding: "utf8",
-        env: { PATH: process.env.PATH ?? "", HOME: home, ...selected },
+        env: {
+          PATH: process.env.PATH ?? "",
+          HOME: home,
+          ...selected,
+          NEMOCLAW_MODEL: "next-local-model",
+        },
       });
       expect(rerun.status, rerun.stderr).toBe(0);
-      expect(fs.readFileSync(settingsPath, "utf8")).toBe(userSettings);
+      expect(JSON.parse(fs.readFileSync(settingsPath, "utf8"))).toEqual({
+        defaultProvider: "openshell",
+        defaultModel: "next-local-model",
+        futurePiSetting: true,
+      });
+      expect(
+        JSON.parse(fs.readFileSync(path.join(home, ".pi/agent/models.json"), "utf8")).defaultModel,
+      ).toBe("next-local-model");
+      const hosted = spawnSync(
+        process.execPath,
+        [path.join(root, "agents/pi/generate-config.ts")],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: {
+            PATH: process.env.PATH ?? "",
+            HOME: home,
+            ...selected,
+            NEMOCLAW_MODEL: "next-hosted-model",
+            NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+          },
+        },
+      );
+      expect(hosted.status, hosted.stderr).toBe(0);
+      expect(JSON.parse(fs.readFileSync(settingsPath, "utf8"))).toEqual({
+        defaultProvider: "openshell",
+        defaultModel: "next-hosted-model",
+        futurePiSetting: true,
+      });
       expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o600);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });

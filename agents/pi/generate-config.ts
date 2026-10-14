@@ -17,7 +17,7 @@ import {
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
 } from "../../src/lib/inference/native-nvidia/contract.ts";
 
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -180,19 +180,27 @@ function buildConfig(settings: Settings): ManagedPiConfig {
   };
 }
 
-function seedNativeLocalDefaults(configDir: string, model: string): void {
+function syncManagedDefaults(configDir: string, model: string, nativeLocal: boolean): void {
   const settingsPath = join(configDir, "settings.json");
   const defaults = { defaultProvider: MANAGED_PROVIDER_ID, defaultModel: model };
+  let existing: Record<string, unknown>;
   try {
-    // Existing Pi settings are user state. A fresh sandbox needs these defaults
-    // because Pi does not read defaultModel from models.json.
-    writeFileSync(settingsPath, `${JSON.stringify(defaults, null, 2)}\n`, {
-      flag: "wx",
-      mode: 0o600,
-    });
+    const parsed: unknown = JSON.parse(readFileSync(settingsPath, "utf8"));
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Pi settings.json must contain an object.");
+    }
+    existing = parsed as Record<string, unknown>;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    // Hosted startup did not previously create settings.json. Native-local
+    // needs explicit defaults because Pi ignores defaultModel in models.json.
+    if (!nativeLocal) return;
+    existing = {};
   }
+  writeFileSync(settingsPath, `${JSON.stringify({ ...existing, ...defaults }, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  chmodSync(settingsPath, 0o600);
 }
 
 function main(): void {
@@ -204,7 +212,7 @@ function main(): void {
   const config = buildConfig(settings);
   writeFileSync(configPath, config.text, { mode: 0o600 });
   chmodSync(configPath, 0o600);
-  if (config.nativeLocal) seedNativeLocalDefaults(configDir, config.model);
+  syncManagedDefaults(configDir, config.model, config.nativeLocal);
 
   console.log(`[config] Wrote ${configPath} (model=${config.model}, base_url=${config.baseUrl})`);
 }

@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -105,6 +105,31 @@ try {
   clearConfigValueCache();
   assert.equal(resolveConfigValue(provider.apiKey), undefined);
   assert.throws(() => resolveHeadersOrThrow(provider.headers, "Pi native-local request"));
+
+  const settingsPath = join(nativeHome, ".pi/agent/settings.json");
+  writeFileSync(
+    settingsPath,
+    '{"defaultProvider":"openshell","defaultModel":"old-model","futurePiSetting":true}\n',
+  );
+  const switched = spawnSync(
+    process.execPath,
+    [fileURLToPath(new URL("./generate-config.ts", import.meta.url))],
+    {
+      encoding: "utf8",
+      env: {
+        HOME: nativeHome,
+        NEMOCLAW_MODEL: "switched-local-model",
+        NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+        NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+      },
+    },
+  );
+  assert.equal(switched.status, 0, switched.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(settingsPath, "utf8")), {
+    defaultProvider: "openshell",
+    defaultModel: "switched-local-model",
+    futurePiSetting: true,
+  });
 } finally {
   delete process.env.NEMOCLAW_LOCAL_INFERENCE_TOKEN;
   clearConfigValueCache();

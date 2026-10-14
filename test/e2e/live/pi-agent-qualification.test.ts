@@ -594,7 +594,7 @@ test(
       // reserved by NemoClaw, and an arbitrary port would select hosted routing.
       port: 11434,
       progress,
-      publicHost: "localhost",
+      publicHost: "host.openshell.internal",
       requireAuth: true,
       requireAuthModels: true,
     });
