@@ -12,8 +12,8 @@ Before pushing, choose checks that cover the changed behavior and its affected c
 | Prose or documentation | Review the changed text; run the [documentation check](documentation-build.md#validate-locally) for documentation changes. |
 | Declarative configuration or workflow triggers | Run the applicable schema or lint checks; test affected execution paths when their behavior changes. |
 | Isolated code change | Run focused behavioral tests and nearby regression checks, plus formatting and lint checks for the affected code. |
-| Bundle construction, provider contracts, lifecycle behavior, or broad workspace dependencies | Run `cargo ci`. |
-| Impact is unclear or narrower checks cannot establish confidence | Run `cargo ci`. |
+| Bundle construction, provider contracts, lifecycle behavior, or broad workspace dependencies | Run `cargo ci --full`. |
+| Impact is unclear or narrower checks cannot establish confidence | Run `cargo ci --full`. |
 
 For changes spanning categories, combine the applicable checks.
 A YAML or configuration file can change runtime behavior; choose by impact rather than extension.
@@ -26,13 +26,58 @@ Required PR checks still apply before merging.
 Run this platform's complete `CI / Bundle` checks from the repository root:
 
 ```sh
-cargo ci
+cargo ci --full
 ```
 
 The command needs the pinned Rust toolchain and a C linker.
 It downloads Protocol Buffers compiler 36.1 and cargo-nextest 0.9.144 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
 It then runs formatting, Clippy, the unit tests and doctests, the schema check, a bundle build, and the contract and system tests, stopping at the first failure.
 To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/protoc` after `cargo ci tools`, or to another protoc 36.1.
+
+## Select Expensive Local Checks
+
+Plain `cargo ci` selects bundle and lifecycle work from changed inputs:
+
+```sh
+cargo ci --dry-run
+cargo ci
+```
+
+The base is selected in this order:
+
+1. An explicit `--base REVISION`.
+2. The open PR target reported by `gh pr view`, including a stacked PR's parent, when that exact commit is available locally.
+3. `origin/v1`.
+
+The runner prints the selected base and why it chose it.
+PR discovery needs an attached branch, GitHub CLI, and GitHub access; a closed PR, failed lookup, or unavailable target commit falls back to `origin/v1`.
+Fetch the parent branch if its commit is missing locally.
+Before opening a stacked PR, use `--base origin/PARENT`; a tracking upstream does not reliably identify a stack's parent.
+If the automatic base is unavailable, the runner stops and asks you to fetch it, pass `--base`, or use `--full`.
+`--base` and `--full` bypass PR discovery.
+The comparison includes committed, staged, unstaged, and untracked files; Git-ignored untracked files are excluded.
+`--dry-run` prints JSON with the selected steps and the reasons for the expensive checks, without installing tools or running those steps.
+The outer Cargo invocation still builds the CI runner when needed.
+Formatting, Clippy, the workspace build, unit tests, doctests, and schema checks always run in `cargo ci`; only bundle construction and lifecycle testing can skip.
+Use `cargo ci --full` to run the complete local suite, or `cargo ci --full --dry-run` to preview it.
+`--base` and `--full` are mutually exclusive and cannot be combined with a named step, a partition, an archive, or live-image inputs.
+
+The bundle retains all crate sources, so a change outside the lifecycle dependency graph can rebuild the bundle while skipping lifecycle tests.
+The planner accounts for the fixture provider launched by OpenTofu as well as Cargo dependencies.
+Non-code inputs use the [bundle rules](../../.config/determinator-bundle.toml) and [lifecycle rules](../../.config/determinator-lifecycle.toml).
+Unknown inputs select checks; an unavailable explicit base, invalid rules, or failed metadata analysis selects all expensive checks and reports why.
+Keep these rules aligned with retained bundle sources, test fixtures, executable dependencies, and build/test configuration.
+
+The same planner also reports image and live-suite decisions:
+
+```sh
+cargo run --locked -p nemoclaw-build --no-default-features -- changes plan --base origin/v1 --worktree
+```
+
+Its JSON contains `bundle`, `lifecycle`, `images`, and `live`, each with `run` and `reason` fields.
+Omit `--worktree` for a clean committed checkout, as CI does; a dirty checkout then selects all checks rather than ignoring local edits.
+Image and live-suite decisions do not add those opt-in steps to `cargo ci`.
+Rebuild the bundle before explicitly running lifecycle or live tests after relevant inputs change.
 
 ## Test Layers
 
@@ -149,7 +194,7 @@ Budgets fail a run only on the Linux GitHub Actions runners, where `GITHUB_ACTIO
 
 - The `test` step, each lifecycle partition, and each live suite check their step budget when the step ends; a step over its wall budget, or with a test over its limit, fails and names each offender with its time and limit.
 - Each platform's `Lifecycle timing` job checks the binary budgets, because a binary's tests run in several partitions.
-  Plain `cargo ci` and `cargo ci lifecycle` run the whole lifecycle suite in one step and report them there too.
+  `cargo ci --full` and `cargo ci lifecycle` run the whole lifecycle suite in one step and report them there too.
 - Nextest stops a test on every platform: each profile reports a test as slow at its per-test limit and stops it at a multiple of the limit, three times for the `test` step and twice for the others.
   An override in the `lifecycle` profile does the same for each budgeted binary with that binary's limit.
   Nextest marks a stopped test `TIMEOUT` and fails the step.
@@ -230,16 +275,22 @@ Documentation previews publish only for PRs targeting `v1`.
 
 The `v1` ruleset requires the first eight checks.
 Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.
-A `Test / PLATFORM` check succeeds only when every job of that platform succeeds, including its live suites when they run.
+A `Test / PLATFORM` check succeeds only when every selected job of that platform succeeds, including its live suites when they run.
+
+Each bundle or image workflow calls the [shared planner](../../.github/workflows/validation-plan.yml) once on Linux before its platform jobs.
+It builds without the SDK, protoc, or nextest, reads old and new Cargo metadata once, and reports the decisions in the job summary.
+Bundle push and manual runs select all checks; PRs use impact analysis.
+Image pushes retain impact analysis, and manual image runs select all checks.
+A failed analysis selects all expensive checks; a failed planning job prevents the required checks from passing.
 
 ### Jobs of One Platform
 
 Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/bundle-platform.yml) on its own runners:
 
-1. `Build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, `schema`, and `archive`: the unit layer, and the archive that later jobs run.
-2. `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
-3. On Linux, `Build live images` decides whether the change can affect the live suites and, if so, runs `cargo ci live-images`, alongside the first two jobs.
-4. When the build and bundle jobs finish, the `Lifecycle` jobs run the contract and system layers in partitions; on Linux, when the live images are also built, `Live / Docker` and `Live / Kind` start.
+1. `Build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when lifecycle or live jobs need the executables.
+2. When the plan selects a bundle, `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
+3. When the plan selects live checks, Linux runs `Build live images` with `cargo ci live-images`, alongside the first two jobs.
+4. When selected and the build and bundle jobs finish, the `Lifecycle` jobs run the contract and system layers in partitions; on Linux, when the live images are also built, `Live / Docker` and `Live / Kind` start.
 5. When the partitions finish, `Lifecycle timing` reports the whole lifecycle suite and checks the binary budgets.
 
 Each platform starts its jobs after its own build; it does not wait for the other platforms.
@@ -266,7 +317,7 @@ CI keeps these artifacts for one day; rerunning a failed job reuses its producer
 
 ### Run a Lifecycle Partition
 
-Plain `cargo ci` runs the complete lifecycle suite in one step.
+`cargo ci --full` runs the complete lifecycle suite in one step.
 After `cargo ci build` and `cargo ci bundle`, select one partition explicitly:
 
 ```sh
@@ -295,7 +346,8 @@ Use `Fixture::engine` for a fake engine so that the test runs on every platform;
 
 `Live / Docker` and `Live / Kind` run on the Linux platforms only, from that platform's archive, bundle, and live images, after enabling Docker's containerd image store on the runner.
 They run on every `v1` push, `run-live/` branch push, and manual run.
-On a pull request, `Build live images` runs `nemoclaw-build changes live` against the base commit; when the change cannot affect the live suites, it builds nothing and both live jobs skip.
+On a pull request, the shared validation plan compares the merge commit with its first parent, the PR base.
+When live inputs are unaffected, the live image and test jobs skip before installing tools or downloading test artifacts.
 A file inside a crate counts when that crate is in the live build: the packages whose tests run live and the CLI and providers the bundle ships, with their dependencies.
 [Path rules](../../.config/determinator-live.toml) classify other files; unclassified files, dependency or feature changes in the live build, and failed analyses run the suites.
 After committing, run `cargo run -p nemoclaw-build --no-default-features -- changes live --base origin/v1` to see the decision.
@@ -359,7 +411,8 @@ Native profiles use isolated local inference; images without a selected profile 
 Readiness qualification is separate and reports unsupported native health as skipped unless `--require-ready` requires it to pass.
 The workflow requires dummy readiness and retains the dummy-specific readiness-failure test; it separately checks OpenClaw reconfiguration and Hermes security.
 
-The image workflow first runs `nemoclaw-build changes images` and skips its remaining steps when the change cannot affect the images; the `Build` checks still pass.
+The image workflow obtains its image decision from the shared validation plan and skips image steps when their inputs are unaffected; the `Build` checks still report.
+A failed planning job fails those checks instead of skipping them.
 A file inside a crate counts when that crate is part of the image build: `nemoclaw-build` without default features, or the Ollama proxy, with their dependencies.
 [Path rules](../../.config/determinator-images.toml) classify other files by the `.dockerignore` build context.
 Unclassified files, dependency or feature changes in the image build, manual runs, and failed analyses run every step.

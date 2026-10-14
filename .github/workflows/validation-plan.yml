@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Validation plan
+on:
+  workflow_call:
+    inputs:
+      full:
+        description: Run every expensive check without impact analysis.
+        type: boolean
+        default: false
+    outputs:
+      bundle:
+        value: ${{ jobs.plan.outputs.bundle }}
+      lifecycle:
+        value: ${{ jobs.plan.outputs.lifecycle }}
+      images:
+        value: ${{ jobs.plan.outputs.images }}
+      live:
+        value: ${{ jobs.plan.outputs.live }}
+permissions:
+  contents: read
+jobs:
+  plan:
+    name: Select checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      bundle: ${{ steps.plan.outputs.bundle }}
+      lifecycle: ${{ steps.plan.outputs.lifecycle }}
+      images: ${{ steps.plan.outputs.images }}
+      live: ${{ steps.plan.outputs.live }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      # The planner has no SDK dependency and needs no protoc or nextest.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: ${{ !inputs.full }}
+        with:
+          prefix-key: validation-plan-v1
+          workspaces: . -> target/ci-runner
+          cache-workspace-crates: "false"
+          save-if: ${{ github.ref == 'refs/heads/v1' }}
+      - name: Decide expensive checks once for all platforms
+        id: plan
+        env:
+          FULL: ${{ inputs.full }}
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$FULL" = true ]; then
+            for check in bundle lifecycle images live; do echo "$check=true" >> "$GITHUB_OUTPUT"; done
+            echo 'All expensive checks selected for this event.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          case "$EVENT" in
+            pull_request) base=$(git rev-parse HEAD^1) ;;
+            push) base=$BEFORE ;;
+            *) base= ;;
+          esac
+          # A missing or unavailable base makes the planner select every check.
+          if [ -n "$base" ] && ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$base" || true
+          fi
+          cargo run --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner -- \
+            changes plan --base "$base" > "$RUNNER_TEMP/validation-plan.json"
+          jq -er 'to_entries[] | "\(.key)=\(.value.run)"' "$RUNNER_TEMP/validation-plan.json" >> "$GITHUB_OUTPUT"
+          jq -r 'to_entries[] | "- \(.key): \(if .value.run then "run" else "skip" end) — \(.value.reason)"' \
+            "$RUNNER_TEMP/validation-plan.json" >> "$GITHUB_STEP_SUMMARY"
