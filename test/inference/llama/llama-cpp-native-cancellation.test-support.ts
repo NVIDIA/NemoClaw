@@ -198,13 +198,24 @@ export async function createNativeLlamaDockerFixture(
       temperature: 0,
       ignore_eos: true,
     });
+    const clientFailures: unknown[] = [];
+    record.clientFailures = clientFailures;
     const finished = async (request: ReturnType<typeof client>, expectedCode = 0) => {
-      await vi.waitFor(
-        () => {
-          expect(owned(request.id).State.Running).toBe(false);
-        },
-        { timeout: (request.timeout + 2) * 1_000, interval: 20 },
-      );
+      try {
+        await vi.waitFor(
+          () => {
+            expect(owned(request.id).State.Running).toBe(false);
+          },
+          { timeout: (request.timeout + 2) * 1_000, interval: 20 },
+        );
+      } catch (error) {
+        clientFailures.push({
+          id: request.id,
+          state: owned(request.id).State,
+          logs: capture(["logs", request.id]),
+        });
+        throw error;
+      }
       const state = owned(request.id).State;
       expect(state.Running).toBe(false);
       expect(state.Pid).toBe(0);
