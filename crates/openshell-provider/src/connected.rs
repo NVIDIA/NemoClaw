@@ -84,12 +84,9 @@ impl ConnectedOpenShellGateway {
             if !value(want, "credential_env").is_empty() {
                 return Err(ObservationError::BindingMismatch);
             }
-            nemoclaw_docker::credentials::resolve(&nemoclaw_docker::credentials::Source::parse(
-                source,
-                value(want, "owner"),
-                value(want, "endpoint"),
-            )?)
-            .await?
+            self.services
+                .resolve_credential_source(source, value(want, "owner"), value(want, "endpoint"))
+                .await?
         } else {
             match value(want, "credential_env") {
                 "" => "empty".into(),
@@ -372,8 +369,12 @@ mod tests {
             endpoint: "http://127.0.0.1:1".into(),
             ..Default::default()
         };
-        let client =
-            ConnectedOpenShellGateway::connect(&connection, Arc::new(SearchSecrets)).unwrap();
+        let client = ConnectedOpenShellGateway::connect(
+            &connection,
+            Arc::new(SearchSecrets),
+            Arc::new(crate::DockerServices),
+        )
+        .unwrap();
         for provider in [SearchProvider::Brave, SearchProvider::Tavily] {
             let name = nemoclaw_openshell::search::search_provider_name(
                 provider,
@@ -411,6 +412,7 @@ mod tests {
                 },
                 &name,
                 false,
+                &crate::DockerServices,
             )
             .unwrap();
             assert_eq!(observed["credential_env"], "SEARCH_KEY");

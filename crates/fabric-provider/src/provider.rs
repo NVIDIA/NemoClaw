@@ -71,6 +71,16 @@ pub struct FabricProvider {
     destroying: Arc<AtomicBool>,
 }
 
+impl FabricProvider {
+    /// Observe sandbox parents with the deployment's credential checks.
+    pub fn with_services(services: Arc<dyn openshell_provider::Services>) -> Self {
+        Self {
+            client: Arc::new(GatewayClient::with_services(services)),
+            destroying: Arc::default(),
+        }
+    }
+}
+
 #[async_trait]
 impl Provider for FabricProvider {
     type Config<'a> = GatewayConfig;
@@ -162,5 +172,107 @@ mod tests {
                 .is_none()
         );
         assert!(!provider.destroying.load(Ordering::Acquire));
+    }
+
+    const FIXTURE_SOURCE: &str = "fixture-credential-source";
+
+    /// Accepts only the fixture credential source and counts validations.
+    /// Docker credentials reject that source, so a provider that drops the
+    /// injected services fails to observe the registration.
+    #[derive(Default)]
+    struct FixtureServices {
+        validations: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl openshell_provider::Services for FixtureServices {
+        fn validate_credential_source(
+            &self,
+            source: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<(), ObservationError> {
+            self.validations.fetch_add(1, Ordering::SeqCst);
+            if source == FIXTURE_SOURCE {
+                Ok(())
+            } else {
+                Err(ObservationError::BindingMismatch)
+            }
+        }
+
+        async fn resolve_credential_source(
+            &self,
+            source: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<String, ObservationError> {
+            if source == FIXTURE_SOURCE {
+                Ok("fixture-secret".into())
+            } else {
+                Err(ObservationError::BindingMismatch)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn configured_provider_observes_registrations_through_its_injected_services() {
+        use nemoclaw_test_fixtures::openshell::{Fixture, contract_rows};
+
+        let fixture = Fixture::start().await;
+        let services = Arc::new(FixtureServices::default());
+        let creator = GatewayClient::with_services(services.clone());
+        creator
+            .connect(&nemoclaw_openshell::Connection {
+                endpoint: fixture.endpoint.clone(),
+                ..Default::default()
+            })
+            .unwrap();
+        let creator = creator.client().unwrap();
+        let rows = contract_rows("fabric-openclaw");
+        let row = |kind: &str| {
+            rows.iter()
+                .find(|(name, _)| *name == kind)
+                .unwrap()
+                .1
+                .clone()
+        };
+        let mut profile = row("provider_profile");
+        profile.insert("authenticated".into(), "true".into());
+        let mut registration = row("provider");
+        registration.insert("credential_source".into(), FIXTURE_SOURCE.into());
+        let mut saved = None;
+        for (kind, desired) in [
+            ("workspace", row("workspace")),
+            ("provider_profile", profile),
+            ("provider", registration),
+        ] {
+            let created = creator.ensure(kind, &desired).await;
+            assert!(created.error().is_none(), "{kind}: {:?}", created.error());
+            saved = created.into_parts().0;
+        }
+        let saved = saved.unwrap();
+
+        let provider = FabricProvider::with_services(services.clone());
+        let mut diagnostics = Diagnostics::default();
+        let config = GatewayConfig {
+            endpoint: Value::Value(fixture.endpoint.clone()),
+            ..Default::default()
+        };
+        provider
+            .configure(&mut diagnostics, String::new(), config)
+            .await
+            .unwrap();
+        assert!(diagnostics.errors.is_empty());
+        let before = services.validations.load(Ordering::SeqCst);
+        // Fabric resources and data sources observe sandbox parents through
+        // this client, so it must keep the injected credential checks.
+        let observed = provider
+            .client
+            .client()
+            .unwrap()
+            .read("provider", &saved, false)
+            .await;
+        assert_eq!(observed, Ok(Some(saved)));
+        assert!(services.validations.load(Ordering::SeqCst) > before);
     }
 }

@@ -30,6 +30,50 @@ pub use provider::OpenShellProvider;
 use transport::ConnectedOpenShellGateway;
 pub use transport::{OpenShell, RESPONSE_LIMIT, SandboxPhase};
 
+/// Deployment-owned inference credential checks.
+#[async_trait::async_trait]
+pub trait Services: Send + Sync {
+    fn validate_credential_source(
+        &self,
+        source: &str,
+        owner: &str,
+        endpoint: &str,
+    ) -> Result<(), ObservationError>;
+    async fn resolve_credential_source(
+        &self,
+        source: &str,
+        owner: &str,
+        endpoint: &str,
+    ) -> Result<String, ObservationError>;
+}
+
+/// Docker credentials, the default for every provider.
+pub struct DockerServices;
+
+#[async_trait::async_trait]
+impl Services for DockerServices {
+    fn validate_credential_source(
+        &self,
+        source: &str,
+        owner: &str,
+        endpoint: &str,
+    ) -> Result<(), ObservationError> {
+        nemoclaw_docker::credentials::Source::parse(source, owner, endpoint).map(|_| ())
+    }
+
+    async fn resolve_credential_source(
+        &self,
+        source: &str,
+        owner: &str,
+        endpoint: &str,
+    ) -> Result<String, ObservationError> {
+        nemoclaw_docker::credentials::resolve(&nemoclaw_docker::credentials::Source::parse(
+            source, owner, endpoint,
+        )?)
+        .await
+    }
+}
+
 pub const OWNER: &str = "nemoclaw.nvidia.com/uid";
 pub const GENERATION: &str = "nemoclaw.nvidia.com/generation";
 pub use nemoclaw_openshell::credential_metadata::CREDENTIAL_SOURCE;
@@ -101,6 +145,7 @@ fn provider_row(
     response: proto::ProviderResponse,
     name: &str,
     removing: bool,
+    services: &dyn Services,
 ) -> Result<Row, ObservationError> {
     let provider = response.provider.ok_or(ObservationError::Incomplete)?;
     if nemoclaw_openshell::search::SearchProvider::from_profile(&provider.r#type).is_some() {
@@ -143,7 +188,7 @@ fn provider_row(
         if !credential.is_empty() {
             return Err(ObservationError::BindingMismatch);
         }
-        nemoclaw_docker::credentials::Source::parse(&source, &row["owner"], endpoint)?;
+        services.validate_credential_source(&source, &row["owner"], endpoint)?;
     }
     row.insert("profile_name".into(), String::new());
     row.insert("credential_source".into(), source);

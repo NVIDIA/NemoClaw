@@ -21,6 +21,7 @@ pub struct OpenShell {
 pub(super) struct ConnectedOpenShellGateway {
     pub(super) client: Arc<OpenShellClient>,
     pub(super) secrets: Arc<dyn Secrets>,
+    pub(super) services: Arc<dyn Services>,
 }
 
 /// Whether a sandbox has finished starting.
@@ -71,8 +72,19 @@ impl OpenShell {
         connection: &nemoclaw_openshell::Connection,
         secrets: Arc<dyn Secrets>,
     ) -> Result<Self, ObservationError> {
+        Self::connect_with_services(connection, secrets, Arc::new(DockerServices))
+    }
+
+    /// Connect with the deployment's credential checks.
+    pub fn connect_with_services(
+        connection: &nemoclaw_openshell::Connection,
+        secrets: Arc<dyn Secrets>,
+        services: Arc<dyn Services>,
+    ) -> Result<Self, ObservationError> {
         Ok(Self {
-            gateway: Arc::new(ConnectedOpenShellGateway::connect(connection, secrets)?),
+            gateway: Arc::new(ConnectedOpenShellGateway::connect(
+                connection, secrets, services,
+            )?),
         })
     }
 
@@ -138,10 +150,12 @@ impl ConnectedOpenShellGateway {
     pub(crate) fn connect(
         connection: &nemoclaw_openshell::Connection,
         secrets: Arc<dyn Secrets>,
+        services: Arc<dyn Services>,
     ) -> Result<Self, ObservationError> {
         Ok(Self {
             client: Arc::new(nemoclaw_openshell::client(connection, secrets.as_ref())?),
             secrets,
+            services,
         })
     }
     pub(super) fn request<T>(&self, value: T) -> Request<T> {
@@ -179,7 +193,7 @@ impl ConnectedOpenShellGateway {
                         .await,
                 )?;
                 response
-                    .map(|response| provider_row(response, name, removing))
+                    .map(|response| provider_row(response, name, removing, self.services.as_ref()))
                     .transpose()?
             }
             "sandbox" => {
