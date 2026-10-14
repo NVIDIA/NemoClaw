@@ -63,7 +63,7 @@ jobs:
         run: cargo ci build
       - name: Upload workspace build timings
         if: always() && steps.timings.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-workspace-${{ inputs.platform }}-${{ github.run_attempt }}
           path: target/cargo-timings/*.html
@@ -73,7 +73,7 @@ jobs:
         run: cargo ci test
       - name: Upload test timings
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-${{ inputs.platform }}-${{ github.run_attempt }}
           path: target/nextest/ci/test.xml
@@ -90,7 +90,7 @@ jobs:
         run: echo "artifact=lifecycle-inputs-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
       - name: Upload lifecycle inputs
         if: inputs.lifecycle || inputs.live
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.identity.outputs.artifact }}
           path: |
@@ -125,7 +125,7 @@ jobs:
         run: cargo ci bundle
       - name: Upload release bundle build timings
         if: always() && steps.timings.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-bundle-${{ inputs.platform }}-${{ github.run_attempt }}
           path: target/cargo-timings/*.html
@@ -140,7 +140,7 @@ jobs:
         id: identity
         run: echo "artifact=bundle-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
       - name: Upload bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.identity.outputs.artifact }}
           path: .build/ci/bundle.tar
@@ -190,7 +190,7 @@ jobs:
           --archive-file .build/ci/lifecycle.tar.zst
       - name: Upload lifecycle timings
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: lifecycle-${{ inputs.platform }}-${{ matrix.shard }}-${{ github.run_attempt }}
           path: target/nextest/lifecycle/lifecycle.xml
@@ -257,7 +257,7 @@ jobs:
         id: identity
         run: echo "artifact=live-images-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
       - name: Upload live images
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.identity.outputs.artifact }}
           path: .build/ci/live-images.tar.zst

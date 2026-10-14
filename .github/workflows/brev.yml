@@ -55,7 +55,7 @@ jobs:
           # Tar retains executable bits; no credential is present in this job.
           tar -cf "${RUNNER_TEMP}/brev-candidate.tar" candidate
       - name: Upload candidate
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.identity.outputs.artifact }}
           path: ${{ runner.temp }}/brev-candidate.tar
@@ -92,7 +92,7 @@ jobs:
             --metadata-file candidate-image/metadata.json
           python3 tools/ci/brev_image.py record candidate-image "$GITHUB_SHA"
       - name: Upload candidate image
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.identity.outputs.artifact }}
           path: |
@@ -176,7 +176,7 @@ jobs:
         run: bash tools/e2e/brev-v1-host.sh qualify
       - name: Upload sanitized evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: brev-proof-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/brev-evidence/brev-proof.json
