@@ -182,7 +182,7 @@ impl GatewaySettings<'_> {
 }
 
 impl GatewayClient {
-    /// Use the deployment's credential checks for each configured client.
+    /// Use the deployment's managed service checks for each configured client.
     pub fn with_services(services: Arc<dyn Services>) -> Self {
         Self(RwLock::new(State::default()), services)
     }

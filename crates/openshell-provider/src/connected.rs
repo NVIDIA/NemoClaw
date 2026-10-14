@@ -17,6 +17,44 @@ fn labels(want: &Row) -> HashMap<String, String> {
     .into()
 }
 
+pub(super) fn create_sandbox_request(
+    want: &Row,
+    grants: &network::ClusterGrants,
+) -> Result<proto::CreateSandboxRequest, ObservationError> {
+    if value(want, "agent_runtime") != "fabric" {
+        return Err(ObservationError::BindingMismatch);
+    }
+    let mut labels = labels(want);
+    labels.insert(AGENT.into(), value(want, "agent_name").into());
+    labels.insert(AGENT_RUNTIME.into(), value(want, "agent_runtime").into());
+    Ok(proto::CreateSandboxRequest {
+        name: value(want, "name").into(),
+        workspace_scope: Some(proto::workspace_selector(value(want, "workspace"))),
+        labels,
+        annotations: [
+            (agent::RUNTIME.into(), value(want, "runtime_json").into()),
+            (agent::POLICY.into(), value(want, "policy_json").into()),
+        ]
+        .into(),
+        spec: Some(proto::SandboxSpec {
+            template: Some(proto::SandboxTemplate {
+                image: value(want, "image").into(),
+                ..Default::default()
+            }),
+            command: agent::binding(want)?
+                .command("serve", &["--agent", value(want, "agent_name")]),
+            providers: inference::provider_names(
+                value(want, "provider_names_json"),
+                value(want, "agent_runtime"),
+            )?,
+            environment: inference_environment(want)?.into_iter().collect(),
+            policy: Some(network::granted_row_policy(want, grants)?),
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
+}
+
 impl ConnectedOpenShellGateway {
     pub(crate) async fn gateway_capabilities(
         &self,
@@ -53,20 +91,32 @@ impl ConnectedOpenShellGateway {
         let native = search.is_none();
         let source = value(want, "credential_source");
         let profile = if native {
-            Some(inference_profile(
-                value(want, "name"),
-                value(want, "endpoint"),
-                kind.parse().map_err(|_| ObservationError::Query)?,
-                !source.is_empty() || !value(want, "credential_env").is_empty(),
-            )?)
-        } else {
-            None
-        };
-        if let Some(profile) = &profile {
+            let id = format!("nemoclaw-inference-{}", value(want, "name"));
             let bound = self
-                .observe_profile(value(want, "workspace"), &profile.id)
+                .observe_profile(value(want, "workspace"), &id, false)
                 .await?
                 .ok_or(ObservationError::BindingMismatch)?;
+            let authenticated = !source.is_empty() || !value(want, "credential_env").is_empty();
+            let mut profile_fields = bound.clone();
+            profile_fields.insert("endpoint".into(), value(want, "endpoint").into());
+            profile_fields.insert("provider_type".into(), value(want, "provider_type").into());
+            profile_fields.insert("authenticated".into(), authenticated.to_string());
+            let profile = if profile::cluster_source(&profile_fields, self.services.as_ref())? {
+                nemoclaw_openshell::profile::cluster_definition(
+                    value(want, "name"),
+                    value(want, "endpoint"),
+                    kind.parse().map_err(|_| ObservationError::Query)?,
+                    authenticated,
+                    &[],
+                )?
+            } else {
+                inference_profile(
+                    value(want, "name"),
+                    value(want, "endpoint"),
+                    kind.parse().map_err(|_| ObservationError::Query)?,
+                    authenticated,
+                )?
+            };
             if ["owner", "generation", "endpoint", "provider_type"]
                 .iter()
                 .any(|key| value(&bound, key) != value(want, key))
@@ -79,7 +129,10 @@ impl ConnectedOpenShellGateway {
             {
                 return Err(ObservationError::BindingMismatch);
             }
-        }
+            Some(profile)
+        } else {
+            None
+        };
         let credential = if !source.is_empty() {
             if !value(want, "credential_env").is_empty() {
                 return Err(ObservationError::BindingMismatch);
@@ -163,46 +216,11 @@ impl ConnectedOpenShellGateway {
 
     pub(crate) async fn create_sandbox(&self, want: &Row) -> Result<String, ObservationError> {
         let name = value(want, "name");
-        let workspace = value(want, "workspace");
-        if value(want, "agent_runtime") != "fabric" {
-            return Err(ObservationError::BindingMismatch);
-        }
-        let mut labels = labels(want);
-        labels.insert(AGENT.into(), value(want, "agent_name").into());
-        if !value(want, "agent_runtime").is_empty() {
-            labels.insert(AGENT_RUNTIME.into(), value(want, "agent_runtime").into());
-        }
+        let grants = self.sandbox_cluster_grants(want).await?;
         let response = self
             .client
             .raw_grpc()
-            .create_sandbox(
-                self.request(proto::CreateSandboxRequest {
-                    name: name.into(),
-                    workspace_scope: Some(proto::workspace_selector(workspace)),
-                    labels,
-                    annotations: [
-                        (agent::RUNTIME.into(), value(want, "runtime_json").into()),
-                        (agent::POLICY.into(), value(want, "policy_json").into()),
-                    ]
-                    .into(),
-                    spec: Some(proto::SandboxSpec {
-                        template: Some(proto::SandboxTemplate {
-                            image: value(want, "image").into(),
-                            ..Default::default()
-                        }),
-                        command: agent::binding(want)?
-                            .command("serve", &["--agent", value(want, "agent_name")]),
-                        providers: inference::provider_names(
-                            value(want, "provider_names_json"),
-                            value(want, "agent_runtime"),
-                        )?,
-                        environment: inference_environment(want)?.into_iter().collect(),
-                        policy: Some(row_policy(want)?),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                }),
-            )
+            .create_sandbox(self.request(create_sandbox_request(want, &grants)?))
             .await
             .map_err(|error| remote_rejection(RejectableOperation::CreateSandbox, &error))?
             .into_inner();

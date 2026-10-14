@@ -30,7 +30,7 @@ pub use provider::OpenShellProvider;
 use transport::ConnectedOpenShellGateway;
 pub use transport::{OpenShell, RESPONSE_LIMIT, SandboxPhase};
 
-/// Deployment-owned inference credential checks.
+/// Deployment-owned inference service identity and credential checks.
 #[async_trait::async_trait]
 pub trait Services: Send + Sync {
     fn validate_credential_source(
@@ -45,9 +45,14 @@ pub trait Services: Send + Sync {
         owner: &str,
         endpoint: &str,
     ) -> Result<String, ObservationError>;
+    /// Verify the retained source owner, exact endpoint, and authentication mode.
+    fn validate_cluster_source(&self, row: &Row) -> Result<(), ObservationError>;
+    /// Observe addresses only after verifying the retained Service identity.
+    async fn cluster_addresses(&self, row: &Row)
+    -> Result<Vec<std::net::IpAddr>, ObservationError>;
 }
 
-/// Docker credentials, the default for every provider.
+/// Docker credentials for callers without managed cluster services.
 pub struct DockerServices;
 
 #[async_trait::async_trait]
@@ -71,6 +76,14 @@ impl Services for DockerServices {
             source, owner, endpoint,
         )?)
         .await
+    }
+
+    fn validate_cluster_source(&self, _: &Row) -> Result<(), ObservationError> {
+        Err(ObservationError::BindingMismatch)
+    }
+
+    async fn cluster_addresses(&self, _: &Row) -> Result<Vec<std::net::IpAddr>, ObservationError> {
+        Err(ObservationError::BindingMismatch)
     }
 }
 
@@ -209,7 +222,7 @@ fn sandbox_row(
     response: proto::SandboxResponse,
     name: &str,
     removing: bool,
-) -> Result<(Row, bool), ObservationError> {
+) -> Result<(Row, bool, network::ClusterGrants), ObservationError> {
     let sandbox = response.sandbox.ok_or(ObservationError::Incomplete)?;
     let meta = sandbox
         .metadata
@@ -245,9 +258,9 @@ fn sandbox_row(
     if !inference.is_empty() {
         expected_environment.insert(PROVIDERS_ENV.into(), inference.clone());
     }
-    if policy_json(spec.policy.as_ref().ok_or(ObservationError::Incomplete)?)?
-        != policy_json(&binding.policy(&input)?)?
-    {
+    let observed_policy = spec.policy.as_ref().ok_or(ObservationError::Incomplete)?;
+    let grants = network::recorded_grants(&input, observed_policy)?;
+    if policy_json(observed_policy)? != policy_json(&binding.granted_policy(&input, &grants)?)? {
         return Err(ObservationError::BindingMismatch);
     }
     let expected_providers = inference::provider_names(&inference, &runtime)?;
@@ -274,7 +287,7 @@ fn sandbox_row(
     row.insert("policy_json".into(), policy_input);
     row.insert("runtime_json".into(), runtime_json);
     // Phase is used by active checks, but is not a Terraform schema attribute.
-    Ok((row, ready))
+    Ok((row, ready, grants))
 }
 fn active_policy(
     response: proto::GetSandboxPolicyStatusResponse,
@@ -295,6 +308,24 @@ fn active_policy(
         return Err(ObservationError::Incomplete);
     }
     Ok(())
+}
+
+async fn checked_sandbox_row_with<F>(
+    response: proto::SandboxResponse,
+    workspace: &str,
+    name: &str,
+    removing: bool,
+    check: impl FnOnce(Row) -> F,
+) -> Result<(Row, bool, network::ClusterGrants), ObservationError>
+where
+    F: std::future::Future<Output = Result<network::ClusterGrants, ObservationError>>,
+{
+    let (mut row, ready, grants) = sandbox_row(response, name, removing)?;
+    row.insert("workspace".into(), workspace.into());
+    if !removing && check(row.clone()).await? != grants {
+        return Err(ObservationError::BindingMismatch);
+    }
+    Ok((row, ready, grants))
 }
 
 mod mutation;
@@ -357,11 +388,18 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
                 "provider_type",
                 "authenticated",
                 "binaries_json",
+                "cluster_source",
             ],
             &[],
         )
-        .optional(&["endpoint", "provider_type", "authenticated"])
-        .reset_when_omitted(&["provider_type"]),
+        .optional(&[
+            "endpoint",
+            "provider_type",
+            "authenticated",
+            "cluster_source",
+        ])
+        .reset_when_omitted(&["provider_type", "cluster_source"])
+        .bound_fields(&["cluster_source"]),
         Definition::new(
             "sandbox",
             &[

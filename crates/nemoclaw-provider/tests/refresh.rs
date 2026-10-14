@@ -481,6 +481,105 @@ async fn retained_replacement_refusal_names_the_resource_and_changed_fields() {
 }
 
 #[tokio::test]
+async fn profile_refresh_preserves_the_bound_cluster_source() {
+    let prior: Row = [
+        ("id", "profile/1"),
+        ("name", "model"),
+        ("workspace", "owned"),
+        ("cluster_source", "bound-service"),
+    ]
+    .map(|(key, value)| (key.into(), value.into()))
+    .into();
+    for source in ["bound-service", "substituted-service", ""] {
+        let mut observed = prior.clone();
+        observed.insert("cluster_source".into(), source.into());
+        let resource = ResourceAdapter::new(
+            support::definition(
+                "provider_profile",
+                &["name", "workspace", "cluster_source"],
+                &[],
+            ),
+            Arc::new(Fixture(Ok(Some(observed)))),
+        );
+        let mut diagnostics = Diagnostics::default();
+        let result = resource
+            .read(
+                &mut diagnostics,
+                state(prior.clone()),
+                Value::Null,
+                Value::Null,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.0, state(prior.clone()));
+        assert_eq!(diagnostics.errors.is_empty(), source == "bound-service");
+    }
+}
+
+#[tokio::test]
+async fn changing_from_cluster_to_external_inference_replaces_the_owned_profile() {
+    let resource = ResourceAdapter::new(
+        support::definition("provider_profile", &["endpoint", "cluster_source"], &[]),
+        Arc::new(Fixture(Ok(None))),
+    );
+    let prior = state(Row::from([
+        ("id".into(), "owned/profile/1".into()),
+        ("endpoint".into(), "http://model.agents.svc:8000/v1".into()),
+        ("cluster_source".into(), "owned-cluster-storage".into()),
+    ]));
+    for omit in [true, false] {
+        let mut proposed = prior.clone();
+        proposed.insert(
+            "endpoint".into(),
+            Value::Value("https://inference.example/v1".into()),
+        );
+        let mut config = proposed.clone();
+        if omit {
+            config.remove("cluster_source");
+        } else {
+            config.insert("cluster_source".into(), Value::Null);
+        }
+        let mut diagnostics = Diagnostics::default();
+        let (planned, _, replacements) = resource
+            .plan_update(
+                &mut diagnostics,
+                prior.clone(),
+                proposed,
+                config,
+                Value::Null,
+                Value::Null,
+            )
+            .await
+            .unwrap();
+        assert!(diagnostics.errors.is_empty(), "{diagnostics:?}");
+        assert_eq!(planned["cluster_source"], Value::Value(String::new()));
+        assert_eq!(
+            replacements.len(),
+            2,
+            "endpoint and cluster provenance require profile replacement"
+        );
+    }
+    let mut diagnostics = Diagnostics::default();
+    let (planned, _, replacements) = resource
+        .plan_update(
+            &mut diagnostics,
+            prior.clone(),
+            prior.clone(),
+            prior.clone(),
+            Value::Null,
+            Value::Null,
+        )
+        .await
+        .unwrap();
+    assert!(diagnostics.errors.is_empty(), "{diagnostics:?}");
+    assert_eq!(
+        planned, prior,
+        "an explicit unchanged cluster source remains bound"
+    );
+    assert!(replacements.is_empty());
+}
+
+#[tokio::test]
 async fn removing_credential_reference_plans_unauthenticated_replacement() {
     let resource = ResourceAdapter::new(
         support::definition(

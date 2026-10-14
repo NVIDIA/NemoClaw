@@ -73,5 +73,9 @@ pub fn policy_input(
             "managed inference and search policy names are reserved",
         ));
     }
-    Ok(PolicyInput { explicit, managed })
+    Ok(PolicyInput {
+        explicit,
+        managed,
+        cluster_grants: Default::default(),
+    })
 }

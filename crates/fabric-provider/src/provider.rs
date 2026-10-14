@@ -212,6 +212,17 @@ mod tests {
                 Err(ObservationError::BindingMismatch)
             }
         }
+
+        fn validate_cluster_source(&self, _: &Row) -> Result<(), ObservationError> {
+            Err(ObservationError::BindingMismatch)
+        }
+
+        async fn cluster_addresses(
+            &self,
+            _: &Row,
+        ) -> Result<Vec<std::net::IpAddr>, ObservationError> {
+            Err(ObservationError::BindingMismatch)
+        }
     }
 
     #[tokio::test]
@@ -274,5 +285,120 @@ mod tests {
             .await;
         assert_eq!(observed, Ok(Some(saved)));
         assert!(services.validations.load(Ordering::SeqCst) > before);
+    }
+
+    /// Accepts every cluster source, reports one Service address, and counts
+    /// both calls. The test uses no credential source, so those methods fail.
+    #[derive(Default)]
+    struct ClusterServices {
+        validations: std::sync::atomic::AtomicUsize,
+        address_reads: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl openshell_provider::Services for ClusterServices {
+        fn validate_credential_source(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<(), ObservationError> {
+            Err(ObservationError::Incomplete)
+        }
+
+        async fn resolve_credential_source(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<String, ObservationError> {
+            Err(ObservationError::Incomplete)
+        }
+
+        fn validate_cluster_source(&self, _: &Row) -> Result<(), ObservationError> {
+            self.validations.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn cluster_addresses(
+            &self,
+            _: &Row,
+        ) -> Result<Vec<std::net::IpAddr>, ObservationError> {
+            self.address_reads.fetch_add(1, Ordering::SeqCst);
+            Ok(vec!["10.96.0.23".parse().unwrap()])
+        }
+    }
+
+    #[tokio::test]
+    async fn configured_provider_observes_cluster_grants_through_its_injected_services() {
+        use nemoclaw_test_fixtures::openshell::{Fixture, contract_rows};
+
+        let fixture = Fixture::start().await;
+        let services = Arc::new(ClusterServices::default());
+        let creator = GatewayClient::with_services(services.clone());
+        creator
+            .connect(&nemoclaw_openshell::Connection {
+                endpoint: fixture.endpoint.clone(),
+                ..Default::default()
+            })
+            .unwrap();
+        let creator = creator.client().unwrap();
+        let rows = contract_rows("fabric-openclaw");
+        let row = |kind: &str| {
+            rows.iter()
+                .find(|(name, _)| *name == kind)
+                .unwrap()
+                .1
+                .clone()
+        };
+        let mut profile = row("provider_profile");
+        profile.insert(
+            "endpoint".into(),
+            "http://model.agents.svc.cluster.local:8000/v1".into(),
+        );
+        profile.insert("cluster_source".into(), "fixture-cluster-source".into());
+        let mut saved = None;
+        for (kind, desired) in [
+            ("workspace", row("workspace")),
+            ("provider_profile", profile),
+        ] {
+            let created = creator.ensure(kind, &desired).await;
+            assert!(created.error().is_none(), "{kind}: {:?}", created.error());
+            saved = created.into_parts().0;
+        }
+        let saved = saved.unwrap();
+
+        let provider = FabricProvider::with_services(services.clone());
+        let mut diagnostics = Diagnostics::default();
+        let config = GatewayConfig {
+            endpoint: Value::Value(fixture.endpoint.clone()),
+            ..Default::default()
+        };
+        provider
+            .configure(&mut diagnostics, String::new(), config)
+            .await
+            .unwrap();
+        assert!(diagnostics.errors.is_empty());
+        let calls = || {
+            (
+                services.validations.load(Ordering::SeqCst),
+                services.address_reads.load(Ordering::SeqCst),
+            )
+        };
+        let before = calls();
+        // Fabric resources and data sources observe sandbox parents through
+        // this client, so it must keep the injected cluster checks.
+        let observed = provider
+            .client
+            .client()
+            .unwrap()
+            .read("provider_profile", &saved, false)
+            .await;
+        assert_eq!(observed, Ok(Some(saved)));
+        let after = calls();
+        assert!(
+            after.0 > before.0 && after.1 > before.1,
+            "{before:?} {after:?}"
+        );
     }
 }

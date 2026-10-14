@@ -50,6 +50,65 @@ pub fn definition(
     kind: InferenceProviderKind,
     authenticated: bool,
 ) -> Result<proto::ProviderProfile, ObservationError> {
+    nemoclaw_backend::validate_endpoint(endpoint, false).map_err(|_| ObservationError::Query)?;
+    let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
+    let allowed_ips = url
+        .host_str()
+        .and_then(|host| host.parse::<std::net::IpAddr>().ok())
+        .into_iter()
+        .collect::<Vec<_>>();
+    profile(name, endpoint, kind, authenticated, &allowed_ips)
+}
+
+/// Build a profile for a caller-verified cluster service endpoint.
+/// Empty addresses defer destination grants until the provider observes the Service.
+pub fn cluster_definition(
+    name: &str,
+    endpoint: &str,
+    kind: InferenceProviderKind,
+    authenticated: bool,
+    addresses: &[std::net::IpAddr],
+) -> Result<proto::ProviderProfile, ObservationError> {
+    let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
+    if url.scheme() != "http"
+        || !url
+            .host_str()
+            .is_some_and(|host| host.ends_with(".svc.cluster.local"))
+        || url.port().is_none_or(|port| port == 0)
+        || url.path() != "/v1"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || addresses
+            .iter()
+            .any(|address| !service_address_allowed(address))
+    {
+        return Err(ObservationError::BindingMismatch);
+    }
+    profile(name, endpoint, kind, authenticated, addresses)
+}
+
+/// Accept a unicast Service address, excluding local and mapped destinations.
+pub fn service_address_allowed(address: &std::net::IpAddr) -> bool {
+    !address.is_unspecified()
+        && !address.is_loopback()
+        && !address.is_multicast()
+        && match address {
+            std::net::IpAddr::V4(ip) => !ip.is_link_local() && !ip.is_broadcast(),
+            std::net::IpAddr::V6(ip) => {
+                !ip.is_unicast_link_local() && ip.to_ipv4_mapped().is_none()
+            }
+        }
+}
+
+fn profile(
+    name: &str,
+    endpoint: &str,
+    kind: InferenceProviderKind,
+    authenticated: bool,
+    addresses: &[std::net::IpAddr],
+) -> Result<proto::ProviderProfile, ObservationError> {
     if name.is_empty()
         || name.len() > 40
         || !name.as_bytes()[0].is_ascii_lowercase()
@@ -59,7 +118,6 @@ pub fn definition(
     {
         return Err(ObservationError::Query);
     }
-    nemoclaw_backend::validate_endpoint(endpoint, false).map_err(|_| ObservationError::Query)?;
     let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
     if url.query().is_some()
         || url.fragment().is_some()
@@ -77,11 +135,9 @@ pub fn definition(
     let path = format!("{}/**", url.path().trim_end_matches('/'));
     // Private addresses require an explicit destination-validation grant. Grant
     // only the selected literal address, never a whole private network.
-    let allowed_ips: Vec<String> = host
-        .parse::<std::net::IpAddr>()
-        .ok()
+    let allowed_ips: Vec<String> = addresses
+        .iter()
         .map(|ip| format!("{ip}/{}", if ip.is_ipv4() { 32 } else { 128 }))
-        .into_iter()
         .collect();
     let policy = openshell_policy::parse_sandbox_policy(
         &serde_json::json!({
@@ -133,6 +189,74 @@ pub fn definition(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cluster_profiles_accept_only_plain_service_endpoints_and_unicast_addresses() {
+        let endpoint = "http://model.agents.svc.cluster.local:8000/v1";
+        let addresses: Vec<std::net::IpAddr> =
+            vec!["10.96.0.42".parse().unwrap(), "fd00::42".parse().unwrap()];
+        let cluster = |endpoint: &str, addresses: &[std::net::IpAddr]| {
+            cluster_definition(
+                "model",
+                endpoint,
+                InferenceProviderKind::Openai,
+                false,
+                addresses,
+            )
+        };
+        let profile = cluster(endpoint, &addresses).unwrap();
+        assert_eq!(profile.endpoints.len(), 1);
+        assert_eq!(profile.endpoints[0].host, "model.agents.svc.cluster.local");
+        assert_eq!(profile.endpoints[0].port, 8000);
+        assert_eq!(
+            profile.endpoints[0].allowed_ips,
+            ["10.96.0.42/32", "fd00::42/128"]
+        );
+        // Creation defers the grant until the provider observes the Service.
+        assert!(
+            cluster(endpoint, &[]).unwrap().endpoints[0]
+                .allowed_ips
+                .is_empty()
+        );
+        for rejected in [
+            "https://model.agents.svc.cluster.local:8000/v1",
+            "http://model.agents.svc:8000/v1",
+            "http://inference.example.com:8000/v1",
+            "http://model.agents.svc.cluster.local/v1",
+            "http://model.agents.svc.cluster.local:8000/v2",
+            "http://model.agents.svc.cluster.local:8000/v1/chat",
+            "http://user@model.agents.svc.cluster.local:8000/v1",
+            "http://user:secret@model.agents.svc.cluster.local:8000/v1",
+            "http://model.agents.svc.cluster.local:8000/v1?debug=1",
+            "http://model.agents.svc.cluster.local:8000/v1#fragment",
+        ] {
+            assert_eq!(
+                cluster(rejected, &addresses).err(),
+                Some(ObservationError::BindingMismatch),
+                "{rejected}"
+            );
+        }
+        for address in [
+            "0.0.0.0",
+            "127.0.0.1",
+            "224.0.0.1",
+            "169.254.1.1",
+            "255.255.255.255",
+            "::",
+            "::1",
+            "ff02::1",
+            "fe80::1",
+            "::ffff:10.0.0.1",
+        ] {
+            let address: std::net::IpAddr = address.parse().unwrap();
+            assert!(!service_address_allowed(&address), "{address}");
+            assert_eq!(
+                cluster(endpoint, &[addresses[0], address]).err(),
+                Some(ObservationError::BindingMismatch),
+                "{address}"
+            );
+        }
+    }
 
     #[test]
     fn inference_credentials_and_policy_are_bound_to_the_selected_endpoint() {

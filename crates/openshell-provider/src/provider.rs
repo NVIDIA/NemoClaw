@@ -28,7 +28,7 @@ pub struct OpenShellProvider {
 }
 
 impl OpenShellProvider {
-    /// Serve resources using the deployment's credential checks.
+    /// Serve resources using the deployment's managed service identity checks.
     pub fn with_services(services: Arc<dyn crate::Services>) -> Self {
         Self {
             client: Arc::new(GatewayClient::with_services(services)),

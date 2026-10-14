@@ -23,6 +23,7 @@ provider openshell (version 0)
 resource openshell_provider_profile (version 0)
   authenticated: string, optional, computed
   binaries: list(string), required
+  cluster_source: string, optional, computed
   endpoint: string, optional, computed
   generation: string, optional, computed
   id: string, computed
@@ -55,6 +56,8 @@ resource openshell_sandbox (version 0)
   runtime_json: string, required
   workspace: string, required
   block policy: optional
+    cluster_grants: list(string), optional
+      > Managed rule names whose exact addresses must come from verified Services.
     block explicit: optional
       version: number, required
         > Policy format version; currently 1.
