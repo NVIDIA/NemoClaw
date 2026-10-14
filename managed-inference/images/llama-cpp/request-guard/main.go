@@ -40,6 +40,9 @@ const (
 // cannot publish a host port. The caller supplies its forwarding deadline from
 // its launch contract; the HTTP request guard still owns authentication.
 func forwardStdio(input io.Reader, output io.Writer, address string, timeout time.Duration) error {
+	if closer, ok := input.(io.Closer); ok {
+		defer closer.Close()
+	}
 	deadline := time.Now().Add(timeout)
 	connection, err := net.DialTimeout("tcp", address, min(5*time.Second, timeout))
 	if err != nil {
@@ -62,17 +65,44 @@ func forwardStdio(input io.Reader, output io.Writer, address string, timeout tim
 	}
 }
 
+type forwardingInput struct {
+	io.Reader
+	eof bool
+}
+
+func (input *forwardingInput) Read(buffer []byte) (int, error) {
+	n, err := input.Reader.Read(buffer)
+	if errors.Is(err, io.EOF) {
+		input.eof = true
+	}
+	return n, err
+}
+
 func forwardStdioConnection(input io.Reader, output io.Writer, connection net.Conn) error {
 	// Parse the request boundary before forwarding so pipelined stdin cannot
 	// submit another request whose response this one-shot command will discard.
-	request, readError := http.ReadRequest(bufio.NewReader(input))
+	source := &forwardingInput{Reader: input}
+	reader := bufio.NewReader(source)
+	request, readError := http.ReadRequest(reader)
 	if readError != nil {
+		if source.eof {
+			return nil // The caller disconnected before a request could be forwarded.
+		}
 		return errors.New("request guard request forwarding failed")
 	}
 
 	inputDone := make(chan error, 1)
+	inputClosed := make(chan struct{})
 	go func() {
-		inputDone <- request.Write(connection)
+		err := request.Write(connection)
+		inputDone <- err
+		if err == nil {
+			// The caller keeps stdin open for the response lifetime. Its closure
+			// must cancel the guarded request even before response bytes arrive.
+			_, _ = io.Copy(io.Discard, reader)
+			close(inputClosed)
+			_ = connection.Close()
+		}
 	}()
 	responseDone := make(chan error, 1)
 	go func() {
@@ -101,12 +131,20 @@ func forwardStdioConnection(input io.Reader, output io.Writer, connection net.Co
 		if inputError != nil {
 			_ = connection.Close()
 			<-responseDone
+			if source.eof {
+				return nil // An interrupted upload has no remaining guarded request.
+			}
 			return errors.New("request guard request forwarding failed")
 		}
 		outputError = <-responseDone
 	case outputError = <-responseDone:
 	}
 	if outputError != nil {
+		select {
+		case <-inputClosed:
+			return nil
+		default:
+		}
 		if os.IsTimeout(outputError) {
 			return errors.New("request guard response forwarding timed out")
 		}

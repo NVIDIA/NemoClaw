@@ -21,6 +21,32 @@ const successfulNeeds = {
 };
 
 describe("release qualification", () => {
+  it.for(["failure", "cancelled", "skipped"])(
+    "retains a Spark plan %s as the cause of a skipped qualification",
+    (result, { onTestFinished }) => {
+      const directory = mkdtempSync(path.join(tmpdir(), "e2e-spark-plan-result-"));
+      onTestFinished(() => rmSync(directory, { recursive: true, force: true }));
+      const outputPath = path.join(directory, "result.json");
+      expect(() =>
+        assertReleaseQualification(
+          JSON.stringify({
+            "generate-matrix": { result: "success" },
+            "base-image-publication": { result: "skipped" },
+            "llama-cpp-dgx-spark-plan": { result },
+            "llama-cpp-dgx-spark-qualification": { result: "skipped" },
+          }),
+          '["llama-cpp-dgx-spark-qualification"]',
+          { outputPath, runId: "123", attempt: "1" },
+          false,
+        ),
+      ).toThrow("llama-cpp-dgx-spark-plan");
+      const receipt = JSON.parse(readFileSync(outputPath, "utf8"));
+      expect(receipt.selectedWorkflowJobs).toEqual(["llama-cpp-dgx-spark-qualification"]);
+      expect(receipt.results).toContainEqual({ job: "llama-cpp-dgx-spark-plan", result });
+      expect(receipt.status).toBe(result === "failure" ? "fail" : "unknown");
+    },
+  );
+
   it("records a skipped image gate without claiming image qualification", ({ onTestFinished }) => {
     const directory = mkdtempSync(path.join(tmpdir(), "e2e-independent-result-"));
     onTestFinished(() => rmSync(directory, { recursive: true, force: true }));
