@@ -163,6 +163,10 @@ mod tests {
         let mut compiler = cargo();
         compiler.env("PROTOC", root.path().join("missing-protoc"));
         compiler.env("CARGO_HOME", root.path().join("empty-cargo-home"));
+        // This checks the offline dependency closure and executable startup.
+        // Optimization is not needed for either assertion and makes this cold
+        // rebuild compete with the Docker tests for runner CPU time.
+        compiler.env("CARGO_PROFILE_RELEASE_OPT_LEVEL", "0");
         let rust_target = target(nemoclaw_build::native_runtime_platform().unwrap()).unwrap();
         let binary =
             compile_retained_source(root.path(), &archive_path, rust_target, compiler).unwrap();
