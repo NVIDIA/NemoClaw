@@ -208,6 +208,42 @@ describe("Docker GPU final handoff acknowledgement", () => {
 // GPU sandbox whose container is running and whose supervisor has already
 // logged `LIFECYCLE:INSTALL OpenShell Sandbox Supervisor success`.
 describe("docker-gpu-supervisor-reconnect Error-phase debounce", () => {
+  it("does not accept a working exec while OpenShell still reports Error", async () => {
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const runCaptureOpenshell = vi.fn(() => "alpha   Error   1s ago");
+    const sleep = vi.fn();
+
+    const ok = await waitForOpenShellSupervisorReconnect("alpha", 600, {
+      commandExecutor: commandExecutorThrough(runOpenshell),
+      runCaptureOpenshell,
+      sleep,
+      errorPhaseDebouncePolls: 2,
+    });
+
+    expect(ok).toBe(false);
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledOnce();
+  });
+
+  it("accepts a working exec after the Error row settles to Ready", async () => {
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const runCaptureOpenshell = vi
+      .fn()
+      .mockReturnValueOnce("alpha   Error   1s ago")
+      .mockReturnValueOnce("alpha   Ready   3s ago");
+
+    const ok = await waitForOpenShellSupervisorReconnect("alpha", 600, {
+      commandExecutor: commandExecutorThrough(runOpenshell),
+      runCaptureOpenshell,
+      sleep: vi.fn(),
+      errorPhaseDebouncePolls: 2,
+    });
+
+    expect(ok).toBe(true);
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+  });
+
   it("uses a Docker-GPU-specific supervisor reconnect wait with an override", () => {
     expect(getDockerGpuSupervisorReconnectTimeoutSecs(180, {})).toBe(900);
     expect(getDockerGpuSupervisorReconnectTimeoutSecs(600, {})).toBe(900);

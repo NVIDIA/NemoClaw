@@ -202,10 +202,10 @@ function defaultSleep(seconds: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, seconds) * 1000);
 }
 
-function sandboxListShowsErrorPhase(
+function sandboxListPhase(
   sandboxName: string,
   runCaptureOpenshell: RunCaptureOpenshellFn,
-): boolean {
+): string | null {
   try {
     const list = runCaptureOpenshell(["sandbox", "list"], {
       ignoreError: true,
@@ -213,14 +213,9 @@ function sandboxListShowsErrorPhase(
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     });
-    return parseLiveSandboxEntries(list).some(
-      (entry) =>
-        entry.name === sandboxName &&
-        entry.phase !== null &&
-        TERMINAL_SANDBOX_FAILURE_PHASES.has(entry.phase),
-    );
+    return parseLiveSandboxEntries(list).find((entry) => entry.name === sandboxName)?.phase ?? null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -246,11 +241,14 @@ export async function waitForOpenShellSupervisorReconnect(
       timeoutMilliseconds: DOCKER_GPU_PATCH_TIMEOUT_MS,
       timeoutKillSignal: "SIGKILL",
     });
-    if (result.outcome.kind === "completed" && result.outcome.exitCode === 0) return true;
-    if (
-      deps.runCaptureOpenshell &&
-      sandboxListShowsErrorPhase(sandboxName, deps.runCaptureOpenshell)
-    ) {
+    const execReady = result.outcome.kind === "completed" && result.outcome.exitCode === 0;
+    const phase = deps.runCaptureOpenshell
+      ? sandboxListPhase(sandboxName, deps.runCaptureOpenshell)
+      : null;
+    // A working exec alone can coexist with an Error lifecycle row. Let the
+    // caller reconcile that row before accepting the recreated container.
+    if (execReady && (!deps.runCaptureOpenshell || phase === "Ready")) return true;
+    if (phase !== null && TERMINAL_SANDBOX_FAILURE_PHASES.has(phase)) {
       consecutiveErrorPolls += 1;
       if (consecutiveErrorPolls >= errorPhaseDebouncePolls) return false;
     } else {
