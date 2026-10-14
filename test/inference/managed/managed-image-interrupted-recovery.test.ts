@@ -85,7 +85,11 @@ beforeEach(async () => {
   fs.mkdirSync(path.dirname(scope.stateDir), { mode: 0o700 });
   prepareManagedImageOpenShellState(input, scope);
   mocks.capture.mockReturnValue(sandboxObservation());
-  mocks.run.mockReturnValue({ status: 0, stdout: `ID: ${sandboxId}`, stderr: "" });
+  mocks.run.mockReturnValue({
+    status: 0,
+    stdout: `ID: ${sandboxId}`,
+    stderr: "",
+  });
   const create = createManagedImageSandboxWithRecovery(
     input,
     scope,
@@ -111,14 +115,21 @@ beforeEach(async () => {
     sudoRemediationPids: [],
   });
   mocks.roots.mockReturnValue([
-    { resourceIdentity: "owned-volume", ownershipLabels: { original: "expected" } },
+    {
+      resourceIdentity: "owned-volume",
+      ownershipLabels: { original: "expected" },
+    },
   ]);
   mocks.removeVolumes.mockReturnValue([{ status: "removed" }]);
   commands = vi
     .spyOn(childProcess, "spawnSync")
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
-    .mockReturnValueOnce({ status: 0, stdout: `sha256:${"b".repeat(64)}`, stderr: "" } as any)
+    .mockReturnValueOnce({
+      status: 0,
+      stdout: `sha256:${"b".repeat(64)}`,
+      stderr: "",
+    } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({
@@ -126,6 +137,14 @@ beforeEach(async () => {
       stdout: "",
       stderr: `Error: No such network: ${scope.networkName}`,
     } as any);
+  mocks.capture.mockImplementation(() =>
+    commands.mock.calls.some(
+      ([command, args]: [string, readonly string[]]) =>
+        command === "openshell" && args[0] === "sandbox" && args[1] === "delete",
+    )
+      ? "[]"
+      : sandboxObservation(),
+  );
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -261,10 +280,18 @@ it("preserves recovery evidence when gateway ownership cannot be proven", async 
 it("rejects ambiguous network inspection instead of deleting recovery state", async () => {
   commands
     .mockReset()
-    .mockReturnValue({ status: 1, stdout: "", stderr: "Docker network driver not found" } as any)
+    .mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "Docker network driver not found",
+    } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
-    .mockReturnValueOnce({ status: 0, stdout: `sha256:${"b".repeat(64)}`, stderr: "" } as any)
+    .mockReturnValueOnce({
+      status: 0,
+      stdout: `sha256:${"b".repeat(64)}`,
+      stderr: "",
+    } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any);
   await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
@@ -276,7 +303,10 @@ it("rejects ambiguous network inspection instead of deleting recovery state", as
 it("preserves state when the existing volume verifier rejects a foreign volume", async () => {
   const engine = vi.fn().mockReturnValue({
     status: 0,
-    stdout: JSON.stringify({ Name: "owned-volume", Labels: { original: "expected" } }),
+    stdout: JSON.stringify({
+      Name: "owned-volume",
+      Labels: { original: "expected" },
+    }),
     stderr: "",
   });
   mocks.removeVolumes.mockImplementation((value: Parameters<typeof removeManagedStateVolumes>[0]) =>
@@ -319,6 +349,90 @@ it("retains recovery ownership when sandbox deletion fails", async () => {
   expect(mocks.stopGateway).not.toHaveBeenCalled();
   expect(mocks.removeVolumes).not.toHaveBeenCalled();
   expect(fs.existsSync(path.join(scope.stateDir, "qualification-owner.json"))).toBe(true);
+});
+
+it("continues cleanup after a post-deletion failure without deleting the sandbox again", async () => {
+  mocks.roots.mockImplementationOnce(() => {
+    throw new Error("injected post-deletion failure");
+  });
+  await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
+    "injected post-deletion failure",
+  );
+  expect(fs.existsSync(path.join(scope.stateDir, "qualification-sandbox-deleted.json"))).toBe(true);
+  commands
+    .mockReset()
+    .mockReturnValueOnce({
+      status: 1,
+      stdout: "",
+      stderr:
+        "Error:   × No gateway metadata found for 'nemoclaw'.\n  │ List available gateways: openshell gateway select",
+    } as any)
+    .mockReturnValueOnce({
+      status: 0,
+      stdout: `sha256:${"b".repeat(64)}`,
+      stderr: "",
+    } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
+    .mockReturnValueOnce({
+      status: 1,
+      stdout: "",
+      stderr: `Error: No such network: ${scope.networkName}`,
+    } as any);
+  mocks.capture.mockClear();
+  mocks.run.mockClear();
+  await cleanupInterruptedManagedImageOpenShellE2e(input, scope);
+  expect(
+    commands.mock.calls.map(([command, args]: [string, readonly string[]]) => [command, ...args]),
+  ).toEqual([
+    ["openshell", "gateway", "remove", "nemoclaw"],
+    ["docker", "image", "inspect", "--format", "{{.Id}}", input.image],
+    [
+      "docker",
+      "ps",
+      "-aq",
+      "--no-trunc",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${input.sandbox}`,
+    ],
+    ["docker", "network", "rm", scope.networkName],
+    ["docker", "network", "inspect", scope.networkName],
+  ]);
+  expect(mocks.capture).not.toHaveBeenCalled();
+  expect(mocks.run).not.toHaveBeenCalled();
+  expect(fs.existsSync(scope.stateDir)).toBe(false);
+});
+
+it("rejects a forged deletion marker before any external cleanup", async () => {
+  fs.writeFileSync(
+    path.join(scope.stateDir, "qualification-sandbox-deleted.json"),
+    JSON.stringify({
+      kind: "managed-qualification-sandbox-deleted-v1",
+      owner: scope.owner,
+      sandbox: input.sandbox,
+      sandboxId: "foreign-id",
+      createAttemptNonce,
+    }),
+  );
+  await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
+    "sandbox identity or deletion is unproven",
+  );
+  expect(commands).not.toHaveBeenCalled();
+  expect(mocks.stopGateway).not.toHaveBeenCalled();
+});
+
+it("retains recovery state if absence cannot be confirmed after deletion", async () => {
+  mocks.capture.mockReturnValue(sandboxObservation());
+  await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
+    "sandbox identity or deletion is unproven",
+  );
+  expect(commands).toHaveBeenCalledTimes(1);
+  expect(fs.existsSync(path.join(scope.stateDir, "qualification-sandbox-deleted.json"))).toBe(
+    false,
+  );
+  expect(fs.existsSync(scope.stateDir)).toBe(true);
 });
 
 it("records the nonce-bound immutable identity from successful creation", () => {
@@ -367,7 +481,13 @@ it("binds a generated create-attempt label and refuses a second create", async (
       mocks.capture.mockReturnValue(
         sandboxObservation(sandboxId, request.labels![NEMOCLAW_CREATE_ATTEMPT_LABEL]),
       );
-      return { status: 0, output: "", sawProgress: false, ambiguous: false, diagnostic: "" };
+      return {
+        status: 0,
+        output: "",
+        sawProgress: false,
+        ambiguous: false,
+        diagnostic: "",
+      };
     },
   );
   const create = createManagedImageSandboxWithRecovery(
@@ -398,7 +518,11 @@ it("binds a generated create-attempt label and refuses a second create", async (
 
 it("does not delete a same-name sandbox with a different immutable identity", async () => {
   mocks.capture.mockReturnValue(sandboxObservation("foreign-sandbox-id"));
-  mocks.run.mockReturnValue({ status: 0, stdout: "ID: foreign-sandbox-id", stderr: "" });
+  mocks.run.mockReturnValue({
+    status: 0,
+    stdout: "ID: foreign-sandbox-id",
+    stderr: "",
+  });
   await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
     "inspection is required",
   );
@@ -409,7 +533,11 @@ it("does not delete a same-name sandbox with a different immutable identity", as
 });
 
 it("rejects replacement between the nonce selector and named inspection", async () => {
-  mocks.run.mockReturnValue({ status: 0, stdout: "ID: replacement-id", stderr: "" });
+  mocks.run.mockReturnValue({
+    status: 0,
+    stdout: "ID: replacement-id",
+    stderr: "",
+  });
   await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
     "inspection is required",
   );
@@ -434,7 +562,11 @@ it("cleans setup before any create submission without issuing sandbox deletion",
   commands.mockReset();
   commands
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
-    .mockReturnValueOnce({ status: 0, stdout: `sha256:${"b".repeat(64)}`, stderr: "" } as any)
+    .mockReturnValueOnce({
+      status: 0,
+      stdout: `sha256:${"b".repeat(64)}`,
+      stderr: "",
+    } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({
@@ -505,7 +637,11 @@ it("cleans partial setup when no exact sandbox container was created", async () 
     .mockReset()
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
-    .mockReturnValueOnce({ status: 0, stdout: `sha256:${"b".repeat(64)}`, stderr: "" } as any)
+    .mockReturnValueOnce({
+      status: 0,
+      stdout: `sha256:${"b".repeat(64)}`,
+      stderr: "",
+    } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({
@@ -558,7 +694,11 @@ it("removes the exact leftover container without removing a foreign container", 
     .mockReturnValueOnce({ status: 0, stdout: foreign, stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: content, stderr: "" } as any)
-    .mockReturnValueOnce({ status: 0, stdout: "foreign-container", stderr: "" } as any)
+    .mockReturnValueOnce({
+      status: 0,
+      stdout: "foreign-container",
+      stderr: "",
+    } as any)
     .mockReturnValueOnce({ status: 0, stdout: foreign, stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({

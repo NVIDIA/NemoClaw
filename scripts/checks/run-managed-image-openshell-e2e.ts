@@ -217,6 +217,45 @@ function recordManagedRecoverySandbox(
   );
 }
 
+function managedSandboxDeletedIdentity(
+  input: Inputs,
+  scope: ManagedImageOpenShellRecoveryScope,
+  nonce: string,
+  sandboxId: string,
+): string {
+  return JSON.stringify({
+    kind: "managed-qualification-sandbox-deleted-v1",
+    owner: scope.owner,
+    sandbox: input.sandbox,
+    sandboxId,
+    createAttemptNonce: nonce,
+  });
+}
+
+function confirmManagedSandboxAbsent(
+  onboard: Pick<OnboardModule, "runCaptureOpenshell">,
+  nonce: string,
+): void {
+  const output = onboard.runCaptureOpenshell(
+    [
+      "sandbox",
+      "list",
+      "-g",
+      GATEWAY_NAME,
+      "--selector",
+      `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`,
+      "--output",
+      "json",
+      "--limit",
+      "2",
+    ],
+    { ignoreError: false, timeout: 30000, maxBuffer: 1024 * 1024 },
+  );
+  const rows: unknown = JSON.parse(output);
+  if (!Array.isArray(rows) || rows.length !== 0)
+    throw new Error("managed recovery sandbox absence is unproven");
+}
+
 export function createManagedImageSandboxWithRecovery(
   input: Inputs,
   scope: ManagedImageOpenShellRecoveryScope | undefined,
@@ -280,6 +319,7 @@ function removeManagedImageSandbox(
   scope?: ManagedImageOpenShellRecoveryScope,
 ): string[] {
   try {
+    let deletionIdentity: { nonce: string; sandboxId: string } | null = null;
     if (scope) {
       requireManagedRecoveryOwner(input, scope);
       const attemptSource = optionalManagedRecoveryRecord(
@@ -288,8 +328,12 @@ function removeManagedImageSandbox(
       const source = optionalManagedRecoveryRecord(
         path.join(scope.stateDir, "qualification-sandbox.json"),
       );
+      const deletedSource = optionalManagedRecoveryRecord(
+        path.join(scope.stateDir, "qualification-sandbox-deleted.json"),
+      );
       if (attemptSource === null) {
-        if (source !== null) throw new Error("managed recovery attempt authority is missing");
+        if (source !== null || deletedSource !== null)
+          throw new Error("managed recovery attempt authority is missing");
         return [];
       }
       const attempt = JSON.parse(attemptSource) as Record<string, unknown>;
@@ -327,6 +371,20 @@ function removeManagedImageSandbox(
             }))
       )
         throw new Error("managed recovery sandbox identity is unproven");
+      if (deletedSource !== null) {
+        if (
+          source === null ||
+          deletedSource !==
+            managedSandboxDeletedIdentity(
+              input,
+              scope,
+              attempt.createAttemptNonce,
+              record!.sandboxId as string,
+            )
+        )
+          throw new Error("managed recovery deleted sandbox identity is unproven");
+        return [];
+      }
       const currentId = resolveCreatedOpenShellSandboxId({
         sandboxName: input.sandbox,
         gatewayName: GATEWAY_NAME,
@@ -336,6 +394,7 @@ function removeManagedImageSandbox(
       const expectedId = record?.sandboxId ?? currentId;
       if (source === null)
         recordManagedRecoverySandbox(input, scope, attempt.createAttemptNonce, currentId);
+      deletionIdentity = { nonce: attempt.createAttemptNonce, sandboxId: expectedId as string };
       const named = onboard.runOpenshell(["sandbox", "get", "-g", GATEWAY_NAME, input.sandbox], {
         ignoreError: true,
         env: process.env,
@@ -359,8 +418,22 @@ function removeManagedImageSandbox(
       process.env,
       15000,
     );
-    if (scope && deletion.status !== 0)
-      throw new Error("managed-image recovery could not verify sandbox deletion");
+    if (scope) {
+      if (deletion.status !== 0 || deletion.error)
+        throw new Error("managed-image recovery could not verify sandbox deletion");
+      if (!deletionIdentity) throw new Error("managed recovery sandbox identity is unproven");
+      confirmManagedSandboxAbsent(onboard, deletionIdentity.nonce);
+      fs.writeFileSync(
+        path.join(scope.stateDir, "qualification-sandbox-deleted.json"),
+        managedSandboxDeletedIdentity(
+          input,
+          scope,
+          deletionIdentity.nonce,
+          deletionIdentity.sandboxId,
+        ),
+        { flag: "wx", mode: 0o600 },
+      );
+    }
     return [];
   } catch {
     return ["managed recovery sandbox identity or deletion is unproven; inspection is required"];
@@ -414,7 +487,17 @@ export async function cleanupInterruptedManagedImageOpenShellE2e(
       process.env,
       15000,
     );
-    if (removeGateway.status !== 0) throw new Error("managed recovery gateway removal failed");
+    const gatewayAlreadyAbsent =
+      removeGateway.status === 1 &&
+      !removeGateway.error &&
+      (/(?:^|\n)\s*(?:Error:\s*)?(?:×\s*)?No gateway metadata found for 'nemoclaw'\./iu.test(
+        String(removeGateway.stderr ?? ""),
+      ) ||
+        /^(?:Error:\s*)?(?:gateway ["']?nemoclaw["']? (?:not found|does not exist)|no such gateway:?[\s"']*nemoclaw)$/iu.test(
+          String(removeGateway.stderr ?? "").trim(),
+        ));
+    if (removeGateway.status !== 0 && !gatewayAlreadyAbsent)
+      throw new Error("managed recovery gateway removal failed");
     const containers = exactHarnessContainerIds(input, scope.networkName, process.env);
     if (containers.exactIds.length > 1)
       throw new Error("managed recovery container identity is ambiguous");
@@ -457,7 +540,13 @@ export async function cleanupInterruptedManagedImageOpenShellE2e(
       !absentNetwork.test(String(network.stderr ?? "").trim())
     )
       throw new Error("managed recovery network cleanup is unproven");
-    if (!removeManagedImageGatewayStateIfSafe(scope.stateDir, gatewayStop, removeGateway.status))
+    if (
+      !removeManagedImageGatewayStateIfSafe(
+        scope.stateDir,
+        gatewayStop,
+        gatewayAlreadyAbsent ? 0 : removeGateway.status,
+      )
+    )
       throw new Error("managed recovery state removal is unproven");
   } finally {
     for (const key of Object.keys(process.env)) {
@@ -568,7 +657,11 @@ type OnboardModule = {
     managedStartupWorkspaceRoot(input: {
       readonly agent: ShippedManagedImageAgent;
       readonly agentIdentity: { readonly uid: number; readonly gid: number };
-    }): { readonly uid: number; readonly gid: number; readonly mode: 0o755 | 0o1775 };
+    }): {
+      readonly uid: number;
+      readonly gid: number;
+      readonly mode: 0o755 | 0o1775;
+    };
     prepareManagedStateVolumes(
       input: { readonly roots: readonly ProtectedManagedStateRoot[] },
       deps: { readonly runtimeProvider: RuntimeProviderBundle },
@@ -1424,7 +1517,10 @@ function parseImmutableManifestReference(image: string): {
   if (!match?.[1] || !match[2]) {
     throw new Error("--image must be an immutable repository@sha256 manifest reference");
   }
-  return { repository: match[1], manifestDigest: match[2] as `sha256:${string}` };
+  return {
+    repository: match[1],
+    manifestDigest: match[2] as `sha256:${string}`,
+  };
 }
 
 function resolveLocalImageContentId(
