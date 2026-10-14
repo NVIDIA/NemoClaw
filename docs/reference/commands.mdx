@@ -575,7 +575,7 @@ Keep the recovery record and retry `destroy` only after resolving the identity d
 
 If OpenShell did not return a durable identity fingerprint, `destroy` cannot authorize deletion of a live sandbox.
 
-Without `--force`, `destroy` can clear local recovery metadata on native Linux with default Docker when no lifecycle identity was published.
+For normal recovery, `destroy` can clear local recovery metadata on native Linux with default Docker when no lifecycle identity was published.
 It requires exactly one matching retained record, a recorded Docker ownership marker, and sandbox absence confirmed by the owning gateway.
 Docker must report no matching containers or managed state volumes.
 When the record includes ownership captured before creation, recovery rechecks the original Docker daemon, gateway binding, and any remaining reservation owner.
