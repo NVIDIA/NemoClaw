@@ -195,7 +195,7 @@ Layering from top to bottom:
 | Docker daemon | Host service | Runs the Docker-driver sandbox container and, on affected Linux hosts, the optional gateway compatibility container. |
 | Sandbox container | Docker container | Runs the selected supported agent runtime and NemoClaw integration under Landlock + seccomp + netns. |
 | OpenShell L7 proxy | Gateway process | Intercepts shared-route agent egress and rewrites `Authorization` headers (Bearer/Bot) and URL-path segments to inject the real credential at the network boundary. |
-| OpenShell attached native provider | Provider profile attached to the sandbox | Restricts NVIDIA, fixed hosted, and new OpenClaw or Deep Agents Code local provider egress by host, method, path, and binary, then rewrites the placeholder credential at the egress boundary. |
+| OpenShell attached native provider | Provider profile attached to the sandbox | Restricts NVIDIA, fixed hosted, and new OpenClaw, Deep Agents Code, or Pi local provider egress by host, method, path, and binary, then rewrites the placeholder credential at the egress boundary. |
 
 NemoClaw never gives the sandbox a raw provider key.
 At onboard time it registers credentials with OpenShell's provider and placeholder system.
