@@ -280,10 +280,7 @@ impl Installer for OllamaProxy {
         let service = address(proxy::PROXY, name);
         Ok(InstallPlan {
             targets: proxy::targets(document, name, self, generations)?,
-            dependencies: BTreeMap::from([(
-                service,
-                vec![address(proxy::STORAGE, name), address(proxy::MODEL, name)],
-            )]),
+            dependencies: BTreeMap::from([(service, vec![address(proxy::STORAGE, name)])]),
         })
     }
 

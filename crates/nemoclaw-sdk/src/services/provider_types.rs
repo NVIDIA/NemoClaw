@@ -6,12 +6,13 @@
 //! kinds have no provider type; credential storage and runtime reads do.
 
 /// Service kinds the vllm and ollama providers serve, with their type names.
-pub const RUNTIME_TYPES: [(&str, &str); 5] = [
+pub const RUNTIME_TYPES: [(&str, &str); 6] = [
     ("inference_storage", "vllm_credential_storage"),
     ("vllm_runtime", "vllm_runtime"),
     ("ollama_proxy_storage", "ollama_proxy_credential_storage"),
     ("ollama_runtime", "ollama_runtime"),
     ("ollama_proxy_runtime", "ollama_proxy_runtime"),
+    ("ollama_model", "ollama_model"),
 ];
 
 /// Readiness data sources for service container kinds.

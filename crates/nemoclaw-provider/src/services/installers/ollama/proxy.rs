@@ -30,67 +30,18 @@ fn auxiliary_storage(row: &Row) -> Result<crate::managed::Storage, Error> {
     storage.validate()?;
     Ok(storage)
 }
-fn model_settings(row: &Row) -> Result<ProxySettings, Error> {
-    let get = |field| {
-        row.get(field)
-            .filter(|value| !value.is_empty())
-            .cloned()
-            .ok_or(ObservationError::Incomplete)
-    };
-    let settings = ProxySettings {
-        upstream: get("upstream")?,
-        model: get("model")?,
-        digest: get("digest")?,
-        endpoint: String::new(),
-    };
-    Models::new(&settings.upstream)?;
-    let upstream = url::Url::parse(&settings.upstream).map_err(|_| ObservationError::Incomplete)?;
-    if upstream.port().is_none()
-        || !match upstream.host() {
-            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-            _ => false,
-        }
-        || !regex::Regex::new(nemoclaw_sdk::services::installers::ollama::MODEL_PATTERN)
-            .unwrap()
-            .is_match(&settings.model)
-        || !regex::Regex::new("^[a-f0-9]{64}$")
-            .unwrap()
-            .is_match(&settings.digest)
-    {
-        return Err(Error::Conflict("invalid external Ollama model observation"));
-    }
-    Ok(settings)
-}
 impl ProxyBackend {
     pub(super) async fn proxy_read(
         &self,
         kind: &str,
         row: &Row,
         apply: bool,
-        removing: bool,
     ) -> Result<Option<Row>, Error> {
         if !supports(kind) {
             return Err(ObservationError::Query.into());
         }
         let id = row.get("id").map(String::as_str).unwrap_or("");
         let mut result = row.clone();
-        if kind == MODEL {
-            let storage = auxiliary_storage(row)?;
-            let settings = model_settings(row)?;
-            if !removing {
-                verify_model(&settings).await?;
-            }
-            let expected = format!(
-                "{}/{}/{}",
-                storage.owner, storage.generation, settings.digest
-            );
-            if !id.is_empty() && id != expected {
-                return Err(ObservationError::BindingMismatch.into());
-            }
-            result.insert("id".into(), expected);
-            return Ok(Some(result));
-        }
         if kind == STORAGE {
             let storage = auxiliary_storage(row)?;
             let observed = if apply {
@@ -105,44 +56,10 @@ impl ProxyBackend {
         }
         Err(ObservationError::Query.into())
     }
-    pub(super) async fn proxy_remove(&self, kind: &str, row: &Row) -> Result<(), Error> {
+    pub(super) async fn proxy_remove(&self, kind: &str) -> Result<(), Error> {
         if kind == STORAGE {
             return Err(Error::Conflict("proxy credential storage is retained"));
         }
-        if kind == MODEL {
-            self.proxy_read(kind, row, false, true).await?;
-            return Ok(());
-        }
         Err(ObservationError::Query.into())
     }
-}
-
-/// Name the authored service and its upstream in external-model diagnostics.
-pub(crate) fn describe_model_error(error: String, attributes: &crate::Row) -> String {
-    let name = attributes.get("name").map_or("unknown", String::as_str);
-    let source = name.split_once("-ollama-proxy-").map_or_else(
-        || format!("external Ollama model/{}", name.escape_default()),
-        |(_, service)| format!("services.{}.upstream", service.escape_default()),
-    );
-    // This package accepts only local, unauthenticated HTTP upstreams.
-    // Invalid state must not echo userinfo, query strings, or fragments.
-    let endpoint = attributes
-        .get("upstream")
-        .and_then(|endpoint| url::Url::parse(endpoint).ok())
-        .filter(|url| {
-            url.scheme() == "http"
-                && url.path() == "/v1"
-                && url.port().is_some()
-                && url.username().is_empty()
-                && url.password().is_none()
-                && url.query().is_none()
-                && url.fragment().is_none()
-                && match url.host() {
-                    Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-                    Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-                    _ => false,
-                }
-        });
-    let endpoint = endpoint.map(|url| format!(" ({url})")).unwrap_or_default();
-    format!("{source}{endpoint}: {error}")
 }

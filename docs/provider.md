@@ -38,8 +38,7 @@ The generated graphs manage these objects and observations:
 | OpenShell provider | Podman gateway process (`openshell_podman_gateway`); gateway storage, initialization, and retained bridge (`openshell_gateway_storage`) |
 | vLLM provider | Retained vLLM credentials (`vllm_credential_storage`) |
 | Ollama provider | Retained Ollama proxy credentials (`ollama_proxy_credential_storage`) |
-| vLLM and Ollama provider data sources | Runtime contracts, and service or proxy readiness |
-| NemoClaw provider | External Ollama model observation |
+| vLLM and Ollama provider data sources | Runtime contracts, service or proxy readiness, and the upstream model digest behind an Ollama proxy (`ollama_model`) |
 | OpenShell provider | Kubernetes namespace and encryption key (`openshell_kubernetes_storage`), development issuer (`openshell_kubernetes_auth`), and gateway readiness (`openshell_kubernetes_gateway`) |
 | NemoClaw provider data source | Engine capabilities and managed runtime-image compatibility |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
@@ -228,8 +227,9 @@ Removing the resource releases its binding without changing the sandbox.
 ### vLLM and Ollama Types
 
 The `vllm` and `ollama` providers serve one runtime each: its credential storage, the runtime contract its container runs with, and its readiness and capacity reads.
+The `ollama` provider also checks the model behind an Ollama proxy.
 Each provider's only setting is `destroy`, which permits deleting its credential storage during explicit teardown.
-Each type names the engine it uses.
+Each type except `ollama_model` names the engine it uses.
 
 | Type | Manages or observes |
 |---|---|
@@ -242,21 +242,12 @@ Each type names the engine it uses.
 | `ollama_proxy_runtime` data source | Nothing; [computes the Ollama proxy contract](#ollama-runtime-contracts) |
 | `ollama_readiness` data source | [Managed Ollama readiness](#runtime-capacity-and-readiness) |
 | `ollama_proxy_readiness` data source | [Ollama proxy readiness](#runtime-capacity-and-readiness) |
+| `ollama_model` data source | An upstream Ollama model's digest |
 | `ollama_capacity` data source | [Managed Ollama capacity](#service-capacity) |
 
-### NemoClaw Resources
+Generated graphs place vLLM and Ollama model caches in `docker_volume` resources.
 
-The `nemoclaw` provider's only setting is `destroy`, which permits deleting its storage during explicit teardown.
-Each resource names the engine it uses.
-
-| Resource | Manages |
-|---|---|
-| `nemoclaw_ollama_service_storage` | Managed Ollama model storage |
-| `nemoclaw_ollama_external_model` | Upstream Ollama model digest |
-
-Generated graphs place vLLM and Ollama model caches in `docker_volume` resources and do not declare `nemoclaw_ollama_service_storage`.
-
-`vllm_credential_storage` and `nemoclaw_ollama_service_storage` take `name` and `engine`, and optionally `owner` and `generation`.
+`vllm_credential_storage` takes `name` and `engine`, and optionally `owner` and `generation`.
 The provider creates a local volume with that name on that engine and labels it with the owner and generation.
 It rejects a same-named volume with other labels, and never recreates a bound volume that disappears.
 Validation reports an invalid value at its attribute:
@@ -273,10 +264,17 @@ The next apply generates another, finds the volume labelled with the lost one, a
 To keep the volume, set `owner` and `generation` to its `nemoclaw.nvidia.com/uid` and `nemoclaw.nvidia.com/generation` labels and apply again.
 
 `ollama_proxy_credential_storage` takes `name` and `engine`, and keeps the proxy credential in a volume named `<name>-auth`.
-`nemoclaw_ollama_external_model` takes `name`, `engine`, `upstream`, `model`, and `digest`.
-Both take optional `owner` and `generation`, generated the same way; generated graphs give the external model its proxy storage's values.
+It takes optional `owner` and `generation`, generated the same way.
+
+`ollama_model` takes `upstream`, `name`, and `digest`, and exports `ref` with those values.
+`upstream` is an `http` URL with a loopback IP address, an explicit port, and path `/v1`; `name` is an Ollama model name; `digest` is 64 lowercase hexadecimal characters.
+Each read lists the upstream's models with `GET /api/tags` and fails when the model is absent or its digest differs; it never pulls or changes a model.
+OpenTofu reads it while planning once its inputs are known, so a changed digest stops the plan.
+Generated graphs read it for each Ollama proxy and start the proxy container after it.
 
 ### NemoClaw Data Sources
+
+The `nemoclaw` provider serves only data sources; its `destroy` setting has no effect.
 
 | Data source | Observes |
 |---|---|

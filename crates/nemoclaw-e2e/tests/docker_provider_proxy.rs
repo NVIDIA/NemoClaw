@@ -259,9 +259,6 @@ async fn sdk_docker_proxy_lifecycle_preserves_readiness_and_storage_guards() {
             .starts_with("ollama_proxy_credential_storage.")
             || change
                 .resource
-                .starts_with("nemoclaw_ollama_external_model.")
-            || change
-                .resource
                 .starts_with("openshell_provider_registration.")
     }));
     let image_id = engine.container(&name).await.unwrap().unwrap().id.unwrap();

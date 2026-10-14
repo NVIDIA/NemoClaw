@@ -9,23 +9,6 @@
 provider nemoclaw (version 0)
   destroy: bool, optional
 
-resource nemoclaw_ollama_external_model (version 0)
-  digest: string, required
-  engine: string, required
-  generation: string, optional, computed
-  id: string, computed
-  model: string, required
-  name: string, required
-  owner: string, optional, computed
-  upstream: string, required
-
-resource nemoclaw_ollama_service_storage (version 0)
-  engine: string, required
-  generation: string, optional, computed
-  id: string, computed
-  name: string, required
-  owner: string, optional, computed
-
 data nemoclaw_engine_capabilities (version 0)
   available: bool, computed
   engine: string, required

@@ -15,6 +15,7 @@ pub mod hardware;
 mod hardware_data;
 mod inference_discovery;
 pub mod kubernetes;
+mod ollama_model;
 mod provider;
 mod readiness;
 mod runtime_contract;

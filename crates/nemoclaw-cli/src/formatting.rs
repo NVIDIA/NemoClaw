@@ -209,12 +209,11 @@ pub(crate) fn resource_label(address: &str) -> String {
                     "openshell_provider_profile.web_search_",
                     "web search profile/",
                 ),
-                ("nemoclaw_ollama_external_model.", "external Ollama model/"),
+                ("data.ollama_model.", "Ollama model/"),
                 ("ollama_proxy_credential_storage.", "proxy credentials/"),
                 ("docker_container.ollama_proxy_", "ollama proxy/"),
                 ("docker_container.ollama_service_", "ollama/"),
                 ("docker_volume.ollama_service_storage_", "model cache/"),
-                ("nemoclaw_ollama_service_storage.", "ollama credentials/"),
                 (
                     "vllm_credential_storage.inference_",
                     "inference credentials/",
@@ -821,7 +820,7 @@ mod tests {
         ], "resourceSources": {
             "openshell_provider_registration.inference_local-1234":{"name":"responses", "path":"spec.sandboxes[host].inferenceProviders[responses]"}
         }, "deferred":["Gateway is required"], "deferredResources":[
-            "docker_container.ollama_proxy_local", "nemoclaw_ollama_external_model.local", "ollama_proxy_credential_storage.local", "docker_image.image_1234"
+            "docker_container.ollama_proxy_local", "data.ollama_model.local", "ollama_proxy_credential_storage.local", "docker_image.image_1234"
         ], "discovery":{"resources":[
             {"address":"fabric_agent.host", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":true, "retained":false, "reusePlanned":false, "agentRunning":false},
             {"address":"openshell_provider_registration.inference_local-1234", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":false, "retained":false, "reusePlanned":false},
@@ -835,7 +834,7 @@ mod tests {
             "web search profile/tavily",
             "inference credentials/tiny",
             "ollama proxy/local",
-            "external Ollama model/local",
+            "Ollama model/local",
             "proxy credentials/local",
             "Agent runtime is not running; apply restarts it.",
             "Resources: 3 established (1 unchanged, 2 with planned changes); 0 new.",

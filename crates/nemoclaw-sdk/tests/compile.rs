@@ -120,10 +120,6 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
     before_container.as_object_mut().unwrap().remove("image");
     after_container.as_object_mut().unwrap().remove("image");
     assert_eq!(before_container, after_container);
-    assert_eq!(
-        before["resource"]["nemoclaw_ollama_service_storage"],
-        after["resource"]["nemoclaw_ollama_service_storage"]
-    );
 }
 
 fn ownership_generations() -> BTreeMap<String, String> {

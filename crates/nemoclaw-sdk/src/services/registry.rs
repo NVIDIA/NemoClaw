@@ -108,24 +108,6 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
             mutable: &[],
         },
         ResourceSchema {
-            kind: "ollama_external_model",
-            fields: &[
-                "name",
-                "owner",
-                "generation",
-                "engine",
-                "upstream",
-                "model",
-                "digest",
-            ],
-            mutable: &[],
-        },
-        ResourceSchema {
-            kind: installers::ollama::STORAGE_KIND,
-            fields: &crate::managed::Storage::ATTRIBUTES,
-            mutable: &[],
-        },
-        ResourceSchema {
             kind: installers::vllm::STORAGE_KIND,
             fields: &crate::managed::Storage::ATTRIBUTES,
             mutable: &[],

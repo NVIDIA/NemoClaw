@@ -330,6 +330,10 @@ impl Provider for ServiceProvider {
             sources.insert("readiness".into(), readiness(Ollama));
             sources.insert("proxy_readiness".into(), readiness(OllamaProxy));
             sources.insert("capacity".into(), capacity(Ollama));
+            sources.insert(
+                "model".into(),
+                Box::new(crate::ollama_model::OllamaModelDataSource),
+            );
         }
         Some(sources)
     }

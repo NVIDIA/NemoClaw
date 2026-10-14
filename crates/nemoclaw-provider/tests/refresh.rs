@@ -607,38 +607,3 @@ async fn removing_credential_reference_plans_unauthenticated_replacement() {
     assert_eq!(planned["credential_env"], Value::Value(String::new()));
     assert_eq!(replacements.len(), 1);
 }
-
-#[tokio::test]
-async fn external_ollama_observation_names_the_authored_upstream_without_url_credentials() {
-    for upstream in [
-        "http://127.0.0.1:11434/v1",
-        "http://[::1]:11434/v1",
-        "http://user:PRIVATE_URL@127.0.0.1:11434/v1",
-    ] {
-        let resource = ResourceAdapter::new(
-            support::definition(
-                "ollama_external_model",
-                &["name", "owner", "generation", "upstream"],
-                &[],
-            ),
-            Arc::new(Fixture(Err(ObservationError::Incomplete))),
-        );
-        let mut values = row();
-        values.insert(
-            "name".into(),
-            "nc-1234567890abcdef-ollama-proxy-local".into(),
-        );
-        values.insert("upstream".into(), upstream.into());
-        let mut diagnostics = Diagnostics::default();
-        resource
-            .read(&mut diagnostics, state(values), Value::Null, Value::Null)
-            .await;
-        let text = format!("{diagnostics:?}");
-        assert!(text.contains("services.local.upstream"), "{text}");
-        assert!(text.contains("observation is incomplete"), "{text}");
-        if !upstream.contains("PRIVATE_") {
-            assert!(text.contains(upstream), "{text}");
-        }
-        assert!(!text.contains("PRIVATE_"), "{text}");
-    }
-}

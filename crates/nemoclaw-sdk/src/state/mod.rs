@@ -100,7 +100,7 @@ impl Record {
         let mut generations = Generations::new();
         allocate_missing_generation_values(&mut generations, &document)?;
         Ok(Self {
-            version: 12,
+            version: 13,
             digest: document.digest(),
             document,
             generations,
@@ -288,9 +288,9 @@ impl Record {
         self.destroy_runtime
     }
     fn validate(&self) -> Result<(), Error> {
-        if self.version != 12 {
+        if self.version != 13 {
             return Err(Error::State(
-                "deployment predates the vllm and ollama providers; retain state and use the original NemoClaw version for recovery or teardown",
+                "deployment predates the ollama_model data source; retain state and use the original NemoClaw version for recovery or teardown",
             ));
         }
         let generations_valid = required_generation_kinds(&self.document).is_ok_and(|kinds| {

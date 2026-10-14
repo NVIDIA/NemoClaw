@@ -77,16 +77,11 @@ impl ServiceRuntime {
     }
 }
 
-/// Installer-owned service storage and external model resources.
-pub(crate) fn definitions() -> [crate::Definition; 4] {
+/// Installer-owned credential storage resources.
+pub(crate) fn definitions() -> [crate::Definition; 2] {
     use nemoclaw_sdk::services::installers::{ollama, vllm};
     [
         generated_identity(schema_definition(ollama::proxy::STORAGE)),
-        generated_identity(
-            schema_definition(ollama::proxy::MODEL)
-                .describe(installers::ollama::proxy::describe_model_error),
-        ),
-        storage_definition(ollama::STORAGE_KIND),
         storage_definition(vllm::STORAGE_KIND),
     ]
 }

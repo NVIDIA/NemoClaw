@@ -23,6 +23,12 @@ data ollama_capacity (version 0)
   observed_bytes: number, computed
   required_bytes: number, computed
 
+data ollama_model (version 0)
+  digest: string, required
+  name: string, required
+  ref: object({ digest = string, name = string, type = string, upstream = string }), computed
+  upstream: string, required
+
 data ollama_proxy_readiness (version 0)
   container_id: string, required
   contract: string, required
