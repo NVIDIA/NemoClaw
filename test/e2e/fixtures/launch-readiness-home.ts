@@ -38,6 +38,9 @@ export async function withGroupWritableReadinessHome(
     console.log(
       `Launch-readiness home qualification: mode=${(fs.fstatSync(descriptor).mode & 0o777).toString(8)} lease=${lease.kind} sessions=2`,
     );
+    if (lease.kind !== "valid") {
+      throw new Error(`Launch readiness did not qualify: ${lease.kind}`);
+    }
   } finally {
     process.umask(originalUmask);
     try {

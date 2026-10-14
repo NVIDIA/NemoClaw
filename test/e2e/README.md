@@ -20,7 +20,7 @@ before those targets run; local runners must provide it themselves.
 On disposable GitHub runners, the `full-e2e` OpenClaw launch segment uses the
 final host user's home at mode `0775` with `umask 0002`. It removes only that
 test sandbox's persistent readiness receipt before the existing probe and two
-PTY launch sessions, then records the resulting lease status. The fixture
+PTY launch sessions, then requires a valid lease and records its status. The fixture
 restores the original home mode and umask in cleanup. Local runs and preinstalled
 Launchable validation retain their original home permissions. Deterministic
 permission denials remain owned by `src/lib/state/launch-readiness-lease.test.ts`.

@@ -7,7 +7,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
 import { withGroupWritableReadinessHome } from "../fixtures/launch-readiness-home.ts";
-import { launchReadinessReceiptPath } from "../../../src/lib/state/launch-readiness-lease.ts";
+import * as readinessLease from "../../../src/lib/state/launch-readiness-lease.ts";
 import { captureNativePluginFailureReadiness } from "../fixtures/native-plugin-failure-diagnostics.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 
@@ -298,15 +298,27 @@ it("skips successful plugin calls and preserves a failed result when diagnostics
   expect(execShell).toHaveBeenCalledTimes(1);
 });
 
-it.each([false, true])(
-  "restores home permissions and umask after launch (failure=%s)",
-  async (fails) => {
+it.each([
+  { scenario: "success", fails: false, leaseKind: "valid", error: undefined },
+  { scenario: "launch failure", fails: true, leaseKind: "valid", error: "launch failed" },
+  {
+    scenario: "invalid lease",
+    fails: false,
+    leaseKind: "unsafe",
+    error: "Launch readiness did not qualify: unsafe",
+  },
+])(
+  "restores home permissions and umask after launch qualification ($scenario)",
+  async ({ fails, leaseKind, error }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "readiness-home-"));
     fs.chmodSync(home, 0o750);
     const user = os.userInfo();
     vi.spyOn(os, "userInfo").mockReturnValue({ ...user, homedir: home });
     vi.spyOn(console, "log").mockImplementation(() => {});
-    const receipt = launchReadinessReceiptPath("test-home", 18080, home);
+    vi.spyOn(readinessLease, "readLaunchReadinessLease").mockReturnValue({
+      kind: leaseKind,
+    } as ReturnType<typeof readinessLease.readLaunchReadinessLease>);
+    const receipt = readinessLease.launchReadinessReceiptPath("test-home", 18080, home);
     fs.mkdirSync(path.dirname(receipt), { recursive: true, mode: 0o700 });
     fs.writeFileSync(receipt, "old receipt", { mode: 0o600 });
     const retained = path.join(path.dirname(receipt), "unrelated.json");
@@ -328,7 +340,7 @@ it.each([false, true])(
           return fails ? Promise.reject(failure) : Promise.resolve();
         },
       ).catch((error: unknown) => error);
-      expect(outcome).toBe(fails ? failure : undefined);
+      expect(outcome).toEqual(error ? new Error(error) : undefined);
       expect(fs.statSync(home).mode & 0o777).toBe(0o750);
       expect(process.umask()).toBe(umask);
       expect(fs.readFileSync(retained, "utf8")).toBe("retained");
