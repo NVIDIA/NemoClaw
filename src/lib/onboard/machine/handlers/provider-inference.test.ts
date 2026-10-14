@@ -1466,6 +1466,7 @@ describe("handleProviderInferenceState", () => {
       [],
       setupOptions(session, {
         allowToolsIncompatible: true,
+        agentName: "openclaw",
         preferredInferenceApi: "openai-responses",
       }),
     );

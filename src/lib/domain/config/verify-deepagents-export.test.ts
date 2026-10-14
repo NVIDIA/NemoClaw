@@ -8,8 +8,11 @@ import {
   asExportedConfig,
   exportedDeepAgentsSandbox,
 } from "../../../../test/support/config-export-document";
-import type { ObservedExportSnapshot } from "./export-evidence";
+import { exportNativeInferenceReceipt, type ObservedExportSnapshot } from "./export-evidence";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import {
+  entry,
   dcodeImageRef,
   dcodeProfileInput,
   dcodeSnapshot,
@@ -194,3 +197,40 @@ describe("Deep Agents config export (#11860)", () => {
     expect(result.publish).not.toHaveBeenCalled();
   });
 });
+
+it.each([
+  ["ollama-local", null, "NEMOCLAW_LOCAL_INFERENCE_TOKEN", true],
+  ["ollama-local", OLLAMA_LOCAL_CREDENTIAL_ENV, "NEMOCLAW_LOCAL_INFERENCE_TOKEN", true],
+  ["vllm-local", null, "NEMOCLAW_LOCAL_INFERENCE_TOKEN", true],
+  ["vllm-local", "UNRELATED_API_KEY", "NEMOCLAW_LOCAL_INFERENCE_TOKEN", false],
+  ["ollama-local", "UNRELATED_API_KEY", "NEMOCLAW_LOCAL_INFERENCE_TOKEN", false],
+  ["ollama-local", null, "UNRELATED_API_KEY", false],
+] as const)(
+  "validates export credential mapping %s/%s/%s as %s (#13197)",
+  (provider, credentialEnv, receiptCredential, expected) => {
+    const binding = {
+      provider,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: receiptCredential,
+      authMode: "authenticated" as const,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+    };
+    const receipt = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "fixture-provider",
+    };
+    const result = exportNativeInferenceReceipt(
+      entry({
+        name: "alpha",
+        provider,
+        gatewayName: "nemoclaw",
+        credentialEnv: credentialEnv ?? undefined,
+        nativeLocalProviderAttachment: receipt,
+      }),
+    );
+    expect(result !== null).toBe(expected);
+  },
+);

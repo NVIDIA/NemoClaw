@@ -140,7 +140,7 @@ export function blockRebuildOnLegacySharedLocalRoute(
   bail: RebuildBail,
 ): boolean {
   if (
-    typeof sandboxEntry.createdAt !== "string" ||
+    sandboxEntry.pendingRouteReservation === true ||
     !hasLegacySharedLocalInferenceRoute(sandboxEntry)
   )
     return false;

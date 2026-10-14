@@ -865,15 +865,7 @@ export function createSetupInference(
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
-    const selectingNativeLocal = usesNativeLocalInferenceForAgent(
-      options.agentName ??
-        options.hostLocalInference?.request.application ??
-        (sandboxName ? deps.getSandbox?.(sandboxName)?.agent : undefined),
-      provider,
-      endpointUrl,
-    );
-    if (selectingNativeLocal)
-      await (deps.requireNativeProviderPolicy ?? requireNativeProviderPolicy)(gatewayName);
+    let selectingNativeLocal = false;
     const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
     const usesBedrockRuntimeAdapter =
       provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
@@ -1663,11 +1655,23 @@ export function createSetupInference(
     // this cleanup runs.
     const mutateGatewayRouteAndReleaseSupersededModel = async (): Promise<SetupInferenceResult> => {
       let previousSandbox: OllamaModelHolder | null = null;
+      const selectedAgent = options.agentName ?? options.hostLocalInference?.request.application;
+      let recordedAgent: string | null | undefined;
       try {
-        previousSandbox = sandboxName ? (deps.getSandbox?.(sandboxName) ?? null) : null;
-      } catch {
+        const recorded = sandboxName ? (deps.getSandbox?.(sandboxName) ?? null) : null;
+        previousSandbox = recorded;
+        recordedAgent = recorded?.agent;
+      } catch (error) {
+        if (!selectedAgent && usesNativeLocalInference(provider, endpointUrl)) throw error;
         /* An unreadable registry skips GPU release; it must not fail onboarding. */
       }
+      selectingNativeLocal = usesNativeLocalInferenceForAgent(
+        selectedAgent ?? recordedAgent,
+        provider,
+        endpointUrl,
+      );
+      if (selectingNativeLocal)
+        await (deps.requireNativeProviderPolicy ?? requireNativeProviderPolicy)(gatewayName);
       const result = await mutateGatewayRoute();
       releaseSupersededOllamaModel(
         previousSandbox,

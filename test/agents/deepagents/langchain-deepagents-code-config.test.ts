@@ -84,6 +84,25 @@ describe("LangChain Deep Agents Code config generator", () => {
       expect(config).not.toContain("ambient-secret-must-not-escape");
     },
   );
+  it.each(["http://10.1.2.3:8000/v1", "http://host.openshell.internal:42103/v1"])(
+    "keeps compatible endpoint %s on the managed credential contract (#13197)",
+    (endpoint) => {
+      const config = runGenerator({
+        NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+        NEMOCLAW_INFERENCE_BASE_URL: getSandboxInferenceConfig(
+          "fixture-model",
+          "compatible-endpoint",
+          "openai-completions",
+          false,
+          endpoint,
+          "langchain-deepagents-code",
+        ).inferenceBaseUrl,
+      });
+      expect(config).toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
+      expect(config).not.toContain("NEMOCLAW_LOCAL_INFERENCE_TOKEN");
+    },
+  );
+
   it.each(
     HOSTED_NATIVE_PROVIDERS.filter(
       (provider) =>

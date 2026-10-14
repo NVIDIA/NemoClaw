@@ -6,6 +6,36 @@ import { nativeLocalSetupReceipt } from "../support/native-local-setup-harness";
 import { createDirectSetupInferenceHarness } from "../helpers/onboard-split-context";
 
 describe("native provider ownership before route reservation", () => {
+  it("selects the recorded agent route only while holding the sandbox mutation lock (#13197)", async () => {
+    let locked = false;
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        applyLocalInferenceRoute: undefined,
+        getSandbox: () => {
+          expect(locked).toBe(true);
+          return {
+            name: "test-box",
+            agent: "langchain-deepagents-code",
+            pendingRouteReservation: true,
+          };
+        },
+        withSandboxMutationLock: async (_name, operation) => {
+          locked = true;
+          try {
+            return await operation();
+          } finally {
+            locked = false;
+          }
+        },
+      },
+    });
+    await expect(harness.setupInference("test-box", "meta-llama", "vllm-local")).resolves.toEqual({
+      ok: true,
+    });
+    expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(false);
+  });
+
   it("retires an unreserved provider after host smoke fails (#12558)", async () => {
     const harness = createDirectSetupInferenceHarness({
       overrides: {

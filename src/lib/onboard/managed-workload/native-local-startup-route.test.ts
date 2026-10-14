@@ -104,7 +104,7 @@ it.each(["openclaw", "hermes"] as const)(
     const prepared = prepareProfile(agentName, {
       endpointUrl: nativeBinding.endpointUrl,
     });
-    expect(prepared?.profile.inference?.routedBaseUrl).toBe(nativeBinding.endpointUrl);
+    expect(prepared?.profile.inference?.routedBaseUrl).toBe("https://inference.local/v1");
   },
 );
 

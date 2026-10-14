@@ -337,6 +337,7 @@ export function getSandboxInferenceConfig(
   preferredInferenceApi: string | null = null,
   nativeProvider?: boolean,
   nativeEndpointUrl?: string | null,
+  agentName?: string | null,
 ): SandboxInferenceConfig {
   let providerKey: string;
   let primaryModelRef: string;
@@ -431,6 +432,8 @@ export function getSandboxInferenceConfig(
   }
 
   if (
+    useNativeProvider &&
+    agentName === "langchain-deepagents-code" &&
     nativeEndpointUrl &&
     usesNativeLocalInference(provider, nativeEndpointUrl) &&
     nativeLocalCredentialReference(provider, nativeEndpointUrl)

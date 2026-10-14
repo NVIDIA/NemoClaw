@@ -106,6 +106,7 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
     input.preferredInferenceApi,
     input.nativeProvider ?? Boolean(local),
     local?.endpointUrl ?? null,
+    input.agentName,
   );
   const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
   const hosted = hostedNativeProvider(input.provider, input.nativeEndpointUrl);

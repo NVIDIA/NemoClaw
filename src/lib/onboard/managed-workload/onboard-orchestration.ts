@@ -423,6 +423,7 @@ export function createManagedWorkloadOnboardRuntime(
       inferenceApi,
       input.nativeProvider ?? true,
       endpointUrl,
+      input.agentName,
     );
     preparedProfile = buildManagedStartupOnboardProfile({
       agentName: input.agentName,
