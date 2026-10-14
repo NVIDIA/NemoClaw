@@ -205,13 +205,14 @@ function defaultSleep(seconds: number): void {
 function sandboxListPhase(
   sandboxName: string,
   runCaptureOpenshell: RunCaptureOpenshellFn,
+  timeoutMs: number,
 ): string | null {
   try {
     const list = runCaptureOpenshell(["sandbox", "list"], {
       ignoreError: true,
       ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
       suppressOutput: true,
-      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      timeout: timeoutMs,
     });
     return parseLiveSandboxEntries(list).find((entry) => entry.name === sandboxName)?.phase ?? null;
   } catch {
@@ -233,18 +234,27 @@ export async function waitForOpenShellSupervisorReconnect(
         // the sibling create/readiness debounce in sandbox-readiness-tracing.ts.
         Math.max(1, Math.round(deps.errorPhaseDebouncePolls));
   let consecutiveErrorPolls = 0;
-  while (Date.now() <= deadline) {
+  while (Date.now() < deadline) {
+    const execTimeoutMs = Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, deadline - Date.now());
+    if (execTimeoutMs <= 0) return false;
     const result = await deps.commandExecutor.runBuffered({
       sandboxName,
       target: selectedOpenShellGateway(),
       command: ["true"],
-      timeoutMilliseconds: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      timeoutMilliseconds: execTimeoutMs,
       timeoutKillSignal: "SIGKILL",
     });
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return false;
     const execReady = result.outcome.kind === "completed" && result.outcome.exitCode === 0;
     const phase = deps.runCaptureOpenshell
-      ? sandboxListPhase(sandboxName, deps.runCaptureOpenshell)
+      ? sandboxListPhase(
+          sandboxName,
+          deps.runCaptureOpenshell,
+          Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, remainingMs),
+        )
       : null;
+    if (Date.now() >= deadline) return false;
     // A working exec alone can coexist with an Error lifecycle row. Let the
     // caller reconcile that row before accepting the recreated container.
     if (execReady && (!deps.runCaptureOpenshell || phase === "Ready")) return true;
@@ -254,7 +264,7 @@ export async function waitForOpenShellSupervisorReconnect(
     } else {
       consecutiveErrorPolls = 0;
     }
-    sleep(2);
+    sleep(Math.min(2, (deadline - Date.now()) / 1000));
   }
   return false;
 }
