@@ -399,7 +399,20 @@ test.for(hostedCases)(
       sandboxName,
       hermes
         ? ["cat", "/sandbox/.hermes/config.yaml"]
-        : ["openclaw", "config", "get", `models.providers.${selected.providerKey}`, "--json"],
+        : [
+            "node",
+            "-e",
+            [
+              'const fs = require("node:fs");',
+              'const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));',
+              "const provider = config.models?.providers?.[process.argv[1]];",
+              'const handle = typeof provider?.apiKey === "string" ? provider.apiKey : "";',
+              'const normalized = handle.replace(/^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_/u, "openshell:resolve:env:");',
+              "process.stdout.write(JSON.stringify({ baseUrl: provider?.baseUrl, credentialBindingValid: normalized === `openshell:resolve:env:${process.argv[2]}` }));",
+            ].join(" "),
+            selected.providerKey,
+            selected.placeholder,
+          ],
       {
         artifactName: `${selected.id}-native-config`,
         env: buildAvailabilityProbeEnv(),
@@ -409,17 +422,9 @@ test.for(hostedCases)(
     );
     expect(config.exitCode, resultText(config)).toBe(0);
     const providerConfig = hermes ? YAML.parse(config.stdout).model : JSON.parse(config.stdout);
-    // OpenClaw startup stamps the supervisor's current revision into the handle.
-    // Compare its credential binding independently of that runtime-generated scope.
-    providerConfig.apiKey = providerConfig.apiKey?.replace(
-      /^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_/u,
-      "openshell:resolve:env:",
-    );
     expect(providerConfig).toMatchObject({
       [hermes ? "base_url" : "baseUrl"]: selected.endpoint,
-      [hermes ? "api_key" : "apiKey"]: hermes
-        ? `\${${selected.placeholder}}`
-        : `openshell:resolve:env:${selected.placeholder}`,
+      ...(hermes ? { api_key: `\${${selected.placeholder}}` } : { credentialBindingValid: true }),
     });
     progress.phase("verify hosted credential isolation");
     const isolation = await sandbox.exec(sandboxName, hostedCredentialScanCommand(apiKey), {
