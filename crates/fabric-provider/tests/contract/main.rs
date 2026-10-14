@@ -109,7 +109,7 @@ fn every_fabric_type_has_a_contract_test() {
     let used: BTreeSet<&str> = [
         "fabric_agent_configuration",
         "fabric_sandbox_readiness",
-        "fabric_capabilities",
+        "fabric_harnesses",
     ]
     .into_iter()
     .filter(|kind| sources.contains(&format!("\"{kind}\"")))

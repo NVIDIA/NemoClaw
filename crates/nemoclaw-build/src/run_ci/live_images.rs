@@ -7,7 +7,7 @@
 use super::*;
 
 /// The repository the shared archive names its images under.
-const SHARED: &str = "nc-live-images";
+pub(super) const SHARED: &str = "nc-live-images";
 /// Where `ci live-images` writes the shared archive.
 const ARCHIVE: &str = ".build/ci/live-images.tar.zst";
 

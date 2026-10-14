@@ -49,7 +49,7 @@ fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, Value), ConfigError> 
                     ));
                 }
             }
-            ("fabric_capabilities", inputs)
+            ("fabric_harnesses", inputs)
         }
         DiscoveryQuery::Inference(request) => {
             request
@@ -83,7 +83,7 @@ fn read(
     let (kind, mut inputs) = inputs(query)?;
     extend(&mut inputs);
     // Fabric image reads belong to the fabric provider; the others to nemoclaw.
-    let source = if kind == "fabric_capabilities" {
+    let source = if kind == "fabric_harnesses" {
         kind.to_owned()
     } else {
         format!("nemoclaw_{kind}")

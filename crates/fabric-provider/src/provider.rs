@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The `fabric` provider's configuration, resources, and data sources.
 
-use crate::{AgentConfigurationBackend, FabricCapabilitiesDataSource, SandboxReadinessDataSource};
+use crate::{
+    AgentConfigurationBackend, FabricCapabilitiesDataSource, FabricHarnessDataSource,
+    SandboxReadinessDataSource,
+};
 use async_trait::async_trait;
 use nemoclaw_backend::{Backend, Error, Mutation, ObservationError, Row};
 use nemoclaw_tofu::{ResourceAdapter, StructuredAdapter};
@@ -131,8 +134,12 @@ impl Provider for FabricProvider {
                     as Box<dyn DynamicDataSource>,
             ),
             (
-                "capabilities".into(),
+                "harnesses".into(),
                 Box::new(FabricCapabilitiesDataSource::default()) as Box<dyn DynamicDataSource>,
+            ),
+            (
+                "harness".into(),
+                Box::new(FabricHarnessDataSource::default()) as Box<dyn DynamicDataSource>,
             ),
         ]))
     }

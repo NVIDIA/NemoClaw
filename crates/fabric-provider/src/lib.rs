@@ -16,7 +16,10 @@ mod sandbox_readiness;
 
 pub use agent_configuration::{AgentConfigurationBackend, definitions};
 pub use bridge::{AgentBridge, AgentSnapshot};
-pub use capabilities::{FabricCapabilitiesDataSource, FabricCapabilitiesState};
+pub use capabilities::{
+    FabricCapabilitiesDataSource, FabricCapabilitiesState, FabricHarnessDataSource,
+    FabricHarnessState, HARNESS_TYPE,
+};
 pub use configuration::fabric_binding;
 pub use provider::FabricProvider;
 pub use sandbox_readiness::{SandboxReadinessDataSource, SandboxReadinessState};
