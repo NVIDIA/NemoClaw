@@ -22,6 +22,56 @@ afterAll(() => {
 });
 
 describe("DCode WAL snapshot persistence", () => {
+  it.each(["-journal", "-shm", "-wal"])(
+    "rejects credential bytes in a sessions.db%s sidecar",
+    (suffix) => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-sidecar-secret-"));
+      try {
+        const nativeRoot = path.join(fixture, "native-home");
+        const databasePath = path.join(nativeRoot, ".deepagents", ".state", "sessions.db");
+        fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+        const database = new DatabaseSync(databasePath);
+        database.exec("CREATE TABLE sessions (content TEXT)");
+        database.close();
+        const credential =
+          suffix === "-shm"
+            ? ["password=", "opaque-value-for-snapshot"].join("")
+            : ["ghp_", "a".repeat(36)].join("");
+        fs.writeFileSync(`${databasePath}${suffix}`, credential);
+
+        fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
+        fs.writeFileSync(
+          path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
+          JSON.stringify({
+            defaultSandbox: "alpha",
+            sandboxes: {
+              alpha: {
+                name: "alpha",
+                model: "m",
+                provider: "p",
+                gpuEnabled: false,
+                agent: null,
+              },
+            },
+          }),
+        );
+
+        const backup = sandboxState.backupSandboxState("alpha", {
+          nativeStateSource: {
+            root: "/sandbox",
+            directory: nativeRoot,
+            assertCurrent: () => undefined,
+          },
+        });
+
+        expect(backup.success).toBe(false);
+        expect(backup.error).toContain(`.deepagents/.state/sessions.db${suffix}`);
+      } finally {
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("validates and preserves a live database as one SQLite state family", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wal-state-"));
     let database: DatabaseSync | null = null;

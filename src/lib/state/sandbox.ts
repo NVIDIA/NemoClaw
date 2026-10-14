@@ -1688,9 +1688,11 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
         nextPath = null;
         if (type === "0" || type === "\0" || type === "7") {
           const fileName = path.posix.basename(entry).toLowerCase();
+          const dcodeSessionsDatabaseRole = dcodeSessionsDatabaseEntryRole(entry);
+          // SQLite inspection of the main database does not cover unused sidecar bytes.
           if (
             !shouldSkipNativeRawCredentialScan(fileName) &&
-            dcodeSessionsDatabaseEntryRole(entry) === null
+            dcodeSessionsDatabaseRole !== "database"
           ) {
             // Dependency source is not a credential authority and generated
             // bundles can contain accidental token-shaped bytes. Package
@@ -1701,7 +1703,8 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
               descriptor,
               dataOffset,
               size,
-              shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+              dcodeSessionsDatabaseRole === "sidecar" ||
+                shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
               fileName === ".npmrc",
               providerProfileSchema,
               !dependencyTree,
