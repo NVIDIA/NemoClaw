@@ -16,7 +16,7 @@ describe("sandbox audit settings", () => {
         sandboxName: "alpha",
         timeoutMs: 500,
       });
-      expect(notice).toHaveBeenCalledWith(expect.stringContaining("ocsf_json_enabled=true"));
+      expect(notice).toHaveBeenCalledWith(expect.stringContaining("attempting to enable"));
     } finally {
       notice.mockRestore();
     }
@@ -50,6 +50,23 @@ describe("sandbox audit settings", () => {
       expect(capture).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllEnvs();
+    }
+  });
+
+  it("does not claim audit logging was enabled when the settings command fails", async () => {
+    const capture = vi.fn(async () => ({ status: 1, output: "" }));
+    const notice = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await createCliOpenShellSandboxSettings(capture).enableAuditLogs({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+        timeoutMs: 500,
+      });
+      expect(result).toMatchObject({ ok: false });
+      expect(notice).toHaveBeenCalledWith(expect.stringContaining("attempting to enable"));
+      expect(notice).not.toHaveBeenCalledWith(expect.stringContaining("audit logs enabled"));
+    } finally {
+      notice.mockRestore();
     }
   });
 

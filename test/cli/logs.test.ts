@@ -51,6 +51,23 @@ describe("CLI dispatch", () => {
     expect(result.out).toContain(FAKE_OPENSHELL_LOG_LINE);
   });
 
+  it("preserves a failed exec result without enabling audit settings when opted out", ({
+    resources,
+  }) => {
+    const setup = createLogsTestSetup(resources, "nemoclaw-cli-exec-audit-opt-out-", [
+      'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+      "  exit 56",
+      "fi",
+    ]);
+    const result = setup.runLogs("alpha exec -- false", { NEMOCLAW_NO_AUTO_AUDIT_LOGS: "1" });
+
+    expect(result.code).toBe(56);
+    expect(setup.readCalls()).toContain("logs -g nemoclaw alpha -n 200 --source all");
+    expect(setup.readCalls()).not.toContain(
+      "settings set alpha --key ocsf_json_enabled --value true",
+    );
+  });
+
   it("shows logs help without calling OpenShell", ({ resources }) => {
     const setup = createLogsTestSetup(resources, "nemoclaw-cli-logs-help-");
     const r = setup.runLogs("alpha logs --help");

@@ -1915,7 +1915,7 @@ To see which rule denied the request, read the merged logs from the host:
 $$nemoclaw <name> logs --tail 50
 ```
 
-Reading sandbox logs, or checking for a policy denial after a failed `$$nemoclaw <name> exec`, enables OpenShell OCSF JSON audit logging for that sandbox. NemoClaw prints a notice before updating `ocsf_json_enabled`.
+Reading sandbox logs, or checking for a policy denial after a failed `$$nemoclaw <name> exec`, attempts to enable OpenShell OCSF JSON audit logging for that sandbox. NemoClaw prints a notice before updating `ocsf_json_enabled`.
 
 To keep the current OpenShell audit setting, set `NEMOCLAW_NO_AUTO_AUDIT_LOGS=1` before running either command. Policy denial hints may be unavailable if audit logging is disabled. You can enable it explicitly with `openshell settings set <name> --key ocsf_json_enabled --value true`.
 

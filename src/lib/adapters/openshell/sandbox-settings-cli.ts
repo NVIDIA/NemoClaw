@@ -31,7 +31,7 @@ export function createCliOpenShellSandboxSettings(
         return { ok: true, value: undefined };
       }
       console.error(
-        `NemoClaw is enabling OpenShell OCSF JSON audit logs for sandbox '${sandboxName}' (ocsf_json_enabled=true). Set NEMOCLAW_NO_AUTO_AUDIT_LOGS=1 to opt out.`,
+        `NemoClaw is attempting to enable OpenShell OCSF JSON audit logs for sandbox '${sandboxName}' (ocsf_json_enabled=true). Set NEMOCLAW_NO_AUTO_AUDIT_LOGS=1 to opt out.`,
       );
       const args = ["settings", "set"];
       if (target.kind === "named") args.push("-g", target.gatewayName);
