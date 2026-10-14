@@ -81,7 +81,7 @@ describe("CLI dispatch", () => {
       "fi",
     ]);
 
-    const r = setup.runLogs("alpha logs 2>&1", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "50" });
+    const r = setup.runLogs("alpha logs 2>&1", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "500" });
 
     expect(r.code).toBe(0);
     expect(r.out).toContain("OpenClaw log source unavailable");
