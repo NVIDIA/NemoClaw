@@ -15,9 +15,134 @@ use serde_json::Value as Json;
 use std::collections::BTreeMap;
 use tf_provider::{
     AttributePath, Diagnostics, Resource,
-    schema::{Attribute, AttributeConstraint, NestedBlock, Schema},
+    schema::{Attribute, AttributeConstraint, AttributeType, NestedBlock, Schema},
     value::{Value, ValueEmpty},
 };
+
+/// The computed attribute holding a resource's exported identity.
+pub const REF: &str = "ref";
+
+/// The `ref` attribute naming the resource type that exported it.
+pub const REF_TYPE: &str = "type";
+
+/// The identity a resource exports as its computed `ref` object.
+#[derive(Clone, Debug)]
+pub struct Export {
+    /// The resource type, which consumers check.
+    pub kind: &'static str,
+    /// Row fields copied into the `ref`, under the same names.
+    pub fields: Vec<&'static str>,
+}
+
+impl Export {
+    fn attribute_type(&self) -> AttributeType {
+        object_type(self.fields.iter().copied())
+    }
+    /// The `ref` for a row; parts the row does not know yet stay unknown.
+    fn compose(&self, state: &State) -> Value<Dynamic> {
+        Value::Value(Dynamic::Map(
+            std::iter::once((
+                REF_TYPE.into(),
+                Value::Value(Dynamic::String(self.kind.into())),
+            ))
+            .chain(self.fields.iter().map(|field| {
+                let value = state.get(*field).cloned().unwrap_or(Value::Null);
+                ((*field).into(), value.map(Dynamic::String))
+            }))
+            .collect(),
+        ))
+    }
+}
+
+/// An input that takes another resource's `ref` and carries some of its
+/// attributes to the backend in row fields.
+#[derive(Clone, Debug)]
+pub struct Reference {
+    pub attribute: &'static str,
+    /// The resource type whose `ref` this input accepts.
+    pub kind: &'static str,
+    /// `(ref attribute, row field)` pairs.
+    pub fields: Vec<(&'static str, &'static str)>,
+}
+
+impl Reference {
+    fn attribute_type(&self) -> AttributeType {
+        object_type(self.fields.iter().map(|(attribute, _)| *attribute))
+    }
+    fn carries(&self, field: &str) -> bool {
+        self.fields.iter().any(|(_, row)| *row == field)
+    }
+    /// The row fields for a configured `ref`; unknown parts stay unknown.
+    fn decompose(&self, value: &Value<Dynamic>) -> Result<Vec<(String, Value<String>)>, String> {
+        let entries = match value {
+            Value::Value(Dynamic::Map(entries)) => entries,
+            Value::Unknown | Value::Null => {
+                return Ok(self
+                    .fields
+                    .iter()
+                    .map(|(_, row)| ((*row).into(), value.clone().map(|_| String::new())))
+                    .collect());
+            }
+            Value::Value(_) => return Err(format!("Expected a ref of {}", self.kind)),
+        };
+        if let Some(Value::Value(Dynamic::String(kind))) = entries.get(REF_TYPE)
+            && kind != self.kind
+        {
+            return Err(format!("Expected a ref of {}, not {kind}", self.kind));
+        }
+        self.fields
+            .iter()
+            .map(|(attribute, row)| {
+                let value = match entries.get(*attribute) {
+                    Some(Value::Value(Dynamic::String(value))) => Value::Value(value.clone()),
+                    Some(Value::Unknown) => Value::Unknown,
+                    None | Some(Value::Null) => Value::Null,
+                    Some(Value::Value(_)) => {
+                        return Err(format!("Expected a string {attribute} in the ref"));
+                    }
+                };
+                Ok(((*row).into(), value))
+            })
+            .collect()
+    }
+    /// The `ref` input recorded for a row; absent when the row carries none.
+    fn compose(&self, state: &State) -> Value<Dynamic> {
+        let values: Vec<_> = self
+            .fields
+            .iter()
+            .map(|(attribute, row)| (*attribute, state.get(*row).cloned().unwrap_or(Value::Null)))
+            .collect();
+        // An omitted optional input reaches the backend as empty fields.
+        if values
+            .iter()
+            .all(|(_, value)| matches!(value, Value::Null) || value == &Value::Value(String::new()))
+        {
+            return Value::Null;
+        }
+        Value::Value(Dynamic::Map(
+            std::iter::once((
+                REF_TYPE.into(),
+                Value::Value(Dynamic::String(self.kind.into())),
+            ))
+            .chain(
+                values
+                    .into_iter()
+                    .map(|(attribute, value)| (attribute.into(), value.map(Dynamic::String))),
+            )
+            .collect(),
+        ))
+    }
+}
+
+/// An object of string attributes, plus the `type` every `ref` carries.
+fn object_type<'a>(attributes: impl Iterator<Item = &'a str>) -> AttributeType {
+    AttributeType::Object(
+        std::iter::once(REF_TYPE)
+            .chain(attributes)
+            .map(|name| (name.to_owned(), AttributeType::String))
+            .collect(),
+    )
+}
 
 /// OpenTofu values of a resource with typed inputs.
 pub type StructuredState = BTreeMap<String, Value<Dynamic>>;
@@ -152,10 +277,37 @@ impl StructuredAdapter {
             .iter()
             .find(|structured| structured.attribute == name)
     }
+    fn reference(&self, name: &str) -> Option<&Reference> {
+        self.definition()
+            .references
+            .iter()
+            .find(|reference| reference.attribute == name)
+    }
+    /// Whether a row field travels inside a `ref` input rather than on its own.
+    fn referenced(&self, field: &str) -> bool {
+        self.definition()
+            .references
+            .iter()
+            .any(|reference| reference.carries(field))
+    }
     /// The adapter's string state for typed OpenTofu values.
     fn inward(&self, diags: &mut Diagnostics, state: &StructuredState) -> Option<State> {
         let mut inward = State::new();
         for (name, value) in state {
+            // The exported identity is derived from the row; backends never see it.
+            if name == REF && self.definition().export.is_some() {
+                continue;
+            }
+            if let Some(reference) = self.reference(name) {
+                match reference.decompose(value) {
+                    Ok(fields) => inward.extend(fields),
+                    Err(error) => {
+                        diags.error("Invalid reference", error, AttributePath::new(name.clone()));
+                        return None;
+                    }
+                }
+                continue;
+            }
             if let Some(structured) = self.structured(name) {
                 match structured.encode(value) {
                     Ok(value) => inward.insert(structured.field.into(), value),
@@ -185,7 +337,19 @@ impl StructuredAdapter {
     /// come from `planned` when given, so they stay exactly as OpenTofu planned.
     fn outward(&self, state: State, planned: Option<&StructuredState>) -> StructuredState {
         let mut outward = StructuredState::new();
+        for reference in &self.definition().references {
+            let value = planned
+                .and_then(|planned| planned.get(reference.attribute).cloned())
+                .unwrap_or_else(|| reference.compose(&state));
+            outward.insert(reference.attribute.into(), value);
+        }
+        if let Some(export) = &self.definition().export {
+            outward.insert(REF.into(), export.compose(&state));
+        }
         for (name, value) in state {
+            if self.referenced(&name) {
+                continue;
+            }
             if let Some(structured) = self
                 .definition()
                 .structured
@@ -217,6 +381,37 @@ impl Resource for StructuredAdapter {
 
     fn schema(&self, diags: &mut Diagnostics) -> Option<Schema> {
         let mut schema = self.0.schema(diags)?;
+        for reference in &self.definition().references {
+            for (_, row) in &reference.fields {
+                schema.block.attributes.remove(*row);
+            }
+            let optional = reference
+                .fields
+                .iter()
+                .all(|(_, row)| self.definition().is_optional(row));
+            schema.block.attributes.insert(
+                reference.attribute.into(),
+                Attribute {
+                    attr_type: reference.attribute_type(),
+                    constraint: if optional {
+                        AttributeConstraint::Optional
+                    } else {
+                        AttributeConstraint::Required
+                    },
+                    ..Default::default()
+                },
+            );
+        }
+        if let Some(export) = &self.definition().export {
+            schema.block.attributes.insert(
+                REF.into(),
+                Attribute {
+                    attr_type: export.attribute_type(),
+                    constraint: AttributeConstraint::Computed,
+                    ..Default::default()
+                },
+            );
+        }
         for structured in &self.definition().structured {
             schema.block.attributes.remove(structured.field);
             let optional = self.definition().is_optional(structured.field);
@@ -266,6 +461,11 @@ impl Resource for StructuredAdapter {
             .filter(|(name, _)| {
                 self.structured(name).is_some_and(|structured| {
                     inward.get(structured.field) == observed.get(structured.field)
+                }) || self.reference(name).is_some_and(|reference| {
+                    reference
+                        .fields
+                        .iter()
+                        .all(|(_, row)| inward.get(*row) == observed.get(*row))
                 })
             })
             .collect();
@@ -314,13 +514,26 @@ impl Resource for StructuredAdapter {
         let replacements = replacements
             .into_iter()
             .map(|path| {
-                self.definition()
+                let definition = self.definition();
+                if let Some(structured) = definition
                     .structured
                     .iter()
                     .find(|structured| path == AttributePath::new(structured.field))
-                    .map_or(path, |structured| AttributePath::new(structured.attribute))
+                {
+                    return AttributePath::new(structured.attribute);
+                }
+                definition
+                    .references
+                    .iter()
+                    .find(|reference| {
+                        reference
+                            .fields
+                            .iter()
+                            .any(|(_, row)| path == AttributePath::new(*row))
+                    })
+                    .map_or(path, |reference| AttributePath::new(reference.attribute))
             })
-            .collect();
+            .collect::<Vec<_>>();
         Some((
             self.outward(planned, Some(&proposed)),
             private,
@@ -551,5 +764,205 @@ mod tests {
             json!([{"mode": null, "rules": {"github": {"host_name": "api.github.com", "limits": [{"max_bytes": 7}]}}}])
         );
         assert_eq!(state["names"], Value::Null);
+    }
+
+    fn producer(backend: Arc<Recorder>) -> StructuredAdapter {
+        let definition = Definition::new("workspace", &["name", "owner"], &[])
+            .exports("example_workspace", &["name", "owner", "id"]);
+        StructuredAdapter(ResourceAdapter::new(definition, backend))
+    }
+
+    fn consumer(backend: Arc<Recorder>) -> StructuredAdapter {
+        let definition = Definition::new("sandbox", &["name", "workspace", "workspace_owner"], &[])
+            .references(
+                "workspace",
+                "example_workspace",
+                &[("name", "workspace"), ("owner", "workspace_owner")],
+            );
+        StructuredAdapter(ResourceAdapter::new(definition, backend))
+    }
+
+    fn object_type(names: &[&str]) -> AttributeType {
+        AttributeType::Object(
+            names
+                .iter()
+                .map(|name| ((*name).to_owned(), AttributeType::String))
+                .collect(),
+        )
+    }
+
+    fn workspace(owner: Value<Dynamic>) -> Value<Dynamic> {
+        Value::Value(Dynamic::Map(BTreeMap::from([
+            ("type".into(), value(json!("example_workspace"))),
+            ("name".into(), value(json!("team"))),
+            ("owner".into(), owner),
+        ])))
+    }
+
+    #[test]
+    fn exported_and_referenced_identities_are_typed_objects_in_the_schema() {
+        let schema = producer(Arc::default())
+            .schema(&mut Diagnostics::default())
+            .unwrap();
+        let reference = &schema.block.attributes["ref"];
+        assert_eq!(
+            reference.attr_type,
+            object_type(&["type", "name", "owner", "id"])
+        );
+        assert!(matches!(
+            reference.constraint,
+            AttributeConstraint::Computed
+        ));
+        let schema = consumer(Arc::default())
+            .schema(&mut Diagnostics::default())
+            .unwrap();
+        assert!(!schema.block.attributes.contains_key("workspace_owner"));
+        let workspace = &schema.block.attributes["workspace"];
+        assert_eq!(workspace.attr_type, object_type(&["type", "name", "owner"]));
+        assert!(matches!(
+            workspace.constraint,
+            AttributeConstraint::Required
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_planned_ref_is_known_except_for_identity_assigned_on_create() {
+        let backend = Arc::new(Recorder::default());
+        let proposed = StructuredState::from([
+            ("name".into(), value(json!("team"))),
+            ("owner".into(), value(json!("deployment"))),
+            ("id".into(), Value::Null),
+            ("ref".into(), Value::Unknown),
+        ]);
+        let mut diags = Diagnostics::default();
+        let (planned, _) = producer(backend.clone())
+            .plan_create(
+                &mut diags,
+                proposed.clone(),
+                proposed,
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert!(diags.errors.is_empty(), "{diags:?}");
+        let Value::Value(Dynamic::Map(reference)) = &planned["ref"] else {
+            panic!("ref is an object: {:?}", planned["ref"])
+        };
+        assert_eq!(reference["type"], value(json!("example_workspace")));
+        assert_eq!(reference["name"], value(json!("team")));
+        assert_eq!(reference["owner"], value(json!("deployment")));
+        assert_eq!(reference["id"], Value::Unknown);
+        assert!(!backend.planned.lock().unwrap()[0].contains_key("ref"));
+    }
+
+    #[tokio::test]
+    async fn a_reference_reaches_the_backend_as_row_fields_and_plans_keep_the_object() {
+        let backend = Arc::new(Recorder::default());
+        let proposed = StructuredState::from([
+            ("name".into(), value(json!("coder"))),
+            ("workspace".into(), workspace(value(json!("deployment")))),
+            ("id".into(), Value::Null),
+        ]);
+        let mut diags = Diagnostics::default();
+        let (planned, _) = consumer(backend.clone())
+            .plan_create(
+                &mut diags,
+                proposed.clone(),
+                proposed.clone(),
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert!(diags.errors.is_empty(), "{diags:?}");
+        assert_eq!(planned["workspace"], proposed["workspace"]);
+        assert!(!planned.contains_key("workspace_owner"));
+        let row = backend.planned.lock().unwrap()[0].clone();
+        assert_eq!(row["workspace"], "team");
+        assert_eq!(row["workspace_owner"], "deployment");
+    }
+
+    #[tokio::test]
+    async fn an_unknown_reference_defers_backend_planning() {
+        for reference in [Value::Unknown, workspace(Value::Unknown)] {
+            let backend = Arc::new(Recorder::default());
+            let proposed = StructuredState::from([
+                ("name".into(), value(json!("coder"))),
+                ("workspace".into(), reference.clone()),
+                ("id".into(), Value::Null),
+            ]);
+            let mut diags = Diagnostics::default();
+            let (planned, _) = consumer(backend.clone())
+                .plan_create(
+                    &mut diags,
+                    proposed.clone(),
+                    proposed,
+                    ValueEmpty::default(),
+                )
+                .await
+                .unwrap();
+            assert!(diags.errors.is_empty(), "{diags:?}");
+            assert_eq!(planned["workspace"], reference);
+            assert!(backend.planned.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_reference_to_another_type_is_rejected() {
+        let config = StructuredState::from([
+            ("name".into(), value(json!("coder"))),
+            (
+                "workspace".into(),
+                value(
+                    json!({"type": "example_registration", "name": "team", "owner": "deployment"}),
+                ),
+            ),
+            ("id".into(), Value::Null),
+        ]);
+        let mut diags = Diagnostics::default();
+        assert!(
+            consumer(Arc::default())
+                .validate(&mut diags, config)
+                .await
+                .is_none()
+        );
+        let message = format!("{diags:?}");
+        assert!(message.contains("example_workspace"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn refresh_rebuilds_a_reference_from_observed_row_fields() {
+        let backend = Arc::new(Recorder::default());
+        let observed = |owner: &str| {
+            Row::from([
+                ("name".into(), "coder".into()),
+                ("id".into(), "sandbox-id".into()),
+                ("workspace".into(), "team".into()),
+                ("workspace_owner".into(), owner.into()),
+            ])
+        };
+        let prior = StructuredState::from([
+            ("name".into(), value(json!("coder"))),
+            ("id".into(), value(json!("sandbox-id"))),
+            ("workspace".into(), workspace(value(json!("deployment")))),
+        ]);
+        for (owner, expected) in [
+            ("deployment", "deployment"),
+            ("someone-else", "someone-else"),
+        ] {
+            *backend.observed.lock().unwrap() = Some(observed(owner));
+            let mut diags = Diagnostics::default();
+            let (state, _) = consumer(backend.clone())
+                .read(
+                    &mut diags,
+                    prior.clone(),
+                    ValueEmpty::default(),
+                    ValueEmpty::default(),
+                )
+                .await
+                .unwrap();
+            assert!(diags.errors.is_empty(), "{diags:?}");
+            assert_eq!(state["workspace"], workspace(value(json!(expected))));
+            assert!(!state.contains_key("workspace_owner"));
+        }
     }
 }

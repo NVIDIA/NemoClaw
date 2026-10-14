@@ -210,7 +210,7 @@ impl Provider for NemoClawProvider {
                 .into_iter()
                 .map(|definition| {
                     let name = definition.kind.into();
-                    let structured = !definition.structured.is_empty();
+                    let structured = definition.is_structured();
                     let mut resource = ResourceAdapter::new(definition, self.backend.clone());
                     resource.destroying = self.destroying.clone();
                     // Typed list and block inputs need the structured adapter.

@@ -72,6 +72,10 @@ pub struct Definition {
     pub describe: Option<Describe>,
     /// Typed inputs carried as JSON in row fields.
     pub structured: Vec<crate::Structured>,
+    /// The identity other resources take, exposed as the computed `ref`.
+    pub export: Option<crate::Export>,
+    /// Inputs that take another resource's `ref`.
+    pub references: Vec<crate::Reference>,
 }
 
 impl Definition {
@@ -93,6 +97,8 @@ impl Definition {
             validate_attribute: None,
             describe: None,
             structured: Vec::new(),
+            export: None,
+            references: Vec::new(),
         }
     }
     pub fn optional(mut self, fields: &[&'static str]) -> Self {
@@ -152,6 +158,35 @@ impl Definition {
             shape,
         });
         self
+    }
+    /// Expose `fields` as the computed object `ref` of type `kind`, which other
+    /// resources take to refer to this one.
+    pub fn exports(mut self, kind: &'static str, fields: &[&'static str]) -> Self {
+        self.export = Some(crate::Export {
+            kind,
+            fields: fields.to_vec(),
+        });
+        self
+    }
+    /// Take another resource's `ref` of type `kind` as the object input
+    /// `attribute`. Each `(ref attribute, row field)` pair carries one of its
+    /// attributes to the backend.
+    pub fn references(
+        mut self,
+        attribute: &'static str,
+        kind: &'static str,
+        fields: &[(&'static str, &'static str)],
+    ) -> Self {
+        self.references.push(crate::Reference {
+            attribute,
+            kind,
+            fields: fields.to_vec(),
+        });
+        self
+    }
+    /// Whether the resource has typed attributes, which need the structured adapter.
+    pub fn is_structured(&self) -> bool {
+        !self.structured.is_empty() || self.export.is_some() || !self.references.is_empty()
     }
     pub fn describe(mut self, describe: Describe) -> Self {
         self.describe = Some(describe);
@@ -230,4 +265,6 @@ pub mod shape;
 mod structured;
 pub use nemoclaw_backend::{Backend, Mutation, Row};
 pub use resource::{ResourceAdapter, observation_message};
-pub use structured::{Structured, StructuredAdapter, StructuredState};
+pub use structured::{
+    Export, REF, REF_TYPE, Reference, Structured, StructuredAdapter, StructuredState,
+};

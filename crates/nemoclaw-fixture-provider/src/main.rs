@@ -4,19 +4,32 @@
 //! resources keep their state in files under `NEMOCLAW_FIXTURE_DIR`, so tests
 //! drive OpenTofu through read failures, drift, absence, and partial creation.
 //! The `mode` file there selects the behavior.
+//!
+//! Its `workspace` exports a `ref` and its `sandbox` takes one, each in its own
+//! `<kind>.json` file, so tests drive references between resources.
 
 use async_trait::async_trait;
 use nemoclaw_sdk::ObservationError;
-use nemoclaw_tofu::{Backend, Definition, Mutation, ResourceAdapter, Row};
+use nemoclaw_tofu::{Backend, Definition, Mutation, ResourceAdapter, Row, StructuredAdapter};
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
 use tf_provider::{Diagnostics, DynamicResource, Provider, schema::Schema, value::ValueEmpty};
 
 struct Fixture {
     directory: PathBuf,
 }
+/// Resource kinds that keep their state in their own file.
+const REFERENCE_KINDS: [&str; 2] = ["workspace", "sandbox"];
+
 impl Fixture {
     fn mode(&self) -> String {
         fs::read_to_string(self.directory.join("mode")).unwrap()
+    }
+    fn file(&self, kind: &str) -> PathBuf {
+        self.directory.join(if REFERENCE_KINDS.contains(&kind) {
+            format!("{kind}.json")
+        } else {
+            "resource.json".into()
+        })
     }
 }
 #[async_trait]
@@ -57,7 +70,7 @@ impl Backend for Fixture {
         nemoclaw_runtime::vllm::hardware_capacity::check_memory(&service, &capacity, false)
             .map_err(Into::into)
     }
-    async fn read(&self, _: &str, _: &Row, _: bool) -> Result<Option<Row>, ObservationError> {
+    async fn read(&self, kind: &str, _: &Row, _: bool) -> Result<Option<Row>, ObservationError> {
         let mode = self.mode();
         if mode == "read-error" {
             return Err(ObservationError::Transport);
@@ -65,7 +78,7 @@ impl Backend for Fixture {
         if mode == "absent" {
             return Ok(None);
         }
-        let bytes = match fs::read(self.directory.join("resource.json")) {
+        let bytes = match fs::read(self.file(kind)) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err(ObservationError::Transport),
@@ -80,23 +93,24 @@ impl Backend for Fixture {
         }
         Ok(Some(row))
     }
-    async fn ensure(&self, _: &str, want: &Row) -> Mutation {
+    async fn ensure(&self, kind: &str, want: &Row) -> Mutation {
         let mut row = want.clone();
-        row.insert("id".into(), "fixture-id".into());
-        fs::write(
-            self.directory.join("resource.json"),
-            serde_json::to_vec(&row).unwrap(),
-        )
-        .unwrap();
+        // A new workspace identity is a new object, so its ID follows the name.
+        let id = if REFERENCE_KINDS.contains(&kind) {
+            format!("{kind}-{}", want["name"])
+        } else {
+            "fixture-id".into()
+        };
+        row.insert("id".into(), id);
+        fs::write(self.file(kind), serde_json::to_vec(&row).unwrap()).unwrap();
         if self.mode() == "create-error" {
             Mutation::partial(row, ObservationError::Transport)
         } else {
             Mutation::complete(row)
         }
     }
-    async fn remove(&self, _: &str, _: &Row, _: bool) -> Result<(), ObservationError> {
-        fs::remove_file(self.directory.join("resource.json"))
-            .map_err(|_| ObservationError::Transport)
+    async fn remove(&self, kind: &str, _: &Row, _: bool) -> Result<(), ObservationError> {
+        fs::remove_file(self.file(kind)).map_err(|_| ObservationError::Transport)
     }
 }
 struct FixtureProvider {
@@ -134,6 +148,26 @@ impl Provider for FixtureProvider {
                         .validate_spec(nemoclaw_sdk::services::validate_resource_spec),
                     self.backend.clone(),
                 )) as Box<dyn DynamicResource>,
+            ),
+            (
+                "workspace".into(),
+                Box::new(StructuredAdapter(ResourceAdapter::new(
+                    Definition::new("workspace", &["name", "label"], &[])
+                        .exports("nemoclaw_workspace", &["name", "label", "id"]),
+                    self.backend.clone(),
+                ))) as Box<dyn DynamicResource>,
+            ),
+            (
+                "sandbox".into(),
+                Box::new(StructuredAdapter(ResourceAdapter::new(
+                    Definition::new("sandbox", &["name", "workspace", "workspace_label"], &[])
+                        .references(
+                            "workspace",
+                            "nemoclaw_workspace",
+                            &[("name", "workspace"), ("label", "workspace_label")],
+                        ),
+                    self.backend.clone(),
+                ))) as Box<dyn DynamicResource>,
             ),
         ]))
     }

@@ -27,6 +27,7 @@ mod inference_capabilities;
 mod kubernetes_hcl;
 mod kubernetes_lifecycle;
 mod provider_protocol;
+mod references;
 mod runtime_image;
 mod service_capacity;
 mod service_readiness;
