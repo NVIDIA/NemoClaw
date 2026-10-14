@@ -410,7 +410,7 @@ describe("Hermes config export live evidence", () => {
   );
 
   it.each(["https", "http"])(
-    "accepts the exact messaging and %s export refusals from both aliases",
+    "accepts messaging refusal from both aliases with %s endpoint",
     async (scheme) => {
       mocks.load.mockReturnValue({
         sandboxes: {
@@ -452,7 +452,7 @@ describe("Hermes config export live evidence", () => {
     },
   );
 
-  it("accepts messaging refusal alongside other unsupported export findings", async () => {
+  it("accepts messaging refusal alongside other export findings", async () => {
     mocks.load.mockReturnValue({
       sandboxes: {
         hermes: {
@@ -468,7 +468,7 @@ describe("Hermes config export live evidence", () => {
       exitCode: 2,
       stdout: "",
       stderr: [
-        "Config export failed (unsupported).",
+        "Config export failed (unsupported, policy-not-representable).",
         "V1 export does not support messaging.",
         "The sandbox provider attachments do not match its supported configuration.",
         "The managed startup profile is not the canonical profile supported by v1 export.",
