@@ -66,12 +66,10 @@ import {
 import {
   E2E_ACTION_PROVENANCE,
   UPLOAD_E2E_ARTIFACTS_ACTION,
+  validatePortableHermesCliArtifactRestoreAction,
   validateUploadE2eArtifactsWorkflowBoundary,
 } from "./upload-e2e-artifacts-workflow-boundary.mts";
-import {
-  CLI_ARTIFACT_RESTORE_STEP,
-  validateE2eWorkspaceBootstrapBoundary,
-} from "./workspace-bootstrap-workflow-boundary.mts";
+import { validateE2eWorkspaceBootstrapBoundary } from "./workspace-bootstrap-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -2927,31 +2925,6 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
     }
   }
   return errors;
-}
-
-function validatePortableHermesCliArtifactRestoreAction(workflow: WorkflowRecord): string[] {
-  const jobs = asRecord(workflow.jobs);
-  const portableHermesRestores = asSteps(
-    asRecord(jobs["portable-hermes-finalization"]).steps,
-  ).filter((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
-  if (
-    portableHermesRestores.length !== 1 ||
-    portableHermesRestores[0]?.uses !== E2E_ACTION_PROVENANCE.restoreCliArtifact.reference
-  ) {
-    return [
-      "portable-hermes-finalization must restore the exact-commit CLI artifact with the reviewed action reference",
-    ];
-  }
-  if (
-    !isDeepStrictEqual(asRecord(portableHermesRestores[0].with), {
-      "provenance-json": "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
-    })
-  ) {
-    return [
-      "portable-hermes-finalization must bind the exact-commit CLI artifact restore to the planned provenance output",
-    ];
-  }
-  return [];
 }
 
 /** Returns workflow contract violations before a caller dispatches E2E jobs with credentials or external resources. */
