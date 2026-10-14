@@ -51,17 +51,12 @@ fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, Value), ConfigError> 
             }
             ("fabric_harnesses", inputs)
         }
-        DiscoveryQuery::Inference(request) => {
-            request
-                .validate()
-                .map_err(|_| ConfigError::new("discovery inputs are invalid"))?;
-            (
-                "inference_capabilities",
-                json!({"endpoint":literal(&request.endpoint),"api":request.api,"credential_env":request.credential_env}),
+        DiscoveryQuery::Gateway(_)
+        | DiscoveryQuery::Credential(_)
+        | DiscoveryQuery::Inference(_) => {
+            unreachable!(
+                "a plan reads the gateway, credentials, and model catalogs outside its discovery reads"
             )
-        }
-        DiscoveryQuery::Gateway(_) | DiscoveryQuery::Credential(_) => {
-            unreachable!("a plan reads the gateway and credentials outside its discovery reads")
         }
     })
 }
@@ -101,7 +96,7 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
     let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();
     sandboxes.sort_by(|left, right| left.name.cmp(&right.name));
     let mut sandboxes = sandboxes.into_iter();
-    let (mut endpoints, mut targets, mut images) = (0, 0, 0);
+    let (mut targets, mut images) = (0, 0);
     for query in plan_queries(document)? {
         match &query {
             DiscoveryQuery::Gateway(_) => {
@@ -111,11 +106,8 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                     json!("${data.openshell_gateway.current.observation_json}"),
                 );
             }
-            DiscoveryQuery::Inference(_) => {
-                let name = format!("endpoint_{endpoints}");
-                read(graph, &mut observations, &query, &name, &name, |_| {})?;
-                endpoints += 1;
-            }
+            // The SDK reads model catalogs itself; they are advisory, not graph reads.
+            DiscoveryQuery::Inference(_) => {}
             DiscoveryQuery::Hardware(_) => {
                 let name = format!("target_{targets}");
                 read(graph, &mut observations, &query, &name, &name, |_| {})?;

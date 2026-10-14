@@ -78,5 +78,6 @@ pub mod discovery;
 
 mod discovery_graph;
 
+mod inference_catalog;
 /// Read-only inference metadata and direct credential availability.
 pub mod inference_discovery;

@@ -18,7 +18,6 @@ use http_fixture as transport;
 mod image_runtime;
 
 mod discovery;
-mod inference_capabilities;
 mod provider_protocol;
 mod references;
 mod runtime_image;
@@ -111,7 +110,6 @@ fn every_type_has_a_contract_test() {
         .collect();
     let sources = [
         include_str!("discovery.rs"),
-        include_str!("inference_capabilities.rs"),
         include_str!("provider_protocol.rs"),
         include_str!("runtime_image.rs"),
         include_str!("service_capacity.rs"),

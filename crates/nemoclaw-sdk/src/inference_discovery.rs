@@ -9,6 +9,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+pub use crate::inference_catalog::observe_endpoint;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EndpointRequest {
     pub endpoint: String,
@@ -125,6 +127,28 @@ pub fn observe_credentials(
         .credential_names()
         .into_iter()
         .map(|reference| observe_credential(secrets, reference))
+        .collect())
+}
+/// Read every external endpoint's model catalog, named `endpoint_0`,
+/// `endpoint_1`, ... in [`endpoint_requests`] order. Reads run together, each
+/// bounded by its own timeout, and report failures as observations; only an
+/// invalid document fails.
+pub async fn observe_endpoints(
+    document: &Document,
+    secrets: &dyn Secrets,
+) -> Result<Vec<(String, EndpointRequest, EndpointObservation)>, Error> {
+    let requests = endpoint_requests(document)?;
+    let observed = futures_util::future::join_all(
+        requests
+            .iter()
+            .map(|request| observe_endpoint(request, secrets)),
+    )
+    .await;
+    Ok(requests
+        .into_iter()
+        .zip(observed)
+        .enumerate()
+        .map(|(index, (request, observation))| (format!("endpoint_{index}"), request, observation))
         .collect())
 }
 /// Resolve every selected route through the configuration owner's scoped providers.

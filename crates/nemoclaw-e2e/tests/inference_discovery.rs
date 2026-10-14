@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Inference catalog discovery through SDK deployments. The provider's
-//! contract tests cover `nemoclaw_inference_capabilities` in authored HCL.
+//! Inference catalog discovery through SDK deployments. The SDK's catalog
+//! reader has its own HTTP fixture tests in nemoclaw-discovery.
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -4,13 +4,13 @@
 //! Advertised model catalogs, not inference probes or sandbox reachability.
 //! Protocols: https://platform.openai.com/docs/api-reference/models/list and
 //! https://platform.claude.com/docs/en/api/models/list.
-use futures_util::StreamExt;
-use nemoclaw_sdk::{
+use crate::{
     Secrets,
     config::InferenceApi,
     discovery::ObservationStatus,
     inference_discovery::{AuthenticationStatus, EndpointObservation, EndpointRequest},
 };
+use futures_util::StreamExt;
 use std::{collections::BTreeSet, time::Duration};
 
 const MAX_BYTES: usize = 2 * 1024 * 1024;
@@ -211,6 +211,22 @@ async fn read_catalog(request: &EndpointRequest, secrets: &dyn Secrets) -> Endpo
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn invalid_requests_are_unknown_without_contacting_the_endpoint() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let request = EndpointRequest {
+            endpoint: format!("http://{}/v1", listener.local_addr().unwrap()),
+            api: InferenceApi::OpenaiCompletions,
+            credential_env: Some("not a credential name".into()),
+        };
+        let observed = observe_endpoint(&request, &crate::EnvironmentSecrets).await;
+        assert_eq!(observed.status, ObservationStatus::Unknown);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), listener.accept())
+                .await
+                .is_err()
+        );
+    }
     #[test]
     fn authentication_uses_protocol_headers_without_query_credentials() {
         let client = reqwest::Client::new();

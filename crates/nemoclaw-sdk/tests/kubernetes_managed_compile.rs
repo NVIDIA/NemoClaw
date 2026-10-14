@@ -252,10 +252,11 @@ fn managed_kubernetes_discovery_never_uses_a_local_container_engine() {
         );
     }
     assert!(agents["data"].get("openshell_gateway").is_some());
+    // The SDK reads model catalogs itself, outside the graph.
     assert!(
         agents["data"]
             .get("nemoclaw_inference_capabilities")
-            .is_some()
+            .is_none()
     );
     let image = &agents["data"]["fabric_harnesses"]["sandbox_0"];
     assert_eq!(image["engine"], "");

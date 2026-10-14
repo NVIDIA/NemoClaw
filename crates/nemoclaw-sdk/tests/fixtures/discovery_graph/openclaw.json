@@ -26,13 +26,6 @@
         "engine": "unix:///var/run/docker.sock"
       }
     },
-    "nemoclaw_inference_capabilities": {
-      "endpoint_0": {
-        "api": "openai-completions",
-        "credential_env": "NVIDIA_API_KEY",
-        "endpoint": "https://integrate.api.nvidia.com/v1"
-      }
-    },
     "nemoclaw_target_hardware": {
       "target_0": {
         "engine": "unix:///var/run/docker.sock"
@@ -55,7 +48,6 @@
   },
   "output": {
     "value": {
-      "endpoint_0": "${data.nemoclaw_inference_capabilities.endpoint_0.observation_json}",
       "engine": "${data.nemoclaw_engine_capabilities.current.observation_json}",
       "gateway": "${data.openshell_gateway.current.observation_json}",
       "gateway_prerequisites": "${data.openshell_gateway_prerequisites.current.observation_json}",

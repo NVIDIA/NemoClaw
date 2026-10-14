@@ -181,6 +181,31 @@ impl DiscoveryReport {
             })
             .collect()
     }
+    /// Record the SDK's model catalog reads under their `endpoint_N` names.
+    pub(super) fn endpoints(
+        &mut self,
+        observed: Vec<(
+            String,
+            crate::inference_discovery::EndpointRequest,
+            crate::inference_discovery::EndpointObservation,
+        )>,
+    ) {
+        for (name, request, observation) in observed {
+            self.targets.insert(
+                name.clone(),
+                DiscoveryTarget {
+                    endpoint: Some(request.endpoint),
+                    api: Some(request.api),
+                    credential_env: request.credential_env,
+                    ..DiscoveryTarget::default()
+                },
+            );
+            self.observations.insert(
+                name,
+                ReportedObservation::Discovery(DiscoveryObservation::Inference(observation)),
+            );
+        }
+    }
     pub(super) fn gateway_target(&mut self, document: &Document) {
         if self.observations.contains_key("gateway") {
             self.targets.insert(
@@ -219,7 +244,6 @@ fn observation_name(address: &str) -> Option<String> {
             "data.fabric_harnesses.",
             "data.nemoclaw_runtime_image.",
             "data.nemoclaw_target_hardware.",
-            "data.nemoclaw_inference_capabilities.",
         ]
         .iter()
         .find_map(|prefix| address.strip_prefix(prefix).map(str::to_owned))
@@ -521,7 +545,7 @@ mod tests {
 
     #[test]
     fn query_provenance_copies_only_safe_inputs_not_provider_payloads() {
-        let plan:Plan=serde_json::from_value(json!({"planned_values":{"root_module":{"resources":[{"address":"data.nemoclaw_inference_capabilities.endpoint_0","values":{"endpoint":"https://example.com/v1","api":"openai-completions","credential_env":"API_KEY","credential":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL","observation_json":null}}]}}})).unwrap();
+        let plan:Plan=serde_json::from_value(json!({"planned_values":{"root_module":{"resources":[{"address":"data.nemoclaw_target_hardware.target_0","values":{"engine":"unix:///var/run/docker.sock","credential":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL","observation_json":null}}]}}})).unwrap();
         let report = plan
             .discovery_report(
                 DiscoveryScope::Deployment,
@@ -530,18 +554,34 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            report.targets["endpoint_0"].endpoint.as_deref(),
-            Some("https://example.com/v1")
-        );
-        assert_eq!(
-            report.targets["endpoint_0"].credential_env.as_deref(),
-            Some("API_KEY")
+            report.targets["target_0"].engine.as_deref(),
+            Some("unix:///var/run/docker.sock")
         );
         assert!(
             !serde_json::to_string(&report)
                 .unwrap()
                 .contains("PRIVATE_SENTINEL")
         );
+    }
+
+    #[test]
+    fn catalog_reads_name_their_endpoint_and_only_leave_plans_unverified() {
+        use crate::inference_discovery::{EndpointObservation, EndpointRequest};
+        let mut report = DiscoveryReport::default();
+        report.endpoints(vec![(
+            "endpoint_0".into(),
+            EndpointRequest {
+                endpoint: "https://example.com/v1".into(),
+                api: crate::config::InferenceApi::OpenaiCompletions,
+                credential_env: Some("API_KEY".into()),
+            },
+            EndpointObservation::unknown("inference catalog observation timed out"),
+        )]);
+        let target = &report.targets["endpoint_0"];
+        assert_eq!(target.endpoint.as_deref(), Some("https://example.com/v1"));
+        assert_eq!(target.credential_env.as_deref(), Some("API_KEY"));
+        assert_eq!(report.unverified().len(), 1);
+        assert!(report.deferred().is_empty());
     }
 }
 

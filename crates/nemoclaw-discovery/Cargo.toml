@@ -24,13 +24,11 @@ nemoclaw-fabric = { path = "../nemoclaw-fabric" }
 bollard.workspace = true
 futures-util.workspace = true
 openshell-sdk.workspace = true
-reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tokio = { workspace = true, features = ["process", "io-util"] }
 tonic.workspace = true
-url.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 hyper = { version = "1", features = ["client", "http1"] }

@@ -15,13 +15,6 @@ data nemoclaw_engine_capabilities (version 0)
   observation_json: string, computed
   status: string, computed
 
-data nemoclaw_inference_capabilities (version 0)
-  api: string, required
-  credential_env: string, optional
-  endpoint: string, required
-  observation_json: string, computed
-  status: string, computed
-
 data nemoclaw_runtime_image (version 0)
   allow_missing: bool, optional
   architecture: string, required

@@ -280,7 +280,6 @@ The `nemoclaw` provider serves only data sources; its `destroy` setting has no e
 |---|---|
 | `nemoclaw_engine_capabilities` | [Engine version, platform, CPUs, and memory](#engine-and-fabric-discovery) |
 | `nemoclaw_target_hardware` | [Engine-advertised hardware](#target-hardware) |
-| `nemoclaw_inference_capabilities` | [Inference model catalog](#inference-endpoint-metadata) |
 | `nemoclaw_runtime_image` | [Managed runtime image labels](#runtime-image-compatibility) |
 
 ### Docker and Helm Types
@@ -353,7 +352,7 @@ An observation describes the selected target at the time of its read; it is not 
 | GPU memory, driver, compute capability, and disk measurements | Provider `observe_host_hardware` with a selected `HostObserver` | Explicit direct calls or existing configured service-capacity checks; the new passive hardware source does not run collectors |
 | Packaged adapters, APIs, settings, and runtime requirements | `fabric_harnesses`; selected image metadata containing Fabric discovery results | Onboarding image changes and deployment planning |
 | Managed runtime specification, required labels, and platform | `nemoclaw_runtime_image`; selected engine image inspection | Plan for present images; after image acquisition before runtime mutations |
-| Advertised models and catalog authentication | `nemoclaw_inference_capabilities`; HTTP model-list endpoint from the control host | Onboarding endpoint changes and planning for selected inference routes |
+| Advertised models and catalog authentication | Direct SDK `observe_endpoints`; HTTP model-list endpoint from the control host | Onboarding endpoint changes and planning for selected inference routes |
 | Credential-reference availability | Direct SDK `observe_credentials`; application's secret resolver | Onboarding, SDK calls, and plan-result discovery; values and local availability do not enter provider state |
 | Gateway version and compute drivers | Existing `openshell_gateway`; authenticated OpenShell API | Onboarding review and required deployment lifecycle checks |
 | Existing resources, ownership, drift, and retained storage | Existing OpenTofu resource refresh and SDK retained bindings | Deployment planning; no separate scan adopts unowned resources |
@@ -440,8 +439,9 @@ Existing configured service-capacity checks retain their daemon-bound `HostObser
 
 ## Inference Endpoint Metadata
 
-`nemoclaw_inference_capabilities` requires `endpoint` and `api`; optional `credential_env` names a credential reference.
-The provider resolves that reference in memory for the selected endpoint and returns `status` and `observation_json`, never the credential value.
+The SDK reads each selected external endpoint's model catalog itself, outside the OpenTofu graph, with `inference_discovery::observe_endpoints`; no provider type reads catalogs.
+Each read takes the endpoint, its `api`, and an optional `credential_env` credential reference, which the SDK resolves in memory and never reports.
+Plans name the reads `endpoint_0`, `endpoint_1`, and so on, and run them together.
 It issues bounded GET requests to the OpenAI-compatible or Anthropic model-list API, with no generation request and no redirects.
 Reads have a five-second total bound and limits on response size, models, and pagination.
 

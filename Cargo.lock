@@ -2563,14 +2563,12 @@ dependencies = [
  "nemoclaw-openshell",
  "nemoclaw-sdk",
  "openshell-sdk",
- "reqwest 0.13.5",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
  "tokio",
  "tonic",
- "url",
 ]
 
 [[package]]
@@ -2796,6 +2794,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bollard-stubs",
+ "futures-util",
  "getrandom 0.4.3",
  "interprocess",
  "ipnet",
