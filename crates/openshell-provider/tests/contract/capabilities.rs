@@ -231,9 +231,10 @@ async fn gateway_capability_reads_wait_for_unknown_bootstrap_dependencies() {
     let directory = TofuWorkspace::with_providers(tofu(), &[("openshell", &provider())]);
     fs::write(directory.path().join("main.tf.json"), json!({
         "terraform":{"required_version":"= 1.12.6", "required_providers":{"openshell":{"source":"registry.opentofu.org/nvidia/openshell"}}},
-        "provider":{"openshell":{"endpoint":gateway.endpoint}},
+        "provider":{"openshell":{}},
         "resource":{"terraform_data":{"bootstrap":{"input":"docker"}}},
         "data":{"openshell_gateway":{"current":{
+            "endpoint":gateway.endpoint,
             "required_compute_drivers":["${terraform_data.bootstrap.output}"],
             "lifecycle":{"postcondition":[{"condition":"${self.compatible}", "error_message":"Gateway is incompatible."}]}
         }}},

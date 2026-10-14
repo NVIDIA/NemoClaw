@@ -420,6 +420,15 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
     ]
     .map(lifecycle_rules)
     .map(|mut definition| {
+        // Each object names the gateway that holds it; the gateway does not
+        // observe how it was reached, so rows carry the connection.
+        let gateway = nemoclaw_openshell::GATEWAY_FIELDS.map(|(_, field)| field);
+        definition.fields.extend(gateway);
+        // Credential and TLS references rotate in place; another endpoint is
+        // another gateway, which retained objects refuse.
+        definition.mutable.extend(&gateway[1..]);
+        definition.optional.extend(&gateway[1..]);
+        definition.carried.extend(gateway);
         definition.structured = nemoclaw_openshell::structured_inputs(definition.kind);
         definition.export = nemoclaw_openshell::export(definition.kind);
         definition.references = nemoclaw_openshell::references(definition.kind);

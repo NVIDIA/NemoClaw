@@ -2,6 +2,7 @@
   "data": {
     "openshell_gateway": {
       "apply": {
+        "endpoint": "${var.endpoint}",
         "lifecycle": {
           "postcondition": [
             {
@@ -16,6 +17,7 @@
         ]
       },
       "current": {
+        "endpoint": "${var.endpoint}",
         "required_compute_drivers": [
           "docker"
         ]
@@ -24,8 +26,7 @@
   },
   "provider": {
     "openshell": {
-      "destroy": "${var.destroying}",
-      "endpoint": "${var.endpoint}"
+      "destroy": "${var.destroying}"
     }
   },
   "resource": {
@@ -39,6 +40,7 @@
           "data.openshell_gateway.apply"
         ],
         "endpoint": "http://172.20.0.1:11446/v1",
+        "gateway": "${data.openshell_gateway.current.ref}",
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "lifecycle": {
           "precondition": [
@@ -62,6 +64,7 @@
           "data.openshell_gateway.apply"
         ],
         "endpoint": "http://172.20.0.1:11446/v1",
+        "gateway": "${data.openshell_gateway.current.ref}",
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "lifecycle": {
           "precondition": [
@@ -85,6 +88,7 @@
           "openshell_provider_registration.inference_local-b95da89e857d01251c2f1583",
           "data.openshell_gateway.apply"
         ],
+        "gateway": "${data.openshell_gateway.current.ref}",
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "image": "nc-multi-models@sha256:2ee5e33522a37d3d77bb6381a92e963cb1d5884f2dd28b353b4b7fa0d95f212e",
         "lifecycle": {
@@ -130,6 +134,7 @@
         "depends_on": [
           "data.openshell_gateway.apply"
         ],
+        "gateway": "${data.openshell_gateway.current.ref}",
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "lifecycle": {
           "precondition": [

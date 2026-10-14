@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The gateway's version and compute drivers, read over its authenticated API.
 
-use crate::client::GatewayClient;
+use crate::client::{GatewayClient, GatewaySettings};
 use async_trait::async_trait;
 use nemoclaw_backend::ObservationError;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 use std::{future::Future, time::Duration};
 use tf_provider::{
     AttributePath, DataSource, Diagnostics,
@@ -19,6 +22,14 @@ pub struct GatewayDataSource(pub Arc<GatewayClient>);
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct GatewayState {
+    endpoint: Value<String>,
+    credential_env: Value<String>,
+    tls_ca_env: Value<String>,
+    tls_certificate_env: Value<String>,
+    tls_key_env: Value<String>,
+    /// How resources reach this gateway, which they take as `gateway`.
+    #[serde(rename = "ref")]
+    reference: Value<BTreeMap<String, Value<String>>>,
     required_compute_drivers: Value<Vec<Value<String>>>,
     wait_timeout_seconds: Value<u64>,
     // An unknown scheduling input makes OpenTofu defer this read until apply.
@@ -32,7 +43,52 @@ pub struct GatewayState {
     incompatibility: Value<String>,
 }
 
+impl GatewayState {
+    fn settings(&self) -> GatewaySettings<'_> {
+        GatewaySettings {
+            endpoint: &self.endpoint,
+            credential_env: &self.credential_env,
+            tls_ca_env: &self.tls_ca_env,
+            tls_certificate_env: &self.tls_certificate_env,
+            tls_key_env: &self.tls_key_env,
+        }
+    }
+    /// The `ref` naming this connection; unknown inputs leave it unknown.
+    fn reference(&self) -> Value<BTreeMap<String, Value<String>>> {
+        if self.settings().unknown() {
+            return Value::Unknown;
+        }
+        let text = |value: &Value<String>| match value {
+            Value::Value(value) => value.clone(),
+            _ => String::new(),
+        };
+        let inputs = [
+            &self.endpoint,
+            &self.credential_env,
+            &self.tls_ca_env,
+            &self.tls_certificate_env,
+            &self.tls_key_env,
+        ];
+        Value::Value(
+            std::iter::once((
+                nemoclaw_tofu::REF_TYPE.to_owned(),
+                Value::Value(nemoclaw_openshell::GATEWAY_TYPE.to_owned()),
+            ))
+            .chain(nemoclaw_openshell::GATEWAY_FIELDS.iter().zip(inputs).map(
+                |((attribute, _), value)| ((*attribute).to_owned(), Value::Value(text(value))),
+            ))
+            .collect(),
+        )
+    }
+}
+
 fn requirements(diags: &mut Diagnostics, config: &GatewayState) -> Option<()> {
+    if !config.settings().unknown()
+        && let Err(error) = config.settings().connection()
+    {
+        diags.error_short(error, AttributePath::new("tls_ca_env"));
+        return None;
+    }
     let valid = match &config.required_compute_drivers {
         Value::Unknown => true,
         Value::Value(drivers) => {
@@ -98,6 +154,44 @@ impl DataSource for GatewayDataSource {
             version: 0,
             block: Block {
                 attributes: [
+                    (
+                        "endpoint",
+                        AttributeType::String,
+                        AttributeConstraint::Required,
+                    ),
+                    (
+                        "credential_env",
+                        AttributeType::String,
+                        AttributeConstraint::Optional,
+                    ),
+                    (
+                        "tls_ca_env",
+                        AttributeType::String,
+                        AttributeConstraint::Optional,
+                    ),
+                    (
+                        "tls_certificate_env",
+                        AttributeType::String,
+                        AttributeConstraint::Optional,
+                    ),
+                    (
+                        "tls_key_env",
+                        AttributeType::String,
+                        AttributeConstraint::Optional,
+                    ),
+                    (
+                        "ref",
+                        AttributeType::Object(
+                            std::iter::once(nemoclaw_tofu::REF_TYPE)
+                                .chain(
+                                    nemoclaw_openshell::GATEWAY_FIELDS
+                                        .map(|(attribute, _)| attribute),
+                                )
+                                .map(|name| (name.to_owned(), AttributeType::String))
+                                .collect(),
+                        ),
+                        AttributeConstraint::Computed,
+                    ),
                     (
                         "wait_timeout_seconds",
                         AttributeType::Number,
@@ -203,14 +297,29 @@ impl DataSource for GatewayDataSource {
                 return None;
             }
         };
-        let observed = match self.0.client() {
+        let connection = match config.settings().connection() {
+            Ok(Some(connection)) => connection,
+            Ok(None) => {
+                diags.root_error_short("Gateway endpoint is not yet known");
+                return None;
+            }
+            Err(error) => {
+                diags.root_error_short(error);
+                return None;
+            }
+        };
+        config.reference = config.reference();
+        let observed = match self.0.connect(&connection) {
+            Err(error) => {
+                diags.root_error("Gateway connection", error);
+                return None;
+            }
             Ok(client) => {
                 observe_with_wait(Duration::from_secs(timeout), || {
                     client.gateway_capabilities()
                 })
                 .await
             }
-            Err(error) => Err(error),
         };
         match observed {
             Ok(observed) => {
@@ -280,6 +389,7 @@ mod tests {
                 observation_json: Value::Null,
                 status: Value::Null,
                 incompatibility: Value::Null,
+                ..Default::default()
             };
             let mut diagnostics = Diagnostics::default();
             assert_eq!(
@@ -316,6 +426,7 @@ mod wait_tests {
                 observation_json: Value::Null,
                 status: Value::Null,
                 incompatibility: Value::Null,
+                ..Default::default()
             };
             let mut diagnostics = Diagnostics::default();
             assert_eq!(

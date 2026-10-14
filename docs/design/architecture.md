@@ -174,7 +174,7 @@ The native [bundle](../build.md#build-a-native-bundle) ships the matching CLI, s
 
 OpenShell needs a reachable gateway to refresh resources and plan changes.
 A managed deployment therefore establishes its runtime infrastructure before planning OpenShell resources.
-Deferred provider configuration supports fresh bootstrap, but an unavailable gateway still blocks refresh of existing OpenShell bindings before a combined graph can restore it.
+A gateway ref whose connection is unknown until apply defers planning during fresh bootstrap, but an unavailable gateway still blocks refresh of existing OpenShell bindings before a combined graph can restore it.
 The runtime stage preserves that recovery path.
 The SDK coordinates two graphs:
 

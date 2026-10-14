@@ -35,6 +35,8 @@ const BINDING: [&str; 9] = [
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct SandboxReadinessState {
+    /// The gateway holding the sandbox, as `data.openshell_gateway`'s `ref`.
+    gateway: Value<std::collections::BTreeMap<String, Value<String>>>,
     workspace: Value<String>,
     name: Value<String>,
     id: Value<String>,
@@ -106,6 +108,21 @@ fn binding(config: &SandboxReadinessState) -> Result<Row, Error> {
         .collect()
 }
 
+/// The gateway ref as the row fields a gateway client reads.
+fn gateway_row(config: &SandboxReadinessState) -> Result<Row, Error> {
+    let Value::Value(gateway) = &config.gateway else {
+        return Err(Error::State("sandbox readiness gateway is not yet known"));
+    };
+    nemoclaw_openshell::GATEWAY_FIELDS
+        .iter()
+        .map(|(attribute, field)| match gateway.get(*attribute) {
+            Some(Value::Value(value)) => Ok(((*field).to_owned(), value.clone())),
+            None | Some(Value::Null) => Ok(((*field).to_owned(), String::new())),
+            Some(Value::Unknown) => Err(Error::State("sandbox readiness gateway is not yet known")),
+        })
+        .collect()
+}
+
 #[async_trait]
 impl DataSource for SandboxReadinessDataSource {
     type State<'a> = SandboxReadinessState;
@@ -120,6 +137,19 @@ impl DataSource for SandboxReadinessDataSource {
                     .iter()
                     .map(|name| (*name, String, Required))
                     .chain([
+                        (
+                            "gateway",
+                            AttributeType::Object(
+                                std::iter::once(nemoclaw_tofu::REF_TYPE)
+                                    .chain(
+                                        nemoclaw_openshell::GATEWAY_FIELDS
+                                            .map(|(attribute, _)| attribute),
+                                    )
+                                    .map(|name| (name.to_owned(), String))
+                                    .collect(),
+                            ),
+                            Required,
+                        ),
                         ("read_trigger", String, Optional),
                         ("health_json", String, Computed),
                         ("error_message", String, Computed),
@@ -167,7 +197,7 @@ impl DataSource for SandboxReadinessDataSource {
                 ));
             }
             let binding = binding(&config)?;
-            let client = self.0.client()?;
+            let client = self.0.client_for(&gateway_row(&config)?)?;
             client.ready(&binding, &CancellationToken::new()).await?;
             client.health(&binding).await
         }

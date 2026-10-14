@@ -22,7 +22,10 @@ pub use connection::{
     remote_rejection, request,
 };
 pub use driver::ComputeDriver;
-pub use inputs::{export, flatten, references, structured_inputs};
+pub use inputs::{
+    GATEWAY_FIELDS, GATEWAY_TYPE, export, flatten, gateway_reference, references,
+    structured_inputs, without_gateway,
+};
 pub use lifecycle::{
     OpenShellLifecycle, RESOURCE_TYPES, object_kind, openshell_lifecycle, resource_type, type_name,
 };

@@ -78,7 +78,13 @@ None of them exposes ephemeral resources or provider functions.
 | `openshell_sandbox` | Sandbox |
 | `openshell_gateway` data source | [Gateway version and compute drivers](#gateway-capabilities) |
 
-The `openshell` provider takes the gateway `endpoint`, the `credential_env` variable holding its bearer credential, the `tls_ca_env`, `tls_certificate_env`, and `tls_key_env` variables naming mutual TLS files, and `destroy`, which permits deleting sandboxes during explicit teardown.
+The `openshell` provider takes only `destroy`, which permits deleting sandboxes during explicit teardown.
+Each object names the gateway that holds it with `gateway`, the `ref` of `data.openshell_gateway`.
+That data source takes the gateway `endpoint`, the `credential_env` variable holding its bearer credential, and the `tls_ca_env`, `tls_certificate_env`, and `tls_key_env` variables naming mutual TLS files; its `ref` carries those names, never their values.
+A literal object of the same shape, with `type = "openshell_gateway"`, also works where no data source is read, such as an SDK teardown graph.
+Objects keep their gateway connection in state, so refresh and removal reach the same gateway without provider configuration.
+Credential and TLS references update in place; a different endpoint is a different gateway, so it replaces reconstructible objects and retained or stateful objects refuse it.
+These schemas are version 1; state from an earlier provider is rejected rather than upgraded.
 When a registration names a managed vLLM or Ollama proxy credential, the provider reads the key from the owning container during apply, so the key never enters OpenTofu state.
 
 Each OpenShell resource exports a computed `ref` object identifying it: its `type`, `name`, `owner`, `generation`, and `id`, plus `workspace` for objects inside a workspace.
@@ -104,6 +110,7 @@ Other inputs are typed too:
 
 ```hcl
 resource "openshell_sandbox" "assistant" {
+  gateway      = data.openshell_gateway.current.ref
   workspace    = openshell_workspace.example.ref
   name         = "assistant"
   image        = var.image
@@ -136,7 +143,7 @@ resource "openshell_sandbox" "assistant" {
 | `fabric_sandbox_readiness` data source | [Sandbox completion](#sandbox-completion) |
 | `fabric_capabilities` data source | [Fabric image catalog and compatibility](#engine-and-fabric-discovery) |
 
-The `fabric` provider takes the same gateway settings as the `openshell` provider.
+The `fabric` provider also takes only `destroy`; `fabric_agent_configuration` and `fabric_sandbox_readiness` take the same `gateway` ref as the sandbox they configure.
 It also accepts `destroy`, but no Fabric type requires it: removing an agent configuration releases its binding without changing the sandbox.
 It reaches each sandbox's Fabric host by running commands in the sandbox through the gateway; `fabric_capabilities` instead reads the container engine named on it.
 
@@ -376,7 +383,7 @@ See [SDK discovery](sdk.md#discover-before-authoring-or-planning) and [onboardin
 
 ## Gateway Capabilities
 
-The deployment graph reads `data.openshell_gateway.current` during planning through the `openshell` provider's configured connection.
+The deployment graph reads `data.openshell_gateway.current` during planning through the connection it takes, and every OpenShell object and Fabric configuration takes its `ref`.
 The data source reports the observed `gateway_version`, driver names and aliases in `compute_drivers`, the driver-entry count in `compute_driver_count`, `compatible` for the `required_compute_drivers`, and an `incompatibility` description that is empty when compatible.
 Compatibility requires the pinned OpenShell version and exactly one initialized driver matching every required name.
 OpenTofu lifecycle conditions name each failed requirement with its required and observed values.

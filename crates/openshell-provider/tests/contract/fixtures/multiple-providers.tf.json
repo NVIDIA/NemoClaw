@@ -2,6 +2,7 @@
   "data": {
     "openshell_gateway": {
       "apply": {
+        "endpoint": "${var.endpoint}",
         "lifecycle": {
           "postcondition": [
             {
@@ -16,6 +17,7 @@
         ]
       },
       "current": {
+        "endpoint": "${var.endpoint}",
         "required_compute_drivers": [
           "docker"
         ]
@@ -24,8 +26,7 @@
   },
   "provider": {
     "openshell": {
-      "destroy": "${var.destroying}",
-      "endpoint": "${var.endpoint}"
+      "destroy": "${var.destroying}"
     }
   },
   "resource": {
@@ -39,6 +40,7 @@
           "data.openshell_gateway.apply"
         ],
         "endpoint": "https://hosted.example/v1",
+        "gateway": "${data.openshell_gateway.current.ref}",
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "lifecycle": {
           "precondition": [
@@ -62,6 +64,7 @@
           "data.openshell_gateway.apply"
         ],
         "endpoint": "http://172.20.0.1:11434/v1",
+        "gateway": "${data.openshell_gateway.current.ref}",
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "lifecycle": {
           "precondition": [
@@ -85,6 +88,7 @@
           "data.openshell_gateway.apply"
         ],
         "endpoint": "https://hosted.example/v1",
+        "gateway": "${data.openshell_gateway.current.ref}",
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "lifecycle": {
           "precondition": [
@@ -106,6 +110,7 @@
           "data.openshell_gateway.apply"
         ],
         "endpoint": "http://172.20.0.1:11434/v1",
+        "gateway": "${data.openshell_gateway.current.ref}",
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "lifecycle": {
           "precondition": [
@@ -130,6 +135,7 @@
           "openshell_provider_registration.inference_local-5834fdcc94534d6506776906",
           "data.openshell_gateway.apply"
         ],
+        "gateway": "${data.openshell_gateway.current.ref}",
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "image": "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e",
         "lifecycle": {
@@ -190,6 +196,7 @@
           "openshell_provider_registration.inference_local-5834fdcc94534d6506776906",
           "data.openshell_gateway.apply"
         ],
+        "gateway": "${data.openshell_gateway.current.ref}",
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "image": "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e",
         "lifecycle": {
@@ -235,6 +242,7 @@
         "depends_on": [
           "data.openshell_gateway.apply"
         ],
+        "gateway": "${data.openshell_gateway.current.ref}",
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "lifecycle": {
           "precondition": [
