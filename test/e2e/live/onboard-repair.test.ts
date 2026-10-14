@@ -11,6 +11,10 @@ import os from "node:os";
 import path from "node:path";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
+import {
+  ONBOARD_REPAIR_COMMAND_TIMEOUT_MS,
+  ONBOARD_REPAIR_TEST_TIMEOUT_MS,
+} from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   assertCleanupSucceededOrAbsent,
@@ -45,13 +49,15 @@ const OTHER_SANDBOX_NAME = process.env.NEMOCLAW_OTHER_SANDBOX_NAME ?? "e2e-repai
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const BACKUP_REJECTION_FILE = "/sandbox/.openclaw/workspace/.nemoclaw-backup-rejection";
+const RESTORED_WORKSPACE_MARKER_FILE =
+  "/sandbox/.openclaw/workspace/.nemoclaw-model-change-recreate-marker";
+const RESTORED_WORKSPACE_MARKER = "nemoclaw-model-change-recreate-workspace";
 const SYNTHETIC_BACKUP_TOKEN = `ghp_${"abcdef0123456789"}`;
 const STALE_EXTRA_PROVIDER = "e2e-stale-extra-provider";
 const LIVE_EXTRA_PROVIDER = "e2e-live-extra-provider";
 const EXTRA_PROVIDER_TOKEN_ENV = "NEMOCLAW_E2E_EXTRA_PROVIDER_TOKEN";
 const EXTRA_PROVIDER_TOKEN = "e2e-extra-provider-token";
-// Five serial onboarding commands can each use 20 minutes; reserve ten for probes.
-const LIVE_TIMEOUT_MS = testTimeout(110 * 60_000);
+const LIVE_TIMEOUT_MS = testTimeout(ONBOARD_REPAIR_TEST_TIMEOUT_MS);
 
 validateSandboxName(SANDBOX_NAME);
 validateSandboxName(OTHER_SANDBOX_NAME);
@@ -73,7 +79,7 @@ async function nemoclaw(
   args: string[],
   artifactName: string,
   extraEnv: NodeJS.ProcessEnv = {},
-  timeoutMs = 20 * 60_000,
+  timeoutMs = ONBOARD_REPAIR_COMMAND_TIMEOUT_MS,
 ): Promise<ShellProbeResult> {
   return await host.command(process.execPath, [CLI_ENTRYPOINT, ...args], {
     artifactName,
@@ -142,7 +148,7 @@ test(
         "resume repair proves recreated sandbox provider attachments are selectively reconciled",
         "REQUESTS_CA_BUNDLE fallback corporate CA source is baked and merged after repair",
         "a rejected pre-delete backup preserves the live sandbox and published route",
-        "a successful model-change recreate replaces the sandbox and serves the selected route",
+        "a successful model-change recreate preserves workspace data and serves the selected route",
         "resume rejects a different requested sandbox name",
         "resume rejects provider/model overrides that conflict with recorded state",
       ],
@@ -261,7 +267,7 @@ test(
         NEMOCLAW_RECREATE_SANDBOX: "1",
         ...corporateCa.env,
       }),
-      execTimeout(20 * 60_000),
+      execTimeout(ONBOARD_REPAIR_COMMAND_TIMEOUT_MS),
     );
     expect(first.exitCode, resultText(first)).toBe(1);
 
@@ -301,7 +307,7 @@ test(
           ["onboard", "--resume", "--non-interactive"],
           "phase-2-resume-repair",
           repairEnv,
-          execTimeout(20 * 60_000),
+          execTimeout(ONBOARD_REPAIR_COMMAND_TIMEOUT_MS),
         ),
       (environment, phase) => captureBoundedPodmanOwnerDiagnostic(host, environment, phase),
     );
@@ -376,7 +382,7 @@ test(
         NEMOCLAW_RECREATE_SANDBOX: "1",
         ...corporateCa.env,
       }),
-      execTimeout(20 * 60_000),
+      execTimeout(ONBOARD_REPAIR_COMMAND_TIMEOUT_MS),
     );
     expect(rejectedBackup.exitCode, resultText(rejectedBackup)).toBe(1);
     expect(resultText(rejectedBackup)).toMatch(/State backup (?:failed|threw)|Partial backup/);
@@ -429,6 +435,13 @@ test(
     fs.rmSync(SESSION_FILE, { force: true });
 
     progress.phase("recreate the same name with a changed model after backup succeeds");
+    await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(
+        `set -eu\nprintf '%s' '${RESTORED_WORKSPACE_MARKER}' > '${RESTORED_WORKSPACE_MARKER_FILE}'\nsync`,
+      ),
+      { artifactName: "phase-3-write-workspace-marker", env: env(), timeoutMs: 60_000 },
+    );
     // Let the changed selection trigger recreation so restored native routing is reconciled.
     const recreated = await nemoclaw(
       host,
@@ -439,7 +452,7 @@ test(
         NEMOCLAW_POLICY_MODE: "skip",
         ...corporateCa.env,
       }),
-      execTimeout(20 * 60_000),
+      execTimeout(ONBOARD_REPAIR_COMMAND_TIMEOUT_MS),
     );
     expect(recreated.exitCode, resultText(recreated)).toBe(0);
     const replacement = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
@@ -448,6 +461,18 @@ test(
       timeoutMs: 60_000,
     });
     expect(parseOpenShellSandboxId(resultText(replacement))).not.toBe(sourceId);
+    const restoredMarker = await sandbox.exec(
+      SANDBOX_NAME,
+      ["cat", RESTORED_WORKSPACE_MARKER_FILE],
+      {
+        artifactName: "phase-3-read-restored-workspace-marker",
+        env: env(),
+        timeoutMs: 60_000,
+      },
+    );
+    expect(restoredMarker.stdout.trim(), resultText(restoredMarker)).toBe(
+      RESTORED_WORKSPACE_MARKER,
+    );
     const replacementRequestOffset = fake.requests().length;
     const replacementChat = await sandbox.exec(
       SANDBOX_NAME,
@@ -499,7 +524,7 @@ test(
         NEMOCLAW_RECREATE_SANDBOX: "1",
         ...corporateCa.env,
       }),
-      execTimeout(20 * 60_000),
+      execTimeout(ONBOARD_REPAIR_COMMAND_TIMEOUT_MS),
     );
     await captureSandboxFailureDiagnostics(host, reinject, {
       sandboxName: SANDBOX_NAME,
