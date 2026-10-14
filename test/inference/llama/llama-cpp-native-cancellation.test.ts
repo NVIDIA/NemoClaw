@@ -19,11 +19,9 @@ describe
     afterAll(() => fixture?.close(), 60_000);
 
     it("rejects a completion without native bearer authentication", async () => {
-      const denied = JSON.parse(
-        await fixture.finished(
-          fixture.client("/v1/chat/completions", fixture.body(false, 16), 10, false),
-        ),
-      );
+      const request = fixture.client("/v1/chat/completions", fixture.body(false, 16), 10, false);
+      const denied = JSON.parse(await fixture.finished(request));
+      expect(request.headers()).toMatch(/^HTTP\/\S+ 401(?:\s|$)/mu);
       expect(denied.error.code).toBe(401);
       fixture.record.unauthenticatedCompletionStatus = denied.error.code;
       fixture.passed.add("authentication");

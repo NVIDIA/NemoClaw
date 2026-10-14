@@ -148,6 +148,7 @@ export async function createNativeLlamaDockerFixture(
     };
     const version = capture(["exec", server, "/app/llama-server", "--version"]);
     record.version = version.stdout + version.stderr;
+    expect(record.version).toContain("commit 8e7f22b67ef4667b4ddd50230771287f328cfb3f");
     record.serverProcesses = capture(["top", server, "-eo", "pid,ppid,comm,args"]).stdout;
 
     const client = (
@@ -168,13 +169,26 @@ export async function createNativeLlamaDockerFixture(
         args.push("--mount", `type=bind,src=${curlPath},dst=/run/secrets/curl-config,readonly`);
       args.push(imageId);
       if (authenticated) args.push("--config", "/run/secrets/curl-config");
-      args.push("--silent", "--show-error", "--no-buffer", "--max-time", String(timeout));
+      args.push(
+        "--silent",
+        "--show-error",
+        "--no-buffer",
+        "--dump-header",
+        "/dev/stderr",
+        "--max-time",
+        String(timeout),
+      );
       if (body) args.push("--data", JSON.stringify(body));
       args.push(`http://${name}:8081${url}`);
       const id = create(args);
       expect(owned(id).Image).toBe(imageId);
       capture(["start", id]);
-      return { id, timeout, output: () => capture(["logs", id]).stdout };
+      return {
+        id,
+        timeout,
+        output: () => capture(["logs", id]).stdout,
+        headers: () => capture(["logs", id]).stderr,
+      };
     };
     const body = (stream: boolean, tokens: number) => ({
       model: "native-test-smollm",
