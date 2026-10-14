@@ -648,7 +648,7 @@ describe("native Podman E2E setup boundary", () => {
     });
   });
 
-  it("reproduces the Portable Hermes user-local OpenShell PATH gap", () => {
+  it("copies Portable Hermes OpenShell components from the explicit user-local install root", () => {
     const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
     const install = job.steps?.find((step) => step.name === "Install pinned OpenShell");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-handoff-"));
@@ -677,7 +677,15 @@ exec /bin/bash "$@"
     writeExecutable(
       path.join(fakeBin, "sudo"),
       `#!/bin/sh
-printf '%s\\n' "$*" >>"$SUDO_LOG"
+set -eu
+previous=
+last=
+for argument in "$@"; do
+  previous="$last"
+  last="$argument"
+done
+[ -x "$previous" ]
+printf '%s -> %s\\n' "$previous" "$last" >>"$SUDO_LOG"
 exit 0
 `,
     );
@@ -694,9 +702,16 @@ exit 0
         },
       });
 
-      expect(result.status).not.toBe(0);
-      expect(fs.existsSync(path.join(home, ".local/bin/openshell"))).toBe(true);
-      expect(fs.existsSync(sudoLog)).toBe(false);
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(sudoLog, "utf8")).toBe(
+        [
+          `${home}/.local/bin/openshell -> /usr/bin/openshell`,
+          `${home}/.local/bin/openshell-gateway -> /usr/bin/openshell-gateway`,
+          `${home}/.local/bin/openshell-sandbox -> /usr/bin/openshell-sandbox`,
+          "",
+        ].join("\n"),
+      );
+      expect(fs.readFileSync(githubPath, "utf8")).toBe("/usr/bin\n");
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
