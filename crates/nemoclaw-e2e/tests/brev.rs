@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
 use nemoclaw_sdk::{
     CancellationToken, Change, Deployment, OperationResult, Outcome,
     backend::Row,
     config::{ComputeDriver, Document, Gateway},
 };
+use openshell_provider::{EnvironmentSecrets, OpenShell};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
@@ -373,7 +373,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
         &[
             "docker_container.managed_gateway_runtime",
             image_resource.as_str(),
-            "nemoclaw_gateway_storage.runtime",
+            "openshell_gateway_storage.runtime",
         ],
         "create",
     );
@@ -409,7 +409,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
         &[
             "docker_container.managed_gateway_runtime",
             image_resource.as_str(),
-            "nemoclaw_gateway_storage.runtime",
+            "openshell_gateway_storage.runtime",
             "openshell_provider_registration.inference_hosted-nvidia-prod",
             "openshell_provider_profile.inference_hosted-nvidia-prod",
             "openshell_sandbox.assistant",
@@ -489,7 +489,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     ];
     let retained = vec![
         String::from("openshell_workspace.deployment"),
-        String::from("nemoclaw_gateway_storage.runtime"),
+        String::from("openshell_gateway_storage.runtime"),
     ];
     let destroy_plan = deployment.plan_destroy(&cancel).await.unwrap();
     assert_eq!(destroy_plan.outcome, Outcome::Planned);
@@ -505,7 +505,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
         destroyed.retained,
         vec![
             String::from("openshell_workspace.deployment"),
-            String::from("nemoclaw_gateway_storage.runtime"),
+            String::from("openshell_gateway_storage.runtime"),
         ]
     );
     assert!(destroyed.health.is_empty());

@@ -127,20 +127,19 @@ fn openshift_compiles_platform_identity_and_wire_driver_without_docker() {
                 assert_eq!(target.values["compute_driver"], "openshift");
             }
             let platform = compile_runtime(&document, &generations, "0.1.0").unwrap();
-            // The platform stage has no gateway, so it omits the gateway providers.
+            // The platform stage installs the gateway: openshell serves the Kubernetes
+            // gateway types; fabric needs a running gateway, so the stage omits it.
             assert_eq!(platform["provider"]["nemoclaw"], json!({}));
-            for provider in ["openshell", "fabric"] {
-                assert!(platform["provider"].get(provider).is_none(), "{provider}");
-                assert!(
-                    platform["terraform"]["required_providers"]
-                        .get(provider)
-                        .is_none(),
-                    "{provider}"
-                );
-            }
+            assert_eq!(platform["provider"]["openshell"], json!({}));
+            assert!(platform["provider"].get("fabric").is_none());
+            assert!(
+                platform["terraform"]["required_providers"]
+                    .get("fabric")
+                    .is_none()
+            );
             assert!(platform.get("data").is_none());
             assert_eq!(
-                platform["resource"]["nemoclaw_kubernetes_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
+                platform["resource"]["openshell_kubernetes_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
                 true
             );
         } else {

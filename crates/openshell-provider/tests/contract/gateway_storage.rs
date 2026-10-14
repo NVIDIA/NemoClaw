@@ -174,11 +174,11 @@ fn configure(workspace: &TofuWorkspace, engine: &str, generation: &str) {
             r#"terraform {{
   required_version = "= 1.12.6"
   required_providers {{
-    nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw" }}
+    openshell = {{ source = "registry.opentofu.org/nvidia/openshell" }}
   }}
 }}
-provider "nemoclaw" {{}}
-resource "nemoclaw_gateway_storage" "runtime" {{
+provider "openshell" {{}}
+resource "openshell_gateway_storage" "runtime" {{
   name           = "{NAME}"
   owner          = "{OWNER}"
   generation     = "{generation}"
@@ -188,7 +188,7 @@ resource "nemoclaw_gateway_storage" "runtime" {{
   network_cidr   = "172.30.110.0/24"
 }}
 output "data_path" {{
-  value = nemoclaw_gateway_storage.runtime.data_path
+  value = openshell_gateway_storage.runtime.data_path
 }}
 "#
         ),

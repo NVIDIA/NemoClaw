@@ -209,7 +209,7 @@ fn saved() -> BTreeMap<String, StateBinding> {
         (KUBERNETES_AUTH, "issuer-uid", "auth-spec"),
         (crate::kubernetes::gateway::ADDRESS, "gateway", ""),
         (
-            "nemoclaw_kubernetes_gateway.runtime",
+            "openshell_kubernetes_gateway.runtime",
             "gateway-uid",
             "gateway-spec",
         ),
@@ -233,7 +233,7 @@ fn a_forgotten_release_is_restored_without_resurrecting_removed_readiness() {
     let saved = saved();
     let mut current = saved.clone();
     current.remove(crate::kubernetes::gateway::ADDRESS);
-    current.remove("nemoclaw_kubernetes_gateway.runtime");
+    current.remove("openshell_kubernetes_gateway.runtime");
     assert!(needs_restore(&saved, &current).unwrap());
 }
 

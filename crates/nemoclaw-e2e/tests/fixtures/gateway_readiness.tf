@@ -16,7 +16,7 @@ provider "docker" { host = "@ENGINE@" }
 provider "nemoclaw" {}
 provider "openshell" {}
 data "docker_image" "gateway" { name = "@GATEWAY_IMAGE@" }
-resource "nemoclaw_gateway_storage" "gateway" {
+resource "openshell_gateway_storage" "gateway" {
   spec = jsonencode({
     layout = 1, kind = "managed_gateway", name = var.name, owner = var.owner,
     generation = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -31,8 +31,8 @@ resource "docker_container" "gateway" {
   image = data.docker_image.gateway.id
   user = "0:0"
   entrypoint = ["/usr/local/bin/openshell-gateway"]
-  command = ["--config", "${nemoclaw_gateway_storage.gateway.data_path}/gateway.toml", "--name", var.name, "--bind-address", "127.0.0.1", "--port", tostring(var.port)]
-  env = ["XDG_STATE_HOME=${nemoclaw_gateway_storage.gateway.data_path}/state", "OPENSHELL_DB_URL=sqlite:${nemoclaw_gateway_storage.gateway.data_path}/gateway.db"]
+  command = ["--config", "${openshell_gateway_storage.gateway.data_path}/gateway.toml", "--name", var.name, "--bind-address", "127.0.0.1", "--port", tostring(var.port)]
+  env = ["XDG_STATE_HOME=${openshell_gateway_storage.gateway.data_path}/state", "OPENSHELL_DB_URL=sqlite:${openshell_gateway_storage.gateway.data_path}/gateway.db"]
   network_mode = "host"
   restart = "no"
   must_run = true
@@ -48,7 +48,7 @@ resource "docker_container" "gateway" {
   mounts {
     type = "volume"
     source = "${var.name}-data"
-    target = nemoclaw_gateway_storage.gateway.data_path
+    target = openshell_gateway_storage.gateway.data_path
   }
   mounts {
     type = "bind"

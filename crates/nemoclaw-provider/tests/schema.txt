@@ -9,82 +9,12 @@
 provider nemoclaw (version 0)
   destroy: bool, optional
 
-resource nemoclaw_gateway_storage (version 0)
-  compute_driver: string, required
-  data_path: string, computed
-  endpoint: string, optional, computed
-  engine: string, required
-  generation: string, optional, computed
-  id: string, computed
-  image: string, required
-  image_pull_policy: string, optional, computed
-  name: string, required
-  network_cidr: string, required
-  owner: string, optional, computed
-
 resource nemoclaw_inference_storage (version 0)
   engine: string, required
   generation: string, optional, computed
   id: string, computed
   name: string, required
   owner: string, optional, computed
-
-resource nemoclaw_kubernetes_auth (version 0)
-  authentication_profile: string, required
-  compute_driver: string, required
-  context: string, required
-  endpoint: string, required
-  environment: list(string), optional
-  gateway_values: string, computed
-  generation: string, optional, computed
-  id: string, computed
-  kubeconfig_env: string, required
-  name: string, required
-  namespace: string, required
-  owner: string, optional, computed
-  release_present: string, computed
-  running: string, computed
-
-resource nemoclaw_kubernetes_gateway (version 0)
-  authentication_profile: string, required
-  compute_driver: string, required
-  context: string, required
-  endpoint: string, required
-  environment: list(string), optional
-  generation: string, optional, computed
-  id: string, computed
-  kubeconfig_env: string, required
-  name: string, required
-  namespace: string, required
-  owner: string, optional, computed
-  running: string, computed
-
-resource nemoclaw_kubernetes_storage (version 0)
-  authentication_profile: string, required
-  compute_driver: string, required
-  context: string, required
-  endpoint: string, required
-  environment: list(string), optional
-  generation: string, optional, computed
-  id: string, computed
-  kubeconfig_env: string, required
-  name: string, required
-  namespace: string, required
-  owner: string, optional, computed
-  running: string, computed
-
-resource nemoclaw_managed_gateway (version 0)
-  compute_driver: string, required
-  endpoint: string, required
-  engine: string, required
-  generation: string, optional, computed
-  id: string, computed
-  image: string, required
-  image_pull_policy: string, optional, computed
-  name: string, required
-  network_cidr: string, required
-  owner: string, optional, computed
-  running: string, computed
 
 resource nemoclaw_ollama_external_model (version 0)
   digest: string, required
@@ -116,40 +46,6 @@ data nemoclaw_engine_capabilities (version 0)
   engine: string, required
   observation_json: string, computed
   status: string, computed
-
-data nemoclaw_gateway_readiness (version 0)
-  > Waits for a managed Docker gateway container to run and answer its health call.
-  container_id: string, required
-    > ID of the gateway container.
-  endpoint: string, required
-    > Gateway API origin, called without credentials.
-  engine: string, required
-    > Docker engine endpoint that runs the gateway container.
-  name: string, required
-    > Expected name of the gateway container.
-  owner: string, required
-    > Expected value of the container's nemoclaw.nvidia.com/uid label.
-  read_trigger: bool, optional
-    > Defers the read until apply while unknown.
-  ready: bool, computed
-    > True once the running gateway answers its health call.
-  wait_timeout_seconds: number, optional
-    > Seconds to wait, from 0 to 300; omission checks once.
-
-data nemoclaw_gateway_runtime (version 0)
-  > Computes a Docker gateway container's launch from typed settings without contacting any host.
-  command: list(string), computed
-    > The container's command.
-  data_path: string, required
-    > Absolute data path returned by the gateway's storage.
-  endpoint: string, required
-    > Gateway HTTP origin with a loopback address and an unprivileged port.
-  entrypoint: list(string), computed
-    > The container's entrypoint.
-  env: list(string), computed
-    > The container's environment.
-  name: string, required
-    > Gateway name: nc-, 16 lowercase hexadecimal characters, a hyphen, and a lowercase name.
 
 data nemoclaw_inference_capabilities (version 0)
   api: string, required

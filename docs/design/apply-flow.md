@@ -26,7 +26,7 @@ flowchart TB
     YAML["Deployment YAML"] --> SDK["1–2. nemoclaw apply deployment.yaml<br/>CLI + SDK validate configuration and credentials<br/>Compile runtime graph"]
 
     subgraph INFRA["OpenTofu — runtime stage: plan → SDK checks → apply"]
-        RUNTIME["3. Docker and NemoClaw providers<br/>Prepare gateway, inference services and storage<br/>Check readiness"]
+        RUNTIME["3. Docker, OpenShell, and NemoClaw providers<br/>Prepare gateway, inference services and storage<br/>Check readiness"]
     end
 
     SDK --> RUNTIME
@@ -86,7 +86,7 @@ OpenShell owns sandbox creation and policy enforcement.
 | **T. Port forwarding** | An operator runs `openshell forward service` using a separately configured OpenShell CLI connection. Forwarding to an enabled listener lasts while that foreground command runs. |
 
 The Docker provider owns disposable Docker compute, images, model-cache volumes, and service networks.
-The OpenShell provider owns OpenShell operations; the Fabric provider owns Fabric runtime configuration; the NemoClaw provider owns Podman gateway processes, gateway initialization and retained bridges, and application-specific persistence.
+The OpenShell provider owns OpenShell operations and gateway installation: Podman gateway processes, gateway initialization and retained bridges, and Kubernetes gateway storage and authentication. The Fabric provider owns Fabric runtime configuration; the NemoClaw provider owns inference services and application-specific persistence.
 The selected engine, any SSH execution setup, and the harness image are [operator prerequisites](../prerequisites.md).
 
 ## Conditions Summarized by the Diagram
