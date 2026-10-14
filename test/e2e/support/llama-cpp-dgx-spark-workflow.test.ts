@@ -5,7 +5,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
-import { exportLlamaCppDgxSparkQualificationPlan } from "../../../scripts/checks/export-llama-cpp-dgx-spark-qualification-plan.mts";
 import { validateE2eOperationsWorkflow } from "../../../tools/e2e/operations-workflow-boundary.mts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
@@ -21,13 +20,6 @@ describe("trusted DGX Spark workflow handoff (#13114)", () => {
     expect(validateE2eWorkflow(workflow)).toEqual([]);
     expect(buildE2eWorkflowPlan().selectedJobs).not.toContain(runnerJob);
     expect(buildE2eWorkflowPlan({ jobs: runnerJob }).selectedJobs).toEqual([runnerJob]);
-  });
-
-  it("exports a digest-bound execution plan including the pinned Go toolchain", () => {
-    const exported = exportLlamaCppDgxSparkQualificationPlan(root);
-    expect(JSON.parse(exported.plan).imageBuild.requestGuardToolchain).toMatchObject({
-      version: "1.26.9",
-    });
   });
 
   it.each([

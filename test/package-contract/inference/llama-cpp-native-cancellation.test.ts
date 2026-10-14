@@ -62,7 +62,7 @@ describe
       const started = performance.now();
       const response = await chat(false, endpoint);
       expect(response.status).toBe(200);
-      expect((await response.json()).usage.completion_tokens).toBe(16);
+      expect(await response.json()).toMatchObject({ usage: { completion_tokens: 16 } });
       return performance.now() - started;
     };
     const stream = async (endpoint = url) => {
