@@ -132,7 +132,7 @@ fn adding_a_sandbox_preserves_existing_resource_addresses_and_values() {
             let mut prior = instance.clone();
             let mut next = after["resource"][kind][name].clone();
             // Adding an earlier sandbox changes the discovery expression; its resolved image metadata is identical.
-            for field in ["runtime_json", "binaries_json"] {
+            for field in ["launch_json", "binaries_json"] {
                 prior.as_object_mut().unwrap().remove(field);
                 next.as_object_mut().unwrap().remove(field);
             }

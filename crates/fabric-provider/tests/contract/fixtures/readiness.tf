@@ -9,9 +9,7 @@ data "fabric_sandbox_readiness" "agent" {
   id            = openshell_sandbox.agent[0].id
   owner         = openshell_sandbox.agent[0].owner
   generation    = openshell_sandbox.agent[0].generation
-  agent_name    = openshell_sandbox.agent[0].agent_name
-  agent_runtime = openshell_sandbox.agent[0].agent_runtime
-  runtime_json  = openshell_sandbox.agent[0].runtime_json
+  launch_json   = openshell_sandbox.agent[0].launch_json
   config_json   = fabric_agent_configuration.agent[0].config_json
   read_trigger  = fabric_agent_configuration.agent[0].id
 }

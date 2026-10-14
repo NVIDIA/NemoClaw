@@ -89,10 +89,36 @@ async fn configuration_parent(
     let mut expected = want.clone();
     expected.insert("id".into(), value(want, "sandbox_id").into());
     verify_identity(&expected, &parent)?;
-    if value(&parent, "agent_runtime") != "fabric" || value(want, "sandbox_id").is_empty() {
+    if value(want, "sandbox_id").is_empty() {
         return Err(ObservationError::BindingMismatch);
     }
-    Ok(Some(parent))
+    fabric_binding(parent).map(Some)
+}
+
+/// A sandbox row with the Fabric agent name and runtime binding its launch
+/// metadata records; a sandbox that Fabric did not launch is refused.
+pub fn fabric_binding(mut sandbox: Row) -> Result<Row, ObservationError> {
+    use nemoclaw_openshell::runtime::{LAUNCH_AGENT, LAUNCH_AGENT_RUNTIME, LAUNCH_RUNTIME, Launch};
+    let launch = Launch::from_json(
+        sandbox
+            .get("launch_json")
+            .ok_or(ObservationError::Incomplete)?,
+    )?;
+    let metadata = |key: &str| {
+        launch
+            .metadata
+            .get(key)
+            .filter(|value| !value.is_empty())
+            .cloned()
+            .ok_or(ObservationError::BindingMismatch)
+    };
+    if metadata(LAUNCH_AGENT_RUNTIME)? != "fabric" {
+        return Err(ObservationError::BindingMismatch);
+    }
+    sandbox.insert("agent_name".into(), metadata(LAUNCH_AGENT)?);
+    sandbox.insert("agent_runtime".into(), "fabric".into());
+    sandbox.insert("runtime_json".into(), metadata(LAUNCH_RUNTIME)?);
+    Ok(sandbox)
 }
 pub(crate) async fn plan(client: &OpenShell, want: &Row) -> Result<(), Error> {
     configuration(value(want, "config_json"))?;

@@ -30,6 +30,7 @@ data fabric_capabilities (version 0)
   engine: string, required
   filesystem_read: list(string), optional
   image: string, required
+  launch_json: string, computed
   metadata_env: string, optional
   observation_json: string, computed
   operating_system: string, optional
@@ -37,17 +38,15 @@ data fabric_capabilities (version 0)
   status: string, computed
 
 data fabric_sandbox_readiness (version 0)
-  agent_name: string, required
-  agent_runtime: string, required
   config_json: string, required
   error_message: string, computed
   gateway: object({ credential_env = string, endpoint = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   generation: string, required
   health_json: string, computed
   id: string, required
+  launch_json: string, required
   name: string, required
   owner: string, required
   read_trigger: string, optional
   ready: bool, computed
-  runtime_json: string, required
   workspace: string, required

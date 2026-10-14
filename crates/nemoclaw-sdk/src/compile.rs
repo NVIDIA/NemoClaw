@@ -96,10 +96,9 @@ fn targets_with_plans(
     let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();
     sandboxes.sort_by_key(|sandbox| &sandbox.name);
     for sandbox in sandboxes {
-        let harness = document.sandbox_harness(sandbox)?;
+        document.sandbox_harness(sandbox)?;
         let web_search = document.web_search(sandbox)?;
         let image_scope = document.image_scope(sandbox)?;
-        let agent_name = &sandbox.agent.name;
         let mut provider_names = document
             .sandbox_inference_providers(sandbox)?
             .iter()
@@ -122,8 +121,9 @@ fn targets_with_plans(
                 generation(generations, "sandbox")?.into(),
             ),
             ("image".into(), sandbox.image.ref_.clone()),
-            ("agent_name".into(), agent_name.clone()),
-            ("agent_runtime".into(), harness.runtime()),
+            // Not a sandbox input: the launch carries the agent. Bound-sandbox
+            // checks compare it so renaming the agent is refused.
+            ("agent_name".into(), sandbox.agent.name.clone()),
             (
                 "provider_names_json".into(),
                 serde_json::to_string(&provider_names).expect("provider names"),
@@ -563,8 +563,12 @@ fn compile_with_plans(
             ));
         }
         if target.kind == "sandbox" {
-            attributes["runtime_json"] = json!(format!(
-                "${{{}.runtime_json}}",
+            attributes
+                .as_object_mut()
+                .expect("sandbox attributes")
+                .remove("agent_name");
+            attributes["launch_json"] = json!(format!(
+                "${{{}.launch_json}}",
                 runtime_sources[&target.values["name"]]
             ));
             let sandbox = document.sandbox(&target.values["name"])?;
@@ -671,9 +675,7 @@ fn compile_with_plans(
                 "id",
                 "owner",
                 "generation",
-                "agent_name",
-                "agent_runtime",
-                "runtime_json",
+                "launch_json",
             ]
             .into_iter()
             .map(|name| {
