@@ -209,21 +209,22 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
         assert!(resource.get("environment").is_none(), "{kind}");
     }
     let agents = compile(&document, &generations, "0.1.0").unwrap();
-    // The managed gateway's credentials reach both gateway providers.
-    for provider in ["openshell", "fabric"] {
-        for (field, expected) in [
-            ("credential_env", "NEMOCLAW_MANAGED_K8S_TOKEN"),
-            ("tls_ca_env", "NEMOCLAW_MANAGED_K8S_CA"),
-            ("tls_certificate_env", "NEMOCLAW_MANAGED_K8S_CERT"),
-            ("tls_key_env", "NEMOCLAW_MANAGED_K8S_KEY"),
-        ] {
-            assert_eq!(
-                agents["provider"][provider][field], expected,
-                "{provider}.{field}"
-            );
-        }
+    // The managed gateway's credentials reach the gateway data source, whose
+    // ref every object takes.
+    for (field, expected) in [
+        ("credential_env", "NEMOCLAW_MANAGED_K8S_TOKEN"),
+        ("tls_ca_env", "NEMOCLAW_MANAGED_K8S_CA"),
+        ("tls_certificate_env", "NEMOCLAW_MANAGED_K8S_CERT"),
+        ("tls_key_env", "NEMOCLAW_MANAGED_K8S_KEY"),
+    ] {
+        assert_eq!(
+            agents["data"]["openshell_gateway"]["current"][field], expected,
+            "{field}"
+        );
     }
-    assert_eq!(agents["provider"]["nemoclaw"], json!({}));
+    for provider in ["nemoclaw", "openshell", "fabric"] {
+        assert_eq!(agents["provider"][provider], json!({}), "{provider}");
+    }
     assert!(
         agents["resource"]
             .get("nemoclaw_kubernetes_gateway")

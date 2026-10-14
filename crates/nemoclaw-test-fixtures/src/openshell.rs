@@ -1023,6 +1023,17 @@ pub fn contract_rows(
                     .iter()
                     .find(|reference| reference.attribute == attribute)
                 {
+                    // These rows reach a gateway client directly, which never
+                    // sees the connection the resource adapter carries.
+                    if reference.kind == nemoclaw_openshell::GATEWAY_TYPE {
+                        assert!(
+                            value
+                                .as_str()
+                                .is_some_and(|text| text.starts_with("${data.openshell_gateway.")),
+                            "{name}: {value} is not a gateway ref"
+                        );
+                        continue;
+                    }
                     let field = reference.fields[0].1;
                     let carried = if reference.list {
                         let names: Vec<_> = value

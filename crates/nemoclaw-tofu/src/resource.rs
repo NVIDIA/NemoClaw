@@ -194,7 +194,17 @@ impl ResourceAdapter {
             })
             .collect()
     }
+    /// Copy fields the backend uses without observing from `source`.
+    fn carry(&self, source: &Row, mut observed: Row) -> Row {
+        for field in &self.definition.carried {
+            if let Some(value) = source.get(*field) {
+                observed.insert((*field).into(), value.clone());
+            }
+        }
+        observed
+    }
     fn checked(&self, prior: &Row, observed: Row) -> Result<Row, ObservationError> {
+        let observed = self.carry(prior, observed);
         for field in &self.definition.bound_fields {
             if prior.get(*field).map(String::as_str).unwrap_or("")
                 != observed.get(*field).map(String::as_str).unwrap_or("")
@@ -551,6 +561,66 @@ mod tests {
         async fn remove(&self, _: &str, _: &Row, _: bool) -> Result<(), ObservationError> {
             unreachable!("binding checks do not mutate resources")
         }
+    }
+
+    /// Observes rows without the connection fields the adapter carries.
+    struct Observer(Row);
+    #[async_trait]
+    impl Backend for Observer {
+        async fn read(&self, _: &str, _: &Row, _: bool) -> Result<Option<Row>, ObservationError> {
+            Ok(Some(self.0.clone()))
+        }
+        async fn ensure(&self, _: &str, _: &Row) -> Mutation {
+            Mutation::complete(self.0.clone())
+        }
+        async fn remove(&self, _: &str, _: &Row, _: bool) -> Result<(), ObservationError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn carried_fields_survive_refresh_and_apply_without_being_observed() {
+        let observed: Row = [("id", "workspace/1"), ("name", "team")]
+            .map(|(key, value)| (key.into(), value.into()))
+            .into();
+        let definition = Definition::new(
+            "workspace",
+            &["name", "gateway_endpoint"],
+            &["gateway_endpoint"],
+        )
+        .carried(&["gateway_endpoint"]);
+        let adapter = ResourceAdapter::new(definition, Arc::new(Observer(observed)));
+        let state: State = [
+            ("id", "workspace/1"),
+            ("name", "team"),
+            ("gateway_endpoint", "https://gateway.example"),
+        ]
+        .map(|(key, value)| (key.into(), Value::Value(value.into())))
+        .into();
+        let mut diags = Diagnostics::default();
+        let (refreshed, _) = adapter
+            .read(
+                &mut diags,
+                state.clone(),
+                ValueEmpty::default(),
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert!(diags.errors.is_empty(), "{diags:?}");
+        assert_eq!(refreshed, state);
+        let (created, _) = adapter
+            .create(
+                &mut diags,
+                state.clone(),
+                state.clone(),
+                ValueEmpty::default(),
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert!(diags.errors.is_empty(), "{diags:?}");
+        assert_eq!(created, state);
     }
 
     #[test]

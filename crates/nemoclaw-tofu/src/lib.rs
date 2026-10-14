@@ -78,6 +78,9 @@ pub struct Definition {
     pub references: Vec<crate::Reference>,
     /// The OpenTofu schema version; state from an earlier version is rejected.
     pub schema_version: i64,
+    /// Inputs the backend uses but does not observe, such as how to reach it.
+    /// Observations and mutations keep the recorded or desired value.
+    pub carried: Vec<&'static str>,
 }
 
 impl Definition {
@@ -102,6 +105,7 @@ impl Definition {
             export: None,
             references: Vec::new(),
             schema_version: 0,
+            carried: Vec::new(),
         }
     }
     pub fn optional(mut self, fields: &[&'static str]) -> Self {
@@ -202,6 +206,12 @@ impl Definition {
             fields: vec![field],
             list: true,
         });
+        self
+    }
+    /// Keep `fields` from the recorded or desired row, because the backend
+    /// uses them without observing them.
+    pub fn carried(mut self, fields: &[&'static str]) -> Self {
+        self.carried.extend_from_slice(fields);
         self
     }
     /// Set the OpenTofu schema version after an incompatible schema change.

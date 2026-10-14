@@ -167,9 +167,13 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
     sandbox.agent.inference.as_mut().unwrap().routes[0].provider_ref = Some("remote".into());
     let generations = ownership_generations();
     let graph = compile(&document, &generations, "0.1.0").unwrap();
-    // Only the gateway providers take the connection.
-    for provider in ["openshell", "fabric"] {
-        let connection = &graph["provider"][provider];
+    // Providers take no connection; the gateway data source does, and
+    // objects take its ref.
+    for provider in ["nemoclaw", "openshell", "fabric"] {
+        assert_eq!(graph["provider"][provider], json!({}), "{provider}");
+    }
+    for read in ["current", "apply"] {
+        let connection = &graph["data"]["openshell_gateway"][read];
         for (field, expected) in [
             ("endpoint", "https://gateway.example.test"),
             ("credential_env", "GATEWAY_TOKEN"),
@@ -177,10 +181,9 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
             ("tls_certificate_env", "GATEWAY_CERT"),
             ("tls_key_env", "GATEWAY_KEY"),
         ] {
-            assert_eq!(connection[field], expected, "{provider}.{field}");
+            assert_eq!(connection[field], expected, "{read}.{field}");
         }
     }
-    assert_eq!(graph["provider"]["nemoclaw"], json!({}));
     let resources = &graph["resource"];
     let workspace = &resources["openshell_workspace"]["deployment"];
     let provider =
@@ -230,6 +233,28 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
             resource["workspace"],
             "${openshell_workspace.deployment.ref}"
         );
+    }
+    for resource in [
+        workspace,
+        provider,
+        profile,
+        sandbox,
+        &resources["fabric_agent_configuration"]["worker"],
+        &graph["data"]["fabric_sandbox_readiness"]["worker"],
+    ] {
+        assert_eq!(
+            resource["gateway"], "${data.openshell_gateway.current.ref}",
+            "{resource}"
+        );
+        for field in [
+            "gateway_endpoint",
+            "gateway_credential_env",
+            "gateway_tls_ca_env",
+            "gateway_tls_certificate_env",
+            "gateway_tls_key_env",
+        ] {
+            assert!(resource.get(field).is_none(), "{field}: {resource}");
+        }
     }
     // Sandboxes name their provider registrations by ref.
     let registration = provider_scope::address(

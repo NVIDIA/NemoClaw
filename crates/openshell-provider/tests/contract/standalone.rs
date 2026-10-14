@@ -660,6 +660,7 @@ async fn gateway_readiness_dependency_waits_for_startup_before_workspace_creatio
         source
             + r#"
  data "openshell_gateway" "ready" {
+   endpoint = local.gateway.endpoint
    required_compute_drivers = ["docker"]
    wait_timeout_seconds = 5
    depends_on = [terraform_data.bootstrap]

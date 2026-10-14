@@ -1,111 +1,55 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The gateway client a provider configuration establishes, and the backend
-//! that reconciles OpenShell objects through it.
+//! Gateway clients for the connections resources name, and the backend that
+//! reconciles OpenShell objects through them.
 
 use crate::{DockerServices, EnvironmentSecrets, OpenShell, Services};
 use async_trait::async_trait;
 use nemoclaw_backend::{Backend, Error, Mutation, ObservationError, Row};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, RwLock};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, RwLock},
+};
 use tf_provider::{
     Diagnostics,
     schema::{Attribute, AttributeConstraint, AttributeType, Block, Description, Schema},
     value::Value,
 };
 
-/// Configuration of a provider that reaches objects through one gateway.
+/// Configuration of a provider whose resources each name their gateway.
 #[derive(Default, Serialize, Deserialize)]
 pub struct GatewayConfig {
-    pub endpoint: Value<String>,
-    pub credential_env: Value<String>,
-    pub tls_ca_env: Value<String>,
-    pub tls_certificate_env: Value<String>,
-    pub tls_key_env: Value<String>,
     pub destroy: Value<bool>,
 }
 
 impl GatewayConfig {
-    /// The provider configuration schema: the gateway connection and teardown permission.
+    /// The provider configuration schema: teardown permission only. Each
+    /// resource names its gateway with a `gateway` ref.
     pub fn schema() -> Schema {
-        let attribute = |attr_type, description: &str| Attribute {
-            attr_type,
-            constraint: AttributeConstraint::Optional,
-            description: Description::plain(description.to_owned()),
-            ..Default::default()
-        };
         Schema {
             version: 0,
             block: Block {
-                attributes: [
-                    (
-                        "endpoint",
-                        attribute(AttributeType::String, "Gateway HTTP(S) origin."),
-                    ),
-                    (
-                        "credential_env",
-                        attribute(
-                            AttributeType::String,
-                            "Environment variable holding the bearer credential.",
+                attributes: [(
+                    "destroy".into(),
+                    Attribute {
+                        attr_type: AttributeType::Bool,
+                        constraint: AttributeConstraint::Optional,
+                        description: Description::plain(
+                            "Permit removing this provider's objects during explicit teardown."
+                                .to_owned(),
                         ),
-                    ),
-                    (
-                        "tls_ca_env",
-                        attribute(
-                            AttributeType::String,
-                            "Environment variable naming the CA certificate file.",
-                        ),
-                    ),
-                    (
-                        "tls_certificate_env",
-                        attribute(
-                            AttributeType::String,
-                            "Environment variable naming the client certificate file.",
-                        ),
-                    ),
-                    (
-                        "tls_key_env",
-                        attribute(
-                            AttributeType::String,
-                            "Environment variable naming the client key file.",
-                        ),
-                    ),
-                    (
-                        "destroy",
-                        attribute(
-                            AttributeType::Bool,
-                            "Permit removing this provider's objects during explicit teardown.",
-                        ),
-                    ),
-                ]
-                .into_iter()
-                .map(|(name, attribute)| (name.into(), attribute))
-                .collect(),
+                        ..Default::default()
+                    },
+                )]
+                .into(),
                 ..Default::default()
             },
         }
     }
 }
 
-#[derive(Default)]
-enum State {
-    #[default]
-    Unconfigured,
-    /// Connection inputs are unknown until an upstream resource applies.
-    Deferred,
-    Ready(OpenShell),
-}
-
-/// The gateway client of the current provider configuration.
-pub struct GatewayClient(RwLock<State>, Arc<dyn Services>);
-
-impl Default for GatewayClient {
-    fn default() -> Self {
-        Self::with_services(Arc::new(DockerServices))
-    }
-}
-
-/// Gateway connection inputs of a provider configuration.
+/// Gateway connection inputs.
 pub struct GatewaySettings<'a> {
     pub endpoint: &'a Value<String>,
     pub credential_env: &'a Value<String>,
@@ -131,31 +75,18 @@ impl GatewaySettings<'_> {
                 .into_iter()
                 .any(|value| matches!(value, Value::Unknown))
     }
-    /// Whether any input is set.
-    pub fn any(&self) -> bool {
-        matches!(self.endpoint, Value::Value(_))
-            || self
-                .references()
-                .into_iter()
-                .any(|value| matches!(value, Value::Value(_)))
-    }
-    /// Whether a credential or TLS reference is set.
-    pub fn credentials(&self) -> bool {
-        self.references()
-            .into_iter()
-            .any(|value| matches!(value, Value::Value(value) if !value.is_empty()))
-    }
     /// The connection these known inputs describe; `None` without an endpoint.
     pub fn connection(&self) -> Result<Option<nemoclaw_openshell::Connection>, &'static str> {
         let text = |value: &Value<String>| match value {
             Value::Value(value) => value.clone(),
             _ => String::new(),
         };
-        if matches!(self.endpoint, Value::Null) {
+        let endpoint = text(self.endpoint);
+        if endpoint.is_empty() {
             return Ok(None);
         }
         let mut connection = nemoclaw_openshell::Connection {
-            endpoint: text(self.endpoint),
+            endpoint,
             ..Default::default()
         };
         let credential = text(self.credential_env);
@@ -181,109 +112,114 @@ impl GatewaySettings<'_> {
     }
 }
 
-impl GatewayClient {
-    /// Use the deployment's managed service checks for each configured client.
-    pub fn with_services(services: Arc<dyn Services>) -> Self {
-        Self(RwLock::new(State::default()), services)
+/// The connection a row's `gateway` ref carries.
+pub fn row_connection(row: &Row) -> Result<nemoclaw_openshell::Connection, &'static str> {
+    let [
+        endpoint,
+        credential_env,
+        tls_ca_env,
+        tls_certificate_env,
+        tls_key_env,
+    ] = nemoclaw_openshell::GATEWAY_FIELDS
+        .map(|(_, field)| Value::Value(row.get(field).cloned().unwrap_or_default()));
+    GatewaySettings {
+        endpoint: &endpoint,
+        credential_env: &credential_env,
+        tls_ca_env: &tls_ca_env,
+        tls_certificate_env: &tls_certificate_env,
+        tls_key_env: &tls_key_env,
     }
+    .connection()?
+    .ok_or("The gateway ref has no endpoint")
+}
 
-    pub fn client(&self) -> Result<OpenShell, ObservationError> {
-        match &*self.0.read().map_err(|_| ObservationError::Query)? {
-            State::Ready(client) => Ok(client.clone()),
-            State::Unconfigured | State::Deferred => Err(ObservationError::Query),
+/// Gateway clients by connection, created on first use.
+pub struct GatewayClient {
+    clients: RwLock<BTreeMap<String, OpenShell>>,
+    services: Arc<dyn Services>,
+}
+
+impl Default for GatewayClient {
+    fn default() -> Self {
+        Self::with_services(Arc::new(DockerServices))
+    }
+}
+
+impl GatewayClient {
+    /// Use the deployment's managed service checks for each client.
+    pub fn with_services(services: Arc<dyn Services>) -> Self {
+        Self {
+            clients: RwLock::default(),
+            services,
         }
     }
-    /// Whether the configuration's connection inputs are not yet known.
-    pub fn deferred(&self) -> Result<bool, ObservationError> {
-        Ok(matches!(
-            *self.0.read().map_err(|_| ObservationError::Query)?,
-            State::Deferred
+
+    /// Whether `config` permits teardown.
+    pub fn configure(&self, _: &mut Diagnostics, config: &GatewayConfig) -> Option<bool> {
+        Some(matches!(config.destroy, Value::Value(true)))
+    }
+
+    /// The client for `connection`, connecting lazily on first use.
+    pub fn connect(
+        &self,
+        connection: &nemoclaw_openshell::Connection,
+    ) -> Result<OpenShell, String> {
+        let key = serde_json::to_string(&(
+            &connection.endpoint,
+            &connection.credential_env,
+            connection
+                .tls
+                .as_ref()
+                .map(|tls| (&tls.ca_env, &tls.certificate_env, &tls.key_env)),
         ))
-    }
-    fn set(&self, state: State) -> Result<(), &'static str> {
-        *self
-            .0
-            .write()
-            .map_err(|_| "Provider configuration lock failed")? = state;
-        Ok(())
-    }
-    /// Forget any earlier client; unknown inputs defer connecting.
-    pub fn reset(&self, deferred: bool) -> Result<(), &'static str> {
-        self.set(if deferred {
-            State::Deferred
-        } else {
-            State::Unconfigured
-        })
-    }
-    /// Connect lazily to `connection`.
-    pub fn connect(&self, connection: &nemoclaw_openshell::Connection) -> Result<(), String> {
+        .map_err(|error| error.to_string())?;
+        if let Some(client) = self
+            .clients
+            .read()
+            .map_err(|_| "Gateway client lock failed".to_owned())?
+            .get(&key)
+        {
+            return Ok(client.clone());
+        }
         let client = OpenShell::connect_with_services(
             connection,
             Arc::new(EnvironmentSecrets),
-            self.1.clone(),
+            self.services.clone(),
         )
         .map_err(|error| error.to_string())?;
-        self.set(State::Ready(client)).map_err(str::to_owned)
+        self.clients
+            .write()
+            .map_err(|_| "Gateway client lock failed".to_owned())?
+            .insert(key, client.clone());
+        Ok(client)
+    }
+
+    /// The client for the gateway a row's `gateway` ref names.
+    pub fn client_for(&self, row: &Row) -> Result<OpenShell, ObservationError> {
+        let connection = row_connection(row).map_err(|_| ObservationError::Incomplete)?;
+        self.connect(&connection)
+            .map_err(|_| ObservationError::Incomplete)
+    }
+
+    /// The client for a row about to be planned, explaining a connection the
+    /// gateway ref cannot describe.
+    pub fn planning_client(&self, row: &Row) -> Result<OpenShell, Error> {
+        let connection = row_connection(row).map_err(Error::State)?;
+        self.connect(&connection)
+            .map_err(|_| Error::State("The gateway ref's endpoint is not a valid gateway origin"))
     }
 }
 
-impl GatewayClient {
-    /// Connect for `config`, forgetting any earlier client first. Returns
-    /// whether teardown may delete objects, or `None` after reporting an error;
-    /// callers withdraw any earlier teardown permission before calling.
-    pub fn configure(&self, diags: &mut Diagnostics, config: &GatewayConfig) -> Option<bool> {
-        // Reconfiguration must not retain a client from an earlier
-        // configuration when inputs become unknown or invalid.
-        let settings = GatewaySettings {
-            endpoint: &config.endpoint,
-            credential_env: &config.credential_env,
-            tls_ca_env: &config.tls_ca_env,
-            tls_certificate_env: &config.tls_certificate_env,
-            tls_key_env: &config.tls_key_env,
-        };
-        let deferred = settings.unknown() || matches!(config.destroy, Value::Unknown);
-        if let Err(error) = self.reset(deferred) {
-            diags.root_error_short(error);
-            return None;
-        }
-        if deferred {
-            return Some(false);
-        }
-        let connection = match settings.connection() {
-            Ok(Some(connection)) => connection,
-            Ok(None) => {
-                if settings.credentials() || matches!(config.destroy, Value::Value(true)) {
-                    diags.root_error_short("Gateway credentials and teardown require an endpoint");
-                    return None;
-                }
-                return Some(false);
-            }
-            Err(error) => {
-                diags.root_error_short(error);
-                return None;
-            }
-        };
-        if let Err(error) = self.connect(&connection) {
-            diags.root_error("Gateway connection", error);
-            return None;
-        }
-        Some(matches!(config.destroy, Value::Value(true)))
-    }
-}
-
-/// Reconciles OpenShell objects through the configured gateway client.
+/// Reconciles OpenShell objects through the gateway each row names.
 pub struct OpenShellBackend(pub Arc<GatewayClient>);
 
 #[async_trait]
 impl Backend for OpenShellBackend {
     async fn plan(&self, kind: &str, desired: &Row, prior: Option<&Row>) -> Result<(), Error> {
-        // Unknown provider inputs may be produced by an upstream resource.
-        // Only fresh-resource planning can defer its read; bound resources
-        // must still be observed, and mutations always require a ready client.
-        if prior.is_none() && self.0.deferred()? {
-            return Ok(());
-        }
-        self.0.client()?.plan(kind, desired, prior).await
+        self.0
+            .planning_client(desired)?
+            .plan(kind, desired, prior)
+            .await
     }
     async fn read(
         &self,
@@ -291,10 +227,10 @@ impl Backend for OpenShellBackend {
         prior: &Row,
         removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
-        self.0.client()?.read(kind, prior, removing).await
+        self.0.client_for(prior)?.read(kind, prior, removing).await
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
-        match self.0.client() {
+        match self.0.client_for(desired) {
             Ok(client) => client.ensure(kind, desired).await,
             Err(error) => Mutation::failed(error),
         }
@@ -305,7 +241,10 @@ impl Backend for OpenShellBackend {
         prior: &Row,
         destroying: bool,
     ) -> Result<(), ObservationError> {
-        self.0.client()?.remove(kind, prior, destroying).await
+        self.0
+            .client_for(prior)?
+            .remove(kind, prior, destroying)
+            .await
     }
 }
 
@@ -313,73 +252,57 @@ impl Backend for OpenShellBackend {
 mod tests {
     use super::*;
 
-    fn known() -> GatewayConfig {
-        GatewayConfig {
-            endpoint: Value::Value("http://127.0.0.1:1".into()),
-            destroy: Value::Value(true),
-            ..Default::default()
-        }
-    }
-
-    #[tokio::test]
-    async fn unknown_connection_inputs_clear_old_clients_and_only_defer_fresh_planning() {
-        for field in 0..6 {
-            let client = Arc::new(GatewayClient::default());
-            let mut diagnostics = Diagnostics::default();
-            assert_eq!(client.configure(&mut diagnostics, &known()), Some(true));
-            assert!(client.client().is_ok());
-            let mut config = known();
-            match field {
-                0 => config.endpoint = Value::Unknown,
-                1 => config.credential_env = Value::Unknown,
-                2 => config.tls_ca_env = Value::Unknown,
-                3 => config.tls_certificate_env = Value::Unknown,
-                4 => config.tls_key_env = Value::Unknown,
-                _ => config.destroy = Value::Unknown,
-            }
-            assert_eq!(client.configure(&mut diagnostics, &config), Some(false));
-            assert!(diagnostics.errors.is_empty());
-            assert!(client.client().is_err());
-            let backend = OpenShellBackend(client);
-            let row = Row::new();
-            assert!(backend.plan("workspace", &row, None).await.is_ok());
-            assert!(backend.plan("workspace", &row, Some(&row)).await.is_err());
-            assert!(backend.read("workspace", &row, false).await.is_err());
-            assert!(backend.ensure("workspace", &row).await.error().is_some());
-            assert!(backend.remove("workspace", &row, true).await.is_err());
-        }
+    fn row(endpoint: &str) -> Row {
+        [("gateway_endpoint".to_owned(), endpoint.to_owned())].into()
     }
 
     // Connecting starts a lazy channel, which needs a runtime.
     #[tokio::test]
-    async fn missing_or_invalid_endpoints_clear_the_previous_client() {
-        for endpoint in [Value::Null, Value::Value("invalid".into())] {
-            let client = GatewayClient::default();
-            let mut diagnostics = Diagnostics::default();
-            client.configure(&mut diagnostics, &known()).unwrap();
-            let config = GatewayConfig {
-                endpoint,
-                ..known()
-            };
-            // Teardown without an endpoint, or an invalid endpoint, is refused.
-            assert!(client.configure(&mut diagnostics, &config).is_none());
-            assert!(!diagnostics.errors.is_empty());
-            assert!(client.client().is_err());
-            assert!(!client.deferred().unwrap());
-        }
+    async fn each_connection_has_one_client_reused_across_rows() {
+        let client = GatewayClient::default();
+        let first = client.client_for(&row("http://127.0.0.1:1")).unwrap();
+        let again = client.client_for(&row("http://127.0.0.1:1")).unwrap();
+        client.client_for(&row("http://127.0.0.1:2")).unwrap();
+        assert_eq!(client.clients.read().unwrap().len(), 2);
+        drop((first, again));
     }
 
     #[tokio::test]
-    async fn an_empty_configuration_has_no_client_and_no_teardown_permission() {
+    async fn rows_without_a_usable_gateway_ref_have_no_client() {
+        let client = GatewayClient::default();
+        for row in [
+            Row::new(),
+            row("invalid"),
+            [
+                (
+                    "gateway_endpoint".to_owned(),
+                    "http://127.0.0.1:1".to_owned(),
+                ),
+                ("gateway_tls_ca_env".to_owned(), "CA".to_owned()),
+            ]
+            .into(),
+        ] {
+            assert!(client.client_for(&row).is_err());
+            assert!(client.planning_client(&row).is_err());
+        }
+    }
+
+    #[test]
+    fn teardown_permission_needs_no_gateway() {
         let client = GatewayClient::default();
         let mut diagnostics = Diagnostics::default();
-        client.configure(&mut diagnostics, &known()).unwrap();
+        let permit = |destroy| GatewayConfig { destroy };
+        assert_eq!(
+            client.configure(&mut diagnostics, &permit(Value::Value(true))),
+            Some(true)
+        );
+        assert_eq!(
+            client.configure(&mut diagnostics, &permit(Value::Unknown)),
+            Some(false)
+        );
         assert_eq!(
             client.configure(&mut diagnostics, &GatewayConfig::default()),
             Some(false)
         );
-        assert!(diagnostics.errors.is_empty());
-        assert!(client.client().is_err());
-        assert!(!client.deferred().unwrap());
     }
 }

@@ -13,7 +13,7 @@ pub struct AgentConfigurationBackend(pub OpenShell);
 #[async_trait::async_trait]
 impl Backend for AgentConfigurationBackend {
     async fn plan(&self, _: &str, desired: &Row, _: Option<&Row>) -> Result<(), Error> {
-        configuration::plan(&self.0, desired).await
+        configuration::plan(&self.0, &nemoclaw_openshell::without_gateway(desired)).await
     }
     async fn read(
         &self,
@@ -21,13 +21,23 @@ impl Backend for AgentConfigurationBackend {
         prior: &Row,
         removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
-        configuration::read(&self.0, prior, removing).await
+        configuration::read(
+            &self.0,
+            &nemoclaw_openshell::without_gateway(prior),
+            removing,
+        )
+        .await
     }
     async fn ensure(&self, _: &str, desired: &Row) -> Mutation {
-        configuration::ensure(&self.0, desired).await
+        configuration::ensure(&self.0, &nemoclaw_openshell::without_gateway(desired)).await
     }
     async fn remove(&self, _: &str, prior: &Row, destroying: bool) -> Result<(), ObservationError> {
-        configuration::remove(&self.0, prior, destroying).await
+        configuration::remove(
+            &self.0,
+            &nemoclaw_openshell::without_gateway(prior),
+            destroying,
+        )
+        .await
     }
 }
 
@@ -52,4 +62,16 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 1] {
         "config_json" => crate::configuration::check(value).map_err(Into::into),
         _ => Ok(()),
     })]
+    .map(|mut definition| {
+        // The configuration reaches its sandbox through the gateway its ref names.
+        let gateway = nemoclaw_openshell::GATEWAY_FIELDS.map(|(_, field)| field);
+        definition.fields.extend(gateway);
+        // Another endpoint is another gateway; credentials rotate in place.
+        definition.mutable.extend(&gateway[1..]);
+        definition.optional.extend(&gateway[1..]);
+        definition.carried.extend(gateway);
+        definition.references = nemoclaw_openshell::references(definition.kind);
+        // Version 1 takes a gateway ref; earlier state is rejected.
+        definition.schema_version(1)
+    })
 }

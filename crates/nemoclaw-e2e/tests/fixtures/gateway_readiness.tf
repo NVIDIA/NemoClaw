@@ -14,9 +14,7 @@ variable "port" { type = number }
 variable "subnet" { type = string }
 provider "docker" { host = "@ENGINE@" }
 provider "nemoclaw" {}
-provider "openshell" {
-  endpoint = docker_container.gateway.id != "" ? "http://127.0.0.1:${var.port}" : ""
-}
+provider "openshell" {}
 data "docker_image" "gateway" { name = "@GATEWAY_IMAGE@" }
 resource "nemoclaw_gateway_storage" "gateway" {
   spec = jsonencode({
@@ -59,6 +57,7 @@ resource "docker_container" "gateway" {
   }
 }
 data "openshell_gateway" "ready" {
+  endpoint = docker_container.gateway.id != "" ? "http://127.0.0.1:${var.port}" : ""
   required_compute_drivers = ["docker"]
   wait_timeout_seconds = 90
   depends_on = [docker_container.gateway]
@@ -70,6 +69,7 @@ data "openshell_gateway" "ready" {
   }
 }
 resource "openshell_workspace" "probe" {
+  gateway = data.openshell_gateway.ready.ref
   name = substr(var.name, 0, 19)
   owner = var.owner
   generation = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
