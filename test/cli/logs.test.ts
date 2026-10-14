@@ -45,9 +45,7 @@ describe("CLI dispatch", () => {
     const result = setup.runLogs("alpha logs", { NEMOCLAW_NO_AUTO_AUDIT_LOGS: "1" });
 
     expect(result.code).toBe(0);
-    expect(setup.readCalls()).not.toContain(
-      "settings set alpha --key ocsf_json_enabled --value true",
-    );
+    expect(setup.readCalls().filter((call) => call.startsWith("settings set"))).toEqual([]);
     expect(result.out).toContain(FAKE_OPENSHELL_LOG_LINE);
   });
 
@@ -63,9 +61,7 @@ describe("CLI dispatch", () => {
 
     expect(result.code).toBe(56);
     expect(setup.readCalls()).toContain("logs -g nemoclaw alpha -n 200 --source all");
-    expect(setup.readCalls()).not.toContain(
-      "settings set alpha --key ocsf_json_enabled --value true",
-    );
+    expect(setup.readCalls().filter((call) => call.startsWith("settings set"))).toEqual([]);
   });
 
   it("shows logs help without calling OpenShell", ({ resources }) => {
