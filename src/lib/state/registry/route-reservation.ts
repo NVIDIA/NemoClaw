@@ -365,7 +365,7 @@ export function nativeHostedReservationAttachment(
   previous?: SandboxEntry,
 ) {
   const receipt = requireHostedProviderAttachment(value, provider);
-  return hostedNativeProvider(provider)
+  return receipt || hostedNativeProvider(provider)
     ? (receipt ??
         (previous && previous.provider === provider
           ? previous.nativeHostedProviderAttachment

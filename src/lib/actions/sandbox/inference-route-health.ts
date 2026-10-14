@@ -4,6 +4,7 @@
 import type { SandboxEntry } from "../../state/registry/types";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { hostedNativeProvider } from "../../inference/native-provider/hosted";
+import { hostedNativeProviderForAttachment } from "../../inference/native-provider/hosted-attachment";
 import {
   fixedNativeProvider,
   fixedNativeProviderForAttachment,
@@ -409,7 +410,13 @@ export function buildSandboxInferenceRouteHealth(
   invocation: SandboxInferenceInvocationResult | null,
   context: SandboxInferenceRouteHealthContext,
 ): ProviderHealthStatus {
-  const definition = fixedNativeProvider(context.provider);
+  const definition =
+    fixedNativeProvider(context.provider) ??
+    (context.nativeProvider &&
+    (context.provider === "compatible-endpoint" ||
+      context.provider === "compatible-anthropic-endpoint")
+      ? { logicalProvider: context.provider, label: "custom hosted" }
+      : undefined);
   if ((context.nativeProvider || context.nativeNvidia) && definition) {
     const endpoint =
       invocation && !invocation.ok && invocation.endpoint
@@ -493,6 +500,13 @@ export function buildSandboxInferenceRouteHealth(
       detail: `Could not probe ${endpoint} from inside the sandbox.`,
     };
   }
+  if (
+    !routeHealth.ok &&
+    gateway?.httpStatus === 0 &&
+    new URL(endpoint).hostname === "inference.local"
+  )
+    routeHealth.detail +=
+      " If this legacy route is no longer available, recreate the sandbox to use native inference.";
   const subprobes = [...(routeHealth.subprobes ?? []), ...diagnostics];
   return subprobes.length > 0 ? { ...routeHealth, subprobes } : routeHealth;
 }
@@ -526,7 +540,9 @@ export function readNativeStatusSelection(entry: SandboxEntry | null | undefined
   } catch {
     failure = "Recorded native provider ownership is invalid; no inference request was sent.";
   }
-  const definition = hostedNativeProvider(entry?.provider, attachment?.endpointUrl);
+  const definition = attachment
+    ? hostedNativeProviderForAttachment(attachment)
+    : hostedNativeProvider(entry?.provider);
   return {
     attachment,
     failure,

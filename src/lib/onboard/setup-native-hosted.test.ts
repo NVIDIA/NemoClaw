@@ -3,7 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
-import { HOSTED_NATIVE_PROVIDERS } from "../inference/native-provider/hosted";
+import { customNativeProvider } from "../inference/native-provider/custom";
+import {
+  HOSTED_NATIVE_PROVIDERS,
+  type HostedProviderDefinition,
+} from "../inference/native-provider/hosted";
 import { createSetupInference, type SetupInferenceDeps } from "./setup-inference";
 
 vi.mock("./sandbox-lifecycle", async (importOriginal) => ({
@@ -11,13 +15,35 @@ vi.mock("./sandbox-lifecycle", async (importOriginal) => ({
   releaseAbandonedRouteReservation: vi.fn(() => false),
 }));
 
-describe.each(HOSTED_NATIVE_PROVIDERS)("native $label onboarding", (provider) => {
-  it.each(["explicit", "omitted"])("uses %s native endpoint (#12589)", async (endpointMode) => {
+const providers: HostedProviderDefinition[] = [
+  ...HOSTED_NATIVE_PROVIDERS,
+  ...[
+    ["compatible-endpoint", "openai-completions", "https://custom.example/v1"],
+    ["compatible-endpoint", "openai-responses", "https://custom.example/v1"],
+    ["compatible-anthropic-endpoint", "anthropic-messages", "https://custom.example"],
+    ["compatible-anthropic-endpoint", "openai-completions", "https://custom.example"],
+  ].map(([provider, api, endpointUrl]) =>
+    customNativeProvider({
+      provider,
+      api,
+      endpointUrl,
+      credentialEnv: "HOST_KEY",
+      allowedIps: ["8.8.8.8"],
+    }),
+  ),
+];
+
+describe.each(providers)("native $label onboarding", (provider) => {
+  const endpointModes = provider.custom ? ["explicit"] : ["explicit", "omitted"];
+  it.each(endpointModes)("uses %s native endpoint (#12589)", async (endpointMode) => {
     const receipt = {
       schemaVersion: 1,
       profileId: provider.profileId,
       providerName: provider.providerName,
       providerId: "identity",
+      ...(provider.endpointUrl ? { endpointUrl: provider.endpointUrl } : {}),
+      ...(provider.allowedIps ? { allowedIps: provider.allowedIps } : {}),
+      ...(provider.custom ? { custom: provider.custom } : {}),
     } as const;
     const getProvider = vi
       .fn<OpenShellProviderAdapter["getProvider"]>()
@@ -61,6 +87,7 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label onboarding", (provider) =>
       getNativeHostedProviderAuthority: () => undefined,
       setNativeHostedProviderAuthority: writeAuthority,
       getSandbox: () => null,
+      resolveEndpointHost: async () => [{ address: "8.8.8.8", family: 4 }],
       upsertProvider: vi.fn(),
       verifyInferenceRoute,
       verifyOnboardInferenceSmoke,
@@ -115,11 +142,11 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label onboarding", (provider) =>
         "alpha",
         "supported-model",
         provider.logicalProvider,
-        endpointMode === "explicit" ? provider.endpoint : null,
-        provider.credentialEnv,
+        endpointMode === "explicit" ? (provider.custom?.endpointUrl ?? provider.endpoint) : null,
+        provider.custom?.credentialEnv ?? provider.credentialEnv,
         null,
         [],
-        { revalidateSandboxIdentity: () => undefined },
+        { revalidateSandboxIdentity: () => undefined, preferredInferenceApi: provider.api },
       ),
     ).resolves.toMatchObject({ ok: true });
     expect(createProvider).toHaveBeenCalledExactlyOnceWith(
@@ -138,7 +165,7 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label onboarding", (provider) =>
       }),
     );
     expect(verifyOnboardInferenceSmoke.mock.calls).toEqual(
-      provider.logicalProvider === "hermes-provider"
+      provider.logicalProvider === "hermes-provider" || provider.custom
         ? []
         : [
             [

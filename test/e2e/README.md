@@ -870,8 +870,9 @@ The report also groups repeated observable outcomes. Those rows are retained onl
 ## Full E2E inference availability
 
 `live/full-e2e.test.ts` owns the live sandbox arithmetic probe.
-Source installs use `inference.local`; the Brev Launchable uses the native NVIDIA endpoint
-with its supervisor-issued credential handle. The test verifies the native provider attachment
+Source installs use the recorded custom native endpoint when present, or retain the legacy fixture route.
+The Brev Launchable uses the native NVIDIA endpoint. Native routes use supervisor-issued credential handles.
+The test verifies the native provider attachment
 on the declared gateway and retains that route across its temporary native model edit.
 The live boundary proves attachment, credential resolution, and a real inference response.
 The support tests own route selection, command encoding, credential rejection, and model-edit configuration.

@@ -7,6 +7,7 @@ import {
   HOSTED_NATIVE_PROVIDERS,
   hostedNativeProvider,
 } from "../../inference/native-provider/hosted";
+import { customNativeProvider } from "../../inference/native-provider/custom";
 import { resetNativeHostedProvider } from "./reset-native-hosted";
 
 const target = { kind: "named", gatewayName: "gateway" } as const;
@@ -14,13 +15,20 @@ const absent = {
   ok: false,
   error: { kind: "command", reason: "not_found", message: "absent" },
 } as const;
-function fixture(provider = "openai-api") {
-  const definition = hostedNativeProvider(provider)!;
+function fixture(provider = "openai-api", custom?: ReturnType<typeof customNativeProvider>) {
+  const definition = custom ?? hostedNativeProvider(provider)!;
   const receipt = {
     schemaVersion: 1 as const,
     profileId: definition.profileId,
     providerName: definition.providerName,
     providerId: "owned-id",
+    ...(definition.custom
+      ? {
+          custom: definition.custom,
+          endpointUrl: definition.endpointUrl,
+          allowedIps: definition.allowedIps,
+        }
+      : {}),
   };
   const metadata = {
     name: definition.providerName,
@@ -153,4 +161,33 @@ describe("native hosted credential reset", () => {
     expect(f.remove).not.toHaveBeenCalled();
     expect(f.clear).not.toHaveBeenCalled();
   });
+});
+
+it("removes only an unreferenced custom provider selected by its owned name", async () => {
+  const definition = customNativeProvider({
+    provider: "compatible-endpoint",
+    endpointUrl: "https://custom.example/v1",
+    api: "openai-completions",
+    credentialEnv: "TEAM_KEY",
+    allowedIps: ["8.8.8.8"],
+  });
+  const f = fixture(definition.logicalProvider, definition);
+  expect(
+    (
+      await resetNativeHostedProvider(definition.providerName, target, f.adapter, {
+        ...f.deps,
+        listNativeHostedProviderAttachmentSandboxNames: () => ["alpha"],
+      })
+    )?.exitCode,
+  ).toBe(1);
+  expect(f.remove).not.toHaveBeenCalled();
+  f.get.mockResolvedValueOnce({ ok: true, value: f.metadata }).mockResolvedValueOnce(absent);
+  expect(
+    (await resetNativeHostedProvider(definition.providerName, target, f.adapter, f.deps))?.exitCode,
+  ).toBe(0);
+  expect(f.remove).toHaveBeenCalledExactlyOnceWith({
+    target,
+    providerName: definition.providerName,
+  });
+  expect(f.clear).toHaveBeenCalledWith("gateway", f.receipt);
 });

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import type { CustomNativeBinding } from "./custom";
 
 export type NativeProviderAttachment<
   ProfileId extends string = string,
@@ -11,10 +12,11 @@ export type NativeProviderAttachment<
   profileId: ProfileId;
   providerName: ProviderName;
   providerId: string;
-  /** Present only for Hermes endpoints returned by authenticated login. */
+  /** Exact sandbox-facing endpoint for a dynamically bound provider. */
   endpointUrl?: string;
-  /** Exact public destination addresses for an authenticated Hermes endpoint. */
+  /** Exact admitted destination addresses for a dynamically bound provider. */
   allowedIps?: readonly string[];
+  custom?: CustomNativeBinding;
 }>;
 
 export type NativeProviderDefinition<
@@ -27,8 +29,9 @@ export type NativeProviderDefinition<
   providerName: ProviderName;
   credentialEnv: string;
   endpointUrl?: string;
-  /** Exact public destination addresses for an authenticated Hermes endpoint. */
+  /** Exact admitted destination addresses for a dynamically bound provider. */
   allowedIps?: readonly string[];
+  custom?: CustomNativeBinding;
 }>;
 
 /** Keep only the exact profile/name binding and immutable provider identity. */
@@ -36,7 +39,7 @@ export function normalizeNativeProviderAttachment<P extends string, N extends st
   value: unknown,
   definition: Pick<
     NativeProviderDefinition<P, N>,
-    "profileId" | "providerName" | "endpointUrl" | "allowedIps"
+    "profileId" | "providerName" | "endpointUrl" | "allowedIps" | "custom"
   >,
 ): NativeProviderAttachment<P, N> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -47,6 +50,7 @@ export function normalizeNativeProviderAttachment<P extends string, N extends st
     receipt.providerName !== definition.providerName ||
     (definition.endpointUrl !== undefined && receipt.endpointUrl !== definition.endpointUrl) ||
     !isDeepStrictEqual(receipt.allowedIps, definition.allowedIps) ||
+    !isDeepStrictEqual(receipt.custom, definition.custom) ||
     typeof receipt.providerId !== "string" ||
     !receipt.providerId.trim()
   )
@@ -58,5 +62,6 @@ export function normalizeNativeProviderAttachment<P extends string, N extends st
     providerId: receipt.providerId,
     ...(definition.endpointUrl ? { endpointUrl: definition.endpointUrl } : {}),
     ...(definition.allowedIps ? { allowedIps: [...definition.allowedIps] } : {}),
+    ...(definition.custom ? { custom: definition.custom } : {}),
   };
 }

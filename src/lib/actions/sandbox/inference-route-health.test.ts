@@ -446,3 +446,19 @@ describe("transient inference invocation failures", () => {
     expect(isTransientInferenceInvocationFailure(null)).toBe(false);
   });
 });
+
+it("offers conditional recreation guidance when the legacy route cannot be reached", () => {
+  const health = buildSandboxInferenceRouteHealth(
+    {
+      ok: false,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 0,
+      detail: "Inference gateway is unreachable.",
+    },
+    null,
+    null,
+    { provider: "compatible-endpoint", model: "selected" },
+  );
+  expect(health.ok).toBe(false);
+  expect(health.detail).toContain("If this legacy route is no longer available");
+});

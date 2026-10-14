@@ -14,6 +14,12 @@ import {
   LLAMA_CPP_PROVIDER_NAME,
 } from "./llama-cpp/contract";
 import { hostedNativeProvider, usesNativeHermesEndpoint } from "./native-provider/hosted";
+import { isCustomHostedProvider } from "./native-provider/hosted";
+import {
+  isBedrockRuntimeEndpoint,
+  BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
+} from "./bedrock-runtime";
+import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "./anthropic/openai-surface";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
 import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
 import { DEFAULT_OLLAMA_MODEL_TAG as DEFAULT_OLLAMA_MODEL } from "./ollama-model-registry";
@@ -333,7 +339,17 @@ export function getSandboxInferenceConfig(
   const hostedNative = useNativeProvider
     ? hostedNativeProvider(provider, nativeEndpointUrl)
     : undefined;
-  let inferenceBaseUrl = hostedNative?.endpoint ?? INFERENCE_ROUTE_URL;
+  let customEndpoint =
+    nativeProvider === true && isCustomHostedProvider(provider) ? nativeEndpointUrl : undefined;
+  if (nativeProvider === true && isCustomHostedProvider(provider) && !customEndpoint)
+    throw new Error("Native custom inference is missing its recorded endpoint");
+  if (customEndpoint && provider === "compatible-anthropic-endpoint")
+    customEndpoint = isBedrockRuntimeEndpoint(customEndpoint)
+      ? BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL
+      : preferredInferenceApi && preferredInferenceApi !== "anthropic-messages"
+        ? getCompatibleAnthropicOpenAiSurfaceBaseUrl(customEndpoint)
+        : customEndpoint;
+  let inferenceBaseUrl = customEndpoint ?? hostedNative?.endpoint ?? INFERENCE_ROUTE_URL;
   let inferenceApi = preferredInferenceApi || "openai-completions";
   // Providers without a /v1/responses endpoint must never be configured with the
   // Responses API. On a provider switch the runtime API resolves to null and the
@@ -363,7 +379,7 @@ export function getSandboxInferenceConfig(
       }
       providerKey = "anthropic";
       primaryModelRef = `anthropic/${model}`;
-      inferenceBaseUrl = hostedNative?.endpoint ?? "https://inference.local";
+      inferenceBaseUrl = customEndpoint ?? hostedNative?.endpoint ?? "https://inference.local";
       inferenceApi = "anthropic-messages";
       break;
     case "gemini-api":

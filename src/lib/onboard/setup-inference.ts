@@ -4,9 +4,14 @@
 import {
   hostedNativeProvider,
   usesNativeHermesEndpoint,
+  customNativeCredentialEnv,
 } from "../inference/native-provider/hosted";
 import { requireHostedProviderAttachment } from "../inference/native-provider/hosted-attachment";
-import { prepareHostedNativeProvider } from "../inference/native-provider/setup";
+import {
+  prepareHostedNativeProvider,
+  prepareCustomNativeProvider,
+  usesCustomNativeOnboarding,
+} from "../inference/native-provider/setup";
 import type { NativeProviderAttachment } from "../inference/native-provider/contract";
 
 import type { OpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle";
@@ -687,8 +692,7 @@ export function createSetupInference(
           );
           return deps.exitProcess(1);
         }
-        const recordedSandbox =
-          provider === "hermes-provider" && sandboxName ? deps.getSandbox?.(sandboxName) : null;
+        const recordedSandbox = sandboxName ? deps.getSandbox?.(sandboxName) : null;
         const hermesAuthority =
           provider === "hermes-provider"
             ? ((recordedSandbox?.provider === provider
@@ -703,10 +707,17 @@ export function createSetupInference(
                 endpointUrl || undefined,
               ))
             : undefined;
+        const nativeCustomSelection = usesCustomNativeOnboarding(
+          provider,
+          endpointUrl,
+          sandboxName,
+          recordedSandbox,
+        );
         const nativeHostedSelection =
-          hostedNativeProvider(provider) &&
-          (provider !== "hermes-provider" ||
-            usesNativeHermesEndpoint(endpointUrl, hermesAuthority));
+          nativeCustomSelection ||
+          (hostedNativeProvider(provider) &&
+            (provider !== "hermes-provider" ||
+              usesNativeHermesEndpoint(endpointUrl, hermesAuthority)));
         if (!isNativeNvidiaProvider(provider) && !nativeHostedSelection) {
           const observedRoute = await deps.inferenceRouteObserver.observeInferenceRoute({
             target: { kind: "named", gatewayName },
@@ -965,6 +976,40 @@ export function createSetupInference(
         }
 
         const setupSelectedProvider = async (): Promise<SetupInferenceResult | null> => {
+          if (nativeCustomSelection) {
+            if (
+              !deps.providerAdapter ||
+              !deps.getNativeHostedProviderAuthority ||
+              !deps.setNativeHostedProviderAuthority
+            )
+              throw new Error(
+                "Native custom setup is missing its provider adapter or ownership store.",
+              );
+            const selectedCredentialEnv = credentialEnv || customNativeCredentialEnv(provider);
+            const credentialValue = deps.hydrateCredentialEnv(selectedCredentialEnv) || null;
+            nativeHostedProviderAttachment = await prepareCustomNativeProvider({
+              gatewayName,
+              provider,
+              endpointUrl: endpointUrl!,
+              api:
+                options.preferredInferenceApi ||
+                (provider === "compatible-anthropic-endpoint"
+                  ? "anthropic-messages"
+                  : "openai-completions"),
+              credentialEnv: selectedCredentialEnv,
+              credentialValue,
+              adapter: deps.providerAdapter,
+              recordedAttachment: recordedSandbox?.nativeHostedProviderAttachment,
+              lookup: endpointPinnedAddresses
+                ? async () => endpointPinnedAddresses!.map((address) => ({ address }))
+                : deps.resolveEndpointHost,
+              trustedPrivateHosts: deps.trustedPrivateEndpointHosts,
+              readAuthority: deps.getNativeHostedProviderAuthority,
+              writeAuthority: deps.setNativeHostedProviderAuthority,
+            });
+            retainedNativeHostedCredential = !credentialValue;
+            return null;
+          }
           const hosted = hostedNativeProvider(provider);
           if (hosted && provider !== deps.hermesProviderAuth.HERMES_PROVIDER_NAME) {
             if (
@@ -1280,6 +1325,10 @@ export function createSetupInference(
           if (hostLocalRoute) {
             deps.log(
               "  Deferring inference.local smoke to the sandbox runtime after sandbox readiness.",
+            );
+          } else if (nativeHostedProviderAttachment?.custom) {
+            deps.log(
+              "  Custom native inference will be verified from the sandbox using its selected API.",
             );
           } else if (options.skipHostInferenceSmoke === true || retainedNativeHostedCredential) {
             deps.log("  Reusing existing gateway credential; skipping host inference smoke.");

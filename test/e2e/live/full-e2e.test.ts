@@ -48,6 +48,7 @@ import {
 import { buildOpenClawFirstTurnLatencyEvidence } from "./agent-turn-latency-helpers.ts";
 import {
   buildFullE2eSandboxInferenceCommand,
+  readFullE2eInferenceRoute,
   FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
@@ -72,10 +73,6 @@ import {
   agentReplyContainsToken,
   parseOpenClawGatewayModelRun,
 } from "./openclaw-inference-switch-helpers.ts";
-import {
-  PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
-  readPublicNvidiaSwitchAttachmentEvidence,
-} from "./public-nvidia-switch-provider.ts";
 import { createCliOpenShellGatewayReuseObserver } from "../../../src/lib/adapters/openshell/gateway-reuse-cli.ts";
 import type { OpenShellGatewayReuseObservation } from "../../../src/lib/adapters/openshell/gateway-reuse.ts";
 
@@ -439,6 +436,7 @@ async function runOpenClawLaunchTurns(input: {
   host: HostCliClient;
   model: string;
   logicalProvider: string;
+  endpointUrl?: string;
   redactionValues: string[];
   sandbox: SandboxClient;
 }): Promise<void> {
@@ -479,7 +477,11 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       timeoutMs: 30_000,
     },
   );
-  const nativeModel = buildNativeModelRestartFixture(input.model, input.logicalProvider);
+  const nativeModel = buildNativeModelRestartFixture(
+    input.model,
+    input.logicalProvider,
+    input.endpointUrl,
+  );
   const editNativeModel = await input.sandbox.exec(
     SANDBOX_NAME,
     ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "patch", "--stdin"],
@@ -1209,30 +1211,17 @@ test(
       },
     );
 
-    const nativeAttachment = await readPublicNvidiaSwitchAttachmentEvidence({
-      artifactName: "phase-3-native-nvidia-provider-attachment",
-      env: env(),
-      logicalProvider: hosted.providerName,
-      receipt: getSandbox(SANDBOX_NAME)?.nativeNvidiaProviderAttachment,
+    const nativeEndpointUrl = getSandbox(SANDBOX_NAME)?.nativeHostedProviderAttachment?.endpointUrl;
+    const inferenceRoute = await readFullE2eInferenceRoute({
       sandbox,
       sandboxName: SANDBOX_NAME,
+      entry: getSandbox(SANDBOX_NAME),
+      logicalProvider: hosted.providerName,
+      model: hosted.model,
+      env: env(),
+      redactionValues,
     });
-    const inference =
-      nativeAttachment === null
-        ? await sandbox.openshell(["inference", "get"], {
-            artifactName: "phase-3-openshell-inference-get",
-            env: env(),
-            timeoutMs: 60_000,
-          })
-        : null;
-    expect(
-      inference !== null
-        ? inference.exitCode === 0 && resultText(inference).includes(hosted.model)
-        : nativeAttachment === PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
-      inference !== null
-        ? resultText(inference)
-        : (nativeAttachment ?? "missing native attachment"),
-    ).toBe(true);
+    expect(inferenceRoute.ok, inferenceRoute.detail).toBe(true);
 
     const policy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
       artifactName: "phase-3-openshell-policy-get",
@@ -1265,7 +1254,11 @@ test(
         run: (availabilityAttempt) =>
           sandbox.exec(
             SANDBOX_NAME,
-            buildFullE2eSandboxInferenceCommand(attempt.requestBody, hosted.providerName),
+            buildFullE2eSandboxInferenceCommand(
+              attempt.requestBody,
+              hosted.providerName,
+              nativeEndpointUrl,
+            ),
             {
               artifactName: `${attempt.artifactName}-availability-${availabilityAttempt}`,
               captureLimitBytes: FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
@@ -1315,6 +1308,7 @@ test(
           host,
           model: hosted.model,
           logicalProvider: hosted.providerName,
+          endpointUrl: nativeEndpointUrl,
           redactionValues,
           sandbox,
         })
@@ -1402,7 +1396,11 @@ test(
               run: (availabilityAttempt) =>
                 sandbox.exec(
                   SANDBOX_NAME,
-                  buildFullE2eSandboxInferenceCommand(attempt.requestBody, hosted.providerName),
+                  buildFullE2eSandboxInferenceCommand(
+                    attempt.requestBody,
+                    hosted.providerName,
+                    nativeEndpointUrl,
+                  ),
                   {
                     artifactName: `retained-${attempt.artifactName}-availability-${availabilityAttempt}`,
                     captureLimitBytes: FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,

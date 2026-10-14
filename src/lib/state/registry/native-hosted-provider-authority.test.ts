@@ -9,6 +9,7 @@ import {
   HOSTED_NATIVE_PROVIDERS,
   hostedNativeProvider,
 } from "../../inference/native-provider/hosted";
+import { customNativeProvider } from "../../inference/native-provider/custom";
 import { normalizeNativeHostedProviderAuthorities } from "./native-provider-authority-state";
 
 const openai = {
@@ -193,6 +194,68 @@ it("retains independent Hermes ownership across authenticated endpoint changes (
     expect(registry.getNativeHostedProviderAuthority("other-gateway", "hermes-provider")).toEqual(
       firstReceipt,
     );
+  } finally {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    await fs.rm(temporaryHome, { recursive: true, force: true });
+  }
+});
+
+it("persists custom endpoint ownership through reservation, registration and a model update", async () => {
+  const temporaryHome = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-custom-authority-"));
+  vi.stubEnv("HOME", temporaryHome);
+  vi.resetModules();
+  try {
+    const registry = await import("../registry");
+    const definition = customNativeProvider({
+      provider: "compatible-endpoint",
+      endpointUrl: "https://custom.example/v1",
+      api: "openai-responses",
+      credentialEnv: "TEAM_KEY",
+      allowedIps: ["8.8.8.8"],
+    });
+    const receipt = {
+      schemaVersion: 1 as const,
+      profileId: definition.profileId,
+      providerName: definition.providerName,
+      providerId: "custom-identity",
+      endpointUrl: definition.endpointUrl,
+      allowedIps: definition.allowedIps,
+      custom: definition.custom,
+    };
+    registry.setNativeHostedProviderAuthority("gateway", definition.logicalProvider, receipt);
+    expect(registry.getNativeHostedProviderAuthority("gateway", definition.providerName)).toEqual(
+      receipt,
+    );
+    expect(
+      registry.getNativeHostedProviderAuthority("other", definition.providerName),
+    ).toBeUndefined();
+    registry.registerSandbox({
+      name: "alpha",
+      gatewayName: "gateway",
+      provider: definition.logicalProvider,
+      model: "first",
+      nativeHostedProviderAttachment: receipt,
+    });
+    registry.reserveSandboxInferenceRoute("alpha", {
+      gatewayName: "gateway",
+      provider: definition.logicalProvider,
+      model: "first",
+      credentialEnv: "TEAM_KEY",
+      endpointUrl: definition.custom.endpointUrl,
+      preferredInferenceApi: definition.custom.api,
+      nativeHostedProviderAttachment: receipt,
+    });
+    expect(registry.getSandbox("alpha")?.nativeHostedProviderAttachment).toEqual(receipt);
+    registry.updateSandbox("alpha", { model: "second" });
+    expect(registry.getSandbox("alpha")?.nativeHostedProviderAttachment).toEqual(receipt);
+    expect(registry.getSandbox("alpha")?.model).toBe("second");
+    expect(
+      (await import("./native-provider-authority")).listNativeHostedProviderAttachmentSandboxNames(
+        "gateway",
+        definition.providerName,
+      ),
+    ).toEqual(["alpha"]);
   } finally {
     vi.unstubAllEnvs();
     vi.resetModules();

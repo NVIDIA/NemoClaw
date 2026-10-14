@@ -1,8 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { parseCliOpenShellProviderMetadata } from "../../../src/lib/adapters/openshell/provider-metadata-cli.ts";
+import { hostedNativeProviderForAttachment } from "../../../src/lib/inference/native-provider/hosted-attachment.ts";
+import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
+import {
+  PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
+  readPublicNvidiaSwitchAttachmentEvidence,
+} from "./public-nvidia-switch-provider.ts";
+
 import { runBoundedRetry, type RetryEvidence } from "../../../tools/e2e/retry-evidence.mts";
 
+import { nativeHostedAuthHeaderScript } from "../../../src/lib/actions/sandbox/inference-invocation-probe.ts";
 import { resolveMaxTokensField } from "../../../src/lib/inference/max-tokens-field.ts";
 import {
   NATIVE_NVIDIA_AUTH_HEADER_SCRIPT,
@@ -26,14 +36,22 @@ const TRUNCATION_SUFFIX = "...[truncated]";
 export function buildFullE2eSandboxInferenceCommand(
   requestBody: string,
   logicalProvider: string,
+  endpointUrl?: string,
 ): [string, ...string[]] {
-  if (logicalProvider === NVIDIA_HOSTED_LOGICAL_PROVIDER) {
+  const nativeCustom = logicalProvider === "compatible-endpoint" && endpointUrl;
+  if (logicalProvider === NVIDIA_HOSTED_LOGICAL_PROVIDER || nativeCustom) {
+    const auth = nativeCustom
+      ? nativeHostedAuthHeaderScript({
+          credentialEnv: "COMPATIBLE_API_KEY",
+          api: "openai-completions",
+        })
+      : NATIVE_NVIDIA_AUTH_HEADER_SCRIPT;
     return [
       "bash",
       "-c",
-      `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; exec curl -fsS --max-time 90 "$1" -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-raw "$2"`,
+      `${auth}; exec curl -fsS --max-time 90 "$1" -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-raw "$2"`,
       "full-e2e-native-inference",
-      `${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions`,
+      `${(nativeCustom ? endpointUrl : NVIDIA_HOSTED_NATIVE_ENDPOINT).replace(/\/+$/u, "")}/chat/completions`,
       requestBody,
     ];
   }
@@ -340,4 +358,67 @@ export function fullE2eInferenceProbeEvidence<Result extends InferenceCommandRes
     );
   }
   return evidence;
+}
+
+/** Preserve full E2E's live ownership check for the selected route family. */
+export async function readFullE2eInferenceRoute(input: {
+  sandbox: SandboxClient;
+  sandboxName: string;
+  entry: SandboxEntry | null;
+  logicalProvider: string;
+  model: string;
+  env: NodeJS.ProcessEnv;
+  redactionValues: string[];
+}): Promise<{ ok: boolean; detail: string }> {
+  const receipt = input.entry?.nativeHostedProviderAttachment;
+  if (receipt?.custom) {
+    const definition = hostedNativeProviderForAttachment(receipt);
+    if (!definition) return { ok: false, detail: "Invalid custom native ownership" };
+    const options = {
+      env: input.env,
+      redactionValues: input.redactionValues,
+      timeoutMs: 60_000,
+      captureLimitBytes: 16 * 1024,
+    };
+    const gateway = input.entry?.gatewayName || input.env.OPENSHELL_GATEWAY || "nemoclaw";
+    const provider = await input.sandbox.openshell(
+      ["provider", "get", "-g", gateway, receipt.providerName],
+      { ...options, artifactName: "phase-3-native-custom-provider-metadata" },
+    );
+    const attachments = await input.sandbox.openshell(
+      ["sandbox", "provider", "list", "-g", gateway, input.sandboxName],
+      { ...options, artifactName: "phase-3-native-custom-provider-attachment" },
+    );
+    const metadata =
+      provider.exitCode === 0 ? parseCliOpenShellProviderMetadata(provider.stdout) : null;
+    const ok =
+      metadata?.name === receipt.providerName &&
+      metadata.type === receipt.profileId &&
+      metadata.revision?.id === receipt.providerId &&
+      metadata.configKeys.length === 0 &&
+      metadata.credentialKeys.length === 1 &&
+      metadata.credentialKeys[0] === definition.credentialEnv &&
+      attachments.exitCode === 0 &&
+      attachments.stdout.split(/\s+/u).includes(receipt.providerName);
+    return {
+      ok,
+      detail: `Custom native provider ownership and attachment: ${ok ? "verified" : "mismatch"}`,
+    };
+  }
+  const native = await readPublicNvidiaSwitchAttachmentEvidence({
+    artifactName: "phase-3-native-nvidia-provider-attachment",
+    env: input.env,
+    logicalProvider: input.logicalProvider,
+    receipt: input.entry?.nativeNvidiaProviderAttachment,
+    sandbox: input.sandbox,
+    sandboxName: input.sandboxName,
+  });
+  if (native !== null)
+    return { ok: native === PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE, detail: native };
+  const route = await input.sandbox.openshell(["inference", "get"], {
+    artifactName: "phase-3-openshell-inference-get",
+    env: input.env,
+    timeoutMs: 60_000,
+  });
+  return { ok: route.exitCode === 0 && route.stdout.includes(input.model), detail: route.stdout };
 }

@@ -5,10 +5,20 @@ import { createHash } from "node:crypto";
 
 import { type NativeProviderAttachment, type NativeProviderDefinition } from "./contract.ts";
 
+export function isCustomHostedProvider(provider: string | null | undefined): boolean {
+  return provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint";
+}
+
+export function customNativeCredentialEnv(provider: string): string {
+  if (provider === "compatible-endpoint") return "COMPATIBLE_API_KEY";
+  if (provider === "compatible-anthropic-endpoint") return "COMPATIBLE_ANTHROPIC_API_KEY";
+  throw new Error("Unsupported custom hosted provider");
+}
+
 export type HostedProviderDefinition = NativeProviderDefinition &
   Readonly<{
     endpoint: string;
-    api: "openai-completions" | "anthropic-messages";
+    api: "openai-completions" | "openai-responses" | "anthropic-messages";
   }>;
 
 /** Existing fixed hosted selections only; custom and local endpoints have separate owners. */

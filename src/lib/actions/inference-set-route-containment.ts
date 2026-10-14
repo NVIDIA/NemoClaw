@@ -496,6 +496,7 @@ export async function finalizeInferenceSetRoute(options: {
   resolveCredentialValue: (credentialEnv: string) => string;
   ensureHttpsPinRuntimeAdapter: EnsureHttpsPinRuntimeAdapterFn;
   effectiveInferenceApi?: string | null;
+  nativeProvider?: boolean;
 }): Promise<{
   registryMetadata: RegistryInferenceMetadata;
   explicitPreferredInferenceApi: string | null;
@@ -504,6 +505,25 @@ export async function finalizeInferenceSetRoute(options: {
   routeImpactWarning: string | null;
 }> {
   const { prepared } = options;
+  if (options.nativeProvider) {
+    const metadata = prepared.preliminaryExplicitMetadata ?? prepared.preliminaryRegistryMetadata;
+    return {
+      registryMetadata: {
+        ...metadata,
+        ...(prepared.preliminaryExplicitSourceEndpointUrl
+          ? {
+              endpointUrl: prepared.preliminaryExplicitSourceEndpointUrl,
+              endpointSource: "inference-set" as const,
+            }
+          : {}),
+      },
+      explicitPreferredInferenceApi:
+        prepared.preliminaryExplicitMetadata?.preferredInferenceApi ?? null,
+      directProviderBinding: null,
+      httpsPinProviderBinding: null,
+      routeImpactWarning: null,
+    };
+  }
   if (!prepared.preliminaryExplicitMetadata) {
     return {
       registryMetadata: prepared.preliminaryRegistryMetadata,
