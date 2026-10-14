@@ -2929,24 +2929,8 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
   return errors;
 }
 
-function validateCliArtifactRestoreActions(workflow: WorkflowRecord): string[] {
-  const errors = new Set<string>();
-  const restoreActionPath = E2E_ACTION_PROVENANCE.restoreCliArtifact.reference.split("@")[0];
+function validatePortableHermesCliArtifactRestoreAction(workflow: WorkflowRecord): string[] {
   const jobs = asRecord(workflow.jobs);
-  for (const [jobName, jobValue] of Object.entries(jobs)) {
-    for (const step of asSteps(asRecord(jobValue).steps)) {
-      const usesRestoreAction = stringValue(step.uses).split("@")[0] === restoreActionPath;
-      if (step.name !== CLI_ARTIFACT_RESTORE_STEP && !usesRestoreAction) continue;
-      if (
-        step.name !== CLI_ARTIFACT_RESTORE_STEP ||
-        step.uses !== E2E_ACTION_PROVENANCE.restoreCliArtifact.reference
-      ) {
-        errors.add(
-          `${jobName} must restore the exact-commit CLI artifact with the reviewed action reference`,
-        );
-      }
-    }
-  }
   const portableHermesRestores = asSteps(
     asRecord(jobs["portable-hermes-finalization"]).steps,
   ).filter((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
@@ -2954,11 +2938,11 @@ function validateCliArtifactRestoreActions(workflow: WorkflowRecord): string[] {
     portableHermesRestores.length !== 1 ||
     portableHermesRestores[0]?.uses !== E2E_ACTION_PROVENANCE.restoreCliArtifact.reference
   ) {
-    errors.add(
+    return [
       "portable-hermes-finalization must restore the exact-commit CLI artifact with the reviewed action reference",
-    );
+    ];
   }
-  return [...errors];
+  return [];
 }
 
 /** Returns workflow contract violations before a caller dispatches E2E jobs with credentials or external resources. */
@@ -2981,7 +2965,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(...validateTrustedHermesSwapWorkflow(workflow));
   errors.push(...validateRunnerComparisonWorkflowBoundary(workflow));
   errors.push(...validateNativePodmanDockerIsolationWorkflow(workflow));
-  errors.push(...validateCliArtifactRestoreActions(workflow));
+  errors.push(...validatePortableHermesCliArtifactRestoreAction(workflow));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
   const workflowDispatch = requireWorkflowDispatch(errors, triggers);
