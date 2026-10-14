@@ -1259,3 +1259,18 @@ func TestForwardStdioCancelsUpstreamWhenInputCloses(t *testing.T) {
 		t.Fatal("forwarder did not exit after cancellation")
 	}
 }
+
+func TestForwardStdioCancelsIncompleteRequest(t *testing.T) {
+	for _, request := range []string{
+		"POST /v1/chat/completions HTTP/1.1\r\nHost: guard\r\n",
+		"POST /v1/chat/completions HTTP/1.1\r\nHost: guard\r\nAuthorization: Bearer opaque-test-value\r\nContent-Length: 10\r\n\r\n{",
+	} {
+		guard, calls := guardedServer(t, http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
+		if err := forwardStdio(strings.NewReader(request), io.Discard, guard.Listener.Addr().String(), time.Second); err != nil {
+			t.Fatalf("incomplete input did not cancel cleanly: %v", err)
+		}
+		if calls.Load() != 0 {
+			t.Fatal("incomplete input reached the upstream")
+		}
+	}
+}

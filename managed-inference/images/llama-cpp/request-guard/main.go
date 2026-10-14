@@ -65,12 +65,29 @@ func forwardStdio(input io.Reader, output io.Writer, address string, timeout tim
 	}
 }
 
+type forwardingInput struct {
+	io.Reader
+	eof bool
+}
+
+func (input *forwardingInput) Read(buffer []byte) (int, error) {
+	n, err := input.Reader.Read(buffer)
+	if errors.Is(err, io.EOF) {
+		input.eof = true
+	}
+	return n, err
+}
+
 func forwardStdioConnection(input io.Reader, output io.Writer, connection net.Conn) error {
 	// Parse the request boundary before forwarding so pipelined stdin cannot
 	// submit another request whose response this one-shot command will discard.
-	reader := bufio.NewReader(input)
+	source := &forwardingInput{Reader: input}
+	reader := bufio.NewReader(source)
 	request, readError := http.ReadRequest(reader)
 	if readError != nil {
+		if source.eof {
+			return nil // The caller disconnected before a request could be forwarded.
+		}
 		return errors.New("request guard request forwarding failed")
 	}
 
@@ -114,6 +131,9 @@ func forwardStdioConnection(input io.Reader, output io.Writer, connection net.Co
 		if inputError != nil {
 			_ = connection.Close()
 			<-responseDone
+			if source.eof {
+				return nil // An interrupted upload has no remaining guarded request.
+			}
 			return errors.New("request guard request forwarding failed")
 		}
 		outputError = <-responseDone
