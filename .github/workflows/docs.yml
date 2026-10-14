@@ -3,8 +3,8 @@
 # Adapted from main's Fern workflows; see fern/NOTICE.md.
 name: CD / Documentation
 on:
+  # Stacked v1 PRs target feature branches, so do not filter by base branch.
   pull_request:
-    branches: [v1]
   push:
     branches: [v1]
     tags: ["v1.*.*"]
@@ -46,7 +46,7 @@ jobs:
   preview:
     name: PR preview
     needs: validate
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    if: github.event_name == 'pull_request' && github.base_ref == 'v1' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

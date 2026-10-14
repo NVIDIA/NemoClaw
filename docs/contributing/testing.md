@@ -195,6 +195,11 @@ CI keeps each step's JUnit report, with per-test durations, for 14 days in the `
 
 ## How CI Runs the Tests
 
+The automatic workflows accept pull requests to any base branch, including stacked `v1` PRs targeting another feature branch.
+The PR must include these workflow changes; update existing stacks from `v1` to enable them.
+Image and live-suite checks still use their change analysis to decide which steps to run.
+Documentation previews publish only for PRs targeting `v1`.
+
 | Workflow | Checks |
 |---|---|
 | CI / Bundle | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64` |
@@ -279,7 +284,7 @@ The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-test
 
 ## Dependency Policy
 
-The [dependency workflow](../../.github/workflows/dependencies.yml) runs on every pull request targeting `v1`, so its required check is available even when no dependencies change.
+The [dependency workflow](../../.github/workflows/dependencies.yml) runs on every pull request, including stacked PRs, so its check is available even when no dependencies change.
 Pushes to `v1` run it only when Rust manifests, lockfiles, the toolchain, the policy, or the workflow change.
 It runs once on Linux, outside the native build matrix, without compiling the workspace or caching build artifacts.
 The [policy](../../deny.toml) permits the current license inventory and the explicitly listed Git sources; dependency revisions remain pinned in the manifests and lockfile.
