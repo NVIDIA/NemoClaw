@@ -396,6 +396,7 @@
         "test/e2e/fixtures/sandbox-failure-diagnostics.ts"
       ],
       "fast": [
+        "test/e2e/support/gateway-extra-provider-profile.test.ts",
         "test/e2e/support/podman-owner-diagnostic.test.ts",
         "test/e2e/support/podman-owner-snapshot.test.ts",
         "test/e2e/support/onboard-precleanup.test.ts",
@@ -424,6 +425,7 @@
         "test/e2e/fixtures/sandbox-failure-diagnostics.ts"
       ],
       "fast": [
+        "test/e2e/support/gateway-extra-provider-profile.test.ts",
         "test/e2e/support/podman-owner-diagnostic.test.ts",
         "test/e2e/support/podman-owner-snapshot.test.ts",
         "test/e2e/support/onboard-precleanup.test.ts",
