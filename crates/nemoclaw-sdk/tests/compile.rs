@@ -296,15 +296,32 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
         compile(&document, &generations, "0.1.0").unwrap(),
         nemoclaw_sdk::compile::compile_runtime(&document, &generations, "0.1.0").unwrap(),
     ] {
+        // The engine's facts and the gateway's prerequisites are separate
+        // reads: the facts serve every reader, and the openshell provider
+        // judges whether the engine can host its gateway.
+        let selected = &document.spec.gateway.as_managed().unwrap().engine;
         let engine = &graph["data"]["nemoclaw_engine_capabilities"]["current"];
-        assert_eq!(
-            engine["engine"],
-            document.spec.gateway.as_managed().unwrap().engine
-        );
-        assert_eq!(engine["compute_driver"], "docker");
+        assert_eq!(engine["engine"], *selected);
+        assert!(engine.get("compute_driver").is_none());
+        assert!(engine.get("lifecycle").is_none());
+        let prerequisites = &graph["data"]["openshell_gateway_prerequisites"]["current"];
+        assert_eq!(prerequisites["engine"], *selected);
+        assert_eq!(prerequisites["compute_driver"], "docker");
         assert!(
-            engine.get("depends_on").is_none(),
-            "read existing capabilities during plan"
+            prerequisites["lifecycle"]["postcondition"][0]["error_message"]
+                .as_str()
+                .unwrap()
+                .contains("does not meet gateway prerequisites")
+        );
+        for read in [engine, prerequisites] {
+            assert!(
+                read.get("depends_on").is_none(),
+                "read existing capabilities during plan"
+            );
+        }
+        assert_eq!(
+            graph["output"]["discovery"]["value"]["gateway_prerequisites"],
+            "${data.openshell_gateway_prerequisites.current.observation_json}"
         );
         let image = &graph["data"]["fabric_capabilities"]["sandbox_0"];
         assert_eq!(image["image"], document.spec.sandboxes[0].image.ref_);

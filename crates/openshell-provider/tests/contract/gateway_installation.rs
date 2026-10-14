@@ -158,6 +158,64 @@ resource "openshell_podman_gateway" "gateway" {{
     }
 }
 
+/// Whether an engine can host a gateway with each compute driver: a Docker
+/// engine serves the Docker driver but not the Podman one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
+async fn gateway_prerequisites_report_whether_an_engine_can_host_a_gateway() {
+    let fixture = crate::http_fixture::Fixture::engine(|request| {
+        assert_eq!(request.method, "GET", "a prerequisite read mutated the engine");
+        let path = request.path.split('?').next().unwrap();
+        let body = if path.ends_with("/libpod/info") {
+            json!({"host":{"security":{"rootless":false}}})
+        } else if path.ends_with("/version") {
+            json!({"Version":"28.0", "ApiVersion":"1.47", "Components":[{"Name":"Engine", "Version":"28.0"}]})
+        } else if path.ends_with("/info") {
+            json!({"ID":"engine"})
+        } else {
+            panic!("unexpected engine query {path}")
+        };
+        Some((200, serde_json::to_vec(&body).unwrap()))
+    })
+    .await;
+    let e = Installation::new();
+    e.configure(&format!(
+        r#"data "openshell_gateway_prerequisites" "docker" {{
+  engine         = "{engine}"
+  compute_driver = "docker"
+}}
+data "openshell_gateway_prerequisites" "podman" {{
+  engine         = "{engine}"
+  compute_driver = "podman"
+}}
+output "docker" {{
+  value = data.openshell_gateway_prerequisites.docker.status
+}}
+output "podman" {{
+  value = data.openshell_gateway_prerequisites.podman.observation_json
+}}
+"#,
+        engine = fixture.endpoint
+    ));
+    e.success(&[
+        "plan",
+        "-input=false",
+        "-no-color",
+        "-out=prerequisites.plan",
+    ]);
+    let plan: Value =
+        serde_json::from_slice(&e.success(&["show", "-json", "prerequisites.plan"]).stdout)
+            .unwrap();
+    let outputs = &plan["planned_values"]["outputs"];
+    assert_eq!(outputs["docker"]["value"], "available");
+    let podman: Value = serde_json::from_str(outputs["podman"]["value"].as_str().unwrap()).unwrap();
+    assert_eq!(podman["status"], "unavailable");
+    assert_eq!(
+        podman["reason"],
+        "Podman sandbox driver requires a Podman engine socket"
+    );
+}
+
 #[test]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
 fn docker_gateway_launch_comes_from_typed_settings() {

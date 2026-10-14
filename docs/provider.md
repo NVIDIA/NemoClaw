@@ -7,7 +7,7 @@ The native bundle includes the NemoClaw, OpenShell, Fabric, Docker, and Helm Ope
 The SDK compiles desired-state YAML into resource graphs and runs bundled OpenTofu.
 OpenShell manages workspaces, provider registrations and profiles, and sandboxes through a gateway's API.
 Fabric configures the Fabric host in each agent sandbox and waits for its runtime, through the same gateway.
-Docker manages disposable service compute and Docker gateway processes; Helm installs the managed Kubernetes gateway chart; NemoClaw manages Podman gateway processes, Kubernetes gateway prerequisites, initialization, retained gateway bridges, and durable data bindings.
+Docker manages disposable service compute and Docker gateway processes; Helm installs the managed Kubernetes gateway chart; OpenShell installs Podman gateway processes, Kubernetes gateway prerequisites, initialization, and retained gateway bridges; NemoClaw manages durable data bindings for inference services.
 Use [the SDK](sdk.md) or [CLI](reference/cli.md) for the documented deployment workflow.
 
 ## Resource and State Ownership
@@ -150,6 +150,7 @@ These types name the engine or cluster they use instead of taking a gateway `ref
 | `openshell_kubernetes_gateway` | Kubernetes gateway StatefulSet identity and readiness |
 | `openshell_docker_gateway_readiness` data source | [Managed Docker gateway process and health](#gateway-capabilities) |
 | `openshell_docker_gateway_runtime` data source | Nothing; [computes a Docker gateway's launch](#docker-gateway-launch) |
+| `openshell_gateway_prerequisites` data source | [Whether an engine can host a managed gateway](#engine-and-fabric-discovery) |
 
 `openshell_gateway_storage` and `openshell_podman_gateway` take the gateway's `name`, `compute_driver` (`docker` or `podman`), `engine`, `image`, and `network_cidr`, optional `owner` and `generation`, generated during apply when omitted and kept in state, and optional `image_pull_policy`:
 
@@ -211,7 +212,7 @@ Both take optional `owner` and `generation`, generated the same way; generated g
 
 | Data source | Observes |
 |---|---|
-| `nemoclaw_engine_capabilities` | [Engine prerequisites](#engine-and-fabric-discovery) |
+| `nemoclaw_engine_capabilities` | [Engine version, platform, CPUs, and memory](#engine-and-fabric-discovery) |
 | `nemoclaw_target_hardware` | [Engine-advertised hardware](#target-hardware) |
 | `nemoclaw_inference_capabilities` | [Inference model catalog](#inference-endpoint-metadata) |
 | `nemoclaw_runtime_image` | [Managed runtime image labels](#runtime-image-compatibility) |
@@ -285,7 +286,8 @@ An observation describes the selected target at the time of its read; it is not 
 
 | Question | Owner and source | When it runs |
 |---|---|---|
-| Engine prerequisites | `nemoclaw_engine_capabilities`; selected Docker/Podman API | Onboarding target changes and managed deployment planning |
+| Engine version, platform, CPUs, and memory | `nemoclaw_engine_capabilities`; selected Docker/Podman API | Onboarding target changes and managed deployment planning |
+| Managed gateway prerequisites for its compute driver | `openshell_gateway_prerequisites`; selected Docker/Podman API | Onboarding target changes and managed deployment planning |
 | Engine features, CPU, memory, and advertised GPU inventory | `nemoclaw_target_hardware`; selected engine API | Onboarding and planning for selected gateway/service engines |
 | GPU memory, driver, compute capability, and disk measurements | Provider `observe_host_hardware` with a selected `HostObserver` | Explicit direct calls or existing configured service-capacity checks; the new passive hardware source does not run collectors |
 | Packaged adapters, APIs, settings, and runtime requirements | `fabric_capabilities`; selected image metadata containing Fabric discovery results | Onboarding image changes and deployment planning |
@@ -297,12 +299,15 @@ An observation describes the selected target at the time of its read; it is not 
 
 ## Engine and Fabric Discovery
 
-`nemoclaw_engine_capabilities` (NemoClaw provider) and `fabric_capabilities` (Fabric provider) require `engine`, the selected container-engine endpoint, without requiring an OpenShell connection.
-The engine source also requires `compute_driver` (`docker` or `podman`); the Fabric source requires `image`.
+`nemoclaw_engine_capabilities` (NemoClaw provider), `openshell_gateway_prerequisites` (OpenShell provider), and `fabric_capabilities` (Fabric provider) require `engine`, the selected container-engine endpoint, without requiring an OpenShell connection.
+The prerequisite source also requires `compute_driver` (`docker` or `podman`); the Fabric source requires `image`.
 For a cluster image that no local engine can inspect, the Fabric source instead reads the metadata bundle whose path is in the environment variable named by `metadata_env`; `engine` must then be empty.
-Both return `status`, `available`, and structured JSON in `observation_json`.
+Each returns `status`, `available`, and structured JSON in `observation_json`.
 
-The engine observation checks gateway prerequisites and reports available server version, architecture, operating system, CPU count, and memory fields.
+The engine observation reports available server version, architecture, operating system, CPU count, and memory fields.
+The prerequisite observation is `unavailable`, with its reason, when the engine cannot host a managed gateway with that driver: the Podman driver needs a Podman engine socket, and rootless Podman needs pasta networking.
+The gateway installation types check the same prerequisites when they plan and apply.
+Plans for a managed gateway read both and report them as one engine observation, whose status is the less available of the two.
 These describe the selected engine, which may differ from the CLI host.
 The image observation retains its configuration ID, repository manifest digests, platform, and size even when it lacks Fabric metadata.
 Neither source pulls images or starts containers.

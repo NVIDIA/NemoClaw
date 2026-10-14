@@ -4,10 +4,70 @@
 //! Engine, hardware, and image facts read from the selected engine's API.
 use crate::engine::Engines;
 use nemoclaw_sdk::{
-    discovery::{DiscoveryRequest, EngineObservation, ObservationStatus},
+    discovery::{
+        DiscoveryRequest, EngineObservation, GatewayPrerequisitesObservation, ObservationStatus,
+    },
     hardware_discovery::HardwareObservation,
 };
 use std::time::Duration;
+
+/// The gateway prerequisite failures that make an engine unusable for a
+/// gateway, rather than unverified.
+fn unmet_prerequisite(error: &nemoclaw_sdk::Error) -> bool {
+    matches!(
+        error,
+        nemoclaw_sdk::Error::Conflict(
+            "managed rootless Podman requires an API that reports pasta networking for OpenShell callbacks"
+                | "Podman sandbox driver requires a Podman engine socket"
+        )
+    )
+}
+
+/// The selected engine's facts from its `/info`, whatever runs on it.
+/// Failure to contact the engine leaves its facts unknown.
+pub async fn observe_engine_facts(engines: &dyn Engines, engine: &str) -> EngineObservation {
+    let mut observed = EngineObservation::unknown("engine observation timed out");
+    let work = async { engines.engine(engine)?.info().await };
+    match tokio::time::timeout(Duration::from_secs(5), work).await {
+        Ok(Ok(info)) => {
+            observed.status = ObservationStatus::Available;
+            observed.reason = None;
+            observed.server_version = info.server_version;
+            observed.architecture = info.architecture;
+            observed.operating_system = info.os_type;
+            observed.memory_bytes = info.mem_total.and_then(|value| value.try_into().ok());
+            observed.cpus = info.ncpu;
+        }
+        Ok(Err(error)) => observed.reason = Some(error.to_string()),
+        Err(_) => {}
+    }
+    observed
+}
+
+/// Whether the selected engine meets a managed gateway's prerequisites for
+/// its compute driver. An unmet prerequisite is unavailable; a failed read is
+/// unknown.
+pub async fn observe_gateway_prerequisites(
+    engines: &dyn Engines,
+    request: &DiscoveryRequest,
+) -> GatewayPrerequisitesObservation {
+    let work = async {
+        let engine = engines.engine(&request.engine)?;
+        crate::gateway_engine_info(&engine, request.compute_driver).await
+    };
+    let (status, reason) = match tokio::time::timeout(Duration::from_secs(5), work).await {
+        Ok(Ok(_)) => (ObservationStatus::Available, None),
+        Ok(Err(error)) if unmet_prerequisite(&error) => {
+            (ObservationStatus::Unavailable, Some(error.to_string()))
+        }
+        Ok(Err(error)) => (ObservationStatus::Unknown, Some(error.to_string())),
+        Err(_) => (
+            ObservationStatus::Unknown,
+            Some("gateway prerequisite observation timed out".into()),
+        ),
+    };
+    GatewayPrerequisitesObservation { status, reason }
+}
 
 /// Observe the selected engine, never substituting the client host for a remote target.
 /// Failure to contact the engine leaves capabilities unknown rather than unsupported.
@@ -39,13 +99,7 @@ pub async fn observe_engine(
             observed.cpus = info.ncpu;
         }
         Ok(Err(error)) => {
-            if matches!(
-                error,
-                nemoclaw_sdk::Error::Conflict(
-                    "managed rootless Podman requires an API that reports pasta networking for OpenShell callbacks"
-                        | "Podman sandbox driver requires a Podman engine socket"
-                )
-            ) {
+            if unmet_prerequisite(&error) {
                 observed.status = ObservationStatus::Unavailable;
             }
             observed.reason = Some(error.to_string());

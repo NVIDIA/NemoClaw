@@ -374,3 +374,10 @@ data openshell_gateway (version 0)
   tls_certificate_env: string, optional
   tls_key_env: string, optional
   wait_timeout_seconds: number, optional
+
+data openshell_gateway_prerequisites (version 0)
+  available: bool, computed
+  compute_driver: string, required
+  engine: string, required
+  observation_json: string, computed
+  status: string, computed

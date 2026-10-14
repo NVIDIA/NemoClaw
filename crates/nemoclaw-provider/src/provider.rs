@@ -294,6 +294,12 @@ impl GatewayInstallation {
                     self.backend.clone(),
                 )) as Box<dyn DynamicDataSource>,
             ),
+            (
+                Self::name("gateway_prerequisites"),
+                Box::new(crate::discovery::GatewayPrerequisitesDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
+            ),
         ])
     }
 }

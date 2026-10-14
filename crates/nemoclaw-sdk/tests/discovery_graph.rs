@@ -17,8 +17,9 @@ use nemoclaw_sdk::{
 };
 use serde_json::{Value, json};
 
-const DATA_SOURCES: [&str; 4] = [
+const DATA_SOURCES: [&str; 5] = [
     "nemoclaw_engine_capabilities",
+    "openshell_gateway_prerequisites",
     "fabric_capabilities",
     "nemoclaw_inference_capabilities",
     "nemoclaw_target_hardware",

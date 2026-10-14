@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 use crate::transport;
-use nemoclaw_discovery::{Direct, observe_engine, observe_fabric, observe_hardware};
+use nemoclaw_discovery::{
+    Direct, observe_engine, observe_engine_facts, observe_fabric, observe_gateway_prerequisites,
+    observe_hardware,
+};
 use nemoclaw_sdk::{
     config::ComputeDriver, discovery::DiscoveryRequest, discovery::ObservationStatus,
 };
@@ -27,6 +30,76 @@ async fn discovery_reads_only_engine_info_and_preserves_target_hardware() {
     assert_eq!(observed.status, ObservationStatus::Available);
     assert_eq!(observed.architecture.as_deref(), Some("arm64"));
     assert_eq!(observed.memory_bytes, Some(16000000000));
+}
+
+/// Engine facts never consult a compute driver: they read only `/info`.
+#[tokio::test]
+async fn engine_facts_read_only_engine_info() {
+    let fixture = transport::Fixture::start(|request| {
+        assert_eq!(request.method, "GET");
+        assert_eq!(request.path, "/info");
+        Some((200, serde_json::to_vec(&json!({"ID":"remote-engine", "ServerVersion":"28.0", "Architecture":"arm64", "OSType":"linux"})).unwrap()))
+    })
+    .await;
+    let observed = observe_engine_facts(&Direct, &fixture.endpoint).await;
+    assert_eq!(observed.status, ObservationStatus::Available);
+    assert_eq!(observed.architecture.as_deref(), Some("arm64"));
+    assert_eq!(observed.operating_system.as_deref(), Some("linux"));
+}
+
+/// A Podman gateway needs a Podman engine, and rootless Podman needs pasta
+/// networking; either failure makes the engine unavailable for it.
+#[tokio::test]
+async fn gateway_prerequisites_reject_engines_a_gateway_cannot_use() {
+    let podman = |rootless: bool, network: &'static str, components: &'static str| {
+        transport::Fixture::start(move |request| {
+            let path = request.path.split('?').next().unwrap().to_owned();
+            let body = if path.ends_with("/libpod/info") {
+                json!({"host":{"security":{"rootless":rootless},"rootlessNetworkCmd":network}})
+            } else if path.ends_with("/version") {
+                json!({"Version":"5.0", "ApiVersion":"1.41", "Components":[{"Name":components, "Version":"5.0"}]})
+            } else if path.ends_with("/info") {
+                json!({"ID":"engine"})
+            } else {
+                panic!("unexpected engine query {path}")
+            };
+            Some((200, serde_json::to_vec(&body).unwrap()))
+        })
+    };
+    let request = |endpoint: &str, compute_driver| DiscoveryRequest {
+        engine: endpoint.to_owned(),
+        compute_driver,
+    };
+    let ready = podman(false, "", "Podman Engine").await;
+    let observed =
+        observe_gateway_prerequisites(&Direct, &request(&ready.endpoint, ComputeDriver::Podman))
+            .await;
+    assert_eq!(
+        observed.status,
+        ObservationStatus::Available,
+        "{observed:?}"
+    );
+    assert_eq!(observed.reason, None);
+    let docker = podman(false, "", "Engine").await;
+    let observed =
+        observe_gateway_prerequisites(&Direct, &request(&docker.endpoint, ComputeDriver::Podman))
+            .await;
+    assert_eq!(observed.status, ObservationStatus::Unavailable);
+    assert_eq!(
+        observed.reason.as_deref(),
+        Some("Podman sandbox driver requires a Podman engine socket")
+    );
+    let slirp = podman(true, "slirp4netns", "Podman Engine").await;
+    let observed =
+        observe_gateway_prerequisites(&Direct, &request(&slirp.endpoint, ComputeDriver::Podman))
+            .await;
+    assert_eq!(observed.status, ObservationStatus::Unavailable);
+    assert!(observed.reason.unwrap().contains("pasta networking"));
+    // Docker has no driver-specific prerequisite beyond a reachable engine.
+    let observed =
+        observe_gateway_prerequisites(&Direct, &request(&docker.endpoint, ComputeDriver::Docker))
+            .await;
+    assert_eq!(observed.status, ObservationStatus::Available);
 }
 
 #[tokio::test]

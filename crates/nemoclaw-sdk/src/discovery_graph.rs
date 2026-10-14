@@ -4,7 +4,7 @@
 //! Discovery reads have no dependency on resource creation or image acquisition.
 use crate::{
     config::{ConfigError, Document},
-    discovery::{DiscoveryQuery, FabricRequest, plan_queries},
+    discovery::{DiscoveryQuery, FabricRequest, GATEWAY_PREREQUISITES, plan_queries},
 };
 use serde_json::{Map, Value, json};
 
@@ -14,7 +14,7 @@ fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, Value), ConfigError> 
     Ok(match query {
         DiscoveryQuery::Engine(request) => (
             "engine_capabilities",
-            json!({"engine":literal(&request.engine),"compute_driver":request.compute_driver}),
+            json!({"engine":literal(&request.engine)}),
         ),
         DiscoveryQuery::Hardware(request) => (
             "target_hardware",
@@ -121,20 +121,31 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                 read(graph, &mut observations, &query, &name, &name, |_| {})?;
                 targets += 1;
             }
-            DiscoveryQuery::Engine(_) => {
+            DiscoveryQuery::Engine(request) => {
                 read(
                     graph,
                     &mut observations,
                     &query,
                     "current",
                     "engine",
-                    |inputs| {
-                        inputs["lifecycle"] = json!({ "postcondition": [{
+                    |_| {},
+                )?;
+                // The openshell provider judges whether the engine can host
+                // the managed gateway; its installation types enforce the
+                // same check.
+                let source = crate::compile::data_source_type(GATEWAY_PREREQUISITES);
+                graph["data"][&source]["current"] = json!({
+                    "engine": literal(&request.engine),
+                    "compute_driver": request.compute_driver,
+                    "lifecycle": { "postcondition": [{
                         "condition": "${self.status != \"unavailable\"}",
                         "error_message": "The selected engine does not meet gateway prerequisites. Correct the runtime or target configuration."
-                    }] });
-                    },
-                )?;
+                    }] },
+                });
+                observations.insert(
+                    GATEWAY_PREREQUISITES.into(),
+                    json!(format!("${{data.{source}.current.observation_json}}")),
+                );
             }
             DiscoveryQuery::Fabric(FabricRequest {
                 requirements,

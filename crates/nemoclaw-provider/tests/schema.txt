@@ -42,7 +42,6 @@ resource nemoclaw_ollama_service_storage (version 0)
 
 data nemoclaw_engine_capabilities (version 0)
   available: bool, computed
-  compute_driver: string, required
   engine: string, required
   observation_json: string, computed
   status: string, computed

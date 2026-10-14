@@ -44,8 +44,8 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
         "provider":{"nemoclaw":{},"fabric":{}},
         "data":{
             "nemoclaw_engine_capabilities":{
-                "present":{"engine":fixture.endpoint,"compute_driver":"docker"},
-                "unknown":{"engine":unreachable,"compute_driver":"docker"}
+                "present":{"engine":fixture.endpoint},
+                "unknown":{"engine":unreachable}
             },
             "fabric_capabilities":{
                 "present":{"engine":fixture.endpoint,"image":"labeled:image"},
@@ -230,12 +230,16 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
     .into();
     let compiled = compile(&document, &generations, "0.1.0").unwrap();
     // Keep the compiler's target inputs and conditions; isolate remote endpoint
-    // and gateway reads so this test touches only its owned engine fixture.
+    // and gateway reads, and the openshell provider's gateway prerequisites,
+    // so this test touches only its owned engine fixture.
     let mut output = compiled["output"].clone();
     output["discovery"]["value"]
         .as_object_mut()
         .unwrap()
-        .retain(|name, _| name != "gateway" && !name.starts_with("endpoint_"));
+        .retain(|name, _| {
+            !["gateway", "gateway_prerequisites"].contains(&name.as_str())
+                && !name.starts_with("endpoint_")
+        });
     let graph = json!({
         "terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"nvidia/nemoclaw"},"fabric":{"source":"nvidia/fabric"}}},
         "provider":{"nemoclaw":{},"fabric":{}},

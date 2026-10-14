@@ -37,7 +37,7 @@ pub const RESOURCE_TYPES: [(&str, &str); 4] = [
 /// Gateway installation kinds the openshell provider serves, with their type
 /// names. They install a gateway rather than reach one, so they take no
 /// gateway `ref` and have no `type_name`.
-pub const INSTALLATION_TYPES: [(&str, &str); 7] = [
+pub const INSTALLATION_TYPES: [(&str, &str); 8] = [
     ("managed_gateway", "podman_gateway"),
     ("gateway_storage", "gateway_storage"),
     ("kubernetes_storage", "kubernetes_storage"),
@@ -46,6 +46,7 @@ pub const INSTALLATION_TYPES: [(&str, &str); 7] = [
     // Data sources.
     ("gateway_readiness", "docker_gateway_readiness"),
     ("gateway_runtime", "docker_gateway_runtime"),
+    ("gateway_prerequisites", "gateway_prerequisites"),
 ];
 
 /// The OpenTofu resource or data source type of a gateway installation kind.
@@ -104,6 +105,7 @@ mod tests {
             ("kubernetes_gateway", "openshell_kubernetes_gateway"),
             ("gateway_readiness", "openshell_docker_gateway_readiness"),
             ("gateway_runtime", "openshell_docker_gateway_runtime"),
+            ("gateway_prerequisites", "openshell_gateway_prerequisites"),
         ] {
             assert_eq!(installation_type(kind).as_deref(), Some(name));
             assert_eq!(object_kind(name), kind);

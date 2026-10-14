@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use crate::discovery::{EngineObservation, GATEWAY_PREREQUISITES};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -203,6 +204,11 @@ impl DiscoveryReport {
         self.credentials.extend(other.credentials);
     }
 }
+/// The prerequisite read's observation name, for its address.
+fn prerequisites(address: &str) -> Option<String> {
+    let source = crate::compile::data_source_type(GATEWAY_PREREQUISITES);
+    (address == format!("data.{source}.current")).then(|| GATEWAY_PREREQUISITES.to_owned())
+}
 fn observation_name(address: &str) -> Option<String> {
     if address == "data.nemoclaw_engine_capabilities.current" {
         Some("engine".into())
@@ -271,7 +277,7 @@ impl Plan {
                 let Some(address) = resource["address"].as_str() else {
                     continue;
                 };
-                if let Some(name) = observation_name(address) {
+                if let Some(name) = observation_name(address).or_else(|| prerequisites(address)) {
                     result
                         .entry(name)
                         .or_insert_with(|| resource["values"]["observation_json"].clone());
@@ -286,11 +292,33 @@ impl Plan {
         }
         for change in &self.resource_changes {
             if change.mode.as_deref() == Some("data")
-                && let Some(name) = observation_name(&change.address)
+                && let Some(name) =
+                    observation_name(&change.address).or_else(|| prerequisites(&change.address))
             {
                 result
                     .entry(name)
                     .or_insert_with(|| change.change.after["observation_json"].clone());
+            }
+        }
+        // A managed gateway's engine facts and its prerequisites are separate
+        // reads, reported as one engine observation; until both complete the
+        // engine is unresolved.
+        if let Some(prerequisites) = result.remove(GATEWAY_PREREQUISITES) {
+            let engine = result
+                .get("engine")
+                .and_then(Value::as_str)
+                .and_then(|engine| serde_json::from_str::<EngineObservation>(engine).ok());
+            if let Some(engine) = engine {
+                let merged = prerequisites
+                    .as_str()
+                    .and_then(|encoded| serde_json::from_str(encoded).ok())
+                    .map(|prerequisites| {
+                        Value::String(
+                            serde_json::to_string(&engine.with_prerequisites(prerequisites))
+                                .expect("engine observation"),
+                        )
+                    });
+                result.insert("engine".into(), merged.unwrap_or(Value::Null));
             }
         }
         result
@@ -512,6 +540,89 @@ mod tests {
                 .unwrap()
                 .contains("PRIVATE_SENTINEL")
         );
+    }
+}
+
+#[cfg(test)]
+mod prerequisite_tests {
+    use super::*;
+    use crate::discovery::{EngineObservation, GatewayPrerequisitesObservation, ObservationStatus};
+
+    fn reported(discovery: Value) -> DiscoveryReport {
+        let plan: Plan = serde_json::from_value(
+            json!({"planned_values":{"outputs":{"discovery":{"value":discovery}}}}),
+        )
+        .unwrap();
+        plan.discovery_report(
+            DiscoveryScope::Deployment,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+        )
+        .unwrap()
+    }
+
+    fn facts() -> String {
+        let mut engine = EngineObservation::unknown("");
+        engine.status = ObservationStatus::Available;
+        engine.reason = None;
+        engine.architecture = Some("arm64".into());
+        serde_json::to_string(&engine).unwrap()
+    }
+
+    fn prerequisites(status: ObservationStatus, reason: Option<&str>) -> String {
+        serde_json::to_string(&GatewayPrerequisitesObservation {
+            status,
+            reason: reason.map(str::to_owned),
+        })
+        .unwrap()
+    }
+
+    fn engine(report: &DiscoveryReport) -> EngineObservation {
+        match &report.observations["engine"] {
+            ReportedObservation::Discovery(DiscoveryObservation::Engine(engine)) => engine.clone(),
+            other => panic!("engine observation: {other:?}"),
+        }
+    }
+
+    /// The engine's facts and a managed gateway's prerequisites are separate
+    /// reads; the report states them as one engine observation, whose status
+    /// is the less available of the two.
+    #[test]
+    fn unmet_gateway_prerequisites_make_the_engine_unavailable() {
+        let reason = "Podman sandbox driver requires a Podman engine socket";
+        let report = reported(json!({
+            "engine": facts(),
+            "gateway_prerequisites": prerequisites(ObservationStatus::Unavailable, Some(reason)),
+        }));
+        let engine = engine(&report);
+        assert_eq!(engine.status, ObservationStatus::Unavailable);
+        assert_eq!(engine.reason.as_deref(), Some(reason));
+        assert_eq!(engine.architecture.as_deref(), Some("arm64"));
+        assert!(!report.observations.contains_key("gateway_prerequisites"));
+        let met = reported(json!({
+            "engine": facts(),
+            "gateway_prerequisites": prerequisites(ObservationStatus::Available, None),
+        }));
+        assert_eq!(engine_status(&met), ObservationStatus::Available);
+    }
+
+    fn engine_status(report: &DiscoveryReport) -> ObservationStatus {
+        engine(report).status
+    }
+
+    /// Until its prerequisites are read, a managed gateway's engine is unverified.
+    #[test]
+    fn unread_gateway_prerequisites_leave_the_engine_unresolved() {
+        let report = reported(json!({"engine": facts(), "gateway_prerequisites": null}));
+        assert!(
+            matches!(
+                &report.observations["engine"],
+                ReportedObservation::Plan(PlanObservation::Unresolved { category }) if category == "engine"
+            ),
+            "{:?}",
+            report.observations
+        );
+        assert!(!report.observations.contains_key("gateway_prerequisites"));
     }
 }
 
