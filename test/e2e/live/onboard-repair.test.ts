@@ -29,7 +29,7 @@ import { readExtraProviders, updateExtraProviders } from "../fixtures/extra-prov
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import {
   expectSandboxProviderAttachment,
-  upsertGenericGatewayProvider,
+  createExtraGatewayProvider,
 } from "../fixtures/gateway-providers.ts";
 import { prepareOnboardSandboxes } from "../fixtures/onboard-precleanup.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
@@ -262,11 +262,9 @@ test(
     });
     expect(sandboxAfterFailure.exitCode, resultText(sandboxAfterFailure)).toBe(0);
 
-    await upsertGenericGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
-      artifactName: "phase-1-live-extra-provider-upsert",
-      credentialEnv: EXTRA_PROVIDER_TOKEN_ENV,
+    await createExtraGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
+      artifactName: "phase-1-live-extra-provider-create",
       env: env({ [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN }),
-      redactionValues: [EXTRA_PROVIDER_TOKEN],
     });
     const seededExtraProviders = updateExtraProviders((providers) => {
       providers.add(STALE_EXTRA_PROVIDER);
