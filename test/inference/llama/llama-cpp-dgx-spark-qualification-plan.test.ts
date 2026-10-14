@@ -111,6 +111,12 @@ describe("llama.cpp DGX Spark qualification plan export (#8260)", () => {
       parseLlamaCppDgxSparkExecutionPlan(JSON.parse(output.plan), output.plan_sha256),
     ).toMatchObject({
       contractVersion: 1,
+      imageBuild: {
+        requestGuardToolchain: {
+          archiveSha256: "sha256:4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052",
+          version: "1.26.9",
+        },
+      },
       qualification: {
         agentQualification: {
           agent: "openclaw",
@@ -154,6 +160,15 @@ describe("llama.cpp DGX Spark qualification plan export (#8260)", () => {
       model_host_path: "/var/lib/nemoclaw/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
       runner: "linux-arm64-gpu-dgx-spark-gb10-protected-1",
     });
+  });
+
+  it("rejects candidate-selected infrastructure even with valid protected-name syntax", () => {
+    const root = candidateRoot({ activation, enabled: true });
+    const file = path.join(root, "managed-inference/images/llama-cpp/image.yaml");
+    const document = YAML.parse(fs.readFileSync(file, "utf8"));
+    document.spec.publication.qualification.environment = "approve-dgx-spark-unprotected";
+    fs.writeFileSync(file, YAML.stringify(document));
+    expect(() => exportLlamaCppDgxSparkQualificationPlan(root)).toThrow("must match trusted main");
   });
 
   it("rejects a dormant image even when an activation file exists", () => {

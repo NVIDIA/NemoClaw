@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { loadLlamaCppImageConfig } from "../../../scripts/checks/export-llama-cpp-image-config.mts";
 import {
@@ -71,6 +71,10 @@ describe("llama.cpp OpenClaw qualification probe", () => {
             status: 0,
             stdout: '{"payloads":[{"text":"LLAMA_CPP_OPENCLAW_TOOL_OK"}]}',
           },
+          {
+            status: 0,
+            stdout: '{"outputDir":"/sandbox/.openclaw/trajectory-exports/qualification-tool"}',
+          },
           { status: 0, stdout: '{"calls":1,"results":1,"users":2}' },
         ],
         invocations,
@@ -85,13 +89,15 @@ describe("llama.cpp OpenClaw qualification probe", () => {
       streamingChat: { done: true, events: 7 },
       synchronousChat: true,
     });
-    expect(invocations).toHaveLength(7);
+    expect(invocations).toHaveLength(8);
     expect(invocations[0]).toContain("https://inference.local/v1/chat/completions");
+    expect(invocations[0]?.[3]).toContain("chat_template_kwargs: { enable_thinking: false }");
     expect(invocations[2]).toContain("llama-cpp-openclaw-normal");
     expect(invocations[4]).toContain("llama-cpp-openclaw-tool");
     expect(invocations[5]).toContain("llama-cpp-openclaw-tool");
-    expect(invocations[6]).toContain(
-      "/sandbox/.openclaw/agents/main/sessions/llama-cpp-openclaw-tool.jsonl",
+    expect(invocations[6]).toContain("agent:main:explicit:llama-cpp-openclaw-tool");
+    expect(invocations[7]).toContain(
+      "/sandbox/.openclaw/trajectory-exports/qualification-tool/session-branch.json",
     );
     expect(JSON.stringify(evidence)).not.toContain("LLAMA_CPP_OPENCLAW_TOOL_OK");
   });
@@ -110,5 +116,41 @@ describe("llama.cpp OpenClaw qualification probe", () => {
         context([{ status: 1, stdout: "", stderr: "TOKEN=do-not-log" }], invocations),
       ),
     ).rejects.toThrow(/^inference[.]local synchronous probe failed with status 1$/u);
+  });
+
+  it("retries only a pending CLI scope approval while retaining the exact agent turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const invocations: string[][] = [];
+      const result = runLlamaCppOpenClawAgentQualification(
+        enabledConfig(),
+        context(
+          [
+            { status: 0, stdout: '{"ok":true}' },
+            { status: 0, stdout: '{"done":true,"events":7}' },
+            {
+              status: 1,
+              stdout: "",
+              stderr: "scope upgrade pending approval (requestId: example)",
+            },
+            { status: 0, stdout: '{"payloads":[{"text":"PONG"}]}' },
+            { status: 0, stdout: "" },
+            { status: 0, stdout: '{"payloads":[{"text":"LLAMA_CPP_OPENCLAW_TOOL_OK"}]}' },
+            { status: 0, stdout: '{"payloads":[{"text":"LLAMA_CPP_OPENCLAW_TOOL_OK"}]}' },
+            {
+              status: 0,
+              stdout: '{"outputDir":"/sandbox/.openclaw/trajectory-exports/qualification-tool"}',
+            },
+            { status: 0, stdout: '{"calls":1,"results":1,"users":2}' },
+          ],
+          invocations,
+        ),
+      );
+      await vi.runAllTimersAsync();
+      expect((await result).agentNormalTurn).toBe(true);
+      expect(invocations[2]).toEqual(invocations[3]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
