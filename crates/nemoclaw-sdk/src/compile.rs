@@ -23,7 +23,7 @@ pub const NEMOCLAW_PROVIDERS: [&str; 3] = ["nemoclaw", "openshell", "fabric"];
 /// The OpenTofu resource type that reconciles a resource kind.
 pub fn resource_type(kind: &str) -> String {
     nemoclaw_openshell::resource_type(kind).unwrap_or_else(|| match kind {
-        "agent_configuration" => format!("fabric_{kind}"),
+        "agent" => nemoclaw_fabric::agent::RESOURCE_TYPE.to_owned(),
         _ => format!("nemoclaw_{kind}"),
     })
 }
@@ -136,27 +136,28 @@ fn targets_with_plans(
                 .expect("policy input"),
         );
         {
+            // The agent's inputs are Fabric's configuration sections; the
+            // sandbox fields name the sandbox whose ref the graph passes.
+            let mut values = nemoclaw_fabric::agent::decompose(&crate::fabric_config::for_sandbox(
+                document, sandbox,
+            )?);
+            values.extend([
+                ("workspace".into(), workspace.clone()),
+                (nemoclaw_fabric::agent::SANDBOX.into(), sandbox.name.clone()),
+                ("owner".into(), document.metadata.uid.clone()),
+                (
+                    "generation".into(),
+                    generation(generations, "sandbox")?.into(),
+                ),
+                (
+                    "sandbox_id".into(),
+                    format!("${{openshell_sandbox.{}.id}}", sandbox.name),
+                ),
+            ]);
             result.push(Target {
-                kind: "agent_configuration".into(),
-                address: format!("fabric_agent_configuration.{}", sandbox.name),
-                values: [
-                    ("workspace".into(), workspace.clone()),
-                    ("name".into(), sandbox.name.clone()),
-                    ("owner".into(), document.metadata.uid.clone()),
-                    (
-                        "generation".into(),
-                        generation(generations, "sandbox")?.into(),
-                    ),
-                    (
-                        "sandbox_id".into(),
-                        format!("${{openshell_sandbox.{}.id}}", sandbox.name),
-                    ),
-                    (
-                        "config_json".into(),
-                        crate::fabric_config::for_sandbox(document, sandbox)?.to_string(),
-                    ),
-                ]
-                .into(),
+                kind: "agent".into(),
+                address: format!("{}.{}", nemoclaw_fabric::agent::RESOURCE_TYPE, sandbox.name),
+                values,
             });
         }
         result.push(Target {
@@ -487,14 +488,29 @@ fn compile_with_plans(
             attributes["credential_source"] =
                 json!(value.replace("${", "$${").replace("%{", "%%{"));
         }
-        if target.kind == "agent_configuration" {
-            let model = attributes["config_json"]
-                .as_str()
-                .expect("Fabric configuration JSON");
-            attributes["config_json"] = json!(model.replace("${", "$${").replace("%{", "%%{"));
+        let agent = target.kind == "agent";
+        if agent
+            && target
+                .values
+                .get(nemoclaw_fabric::agent::DESCRIPTION)
+                .is_some_and(String::is_empty)
+        {
+            attributes
+                .as_object_mut()
+                .expect("attribute object")
+                .remove(nemoclaw_fabric::agent::DESCRIPTION);
         }
-        // OpenShell objects take typed inputs; their rows carry the JSON.
-        for input in nemoclaw_openshell::structured_inputs(&target.kind) {
+        // OpenShell objects and Fabric agents take typed inputs; their rows
+        // carry the JSON.
+        let structured = nemoclaw_openshell::structured_inputs(&target.kind)
+            .into_iter()
+            .chain(
+                agent
+                    .then(nemoclaw_fabric::agent::structured_inputs)
+                    .into_iter()
+                    .flatten(),
+            );
+        for input in structured {
             let encoded = attributes
                 .as_object_mut()
                 .expect("attribute object")
@@ -511,20 +527,32 @@ fn compile_with_plans(
         }
         // Rows name other objects; OpenTofu takes their refs, which also
         // order those objects first.
-        for reference in nemoclaw_openshell::references(&target.kind) {
+        let references = if agent {
+            nemoclaw_fabric::agent::references()
+        } else {
+            nemoclaw_openshell::references(&target.kind)
+        };
+        for reference in references {
             let object = attributes.as_object_mut().expect("attribute object");
             let carried: Vec<_> = reference
                 .fields
                 .iter()
                 .filter_map(|(_, field)| object.remove(*field))
                 .collect();
-            let Some(encoded) = carried.into_iter().next() else {
-                continue;
-            };
             if reference.kind == nemoclaw_openshell::GATEWAY_TYPE {
                 attributes[reference.attribute] = json!(gateway_ref_expression());
                 continue;
             }
+            // An agent's harness is the one its sandbox's image read selects.
+            if reference.kind == nemoclaw_fabric::agent::HARNESS_TYPE {
+                let sandbox = &target.values[nemoclaw_fabric::agent::SANDBOX];
+                attributes[reference.attribute] =
+                    json!(format!("${{data.fabric_harness.{sandbox}.ref}}"));
+                continue;
+            }
+            let Some(encoded) = carried.into_iter().next() else {
+                continue;
+            };
             let encoded = encoded.as_str().unwrap_or_default();
             if encoded.is_empty() {
                 continue;
@@ -663,11 +691,11 @@ fn compile_with_plans(
         "condition":"${self.compatible}",
         "error_message":gateway_error_message("self")
     }]});
-    let sandbox_readiness: BTreeMap<_, _> = document
+    let sandbox_readiness = document
         .spec
         .sandboxes
         .iter()
-        .map(|sandbox| {
+        .map(|sandbox| -> Result<(String, Value), ConfigError> {
             // Readiness names the sandbox and configuration attributes it reads.
             let mut readiness: serde_json::Map<String, Value> = [
                 "workspace",
@@ -689,12 +717,18 @@ fn compile_with_plans(
             })
             .collect();
             readiness.insert("gateway".into(), json!(gateway_ref_expression()));
+            // The document the agent's inputs compose, read once it applies.
+            let config = crate::fabric_config::for_sandbox(document, sandbox)?;
+            let mut applied = json!(
+                nemoclaw_fabric::agent::compose(&nemoclaw_fabric::agent::decompose(&config))
+                    .map_err(|_| ConfigError::new("invalid public Fabric configuration"))?
+                    .to_string()
+            );
+            crate::docker_compute::literal(&mut applied);
+            readiness.insert("config_json".into(), applied);
             readiness.insert(
-                "config_json".into(),
-                json!(format!(
-                    "${{fabric_agent_configuration.{}.config_json}}",
-                    sandbox.name
-                )),
+                "depends_on".into(),
+                json!([format!("{}.{}", nemoclaw_fabric::agent::RESOURCE_TYPE, sandbox.name)]),
             );
             // uuid() is unknown in a saved plan and records a unique observation
             // token, so failed applies cannot report stale health as a new result.
@@ -706,9 +740,9 @@ fn compile_with_plans(
                     "error_message":"${self.error_message != null ? self.error_message : \"Fabric readiness could not be established; resources retained\"}"
                 }]}),
             );
-            (sandbox.name.clone(), Value::Object(readiness))
+            Ok((sandbox.name.clone(), Value::Object(readiness)))
         })
-        .collect();
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
     graph["resource"] = resources;
     graph["data"]["fabric_sandbox_readiness"] = json!(sandbox_readiness);
     graph["data"]["openshell_gateway"]["apply"] = apply_readiness;

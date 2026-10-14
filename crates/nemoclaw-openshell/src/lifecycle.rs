@@ -19,9 +19,7 @@ pub fn openshell_lifecycle(kind: &str) -> Option<OpenShellLifecycle> {
     match object_kind(kind) {
         "workspace" => Some(OpenShellLifecycle::Retained),
         "sandbox" => Some(OpenShellLifecycle::Stateful),
-        "provider" | "provider_profile" | "agent_configuration" => {
-            Some(OpenShellLifecycle::Reconstructible)
-        }
+        "provider" | "provider_profile" | "agent" => Some(OpenShellLifecycle::Reconstructible),
         _ => None,
     }
 }

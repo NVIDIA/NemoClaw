@@ -158,7 +158,7 @@ See [provider discovery](../provider.md#engine-and-fabric-discovery) for observa
 
 Native interface, tool-disclosure, and reasoning settings are authored through Fabric's configuration and adapter settings.
 Managed search credentials, endpoint protocols, and network grants remain SDK deployment behavior.
-The reconstructible `agent_configuration` resource applies canonical Fabric configuration after provider routes are established.
+The reconstructible `fabric_agent` resource applies canonical Fabric configuration after provider routes are established.
 It restarts the Fabric runtime inside its retained sandbox when configuration changes; it does not replace the sandbox.
 A restarted host waits for explicit apply before starting a runtime, because persisted intent does not prove that current gateway routes match.
 The host calls Fabric's public plan/start/invoke/stop APIs.

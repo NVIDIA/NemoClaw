@@ -112,16 +112,21 @@ impl Record {
             return;
         }
         self.pending_creations.retain(|address, desired| {
-            // Fabric configuration has no independent runtime: its sandbox owns
-            // any partial effects, and its configuration binding uses that ID.
-            let address = address
-                .strip_prefix("fabric_agent_configuration.")
+            // A Fabric agent has no independent runtime: its sandbox owns any
+            // partial effects, and the agent names that sandbox.
+            let agent = address.strip_prefix("fabric_agent.");
+            let address = agent
                 .map(|name| format!("openshell_sandbox.{name}"))
                 .unwrap_or_else(|| address.clone());
+            let name = if agent.is_some() {
+                nemoclaw_fabric::agent::SANDBOX
+            } else {
+                "name"
+            };
             !bindings.get(&address).is_some_and(|binding| {
                 !binding.id.is_empty()
                     && [
-                        ("name", &binding.name),
+                        (name, &binding.name),
                         ("workspace", &binding.workspace),
                         ("owner", &binding.owner),
                         ("generation", &binding.generation),
@@ -590,6 +595,7 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
             let mut values = resource.values;
             if let Some((kind, _)) = resource.address.split_once('.') {
                 nemoclaw_openshell::flatten(kind, &mut values);
+                nemoclaw_fabric::agent::flatten(kind, &mut values);
             }
             let attributes: StateBinding = serde_json::from_value(values).map_err(|_| {
                 Error::State("OpenTofu binding is unreadable; retain state for recovery")

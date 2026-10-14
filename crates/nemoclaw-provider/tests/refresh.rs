@@ -207,7 +207,7 @@ async fn failed_and_partial_observations_retain_protocol_state() {
         "provider_profile",
         "provider",
         "sandbox",
-        "agent_configuration",
+        "agent",
     ] {
         for observation in [
             Err(ObservationError::Transport),
@@ -236,7 +236,7 @@ async fn confirmed_absence_reconciles_registrations_but_preserves_stateful_bindi
         "provider_profile",
         "provider",
         "sandbox",
-        "agent_configuration",
+        "agent",
     ] {
         for destroying in [false, true] {
             let resource = ResourceAdapter::new(
@@ -251,10 +251,8 @@ async fn confirmed_absence_reconciles_registrations_but_preserves_stateful_bindi
             let result = resource
                 .read(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
                 .await;
-            if matches!(
-                kind,
-                "provider_profile" | "provider" | "agent_configuration"
-            ) || (destroying && kind == "sandbox")
+            if matches!(kind, "provider_profile" | "provider" | "agent")
+                || (destroying && kind == "sandbox")
             {
                 assert!(result.is_none());
                 assert!(diagnostics.errors.is_empty());
@@ -391,7 +389,7 @@ async fn reconstructible_resources_plan_replacement_and_deletion_without_teardow
         "provider_profile",
         "provider",
         "sandbox",
-        "agent_configuration",
+        "agent",
     ] {
         let resource = ResourceAdapter::new(
             support::definition(kind, &["name", "owner", "generation"], &[]),
@@ -411,10 +409,7 @@ async fn reconstructible_resources_plan_replacement_and_deletion_without_teardow
                 Value::Null,
             )
             .await;
-        let reconstructible = matches!(
-            kind,
-            "provider_profile" | "provider" | "agent_configuration"
-        );
+        let reconstructible = matches!(kind, "provider_profile" | "provider" | "agent");
         assert_eq!(result.is_some(), reconstructible, "{kind}");
         assert_eq!(diagnostics.errors.is_empty(), reconstructible, "{kind}");
         if let Some((_, _, replacements)) = result {

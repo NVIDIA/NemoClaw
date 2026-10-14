@@ -37,7 +37,9 @@ impl From<PlannedResourceChange> for ResourceChange {
             && let Some((kind, _)) = planned.address.split_once('.')
         {
             nemoclaw_openshell::flatten(kind, &mut change.before);
+            nemoclaw_fabric::agent::flatten(kind, &mut change.before);
             nemoclaw_openshell::flatten(kind, &mut change.after);
+            nemoclaw_fabric::agent::flatten(kind, &mut change.after);
         }
         Self {
             mode: planned.mode,

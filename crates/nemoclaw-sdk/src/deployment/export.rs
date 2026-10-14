@@ -284,6 +284,10 @@ fn validate_projection(target: &Target, observed: &Value) -> Result<(), Error> {
                     observed[field].as_str().unwrap_or("").to_owned(),
                 ),
             };
+            // An omitted optional input is empty on both sides.
+            if expected.is_empty() && observed.is_empty() {
+                continue;
+            }
             let expected: Value = serde_json::from_str(&expected)
                 .map_err(|_| Error::State("invalid authored export configuration"))?;
             let actual: Value = serde_json::from_str(&observed)
@@ -564,13 +568,18 @@ mod tests {
     #[test]
     fn export_rejects_configuration_and_intent_identity_drift_from_provider_observations() {
         let target = Target {
-            address: "fabric_agent_configuration.agent".into(),
-            kind: "agent_configuration".into(),
+            address: "fabric_agent.agent".into(),
+            kind: "agent".into(),
             values: Row::from([
                 ("owner".into(), "deployment".into()),
                 ("generation".into(), "generation".into()),
                 ("name".into(), "agent".into()),
-                ("config_json".into(), r#"{"model":"wanted"}"#.into()),
+                (
+                    "models_json".into(),
+                    r#"{"default":{"model":"wanted"}}"#.into(),
+                ),
+                // An omitted section is empty in the row and the observation.
+                ("tools_json".into(), String::new()),
             ]),
         };
         let observed = serde_json::to_value(&target.values).unwrap();
@@ -578,14 +587,15 @@ mod tests {
         for (key, value) in [
             ("owner", "foreign"),
             ("generation", "foreign"),
-            ("config_json", r#"{"model":"changed"}"#),
+            ("models_json", r#"{"default":{"model":"changed"}}"#),
+            ("tools_json", r#"{"enabled":["bash"]}"#),
         ] {
             let mut changed = observed.clone();
             changed[key] = json!(value);
             assert!(validate_projection(&target, &changed).is_err(), "{key}");
         }
         let mut reformatted = observed;
-        reformatted["config_json"] = json!(r#"{ "model": "wanted" }"#);
+        reformatted["models_json"] = json!(r#"{ "default": { "model": "wanted" } }"#);
         validate_projection(&target, &reformatted).unwrap();
     }
 

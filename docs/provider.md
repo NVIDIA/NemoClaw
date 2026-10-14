@@ -140,14 +140,56 @@ resource "openshell_sandbox" "assistant" {
 
 | Type | Manages or observes |
 |---|---|
-| `fabric_agent_configuration` | Fabric runtime configuration in a sandbox |
+| `fabric_agent` | The [agent a sandbox launches](#fabric-agents) and its Fabric configuration |
 | `fabric_sandbox_readiness` data source | [Sandbox completion](#sandbox-completion) |
 | `fabric_harnesses` data source | [Fabric image catalog and compatibility](#engine-and-fabric-discovery) |
-| `fabric_harness` data source | One harness in an image, selected by `adapter_id`: the `launch_json` that starts it for `agent_name`, and a `ref` naming the harness (`type`, `adapter_id`, `image`); fails when the image installs no runtime for the adapter |
+| `fabric_harness` data source | One harness in an image, selected by `adapter_id`: the `launch_json` that starts it for `agent_name`, and a `ref` naming the harness (`type`, `adapter_id`, `image`, and `catalog_json`, the image catalog's records for the adapter); fails when the image installs no runtime for the adapter |
 
-The `fabric` provider also takes only `destroy`; `fabric_agent_configuration` and `fabric_sandbox_readiness` take the same `gateway` ref as the sandbox they configure.
-It also accepts `destroy`, but no Fabric type requires it: removing an agent configuration releases its binding without changing the sandbox.
+The `fabric` provider also takes only `destroy`; `fabric_agent` and `fabric_sandbox_readiness` take the same `gateway` ref as the sandbox they configure.
+It also accepts `destroy`, but no Fabric type requires it: removing an agent releases its binding without changing the sandbox.
 It reaches each sandbox's Fabric host by running commands in the sandbox through the gateway; `fabric_harnesses` instead reads the container engine named on it.
+
+#### Fabric Agents
+
+`fabric_agent` configures the agent a sandbox launches.
+It takes the sandbox as `sandbox = openshell_sandbox.<name>.ref`, the harness that sandbox launches as `harness = data.fabric_harness.<name>.ref`, and `gateway`.
+`name` is the agent's name, Fabric's `metadata.name`, and optional `description` is `metadata.description`.
+`settings` is the harness's `harness.settings`.
+Every section of Fabric's agent configuration is an input with Fabric's name: `instructions`, `models`, `runtime`, `tools`, `skills`, `mcp`, `workflow`, `environment`, `discovery`, `relay`, and `telemetry`.
+Their types come from Fabric's published configuration schema, with snake_case names.
+Named objects, such as model roles, are labeled blocks: `models "default" { ... }`.
+A value Fabric leaves open, such as `settings`, is JSON text; write it with `jsonencode`.
+Fields an object accepts beyond those Fabric's schema declares, such as a model's `api`, go in that object's `extensions` attribute, also as JSON text.
+Fabric requires a `runtime` section, so omitting `runtime` sends an empty one.
+
+```hcl
+resource "fabric_agent" "travel" {
+  gateway = data.openshell_gateway.current.ref
+  sandbox = openshell_sandbox.travel.ref
+  harness = data.fabric_harness.pi.ref
+  name    = "travel"
+
+  instructions {
+    system {
+      content = file("instructions/travel.md")
+      mode    = "replace"
+    }
+  }
+
+  models "default" {
+    provider    = "openai"
+    model       = "nemotron"
+    base_url    = "https://inference.local/v1"
+    api_key_env = "NEMOCLAW_ANONYMOUS_API_KEY"
+  }
+}
+```
+
+Planning rejects a configuration Fabric cannot parse, naming the field but not its value.
+It also rejects one the harness does not accept, using the catalog records in the harness ref: Pi, for example, replaces system instructions and cannot append to them.
+Once the sandbox is known, planning refuses a `name` or harness other than the agent and harness the sandbox launches.
+Changing the sandbox, harness, or `name` replaces the agent; any other change reconfigures it through the sandbox's Fabric host without replacing the sandbox.
+Removing the resource releases its binding without changing the sandbox.
 
 ### NemoClaw Resources
 
@@ -310,7 +352,7 @@ Fabric observations retain the original `catalog`: Fabric adapter and workflow t
 Native schemas and declared requirements are consumed directly, without a second capability projection.
 Missing declarations remain unknown; an advertised setting does not prove that the selected inference model supports it.
 
-Optional `config_json` supplies the canonical public Fabric configuration, the same document `fabric_agent_configuration` takes.
+Optional `config_json` supplies the canonical public Fabric configuration, the same document a `fabric_agent`'s inputs compose.
 Optional `filesystem_read` lists the paths the sandbox policy grants for reading; omitting it skips the filesystem check.
 A configuration without `harness.adapter_id` is rejected.
 Optional `architecture` and `operating_system` supply the execution engine's platform.
@@ -424,8 +466,8 @@ Teardown omits the capability gates so a version or driver mismatch alone does n
 
 [OpenShell contract tests](../crates/openshell-provider/tests/contract) exercise the production provider and pinned OpenTofu without SDK orchestration: early planning errors, saved-plan drift, unchanged apply, failed observation, recovery, and teardown.
 [Deployment fixtures](../crates/nemoclaw-e2e/tests/deployment.rs) and [Fabric lifecycle fixtures](../crates/nemoclaw-e2e/tests/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
-Fabric configuration writes are owned by `fabric_agent_configuration`; unchanged apply preserves the active runtime handle.
-Its `config_json` is the canonical public Fabric configuration, separate from immutable sandbox identity.
+Fabric configuration writes are owned by `fabric_agent`; unchanged apply preserves the active runtime handle.
+Its inputs compose the canonical public Fabric configuration, separate from immutable sandbox identity.
 
 ## vLLM Runtime Contract
 

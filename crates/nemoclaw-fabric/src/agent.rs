@@ -400,6 +400,27 @@ mod tests {
         );
     }
 
+    /// Typed inputs carry a document without loss, including fields Fabric's
+    /// schema leaves open, such as a model's `api` extension.
+    #[test]
+    fn typed_inputs_keep_every_field_of_a_document() {
+        let mut config = document();
+        config["models"]["default"]["api"] = "openai-completions".into();
+        config["models"]["default"]["max_tokens"] = 4096.into();
+        config["models"]["default"]["settings"] = json!({"reasoning": {"effort": "low"}});
+        config["environment"] = json!({"provider": "local", "workspace": "/sandbox/workspace"});
+        let mut row = decompose(&config);
+        for input in structured_inputs() {
+            let encoded = row[input.field].clone();
+            if encoded.is_empty() {
+                continue;
+            }
+            let typed = input.configuration(&encoded).unwrap();
+            row.insert(input.field.into(), input.row_value(typed).unwrap().unwrap());
+        }
+        assert_eq!(compose(&row).unwrap(), config);
+    }
+
     #[test]
     fn a_section_that_is_not_json_names_its_input() {
         let mut row = decompose(&document());

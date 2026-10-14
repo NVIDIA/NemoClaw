@@ -169,6 +169,20 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                         }
                     }] });
                 })?;
+                // The harness the sandbox launches, which its agent takes by ref.
+                let read = &graph["data"]["fabric_harnesses"][&name];
+                let mut harness = json!({
+                    "image": read["image"],
+                    "adapter_id": literal(adapter),
+                    "agent_name": literal(&sandbox.agent.name),
+                });
+                for field in ["engine", "metadata_env"] {
+                    if !read[field].is_null() {
+                        harness[field] = read[field].clone();
+                    }
+                }
+                // Named by sandbox, so adding a sandbox changes no agent's ref.
+                graph["data"]["fabric_harness"][&sandbox.name] = harness;
             }
             DiscoveryQuery::Credential(_) => {
                 unreachable!("a plan reads credentials separately from its provider reads")

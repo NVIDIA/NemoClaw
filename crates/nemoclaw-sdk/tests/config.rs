@@ -323,9 +323,9 @@ fn pi_model_updates_leave_the_sandbox_connection_unchanged() {
     let mut after = targets(&document, &generations).unwrap();
     let configuration = after
         .iter_mut()
-        .find(|target| target.kind == "agent_configuration")
+        .find(|target| target.kind == "agent")
         .unwrap();
-    let model: Value = serde_json::from_str(&configuration.values["config_json"]).unwrap();
+    let model: Value = nemoclaw_fabric::agent::compose(&configuration.values).unwrap();
     assert_eq!(model["models"]["default"]["model"], "another-custom-model");
     let prior = before
         .iter()
@@ -333,7 +333,7 @@ fn pi_model_updates_leave_the_sandbox_connection_unchanged() {
         .unwrap();
     configuration
         .values
-        .insert("config_json".into(), prior.values["config_json"].clone());
+        .insert("models_json".into(), prior.values["models_json"].clone());
     assert_eq!(after, before);
 }
 

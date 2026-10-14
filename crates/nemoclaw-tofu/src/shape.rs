@@ -46,6 +46,25 @@ pub type Fields = BTreeMap<String, Field>;
 /// field has an empty JSON name.
 pub const CHOICE: &str = "value";
 
+/// The attribute that holds an object's undeclared properties, as JSON text,
+/// when its schema allows them; its field's JSON name is [`OPEN`].
+pub const EXTENSIONS: &str = "extensions";
+const OPEN: &str = "*";
+
+/// Add the `extensions` attribute for an object's undeclared properties.
+fn open(fields: &mut Fields, pointer: &str) -> Result<(), Unmappable> {
+    let extensions = Field {
+        json: OPEN.into(),
+        shape: Shape::Json,
+        required: false,
+        description: "Undeclared properties, as JSON text.".into(),
+    };
+    if fields.insert(EXTENSIONS.into(), extensions).is_some() {
+        return Err(unmappable(pointer, "duplicate OpenTofu name"));
+    }
+    Ok(())
+}
+
 fn choice(fields: &Fields) -> Option<&Field> {
     fields.get(CHOICE).filter(|field| field.json.is_empty())
 }
@@ -237,6 +256,16 @@ fn shape(root: &Value, schema: &Value, pointer: &str) -> Result<Shape, Unmappabl
                 }
             }
             Some(Value::Bool(false)) => Shape::Object(object_fields(root, schema, pointer)?),
+            Some(Value::Bool(true))
+                if schema
+                    .get("properties")
+                    .and_then(Value::as_object)
+                    .is_some_and(|properties| !properties.is_empty()) =>
+            {
+                let mut fields = object_fields(root, schema, pointer)?;
+                open(&mut fields, pointer)?;
+                Shape::Object(fields)
+            }
             _ if schema
                 .get("properties")
                 .and_then(Value::as_object)
@@ -319,6 +348,43 @@ pub fn from_hcl(fields: &Fields, value: &Value) -> Value {
     convert(&Shape::Object(fields.clone()), value, false)
 }
 
+/// Carry an open object's undeclared properties to or from `extensions`.
+fn extend(
+    fields: &Fields,
+    object: &Map<String, Value>,
+    converted: &mut Map<String, Value>,
+    outward: bool,
+) {
+    if outward {
+        let undeclared: Map<String, Value> = object
+            .iter()
+            .filter(|(key, _)| !fields.values().any(|field| field.json == **key))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        if !undeclared.is_empty() {
+            converted.insert(
+                EXTENSIONS.into(),
+                Value::Object(undeclared).to_string().into(),
+            );
+        }
+        return;
+    }
+    let Some(Value::String(text)) = object.get(EXTENSIONS) else {
+        return;
+    };
+    match serde_json::from_str(text) {
+        Ok(Value::Object(undeclared)) => {
+            for (key, value) in undeclared {
+                converted.entry(key).or_insert(value);
+            }
+        }
+        // Text that is not a JSON object reaches validation unchanged.
+        _ => {
+            converted.insert(EXTENSIONS.into(), text.clone().into());
+        }
+    }
+}
+
 /// OpenTofu's value for JSON of any shape.
 pub fn outward(shape: &Shape, value: &Value) -> Value {
     convert(shape, value, true)
@@ -341,19 +407,19 @@ fn convert(shape: &Shape, value: &Value, outward: bool) -> Value {
         }
     }
     match (shape, value) {
-        (Shape::Object(fields), Value::Object(object)) => Value::Object(
-            object
+        (Shape::Object(fields), Value::Object(object)) => {
+            let mut converted: Map<String, Value> = object
                 .iter()
                 .filter_map(|(key, value)| {
                     let (name, field) = if outward {
                         fields
                             .iter()
-                            .find(|(_, field)| field.json == *key)
+                            .find(|(_, field)| field.json == *key && field.json != OPEN)
                             .map(|(name, field)| (name.clone(), field))?
                     } else {
                         fields
                             .get(key)
-                            .filter(|field| !field.json.is_empty())
+                            .filter(|field| !field.json.is_empty() && field.json != OPEN)
                             .map(|field| (field.json.clone(), field))?
                     };
                     // OpenTofu sends an omitted attribute or block as null and
@@ -370,8 +436,15 @@ fn convert(shape: &Shape, value: &Value, outward: bool) -> Value {
                     }
                     Some((name, convert(&field.shape, value, outward)))
                 })
-                .collect(),
-        ),
+                .collect();
+            if fields
+                .get(EXTENSIONS)
+                .is_some_and(|field| field.json == OPEN)
+            {
+                extend(fields, object, &mut converted, outward);
+            }
+            Value::Object(converted)
+        }
         (Shape::ObjectList(fields), Value::Array(items)) => Value::Array(
             items
                 .iter()
@@ -715,6 +788,51 @@ mod tests {
         // Text that is not JSON reaches validation unchanged.
         let invalid = json!({"settings": "{"});
         assert_eq!(from_hcl(&fields, &invalid), invalid);
+    }
+
+    /// An object that also allows undeclared properties, such as Fabric's
+    /// flattened model extensions, keeps them as JSON text in `extensions`.
+    #[test]
+    fn undeclared_properties_are_json_text_extensions() {
+        let root = json!({
+            "type": "object",
+            "properties": {"model": {"type": "object", "additionalProperties": true, "required": ["provider"], "properties": {
+                "provider": {"type": "string"},
+            }}},
+        });
+        let fields = fields(&root, &[]).unwrap();
+        let Shape::Object(model) = &fields["model"].shape else {
+            panic!("the model is an object")
+        };
+        assert_eq!(model[EXTENSIONS].shape, Shape::Json);
+        assert!(!model[EXTENSIONS].required);
+        let value = json!({"model": {"provider": "openai", "api": "openai-completions"}});
+        let hcl = to_hcl(&fields, &value);
+        assert_eq!(hcl["model"]["provider"], "openai");
+        assert_eq!(
+            serde_json::from_str::<Value>(hcl["model"][EXTENSIONS].as_str().unwrap()).unwrap(),
+            json!({"api": "openai-completions"})
+        );
+        assert_eq!(from_hcl(&fields, &hcl), value);
+        // Without undeclared properties there is nothing to write.
+        let plain = json!({"model": {"provider": "openai"}});
+        assert!(to_hcl(&fields, &plain)["model"].get(EXTENSIONS).is_none());
+        assert_eq!(
+            from_hcl(
+                &fields,
+                &json!({"model": {"provider": "openai", "extensions": null}})
+            ),
+            plain
+        );
+        // A declared `extensions` property leaves no name for them.
+        let clash = json!({"type": "object", "properties": {"model": {"type": "object", "additionalProperties": true, "properties": {
+            "extensions": {"type": "string"},
+        }}}});
+        assert_eq!(fields_error(&clash), "duplicate OpenTofu name");
+    }
+
+    fn fields_error(root: &Value) -> &'static str {
+        fields(root, &[]).unwrap_err().reason
     }
 
     #[test]

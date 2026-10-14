@@ -19,7 +19,7 @@ Its [bridge protocol](../../image/fabric/bridge_protocol.py) owns command parsin
 | Fabric | Adapter discovery, schemas, native validation, native mapping and execution |
 | Authoring | Generic questions from owner schemas, accepted intent and unresolved work |
 
-`fabric_agent_configuration` applies the public Fabric document after sandbox creation and route setup.
+`fabric_agent` applies the public Fabric document its typed inputs compose after sandbox creation and route setup.
 Unchanged configuration preserves the active handle; a changed document stops the previous runtime before its replacement starts.
 A host process restart waits for explicit apply before starting Fabric so that persisted configuration cannot outrun current gateway routes.
 This resource is reconstructible and separate from immutable sandbox identity and retained deployment bindings.

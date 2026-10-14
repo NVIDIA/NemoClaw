@@ -57,12 +57,8 @@ fn shared_harness_configuration_compiles_identically_and_survives_export() {
             .push(other);
         let doc = Document::parse(value.to_string().as_bytes()).unwrap();
         let rows = targets(&doc, &generations).unwrap();
-        let runtime: Value = serde_json::from_str(
-            &rows
-                .iter()
-                .find(|row| row.kind == "agent_configuration")
-                .unwrap()
-                .values["config_json"],
+        let runtime: Value = nemoclaw_fabric::agent::compose(
+            &rows.iter().find(|row| row.kind == "agent").unwrap().values,
         )
         .unwrap();
         assert_eq!(runtime["runtime"]["timeout_seconds"], 900);

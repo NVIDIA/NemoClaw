@@ -44,6 +44,7 @@ pub(crate) fn parse_resources(values: &Value) -> Result<BTreeMap<String, Value>,
                     && let Some((kind, _)) = resource.address.split_once('.')
                 {
                     nemoclaw_openshell::flatten(kind, &mut values);
+                    nemoclaw_fabric::agent::flatten(kind, &mut values);
                 }
                 resources.insert(resource.address, values);
             }

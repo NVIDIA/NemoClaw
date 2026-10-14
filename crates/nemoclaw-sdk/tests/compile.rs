@@ -239,7 +239,7 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
         provider,
         profile,
         sandbox,
-        &resources["fabric_agent_configuration"]["worker"],
+        &resources["fabric_agent"]["worker"],
         &graph["data"]["fabric_sandbox_readiness"]["worker"],
     ] {
         assert_eq!(
@@ -351,12 +351,12 @@ fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
         .find(|target| target.kind == "sandbox")
         .unwrap();
     assert!(!sandbox.values.contains_key("agent_runtime"));
-    let settings: serde_json::Value = serde_json::from_str(
+    let settings: serde_json::Value = nemoclaw_fabric::agent::compose(
         &targets
             .iter()
-            .find(|target| target.kind == "agent_configuration")
+            .find(|target| target.kind == "agent")
             .unwrap()
-            .values["config_json"],
+            .values,
     )
     .unwrap();
     assert!(settings.to_string().contains("openai-responses"));

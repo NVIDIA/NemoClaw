@@ -573,7 +573,7 @@ fn pending_recovery_requires_matching_current_bindings_and_retains_unknown_creat
     record.begin_apply(&document, pending);
     let mut bindings: BTreeMap<_, _> = targets
         .iter()
-        .filter(|target| target.kind != "agent_configuration")
+        .filter(|target| target.kind != "agent")
         .map(|target| {
             let get = |key: &str| target.values.get(key).cloned().unwrap_or_default();
             (
@@ -609,7 +609,7 @@ fn pending_recovery_requires_matching_current_bindings_and_retains_unknown_creat
         assert!(retained.pending(), "{field}");
         let unresolved = retained.pending_creations;
         assert!(unresolved.contains_key(sandbox));
-        assert!(unresolved.contains_key("fabric_agent_configuration.assistant"));
+        assert!(unresolved.contains_key("fabric_agent.assistant"));
     }
     let missing = bindings
         .keys()
