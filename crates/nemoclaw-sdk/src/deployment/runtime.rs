@@ -14,6 +14,47 @@ const GATEWAY_STORAGE: &str = "nemoclaw_gateway_storage.runtime";
 const KUBERNETES_STORAGE: &str = "nemoclaw_kubernetes_storage.runtime";
 const KUBERNETES_AUTH: &str = "nemoclaw_kubernetes_auth.runtime";
 
+pub(super) fn validate_bound_sandboxes(
+    record: &Record,
+    document: &Document,
+    bindings: &BTreeMap<String, StateBinding>,
+) -> Result<(), Error> {
+    let error = match record.validate_bound_sandboxes(document, bindings) {
+        Err(error @ Error::SandboxChangeRefused { .. }) => error,
+        result => return result,
+    };
+    let Error::SandboxChangeRefused { sandbox, .. } = &error else {
+        unreachable!()
+    };
+    let prior = record.document.sandbox(sandbox)?;
+    // These bindings come from the main OpenShell state. Runtime resources
+    // live in a separate store, so compare retained and proposed intent here;
+    // runtime reconciliation still owns live binding and identity checks.
+    let previous = compile::runtime_targets(&record.document, &record.generations)?;
+    let targets = compile::runtime_targets(document, &record.generations)?;
+    for route in &record.document.sandbox_inference(prior)?.routes {
+        let provider = record.document.sandbox_route_provider(prior, route)?;
+        let Some(name) = provider.service_ref.as_deref() else {
+            continue;
+        };
+        let address = format!("nemoclaw_kubernetes_service.{name}");
+        let (Some(previous), Some(target)) = (
+            previous.iter().find(|target| target.address == address),
+            targets.iter().find(|target| target.address == address),
+        ) else {
+            continue;
+        };
+        let bound = crate::kubernetes::services::Spec::decode(&previous.values["spec"])?;
+        let want = crate::kubernetes::services::Spec::decode(&target.values["spec"])?;
+        if bound.storage() == want.storage() && bound.port() != want.port() {
+            return Err(crate::ObservationError::Backend(
+                "changing the model serving port requires whole-deployment destroy and apply; destroy deletes sandbox files and conversation history but retains model and credential PVCs",
+            ).into());
+        }
+    }
+    Err(error)
+}
+
 fn kubernetes_binding(
     target: &Target,
     bindings: &BTreeMap<String, StateBinding>,

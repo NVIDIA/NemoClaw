@@ -43,10 +43,10 @@ pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, Conf
         let provider = document.sandbox_route_registration(sandbox, route)?;
         let definition = provider.definition;
         let connection = document.provider_connection(definition)?;
-        let profile = crate::config::inference_profile(
+        let profile = crate::config::inference_profile_for_provider(
+            document,
+            definition,
             &provider.key,
-            &connection.endpoint,
-            definition.provider,
             crate::services::provider_authenticated(document, definition)?,
         )
         .map_err(|_| ConfigError::new("invalid inference transport"))?;

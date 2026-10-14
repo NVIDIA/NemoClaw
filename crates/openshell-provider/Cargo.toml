@@ -31,6 +31,7 @@ tokio-util.workspace = true
 tonic.workspace = true
 
 [dev-dependencies]
+nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 nemoclaw-test-fixtures = { path = "../nemoclaw-test-fixtures" }
 serde_json.workspace = true
 prost.workspace = true

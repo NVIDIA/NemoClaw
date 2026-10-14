@@ -90,6 +90,117 @@ impl Operations {
         )
     }
 
+    pub async fn endpoint_addresses(
+        &self,
+        spec: &StorageSpec,
+        endpoint: &str,
+    ) -> Result<Vec<std::net::IpAddr>, ObservationError> {
+        let receipt = self.load(spec)?.ok_or(ObservationError::Incomplete)?;
+        self.verify_storage(&receipt, true).await?;
+        let compute = receipt
+            .specification
+            .as_ref()
+            .ok_or(ObservationError::Incomplete)?;
+        if compute.endpoint() != endpoint {
+            return Err(Self::compute_mismatch(&receipt, "Service", "endpoint"));
+        }
+        let service = receipt
+            .compute
+            .iter()
+            .find(|owned| owned.kind == "Service")
+            .ok_or(ObservationError::Incomplete)?;
+        let observed = self.verify(spec, service).await?;
+        Self::verify_compute_spec(&receipt, &observed)?;
+        self.verify_endpoints(&receipt, service).await?;
+        let primary = observed
+            .data
+            .pointer("/spec/clusterIP")
+            .and_then(Value::as_str)
+            .ok_or(ObservationError::Incomplete)?;
+        let texts: Vec<&str> = match observed
+            .data
+            .pointer("/spec/clusterIPs")
+            .and_then(Value::as_array)
+        {
+            Some(values) => values
+                .iter()
+                .map(|value| value.as_str().ok_or(ObservationError::Incomplete))
+                .collect::<Result<_, _>>()?,
+            None => vec![primary],
+        };
+        if texts.is_empty() || texts.len() > 2 || texts[0] != primary {
+            return Err(ObservationError::Incomplete);
+        }
+        texts
+            .into_iter()
+            .map(|text| {
+                let address: std::net::IpAddr =
+                    text.parse().map_err(|_| ObservationError::Incomplete)?;
+                if !super::service_address_allowed(&address) {
+                    return Err(Self::mismatch(service, "spec.clusterIPs"));
+                }
+                Ok(address)
+            })
+            .collect()
+    }
+
+    async fn verify_endpoints(
+        &self,
+        receipt: &Receipt,
+        service: &Owned,
+    ) -> Result<(), ObservationError> {
+        use k8s_openapi::api::discovery::v1::EndpointSlice;
+        let pod = receipt
+            .compute
+            .iter()
+            .find(|owned| owned.kind == "Pod")
+            .ok_or(ObservationError::Incomplete)?;
+        let slices =
+            kube::Api::<EndpointSlice>::namespaced(self.client.clone(), &service.namespace)
+                .list(
+                    &kube::api::ListParams::default()
+                        .labels(&format!("kubernetes.io/service-name={}", service.name)),
+                )
+                .await
+                .map_err(|error| match error {
+                    kube::Error::Api(status) if status.code == 401 => {
+                        ObservationError::Authentication
+                    }
+                    kube::Error::Api(status) if status.code == 403 => ObservationError::Permission,
+                    kube::Error::Api(_) => ObservationError::Query,
+                    _ => ObservationError::Transport,
+                })?;
+        for slice in slices {
+            for endpoint in slice.endpoints.unwrap_or_default() {
+                if endpoint
+                    .conditions
+                    .as_ref()
+                    .and_then(|conditions| conditions.ready)
+                    == Some(false)
+                {
+                    continue;
+                }
+                if !endpoint.target_ref.as_ref().is_some_and(|target| {
+                    target.kind.as_deref() == Some("Pod")
+                        && target.namespace.as_deref() == Some(&pod.namespace)
+                        && target.name.as_deref() == Some(&pod.name)
+                        && target.uid.as_deref() == Some(&pod.uid)
+                }) {
+                    return Err(Self::mismatch(
+                        &Owned {
+                            api_version: "discovery.k8s.io/v1".into(),
+                            kind: "EndpointSlice".into(),
+                            namespace: service.namespace.clone(),
+                            name: slice.metadata.name.clone().unwrap_or_default(),
+                            uid: String::new(),
+                        },
+                        "endpoints.targetRef",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
     fn directory(&self, spec: &StorageSpec) -> PathBuf {
         self.state.join("services").join(&spec.name)
     }
@@ -1036,5 +1147,59 @@ impl Operations {
             self.read_with_exec(spec, None, executor).await
         })
         .await
+    }
+
+    pub async fn credential(&self, spec: &StorageSpec) -> Result<String, ObservationError> {
+        self.credential_with_exec(spec, &super::status::KubernetesExec(self.client.clone()))
+            .await
+    }
+
+    pub async fn credential_with_exec(
+        &self,
+        spec: &StorageSpec,
+        executor: &dyn super::PodExec,
+    ) -> Result<String, ObservationError> {
+        if !spec.authenticated {
+            return Err(ObservationError::BindingMismatch);
+        }
+        let receipt = self.load(spec)?.ok_or(ObservationError::Incomplete)?;
+        self.verify_storage(&receipt, true).await?;
+        let compute = receipt
+            .specification
+            .as_ref()
+            .ok_or(ObservationError::Incomplete)?;
+        if self.read_with_exec(compute, None, executor).await?.running != Some(true) {
+            return Err(ObservationError::Incomplete);
+        }
+        let pod = receipt
+            .compute
+            .iter()
+            .find(|owned| owned.kind == "Pod")
+            .ok_or(ObservationError::Incomplete)?;
+        let before = self.verify(spec, pod).await?;
+        Self::verify_pod(&receipt, &before)?;
+        let started = super::status::started(&before)?;
+        let bytes = executor
+            .read_file(spec.namespace(), &pod.name, super::RuntimeFile::Credential)
+            .await?
+            .ok_or(ObservationError::Incomplete)?;
+        self.verify_storage(&receipt, true).await?;
+        let after = self.verify(spec, pod).await?;
+        Self::verify_pod(&receipt, &after)?;
+        if super::status::started(&after)? != started {
+            return Err(Self::mismatch(
+                pod,
+                "status.containerStatuses[runtime].state.running.startedAt",
+            ));
+        }
+        let key = String::from_utf8(bytes).map_err(|_| ObservationError::Incomplete)?;
+        if key.len() != 64
+            || !key
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(ObservationError::Incomplete);
+        }
+        Ok(key)
     }
 }

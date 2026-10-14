@@ -468,6 +468,18 @@ impl ServiceDefinition {
             ServiceDefinition::OllamaProxy(service) => service
                 .credential_source(document, name, generations)
                 .map(Some),
+            ServiceDefinition::Vllm(service) if service.kubernetes.is_some() => {
+                if service.authentication.is_none() {
+                    return Ok(None);
+                }
+                let spec = super::cluster::spec(self, document, name, generations)?;
+                Ok(Some(super::authentication::source_json(
+                    &super::authentication::Source::ClusterService {
+                        endpoint: spec.endpoint(),
+                        storage: Box::new(spec.storage()),
+                    },
+                )?))
+            }
             ServiceDefinition::Vllm(service) => {
                 service.credential_source(document, name, generations)
             }
@@ -641,17 +653,7 @@ pub(crate) fn validate_provider(
     document: &Document,
     provider: &InferenceProvider,
 ) -> Result<bool, ConfigError> {
-    let Some((_, definition)) = definition(document, provider)? else {
-        return Ok(false);
-    };
-    // Sandbox policies cannot grant a cluster service's addresses, and providers
-    // cannot read its key, yet. Refuse here, before sandbox policy compilation
-    // reports only an invalid native inference policy.
-    crate::config::validation::require(
-        definition.kubernetes().is_none(),
-        "inference providers cannot reference cluster model services yet; use an external endpoint",
-    )?;
-    Ok(true)
+    Ok(definition(document, provider)?.is_some())
 }
 
 pub(crate) fn validate_route(
@@ -683,6 +685,23 @@ pub(crate) fn credential_source_json(
     definition
         .credential_source(document, name, generations)
         .map_err(|_| ConfigError::new("invalid managed credential source"))
+}
+
+pub(crate) fn cluster_source_json(
+    document: &Document,
+    provider: &InferenceProvider,
+    generations: &Generations,
+) -> Result<Option<String>, ConfigError> {
+    let Some((name, definition)) = definition(document, provider)? else {
+        return Ok(None);
+    };
+    if definition.kubernetes().is_none() {
+        return Ok(None);
+    }
+    super::cluster::spec(definition, document, name, generations)
+        .and_then(|spec| spec.storage().encode())
+        .map(Some)
+        .map_err(|_| ConfigError::new("invalid cluster endpoint provenance"))
 }
 
 pub(crate) fn generation_kinds(document: &Document) -> Result<Vec<&'static str>, ConfigError> {

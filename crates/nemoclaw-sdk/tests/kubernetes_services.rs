@@ -388,6 +388,46 @@ async fn cluster_identity_changes_block_model_mutations() {
 }
 
 #[tokio::test]
+async fn endpoint_grants_follow_only_the_owned_service_cluster_addresses() {
+    let spec = spec("ollama", false);
+    let objects = crate::kube_api::Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+    operations
+        .ensure_storage(&spec.storage(), None)
+        .await
+        .unwrap();
+    operations.ensure(&spec, None).await.unwrap();
+    let mut service = objects.get("v1", "Service", "agents", &spec.name).unwrap();
+    service["spec"]["clusterIP"] = json!("10.96.0.42");
+    service["spec"]["clusterIPs"] = json!(["10.96.0.42", "fd00::42"]);
+    objects.insert(service.clone());
+    assert_eq!(
+        operations
+            .endpoint_addresses(&spec.storage(), &spec.endpoint())
+            .await
+            .unwrap(),
+        vec![
+            "10.96.0.42".parse::<std::net::IpAddr>().unwrap(),
+            "fd00::42".parse().unwrap()
+        ]
+    );
+    let error = operations
+        .endpoint_addresses(&spec.storage(), "http://elsewhere.agents.svc:11434/v1")
+        .await
+        .unwrap_err();
+    diagnostics::assert_named_mismatch(&error, "Service", "agents", &spec.name, "endpoint");
+    assert!(!error.to_string().contains("elsewhere"));
+    service["metadata"]["uid"] = json!("replacement");
+    objects.insert(service);
+    assert_binding_mismatch(
+        operations
+            .endpoint_addresses(&spec.storage(), &spec.endpoint())
+            .await,
+    );
+}
+
+#[tokio::test]
 async fn retained_claims_remain_observable_after_their_storage_class_is_removed() {
     let spec = spec("ollama", false);
     let objects = crate::kube_api::Objects::default();
@@ -962,6 +1002,36 @@ async fn replacement_admission_uses_temporary_names_without_changing_the_workloa
 }
 
 #[tokio::test]
+async fn foreign_service_backends_cannot_receive_the_managed_credential() {
+    let spec = spec("vllm", true);
+    let objects = crate::kube_api::Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+    operations
+        .ensure_storage(&spec.storage(), None)
+        .await
+        .unwrap();
+    operations.ensure(&spec, None).await.unwrap();
+    let mut service = objects.get("v1", "Service", "agents", &spec.name).unwrap();
+    service["spec"]["clusterIP"] = json!("10.96.0.42");
+    objects.insert(service);
+    objects.insert(json!({"apiVersion":"discovery.k8s.io/v1","kind":"EndpointSlice", "metadata":{"name":"injected-backend", "namespace":"agents", "labels":{"kubernetes.io/service-name":spec.name}}, "addressType":"IPv4", "endpoints":[{"addresses":["10.244.0.15"],"conditions":{"ready":true},"targetRef":{"kind":"Pod","namespace":"agents","name":"foreign","uid":"foreign"}}]}));
+    let error = operations
+        .endpoint_addresses(&spec.storage(), &spec.endpoint())
+        .await
+        .unwrap_err();
+    diagnostics::assert_named_mismatch(
+        &error,
+        "EndpointSlice",
+        "agents",
+        "injected-backend",
+        "endpoints.targetRef",
+    );
+    assert!(!error.to_string().contains("foreign"));
+    assert!(!error.to_string().contains("10.244.0.15"));
+}
+
+#[tokio::test]
 async fn terminal_pods_are_replaced_only_by_explicit_apply_and_only_when_owned() {
     for foreign in [false, true] {
         let spec = spec("ollama", false);
@@ -1199,6 +1269,67 @@ async fn destroy_waits_for_pod_deletion_before_removing_its_network_boundary() {
             )
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn endpoint_grants_reject_service_drift_and_unroutable_addresses() {
+    let spec = spec("ollama", false);
+    let objects = crate::kube_api::Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+    operations
+        .ensure_storage(&spec.storage(), None)
+        .await
+        .unwrap();
+    operations.ensure(&spec, None).await.unwrap();
+    let mut service = objects.get("v1", "Service", "agents", &spec.name).unwrap();
+    service["spec"]["clusterIP"] = json!("10.96.0.42");
+    service["spec"]["clusterIPs"] = json!(["10.96.0.42"]);
+    for addresses in [
+        json!(["None"]),
+        json!(["127.0.0.1"]),
+        json!(["169.254.1.1"]),
+        json!(["255.255.255.255"]),
+        json!(["::ffff:10.0.0.1"]),
+        json!(["fe80::1"]),
+        json!(["::"]),
+        json!(["10.96.0.42", "fd00::42", "10.96.0.43"]),
+    ] {
+        let malformed = addresses[0] == "None" || addresses.as_array().unwrap().len() > 2;
+        let mut invalid = service.clone();
+        invalid["spec"]["clusterIP"] = addresses[0].clone();
+        invalid["spec"]["clusterIPs"] = addresses;
+        objects.insert(invalid);
+        let error = operations
+            .endpoint_addresses(&spec.storage(), &spec.endpoint())
+            .await
+            .unwrap_err();
+        if malformed {
+            assert_eq!(error, nemoclaw_sdk::ObservationError::Incomplete);
+        } else {
+            diagnostics::assert_named_mismatch(
+                &error,
+                "Service",
+                "agents",
+                &spec.name,
+                "spec.clusterIPs",
+            );
+        }
+    }
+    for (field, value) in [
+        ("selector", json!({"foreign":"pod"})),
+        ("ports", json!([])),
+        ("type", json!("NodePort")),
+    ] {
+        let mut invalid = service.clone();
+        invalid["spec"][field] = value;
+        objects.insert(invalid);
+        assert_binding_mismatch(
+            operations
+                .endpoint_addresses(&spec.storage(), &spec.endpoint())
+                .await,
+        );
+    }
 }
 
 #[tokio::test]

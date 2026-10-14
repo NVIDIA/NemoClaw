@@ -26,8 +26,7 @@ OpenShift's security policy admitting these pods is untested; [current limits](l
   - [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox), with its controller running in `agent-sandbox-system`; CI tests version 0.5.0.
   - Exactly one default StorageClass.
 - **Agent images:** pushed to a registry the cluster can pull from, and referenced by digest.
-- **Inference:** an endpoint reachable from inside the sandboxes.
-  A [managed model service](#run-a-managed-model-service) can run in the managed gateway's namespace, but sandboxes cannot route to it yet.
+- **Inference:** an endpoint reachable from inside the sandboxes, or a [managed model service](#run-a-managed-model-service) in the managed gateway's namespace.
   Managed services require a GPU node, a compatible runtime image, and persistent storage; real-cluster inference qualification remains open ([#12732](https://github.com/NVIDIA/NemoClaw/issues/12732)).
   The [kind GB300 operator report](design/cluster-inference-compatibility.md#openclaw-context-budget) informs example context budgets; it is not deployment qualification.
 
@@ -93,7 +92,8 @@ Keep the state directory: it holds the cluster ownership receipt and the develop
 With a managed Kubernetes or OpenShift gateway, declare `kind: vllm` or `kind: ollama` under `spec.services` and add the service's `kubernetes` resource settings.
 The service inherits the gateway's cluster, context, and namespace.
 An external gateway cannot provision a managed model service.
-Sandboxes cannot route to a cluster model service yet: validation rejects an inference provider whose `serviceRef` names one, so agents must use an external endpoint.
+Start from [local vLLM](../examples/kubernetes/local-vllm.yaml) or [local Ollama](../examples/kubernetes/local-ollama.yaml).
+These examples are configuration templates; neither establishes a qualified GPU, model, storage driver, or OpenShift security profile.
 
 Before applying, the platform operator must provide:
 
@@ -122,6 +122,10 @@ The same [vLLM model](models.md) and [managed Ollama](inference.md#run-managed-o
 vLLM takes a public Hugging Face repository and exact commit; Ollama takes a public library model name and manifest digest.
 Models, image digests, hardware profiles, serving budgets, and storage sizes remain deployment settings.
 There is no cluster-specific model allowlist.
+
+Both examples set `serving.contextTokens` and the route's `settings.model_metadata.contextWindow` to `32768` to leave room for OpenClaw's initial prompt and a reply.
+These limits and models do not suit Hermes, which requires at least `64000` context tokens; see [Hermes context sizing](inference.md#size-the-context-for-hermes).
+Follow [OpenClaw context budgeting](inference.md#tune-openclaws-primary-route) to keep those limits aligned, size memory, and interpret the advisory emitted by plan and apply.
 
 The settings below reserve CPU and memory and limit their use for one service.
 The `container` limits and service-level `updatePolicy` are common to managed vLLM and Ollama on Docker, Kubernetes, and OpenShift; see [container limits and updates](inference.md#set-container-limits-and-update-policy).
@@ -173,11 +177,17 @@ Principals with `pods/exec` or Pod creation in the namespace, and node, kubelet,
 Keep the deployment state and both PVCs together for recovery; deleting a bound credential PVC or substituting another PVC does not authorize generating a replacement identity.
 PVC resize, storage-class changes, changes to vLLM authentication mode, existing-volume adoption, and transfer between clusters are not supported.
 
+Use `serviceRef` to connect providers to the service, and `provider: openai` with `api: openai-completions` for the examples' OpenClaw adapter.
+The SDK derives the fully qualified internal host `<service>.<namespace>.svc.cluster.local`; do not set a provider endpoint or credential alongside `serviceRef`.
+Multiple agents and providers may share a service.
 The provider creates a ClusterIP Service and a NetworkPolicy; no host port, NodePort, or LoadBalancer is published.
 The NetworkPolicy admits only OpenShell supervisor Pods in the gateway's namespace on the model port.
+The supervisor proxy's inference grant limits sandbox traffic to `/v1/**`.
 The hosted bearer-vLLM runtime also returns 404 for every direct request except the [listed inference requests](inference.md#authenticate-a-managed-vllm-service), which require the key, and public `GET /health`.
 Admitted peers can still reach Ollama's full native API directly.
 Principals allowed to create or relabel Pods in that namespace remain inside the trust boundary.
+The imported inference profile and each sandbox's matching network rule grant only the verified Service's assigned IP addresses; refresh compares both with the live Service, and a sandbox created against other addresses must be replaced.
+General authored HTTP DNS endpoints remain rejected.
 Model, image, and workload-resource changes preserve the Service and its addresses while replacing compute.
 Renaming only the local image-metadata environment reference leaves compute unchanged.
 Changing `serving.port` requires whole-deployment destroy and reapply with the retained PVCs; apply rejects a bound port change before mutation.
@@ -225,6 +235,7 @@ Preserve the pending receipt. An operator must inspect that exact object and ver
 Do not delete a PVC without accounting for its model data or credential identity, and do not erase the receipt to bypass the refusal.
 
 Refresh rejects changes to an owned Service or NetworkPolicy's expected specification.
+Endpoint grants also reject ready EndpointSlice members that do not identify the recorded model Pod.
 For a deployment from an earlier experimental build, inspect the retained object UID, owner, and generation before an operator repairs its policy to the current supervisor-only form.
 Replacing the object gives it a new UID that NemoClaw will not adopt; whole-deployment destroy is not a data-preserving policy migration.
 Older short-DNS endpoints and sandbox policies require the existing sandbox change procedure; revised policy bytes also cannot replace an unresolved pending creation's recorded intent.

@@ -22,6 +22,10 @@ pub use agent_inference::*;
 pub use execution::*;
 mod image_pull_policy;
 pub use image_pull_policy::ImagePullPolicy;
+mod inference_profile;
+pub use inference_profile::{
+    cluster_definition as cluster_inference_profile, for_provider as inference_profile_for_provider,
+};
 pub use nemoclaw_openshell::policy::policy_json;
 pub use nemoclaw_openshell::profile::definition as inference_profile;
 mod network;

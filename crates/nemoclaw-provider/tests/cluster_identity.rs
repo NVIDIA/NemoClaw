@@ -44,8 +44,8 @@ impl Backend for Fixture {
 
 fn targets() -> Vec<(String, State, serde_json::Value)> {
     [
-        include_bytes!("../../../crates/test-support/cluster-models/vllm.yaml").as_slice(),
-        include_bytes!("../../../crates/test-support/cluster-models/ollama.yaml").as_slice(),
+        include_bytes!("../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+        include_bytes!("../../../examples/kubernetes/local-ollama.yaml").as_slice(),
     ]
     .into_iter()
     .flat_map(|source| {

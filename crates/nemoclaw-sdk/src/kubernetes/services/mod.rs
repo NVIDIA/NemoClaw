@@ -23,6 +23,8 @@ pub fn service_host(name: &str, namespace: &str) -> String {
     format!("{name}.{namespace}.svc.cluster.local")
 }
 
+pub use nemoclaw_openshell::profile::service_address_allowed;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Spec {

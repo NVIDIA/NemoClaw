@@ -24,12 +24,6 @@ fn document(kind: &str) -> Document {
     });
     input["spec"]["services"]["qwen"]["container"] =
         json!({"cpuLimitMillis": 4000, "memoryLimitGiB": 64});
-    // Until sandboxes can route to cluster services, the sandbox uses an external endpoint.
-    let provider = input["spec"]["inferenceProviders"][0]
-        .as_object_mut()
-        .unwrap();
-    provider.remove("serviceRef");
-    provider.insert("endpoint".into(), json!("http://10.20.30.40:8000/v1"));
     if kind == "vllm" {
         input["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
     }
@@ -55,7 +49,7 @@ fn generations() -> compile::Generations {
 }
 
 #[test]
-fn cluster_services_provision_retained_storage_and_workloads_before_agents() {
+fn cluster_services_provision_before_agents_and_publish_their_cluster_endpoint() {
     for kind in ["vllm", "ollama"] {
         let document = document(kind);
         let graph = compile::compile_runtime(&document, &generations(), "0.1.0").unwrap();
@@ -80,15 +74,64 @@ fn cluster_services_provision_retained_storage_and_workloads_before_agents() {
                 .get("docker")
                 .is_none()
         );
-        // Agents apply in a later graph, after the runtime stage provisions the service.
         let main = compile::compile(&document, &generations(), "0.1.0").unwrap();
-        for resource in [
-            "nemoclaw_kubernetes_service",
-            "nemoclaw_kubernetes_service_storage",
-        ] {
-            assert!(main["resource"].get(resource).is_none(), "{resource}");
+        let targets = compile::targets(&document, &generations()).unwrap();
+        let provider = targets
+            .iter()
+            .find(|target| target.kind == "provider")
+            .unwrap();
+        let profile = targets
+            .iter()
+            .find(|target| target.kind == "provider_profile")
+            .unwrap();
+        let sandbox = targets
+            .iter()
+            .find(|target| target.kind == "sandbox")
+            .unwrap();
+        let policy: Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
+        assert_eq!(
+            main["resource"]["openshell_sandbox"][&sandbox.values["name"]]["policy"]["cluster_grants"],
+            policy["cluster_grants"]
+        );
+        let storage: Value = serde_json::from_str(
+            profile
+                .values
+                .get("cluster_source")
+                .expect("owned cluster endpoint provenance"),
+        )
+        .unwrap();
+        assert_eq!(storage["name"], spec["name"]);
+        assert_eq!(storage["owner"], document.metadata.uid);
+        assert_eq!(storage["authenticated"], kind == "vllm");
+        if kind == "vllm" {
+            let credential: Value =
+                serde_json::from_str(&provider.values["credential_source"]).unwrap();
+            assert_eq!(credential["storage"], storage);
         }
+        let port = spec["runtime"]["serving"]["port"].as_i64().unwrap();
+        assert_eq!(
+            provider.values["endpoint"],
+            format!(
+                "http://{}.test-models.svc.cluster.local:{port}/v1",
+                spec["name"].as_str().unwrap()
+            )
+        );
     }
+}
+
+#[test]
+fn cluster_endpoint_provenance_preserves_literal_kubeconfig_contexts() {
+    let mut input = serde_json::to_value(document("ollama")).unwrap();
+    input["spec"]["gateway"]["kubernetes"]["context"] = json!("cluster-${literal}-%{literal}");
+    let document = Document::parse(input.to_string().as_bytes()).unwrap();
+    let graph = compile::compile(&document, &generations(), "0.1.0").unwrap();
+    let profiles = graph["resource"]["openshell_provider_profile"]
+        .as_object()
+        .unwrap();
+    let source = profiles.values().next().unwrap()["cluster_source"]
+        .as_str()
+        .unwrap();
+    assert!(source.contains("cluster-$${literal}-%%{literal}"));
 }
 
 #[test]

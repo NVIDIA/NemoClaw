@@ -131,6 +131,13 @@ impl Step {
     fn status(phase: &str) -> Self {
         Self { file: RuntimeFile::Status, bytes: json!({"phase": phase, "updated": STARTED, "pid": 42, "detail": "runtime observation"}).to_string().into_bytes(), change: None }
     }
+    fn key(bytes: Vec<u8>) -> Self {
+        Self {
+            file: RuntimeFile::Credential,
+            bytes,
+            change: None,
+        }
+    }
 }
 struct Exec {
     objects: Objects,
@@ -187,6 +194,64 @@ async fn fresh_ready_status_establishes_readiness_for_each_backend() {
 }
 
 #[tokio::test]
+async fn only_ready_authenticated_vllm_can_read_a_valid_key() {
+    let harness = Harness::new("vllm", true).await;
+    for (bytes, accepted) in [
+        (vec![b'a'; 64], true),
+        (vec![b'a'; 63], false),
+        (vec![b'G'; 64], false),
+        (vec![0xff; 64], false),
+    ] {
+        let executor = harness.executor(vec![Step::status("ready"), Step::key(bytes)]);
+        let result = harness
+            .operations
+            .credential_with_exec(&harness.spec.storage(), &executor)
+            .await;
+        assert_eq!(result.is_ok(), accepted);
+        if accepted {
+            assert_eq!(result.unwrap(), "a".repeat(64));
+        }
+        assert_eq!(
+            *executor.calls.lock().unwrap(),
+            [RuntimeFile::Status, RuntimeFile::Credential]
+        );
+    }
+    let executor = harness.executor(vec![Step::status("loading")]);
+    assert_eq!(
+        harness
+            .operations
+            .credential_with_exec(&harness.spec.storage(), &executor)
+            .await,
+        Err(ObservationError::Incomplete)
+    );
+    assert_eq!(*executor.calls.lock().unwrap(), [RuntimeFile::Status]);
+    Change::StartedAt.apply(&harness.objects, &harness.spec.name);
+    let executor = harness.executor(vec![Step::status("ready")]);
+    assert_eq!(
+        harness
+            .operations
+            .credential_with_exec(&harness.spec.storage(), &executor)
+            .await,
+        Err(ObservationError::Incomplete)
+    );
+    assert_eq!(
+        *executor.calls.lock().unwrap(),
+        [RuntimeFile::Status],
+        "a previous container's ready file cannot authorize a credential read"
+    );
+    let unauthenticated = Harness::new("ollama", false).await;
+    let executor = unauthenticated.executor(Vec::new());
+    assert_eq!(
+        unauthenticated
+            .operations
+            .credential_with_exec(&unauthenticated.spec.storage(), &executor)
+            .await,
+        Err(ObservationError::BindingMismatch)
+    );
+    assert!(executor.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn runtime_reads_reject_identity_changes_during_status_exec() {
     for change in [
         Change::PodUid,
@@ -235,5 +300,46 @@ async fn refused_exec_upgrades_report_authentication_and_permission_without_retr
             assert_eq!(harness.objects.rejected_requests().len(), 2, "{code}");
         }
         assert_eq!(*harness.objects.0.lock().unwrap(), before, "{code}");
+    }
+}
+
+#[tokio::test]
+async fn credential_reads_reject_identity_changes_before_and_during_exec() {
+    for change in [
+        Change::PodUid,
+        Change::CredentialMount,
+        Change::CredentialPvcUid,
+    ] {
+        let harness = Harness::new("vllm", true).await;
+        change.apply(&harness.objects, &harness.spec.name);
+        let executor = harness.executor(Vec::new());
+        let error = harness
+            .operations
+            .credential_with_exec(&harness.spec.storage(), &executor)
+            .await
+            .unwrap_err();
+        change.assert_mismatch(&error, &harness.spec.name);
+        assert!(executor.calls.lock().unwrap().is_empty());
+    }
+    for change in [
+        Change::PodUid,
+        Change::StartedAt,
+        Change::CredentialMount,
+        Change::CredentialPvcUid,
+    ] {
+        let harness = Harness::new("vllm", true).await;
+        let mut step = Step::key(vec![b'a'; 64]);
+        step.change = Some(change);
+        let executor = harness.executor(vec![Step::status("ready"), step]);
+        let error = harness
+            .operations
+            .credential_with_exec(&harness.spec.storage(), &executor)
+            .await
+            .unwrap_err();
+        change.assert_mismatch(&error, &harness.spec.name);
+        assert_eq!(
+            *executor.calls.lock().unwrap(),
+            [RuntimeFile::Status, RuntimeFile::Credential]
+        );
     }
 }

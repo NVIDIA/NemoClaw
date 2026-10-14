@@ -86,7 +86,7 @@ The current tests establish configuration, compilation, API attachment, and drif
 | NemoClaw should run Ollama on a declared NVIDIA GPU | Declare a service with `kind: ollama`, hardware requirements, a pinned runtime image, a model name and digest, memory, and serving settings | [Managed Ollama](#run-managed-ollama) |
 | Ollama and its model already run locally and must remain external | Declare a service with `kind: ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#use-external-ollama-through-a-managed-proxy) |
 | NemoClaw should download and serve a pinned public model with vLLM | Declare a service with `kind: vllm`, the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/spark/vllm.yaml) |
-| NemoClaw should run vLLM or Ollama beside a managed Kubernetes or OpenShift gateway | Add the service's `kubernetes` settings; follow [managed cluster inference](kubernetes.md#run-a-managed-model-service). Sandboxes cannot route to these services yet | [Cluster service settings](kubernetes.md#run-a-managed-model-service) |
+| NemoClaw should run vLLM or Ollama beside a managed Kubernetes or OpenShift gateway | Add the service's `kubernetes` settings; follow [managed cluster inference](kubernetes.md#run-a-managed-model-service) | [Cluster vLLM](../examples/kubernetes/local-vllm.yaml), [cluster Ollama](../examples/kubernetes/local-ollama.yaml) |
 | The Docker daemon running a managed service is reached through SSH | Set `placement.engine` to the SSH endpoint, then declare the private network and `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
 | The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark/spark-inline.yaml) |
 
@@ -285,7 +285,8 @@ Recipe environment maps cannot set `VLLM_API_KEY`.
 The OpenShell provider reads the key through the verified runtime container identity and installs it in OpenShell's provider credential store.
 Agent requests use their OpenShell placeholder credential.
 YAML, plans, container launch settings, and OpenTofu state contain no generated key.
-The runtime's root user and Docker administrators can read the key and child environment.
+On Docker, the runtime's root user and Docker administrators can read the key and child environment.
+On Kubernetes and OpenShift, principals with `pods/exec` on the model Pod or permission to create Pods in the managed namespace, and node, kubelet, and storage administrators, can read it; see [credential access](security.md#credentials-and-authentication).
 The key authenticates the `/v1` requests below and does not provide TLS.
 In bearer mode, the supervisor serves the published port with HTTP/1.1 and forwards only these requests to vLLM:
 
@@ -402,12 +403,12 @@ The selected adapter's model schema and implementation own the meanings, accepte
 These settings do not resize a managed inference server; configure that service's limits separately.
 The SDK does not infer native support from an adapter name or from accepting the YAML structure.
 
-The managed Ollama examples set both the service's `serving.contextTokens` and the route's `overrides.settings.model_metadata.contextWindow` to `32768`.
+The managed Ollama examples and [cluster examples](kubernetes.md#run-a-managed-model-service) set both the service's `serving.contextTokens` and the route's `overrides.settings.model_metadata.contextWindow` to `32768`.
 That suits OpenClaw; [Hermes needs at least `64000`](#size-the-context-for-hermes).
 The [operator-reported prompt](design/cluster-inference-compatibility.md#openclaw-context-budget) used 19,947 tokens in one setup, before allowing space for a reply.
 Keep the two limits aligned and size the model, KV cache, and GPU memory for the selected context.
 
-For an OpenClaw route to managed vLLM or Ollama, plan and apply compare the smaller of the service context and the effective route context window with `20000` plus the effective reply allowance.
+For an OpenClaw route to managed vLLM or Ollama, plan and apply compare the smaller of the service context and the effective route context window with `20000` plus the effective reply allowance, on Docker as well as Kubernetes.
 At the pinned adapter revision, omitted route context defaults to `32768`; `overrides.settings.model_metadata.contextWindow` replaces that default.
 The reply allowance defaults to `4096`; `overrides.maxTokens` replaces that default, and `overrides.settings.model_metadata.maxTokens` takes precedence over both.
 A smaller available context produces a budget warning; explicit token metadata that cannot be assessed instead produces a warning without substituting defaults.
@@ -427,10 +428,10 @@ Nested null values remain intact in opaque native settings.
 The pinned Hermes Agent requires a model context window of at least 64,000 tokens.
 It reads the window from the model server; route settings such as `overrides.settings.model_metadata` do not change it.
 For a Hermes route to managed vLLM or Ollama, set `serving.contextTokens` between `64000` and the schema maximum, `65536`, and choose a model that supports that context.
-The models in the managed Ollama examples and the [Spark vLLM example](../examples/spark/vllm.yaml), `qwen3:0.6b` and `Qwen/Qwen3-4B`, have 40,960-token native context windows and cannot serve Hermes.
+The models in the managed Ollama and cluster examples, `qwen3:0.6b` and `Qwen/Qwen3-4B`, have 40,960-token native context windows and cannot serve Hermes.
 In one operator test, Hermes answered a request through cluster vLLM serving `Qwen/Qwen3-4B-Instruct-2507` with `serving.contextTokens: 65536`; that test does not qualify the model.
 
-Plan and apply warn when a Hermes route uses a managed vLLM or Ollama service whose `serving.contextTokens` is below `64000`; the warning does not reject the configuration.
+Plan and apply warn when a Hermes route uses a managed vLLM or Ollama service whose `serving.contextTokens` is below `64000`, on Docker as well as Kubernetes; the warning does not reject the configuration.
 Below the minimum, Hermes refuses to start when it can read the server's window.
 In operator tests it could not read the window through the sandbox proxy and started anyway: bearer vLLM answered its `GET /v1/models` with 401, and the proxy does not pass Ollama's `/api/show`.
 Hermes then assumes its built-in window, 131,072 tokens for Qwen models, so longer conversations can exceed the server limit before Hermes compacts them, even at `65536`.

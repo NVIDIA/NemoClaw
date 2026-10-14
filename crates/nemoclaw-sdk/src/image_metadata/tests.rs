@@ -305,11 +305,11 @@ fn deployment_preflight_requires_metadata_for_every_declared_cluster_service() {
     for (kind, source) in [
         (
             "vllm",
-            include_bytes!("../../../../crates/test-support/cluster-models/vllm.yaml").as_slice(),
+            include_bytes!("../../../../examples/kubernetes/local-vllm.yaml").as_slice(),
         ),
         (
             "ollama",
-            include_bytes!("../../../../crates/test-support/cluster-models/ollama.yaml").as_slice(),
+            include_bytes!("../../../../examples/kubernetes/local-ollama.yaml").as_slice(),
         ),
     ] {
         let (image, bundle) = runtime_bundle(

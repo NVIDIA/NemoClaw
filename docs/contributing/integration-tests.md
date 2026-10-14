@@ -105,7 +105,7 @@ On Unix, `fabric_capabilities` reads a fake Docker engine's image metadata: a co
 
 ## System Tests
 
-The system tests are ignored tests in `nemoclaw-e2e`'s `integration` binary, which the `lifecycle` profile selects by module.
+The system tests are ignored tests in `nemoclaw-e2e`'s `integration` binary, which the `lifecycle` profile selects by module, and one ignored test in the `nemoclaw-sdk` library.
 They use the local gRPC OpenShell fixture and simulated SSH and Docker hosts:
 
 ```sh
@@ -127,11 +127,15 @@ The fixtures return protocol responses; they do not establish agent inference, n
 | `sandbox_readiness` | Standalone sandbox completion; see [below](#standalone-sandbox-completion) |
 | `remote_service` | Services on simulated SSH hosts; see [SSH service fixtures](#ssh-service-fixtures) |
 | `helm_recovery` | On Unix, destroy and its recovery against an in-memory Kubernetes API, after failures, a second destroy, and cancellation; see [below](#helm-release-recovery) |
+| `cluster_credentials` | Its `bundled_` tests run the bundle's OpenShell and Fabric providers against the fixture gateway: OpenShell refreshes a saved cluster vLLM registration without resolving its key, and Fabric checks a cluster-routed configuration through NemoClaw's managed cluster callbacks; neither changes saved state. The module's other test runs in the `test` step |
 
 In `deployment`, `cli_terminal_outputs_preserve_lifecycle_and_json_contract` checks text plans, JSON apply, unchanged text apply, JSON plan completeness, text destroy, and repeated JSON destroy against one fixture state.
 `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` changes the gateway driver after planning to check OpenTofu's apply-time check, recovery, and teardown.
 `rejected_policy_fails_promptly_with_context_and_allows_recovery_or_destroy` checks a simulated gateway admission rejection with sandbox context in text and JSON output, retained bindings, recovery, and destroy.
 `separate_agent_sandboxes_cli_export_reapply_and_policy_drift` and `tool_disclosure_cli_export_reapply_and_native_settings_drift` check OpenClaw tool policies, with observation failures that change nothing.
+
+The `lifecycle` profile also selects the `nemoclaw-sdk` library's `plan_and_apply_refuse_cluster_port_changes_with_separate_state_files`, which reads saved OpenTofu states built from SDK internals through the bundle's OpenTofu.
+Run it with `NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle cargo test -p nemoclaw-sdk --lib -- --ignored plan_and_apply_refuse_cluster_port_changes`.
 
 ### Helm Release Recovery
 

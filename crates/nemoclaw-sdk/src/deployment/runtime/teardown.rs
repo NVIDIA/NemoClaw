@@ -388,8 +388,7 @@ mod tests {
     #[test]
     fn cluster_teardown_uses_the_recorded_process_configuration_and_retained_storage() {
         let document = Document::parse(
-            include_bytes!("../../../../../crates/test-support/cluster-models/vllm.yaml")
-                .as_slice(),
+            include_bytes!("../../../../../examples/kubernetes/local-vllm.yaml").as_slice(),
         )
         .unwrap();
         let mut record = Record::new(document).unwrap();
@@ -434,10 +433,8 @@ mod tests {
     #[test]
     fn teardown_preserves_cluster_service_metadata_without_requesting_its_file() {
         for source in [
-            include_bytes!("../../../../../crates/test-support/cluster-models/vllm.yaml")
-                .as_slice(),
-            include_bytes!("../../../../../crates/test-support/cluster-models/ollama.yaml")
-                .as_slice(),
+            include_bytes!("../../../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+            include_bytes!("../../../../../examples/kubernetes/local-ollama.yaml").as_slice(),
         ] {
             let document = Document::parse(source).unwrap();
             assert!(

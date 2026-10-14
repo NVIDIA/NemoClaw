@@ -142,11 +142,11 @@ fn docker_model_preservation_refuses_docker_models_but_not_cluster_models_of_the
     for (docker, cluster) in [
         (
             include_str!("../../../../../examples/station/vllm.yaml"),
-            include_str!("../../../../../crates/test-support/cluster-models/vllm.yaml"),
+            include_str!("../../../../../examples/kubernetes/local-vllm.yaml"),
         ),
         (
             include_str!("../../../../../examples/managed-ollama-gpu.yaml"),
-            include_str!("../../../../../crates/test-support/cluster-models/ollama.yaml"),
+            include_str!("../../../../../examples/kubernetes/local-ollama.yaml"),
         ),
     ] {
         let [docker, cluster] =
@@ -189,10 +189,265 @@ fn docker_model_preservation_refuses_docker_models_but_not_cluster_models_of_the
 }
 
 #[test]
+fn bound_cluster_port_change_explains_required_teardown_before_runtime_reconciliation() {
+    for source in [
+        include_str!("../../../../../examples/kubernetes/local-vllm.yaml"),
+        include_str!("../../../../../examples/kubernetes/local-ollama.yaml"),
+    ] {
+        let document = Document::parse(source.as_bytes()).unwrap();
+        let record = Record::new(document.clone()).unwrap();
+        // The early guard receives only the main state's OpenShell resources;
+        // managed model services belong to the separate runtime state.
+        let targets = compile::targets(&document, &record.generations).unwrap();
+        let bindings = kubernetes_bindings(&targets);
+        assert!(
+            bindings
+                .keys()
+                .any(|address| address.starts_with("openshell_sandbox."))
+        );
+        assert!(!bindings.contains_key("nemoclaw_kubernetes_service.qwen"));
+        let mut changed = serde_json::to_value(&document).unwrap();
+        changed["spec"]["services"]["qwen"]["serving"]["port"] = json!(19001);
+        let changed = Document::parse(changed.to_string().as_bytes()).unwrap();
+        let error = validate_bound_sandboxes(&record, &changed, &bindings).unwrap_err();
+        let message = error.to_string();
+        for required in [
+            "model serving port",
+            "whole-deployment destroy and apply",
+            "sandbox files and conversation history",
+            "retains model and credential PVCs",
+        ] {
+            assert!(
+                message.contains(required),
+                "missing {required:?}: {message}"
+            );
+        }
+        validate_bound_sandboxes(&record, &changed, &BTreeMap::new()).unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; separate local OpenTofu states"]
+async fn plan_and_apply_refuse_cluster_port_changes_with_separate_state_files() {
+    fn state_block(fields: &nemoclaw_tofu::shape::Fields, value: &Value) -> Value {
+        use nemoclaw_tofu::shape::Shape;
+
+        fields
+            .iter()
+            .map(|(name, field)| {
+                let value = &value[name];
+                let value = match &field.shape {
+                    Shape::Object(fields) if field.required => state_block(fields, value),
+                    Shape::Object(fields) => {
+                        if value.is_null() {
+                            json!([])
+                        } else {
+                            json!([state_block(fields, value)])
+                        }
+                    }
+                    Shape::ObjectList(fields) => value
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|item| state_block(fields, item))
+                        .collect(),
+                    Shape::ObjectMap(fields) => value
+                        .as_object()
+                        .into_iter()
+                        .flatten()
+                        .map(|(key, item)| (key.clone(), state_block(fields, item)))
+                        .collect(),
+                    _ => value.clone(),
+                };
+                (name.clone(), value)
+            })
+            .collect()
+    }
+
+    let bundle_path = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    for source in [
+        include_str!("../../../../../examples/kubernetes/local-vllm.yaml"),
+        include_str!("../../../../../examples/kubernetes/local-ollama.yaml"),
+    ] {
+        let document = Document::parse(source.as_bytes()).unwrap();
+        let record = Record::new(document.clone()).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        {
+            let store = Store::open(directory.path()).unwrap();
+            store.save(&record).unwrap();
+        }
+        let main = compile::targets(&document, &record.generations).unwrap();
+        let runtime = compile::runtime_targets(&document, &record.generations).unwrap();
+        let sandbox = main.iter().find(|target| target.kind == "sandbox").unwrap();
+        let model = runtime
+            .iter()
+            .find(|target| target.kind == crate::kubernetes::services::SERVICE_KIND)
+            .unwrap();
+        // Materialize native state files rather than combining the two stages'
+        // bindings. Real OpenTofu decodes these through the packaged schemas.
+        let native_state = |target: &Target| {
+            let (kind, name) = target.address.split_once('.').unwrap();
+            let openshell = kind.starts_with("openshell_");
+            let provider = if openshell {
+                compile::OPENSHELL_PROVIDER_ADDRESS
+            } else {
+                compile::PROVIDER_ADDRESS
+            };
+            let mut attributes = serde_json::to_value(&target.values).unwrap();
+            for input in nemoclaw_openshell::structured_inputs(&target.kind) {
+                let encoded = attributes
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(input.field)
+                    .unwrap();
+                let value = input.configuration(encoded.as_str().unwrap()).unwrap();
+                attributes[input.attribute] = match &input.shape {
+                    nemoclaw_tofu::shape::Shape::Object(fields) => {
+                        json!([state_block(fields, &value)])
+                    }
+                    _ => value,
+                };
+            }
+            attributes["id"] = json!(format!("physical-{}", target.kind));
+            // OpenShell objects record the refs they take in place of the row
+            // fields those refs carry, and export their own.
+            for reference in nemoclaw_openshell::references(&target.kind) {
+                let object = attributes.as_object_mut().unwrap();
+                let mut carried = reference
+                    .fields
+                    .iter()
+                    .map(|(attribute, field)| (*attribute, object.remove(*field).unwrap()));
+                attributes[reference.attribute] = if reference.list {
+                    let (attribute, names) = carried.next().unwrap();
+                    let names: Vec<String> = serde_json::from_str(names.as_str().unwrap()).unwrap();
+                    names
+                        .into_iter()
+                        .map(|name| json!({"type": reference.kind, attribute: name}))
+                        .collect()
+                } else {
+                    let mut value = json!({"type": reference.kind});
+                    for (attribute, carried) in carried {
+                        value[attribute] = carried;
+                    }
+                    value
+                };
+            }
+            if let Some(export) = nemoclaw_openshell::export(&target.kind) {
+                let mut row = target.values.clone();
+                row.insert("id".into(), format!("physical-{}", target.kind));
+                let mut reference = json!({"type": export.kind});
+                for field in export.fields {
+                    reference[field] = json!(row[field]);
+                }
+                attributes[nemoclaw_tofu::REF] = reference;
+            }
+            json!({
+                "version": 4, "terraform_version": compile::OPENTOFU_VERSION,
+                "serial": 1, "lineage": "cd73e09f-c75c-48ce-86af-352a4764560e", "outputs": {},
+                "resources": [{
+                    "mode": "managed", "type": kind, "name": name,
+                    "provider": format!("provider[\"{provider}\"]"),
+                    "instances": [{
+                        "schema_version": if openshell { 1 } else { 0 },
+                        "attributes": attributes,
+                    }]
+                }]
+            })
+        };
+        fs::create_dir(directory.path().join("runtime")).unwrap();
+        save_json(
+            &directory.path().join("terraform.tfstate"),
+            &native_state(sandbox),
+        )
+        .unwrap();
+        save_json(
+            &directory.path().join("runtime/terraform.tfstate"),
+            &native_state(model),
+        )
+        .unwrap();
+        let saved: Vec<_> = [
+            "intent.json",
+            "terraform.tfstate",
+            "runtime/terraform.tfstate",
+        ]
+        .into_iter()
+        .map(|name| (name, fs::read(directory.path().join(name)).unwrap()))
+        .collect();
+        let mut changed = serde_json::to_value(&document).unwrap();
+        changed["spec"]["services"]["qwen"]["serving"]["port"] = json!(19001);
+        let changed = Document::parse(changed.to_string().as_bytes()).unwrap();
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let deployment = Deployment::new(directory.path(), &bundle_path)
+            .with_progress(Arc::new(move |event| captured.lock().unwrap().push(event)));
+        for apply in [false, true] {
+            let cancel = CancellationToken::new();
+            let error = if apply {
+                deployment.apply(&changed, &cancel).await
+            } else {
+                deployment.plan(&changed, &cancel).await
+            }
+            .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("changing the model serving port"),
+                "{error}"
+            );
+            assert!(!events.lock().unwrap().contains(&Progress::MutationStarted));
+            for (name, bytes) in &saved {
+                assert_eq!(
+                    &fs::read(directory.path().join(name)).unwrap(),
+                    bytes,
+                    "{name}"
+                );
+            }
+            assert!(
+                !directory.path().join("runtime/main.tf.json").exists(),
+                "runtime reconciliation must not start"
+            );
+        }
+    }
+}
+
+#[test]
+fn unrelated_sandbox_or_storage_changes_keep_their_original_refusal() {
+    for source in [
+        include_str!("../../../../../examples/kubernetes/local-vllm.yaml"),
+        include_str!("../../../../../examples/kubernetes/local-ollama.yaml"),
+    ] {
+        let document = Document::parse(source.as_bytes()).unwrap();
+        let record = Record::new(document.clone()).unwrap();
+        let targets = compile::targets(&document, &record.generations).unwrap();
+        let bindings = kubernetes_bindings(&targets);
+        for change in ["sandbox image", "storage and port"] {
+            let mut revised = serde_json::to_value(&document).unwrap();
+            if change == "sandbox image" {
+                revised["spec"]["sandboxes"][0]["image"]["ref"] = json!(format!(
+                    "registry.example.com/changed@sha256:{}",
+                    "b".repeat(64)
+                ));
+            } else {
+                revised["spec"]["services"]["qwen"]["serving"]["port"] = json!(19001);
+                revised["spec"]["services"]["qwen"]["kubernetes"]["storageGiB"] = json!(200);
+            }
+            let revised = Document::parse(revised.to_string().as_bytes()).unwrap();
+            assert!(
+                matches!(
+                    validate_bound_sandboxes(&record, &revised, &bindings),
+                    Err(Error::SandboxChangeRefused { .. })
+                ),
+                "{change}"
+            );
+        }
+    }
+}
+
+#[test]
 fn cluster_service_changes_keep_bound_storage_and_require_all_recorded_prerequisites() {
     for source in [
-        include_str!("../../../../../crates/test-support/cluster-models/vllm.yaml"),
-        include_str!("../../../../../crates/test-support/cluster-models/ollama.yaml"),
+        include_str!("../../../../../examples/kubernetes/local-vllm.yaml"),
+        include_str!("../../../../../examples/kubernetes/local-ollama.yaml"),
     ] {
         let document = Document::parse(source.as_bytes()).unwrap();
         let record = Record::new(document.clone()).unwrap();
@@ -270,7 +525,7 @@ fn kubernetes_gateway_requires_storage_and_fresh_readiness_without_replacement()
 #[test]
 fn failed_kubernetes_model_rollout_accepts_only_revised_model_workloads() {
     let working = Document::parse(
-        include_bytes!("../../../../../crates/test-support/cluster-models/ollama.yaml").as_slice(),
+        include_bytes!("../../../../../examples/kubernetes/local-ollama.yaml").as_slice(),
     )
     .unwrap();
     let mut failed = serde_json::to_value(&working).unwrap();
@@ -304,20 +559,17 @@ fn failed_kubernetes_model_rollout_accepts_only_revised_model_workloads() {
 async fn plan_and_apply_warn_about_cluster_network_boundaries_even_with_bearer_authentication() {
     for (source, remove_authentication, warning_detail) in [
         (
-            include_bytes!("../../../../../crates/test-support/cluster-models/ollama.yaml")
-                .as_slice(),
+            include_bytes!("../../../../../examples/kubernetes/local-ollama.yaml").as_slice(),
             false,
             Some("no bearer authentication"),
         ),
         (
-            include_bytes!("../../../../../crates/test-support/cluster-models/vllm.yaml")
-                .as_slice(),
+            include_bytes!("../../../../../examples/kubernetes/local-vllm.yaml").as_slice(),
             false,
             Some("requires an image that restricts inference to authenticated /v1 routes"),
         ),
         (
-            include_bytes!("../../../../../crates/test-support/cluster-models/vllm.yaml")
-                .as_slice(),
+            include_bytes!("../../../../../examples/kubernetes/local-vllm.yaml").as_slice(),
             true,
             Some("no bearer authentication"),
         ),

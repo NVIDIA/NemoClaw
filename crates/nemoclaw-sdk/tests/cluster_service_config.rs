@@ -485,26 +485,3 @@ fn docker_service_defaults_do_not_add_cluster_settings() {
         );
     }
 }
-
-#[test]
-fn sandboxes_cannot_route_to_cluster_model_services_yet() {
-    for source in [
-        include_str!("../../test-support/cluster-models/vllm.yaml"),
-        include_str!("../../test-support/cluster-models/ollama.yaml"),
-    ] {
-        let mut input: Value = serde_saphyr::from_str(source).unwrap();
-        Document::parse(input.to_string().as_bytes()).unwrap();
-        let provider = input["spec"]["inferenceProviders"][0]
-            .as_object_mut()
-            .unwrap();
-        provider.remove("endpoint");
-        provider.insert("serviceRef".into(), json!("qwen"));
-        let error = Document::parse(input.to_string().as_bytes())
-            .unwrap_err()
-            .to_string();
-        assert_eq!(
-            error,
-            "inference providers cannot reference cluster model services yet; use an external endpoint"
-        );
-    }
-}

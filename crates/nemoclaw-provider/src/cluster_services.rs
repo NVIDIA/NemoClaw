@@ -273,6 +273,95 @@ impl Backend for ClusterServicesBackend {
             .await
     }
 }
+
+/// Keep SDK-owned cluster identities at the platform boundary while OpenShell
+/// reconciliation operates on its existing registration and profile rows.
+pub struct OpenShellServices;
+
+#[async_trait::async_trait]
+impl openshell_provider::Services for OpenShellServices {
+    fn validate_credential_source(
+        &self,
+        source: &str,
+        owner: &str,
+        endpoint: &str,
+    ) -> Result<(), ObservationError> {
+        nemoclaw_sdk::services::authentication::Source::parse(source, owner, endpoint).map(|_| ())
+    }
+
+    async fn resolve_credential_source(
+        &self,
+        source: &str,
+        owner: &str,
+        endpoint: &str,
+    ) -> Result<String, ObservationError> {
+        let source =
+            nemoclaw_sdk::services::authentication::Source::parse(source, owner, endpoint)?;
+        crate::services::authentication::resolve(&source).await
+    }
+
+    fn validate_cluster_source(&self, row: &Row) -> Result<(), ObservationError> {
+        profile_storage(row).map(|_| ())
+    }
+
+    async fn cluster_addresses(
+        &self,
+        row: &Row,
+    ) -> Result<Vec<std::net::IpAddr>, ObservationError> {
+        endpoint_addresses(&profile_storage(row)?, &row["endpoint"]).await
+    }
+}
+
+fn profile_storage(row: &Row) -> Result<StorageSpec, ObservationError> {
+    let storage = StorageSpec::decode(
+        row.get("cluster_source")
+            .ok_or(ObservationError::Incomplete)?,
+    )
+    .map_err(|_| ObservationError::BindingMismatch)?;
+    if row.get("owner") != Some(&storage.owner) {
+        return Err(ObservationError::BindingMismatch);
+    }
+    let name = row
+        .get("name")
+        .and_then(|name| name.strip_prefix("nemoclaw-inference-"))
+        .ok_or(ObservationError::Query)?;
+    let authenticated = match row.get("authenticated").map(String::as_str) {
+        Some("true") => true,
+        Some("false") => false,
+        _ => return Err(ObservationError::Query),
+    };
+    let kind = if row
+        .get("provider_type")
+        .is_some_and(|kind| kind == "anthropic")
+    {
+        nemoclaw_sdk::config::InferenceProviderKind::Anthropic
+    } else {
+        nemoclaw_sdk::config::InferenceProviderKind::Openai
+    };
+    nemoclaw_sdk::config::cluster_inference_profile(
+        name,
+        row.get("endpoint").ok_or(ObservationError::Incomplete)?,
+        kind,
+        authenticated,
+        &storage,
+        &[],
+    )?;
+    Ok(storage)
+}
+
+pub async fn resolve_credential(storage: &StorageSpec) -> Result<String, ObservationError> {
+    operations(storage).await?.credential(storage).await
+}
+pub async fn endpoint_addresses(
+    storage: &StorageSpec,
+    endpoint: &str,
+) -> Result<Vec<std::net::IpAddr>, ObservationError> {
+    operations(storage)
+        .await?
+        .endpoint_addresses(storage, endpoint)
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,11 +379,167 @@ mod tests {
             "{error}"
         );
     }
+
+    #[tokio::test]
+    async fn cluster_credentials_validate_identity_before_resolving_the_kubernetes_target() {
+        use openshell_provider::Services as _;
+        use serde_json::json;
+
+        let missing_kubeconfig = format!(
+            "NEMOCLAW_TEST_ABSENT_KUBECONFIG_{}",
+            nemoclaw_backend::generate_generation()
+                .unwrap()
+                .to_ascii_uppercase()
+        );
+        assert!(std::env::var_os(&missing_kubeconfig).is_none());
+        let document = nemoclaw_sdk::config::Document::parse(
+            include_bytes!("../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+        )
+        .unwrap();
+        let mut input = serde_json::to_value(document).unwrap();
+        input["spec"]["gateway"]["kubernetes"]["kubeconfig"]["env"] = json!(missing_kubeconfig);
+        input["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
+        let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
+        let generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "kubernetes_storage",
+            "kubernetes_gateway",
+            "inference_service",
+        ]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+        let registration = nemoclaw_sdk::compile::targets(&document, &generations)
+            .unwrap()
+            .into_iter()
+            .find(|target| target.kind == "provider")
+            .unwrap()
+            .values;
+        let source = &registration["credential_source"];
+        let owner = &registration["owner"];
+        let endpoint = &registration["endpoint"];
+        assert_eq!(
+            OpenShellServices.validate_credential_source(source, owner, endpoint),
+            Ok(())
+        );
+        // A valid cluster source reaches its Kubernetes credential reference.
+        // No environment mutation, kubeconfig file, or live cluster is needed.
+        assert_eq!(
+            OpenShellServices
+                .resolve_credential_source(source, owner, endpoint)
+                .await,
+            Err(ObservationError::Authentication)
+        );
+
+        let original: serde_json::Value = serde_json::from_str(source).unwrap();
+        let foreign_endpoint = endpoint.replacen("http://", "http://other-", 1);
+        let mut foreign_host = original.clone();
+        foreign_host["endpoint"] = json!(foreign_endpoint);
+        let mut unauthenticated = original;
+        unauthenticated["storage"]["authenticated"] = json!(false);
+        for (case, source, owner, endpoint) in [
+            (
+                "owner",
+                source.clone(),
+                "foreign-owner".into(),
+                endpoint.clone(),
+            ),
+            (
+                "published endpoint",
+                source.clone(),
+                owner.clone(),
+                foreign_endpoint.clone(),
+            ),
+            (
+                "Service host",
+                foreign_host.to_string(),
+                owner.clone(),
+                foreign_endpoint,
+            ),
+            (
+                "authentication",
+                unauthenticated.to_string(),
+                owner.clone(),
+                endpoint.clone(),
+            ),
+        ] {
+            assert_eq!(
+                OpenShellServices.validate_credential_source(&source, &owner, &endpoint),
+                Err(ObservationError::BindingMismatch),
+                "{case}"
+            );
+            assert_eq!(
+                OpenShellServices
+                    .resolve_credential_source(&source, &owner, &endpoint)
+                    .await,
+                Err(ObservationError::BindingMismatch),
+                "{case} must be rejected before Kubernetes credential lookup"
+            );
+        }
+    }
+
+    #[test]
+    fn openshell_service_adapter_validates_compiled_cluster_profile_identity() {
+        use openshell_provider::Services as _;
+
+        for source in [
+            include_bytes!("../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+            include_bytes!("../../../examples/kubernetes/local-ollama.yaml").as_slice(),
+        ] {
+            let document = nemoclaw_sdk::config::Document::parse(source).unwrap();
+            let generations = [
+                "workspace",
+                "provider",
+                "sandbox",
+                "kubernetes_storage",
+                "kubernetes_gateway",
+                "inference_service",
+                "ollama_service",
+            ]
+            .map(|kind| (kind.into(), "a".repeat(32)))
+            .into();
+            let profile = nemoclaw_sdk::compile::targets(&document, &generations)
+                .unwrap()
+                .into_iter()
+                .find(|target| target.kind == "provider_profile")
+                .unwrap()
+                .values;
+            assert_eq!(OpenShellServices.validate_cluster_source(&profile), Ok(()));
+
+            let storage = StorageSpec::decode(&profile["cluster_source"]).unwrap();
+            for (field, value) in [
+                ("owner", "foreign-owner".into()),
+                (
+                    "endpoint",
+                    profile["endpoint"].replacen(&storage.name, "foreign-model", 1),
+                ),
+                (
+                    "authenticated",
+                    if profile["authenticated"] == "true" {
+                        "false"
+                    } else {
+                        "true"
+                    }
+                    .into(),
+                ),
+            ] {
+                let mut changed = profile.clone();
+                changed.insert(field.into(), value);
+                assert_eq!(
+                    OpenShellServices.validate_cluster_source(&changed),
+                    Err(ObservationError::BindingMismatch),
+                    "{field}"
+                );
+            }
+        }
+    }
+
     #[tokio::test]
     async fn plan_rejects_bound_port_changes_before_reading_metadata_or_cluster_credentials() {
         for source in [
-            include_bytes!("../../../crates/test-support/cluster-models/vllm.yaml").as_slice(),
-            include_bytes!("../../../crates/test-support/cluster-models/ollama.yaml").as_slice(),
+            include_bytes!("../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+            include_bytes!("../../../examples/kubernetes/local-ollama.yaml").as_slice(),
         ] {
             let document = nemoclaw_sdk::config::Document::parse(source).unwrap();
             let generations = [
@@ -327,6 +572,75 @@ mod tests {
             let message = error.to_string();
             assert!(message.contains("serving port"));
             assert!(message.contains("sandbox files and conversation history"));
+        }
+    }
+
+    #[tokio::test]
+    async fn only_the_cluster_adapter_reaches_the_kubernetes_credential_of_a_cluster_source() {
+        use openshell_provider::{DockerServices, Services};
+        use serde_json::json;
+
+        let missing_kubeconfig = format!(
+            "NEMOCLAW_TEST_ABSENT_KUBECONFIG_{}",
+            nemoclaw_backend::generate_generation()
+                .unwrap()
+                .to_ascii_uppercase()
+        );
+        assert!(std::env::var_os(&missing_kubeconfig).is_none());
+        let document = nemoclaw_sdk::config::Document::parse(
+            include_bytes!("../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+        )
+        .unwrap();
+        let mut input = serde_json::to_value(document).unwrap();
+        input["spec"]["gateway"]["kubernetes"]["kubeconfig"]["env"] = json!(missing_kubeconfig);
+        input["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
+        let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
+        let generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "kubernetes_storage",
+            "kubernetes_gateway",
+            "inference_service",
+        ]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+        let registration = nemoclaw_sdk::compile::targets(&document, &generations)
+            .unwrap()
+            .into_iter()
+            .find(|target| target.kind == "provider")
+            .unwrap()
+            .values;
+        let (source, owner, endpoint) = (
+            &registration["credential_source"],
+            &registration["owner"],
+            &registration["endpoint"],
+        );
+        // The same source gives different results, so an Authentication error
+        // comes from the injected adapter's kubeconfig lookup, not a default.
+        let adapters: [(&dyn Services, _, _); 2] = [
+            (
+                &OpenShellServices,
+                Ok(()),
+                Err(ObservationError::Authentication),
+            ),
+            (
+                &DockerServices,
+                Err(ObservationError::Incomplete),
+                Err(ObservationError::Incomplete),
+            ),
+        ];
+        for (adapter, validated, resolved) in adapters {
+            assert_eq!(
+                adapter.validate_credential_source(source, owner, endpoint),
+                validated
+            );
+            assert_eq!(
+                adapter
+                    .resolve_credential_source(source, owner, endpoint)
+                    .await,
+                resolved
+            );
         }
     }
 }

@@ -295,7 +295,7 @@ impl Deployment {
         };
         record.reconcile_pending_creations(&bindings);
         record.validate_pending_intent(&document)?;
-        record.validate_bound_sandboxes(&document, &bindings)?;
+        runtime::validate_bound_sandboxes(&record, &document, &bindings)?;
         let connection = Some(DeploymentConnection {
             gateway_endpoint: document.spec.gateway.endpoint().into(),
             workspace: document.workspace(),
