@@ -1895,6 +1895,8 @@ class SandboxStateFlow<
             !this.options.fromDockerfile,
           agentName: (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
           provider: this.options.provider,
+          model: this.options.model,
+          deferredN1xManagedVllmPreviewIntent: this.options.deferredN1xManagedVllmPreviewIntent,
           entry: registeredEntry,
           sessionId: state.session?.sessionId,
           env: this.options.env,
