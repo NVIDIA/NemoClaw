@@ -153,7 +153,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     assert!(
         plan.changes
             .iter()
-            .any(|change| change.resource == "nemoclaw_gateway_storage.runtime"),
+            .any(|change| change.resource == "openshell_gateway_storage.runtime"),
         "plan must create the gateway storage: {:?}",
         plan.changes
     );
@@ -247,7 +247,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     assert_eq!(
         retained,
         [
-            "nemoclaw_gateway_storage.runtime",
+            "openshell_gateway_storage.runtime",
             "openshell_workspace.deployment"
         ]
     );

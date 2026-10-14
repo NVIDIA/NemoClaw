@@ -746,7 +746,7 @@ fn gateway_storage_bindings_record_their_typed_settings() {
         "image_pull_policy":null,
         "data_path":"/var/lib/docker/volumes/data/_data",
     });
-    let address = "nemoclaw_gateway_storage.runtime";
+    let address = "openshell_gateway_storage.runtime";
     let bindings = read(&state(serde_json::json!([
         {"address":address, "mode":"managed", "values":values}
     ])))

@@ -50,7 +50,7 @@ use std::{
     time::Duration,
 };
 
-const STORAGE: &str = "nemoclaw_kubernetes_storage.runtime";
+const STORAGE: &str = "openshell_kubernetes_storage.runtime";
 const WORKSPACE: &str = "openshell_workspace.deployment";
 
 fn original() -> Document {

@@ -36,9 +36,9 @@ pub fn compile_teardown(
         .collect();
     retained.insert(if runtime {
         if document.spec.gateway.as_kubernetes().is_some() {
-            "nemoclaw_kubernetes_storage.runtime".into()
+            "openshell_kubernetes_storage.runtime".into()
         } else {
-            "nemoclaw_gateway_storage.runtime".into()
+            "openshell_gateway_storage.runtime".into()
         }
     } else {
         "openshell_workspace.deployment".into()
@@ -164,7 +164,7 @@ mod tests {
             .filter(|address| {
                 address.starts_with("docker_volume.")
                     || address.starts_with("nemoclaw_inference_storage.")
-                    || address == "nemoclaw_gateway_storage.runtime"
+                    || address == "openshell_gateway_storage.runtime"
             })
             .collect();
         assert_eq!(
@@ -174,7 +174,7 @@ mod tests {
         );
         for established in [
             BTreeSet::new(),
-            BTreeSet::from(["nemoclaw_gateway_storage.runtime".into()]),
+            BTreeSet::from(["openshell_gateway_storage.runtime".into()]),
             retained.clone(),
         ] {
             let compiled =
@@ -214,8 +214,8 @@ mod tests {
                 }
                 assert_eq!(attrs["provider"], full["resource"][kind][name]["provider"]);
             }
-            if established.contains("nemoclaw_gateway_storage.runtime") {
-                let engine = graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["engine"]
+            if established.contains("openshell_gateway_storage.runtime") {
+                let engine = graph["resource"]["openshell_gateway_storage"]["runtime"]["engine"]
                     .as_str()
                     .unwrap();
                 assert!(
@@ -235,13 +235,13 @@ mod tests {
         let generations = crate::state::Record::new(document.clone())
             .unwrap()
             .generations;
-        let storage = "nemoclaw_kubernetes_storage.runtime".to_owned();
+        let storage = "openshell_kubernetes_storage.runtime".to_owned();
         for established in [
             BTreeSet::new(),
             BTreeSet::from([storage.clone()]),
             BTreeSet::from([
                 storage.clone(),
-                "nemoclaw_kubernetes_gateway.runtime".into(),
+                "openshell_kubernetes_gateway.runtime".into(),
             ]),
         ] {
             let compiled =
@@ -252,22 +252,21 @@ mod tests {
                 .collect();
             assert_eq!(compiled.retained, expected);
             assert_eq!(addresses(&compiled.graph), expected);
-            // The platform stage has no gateway, so only nemoclaw is configured.
-            assert_eq!(
-                compiled.graph["provider"]["nemoclaw"],
-                json!({"destroy": true})
-            );
-            for provider in crate::compile::GATEWAY_PROVIDERS {
-                assert!(
-                    compiled.graph["provider"].get(provider).is_none(),
+            // The platform stage installs the gateway: openshell serves the
+            // Kubernetes gateway types; fabric needs a running gateway.
+            for provider in ["nemoclaw", "openshell"] {
+                assert_eq!(
+                    compiled.graph["provider"][provider],
+                    json!({"destroy": true}),
                     "{provider}"
                 );
             }
+            assert!(compiled.graph["provider"].get("fabric").is_none());
             assert!(compiled.graph.get("data").is_none());
             assert!(compiled.graph.get("output").is_none());
             if compiled.retained.contains(&storage) {
                 assert_eq!(
-                    compiled.graph["resource"]["nemoclaw_kubernetes_storage"]["runtime"]["lifecycle"],
+                    compiled.graph["resource"]["openshell_kubernetes_storage"]["runtime"]["lifecycle"],
                     json!({"prevent_destroy":true})
                 );
             }

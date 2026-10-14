@@ -394,10 +394,10 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
         openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
     };
     let all = [
-        "nemoclaw_kubernetes_storage.runtime",
-        "nemoclaw_kubernetes_auth.runtime",
+        "openshell_kubernetes_storage.runtime",
+        "openshell_kubernetes_auth.runtime",
         "helm_release.gateway",
-        "nemoclaw_kubernetes_gateway.runtime",
+        "openshell_kubernetes_gateway.runtime",
     ];
     let workloads = &all[1..];
     let storage = BTreeSet::from([all[0].to_owned()]);

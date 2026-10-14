@@ -137,7 +137,7 @@ fn needs_restore(
         // Successful auth deletion independently verified release and gateway
         // absence. Restoring here would undo a confirmed deletion.
         if current.contains_key(ADDRESS)
-            || current.contains_key("nemoclaw_kubernetes_gateway.runtime")
+            || current.contains_key("openshell_kubernetes_gateway.runtime")
         {
             return Err(Error::Conflict(
                 "Helm recovery found incomplete prerequisite state; retain state and checkpoint",

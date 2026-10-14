@@ -189,7 +189,7 @@ impl Installer for Service {
             service_dependencies.push(address(STORAGE_KIND, &format!("{name}_auth")));
         }
         if document.spec.gateway.as_managed().is_some() && self.placement.is_none() {
-            service_dependencies.insert(0, "nemoclaw_managed_gateway.runtime".into());
+            service_dependencies.insert(0, "openshell_podman_gateway.runtime".into());
         }
         Ok(InstallPlan {
             targets,

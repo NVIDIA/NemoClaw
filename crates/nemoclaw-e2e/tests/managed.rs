@@ -16,7 +16,7 @@ fn provider_refreshes_retained_storage_without_changes() {
     state["resources"].as_array_mut().unwrap().retain(|r| {
         matches!(
             r["type"].as_str(),
-            Some("nemoclaw_gateway_storage" | "nemoclaw_inference_storage")
+            Some("openshell_gateway_storage" | "nemoclaw_inference_storage")
         )
     });
     let resources = state["resources"].as_array().unwrap();
