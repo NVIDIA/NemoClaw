@@ -40,6 +40,7 @@ const mocks = require(${mocksPath});
 const childProcess = require("node:child_process");
 const commandText = (command) => (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
 const events = [];
+const providerConfig = { credential: "old-test-key" };
 const failPolicyPreflight = ${JSON.stringify(failure === "policy preflight")};
 mocks.mockStandaloneGatewayTeardownAuthority();
 mocks.mockManagedStateVolumeOnboardLifecycle();
@@ -56,9 +57,12 @@ const source = mocks.sandboxLifecycleFixture({
 }, { sandboxId: sourceId });
 registry.save({ defaultSandbox: "my-assistant", sandboxes: { "my-assistant": source } });
 const before = registry.load();
-runner.run = (command) => {
+runner.run = (command, options = {}) => {
   const cmd = commandText(command);
   events.push({ kind: "run", cmd });
+  if (cmd.includes("provider update") && cmd.includes("nvidia-prod")) {
+    providerConfig.credential = options.env?.NVIDIA_INFERENCE_API_KEY ?? "";
+  }
   const profile = mocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profile !== null) return profile;
   if (cmd.includes("sandbox delete")) throw new Error("unexpected sandbox delete");
@@ -102,6 +106,7 @@ process.on("exit", () => {
     after: registry.load(),
     sourceId,
     liveId: live.state.sandboxId,
+    providerConfig,
     journal: sessions.loadSession()?.checkpoint?.sandboxRecreate ?? null,
   }));
 });
@@ -133,6 +138,7 @@ const { createSandbox } = require(${onboardPath});
       NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
       NEMOCLAW_SANDBOX_PREBUILD: "1",
       NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE: "1",
+      NVIDIA_INFERENCE_API_KEY: "new-test-key",
       NEMOCLAW_DASHBOARD_PORT: String(
         20_000 + (createHash("sha256").update(scriptPath).digest().readUInt16BE(0) % 10_000),
       ),
@@ -148,6 +154,7 @@ const { createSandbox } = require(${onboardPath});
     after: unknown;
     sourceId: string;
     liveId: string;
+    providerConfig: { credential: string };
     journal: unknown;
   }>(result.stdout);
   assert.ok(
@@ -161,6 +168,7 @@ const { createSandbox } = require(${onboardPath});
   );
   assert.deepEqual(payload.after, payload.before);
   assert.equal(payload.liveId, payload.sourceId);
+  assert.equal(payload.providerConfig.credential, "old-test-key");
   return payload;
 }
 

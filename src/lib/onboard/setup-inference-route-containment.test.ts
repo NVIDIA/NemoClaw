@@ -71,6 +71,13 @@ describe("onboard shared gateway route containment", () => {
     };
     const verifyInferenceRoute = vi.fn();
     const updateSandbox = vi.fn(() => true);
+    let providerEndpoint = "https://old.example/v1";
+    const upsertProvider = vi.fn(
+      async (_name: string, _type: string, _credential: string, baseUrl: string | null) => {
+        providerEndpoint = baseUrl ?? "";
+        return { ok: true };
+      },
+    );
     const setupInference = createSetupInference({
       checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
       withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
@@ -92,7 +99,7 @@ describe("onboard shared gateway route containment", () => {
       inferenceRouteMutator,
       inferenceRouteObserver,
       updateSandbox,
-      upsertProvider: vi.fn(async () => ({ ok: true })),
+      upsertProvider,
       verifyInferenceRoute,
       verifyOnboardInferenceSmoke: vi.fn(),
       isNonInteractive: () => true,
@@ -140,6 +147,8 @@ describe("onboard shared gateway route containment", () => {
     );
     expect(result).toMatchObject({ ok: true });
     expect(inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+    expect(upsertProvider).not.toHaveBeenCalled();
+    expect(providerEndpoint).toBe("https://old.example/v1");
     expect(verifyInferenceRoute).not.toHaveBeenCalled();
     expect(updateSandbox).not.toHaveBeenCalled();
     const deferredRoute = (
@@ -148,6 +157,11 @@ describe("onboard shared gateway route containment", () => {
     expect(deferredRoute).toEqual(expect.any(Function));
     await withGatewayRouteMutationLock("nemoclaw", () => deferredRoute!(() => undefined));
     expect(gatewayLockHeld).toBe(false);
+    expect(providerEndpoint).toBe("https://api.example/v1");
+    expect(upsertProvider).toHaveBeenCalledTimes(1);
+    expect(upsertProvider.mock.invocationCallOrder[0]).toBeLessThan(
+      inferenceRouteMutator.setInferenceRoute.mock.invocationCallOrder[0]!,
+    );
     expect(inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledWith(
       expect.objectContaining({ route: { provider: "compatible-endpoint", model: "new-model" } }),
     );
@@ -155,8 +169,8 @@ describe("onboard shared gateway route containment", () => {
     expect(verifyInferenceRoute).not.toHaveBeenCalled();
   });
 
-  it.each(["verification", "reservation"] as const)(
-    "restores the published route when deferred %s fails",
+  it.each(["provider", "verification", "reservation"] as const)(
+    "preserves the published route when deferred %s fails",
     async (failure) => {
       let liveRoute = { provider: "compatible-endpoint", model: "old-model" };
       let observations = 0;
@@ -199,7 +213,11 @@ describe("onboard shared gateway route containment", () => {
         inferenceRouteMutator,
         inferenceRouteObserver,
         updateSandbox: vi.fn(() => true),
-        upsertProvider: vi.fn(async () => ({ ok: true })),
+        upsertProvider: vi.fn(async () =>
+          failure === "provider"
+            ? { ok: false, message: "provider update rejected" }
+            : { ok: true },
+        ),
         verifyInferenceRoute: vi.fn(),
         verifyOnboardInferenceSmoke: vi.fn(),
         isNonInteractive: () => true,
@@ -256,10 +274,16 @@ describe("onboard shared gateway route containment", () => {
             })
           : vi.fn();
       await expect(deferredRoute?.(reserve)).rejects.toThrow(
-        failure === "verification" ? "not verified" : "reservation rejected",
+        failure === "provider"
+          ? "provider update rejected"
+          : failure === "verification"
+            ? "not verified"
+            : "reservation rejected",
       );
       expect(liveRoute).toEqual({ provider: "compatible-endpoint", model: "old-model" });
-      expect(inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledTimes(2);
+      expect(inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledTimes(
+        failure === "provider" ? 0 : 2,
+      );
       expect(reserve).toHaveBeenCalledTimes(failure === "reservation" ? 1 : 0);
     },
   );

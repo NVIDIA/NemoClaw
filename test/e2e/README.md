@@ -263,7 +263,7 @@ synthetic credential marker in its workspace. The pre-delete state backup must r
 The target compares the sandbox identity and published registry route before and after the failure.
 It sends an in-sandbox request to `inference.local` to confirm the source route still handles inference.
 After removing the marker, the same target completes the model-change recreate, checks that the
-replacement has a new sandbox identity and published model, and sends inference from the replacement.
+replacement has a new sandbox identity, and sends inference through the selected replacement route.
 
 Full MCP bridge E2E also owns the supervisor's corporate-CA TLS consumer check:
 onboarding receives the fixture CA through `NEMOCLAW_CORPORATE_CA_BUNDLE`, and the

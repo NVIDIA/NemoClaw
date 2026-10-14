@@ -674,22 +674,26 @@ function createGatewayRouteStager(input: {
   revalidateSandboxIdentity?: (operation: string) => void;
 }) {
   let stagedRoute: Parameters<OpenShellInferenceRouteMutator["setInferenceRoute"]>[0] | null = null;
+  const stagedProviderUpserts: Array<
+    () => Promise<Awaited<ReturnType<CommonDeps["upsertProvider"]>>>
+  > = [];
+  const shouldStage = () => {
+    const source =
+      input.sandboxName && input.options.deferPublishedRouteReservation
+        ? input.deps.getSandbox?.(input.sandboxName)
+        : null;
+    return shouldStageGatewayRouteAfterBackup(
+      input.provider,
+      source,
+      input.hostLocalSelection,
+      input.credentialEnv,
+      input.deps.ollamaProxyCredentialEnv,
+    );
+  };
   const mutator: OpenShellInferenceRouteMutator = {
     setInferenceRoute: (request) => {
       input.revalidateSandboxIdentity?.("change the OpenShell inference provider route");
-      const source =
-        input.sandboxName && input.options.deferPublishedRouteReservation
-          ? input.deps.getSandbox?.(input.sandboxName)
-          : null;
-      if (
-        shouldStageGatewayRouteAfterBackup(
-          input.provider,
-          source,
-          input.hostLocalSelection,
-          input.credentialEnv,
-          input.deps.ollamaProxyCredentialEnv,
-        )
-      ) {
+      if (shouldStage()) {
         stagedRoute = request;
         return Promise.resolve({ ok: true });
       }
@@ -698,10 +702,22 @@ function createGatewayRouteStager(input: {
   };
   return {
     mutator,
+    stageProviderUpsert: (
+      upsert: () => Promise<Awaited<ReturnType<CommonDeps["upsertProvider"]>>>,
+    ) => {
+      if (!shouldStage()) return false;
+      stagedProviderUpserts.push(upsert);
+      return true;
+    },
     hasStagedRoute: () => stagedRoute !== null,
     successResult: (): SetupInferenceResult => {
-      if (!stagedRoute) return { ok: true };
+      if (!stagedRoute) {
+        if (stagedProviderUpserts.length > 0)
+          throw new Error("The staged inference provider has no deferred route to publish.");
+        return { ok: true };
+      }
       const request = stagedRoute;
+      const providerUpserts = [...stagedProviderUpserts];
       return {
         ok: true,
         // The sandbox create phase holds the gateway-route lock through backup,
@@ -719,6 +735,14 @@ function createGatewayRouteStager(input: {
           }
           const sourceRoute = before.value.route;
           try {
+            for (const upsert of providerUpserts) {
+              const providerResult = await upsert();
+              if (!providerResult.ok)
+                throw new Error(
+                  providerResult.message ??
+                    `Cannot update the inference provider on gateway '${input.gatewayName}'.`,
+                );
+            }
             const result = await input.deps.inferenceRouteMutator.setInferenceRoute(request);
             if (!result.ok) throw new Error(result.error.message);
             const after = await input.deps.inferenceRouteObserver.observeInferenceRoute({
@@ -1030,6 +1054,8 @@ export function createSetupInference(
         const selectedUpsertProvider: CommonDeps["upsertProvider"] = async (...args) => {
           revalidateSandboxIdentity?.("register the inference provider");
           const upsertProvider = hostLocalGatewayMutation?.upsertProvider ?? defaultUpsertProvider;
+          if (routeStager.stageProviderUpsert(async () => await upsertProvider(...args)))
+            return { ok: true };
           return await upsertProvider(...args);
         };
         const commonDeps = {
