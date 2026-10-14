@@ -50,7 +50,8 @@ const STALE_EXTRA_PROVIDER = "e2e-stale-extra-provider";
 const LIVE_EXTRA_PROVIDER = "e2e-live-extra-provider";
 const EXTRA_PROVIDER_TOKEN_ENV = "NEMOCLAW_E2E_EXTRA_PROVIDER_TOKEN";
 const EXTRA_PROVIDER_TOKEN = "e2e-extra-provider-token";
-const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
+// Five serial onboarding commands can each use 20 minutes; reserve ten for probes.
+const LIVE_TIMEOUT_MS = testTimeout(110 * 60_000);
 
 validateSandboxName(SANDBOX_NAME);
 validateSandboxName(OTHER_SANDBOX_NAME);
