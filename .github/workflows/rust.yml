@@ -6,8 +6,8 @@ on:
     # Push a run-live/ branch to run every job, including the live suites,
     # outside a pull request; dispatch needs this file on the default branch.
     branches: [v1, run-live/**]
+  # Stacked v1 PRs target feature branches, so do not filter by base branch.
   pull_request:
-    branches: [v1]
   workflow_dispatch:
 permissions:
   contents: read
