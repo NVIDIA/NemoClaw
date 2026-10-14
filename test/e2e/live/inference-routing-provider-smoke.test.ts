@@ -107,8 +107,8 @@ test(
     ).toBe(true);
     expect(
       isolationEvidence.processesClean,
-      "real credential absent from sandbox process arguments when ps is available",
-    ).toBe(isolationEvidence.processesAvailable);
+      "sandbox process arguments are available and credential-free",
+    ).toBe(true);
     expect(
       isolationEvidence.sampledFilesClean,
       "real credential absent from sampled sandbox files",
@@ -199,7 +199,7 @@ test(
     ).toMatchObject({
       exitCode: 0,
       environmentClean: true,
-      processesClean: isolationEvidence.processesAvailable,
+      processesClean: true,
       sampledFilesClean: true,
       canaryDetected: true,
     });
@@ -370,8 +370,8 @@ console.log(JSON.stringify({
     ).toBe(true);
     expect(
       isolationEvidence.processesClean,
-      "real credential absent from sandbox process arguments when ps is available",
-    ).toBe(isolationEvidence.processesAvailable);
+      "sandbox process arguments are available and credential-free",
+    ).toBe(true);
     expect(
       isolationEvidence.sampledFilesClean,
       "real credential absent from sampled sandbox files",

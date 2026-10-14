@@ -2247,8 +2247,8 @@ belongs to the `inference get` source tests. Both switch exit checks and the ret
 After onboarding, each hosted-provider case runs one sandbox probe before its first native agent request.
 The OpenRouter model-switch requests and follow-up agent responses do not repeat that scan.
 The probe checks the raw environment and a bounded file sample for a salted fingerprint of the selected credential.
-It checks process arguments when `ps` is available.
-If `ps` is unavailable, the probe reports that status and continues. Only the fingerprint enters the probe;
+The probe tries `ps aux`, then `ps -ef`, to check process arguments.
+If neither command returns process output, the case fails. Only the fingerprint enters the probe;
 reports contain booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
 The sample inspects up to 200 files smaller than 1 MiB, taking the first 64 KiB of each readable file.
 This is not an exhaustive filesystem scan. The scan checks only sandbox environment variables, process arguments, and sampled files.
