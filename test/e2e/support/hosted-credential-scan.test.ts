@@ -12,11 +12,16 @@ import { hostedCredentialScanCommand } from "../live/inference-routing-credentia
 
 const credential = "synthetic-hosted-credential-for-scan";
 
+function unavailablePs(): never {
+  throw new Error("ps unavailable");
+}
+
 function executeProbe(
   leakIn = "none",
   emptyFiles = false,
   discoverCanary = true,
   scannedCredential = credential,
+  psMode: "available" | "fallback" | "unavailable" = "available",
 ) {
   const command = hostedCredentialScanCommand(scannedCredential);
   const records = new Map<string, Buffer>([
@@ -31,21 +36,24 @@ function executeProbe(
     "node:os": os,
     "node:path": path,
     "node:child_process": {
-      execFileSync: (program: string) =>
-        Buffer.from(
-          program === "sh"
-            ? [
-                discoverCanary && records.has("/probe-control/canary")
-                  ? "/probe-control/canary"
-                  : "",
-                emptyFiles ? "" : "/fixture",
-              ]
-                .filter(Boolean)
-                .join("\n")
-            : leakIn === program
-              ? `prefix ${scannedCredential} suffix`
-              : "ordinary observation",
-        ),
+      execFileSync: (program: string, args?: string[]) =>
+        program === "ps" &&
+        (psMode === "unavailable" || (psMode === "fallback" && args?.[0] === "aux"))
+          ? unavailablePs()
+          : Buffer.from(
+              program === "sh"
+                ? [
+                    discoverCanary && records.has("/probe-control/canary")
+                      ? "/probe-control/canary"
+                      : "",
+                    emptyFiles ? "" : "/fixture",
+                  ]
+                    .filter(Boolean)
+                    .join("\n")
+                : leakIn === program
+                  ? `prefix ${scannedCredential} suffix`
+                  : "ordinary observation",
+            ),
     },
     "node:fs": {
       readFileSync: (file: string) => Buffer.from(records.get(file)!),
@@ -102,12 +110,29 @@ describe("hosted credential isolation probe", () => {
     const result = executeProbe();
     expect(result.evidence).toEqual({
       environmentClean: true,
+      processesAvailable: true,
       processesClean: true,
       sampledFilesClean: true,
       canaryDetected: true,
       sampledFileCount: 1,
     });
     expect(result.records.has("/probe-control/canary")).toBe(false);
+  });
+
+  it("classifies unavailable process inspection while retaining other scan evidence", () => {
+    const evidence = executeProbe("none", false, true, credential, "unavailable").evidence;
+    expect(evidence).toMatchObject({
+      environmentClean: true,
+      processesAvailable: false,
+      processesClean: false,
+      sampledFilesClean: true,
+      canaryDetected: true,
+    });
+  });
+
+  it("falls back to ps -ef when ps aux is unavailable", () => {
+    const evidence = executeProbe("none", false, true, credential, "fallback").evidence;
+    expect(evidence).toMatchObject({ processesAvailable: true, processesClean: true });
   });
 
   it("detects a synthetic NVIDIA credential in sampled files without emitting it", () => {

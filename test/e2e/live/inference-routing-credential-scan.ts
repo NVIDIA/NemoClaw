@@ -21,7 +21,12 @@ try {
   const canaryFile = path.join(root, "canary");
   fs.writeFileSync(canaryFile, canary, { mode: 0o600 });
   const environment = execFileSync("env");
-  const processes = execFileSync("ps", ["aux"]);
+  let processes = null;
+  try { processes = execFileSync("ps", ["aux"]); }
+  catch {
+    try { processes = execFileSync("ps", ["-ef"]); }
+    catch { /* Process inspection is conditional in hardened sandboxes. */ }
+  }
   const sample = execFileSync("sh", [
     "-lc", 'find "$1" /tmp /sandbox /home -type f -size -1048576c 2>/dev/null | head -200',
     "credential-scan", root,
@@ -33,7 +38,8 @@ try {
   const files = observations.filter(entry => entry.file !== canaryFile).map(entry => entry.data);
   console.log(JSON.stringify({
     environmentClean: environment.length > 0 && !contains(environment, length, fingerprint),
-    processesClean: processes.length > 0 && !contains(processes, length, fingerprint),
+    processesAvailable: Boolean(processes?.length),
+    processesClean: Boolean(processes?.length) && !contains(processes, length, fingerprint),
     sampledFilesClean: files.length > 0 && !files.some(data => contains(data, length, fingerprint)),
     canaryDetected: observations.some(entry => contains(entry.data, canary.length, digest(canary))),
     sampledFileCount: files.length,

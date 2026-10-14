@@ -17,7 +17,10 @@ import {
   openClawAgentResponseRecord,
 } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import {
+  AVAILABILITY_PROBE_EXTRA_ENV_KEYS,
+  buildAvailabilityProbeEnv,
+} from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -104,8 +107,8 @@ test(
     ).toBe(true);
     expect(
       isolationEvidence.processesClean,
-      "real credential absent from sandbox process arguments",
-    ).toBe(true);
+      "real credential absent from sandbox process arguments when ps is available",
+    ).toBe(isolationEvidence.processesAvailable);
     expect(
       isolationEvidence.sampledFilesClean,
       "real credential absent from sampled sandbox files",
@@ -367,8 +370,8 @@ console.log(JSON.stringify({
     ).toBe(true);
     expect(
       isolationEvidence.processesClean,
-      "real credential absent from sandbox process arguments",
-    ).toBe(true);
+      "real credential absent from sandbox process arguments when ps is available",
+    ).toBe(isolationEvidence.processesAvailable);
     expect(
       isolationEvidence.sampledFilesClean,
       "real credential absent from sampled sandbox files",
@@ -413,8 +416,12 @@ console.log(JSON.stringify({
             ? "nvidia/nemotron-3-ultra-550b-a55b"
             : "nvidia/nemotron-3-super-120b-a12b";
         const switchEnv = buildChildEnv(
-          { ...buildAvailabilityProbeEnv(), OPENROUTER_API_KEY: apiKey },
-          { secretEnv: ["OPENROUTER_API_KEY"], fixtureOverlay: {} },
+          { ...process.env, OPENROUTER_API_KEY: apiKey },
+          {
+            additionalAllowedEnv: AVAILABILITY_PROBE_EXTRA_ENV_KEYS,
+            secretEnv: ["OPENROUTER_API_KEY"],
+            fixtureOverlay: {},
+          },
         );
         progress.phase("switch OpenRouter models when selected");
         const toAlternate = await host.nemoclaw(
