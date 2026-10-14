@@ -389,6 +389,7 @@
     {
       "live": "test/e2e/live/onboard-repair.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/gateway-providers.ts",
         "test/e2e/fixtures/podman-owner-diagnostic.ts",
         "test/e2e/fixtures/podman-owner-snapshot.ts",
         "test/e2e/fixtures/onboard-precleanup.ts",
@@ -418,6 +419,7 @@
     {
       "live": "test/e2e/live/onboard-resume.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/gateway-providers.ts",
         "test/e2e/fixtures/podman-owner-diagnostic.ts",
         "test/e2e/fixtures/podman-owner-snapshot.ts",
         "test/e2e/fixtures/onboard-precleanup.ts",
