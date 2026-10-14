@@ -158,6 +158,43 @@ describe("sandbox provider preparation", () => {
     },
   );
 
+  it("stops direct create when an attached provider cannot be inspected", async () => {
+    const adapter = typedProviderAdapter({
+      getProvider: vi.fn(async () => ({
+        ok: false as const,
+        error: {
+          kind: "command" as const,
+          reason: "failed" as const,
+          message: "provider inspection failed",
+        },
+      })),
+    });
+    const harness = createHarness(adapter);
+    const boundary = createProviderEffectBoundary({
+      deferred: false,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      preparationInput: publicationInput({
+        messagingProviders: [],
+        messagingProviderRequests: [],
+        extraProviders: ["search-provider"],
+        directCreateProviderNames: ["search-provider"],
+      }),
+      preparationDeps: harness.deps,
+      runVerifiedSandboxCreateEffects: null,
+      activateDeferredProviderEffects: null,
+      revalidateSandboxIdentityBeforeCreate: vi.fn(),
+    });
+
+    await expect(boundary.validateBeforeCreate()).rejects.toThrow(
+      "Could not inspect attached provider 'search-provider' before sandbox creation",
+    );
+    expect(harness.cleanupCreateSources).toHaveBeenCalledOnce();
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(adapter.updateProvider).not.toHaveBeenCalled();
+    expect(harness.runOpenshell).not.toHaveBeenCalled();
+  });
+
   it.each(["nemoclaw-hermes-tool-gateway-v1", "generic"])(
     "preserves the %s Hermes tool gateway binding on direct create",
     async (type) => {

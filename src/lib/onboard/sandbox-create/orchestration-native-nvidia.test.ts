@@ -153,6 +153,10 @@ describe("native NVIDIA post-create provider verification", () => {
       providerName: "nemoclaw-nvidia-prod-v1",
     });
     expect(adapter.listProviderAttachments).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(adapter.attachProvider).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(adapter.warnIfVerifiedProfilesChangedAfterSandboxCreate).mock
+        .invocationCallOrder[0],
+    );
   });
 
   it("rejects a replaced provider before inspecting its sandbox attachments", async () => {

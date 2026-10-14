@@ -1529,6 +1529,7 @@ export function createProviderEffectBoundary(input: {
         await publish();
       },
       runAfterVerifiedCreate: async (context) => {
+        await attachAndVerifyNativeInferenceProvider(context);
         const profileIds = verifiedDirectCreateProfileIds();
         if (!input.resumingVerifiedCreate && profileIds.length > 0) {
           adapter.warnIfVerifiedProfilesChangedAfterSandboxCreate?.(
@@ -1536,7 +1537,6 @@ export function createProviderEffectBoundary(input: {
             profileIds,
           );
         }
-        await attachAndVerifyNativeInferenceProvider(context);
       },
     };
   }

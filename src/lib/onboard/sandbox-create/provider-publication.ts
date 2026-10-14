@@ -101,7 +101,12 @@ export async function validateAttachedOwnedProfilesBeforeSandboxCreation(
       continue;
     }
     const observed = await adapter.getProvider({ target, providerName });
-    if (!observed.ok) continue;
+    if (!observed.ok) {
+      throwAfterCleanup(
+        deps,
+        `Could not inspect attached provider '${providerName}' before sandbox creation: ${observed.error.message}`,
+      );
+    }
     if (observed.value.type === "generic") continue;
     const directProfile = messagingProviderProfileForType(
       REPOSITORY_ROOT,
