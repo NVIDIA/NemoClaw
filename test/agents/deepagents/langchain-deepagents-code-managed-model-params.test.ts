@@ -178,28 +178,28 @@ for root_provider in ("openrouter-api", "openrouter", "compatible-endpoint"):
         assert resolved["api_key"] == value, root_provider
         assert resolved["base_url"] == "https://openrouter.ai/api/v1"
 
-for value in (
-    "",
-    "sk-or-" + "x" * 32,
-    "nemoclaw-managed-inference",
-    "openshell:resolve:env:v12_NVIDIA_INFERENCE_API_KEY",
-    "openshell:resolve:env:v12_OPENROUTER_API_KEY\\n",
-):
-    os.environ[name] = value
+    for value in (
+        "",
+        "sk-or-" + "x" * 32,
+        "nemoclaw-managed-inference",
+        "openshell:resolve:env:v12_NVIDIA_INFERENCE_API_KEY",
+        "openshell:resolve:env:v12_" + name + "\\n",
+    ):
+        os.environ[name] = value
+        try:
+            config._get_provider_kwargs("openrouter")
+        except RuntimeError as error:
+            assert not value or value not in str(error)
+        else:
+            raise AssertionError("native OpenRouter accepted an invalid handle")
+
+    del os.environ[name]
     try:
         config._get_provider_kwargs("openrouter")
-    except RuntimeError as error:
-        assert not value or value not in str(error)
+    except RuntimeError:
+        pass
     else:
-        raise AssertionError("native OpenRouter accepted an invalid handle")
-
-del os.environ[name]
-try:
-    config._get_provider_kwargs("openrouter")
-except RuntimeError:
-    pass
-else:
-    raise AssertionError("native OpenRouter accepted a missing handle")
+        raise AssertionError("native OpenRouter accepted a missing handle")
 
 managed._UPSTREAM_PROVIDER_FILE.chmod(0o644)
 managed._UPSTREAM_PROVIDER_FILE.write_text("openai\\n")
