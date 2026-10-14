@@ -23,13 +23,36 @@ fn unmet_prerequisite(error: &nemoclaw_sdk::Error) -> bool {
     )
 }
 
+/// One bounded `/info` read: the engine's reply, its error, or `None` on timeout.
+type InfoRead = Option<Result<bollard::models::SystemInfo, nemoclaw_sdk::Error>>;
+async fn read_info(engines: &dyn Engines, endpoint: &str) -> InfoRead {
+    let work = async { engines.engine(endpoint)?.info().await };
+    tokio::time::timeout(Duration::from_secs(5), work)
+        .await
+        .ok()
+}
+
+/// The selected engine's facts and its advertised hardware from one `/info`
+/// read, with the same meaning as [`observe_engine_facts`] and [`observe_hardware`].
+pub async fn observe_host(
+    engines: &dyn Engines,
+    endpoint: &str,
+) -> (EngineObservation, HardwareObservation) {
+    let info = read_info(engines, endpoint).await;
+    (engine_facts(&info), hardware(info))
+}
+
 /// The selected engine's facts from its `/info`, whatever runs on it.
 /// Failure to contact the engine leaves its facts unknown.
 pub async fn observe_engine_facts(engines: &dyn Engines, engine: &str) -> EngineObservation {
+    engine_facts(&read_info(engines, engine).await)
+}
+
+fn engine_facts(info: &InfoRead) -> EngineObservation {
     let mut observed = EngineObservation::unknown("engine observation timed out");
-    let work = async { engines.engine(engine)?.info().await };
-    match tokio::time::timeout(Duration::from_secs(5), work).await {
-        Ok(Ok(info)) => {
+    match info {
+        Some(Ok(info)) => {
+            let info = info.clone();
             observed.status = ObservationStatus::Available;
             observed.reason = None;
             observed.server_version = info.server_version;
@@ -38,8 +61,8 @@ pub async fn observe_engine_facts(engines: &dyn Engines, engine: &str) -> Engine
             observed.memory_bytes = info.mem_total.and_then(|value| value.try_into().ok());
             observed.cpus = info.ncpu;
         }
-        Ok(Err(error)) => observed.reason = Some(error.to_string()),
-        Err(_) => {}
+        Some(Err(error)) => observed.reason = Some(error.to_string()),
+        None => {}
     }
     observed
 }
@@ -114,9 +137,12 @@ pub async fn observe_engine(
 /// Read only the selected engine API. Never run a collector, inspect the client's
 /// host, start a probe container, or infer GPU absence from missing advertisements.
 pub async fn observe_hardware(engines: &dyn Engines, endpoint: &str) -> HardwareObservation {
-    let work = async { engines.engine(endpoint)?.info().await };
-    match tokio::time::timeout(Duration::from_secs(5), work).await {
-        Ok(Ok(info)) => HardwareObservation::from_info(info),
+    hardware(read_info(engines, endpoint).await)
+}
+
+fn hardware(info: InfoRead) -> HardwareObservation {
+    match info {
+        Some(Ok(info)) => HardwareObservation::from_info(info),
         _ => {
             let mut observation = HardwareObservation::unknown();
             observation.reason =

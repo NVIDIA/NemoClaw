@@ -115,8 +115,7 @@ fn openshift_compiles_platform_identity_and_wire_driver_without_docker() {
                 json!(["kubernetes"])
             );
         }
-        assert!(graph["data"].get("nemoclaw_engine_capabilities").is_none());
-        assert!(graph["data"].get("nemoclaw_target_hardware").is_none());
+        assert!(graph["data"].get("host_engine").is_none());
         let targets = runtime_targets(&document, &generations).unwrap();
         if managed {
             assert_eq!(targets.len(), 4);

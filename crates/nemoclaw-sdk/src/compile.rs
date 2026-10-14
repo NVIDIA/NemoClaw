@@ -17,6 +17,9 @@ pub const OPENSHELL_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/opens
 pub const FABRIC_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/fabric";
 pub const VLLM_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/vllm";
 pub const OLLAMA_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/ollama";
+/// Registry address of the provider that observes container engines; it has
+/// no settings, so it is not one of [`NEMOCLAW_PROVIDERS`].
+pub const HOST_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/host";
 /// This repository's providers; each takes `destroy`.
 pub const NEMOCLAW_PROVIDERS: [&str; 5] = ["nemoclaw", "openshell", "fabric", "vllm", "ollama"];
 
@@ -447,11 +450,12 @@ fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> 
             "openshell":{"source":OPENSHELL_PROVIDER_ADDRESS,"version":format!("= {version}")},
             "fabric":{"source":FABRIC_PROVIDER_ADDRESS,"version":format!("= {version}")},
             "vllm":{"source":VLLM_PROVIDER_ADDRESS,"version":format!("= {version}")},
-            "ollama":{"source":OLLAMA_PROVIDER_ADDRESS,"version":format!("= {version}")}
+            "ollama":{"source":OLLAMA_PROVIDER_ADDRESS,"version":format!("= {version}")},
+            "host":{"source":HOST_PROVIDER_ADDRESS,"version":format!("= {version}")}
         }},
         // Each provider reaches the engines, clusters, and gateways named on
         // its resources; providers take only `destroy`.
-        "provider":{"nemoclaw":{},"openshell":{},"fabric":{},"vllm":{},"ollama":{}}, "resource":{},
+        "provider":{"nemoclaw":{},"openshell":{},"fabric":{},"vllm":{},"ollama":{},"host":{}}, "resource":{},
         "data":{"openshell_gateway":{"current":gateway_data(&connection, json!(drivers))}}
     });
     crate::discovery_graph::populate(&mut graph, document)?;

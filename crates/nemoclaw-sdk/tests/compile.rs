@@ -296,7 +296,7 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
         // reads: the facts serve every reader, and the openshell provider
         // judges whether the engine can host its gateway.
         let selected = &document.spec.gateway.as_managed().unwrap().engine;
-        let engine = &graph["data"]["nemoclaw_engine_capabilities"]["current"];
+        let engine = &graph["data"]["host_engine"]["current"];
         assert_eq!(engine["engine"], *selected);
         assert!(engine.get("compute_driver").is_none());
         assert!(engine.get("lifecycle").is_none());

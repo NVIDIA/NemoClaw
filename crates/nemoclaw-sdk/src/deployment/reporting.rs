@@ -235,7 +235,7 @@ fn prerequisites(address: &str) -> Option<String> {
     (address == format!("data.{source}.current")).then(|| GATEWAY_PREREQUISITES.to_owned())
 }
 fn observation_name(address: &str) -> Option<String> {
-    if address == "data.nemoclaw_engine_capabilities.current" {
+    if address == "data.host_engine.current" {
         Some("engine".into())
     } else if address == "data.openshell_gateway.current" {
         Some("gateway".into())
@@ -243,7 +243,7 @@ fn observation_name(address: &str) -> Option<String> {
         [
             "data.fabric_harnesses.",
             "data.nemoclaw_runtime_image.",
-            "data.nemoclaw_target_hardware.",
+            "data.host_engine.",
         ]
         .iter()
         .find_map(|prefix| address.strip_prefix(prefix).map(str::to_owned))
@@ -545,7 +545,7 @@ mod tests {
 
     #[test]
     fn query_provenance_copies_only_safe_inputs_not_provider_payloads() {
-        let plan:Plan=serde_json::from_value(json!({"planned_values":{"root_module":{"resources":[{"address":"data.nemoclaw_target_hardware.target_0","values":{"engine":"unix:///var/run/docker.sock","credential":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL","observation_json":null}}]}}})).unwrap();
+        let plan:Plan=serde_json::from_value(json!({"planned_values":{"root_module":{"resources":[{"address":"data.host_engine.target_0","values":{"engine":"unix:///var/run/docker.sock","credential":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL","observation_json":null}}]}}})).unwrap();
         let report = plan
             .discovery_report(
                 DiscoveryScope::Deployment,

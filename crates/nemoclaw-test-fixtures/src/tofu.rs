@@ -37,6 +37,7 @@ impl TofuWorkspace {
                 ("fabric", &bundle.provider("fabric")),
                 ("vllm", &bundle.provider("vllm")),
                 ("ollama", &bundle.provider("ollama")),
+                ("host", &bundle.provider("host")),
             ],
         )
     }

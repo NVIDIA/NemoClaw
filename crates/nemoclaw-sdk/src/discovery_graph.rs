@@ -8,16 +8,20 @@ use crate::{
 };
 use serde_json::{Map, Value, json};
 
-/// The data source and inputs that answer `query` in a plan. An image read on
-/// a platform takes it from the plan's one engine read, `current`.
-fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, Value), ConfigError> {
+/// The data source type, the attribute holding its observation, and the
+/// inputs that answer `query` in a plan. One `host_engine` read answers both
+/// engine facts and advertised hardware. An image read on a platform takes it
+/// from the plan's one engine read, `current`.
+fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, &'static str, Value), ConfigError> {
     Ok(match query {
         DiscoveryQuery::Engine(request) => (
-            "engine_capabilities",
+            "host_engine",
+            "engine_json",
             json!({"engine":literal(&request.engine)}),
         ),
         DiscoveryQuery::Hardware(request) => (
-            "target_hardware",
+            "host_engine",
+            "hardware_json",
             json!({"engine":literal(&request.engine)}),
         ),
         DiscoveryQuery::Fabric(FabricRequest {
@@ -45,11 +49,11 @@ fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, Value), ConfigError> 
             if platform.is_some() {
                 for field in ["architecture", "operating_system"] {
                     inputs[field] = json!(format!(
-                        "${{jsondecode(data.nemoclaw_engine_capabilities.current.observation_json).{field}}}"
+                        "${{jsondecode(data.host_engine.current.engine_json).{field}}}"
                     ));
                 }
             }
-            ("fabric_harnesses", inputs)
+            ("fabric_harnesses", "observation_json", inputs)
         }
         DiscoveryQuery::Gateway(_)
         | DiscoveryQuery::Credential(_)
@@ -75,18 +79,12 @@ fn read(
     key: &str,
     extend: impl FnOnce(&mut Value),
 ) -> Result<(), ConfigError> {
-    let (kind, mut inputs) = inputs(query)?;
+    let (source, attribute, mut inputs) = inputs(query)?;
     extend(&mut inputs);
-    // Fabric image reads belong to the fabric provider; the others to nemoclaw.
-    let source = if kind == "fabric_harnesses" {
-        kind.to_owned()
-    } else {
-        format!("nemoclaw_{kind}")
-    };
-    graph["data"][&source][name] = inputs;
+    graph["data"][source][name] = inputs;
     observations.insert(
         key.into(),
-        json!(format!("${{data.{source}.{name}.observation_json}}")),
+        json!(format!("${{data.{source}.{name}.{attribute}}}")),
     );
     Ok(())
 }

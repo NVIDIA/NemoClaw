@@ -9,12 +9,6 @@
 provider nemoclaw (version 0)
   destroy: bool, optional
 
-data nemoclaw_engine_capabilities (version 0)
-  available: bool, computed
-  engine: string, required
-  observation_json: string, computed
-  status: string, computed
-
 data nemoclaw_runtime_image (version 0)
   allow_missing: bool, optional
   architecture: string, required
@@ -23,9 +17,3 @@ data nemoclaw_runtime_image (version 0)
   image_id: string, optional
   labels: map(string), optional
   observation_json: string, computed
-
-data nemoclaw_target_hardware (version 0)
-  available: bool, computed
-  engine: string, required
-  observation_json: string, computed
-  status: string, computed

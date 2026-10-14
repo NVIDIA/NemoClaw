@@ -4,7 +4,7 @@
 //! attributes; these tests check that snapshot and the rules across types.
 
 use fabric_provider::FabricProvider;
-use nemoclaw_provider::{NemoClawProvider, ServiceProvider};
+use nemoclaw_provider::{HostProvider, NemoClawProvider, ServiceProvider};
 use openshell_provider::OpenShellProvider;
 use std::{collections::BTreeSet, path::Path};
 use tf_provider::{Diagnostics, DynamicProvider, schema::AttributeConstraint};
@@ -32,6 +32,12 @@ fn runtime_provider_schemas_match_their_snapshots() {
             "cargo test -p nemoclaw-provider --test integration schema::",
         );
     }
+    nemoclaw_test_fixtures::schema::assert_snapshot(
+        "host",
+        &HostProvider::default(),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/schema-host.txt"),
+        "cargo test -p nemoclaw-provider --test integration schema::",
+    );
 }
 
 fn type_names(provider: &dyn DynamicProvider) -> BTreeSet<String> {

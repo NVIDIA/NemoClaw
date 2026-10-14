@@ -96,26 +96,12 @@ impl Provider for NemoClawProvider {
         &self,
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
-        Some(HashMap::from([
-            (
-                "target_hardware".into(),
-                Box::new(crate::hardware_data::HardwareDataSource(
-                    self.backend.clone(),
-                )) as Box<dyn DynamicDataSource>,
-            ),
-            (
-                "engine_capabilities".into(),
-                Box::new(crate::discovery::EngineCapabilitiesDataSource(
-                    self.backend.clone(),
-                )) as Box<dyn DynamicDataSource>,
-            ),
-            (
-                "runtime_image".into(),
-                Box::new(crate::runtime_image::RuntimeImageDataSource(
-                    self.backend.clone(),
-                )) as Box<dyn DynamicDataSource>,
-            ),
-        ]))
+        Some(HashMap::from([(
+            "runtime_image".into(),
+            Box::new(crate::runtime_image::RuntimeImageDataSource(
+                self.backend.clone(),
+            )) as Box<dyn DynamicDataSource>,
+        )]))
     }
     fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
         Some(destroy_schema())
@@ -221,6 +207,43 @@ pub(crate) fn definitions() -> Vec<Definition> {
 
 /// The `vllm` or `ollama` provider: one runtime's credential storage, runtime
 /// contracts, readiness, and capacity.
+/// The `host` provider: read-only observations of a container engine.
+#[derive(Default)]
+pub struct HostProvider {
+    backend: Arc<ConfiguredBackend>,
+}
+#[async_trait]
+impl Provider for HostProvider {
+    type Config<'a> = ValueEmpty;
+    type MetaState<'a> = ValueEmpty;
+    fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
+        Some(Schema {
+            version: 0,
+            block: Block::default(),
+        })
+    }
+    async fn configure<'a>(&self, _: &mut Diagnostics, _: String, _: ValueEmpty) -> Option<()> {
+        Some(())
+    }
+    fn get_resources(
+        &self,
+        _: &mut Diagnostics,
+    ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
+        Some(HashMap::new())
+    }
+    fn get_data_sources(
+        &self,
+        _: &mut Diagnostics,
+    ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
+        Some(HashMap::from([(
+            "engine".into(),
+            Box::new(crate::host_engine::HostEngineDataSource(
+                self.backend.clone(),
+            )) as Box<dyn DynamicDataSource>,
+        )]))
+    }
+}
+
 pub struct ServiceProvider {
     name: &'static str,
     backend: Arc<ConfiguredBackend>,

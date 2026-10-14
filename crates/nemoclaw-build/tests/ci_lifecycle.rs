@@ -204,6 +204,7 @@ fi
             "target/debug/terraform-provider-fabric",
             "target/debug/terraform-provider-vllm",
             "target/debug/terraform-provider-ollama",
+            "target/debug/terraform-provider-host",
             "target/debug/nemoclaw-fixture-ssh",
         ] {
             let file = self.0.path().join(path);

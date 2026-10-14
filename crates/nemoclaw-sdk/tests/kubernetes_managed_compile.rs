@@ -245,12 +245,10 @@ fn managed_kubernetes_discovery_never_uses_a_local_container_engine() {
     .map(|kind| (kind.into(), "a".repeat(32)))
     .into();
     let agents = compile(&document, &generations, "0.1.0").unwrap();
-    for data_source in ["nemoclaw_engine_capabilities", "nemoclaw_target_hardware"] {
-        assert!(
-            agents["data"].get(data_source).is_none(),
-            "Kubernetes discovery must not contact the client engine: {data_source}"
-        );
-    }
+    assert!(
+        agents["data"].get("host_engine").is_none(),
+        "Kubernetes discovery must not contact the client engine"
+    );
     assert!(agents["data"].get("openshell_gateway").is_some());
     // The SDK reads model catalogs itself, outside the graph.
     assert!(

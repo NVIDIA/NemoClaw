@@ -268,6 +268,13 @@ pub fn required_files(version: &str) -> Result<Vec<String>, Error> {
             platform()?,
             executable(&format!("terraform-provider-ollama_v{version}"))
         ),
+        format!(
+            "providers/{}/{}/{}/{}",
+            crate::compile::HOST_PROVIDER_ADDRESS,
+            version,
+            platform()?,
+            executable(&format!("terraform-provider-host_v{version}"))
+        ),
         helm_provider_path(&platform()?)?,
         "licenses/helm-provider-LICENSE".into(),
         crate::config::schema::SCHEMA_PATH.into(),

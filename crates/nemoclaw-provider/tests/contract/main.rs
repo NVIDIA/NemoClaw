@@ -53,6 +53,10 @@ pub fn workspace() -> tofu::TofuWorkspace {
                 "ollama",
                 &nemoclaw_test_fixtures::package_executable!("terraform-provider-ollama"),
             ),
+            (
+                "host",
+                &nemoclaw_test_fixtures::package_executable!("terraform-provider-host"),
+            ),
             ("openshell", &bundle.provider("openshell")),
             ("fabric", &bundle.provider("fabric")),
         ],
@@ -107,6 +111,7 @@ fn every_type_has_a_contract_test() {
             "ollama",
             nemoclaw_provider::ServiceProvider::ollama(),
         ))
+        .chain(served("host", nemoclaw_provider::HostProvider::default()))
         .collect();
     let sources = [
         include_str!("discovery.rs"),

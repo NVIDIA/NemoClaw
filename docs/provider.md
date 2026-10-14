@@ -40,7 +40,8 @@ The generated graphs manage these objects and observations:
 | Ollama provider | Retained Ollama proxy credentials (`ollama_proxy_credential_storage`) |
 | vLLM and Ollama provider data sources | Runtime contracts, service or proxy readiness, and the upstream model digest behind an Ollama proxy (`ollama_model`) |
 | OpenShell provider | Kubernetes namespace and encryption key (`openshell_kubernetes_storage`), development issuer (`openshell_kubernetes_auth`), and gateway readiness (`openshell_kubernetes_gateway`) |
-| NemoClaw provider data source | Engine capabilities and managed runtime-image compatibility |
+| Host provider data source | Engine facts and advertised hardware (`host_engine`) |
+| NemoClaw provider data source | Managed runtime-image compatibility |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 | Helm provider | The managed Kubernetes gateway's OpenShell chart release (`helm_release.gateway`) |
@@ -272,14 +273,20 @@ Each read lists the upstream's models with `GET /api/tags` and fails when the mo
 OpenTofu reads it while planning once its inputs are known, so a changed digest stops the plan.
 Generated graphs read it for each Ollama proxy and start the proxy container after it.
 
+### Host Data Sources
+
+The `host` provider observes container engines and changes nothing; it has no settings.
+
+| Data source | Observes |
+|---|---|
+| `host_engine` | [Engine version, platform, CPUs, memory](#engine-and-fabric-discovery), and [advertised hardware](#target-hardware) |
+
 ### NemoClaw Data Sources
 
 The `nemoclaw` provider serves only data sources; its `destroy` setting has no effect.
 
 | Data source | Observes |
 |---|---|
-| `nemoclaw_engine_capabilities` | [Engine version, platform, CPUs, and memory](#engine-and-fabric-discovery) |
-| `nemoclaw_target_hardware` | [Engine-advertised hardware](#target-hardware) |
 | `nemoclaw_runtime_image` | [Managed runtime image labels](#runtime-image-compatibility) |
 
 ### Docker and Helm Types
@@ -346,9 +353,9 @@ An observation describes the selected target at the time of its read; it is not 
 
 | Question | Owner and source | When it runs |
 |---|---|---|
-| Engine version, platform, CPUs, and memory | `nemoclaw_engine_capabilities`; selected Docker/Podman API | Onboarding target changes and managed deployment planning |
+| Engine version, platform, CPUs, and memory | `host_engine` (`engine_json`); selected Docker/Podman API | Onboarding target changes and managed deployment planning |
 | Managed gateway prerequisites for its compute driver | `openshell_gateway_prerequisites`; selected Docker/Podman API | Onboarding target changes and managed deployment planning |
-| Engine features, CPU, memory, and advertised GPU inventory | `nemoclaw_target_hardware`; selected engine API | Onboarding and planning for selected gateway/service engines |
+| Engine features, CPU, memory, and advertised GPU inventory | `host_engine` (`hardware_json`); selected engine API | Onboarding and planning for selected gateway/service engines |
 | GPU memory, driver, compute capability, and disk measurements | Provider `observe_host_hardware` with a selected `HostObserver` | Explicit direct calls or existing configured service-capacity checks; the new passive hardware source does not run collectors |
 | Packaged adapters, APIs, settings, and runtime requirements | `fabric_harnesses`; selected image metadata containing Fabric discovery results | Onboarding image changes and deployment planning |
 | Managed runtime specification, required labels, and platform | `nemoclaw_runtime_image`; selected engine image inspection | Plan for present images; after image acquisition before runtime mutations |
@@ -359,10 +366,11 @@ An observation describes the selected target at the time of its read; it is not 
 
 ## Engine and Fabric Discovery
 
-`nemoclaw_engine_capabilities` (NemoClaw provider), `openshell_gateway_prerequisites` (OpenShell provider), and `fabric_harnesses` (Fabric provider) require `engine`, the selected container-engine endpoint, without requiring an OpenShell connection.
+`host_engine` (host provider), `openshell_gateway_prerequisites` (OpenShell provider), and `fabric_harnesses` (Fabric provider) require `engine`, the selected container-engine endpoint, without requiring an OpenShell connection.
 The prerequisite source also requires `compute_driver` (`docker` or `podman`); the Fabric source requires `image`.
 For a cluster image that no local engine can inspect, the Fabric source instead reads the metadata bundle whose path is in the environment variable named by `metadata_env`; `engine` must then be empty.
-Each returns `status`, `available`, and structured JSON in `observation_json`.
+Each returns `status`, `available`, and structured JSON: `host_engine` in `engine_json` and `hardware_json`, the others in `observation_json`.
+One read of the engine's `/info` answers both of `host_engine`'s observations; its `status` and `available` describe the engine facts, and `hardware_json` carries its own status.
 
 The engine observation reports available server version, architecture, operating system, CPU count, and memory fields.
 The prerequisite observation is `unavailable`, with its reason, when the engine cannot host a managed gateway with that driver: the Podman driver needs a Podman engine socket, and rootless Podman needs pasta networking.
@@ -425,8 +433,8 @@ An image observation is scoped to the selected engine, not every possible execut
 
 ## Target Hardware
 
-`nemoclaw_target_hardware` requires `engine` and returns `status` and `observation_json`.
-The passive read reports the daemon identity, architecture, CPU/memory fields, and available engine features such as rootless mode, runtimes, networking, cgroups, and memory-limit support.
+`host_engine`'s `hardware_json` is the passive hardware read.
+It reports the daemon identity, architecture, CPU/memory fields, and available engine features such as rootless mode, runtimes, networking, cgroups, and memory-limit support.
 GPU IDs advertised as engine generic resources are retained without inventing names, VRAM, driver versions, or compute capability.
 No GPU advertisement means unknown inventory, not zero GPUs.
 
@@ -434,7 +442,7 @@ For complete host measurements, the provider library exposes `hardware_observati
 The operation checks the collector's daemon identity before accepting measurements and has a 30-second bound.
 It reports unsupported GPU memory counters separately from unobserved counters.
 Collector failure never falls back to the client's hardware.
-The new `nemoclaw_target_hardware` source uses passive engine information and does not execute a collector or launch a probe container.
+`host_engine` uses passive engine information and does not execute a collector or launch a probe container.
 Existing configured service-capacity checks retain their daemon-bound `HostObserver` collectors; this passive source neither replaces nor disables those checks.
 
 ## Inference Endpoint Metadata
