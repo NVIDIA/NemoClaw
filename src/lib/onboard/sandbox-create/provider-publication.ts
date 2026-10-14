@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import { isNativeHostedProviderName } from "../../inference/native-provider/hosted-attachment";
 import { hostedNativeProviderForAttachment } from "../../inference/native-provider/hosted-attachment";
 import { nativeProviderLifecycle } from "../../inference/native-provider";
@@ -10,20 +12,29 @@ import type {
   OpenShellProviderAdapter,
   OpenShellProviderError,
 } from "../../adapters/openshell/provider-adapter";
-import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
+import {
+  createCliOpenShellProviderAdapter,
+  type CliOpenShellProviderAdapter,
+} from "../../adapters/openshell/provider-adapter-cli";
 import type { OpenShellGatewayEndpointEnvironment } from "../../adapters/openshell/gateway-scope";
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
+import { messagingProviderProfileForType } from "../../messaging/applier/provider-application";
 import {
   ensureNativeNvidiaProviderAttached,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
+  requireNativeNvidiaProviderProfileBoundary,
 } from "../../inference/native-nvidia";
 import {
   messagingCredentialProviderProfilePath,
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
 } from "../../messaging/provider-profile";
+import { listMessagingBridgeProfiles } from "../messaging-bridge-provider";
 import type { SandboxEntry } from "../../state/registry";
-import { matchesGatewayCredentialFamilyProviderBinding } from "../gateway-provider-metadata";
+import {
+  matchesGatewayCredentialFamilyProviderBinding,
+  matchesGatewayCredentialOnlyProviderBinding,
+} from "../gateway-provider-metadata";
 import { resolveRegisteredRuntimeProvider } from "../runtime-provider/selection";
 import type { SandboxCreateIntent } from "../sandbox-create-intent-types";
 
@@ -35,12 +46,19 @@ type ProviderPreparationInput = {
   readonly messagingProviderRequests: SandboxCreateIntent["messagingProviderRequests"];
   readonly extraProviders: readonly string[];
   readonly gatewayName: string;
+  readonly directCreateProviderNames?: readonly string[];
+  readonly hermesToolGateway?: Readonly<{
+    providerName: string;
+    profileType: string;
+    credentialEnv: string;
+  }>;
 };
 
 type ProviderPreparationDeps = Pick<SandboxCreateOrchestrationRuntime, "runOpenshell"> & {
   readonly cleanupCreateSources: () => void;
   readonly environment?: OpenShellGatewayEndpointEnvironment;
-  readonly providerAdapter?: OpenShellProviderAdapter;
+  readonly providerAdapter?: OpenShellProviderAdapter &
+    Partial<Pick<CliOpenShellProviderAdapter, "warnIfVerifiedProfilesChangedAfterSandboxCreate">>;
 };
 
 function expectedMessagingBindings(input: ProviderPreparationInput) {
@@ -58,7 +76,127 @@ function expectedMessagingBindings(input: ProviderPreparationInput) {
   );
 }
 
-function resolveProviderAdapter(deps: ProviderPreparationDeps): OpenShellProviderAdapter {
+/** Recheck only profiles already owned by messaging or web-search setup. */
+export async function validateAttachedOwnedProfilesBeforeSandboxCreation(
+  input: ProviderPreparationInput,
+  deps: ProviderPreparationDeps,
+): Promise<readonly string[]> {
+  const adapter = resolveProviderAdapter(deps);
+  const target = namedOpenShellGateway(input.gatewayName);
+  const expectedMessaging = expectedMessagingBindings(input);
+  const candidates = new Set([...input.messagingProviders, ...input.extraProviders]);
+  if (input.inferenceProvider && expectedMessaging.has(input.inferenceProvider)) {
+    candidates.add(input.inferenceProvider);
+  }
+  const providerNames = (input.directCreateProviderNames ?? [...candidates]).filter((name) =>
+    candidates.has(name),
+  );
+  if (providerNames.length === 0) return [];
+  let bridgeProfiles: Map<string, ReturnType<typeof listMessagingBridgeProfiles>[number]> | null =
+    null;
+  const profileIds = new Set<string>();
+  for (const providerName of new Set(providerNames)) {
+    if (expectedMessaging.has(providerName)) {
+      profileIds.add(MESSAGING_CREDENTIAL_PROVIDER_TYPE);
+      continue;
+    }
+    const observed = await adapter.getProvider({ target, providerName });
+    if (!observed.ok) {
+      throwAfterCleanup(
+        deps,
+        `Could not inspect attached provider '${providerName}' before sandbox creation: ${observed.error.message}`,
+      );
+    }
+    if (observed.value.type === "generic") continue;
+    const directProfile = messagingProviderProfileForType(
+      REPOSITORY_ROOT,
+      observed.value.type,
+      undefined,
+    );
+    if (!directProfile) {
+      bridgeProfiles ??= new Map(
+        listMessagingBridgeProfiles({ root: REPOSITORY_ROOT }).map((entry) => [
+          entry.profileId,
+          entry,
+        ]),
+      );
+    }
+    const profile =
+      directProfile ??
+      messagingProviderProfileForType(
+        REPOSITORY_ROOT,
+        observed.value.type,
+        bridgeProfiles?.get(observed.value.type),
+      );
+    if (!profile) continue;
+    const imported = await adapter.importProviderProfile({
+      target,
+      profilePath: profile.profilePath,
+    });
+    if (!imported.ok) {
+      throwAfterCleanup(
+        deps,
+        `Could not verify provider profile '${profile.profileType}' before sandbox creation.`,
+      );
+    }
+    profileIds.add(profile.profileType);
+  }
+  return [...profileIds];
+}
+
+/** Legacy generic bindings remain eligible only for the broker's exact credential contract. */
+export async function validateAttachedHermesToolGatewayProfileBeforeSandboxCreation(
+  input: ProviderPreparationInput,
+  deps: ProviderPreparationDeps,
+): Promise<string | null> {
+  const expected = input.hermesToolGateway;
+  if (!expected) return null;
+  const adapter = resolveProviderAdapter(deps);
+  const target = namedOpenShellGateway(input.gatewayName);
+  const observed = await adapter.getProvider({ target, providerName: expected.providerName });
+  if (!observed.ok) {
+    throwAfterCleanup(
+      deps,
+      `Could not inspect Hermes tool gateway provider before sandbox creation.`,
+    );
+  }
+  if (
+    ![expected.profileType, "generic"].includes(observed.value.type) ||
+    !matchesGatewayCredentialOnlyProviderBinding(observed.value, {
+      name: expected.providerName,
+      type: observed.value.type,
+      credentialKey: expected.credentialEnv,
+    })
+  ) {
+    throwAfterCleanup(
+      deps,
+      `Hermes tool gateway provider binding changed before sandbox creation.`,
+    );
+  }
+  if (observed.value.type === "generic") return null;
+  const profile = await adapter.importProviderProfile({
+    target,
+    profilePath: path.join(
+      REPOSITORY_ROOT,
+      "agents",
+      "hermes",
+      "host",
+      `${expected.profileType}.yaml`,
+    ),
+  });
+  if (!profile.ok) {
+    throwAfterCleanup(
+      deps,
+      `Could not verify Hermes tool gateway profile before sandbox creation.`,
+    );
+  }
+  return expected.profileType;
+}
+
+export function resolveProviderAdapter(
+  deps: ProviderPreparationDeps,
+): OpenShellProviderAdapter &
+  Partial<Pick<CliOpenShellProviderAdapter, "warnIfVerifiedProfilesChangedAfterSandboxCreate">> {
   return (
     deps.providerAdapter ??
     createCliOpenShellProviderAdapter({
@@ -66,6 +204,28 @@ function resolveProviderAdapter(deps: ProviderPreparationDeps): OpenShellProvide
       run: (args, options) => deps.runOpenshell(args, options),
     })
   );
+}
+
+/** Verify native profiles before direct sandbox create binds their providers. */
+export async function validateAttachedNativeProfileBeforeSandboxCreation(
+  input: ProviderPreparationInput,
+  deps: ProviderPreparationDeps,
+  expectedNativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"],
+  expectedNativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"],
+): Promise<void> {
+  const target = namedOpenShellGateway(input.gatewayName);
+  const adapter = resolveProviderAdapter(deps);
+  if (usesNativeNvidiaProvider(input.inferenceProvider) && expectedNativeNvidiaProviderAttachment) {
+    await requireNativeNvidiaProviderProfileBoundary(adapter, target);
+  }
+  if (usesNativeHostedProvider(input.inferenceProvider) && expectedNativeHostedProviderAttachment) {
+    const definition = hostedNativeProviderForAttachment(expectedNativeHostedProviderAttachment);
+    if (definition?.providerName === input.inferenceProvider) {
+      await nativeProviderLifecycle<string, string>(
+        definition,
+      ).requireNativeProviderProfileBoundary(adapter, target);
+    }
+  }
 }
 
 export function usesNativeNvidiaProvider(inferenceProvider: string | null): boolean {

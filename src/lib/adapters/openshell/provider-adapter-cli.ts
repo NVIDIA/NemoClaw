@@ -85,6 +85,10 @@ export type CliOpenShellProviderAdapter = Omit<OpenShellProviderAdapter, "import
     importProviderProfile(
       request: ImportOpenShellProviderProfileRequest,
     ): CliOpenShellProviderProfileResult;
+    warnIfVerifiedProfilesChangedAfterSandboxCreate(
+      request: OpenShellProviderRequest,
+      profileIds: readonly string[],
+    ): void;
   }>;
 
 export type CliOpenShellProviderProfileOperation = OpenShellProviderProfileOperation;
@@ -544,6 +548,13 @@ export function createCliOpenShellProviderAdapter(
       );
     }
   };
+
+  const warnIfVerifiedProfilesChangedAfterSandboxCreate: CliOpenShellProviderAdapter["warnIfVerifiedProfilesChangedAfterSandboxCreate"] =
+    (request, profileIds) => {
+      for (const profileId of new Set(profileIds)) {
+        warnIfVerifiedProfileChanged(request, profileId);
+      }
+    };
 
   const ensureProviderPolicyComposition: OpenShellProviderAdapter["ensureProviderPolicyComposition"] =
     async (request) => {
@@ -1059,6 +1070,7 @@ export function createCliOpenShellProviderAdapter(
     getProvider,
     updateProvider,
     importProviderProfile,
+    warnIfVerifiedProfilesChangedAfterSandboxCreate,
     inspectProviderProfile,
     deleteProvider,
     detachProvider,

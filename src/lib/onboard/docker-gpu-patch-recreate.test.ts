@@ -162,7 +162,10 @@ describe("Docker GPU recreate orchestration", () => {
           dockerStop: vi.fn(() => ({ status: 0 })),
           dockerRm: vi.fn(() => ({ status: 0 })),
           dockerStart: vi.fn(() => ({ status: 0 })),
-          runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:02  Deleting\n"),
+          runCaptureOpenshell: vi
+            .fn()
+            .mockReturnValueOnce("alpha  2026-08-23 10:00:01  Ready\n")
+            .mockReturnValue("alpha  2026-08-23 10:00:02  Deleting\n"),
           runOpenshell,
           commandExecutor: commandExecutorThrough(runOpenshell),
           sleep: vi.fn(),
