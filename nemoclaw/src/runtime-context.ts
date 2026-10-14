@@ -75,6 +75,8 @@ function buildRuntimeContextText(summary: RuntimeSummary): string {
     "- If a tool reports `CONNECT tunnel failed, response 403`, state that the proxy refused the request.",
     "- OpenShell policy may be the cause. The error alone does not confirm a policy denial.",
     `- Ask the operator to check \`nemoclaw ${displaySandboxName} logs --tail 50\` on the host before suggesting a policy change.`,
+    "- Only suggest a policy change if a logged denial's destination and time match the failed request. The merged logs can contain unrelated denials.",
+    "- If the last 50 log lines have no matching denial, ask the operator to inspect more logs; do not infer that policy allowed or blocked this request.",
     "- Do not call a proxy 403 a generic connectivity failure. Treat proxy 407, DNS, timeout, and TLS failures separately.",
     "- Do not claim unrestricted host or internet access either. When unsure, attempt the action and rely on the real result instead of speculating about the environment.",
     "</nemoclaw-runtime>",

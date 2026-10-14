@@ -143,6 +143,10 @@ describe("registerRuntimeContext", () => {
     expect(result.prependSystemContext).toContain("state that the proxy refused the request");
     expect(result.prependSystemContext).toContain("The error alone does not confirm");
     expect(result.prependSystemContext).toContain("nemoclaw openclaw logs --tail 50");
+    expect(result.prependSystemContext).toContain(
+      "Only suggest a policy change if a logged denial's destination and time match the failed request",
+    );
+    expect(result.prependSystemContext).toContain("ask the operator to inspect more logs");
     expect(result.prependSystemContext).toContain("Treat proxy 407, DNS, timeout, and TLS");
   });
 
