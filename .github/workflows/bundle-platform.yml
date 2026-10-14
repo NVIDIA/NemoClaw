@@ -10,6 +10,14 @@ on:
       platform:
         type: string
         required: true
+      bundle:
+        description: Build the bundle when its inputs or consumers are affected.
+        type: boolean
+        default: true
+      lifecycle:
+        description: Run contract and system tests when their inputs are affected.
+        type: boolean
+        default: true
       lifecycle-shards:
         description: JSON list of lifecycle shard numbers; its length is the partition count.
         type: string
@@ -74,11 +82,14 @@ jobs:
       - name: Check generated configuration schema and reference
         run: cargo ci schema
       - name: Archive lifecycle executables and inputs
+        if: inputs.lifecycle || inputs.live
         run: cargo ci archive
       - name: Identify lifecycle artifact
+        if: inputs.lifecycle || inputs.live
         id: identity
         run: echo "artifact=lifecycle-inputs-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
       - name: Upload lifecycle inputs
+        if: inputs.lifecycle || inputs.live
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.identity.outputs.artifact }}
@@ -92,6 +103,7 @@ jobs:
 
   bundle:
     name: Build bundle
+    if: inputs.bundle || inputs.lifecycle || inputs.live
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     outputs:
@@ -139,6 +151,7 @@ jobs:
 
   lifecycle:
     name: Lifecycle / ${{ matrix.shard }}
+    if: inputs.lifecycle
     needs: [build, bundle]
     strategy:
       fail-fast: false
@@ -229,43 +242,21 @@ jobs:
     timeout-minutes: 60
     outputs:
       artifact: ${{ steps.identity.outputs.artifact }}
-      live: ${{ steps.changes.outputs.live }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # The second commit is a pull request merge commit's base.
-          fetch-depth: 2
       - uses: ./.github/actions/setup-rust
         with:
           platform: ${{ inputs.platform }}
           save-cache: "false"
-      # Deciding here skips the image build, and both live jobs, when a change
-      # cannot affect the live suites.
-      - name: Decide whether this change can affect the live suites
-        id: changes
-        env:
-          EVENT: ${{ github.event_name }}
-        run: |
-          # Pushes and manual runs always run the live suites.
-          if [ "$EVENT" != pull_request ]; then
-            echo live=true >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          base=$(git rev-parse HEAD^1)
-          cargo run --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner -- \
-            changes live --base "$base" >> "$GITHUB_OUTPUT"
-      - if: steps.changes.outputs.live == 'true'
-        uses: ./.github/actions/containerd-store
+      - uses: ./.github/actions/containerd-store
       - name: Build and save the live images
-        if: steps.changes.outputs.live == 'true'
         run: cargo ci live-images
       - name: Identify live images artifact
-        if: steps.changes.outputs.live == 'true'
         id: identity
         run: echo "artifact=live-images-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
       - name: Upload live images
-        if: steps.changes.outputs.live == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.identity.outputs.artifact }}
@@ -282,7 +273,7 @@ jobs:
   live-docker:
     name: Live / Docker
     needs: [build, bundle, live-images]
-    if: inputs.live && needs.live-images.outputs.live == 'true'
+    if: inputs.live
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     steps:
@@ -300,7 +291,7 @@ jobs:
   live-kind:
     name: Live / Kind
     needs: [build, bundle, live-images]
-    if: inputs.live && needs.live-images.outputs.live == 'true'
+    if: inputs.live
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     steps:

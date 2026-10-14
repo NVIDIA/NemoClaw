@@ -12,6 +12,8 @@
 # default and recognizes only a toolchain file named rust-toolchain.
 [[path-rule]]
 globs = [
+    ".config/determinator-*.toml",
+    ".github/workflows/validation-plan.yml",
     "image/**",
     "docker-bake.hcl",
     ".dockerignore",

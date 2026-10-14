@@ -192,7 +192,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
         Arc::new(EnvironmentSecrets),
     )
     .unwrap();
-    let binding = sandbox_binding(&state_path);
+    let binding = fabric_provider::fabric_binding(sandbox_binding(&state_path)).unwrap();
     let runtime = runtime_id(&client, &binding).await;
     let reply = invoke(&client, &binding, &sandbox.agent.name, "dummy-lifecycle").await;
     assert_eq!(reply["status"], "succeeded", "{reply}");
