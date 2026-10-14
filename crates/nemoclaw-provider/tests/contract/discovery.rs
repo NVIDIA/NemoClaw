@@ -47,7 +47,7 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
                 "present":{"engine":fixture.endpoint,"compute_driver":"docker"},
                 "unknown":{"engine":unreachable,"compute_driver":"docker"}
             },
-            "fabric_capabilities":{
+            "fabric_harnesses":{
                 "present":{"engine":fixture.endpoint,"image":"labeled:image"},
                 "absent":{"engine":fixture.endpoint,"image":"absent:image"}
             }
@@ -55,8 +55,8 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
         "output":{
             "engine":{"value":"${data.nemoclaw_engine_capabilities.present.observation_json}"},
             "unknown":{"value":"${data.nemoclaw_engine_capabilities.unknown.observation_json}"},
-            "fabric":{"value":"${data.fabric_capabilities.present.observation_json}"},
-            "absent":{"value":"${data.fabric_capabilities.absent.observation_json}"}
+            "fabric":{"value":"${data.fabric_harnesses.present.observation_json}"},
+            "absent":{"value":"${data.fabric_harnesses.absent.observation_json}"}
         }
     });
     fs::write(root.join("main.tf.json"), config.to_string()).unwrap();
@@ -117,7 +117,7 @@ async fn authored_fabric_requirements_take_the_configuration_and_policy_reads_se
 
 provider "fabric" {{}}
 
-data "fabric_capabilities" "agent" {{
+data "fabric_harnesses" "agent" {{
   engine          = "{engine}"
   image           = "labeled:image"
   config_json     = jsonencode({configuration})
@@ -125,7 +125,7 @@ data "fabric_capabilities" "agent" {{
 }}
 
 output "status" {{
-  value = data.fabric_capabilities.agent.compatibility_status
+  value = data.fabric_harnesses.agent.compatibility_status
 }}
 "#,
                 engine = fixture.endpoint
@@ -241,7 +241,7 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
         "provider":{"nemoclaw":{},"fabric":{}},
         "data":{
             "nemoclaw_engine_capabilities":compiled["data"]["nemoclaw_engine_capabilities"],
-            "fabric_capabilities":compiled["data"]["fabric_capabilities"],
+            "fabric_harnesses":compiled["data"]["fabric_harnesses"],
             "nemoclaw_target_hardware":compiled["data"]["nemoclaw_target_hardware"]
         },
         "output":output

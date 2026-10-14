@@ -306,7 +306,7 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
             engine.get("depends_on").is_none(),
             "read existing capabilities during plan"
         );
-        let image = &graph["data"]["fabric_capabilities"]["sandbox_0"];
+        let image = &graph["data"]["fabric_harnesses"]["sandbox_0"];
         assert_eq!(image["image"], document.spec.sandboxes[0].image.ref_);
         assert!(
             image.get("depends_on").is_none(),
@@ -368,7 +368,7 @@ fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
     // The sandbox launches what Fabric computed; it holds no agent runtime of its own.
     assert_eq!(
         graph["resource"]["openshell_sandbox"]["assistant"]["launch_json"],
-        "${data.fabric_capabilities.sandbox_0.launch_json}"
+        "${data.fabric_harnesses.sandbox_0.launch_json}"
     );
     assert!(
         graph["resource"]["openshell_sandbox"]["assistant"]
@@ -416,7 +416,7 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
             graph["resource"]["openshell_sandbox"][name]["launch_json"]
                 .as_str()
                 .unwrap()
-                .contains("fabric_capabilities")
+                .contains("fabric_harnesses")
         );
     }
     for profile in graph["resource"]["openshell_provider_profile"]
@@ -425,7 +425,7 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
         .values()
     {
         let binaries = profile["binaries"].as_str().unwrap();
-        assert!(binaries.starts_with("${jsondecode(data.fabric_capabilities."));
+        assert!(binaries.starts_with("${jsondecode(data.fabric_harnesses."));
         assert!(binaries.ends_with(".binaries_json)}"));
     }
 }

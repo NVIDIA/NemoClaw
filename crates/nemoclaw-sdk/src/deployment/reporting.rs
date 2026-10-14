@@ -210,7 +210,7 @@ fn observation_name(address: &str) -> Option<String> {
         Some("gateway".into())
     } else {
         [
-            "data.fabric_capabilities.",
+            "data.fabric_harnesses.",
             "data.nemoclaw_runtime_image.",
             "data.nemoclaw_target_hardware.",
             "data.nemoclaw_inference_capabilities.",

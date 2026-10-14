@@ -46,12 +46,12 @@ fn fixture(mut document: Document) -> Option<String> {
         encoded = encoded
             .replace(
                 &format!(
-                    "\"${{jsondecode(data.fabric_capabilities.sandbox_{index}.binaries_json)}}\""
+                    "\"${{jsondecode(data.fabric_harnesses.sandbox_{index}.binaries_json)}}\""
                 ),
                 &serde_json::to_string(&binding.binaries()).unwrap(),
             )
             .replace(
-                &format!("\"${{data.fabric_capabilities.sandbox_{index}.launch_json}}\""),
+                &format!("\"${{data.fabric_harnesses.sandbox_{index}.launch_json}}\""),
                 &launch.replace("${", "$${"),
             );
     }

@@ -107,7 +107,7 @@ Other inputs are typed too:
 - `openshell_provider_profile` takes a `binaries` list.
 - `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables managed endpoint grants allow.
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox; it does not depend on the agent runtime that produced the launch.
-  `fabric_capabilities` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
+  `fabric_harnesses` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
 - `owner` and `generation` are optional; when omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [service storage](#nemoclaw-resources).
 
 ```hcl
@@ -116,7 +116,7 @@ resource "openshell_sandbox" "assistant" {
   workspace    = openshell_workspace.example.ref
   name         = "assistant"
   image        = var.image
-  launch_json  = data.fabric_capabilities.assistant.launch_json
+  launch_json  = data.fabric_harnesses.assistant.launch_json
   providers    = [openshell_provider_registration.local.ref]
   policy {
     explicit {
@@ -142,11 +142,12 @@ resource "openshell_sandbox" "assistant" {
 |---|---|
 | `fabric_agent_configuration` | Fabric runtime configuration in a sandbox |
 | `fabric_sandbox_readiness` data source | [Sandbox completion](#sandbox-completion) |
-| `fabric_capabilities` data source | [Fabric image catalog and compatibility](#engine-and-fabric-discovery) |
+| `fabric_harnesses` data source | [Fabric image catalog and compatibility](#engine-and-fabric-discovery) |
+| `fabric_harness` data source | One harness in an image, selected by `adapter_id`: the `launch_json` that starts it for `agent_name`, and a `ref` naming the harness (`type`, `adapter_id`, `image`); fails when the image installs no runtime for the adapter |
 
 The `fabric` provider also takes only `destroy`; `fabric_agent_configuration` and `fabric_sandbox_readiness` take the same `gateway` ref as the sandbox they configure.
 It also accepts `destroy`, but no Fabric type requires it: removing an agent configuration releases its binding without changing the sandbox.
-It reaches each sandbox's Fabric host by running commands in the sandbox through the gateway; `fabric_capabilities` instead reads the container engine named on it.
+It reaches each sandbox's Fabric host by running commands in the sandbox through the gateway; `fabric_harnesses` instead reads the container engine named on it.
 
 ### NemoClaw Resources
 
@@ -280,7 +281,7 @@ An observation describes the selected target at the time of its read; it is not 
 | Engine prerequisites | `nemoclaw_engine_capabilities`; selected Docker/Podman API | Onboarding target changes and managed deployment planning |
 | Engine features, CPU, memory, and advertised GPU inventory | `nemoclaw_target_hardware`; selected engine API | Onboarding and planning for selected gateway/service engines |
 | GPU memory, driver, compute capability, and disk measurements | Provider `observe_host_hardware` with a selected `HostObserver` | Explicit direct calls or existing configured service-capacity checks; the new passive hardware source does not run collectors |
-| Packaged adapters, APIs, settings, and runtime requirements | `fabric_capabilities`; selected image metadata containing Fabric discovery results | Onboarding image changes and deployment planning |
+| Packaged adapters, APIs, settings, and runtime requirements | `fabric_harnesses`; selected image metadata containing Fabric discovery results | Onboarding image changes and deployment planning |
 | Managed runtime specification, required labels, and platform | `nemoclaw_runtime_image`; selected engine image inspection | Plan for present images; after image acquisition before runtime mutations |
 | Advertised models and catalog authentication | `nemoclaw_inference_capabilities`; HTTP model-list endpoint from the control host | Onboarding endpoint changes and planning for selected inference routes |
 | Credential-reference availability | Direct SDK `observe_credentials`; application's secret resolver | Onboarding, SDK calls, and plan-result discovery; values and local availability do not enter provider state |
@@ -289,7 +290,7 @@ An observation describes the selected target at the time of its read; it is not 
 
 ## Engine and Fabric Discovery
 
-`nemoclaw_engine_capabilities` (NemoClaw provider) and `fabric_capabilities` (Fabric provider) require `engine`, the selected container-engine endpoint, without requiring an OpenShell connection.
+`nemoclaw_engine_capabilities` (NemoClaw provider) and `fabric_harnesses` (Fabric provider) require `engine`, the selected container-engine endpoint, without requiring an OpenShell connection.
 The engine source also requires `compute_driver` (`docker` or `podman`); the Fabric source requires `image`.
 For a cluster image that no local engine can inspect, the Fabric source instead reads the metadata bundle whose path is in the environment variable named by `metadata_env`; `engine` must then be empty.
 Both return `status`, `available`, and structured JSON in `observation_json`.

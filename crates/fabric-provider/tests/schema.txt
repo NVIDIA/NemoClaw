@@ -21,7 +21,19 @@ resource fabric_agent_configuration (version 1)
   sandbox_id: string, required
   workspace: string, required
 
-data fabric_capabilities (version 0)
+data fabric_harness (version 0)
+  adapter_id: string, required
+  agent_name: string, required
+  available: bool, computed
+  engine: string, optional
+  image: string, required
+  launch_json: string, computed
+  metadata_env: string, optional
+  observation_json: string, computed
+  ref: object({ adapter_id = string, image = string, type = string }), computed
+  status: string, computed
+
+data fabric_harnesses (version 0)
   architecture: string, optional
   available: bool, computed
   binaries_json: string, computed
