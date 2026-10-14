@@ -47,6 +47,8 @@ export type DirectRunStubResult = {
 };
 
 export type DirectSetupHarnessOptions = {
+  /** Exercise an existing custom sandbox's shared inference route. */
+  legacyCustomRoute?: boolean;
   runOpenshell?: (
     args: string[],
     options: DirectRunOptions,
@@ -378,6 +380,7 @@ export function createDirectSetupInferenceHarnessFactory(
   createSetupInference: CreateSetupInference,
 ) {
   return function createDirectSetupInferenceHarness(options: DirectSetupHarnessOptions = {}) {
+    let legacySandbox: ReturnType<NonNullable<SetupInferenceDeps["getSandbox"]>> = null;
     const commands: DirectCommandEntry[] = [];
     const errors: string[] = [];
     const logs: string[] = [];
@@ -539,7 +542,7 @@ export function createDirectSetupInferenceHarnessFactory(
       // #9110: neutralize the GPU-release seams so harness consumers backed by
       // the production defaults never read the developer's real registry or
       // curl a live Ollama daemon.
-      getSandbox: () => null,
+      getSandbox: () => legacySandbox,
       listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
       unloadOllamaModels,
       withOllamaModelOwnershipLock: (operation) => operation(),
@@ -555,8 +558,11 @@ export function createDirectSetupInferenceHarnessFactory(
       hermesAuthMethod,
       hermesToolGateways,
       inferenceOptions = {},
-    ) =>
-      setupInferenceWithoutPolicyAuthority(
+    ) => {
+      if (options.legacyCustomRoute && sandboxName) {
+        legacySandbox = { name: sandboxName, provider, model, endpointUrl, credentialEnv };
+      }
+      return setupInferenceWithoutPolicyAuthority(
         sandboxName,
         model,
         provider,
@@ -570,6 +576,7 @@ export function createDirectSetupInferenceHarnessFactory(
             inferenceOptions.revalidateSandboxIdentity ?? revalidateSandboxIdentity,
         },
       );
+    };
     return {
       commands,
       errors,

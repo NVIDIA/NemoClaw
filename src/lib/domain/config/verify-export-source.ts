@@ -7,7 +7,10 @@ import { cloneAndDeepFreeze } from "../../core/immutable";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
-import { hostedNativeProvider } from "../../inference/native-provider/hosted";
+import {
+  hostedNativeProvider,
+  isCustomHostedProvider,
+} from "../../inference/native-provider/hosted";
 import { fixedNativeProviderForAttachment } from "../../inference/native-provider/fixed";
 import { BUILD_ENDPOINT_URL } from "../../inference/provider-models";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../inference/native-nvidia/contract";
@@ -571,7 +574,10 @@ function deepAgentsObservability(
 }
 
 function exportUsesNativeInference(entry: ObservedExportRegistry): boolean {
-  return !hostedNativeProvider(entry.provider) || Boolean(nativeExportReceipt(entry));
+  return (
+    (!hostedNativeProvider(entry.provider) && !isCustomHostedProvider(entry.provider)) ||
+    Boolean(nativeExportReceipt(entry))
+  );
 }
 
 function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedStartupProfile {
@@ -867,6 +873,35 @@ function nativeExportReceipt(entry: QualifiedExportSnapshot["registry"]) {
   }
 }
 
+function expectedManagedEndpointRoute(
+  snapshot: QualifiedExportSnapshot,
+  receipt: NonNullable<ReturnType<typeof nativeExportReceipt>>,
+) {
+  const definition = fixedNativeProviderForAttachment(receipt);
+  const identity = [
+    receipt.profileId,
+    receipt.providerName,
+    receipt.providerId,
+    definition.logicalProvider,
+  ];
+  if (receipt.custom) {
+    return [
+      ...identity,
+      receipt.custom.api,
+      receipt.custom.endpointUrl,
+      receipt.endpointUrl,
+      receipt.custom.credentialEnv,
+    ];
+  }
+  const hosted = hostedNativeProvider(snapshot.registry.provider, receipt.endpointUrl);
+  const endpoint = hosted?.endpoint ?? NVIDIA_HOSTED_NATIVE_ENDPOINT;
+  const api =
+    hosted?.logicalProvider === "openai-api" && snapshot.inference.api === "openai-responses"
+      ? "openai-responses"
+      : (hosted?.api ?? "openai-completions");
+  return [...identity, api, endpoint, endpoint, definition.credentialEnv];
+}
+
 function managedEndpointEvidenceMatchesRoute(
   snapshot: QualifiedExportSnapshot,
   evidence: NonNullable<QualifiedExportSnapshot["inference"]["endpointEvidence"]> & {
@@ -876,13 +911,6 @@ function managedEndpointEvidenceMatchesRoute(
   const { inference } = snapshot;
   const receipt = nativeExportReceipt(snapshot.registry);
   if (!receipt) return false;
-  const definition = fixedNativeProviderForAttachment(receipt);
-  const hosted = hostedNativeProvider(snapshot.registry.provider, receipt.endpointUrl);
-  const endpoint = hosted?.endpoint ?? NVIDIA_HOSTED_NATIVE_ENDPOINT;
-  const api =
-    hosted?.logicalProvider === "openai-api" && inference.api === "openai-responses"
-      ? "openai-responses"
-      : (hosted?.api ?? "openai-completions");
   return isDeepStrictEqual(
     [
       evidence.source.profileId,
@@ -894,16 +922,7 @@ function managedEndpointEvidenceMatchesRoute(
       evidence.endpoint,
       inference.credentialEnv,
     ],
-    [
-      receipt.profileId,
-      receipt.providerName,
-      receipt.providerId,
-      definition.logicalProvider,
-      api,
-      endpoint,
-      endpoint,
-      definition.credentialEnv,
-    ],
+    expectedManagedEndpointRoute(snapshot, receipt),
   );
 }
 

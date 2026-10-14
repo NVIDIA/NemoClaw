@@ -6,6 +6,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import assert from "node:assert/strict";
+import { runInNewContext } from "node:vm";
 import { customNativeProvider } from "../../../src/lib/inference/native-provider/custom.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 
@@ -36,11 +38,15 @@ function completion(content: string, finishReason = "stop"): string {
 }
 
 it.each([
-  ["owned-id", true],
-  ["different-id", false],
+  ["owned-id", "none", true],
+  ["different-id", "none", false],
+  ["owned-id", "endpoint", false],
+  ["owned-id", "api", false],
+  ["owned-id", "credential", false],
+  ["owned-id", "model", false],
 ] as const)(
-  "checks custom native provider identity %s on the recorded gateway",
-  async (observedId, expected) => {
+  "checks custom native provider identity %s and agent drift %s on the recorded gateway",
+  async (observedId, drift, expected) => {
     const definition = customNativeProvider({
       provider: "compatible-endpoint",
       endpointUrl: "https://custom.example/v1",
@@ -62,8 +68,47 @@ it.each([
         ].join("\n"),
       })
       .mockResolvedValueOnce({ exitCode: 0, stdout: definition.providerName });
+    const handle = "openshell:resolve:env:v3_COMPATIBLE_API_KEY";
+    const config = {
+      agents: {
+        defaults: {
+          model: { primary: drift === "model" ? "inference/other" : "inference/selected-model" },
+        },
+      },
+      models: {
+        providers: {
+          inference: {
+            baseUrl: drift === "endpoint" ? "https://wrong.example/v1" : definition.endpoint,
+            api: drift === "api" ? "openai-responses" : definition.api,
+            apiKey: drift === "credential" ? "raw-secret" : handle,
+            models: [{ id: "selected-model" }],
+          },
+        },
+      },
+    };
+    const exec = vi.fn(async (_name, command) => {
+      let stdout = "";
+      try {
+        runInNewContext(command[2], {
+          require: (name: string) =>
+            name === "node:fs" ? { readFileSync: () => JSON.stringify(config) } : assert,
+          process: {
+            argv: ["node", command[3]],
+            env: { COMPATIBLE_API_KEY: handle },
+            stdout: {
+              write: (value: string) => {
+                stdout += value;
+              },
+            },
+          },
+        });
+        return { exitCode: 0, stdout };
+      } catch {
+        return { exitCode: 1, stdout };
+      }
+    });
     const result = await readFullE2eInferenceRoute({
-      sandbox: { openshell } as unknown as SandboxClient,
+      sandbox: { openshell, exec } as unknown as SandboxClient,
       sandboxName: "alpha",
       logicalProvider: definition.logicalProvider,
       model: "selected-model",
@@ -84,6 +129,11 @@ it.each([
       },
     });
     expect(result.ok).toBe(expected);
+    expect(exec).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      expect.any(Array),
+      expect.objectContaining({ artifactName: "phase-3-native-custom-agent-route" }),
+    );
     expect(openshell.mock.calls.map(([args]) => args)).toEqual([
       ["provider", "get", "-g", "recorded-gateway", definition.providerName],
       ["sandbox", "provider", "list", "-g", "recorded-gateway", "alpha"],

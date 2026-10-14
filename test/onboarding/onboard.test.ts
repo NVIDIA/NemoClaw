@@ -845,6 +845,7 @@ const { createSandbox } = require(${onboardPath});
 
     await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
       const harness = createDirectSetupInferenceHarness({
+        legacyCustomRoute: true,
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
             ? {

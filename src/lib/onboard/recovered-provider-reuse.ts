@@ -3,6 +3,7 @@
 
 import { canonicalEndpoint, type EndpointFlavor } from "../core/url-utils";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
+import { usesCustomNativeOnboarding } from "../inference/native-provider/custom-setup";
 import { isSafeModelId } from "../validation";
 import type { GatewayProviderMetadata } from "./gateway-provider-metadata";
 import type { RecordedInferenceRoute } from "./provider-recovery";
@@ -37,6 +38,7 @@ export type RecoveredProviderReuseRejectCondition =
 export type RecoveredProviderReuseDecision =
   | { kind: "validate-host-credential" }
   | { kind: "reuse-gateway-credential"; preferredInferenceApi: string }
+  | { kind: "verify-native-credential"; preferredInferenceApi: string }
   | { kind: "reject"; condition: RecoveredProviderReuseRejectCondition; reason: string };
 
 type EndpointIdentity = {
@@ -67,6 +69,7 @@ type RecoveredProviderSelection = {
 };
 
 type RecoveredProviderSelectionDeps = {
+  getSandbox?: (name: string) => Parameters<typeof usesCustomNativeOnboarding>[3];
   resolveProviderCredential(name: string): string | null;
   readRecordedInferenceRoute(sandboxName: string | null): RecordedInferenceRoute | null;
   readRecordedProviderEndpoints(
@@ -112,6 +115,7 @@ export function assessRecoveredProviderCredentialReuse(options: {
   expectedCredentialEnv: string;
   gatewayProvider: GatewayProviderMetadata | null;
   endpointIdentity?: EndpointIdentity;
+  nativeCustom?: boolean;
 }): RecoveredProviderReuseDecision {
   if (options.hostCredentialAvailable) return { kind: "validate-host-credential" };
   if (!options.recoveredFromSandbox) {
@@ -146,6 +150,26 @@ export function assessRecoveredProviderCredentialReuse(options: {
       kind: "reject",
       condition: "inference-api",
       reason: "the recovered inference API is missing or unsupported",
+    };
+  }
+  if (options.nativeCustom) {
+    const endpoint = options.endpointIdentity;
+    const selected = endpoint && canonicalEndpoint(endpoint.selected, endpoint.flavor);
+    if (
+      !selected ||
+      endpoint?.routeSource !== "registry" ||
+      selected !== canonicalEndpoint(endpoint.recovered, endpoint.flavor)
+    )
+      return {
+        kind: "reject",
+        condition: "endpoint-identity",
+        reason: "the recovered endpoint identity is missing or incompatible",
+      };
+    // Selection can defer host validation, but only provider setup can verify
+    // the endpoint-bound receipt and current OpenShell resource identity.
+    return {
+      kind: "verify-native-credential",
+      preferredInferenceApi: options.recoveredPreferredInferenceApi as string,
     };
   }
   const gatewayProvider = options.gatewayProvider;
@@ -259,6 +283,15 @@ export function resolveRecoveredProviderCredentialReuse(
       : selected.key === "anthropicCompatible"
         ? "anthropic"
         : null;
+  const nativeCustom = Boolean(
+    deps.getSandbox &&
+    usesCustomNativeOnboarding(
+      state.provider,
+      state.endpointUrl,
+      options.sandboxName,
+      options.sandboxName ? deps.getSandbox(options.sandboxName) : null,
+    ),
+  );
   const decision = assessRecoveredProviderCredentialReuse({
     hostCredentialAvailable: false,
     recoveredFromSandbox,
@@ -270,14 +303,17 @@ export function resolveRecoveredProviderCredentialReuse(
     recoveredPreferredInferenceApi: recoveredRoute?.preferredInferenceApi,
     expectedProviderType: remoteConfig.providerType,
     expectedCredentialEnv: selectedCredentialEnv,
-    gatewayProvider: deps.readGatewayProviderMetadata(state.provider),
+    gatewayProvider: nativeCustom ? null : deps.readGatewayProviderMetadata(state.provider),
+    nativeCustom,
     endpointIdentity: customFlavor
       ? {
           flavor: customFlavor,
           routeSource: recoveredRoute?.source ?? null,
           selected: state.endpointUrl,
           recovered: recoveredRoute?.endpointUrl,
-          otherRecorded: deps.readRecordedProviderEndpoints(state.provider, options.sandboxName),
+          otherRecorded: nativeCustom
+            ? []
+            : deps.readRecordedProviderEndpoints(state.provider, options.sandboxName),
         }
       : undefined,
   });
@@ -294,7 +330,9 @@ export function resolveRecoveredProviderCredentialReuse(
   state.reuseGatewayCredentialWithoutLocalKey = true;
   state.preferredInferenceApi = decision.preferredInferenceApi;
   deps.note(
-    `  Reusing existing gateway credential for '${state.provider}'; skipping direct endpoint validation.`,
+    decision.kind === "verify-native-credential"
+      ? "  Checking for a matching endpoint-bound credential during provider setup; a new credential may be required."
+      : `  Reusing existing gateway credential for '${state.provider}'; skipping direct endpoint validation.`,
   );
   return true;
 }

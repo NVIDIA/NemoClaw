@@ -603,6 +603,7 @@ describe("setupInference dependency failures", () => {
     const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
     const upsertProvider = vi.fn(async () => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
+      legacyCustomRoute: true,
       overrides: {
         isNonInteractive: () => true,
         exitProcess,
@@ -640,6 +641,7 @@ describe("setupInference dependency failures", () => {
     });
     const upsertProvider = vi.fn(async () => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
+      legacyCustomRoute: true,
       overrides: {
         exitProcess,
         upsertProvider,
@@ -675,6 +677,7 @@ describe("setupInference dependency failures", () => {
     });
     const upsertProvider = vi.fn(async () => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
+      legacyCustomRoute: true,
       overrides: {
         isNonInteractive: () => true,
         exitProcess,
@@ -714,6 +717,7 @@ describe("setupInference dependency failures", () => {
       message: "Bedrock provider registration failed",
     }));
     const harness = createDirectSetupInferenceHarness({
+      legacyCustomRoute: true,
       overrides: {
         isNonInteractive: () => true,
         exitProcess,
@@ -751,6 +755,7 @@ describe("setupInference dependency failures", () => {
       message: "Bedrock provider registration failed without status",
     }));
     const harness = createDirectSetupInferenceHarness({
+      legacyCustomRoute: true,
       overrides: {
         isNonInteractive: () => true,
         exitProcess,
@@ -784,6 +789,7 @@ describe("setupInference dependency failures", () => {
     const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
     const upsertProvider = vi.fn(async () => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
+      legacyCustomRoute: true,
       runOpenshell: (args) =>
         args.slice(0, 2).join(" ") === "inference set"
           ? { status: 37, stdout: "", stderr: "route denied" }
@@ -825,6 +831,7 @@ describe("setupInference dependency failures", () => {
     const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
     const upsertProvider = vi.fn(async () => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
+      legacyCustomRoute: true,
       runOpenshell: (args) =>
         args.slice(0, 2).join(" ") === "inference set"
           ? { status: null, stdout: "", stderr: "" }

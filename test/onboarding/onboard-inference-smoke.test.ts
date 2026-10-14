@@ -121,6 +121,7 @@ process.env.BROKEN_API_KEY = "test-key";
 
 const { createSetupInference } = require(${onboardPath});
 const setupInference = createSetupInference({
+  getSandbox: () => ({ name: "test-sandbox", provider: "compatible-endpoint" }),
   resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
 });
 

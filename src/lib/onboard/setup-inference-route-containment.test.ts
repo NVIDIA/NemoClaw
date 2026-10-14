@@ -81,6 +81,9 @@ describe("onboard shared gateway route containment", () => {
     });
     const verifyOnboardInferenceSmoke = vi.fn();
     const setupInference = createSetupInference({
+      getSandbox: () => ({ name: "sandbox-a", provider: "compatible-endpoint" }),
+      localInference: { loadPendingOllamaModelCleanup: () => [] },
+      withOllamaModelOwnershipLock: (operation: () => unknown) => operation(),
       checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
       withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
         await operation(),
@@ -309,6 +312,7 @@ describe("onboard shared gateway route containment", () => {
       checkGatewayRouteCompatibility: (
         request: Parameters<SetupInferenceDeps["checkGatewayRouteCompatibility"]>[0],
       ) => checkGatewayRouteCompatibility({ ...request, sandboxes: [peer] }),
+      getSandbox: () => ({ name: "new-custom", provider: "compatible-endpoint" }),
       withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
         await operation(),
       withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>

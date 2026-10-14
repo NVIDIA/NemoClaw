@@ -47,6 +47,7 @@ const managedProfileSchemas = {
 };
 type ManagedProfileContract = keyof typeof managedProfileSchemas;
 type ProfileContract = ManagedProfileContract | "native-nvidia" | "native-hosted";
+type CustomNativeBinding = import("../../inference/native-provider/custom").CustomNativeBinding;
 
 export type Provider = Readonly<
   Pick<OpenShellProviderMetadata, "name" | "type" | "credentialKeys" | "configKeys"> & {
@@ -75,6 +76,7 @@ export interface Providers {
         profileContract?: ProfileContract;
         nativeHostedEndpoint?: string;
         nativeHostedAllowedIps?: readonly string[];
+        nativeHostedCustom?: CustomNativeBinding;
       }>,
   ): Promise<Provider | null>;
 }
@@ -105,7 +107,11 @@ async function readManagedProfile(
   let profileId: string | undefined = profileContract;
   if (profileContract === "native-nvidia") profileId = NVIDIA_HOSTED_NATIVE_PROFILE_ID;
   else if (profileContract === "native-hosted")
-    profileId = hostedNativeProfile(providerType, request.nativeHostedEndpoint)?.profileId;
+    profileId = hostedNativeProfile(
+      providerType,
+      request.nativeHostedEndpoint,
+      request.nativeHostedCustom,
+    )?.profileId;
   if (
     providerType !== profileId ||
     (profileWorkspace !== "" && profileWorkspace !== request.workspace)
@@ -131,6 +137,7 @@ async function readManagedProfile(
     providerType,
     request.nativeHostedEndpoint,
     request.nativeHostedAllowedIps,
+    request.nativeHostedCustom,
   );
 }
 
@@ -159,6 +166,7 @@ function validateManagedProfileResponse(
   providerType: string,
   nativeHostedEndpoint?: string,
   nativeHostedAllowedIps?: readonly string[],
+  nativeHostedCustom?: CustomNativeBinding,
 ): NonNullable<Provider["managedProfile"]> {
   if (profileContract === "native-nvidia") {
     return validateNativeManagedProfileResponse(response, profileWorkspace);
@@ -169,6 +177,7 @@ function validateManagedProfileResponse(
       providerType,
       nativeHostedEndpoint,
       nativeHostedAllowedIps,
+      nativeHostedCustom,
     );
     if (
       !validated ||
@@ -205,10 +214,12 @@ function validateManagedProfileResponse(
 function managedInferenceEndpointFor(
   managedProfile: Provider["managedProfile"],
   nativeHostedEndpoint?: string,
+  nativeHostedCustom?: CustomNativeBinding,
 ): string | undefined {
   return managedProfile?.id === NVIDIA_HOSTED_NATIVE_PROFILE_ID
     ? NVIDIA_HOSTED_NATIVE_ENDPOINT
-    : hostedNativeProfile(managedProfile?.id ?? "", nativeHostedEndpoint)?.endpoint;
+    : hostedNativeProfile(managedProfile?.id ?? "", nativeHostedEndpoint, nativeHostedCustom)
+        ?.endpoint;
 }
 
 async function readProfileEvidence(
@@ -246,6 +257,7 @@ async function readProfileEvidence(
   const managedInferenceEndpoint = managedInferenceEndpointFor(
     managedProfile,
     request.nativeHostedEndpoint,
+    request.nativeHostedCustom,
   );
   return {
     ...(builtinInferenceEndpoint === undefined ? {} : { builtinInferenceEndpoint }),

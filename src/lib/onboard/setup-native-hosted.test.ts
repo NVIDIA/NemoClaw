@@ -34,7 +34,9 @@ const providers: HostedProviderDefinition[] = [
 ];
 
 describe.each(providers)("native $label onboarding", (provider) => {
-  const endpointModes = provider.custom ? ["explicit"] : ["explicit", "omitted"];
+  const endpointModes = provider.custom
+    ? ["explicit", "previous-provider"]
+    : ["explicit", "omitted"];
   it.each(endpointModes)("uses %s native endpoint (#12589)", async (endpointMode) => {
     const receipt = {
       schemaVersion: 1,
@@ -84,9 +86,24 @@ describe.each(providers)("native $label onboarding", (provider) => {
       getGatewayName: () => "gateway",
       runOpenshell,
       updateSandbox,
+      localInference: { loadPendingOllamaModelCleanup: () => [] },
+      withOllamaModelOwnershipLock: (operation: () => unknown) => operation(),
       getNativeHostedProviderAuthority: () => undefined,
       setNativeHostedProviderAuthority: writeAuthority,
-      getSandbox: () => null,
+      getSandbox: () =>
+        endpointMode === "previous-provider"
+          ? {
+              name: "alpha",
+              provider: "openai-api",
+              pendingRouteReservation: true,
+              nativeHostedProviderAttachment: {
+                schemaVersion: 1,
+                profileId: HOSTED_NATIVE_PROVIDERS[0].profileId,
+                providerName: HOSTED_NATIVE_PROVIDERS[0].providerName,
+                providerId: "previous-provider-id",
+              },
+            }
+          : null,
       resolveEndpointHost: async () => [{ address: "8.8.8.8", family: 4 }],
       upsertProvider: vi.fn(),
       verifyInferenceRoute,
@@ -142,7 +159,7 @@ describe.each(providers)("native $label onboarding", (provider) => {
         "alpha",
         "supported-model",
         provider.logicalProvider,
-        endpointMode === "explicit" ? (provider.custom?.endpointUrl ?? provider.endpoint) : null,
+        endpointMode !== "omitted" ? (provider.custom?.endpointUrl ?? provider.endpoint) : null,
         provider.custom?.credentialEnv ?? provider.credentialEnv,
         null,
         [],

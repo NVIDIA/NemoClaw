@@ -2029,8 +2029,7 @@ async function handleRemoteProviderSelection(
       log: (message) => console.log(message),
     });
     if (bedrockSelection.action === "retry-selection") {
-      console.log("  Returning to provider selection.");
-      console.log("");
+      console.log("  Returning to provider selection.\n");
       return "retry-selection";
     }
     if (bedrockSelection.action === "selected") {
@@ -2058,6 +2057,7 @@ async function handleRemoteProviderSelection(
           },
           {
             resolveProviderCredential,
+            getSandbox: registry.getSandbox,
             readRecordedInferenceRoute: (name) =>
               readRecordedInferenceRoute(name, args.recoverySessionId),
             readRecordedProviderEndpoints,

@@ -54,6 +54,30 @@ describe("assessRecoveredProviderCredentialReuse", () => {
     });
   });
 
+  it("defers native credential verification without trusting legacy provider metadata", () => {
+    expect(
+      assessRecoveredProviderCredentialReuse({
+        ...completeRecovery,
+        nativeCustom: true,
+        gatewayProvider: null,
+        endpointIdentity: {
+          ...completeRecovery.endpointIdentity,
+          otherRecorded: ["https://other.example/v1"],
+        },
+      }),
+    ).toEqual({ kind: "verify-native-credential", preferredInferenceApi: "openai-completions" });
+    expect(
+      assessRecoveredProviderCredentialReuse({
+        ...completeRecovery,
+        nativeCustom: true,
+        endpointIdentity: {
+          ...completeRecovery.endpointIdentity,
+          recovered: "https://other.example/v1",
+        },
+      }),
+    ).toMatchObject({ kind: "reject", condition: "endpoint-identity" });
+  });
+
   it.each(
     Array.from([[], ["WRONG_BASE_URL"], ["OPENAI_BASE_URL", "EXTRA_FLAG"]], (value) => [value]),
   )(

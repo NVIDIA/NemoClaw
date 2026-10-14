@@ -415,6 +415,7 @@ describe("restored native OpenClaw inference fields", () => {
     const writeValues = vi.fn();
     const identity = vi.fn();
     const write = createOpenclawInferenceRouteWriter({
+      readInferenceSelection: () => ({ nativeProvider: false }),
       readOpenclawConfig: () => config,
       patchOpenclawInferenceConfig: patchOpenClawInferenceConfig,
       writeOpenclawInferenceConfigNatively: (name, patched, route, gateway) =>

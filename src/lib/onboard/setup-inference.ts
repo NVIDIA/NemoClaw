@@ -999,7 +999,10 @@ export function createSetupInference(
               credentialEnv: selectedCredentialEnv,
               credentialValue,
               adapter: deps.providerAdapter,
-              recordedAttachment: recordedSandbox?.nativeHostedProviderAttachment,
+              recordedAttachment:
+                recordedSandbox?.provider === provider
+                  ? recordedSandbox.nativeHostedProviderAttachment
+                  : undefined,
               lookup: endpointPinnedAddresses
                 ? async () => endpointPinnedAddresses!.map((address) => ({ address }))
                 : deps.resolveEndpointHost,

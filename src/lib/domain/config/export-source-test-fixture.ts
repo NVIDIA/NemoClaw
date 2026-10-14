@@ -518,6 +518,7 @@ export function compatibleSnapshot(
     "compatible-endpoint",
     "gpt-5",
     "openai-completions",
+    false,
   );
   const input = {
     ...base,

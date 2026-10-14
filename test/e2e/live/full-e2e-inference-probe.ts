@@ -3,6 +3,7 @@
 
 import { parseCliOpenShellProviderMetadata } from "../../../src/lib/adapters/openshell/provider-metadata-cli.ts";
 import { hostedNativeProviderForAttachment } from "../../../src/lib/inference/native-provider/hosted-attachment.ts";
+import { getSandboxInferenceConfig } from "../../../src/lib/inference/config.ts";
 import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
@@ -391,6 +392,44 @@ export async function readFullE2eInferenceRoute(input: {
     );
     const metadata =
       provider.exitCode === 0 ? parseCliOpenShellProviderMetadata(provider.stdout) : null;
+    const route = getSandboxInferenceConfig(
+      input.model,
+      input.logicalProvider,
+      receipt.custom.api,
+      true,
+      receipt.endpointUrl,
+    );
+    // Inspect the selected agent's real configuration inside the sandbox.
+    // Keep credential references out of retained command output.
+    const agent = await input.sandbox.exec(
+      input.sandboxName,
+      [
+        "node",
+        "-e",
+        [
+          'const config = JSON.parse(require("node:fs").readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));',
+          'const assert = require("node:assert/strict");',
+          "const expected = JSON.parse(process.argv[1]);",
+          "const provider = config.models?.providers?.[expected.providerKey];",
+          'assert.equal(config.agents?.defaults?.model?.primary, expected.primaryModelRef, "selected model mismatch");',
+          'assert.equal(provider?.baseUrl, expected.endpoint, "selected endpoint mismatch");',
+          'assert.equal(provider?.api, expected.api, "selected API mismatch");',
+          'assert.ok(provider?.models?.some(model => model.id === expected.model), "selected model is absent");',
+          "const handle = process.env[expected.credentialEnv];",
+          'assert.ok(new RegExp("^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + expected.credentialEnv + "$").test(handle ?? "") && provider?.apiKey === handle, "selected credential reference mismatch");',
+          'process.stdout.write("selected agent route verified");',
+        ].join(" "),
+        JSON.stringify({
+          providerKey: route.providerKey,
+          primaryModelRef: route.primaryModelRef,
+          endpoint: route.inferenceBaseUrl,
+          api: route.inferenceApi,
+          model: input.model,
+          credentialEnv: definition.credentialEnv,
+        }),
+      ],
+      { ...options, artifactName: "phase-3-native-custom-agent-route" },
+    );
     const ok =
       metadata?.name === receipt.providerName &&
       metadata.type === receipt.profileId &&
@@ -399,10 +438,12 @@ export async function readFullE2eInferenceRoute(input: {
       metadata.credentialKeys.length === 1 &&
       metadata.credentialKeys[0] === definition.credentialEnv &&
       attachments.exitCode === 0 &&
-      attachments.stdout.split(/\s+/u).includes(receipt.providerName);
+      attachments.stdout.split(/\s+/u).includes(receipt.providerName) &&
+      agent.exitCode === 0 &&
+      agent.stdout === "selected agent route verified";
     return {
       ok,
-      detail: `Custom native provider ownership and attachment: ${ok ? "verified" : "mismatch"}`,
+      detail: `Custom native provider ownership, attachment and selected agent route: ${ok ? "verified" : "mismatch"}`,
     };
   }
   const native = await readPublicNvidiaSwitchAttachmentEvidence({

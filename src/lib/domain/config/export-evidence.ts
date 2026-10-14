@@ -146,6 +146,7 @@ export interface ObservedExportEndpointEvidence {
         | "nemoclaw-gemini-inference-v1"
         | "nemoclaw-openrouter-inference-v1"
         | "nemoclaw-hermes-inference-v1"
+        | `nemoclaw-custom-${string}-v1`
         | `nemoclaw-hermes-inference-${string}-v1`;
       readonly source: "builtin" | "user";
       readonly scope: "" | "platform" | "workspace";

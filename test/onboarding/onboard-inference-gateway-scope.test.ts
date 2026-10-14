@@ -197,6 +197,7 @@ describe("onboarding inference gateway scope", () => {
           },
         ]);
         const harness = createHarness({
+          legacyCustomRoute: true,
           runOpenshell: commandRouter.runOpenshell,
           overrides: {
             probeOpenAiLikeEndpoint: vi.fn(() => ({ ok: true })),
