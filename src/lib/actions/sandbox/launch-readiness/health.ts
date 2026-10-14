@@ -438,6 +438,10 @@ export async function requireLaunchSemanticHealth(
     }
     if (inference.broken || (inference.httpStatus >= 100 && inference.httpStatus < 600)) {
       recordLaunchReadinessObservationFailure(deps, "inference-route");
+      const curlExit = /^BROKEN 000 curl_exit=([0-9]{1,3})$/.exec(inference.detail)?.[1];
+      console.error(
+        `  Inference route readiness failed: HTTP ${String(inference.httpStatus)}; probe_broken=${String(inference.broken)}${curlExit ? `; curl_exit=${curlExit}` : ""}.`,
+      );
       throw new LaunchReadinessObservationError("health");
     }
     recordLaunchReadinessObservationFailure(deps, "inference-route");

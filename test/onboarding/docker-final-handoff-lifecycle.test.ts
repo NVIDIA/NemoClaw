@@ -107,6 +107,7 @@ describe("Docker final handoff lifecycle integration", () => {
     expect(events).toEqual([
       "stop original for recreate",
       "exec supervisor ready",
+      "observe replacement ready",
       "stop through OpenShell",
       "stop exact replacement",
       "remove exact backup",
@@ -167,7 +168,7 @@ describe("Docker final handoff lifecycle integration", () => {
       oldContainerId: OLD_CONTAINER_ID,
       rolledBack: false,
     });
-    expect(runCaptureOpenshell).not.toHaveBeenCalled();
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
     expect(dockerStop).toHaveBeenCalledTimes(1);
     expect(dockerStop).toHaveBeenCalledWith(OLD_CONTAINER_ID, expect.any(Object));
     expect(dockerRm).not.toHaveBeenCalled();

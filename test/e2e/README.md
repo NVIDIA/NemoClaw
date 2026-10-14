@@ -17,6 +17,14 @@ Fixes and regression coverage for those behaviors belong upstream.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
+On disposable GitHub runners, the `full-e2e` OpenClaw launch segment uses the
+final host user's home at mode `0775` with `umask 0002`. It removes only that
+test sandbox's persistent readiness receipt before the existing probe and two
+PTY launch sessions, then requires a valid lease and records its status. The fixture
+restores the original home mode and umask in cleanup. Local runs and preinstalled
+Launchable validation retain their original home permissions. Deterministic
+permission denials remain owned by `src/lib/state/launch-readiness-lease.test.ts`.
+
 The native Podman row of Hermes GPU startup installs its reviewed host prerequisites before candidate checkout.
 It uses the pinned host-dependency action for `conmon`, `fuse-overlayfs`, `golang-github-containers-common`, `iptables`, `nftables`, `slirp4netns`, and `uidmap`.
 The container configuration package supplies Podman's standard image policy and seccomp files.
