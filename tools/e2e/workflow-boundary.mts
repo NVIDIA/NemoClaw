@@ -72,6 +72,7 @@ import { validateE2eWorkspaceBootstrapBoundary } from "./workspace-bootstrap-wor
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
+const CLI_ARTIFACT_RESTORE_STEP = "Restore exact-commit CLI artifact";
 const DEFAULT_LIVE_VITEST_INVOCATION_PATH = join(
   REPO_ROOT,
   "tools",
@@ -2926,6 +2927,26 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
   return errors;
 }
 
+function validateCliArtifactRestoreActions(workflow: WorkflowRecord): string[] {
+  const errors: string[] = [];
+  const restoreActionPath = E2E_ACTION_PROVENANCE.restoreCliArtifact.reference.split("@")[0];
+  for (const [jobName, jobValue] of Object.entries(asRecord(workflow.jobs))) {
+    for (const step of asSteps(asRecord(jobValue).steps)) {
+      const usesRestoreAction = stringValue(step.uses).split("@")[0] === restoreActionPath;
+      if (step.name !== CLI_ARTIFACT_RESTORE_STEP && !usesRestoreAction) continue;
+      if (
+        step.name !== CLI_ARTIFACT_RESTORE_STEP ||
+        step.uses !== E2E_ACTION_PROVENANCE.restoreCliArtifact.reference
+      ) {
+        errors.push(
+          `${jobName} must restore the exact-commit CLI artifact with the reviewed action reference`,
+        );
+      }
+    }
+  }
+  return errors;
+}
+
 /** Returns workflow contract violations before a caller dispatches E2E jobs with credentials or external resources. */
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
@@ -2946,6 +2967,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(...validateTrustedHermesSwapWorkflow(workflow));
   errors.push(...validateRunnerComparisonWorkflowBoundary(workflow));
   errors.push(...validateNativePodmanDockerIsolationWorkflow(workflow));
+  errors.push(...validateCliArtifactRestoreActions(workflow));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
   const workflowDispatch = requireWorkflowDispatch(errors, triggers);

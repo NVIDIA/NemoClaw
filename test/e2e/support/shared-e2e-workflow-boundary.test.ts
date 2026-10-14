@@ -347,6 +347,22 @@ describe("shared E2E workflow boundary", () => {
     );
   });
 
+  it(
+    "rejects a stale Portable Hermes CLI artifact restore action",
+    testTimeoutOptions(15_000),
+    () => {
+      const errors = validateMutatedWorkflow((workflow) => {
+        const restore = workflow.jobs["portable-hermes-finalization"].steps!.find(
+          (step) => step.name === "Restore exact-commit CLI artifact",
+        )!;
+        restore.uses = "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@" + "0".repeat(40);
+      });
+      expect(errors).toContain(
+        "portable-hermes-finalization must restore the exact-commit CLI artifact with the reviewed action reference",
+      );
+    },
+  );
+
   it("keeps action paths case-sensitive when classifying staging references", () => {
     const errors = validateMutatedWorkflow((workflow) => {
       workflow.jobs["generate-matrix"].steps!.push({
