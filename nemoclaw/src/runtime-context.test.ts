@@ -140,8 +140,9 @@ describe("registerRuntimeContext", () => {
     );
     expect(result.prependSystemContext).toContain("can raise operator approval requests");
     expect(result.prependSystemContext).toContain("CONNECT tunnel failed, response 403");
+    expect(result.prependSystemContext).toContain("state that the proxy refused the request");
     expect(result.prependSystemContext).toContain("The error alone does not confirm");
-    expect(result.prependSystemContext).toContain("nemoclaw <sandbox> logs --tail 50");
+    expect(result.prependSystemContext).toContain("nemoclaw openclaw logs --tail 50");
     expect(result.prependSystemContext).toContain("Treat proxy 407, DNS, timeout, and TLS");
   });
 
@@ -155,5 +156,19 @@ describe("registerRuntimeContext", () => {
     };
 
     expect(result.prependSystemContext).toContain('OpenShell sandbox "my-assistant"');
+    expect(result.prependSystemContext).toContain("nemoclaw my-assistant logs --tail 50");
+  });
+
+  it("does not place an invalid persisted sandbox name in the logs command", async () => {
+    mockedLoadState.mockReturnValue(blankState({ sandboxName: "invalid; echo injected" }));
+    const api = createMockApi();
+    registerRuntimeContext(api, defaultConfig);
+
+    const result = (await api._trigger("before_prompt_build", {}, {})) as {
+      prependSystemContext: string;
+    };
+
+    expect(result.prependSystemContext).toContain("nemoclaw <name> logs --tail 50");
+    expect(result.prependSystemContext).not.toContain("nemoclaw invalid;");
   });
 });
