@@ -2942,6 +2942,15 @@ function validatePortableHermesCliArtifactRestoreAction(workflow: WorkflowRecord
       "portable-hermes-finalization must restore the exact-commit CLI artifact with the reviewed action reference",
     ];
   }
+  if (
+    !isDeepStrictEqual(asRecord(portableHermesRestores[0].with), {
+      "provenance-json": "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
+    })
+  ) {
+    return [
+      "portable-hermes-finalization must bind the exact-commit CLI artifact restore to the planned provenance output",
+    ];
+  }
   return [];
 }
 

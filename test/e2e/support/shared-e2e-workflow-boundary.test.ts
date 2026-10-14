@@ -373,6 +373,18 @@ describe("shared E2E workflow boundary", () => {
     );
   });
 
+  it("binds the Portable Hermes CLI artifact restore to planned provenance", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const restore = workflow.jobs["portable-hermes-finalization"].steps!.find(
+        (step) => step.name === "Restore exact-commit CLI artifact",
+      )!;
+      restore.with!["provenance-json"] = "${{ inputs.checkout_sha }}";
+    });
+    expect(errors).toContain(
+      "portable-hermes-finalization must bind the exact-commit CLI artifact restore to the planned provenance output",
+    );
+  });
+
   it("keeps action paths case-sensitive when classifying staging references", () => {
     const errors = validateMutatedWorkflow((workflow) => {
       workflow.jobs["generate-matrix"].steps!.push({
