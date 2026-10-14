@@ -164,7 +164,7 @@ describe("sandbox stuck in non-Ready phase (#2016)", () => {
 
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain(`Waiting for sandbox '${sandboxName}' to be ready`);
-      expect(combined).toContain("Timed out");
+      expect(combined).toMatch(/timed out/iu);
       expect(combined).toContain("NEMOCLAW_CONNECT_TIMEOUT");
     },
   );

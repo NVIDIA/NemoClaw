@@ -1355,6 +1355,17 @@ describe("destroySandbox flow", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it("preserves host resources when --force cannot confirm sandbox deletion", async () => {
+    const harness = createDestroyHarness({ deleteStatus: 1, deleteOutput: "connection refused" });
+    await expect(harness.destroySandbox("alpha", { force: true })).resolves.toBeUndefined();
+    expect(harness.unloadOllamaModelsSpy).not.toHaveBeenCalled();
+    expect(harness.stopAllSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["provider", "delete"]),
+      expect.anything(),
+    );
+  });
+
   it("fails closed and restores MCP state when --force cannot confirm sandbox deletion", async () => {
     const harness = createDestroyHarness({
       deleteStatus: 1,

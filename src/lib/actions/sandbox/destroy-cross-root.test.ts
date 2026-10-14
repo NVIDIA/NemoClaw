@@ -100,7 +100,13 @@ describe("destroySandbox cross-root registry authority", () => {
         },
       }),
     );
-    const harness = createDestroyHarness();
+    const harness = createDestroyHarness({
+      sandboxListResult: {
+        status: 0,
+        stdout: "NAME PHASE\nalpha Ready\nbeta Ready",
+        stderr: "",
+      },
+    });
 
     await expect(
       harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
@@ -111,6 +117,7 @@ describe("destroySandbox cross-root registry authority", () => {
       sandboxes: { beta: { name: "beta" } },
     });
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(harness.unloadOllamaModelsSpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
   });
 });

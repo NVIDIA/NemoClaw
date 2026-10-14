@@ -400,14 +400,41 @@ Windows-host Ollama does not receive this Linux recovery guidance.
 
 ## Release GPU Memory
 
-When you destroy an Ollama-backed sandbox or stop host services, NemoClaw asks Ollama to unload each currently loaded model by sending `keep_alive: 0`.
+When you destroy a sandbox or stop host services, NemoClaw asks Ollama to unload only that sandbox's current model and any models recorded for cleanup retry. Other models resident on the shared host daemon are left alone.
 When you stop a single Ollama-backed sandbox, NemoClaw unloads only that sandbox's own model.
 It leaves the model loaded only when OpenShell reports that another matching Ollama-backed sandbox is active.
 Stopped or incomplete sibling registry rows do not retain the model.
 If NemoClaw cannot verify sibling state, it does not unload the model and `stop` exits nonzero.
-When you re-onboard an existing Ollama-backed sandbox onto a different model, NemoClaw unloads the model it replaced, with the same sibling protection.
-A re-onboard that keeps the same model leaves it loaded, because the new route can still be served by the same Ollama daemon.
-This cleanup runs on a best-effort basis and does not delete downloaded model files.
+When you re-onboard an Ollama-backed sandbox from the host Ollama route to a different model or provider, NemoClaw checks live ownership before releasing its previous model.
+If another active sandbox uses the same local Ollama model, NemoClaw keeps it loaded.
+If NemoClaw cannot verify whether another sandbox uses the model, it keeps the model loaded and attempts to record cleanup for retry while leaving the new route active. If it reports that retry state could not be recorded, keep the model loaded and restore gateway access before retrying; do not unload it while ownership remains unverified.
+If the new route uses the same model through the same local daemon, NemoClaw keeps the model loaded.
+If the unload cleanup fails, the new route remains active and NemoClaw attempts to record the model for cleanup retry. Rerun onboarding or run `$$nemoclaw <name> destroy` to retry it; if the warning says the retry state could not be recorded, use its reported manual-release guidance instead.
+This cleanup is best-effort and does not delete downloaded model files.
+
+### Recover a legacy pending Ollama cleanup
+
+A legacy cleanup receipt may list model names without recording the gateway and sandbox lifecycle that owned them. NemoClaw does not replay or clear those receipts because a reused sandbox name cannot establish ownership. The warning names the receipt's sandbox and each listed model; no model is unloaded automatically.
+
+Before manually releasing a listed model, verify that no active sandbox on this host still uses it:
+
+1. Run `openshell gateway list` and identify every NemoClaw gateway on the host. Do not assume the selected gateway is the only one.
+2. For each gateway port, run `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw list --json`. This lists that port's registered sandboxes and any entries recovered from its live gateway; it does not scan other gateway ports.
+3. For every sandbox in each inventory, run `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw <name> status --json` and `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw <name> inference get --json`. Check the live phase and effective provider/model route. A sandbox that is active and uses the same local Ollama daemon and model owns it; do not stop that model. If any gateway, sandbox phase, or route cannot be inspected or is ambiguous, leave the model loaded and restore access or obtain recovery support before retrying.
+4. Only after every gateway and sandbox was checked successfully and no active sandbox uses the listed model, confirm the model appears in `ollama ps`. Run these commands against the same host Ollama daemon NemoClaw uses. Stop only the exact listed model, then verify that it is absent:
+
+   ```bash
+   ollama stop '<model-from-warning>'
+   ollama ps
+   ```
+
+5. After the ownership checks succeed and every listed model is confirmed absent from `ollama ps`, acknowledge the completed manual recovery by removing only that sandbox's legacy receipt:
+
+   ```bash
+   rm -- "$HOME/.nemoclaw/ollama-pending-model-cleanup/<sandbox-name>.json"
+   ```
+
+   Replace `<sandbox-name>` with the exact sandbox name printed in the warning. This only retires the obsolete warning receipt; it does not trigger cleanup. If any ownership check is incomplete or a listed model remains active, keep the receipt and do not stop a model owned by an active sandbox. Do not delete or edit the receipt to force an automatic retry.
 
 ## Related Topics
 

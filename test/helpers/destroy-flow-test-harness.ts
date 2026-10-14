@@ -548,6 +548,17 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         return { status: 0, stdout: "", stderr: "" };
     }
   });
+  vi.spyOn(runtime, "captureSandboxPhasesForGateway").mockImplementation(() => {
+    const result = options.sandboxListResult ?? {
+      status: 0,
+      stdout: sandboxListJson(sandboxPresent ? ["alpha"] : []),
+      stderr: "",
+    };
+    return {
+      status: result.status,
+      output: `${result.stdout ?? ""}${result.stderr ?? ""}`.trim(),
+    };
+  });
   const captureOpenshellSpy = vi.spyOn(runtime, "captureOpenshell").mockReturnValue({
     status: 0,
     output: options.liveListOutput ?? "",

@@ -32,6 +32,11 @@ export {
 
 export { buildOpenShellSubprocessEnv, OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS };
 export { classifyManagedGatewayEndpointBinding } from "./command-execution";
+export {
+  assertNoOpenShellGatewayEndpointOverride,
+  scopeGatewayOpenshellArgs,
+  type OpenShellGatewayEndpointEnvironment,
+} from "./gateway-scope";
 export { runCaptureEx } from "../../runner";
 
 type RunnerOptions = {
@@ -107,6 +112,21 @@ export function captureOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
     errorLine: console.error,
     exit: (code: number) => process.exit(code),
   });
+}
+
+/** Capture one gateway's live sandbox phases. */
+export function captureSandboxPhasesForGateway(
+  gatewayName: string,
+  environment: NodeJS.ProcessEnv,
+): { readonly output: string; readonly status: number | null } {
+  const result = captureOpenshell(["sandbox", "list", "-g", gatewayName], {
+    env: environment,
+    ignoreError: true,
+    includeStderr: true,
+    maxBuffer: 1024 * 1024,
+    timeout: 10_000,
+  });
+  return { output: result.output, status: result.status };
 }
 
 /** Capture an OpenShell command while treating an unavailable binary as a recoverable error. */

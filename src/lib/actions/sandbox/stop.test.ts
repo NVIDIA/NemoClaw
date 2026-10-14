@@ -235,7 +235,7 @@ describe("discoverActiveOllamaSandboxNames", () => {
   const activePeer = sandbox({ name: "active-peer" });
   const stoppedPeer = sandbox({ name: "stopped-peer" });
 
-  it("groups peers by gateway and distinguishes active phases from stopped or absent rows (#10074)", async () => {
+  it("groups peers by gateway and distinguishes active, transient, and terminal phases (#10074)", async () => {
     const captureSandboxOwnershipPhases = vi.fn(() => ({
       status: 0,
       output: [
@@ -246,20 +246,16 @@ describe("discoverActiveOllamaSandboxNames", () => {
       ].join("\n"),
     }));
     const transientPeer = sandbox({ name: "transient-peer" });
-    const missingPeer = sandbox({ name: "missing-peer" });
 
     expect(
-      discoverActiveOllamaSandboxNames(
-        [activePeer, transientPeer, stoppedPeer, missingPeer],
-        environment,
-        {
-          captureSandboxOwnershipPhases,
-          resolvePersistedSandboxOwnershipGateway: () => "nemoclaw",
-        },
-      ),
+      discoverActiveOllamaSandboxNames([activePeer, transientPeer, stoppedPeer], environment, {
+        captureSandboxOwnershipPhases,
+        resolvePersistedSandboxOwnershipGateway: () => "nemoclaw",
+      }),
     ).toEqual({
       ok: true,
       activeSandboxNames: new Set(["active-peer", "transient-peer"]),
+      activePeers: new Set([activePeer, transientPeer]),
       gatewayChecks: [
         {
           activeSandboxes: ["active-peer", "transient-peer"],
@@ -268,6 +264,19 @@ describe("discoverActiveOllamaSandboxNames", () => {
       ],
     });
     expect(captureSandboxOwnershipPhases).toHaveBeenCalledExactlyOnceWith("nemoclaw", environment);
+  });
+
+  it("fails closed when a listed sibling is omitted from a successful phase inventory (#10074)", async () => {
+    const omittedResult = discoverActiveOllamaSandboxNames([activePeer], environment, {
+      captureSandboxOwnershipPhases: () => ({ status: 0, output: "NAME CREATED PHASE" }),
+      resolvePersistedSandboxOwnershipGateway: () => "nemoclaw",
+    });
+
+    expect(omittedResult).toEqual({
+      ok: false,
+      message:
+        "OpenShell omitted sibling 'active-peer' from the sandbox phase inventory on gateway 'nemoclaw'",
+    });
   });
 
   it("fails closed when a listed sibling has no usable phase (#10074)", async () => {

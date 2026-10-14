@@ -26,6 +26,11 @@ describe("standard E2E execution profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it("routes the GPU provider-switch target through guarded NVIDIA API credentials", () => {
+    expect(catalogueTarget("gpu-double-onboard").profile).toBe("nvidia-api");
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
+  });
+
   it("reserves the standard full-E2E setup, test, and artifact envelope", () => {
     // The original 70-minute path now includes native configuration and plugin lifecycle work.
     expect(FULL_E2E_TEST_TIMEOUT_MINUTES).toBeGreaterThanOrEqual(100);
