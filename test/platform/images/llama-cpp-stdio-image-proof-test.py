@@ -85,6 +85,8 @@ class CleanupTest(unittest.TestCase):
                     with patch.object(proof.subprocess, "run", run), patch.object(
                         proof, "docker", docker,
                     ), patch.object(proof, "forward", forward), patch.object(
+                        proof, "cancel_forward", lambda _container: None,
+                    ), patch.object(
                         proof.sys, "stdout", output,
                     ), patch.object(proof.sys, "stderr", errors):
                         if failure in ("none", "missing-container"):
