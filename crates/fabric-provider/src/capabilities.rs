@@ -649,6 +649,8 @@ mod tests {
         assert!(requirements(&config).is_err(), "an adapter_id is required");
     }
 
+    // The fake engine listens on a Unix socket, as the test above.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_harness_selects_one_adapter_and_launches_the_named_agent() {
         use nemoclaw_fabric::catalog::{BridgeCapabilities, FabricCatalog, IMAGE_CATALOG_LABEL};
