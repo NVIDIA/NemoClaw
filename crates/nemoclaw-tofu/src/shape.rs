@@ -25,6 +25,9 @@ pub enum Shape {
     ObjectList(Fields),
     /// Nested objects keyed by arbitrary names, which keep their JSON spelling.
     ObjectMap(Fields),
+    /// JSON text, as `jsonencode` writes it, for an object whose properties the
+    /// schema leaves open; OpenTofu has no type for such an object.
+    Json,
 }
 
 /// One nested attribute and the JSON property it carries.
@@ -144,6 +147,18 @@ fn shape(root: &Value, schema: &Value, pointer: &str) -> Result<Shape, Unmappabl
         // A scalar alternative to objects becomes their `value` attribute.
         let (objects, scalars): (Vec<_>, Vec<_>) =
             resolved.into_iter().partition(|variant| is_object(variant));
+        // Alternatives of one scalar type, such as a string enum, are that type.
+        if objects.is_empty() {
+            let shapes = scalars
+                .iter()
+                .map(|scalar| shape(root, scalar, pointer))
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some(first @ (Shape::String | Shape::Number | Shape::Bool)) = shapes.first()
+                && shapes.iter().all(|shape| shape == first)
+            {
+                return Ok(first.clone());
+            }
+        }
         if let [scalar] = scalars.as_slice()
             && !objects.is_empty()
         {
@@ -170,6 +185,16 @@ fn shape(root: &Value, schema: &Value, pointer: &str) -> Result<Shape, Unmappabl
     }
     let kind = match schema.get("type") {
         Some(Value::String(kind)) => kind.as_str(),
+        // A nullable type is its optional type; omission already expresses null.
+        Some(Value::Array(kinds)) => match kinds
+            .iter()
+            .filter(|kind| kind.as_str() != Some("null"))
+            .collect::<Vec<_>>()
+            .as_slice()
+        {
+            [Value::String(kind)] => kind.as_str(),
+            _ => return Err(unmappable(pointer, "multiple types")),
+        },
         Some(_) => return Err(unmappable(pointer, "multiple types")),
         None if schema.get("enum").is_some_and(|values| {
             values
@@ -209,6 +234,14 @@ fn shape(root: &Value, schema: &Value, pointer: &str) -> Result<Shape, Unmappabl
                     }
                     item => Shape::Map(Box::new(item)),
                 }
+            }
+            Some(Value::Bool(false)) => Shape::Object(object_fields(root, schema, pointer)?),
+            _ if schema
+                .get("properties")
+                .and_then(Value::as_object)
+                .is_none_or(Map::is_empty) =>
+            {
+                Shape::Json
             }
             _ => Shape::Object(object_fields(root, schema, pointer)?),
         },
@@ -285,6 +318,16 @@ pub fn from_hcl(fields: &Fields, value: &Value) -> Value {
     convert(&Shape::Object(fields.clone()), value, false)
 }
 
+/// OpenTofu's value for JSON of any shape.
+pub fn outward(shape: &Shape, value: &Value) -> Value {
+    convert(shape, value, true)
+}
+
+/// JSON for OpenTofu's value of any shape.
+pub fn inward(shape: &Shape, value: &Value) -> Value {
+    convert(shape, value, false)
+}
+
 fn convert(shape: &Shape, value: &Value, outward: bool) -> Value {
     if let Shape::Object(fields) = shape
         && let Some(alternative) = choice(fields)
@@ -358,6 +401,11 @@ fn convert(shape: &Shape, value: &Value, outward: bool) -> Value {
                 .map(|(key, value)| (key.clone(), convert(item, value, outward)))
                 .collect(),
         ),
+        (Shape::Json, value) if outward && !value.is_null() => Value::String(value.to_string()),
+        // Text that is not JSON reaches validation unchanged.
+        (Shape::Json, Value::String(text)) if !outward => {
+            serde_json::from_str(text).unwrap_or_else(|_| value.clone())
+        }
         _ => value.clone(),
     }
 }
@@ -465,6 +513,7 @@ pub fn attribute_type(shape: &Shape) -> AttributeType {
         Shape::Bool => AttributeType::Bool,
         Shape::List(item) => AttributeType::List(Box::new(attribute_type(item))),
         Shape::Map(item) => AttributeType::Map(Box::new(attribute_type(item))),
+        Shape::Json => AttributeType::String,
         // Objects are nested blocks (see `block`), and the schema
         // conversion rejects lists and maps of objects.
         Shape::Object(_) | Shape::ObjectList(_) | Shape::ObjectMap(_) => {
@@ -612,6 +661,60 @@ mod tests {
     }
 
     #[test]
+    fn a_nullable_type_is_its_optional_type() {
+        let root = json!({
+            "type": "object",
+            "required": ["count"],
+            "properties": {"count": {"type": ["integer", "null"]}, "name": {"type": ["null", "string"]}},
+        });
+        let fields = fields(&root, &[]).unwrap();
+        assert_eq!(fields["count"].shape, Shape::Number);
+        assert_eq!(fields["name"].shape, Shape::String);
+    }
+
+    #[test]
+    fn alternatives_of_one_scalar_type_are_that_type() {
+        let root = json!({
+            "type": "object",
+            "properties": {"mode": {"oneOf": [
+                {"type": "string", "const": "replace", "description": "Replace."},
+                {"type": "string", "const": "append", "description": "Append."},
+            ]}},
+        });
+        assert_eq!(fields(&root, &[]).unwrap()["mode"].shape, Shape::String);
+    }
+
+    /// An object whose properties the schema leaves open has no OpenTofu
+    /// object type, so it is JSON text, as `jsonencode` writes it.
+    #[test]
+    fn an_open_object_is_json_text() {
+        let root = json!({
+            "type": "object",
+            "properties": {
+                "settings": {"type": "object", "additionalProperties": true},
+                "extensions": {"type": "object"},
+                "closed": {"type": "object", "additionalProperties": false},
+            },
+        });
+        let fields = fields(&root, &[]).unwrap();
+        assert_eq!(fields["settings"].shape, Shape::Json);
+        assert_eq!(fields["extensions"].shape, Shape::Json);
+        assert_eq!(fields["closed"].shape, Shape::Object(Fields::new()));
+        assert_eq!(attribute_type(&Shape::Json), AttributeType::String);
+        let value = json!({"settings": {"budget": 4, "nested": {"on": true}}});
+        let hcl = to_hcl(&fields, &value);
+        let text = hcl["settings"].as_str().expect("settings are JSON text");
+        assert_eq!(
+            serde_json::from_str::<Value>(text).unwrap(),
+            value["settings"]
+        );
+        assert_eq!(from_hcl(&fields, &hcl), value);
+        // Text that is not JSON reaches validation unchanged.
+        let invalid = json!({"settings": "{"});
+        assert_eq!(from_hcl(&fields, &invalid), invalid);
+    }
+
+    #[test]
     fn constructs_without_an_opentofu_type_are_errors() {
         for (property, reason) in [
             (
@@ -621,7 +724,7 @@ mod tests {
             (json!({"type": ["string", "integer"]}), "multiple types"),
             (json!({"type": "array"}), "array without item schema"),
             (
-                json!({"type": "object", "additionalProperties": {"type": "array", "items": {"type": "object", "properties": {}}}}),
+                json!({"type": "object", "additionalProperties": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}}}}}),
                 "map of object collections",
             ),
             (json!({}), "untyped schema"),
