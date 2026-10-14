@@ -668,6 +668,7 @@ function createGatewayRouteStager(input: {
   provider: string;
   sandboxName: string | null;
   gatewayName: string;
+  endpointUrl: string | null;
   credentialEnv: string | null;
   hostLocalSelection: ProviderInferenceSetupOptions["hostLocalInference"];
   options: ProviderInferenceSetupOptions;
@@ -677,7 +678,7 @@ function createGatewayRouteStager(input: {
   const stagedProviderUpserts: Array<
     () => Promise<Awaited<ReturnType<CommonDeps["upsertProvider"]>>>
   > = [];
-  const shouldStage = () => {
+  const publishedSourceForStaging = (): SandboxEntry | null => {
     const source =
       input.sandboxName && input.options.deferPublishedRouteReservation
         ? input.deps.getSandbox?.(input.sandboxName)
@@ -688,12 +689,14 @@ function createGatewayRouteStager(input: {
       input.hostLocalSelection,
       input.credentialEnv,
       input.deps.ollamaProxyCredentialEnv,
-    );
+    )
+      ? (source ?? null)
+      : null;
   };
   const mutator: OpenShellInferenceRouteMutator = {
     setInferenceRoute: (request) => {
       input.revalidateSandboxIdentity?.("change the OpenShell inference provider route");
-      if (shouldStage()) {
+      if (publishedSourceForStaging()) {
         stagedRoute = request;
         return Promise.resolve({ ok: true });
       }
@@ -702,10 +705,29 @@ function createGatewayRouteStager(input: {
   };
   return {
     mutator,
+    reusePublishedProvider: (providerName: string) => {
+      const source = publishedSourceForStaging();
+      if (!source || source.provider !== providerName) return null;
+      if (
+        (source.endpointUrl ?? null) !== input.endpointUrl ||
+        (source.credentialEnv ?? null) !== input.credentialEnv ||
+        (source.preferredInferenceApi ?? null) !== (input.options.preferredInferenceApi ?? null)
+      ) {
+        return {
+          ok: false,
+          status: 1,
+          message:
+            `Cannot change provider '${providerName}' endpoint, credential binding, or ` +
+            `inference API while recreating the published sandbox. Re-run this model ` +
+            `change with the source sandbox's provider configuration.`,
+        };
+      }
+      return { ok: true };
+    },
     stageProviderUpsert: (
       upsert: () => Promise<Awaited<ReturnType<CommonDeps["upsertProvider"]>>>,
     ) => {
-      if (!shouldStage()) return false;
+      if (!publishedSourceForStaging()) return false;
       stagedProviderUpserts.push(upsert);
       return true;
     },
@@ -955,6 +977,7 @@ export function createSetupInference(
           provider,
           sandboxName,
           gatewayName,
+          endpointUrl,
           credentialEnv,
           hostLocalSelection,
           options,
@@ -1053,6 +1076,8 @@ export function createSetupInference(
           : deps.error;
         const selectedUpsertProvider: CommonDeps["upsertProvider"] = async (...args) => {
           revalidateSandboxIdentity?.("register the inference provider");
+          const reused = routeStager.reusePublishedProvider(args[0]);
+          if (reused) return reused;
           const upsertProvider = hostLocalGatewayMutation?.upsertProvider ?? defaultUpsertProvider;
           if (routeStager.stageProviderUpsert(async () => await upsertProvider(...args)))
             return { ok: true };
