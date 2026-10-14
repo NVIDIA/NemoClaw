@@ -9,13 +9,17 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { removeManagedStateVolumes } from "../../../src/lib/onboard/managed-workload/managed-state-volumes";
 import {
   cleanupInterruptedManagedImageOpenShellE2e,
+  createManagedImageSandboxWithRecovery,
   prepareManagedImageOpenShellState,
 } from "../../../scripts/checks/run-managed-image-openshell-e2e";
+import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../../src/lib/adapters/openshell/sandbox-identity";
 
 const mocks = vi.hoisted(() => ({
   stopGateway: vi.fn(),
   removeVolumes: vi.fn(),
   roots: vi.fn(),
+  capture: vi.fn(),
+  run: vi.fn(),
 }));
 vi.mock("../../../src/lib/onboard/host-gateway-process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../src/lib/onboard/host-gateway-process")>()),
@@ -24,8 +28,8 @@ vi.mock("../../../src/lib/onboard/host-gateway-process", async (importOriginal) 
 vi.mock("../../../src/lib/onboard.ts", () => ({
   default: {
     openshellArgv: (args: string[]) => ["openshell", ...args],
-    runOpenshell: vi.fn(),
-    runCaptureOpenshell: vi.fn(),
+    runOpenshell: mocks.run,
+    runCaptureOpenshell: mocks.capture,
     sleepSeconds: vi.fn(),
     startGatewayForRecovery: vi.fn(),
     createForwardPortObserver: vi.fn(),
@@ -43,6 +47,21 @@ vi.mock("node:child_process", async (importOriginal) => ({
 }));
 
 const realSpawnSync = childProcess.spawnSync;
+const sandboxId = "owned-sandbox-id";
+const createAttemptNonce = "c".repeat(62);
+function sandboxObservation(id = sandboxId, nonce = createAttemptNonce): string {
+  return JSON.stringify([
+    {
+      id,
+      name: input.sandbox,
+      labels: { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+      resource_version: 1,
+      created_at: "2026-10-14T00:00:00Z",
+      phase: "Ready",
+      current_policy_version: 1,
+    },
+  ]);
+}
 
 const input = {
   agent: "openclaw" as const,
@@ -55,7 +74,7 @@ let root: string;
 let scope: { owner: string; stateDir: string; networkName: string };
 let commands: ReturnType<typeof vi.spyOn>;
 
-beforeEach(() => {
+beforeEach(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "managed-recovery-"));
   const owner = "llama-cpp-dgx-spark-42-2";
   scope = {
@@ -65,6 +84,24 @@ beforeEach(() => {
   };
   fs.mkdirSync(path.dirname(scope.stateDir), { mode: 0o700 });
   prepareManagedImageOpenShellState(input, scope);
+  mocks.capture.mockReturnValue(sandboxObservation());
+  mocks.run.mockReturnValue({ status: 0, stdout: `ID: ${sandboxId}`, stderr: "" });
+  const create = createManagedImageSandboxWithRecovery(
+    input,
+    scope,
+    {
+      runCaptureOpenshell: mocks.capture,
+    },
+    vi.fn().mockResolvedValue({ status: 0, output: "", ambiguous: false }),
+  );
+  await create({
+    sandboxName: input.sandbox,
+    target: { kind: "named", gatewayName: "nemoclaw" },
+    source: { reference: input.image },
+    startupCommand: ["true"],
+    environment: process.env,
+    labels: { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: createAttemptNonce },
+  });
   mocks.stopGateway.mockReturnValue({
     failed: [],
     ownershipFailures: [],
@@ -107,7 +144,7 @@ it("recovers only the marked isolated sandbox, gateway, volumes and network", as
   expect(
     commands.mock.calls.map(([command, args]: [string, readonly string[]]) => [command, ...args]),
   ).toEqual([
-    ["openshell", "sandbox", "delete", input.sandbox],
+    ["openshell", "sandbox", "delete", "-g", "nemoclaw", input.sandbox],
     ["openshell", "gateway", "remove", "nemoclaw"],
     ["docker", "image", "inspect", "--format", "{{.Id}}", input.image],
     [
@@ -276,12 +313,123 @@ it("accepts an exact bounded marker across short descriptor reads", async () => 
 it("retains recovery ownership when sandbox deletion fails", async () => {
   commands.mockReset().mockReturnValueOnce({ status: 1, stdout: "", stderr: "denied" } as any);
   await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
-    "could not verify sandbox deletion",
+    "sandbox identity or deletion is unproven",
   );
   expect(commands).toHaveBeenCalledTimes(1);
   expect(mocks.stopGateway).not.toHaveBeenCalled();
   expect(mocks.removeVolumes).not.toHaveBeenCalled();
   expect(fs.existsSync(path.join(scope.stateDir, "qualification-owner.json"))).toBe(true);
+});
+
+it("records the nonce-bound immutable identity from successful creation", () => {
+  expect(
+    JSON.parse(fs.readFileSync(path.join(scope.stateDir, "qualification-sandbox.json"), "utf8")),
+  ).toEqual({
+    kind: "managed-qualification-sandbox-v1",
+    owner: scope.owner,
+    sandbox: input.sandbox,
+    sandboxId,
+    createAttemptNonce,
+  });
+  expect(mocks.capture).toHaveBeenCalledWith(
+    [
+      "sandbox",
+      "list",
+      "-g",
+      "nemoclaw",
+      "--selector",
+      `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}`,
+      "--output",
+      "json",
+      "--limit",
+      "2",
+    ],
+    expect.objectContaining({ ignoreError: false, timeout: 30000 }),
+  );
+});
+
+it("binds a generated create-attempt label and refuses a second create", async () => {
+  fs.unlinkSync(path.join(scope.stateDir, "qualification-sandbox.json"));
+  const delegate = vi.fn(
+    async (request: Parameters<ReturnType<typeof createManagedImageSandboxWithRecovery>>[0]) => {
+      mocks.capture.mockReturnValue(
+        sandboxObservation(sandboxId, request.labels![NEMOCLAW_CREATE_ATTEMPT_LABEL]),
+      );
+      return { status: 0, output: "", sawProgress: false, ambiguous: false, diagnostic: "" };
+    },
+  );
+  const create = createManagedImageSandboxWithRecovery(
+    input,
+    scope,
+    {
+      runCaptureOpenshell: mocks.capture,
+    },
+    delegate,
+  );
+  const request = {
+    sandboxName: input.sandbox,
+    target: { kind: "named" as const, gatewayName: "nemoclaw" },
+    source: { reference: input.image },
+    startupCommand: ["true"],
+    environment: process.env,
+  };
+  await create(request);
+  const submitted = delegate.mock.calls[0]![0];
+  const nonce = submitted.labels![NEMOCLAW_CREATE_ATTEMPT_LABEL];
+  expect(nonce).toMatch(/^[a-f0-9]{62}$/u);
+  expect(
+    JSON.parse(fs.readFileSync(path.join(scope.stateDir, "qualification-sandbox.json"), "utf8")),
+  ).toMatchObject({ sandboxId, createAttemptNonce: nonce });
+  await expect(create(request)).rejects.toThrow("create authority mismatch");
+  expect(delegate).toHaveBeenCalledTimes(1);
+});
+
+it("does not delete a same-name sandbox with a different immutable identity", async () => {
+  mocks.capture.mockReturnValue(sandboxObservation("foreign-sandbox-id"));
+  mocks.run.mockReturnValue({ status: 0, stdout: "ID: foreign-sandbox-id", stderr: "" });
+  await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
+    "inspection is required",
+  );
+  expect(commands).not.toHaveBeenCalled();
+  expect(mocks.stopGateway).not.toHaveBeenCalled();
+  expect(mocks.removeVolumes).not.toHaveBeenCalled();
+  expect(fs.existsSync(path.join(scope.stateDir, "qualification-owner.json"))).toBe(true);
+});
+
+it("rejects replacement between the nonce selector and named inspection", async () => {
+  mocks.run.mockReturnValue({ status: 0, stdout: "ID: replacement-id", stderr: "" });
+  await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
+    "inspection is required",
+  );
+  expect(commands).not.toHaveBeenCalled();
+  expect(fs.existsSync(scope.stateDir)).toBe(true);
+});
+
+it("retains partial creation without a persisted immutable sandbox identity", async () => {
+  fs.unlinkSync(path.join(scope.stateDir, "qualification-sandbox.json"));
+  mocks.capture.mockClear();
+  mocks.run.mockClear();
+  await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
+    "inspection is required",
+  );
+  expect(commands).not.toHaveBeenCalled();
+  expect(mocks.capture).not.toHaveBeenCalled();
+  expect(mocks.run).not.toHaveBeenCalled();
+  expect(fs.existsSync(scope.stateDir)).toBe(true);
+});
+
+it("does not change unscoped managed creation", () => {
+  const create = vi.fn();
+  expect(
+    createManagedImageSandboxWithRecovery(
+      input,
+      undefined,
+      {
+        runCaptureOpenshell: mocks.capture,
+      },
+      create,
+    ),
+  ).toBe(create);
 });
 
 it("cleans partial setup when no exact sandbox container was created", async () => {

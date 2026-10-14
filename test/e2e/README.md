@@ -115,6 +115,11 @@ and run-owned volume labels. Ordinary failure, interruption, and fallback cleanu
 that recovery path. Foreign resources are preserved; unproven recovery retains its
 ownership evidence and still fails qualification.
 
+Scoped creation records the immutable sandbox ID selected by its unique create-attempt
+label. Cleanup reconfirms that ID through the isolated gateway before deletion. A missing
+identity record, mismatched ID, or failed inspection preserves the recovery state and
+requires operator inspection; the sandbox name alone never authorizes recovery deletion.
+
 ### Candidate CLI Artifact
 
 The candidate CLI comes from the source commit that an E2E run tests.
