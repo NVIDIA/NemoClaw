@@ -8,6 +8,7 @@ import type {
 import {
   requireNativeProviderPolicy,
   normalizeNativeLocalProviderAttachment,
+  isPersistedPiSharedLocalInferenceRoute,
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
   prepareNativeLocalSelection,
@@ -833,13 +834,23 @@ export function createSetupInference(
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
-    const selectingNativeLocal = usesNativeLocalInferenceForAgent(
+    const nativeLocalRequested = usesNativeLocalInferenceForAgent(
       options.agentName ??
         options.hostLocalInference?.request.application ??
         (sandboxName ? deps.getSandbox?.(sandboxName)?.agent : undefined),
       provider,
       endpointUrl,
     );
+    const preservingLegacyPiRoute =
+      options.preserveLegacyPiSharedLocalRoute === true &&
+      isPersistedPiSharedLocalInferenceRoute(sandboxName ? deps.getSandbox?.(sandboxName) : null, {
+        provider,
+        model,
+        endpointUrl,
+      });
+    if (options.preserveLegacyPiSharedLocalRoute && !preservingLegacyPiRoute)
+      throw new Error("Recorded Pi shared local inference route changed before setup.");
+    const selectingNativeLocal = nativeLocalRequested && !preservingLegacyPiRoute;
     if (selectingNativeLocal)
       await (deps.requireNativeProviderPolicy ?? requireNativeProviderPolicy)(gatewayName);
     const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;

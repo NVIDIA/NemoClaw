@@ -141,6 +141,7 @@ export function blockRebuildOnLegacySharedLocalRoute(
 ): boolean {
   if (
     typeof sandboxEntry.createdAt !== "string" ||
+    sandboxEntry.agent === "pi" ||
     !hasLegacySharedLocalInferenceRoute(sandboxEntry)
   )
     return false;
