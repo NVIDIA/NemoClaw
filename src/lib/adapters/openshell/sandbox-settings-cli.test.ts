@@ -8,11 +8,18 @@ import { createCliOpenShellSandboxSettings } from "./sandbox-settings-cli";
 describe("sandbox audit settings", () => {
   it("enables audit logs on the requested gateway with bounded capture", async () => {
     const capture = vi.fn(async () => ({ status: 0, output: "" }));
-    const result = await createCliOpenShellSandboxSettings(capture).enableAuditLogs({
-      target: namedOpenShellGateway("nemoclaw"),
-      sandboxName: "alpha",
-      timeoutMs: 500,
-    });
+    const notice = vi.spyOn(console, "error").mockImplementation(() => {});
+    let result;
+    try {
+      result = await createCliOpenShellSandboxSettings(capture).enableAuditLogs({
+        target: namedOpenShellGateway("nemoclaw"),
+        sandboxName: "alpha",
+        timeoutMs: 500,
+      });
+      expect(notice).toHaveBeenCalledWith(expect.stringContaining("ocsf_json_enabled=true"));
+    } finally {
+      notice.mockRestore();
+    }
     expect(result).toEqual({ ok: true, value: undefined });
     expect(capture).toHaveBeenCalledWith(
       [
@@ -28,6 +35,24 @@ describe("sandbox audit settings", () => {
       ],
       expect.objectContaining({ timeout: 500, outputLimitBytes: 1024 * 1024 }),
     );
+  });
+
+  it("does not change audit settings when automatic enablement is disabled", async () => {
+    const capture = vi.fn(async () => ({ status: 0, output: "" }));
+    const previous = process.env.NEMOCLAW_NO_AUTO_AUDIT_LOGS;
+    process.env.NEMOCLAW_NO_AUTO_AUDIT_LOGS = "1";
+    try {
+      const result = await createCliOpenShellSandboxSettings(capture).enableAuditLogs({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+        timeoutMs: 500,
+      });
+      expect(result).toEqual({ ok: true, value: undefined });
+      expect(capture).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.NEMOCLAW_NO_AUTO_AUDIT_LOGS;
+      else process.env.NEMOCLAW_NO_AUTO_AUDIT_LOGS = previous;
+    }
   });
 
   it.each([

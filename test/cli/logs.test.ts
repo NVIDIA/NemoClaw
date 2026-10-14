@@ -38,6 +38,19 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
   });
 
+  it("reads logs without changing audit settings when automatic enablement is disabled", ({
+    resources,
+  }) => {
+    const setup = createLogsTestSetup(resources, "nemoclaw-cli-logs-audit-opt-out-");
+    const result = setup.runLogs("alpha logs", { NEMOCLAW_NO_AUTO_AUDIT_LOGS: "1" });
+
+    expect(result.code).toBe(0);
+    expect(setup.readCalls()).not.toContain(
+      "settings set alpha --key ocsf_json_enabled --value true",
+    );
+    expect(result.out).toContain(FAKE_OPENSHELL_LOG_LINE);
+  });
+
   it("shows logs help without calling OpenShell", ({ resources }) => {
     const setup = createLogsTestSetup(resources, "nemoclaw-cli-logs-help-");
     const r = setup.runLogs("alpha logs --help");
