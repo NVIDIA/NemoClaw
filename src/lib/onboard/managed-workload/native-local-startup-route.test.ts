@@ -37,6 +37,12 @@ const routes = [
     endpointUrl: "http://host.openshell.internal:8000/v1",
     expected: "https://inference.local/v1",
   },
+  {
+    name: "hosted endpoint with stale native attachment",
+    endpointUrl: "https://example.com/v1",
+    attachment: nativeAttachment,
+    expected: "https://inference.local/v1",
+  },
 ] as const;
 
 describe.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const)(
