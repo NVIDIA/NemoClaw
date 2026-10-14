@@ -169,7 +169,7 @@ jobs:
           printf 'artifact_name=%s\n' "$artifact_name" >> "$GITHUB_OUTPUT"
 
       - name: Upload reviewed OpenShell SDK archive
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.identity.outputs.artifact_name }}
           path: ${{ steps.package.outputs.artifact_path }}
@@ -843,7 +843,7 @@ jobs:
       - id: upload_cli_artifact
         name: Publish content-addressed CLI artifact
         if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.package_cli_artifact.outputs.artifact_name }}
           path: ${{ runner.temp }}/nemoclaw-cli-artifact/
@@ -1409,7 +1409,7 @@ jobs:
           )
 
       - name: Upload the pinned Portable Podman toolchain
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: portable-podman-e2e-toolchain-amd64
           path: ${{ runner.temp }}/portable-podman-e2e-toolchain/
@@ -2752,7 +2752,7 @@ jobs:
           node --no-warnings tools/e2e/native-runtime-qualification-producer-aggregate.mts
 
       - name: Upload aggregate evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-runtime-qualification-${{ inputs.checkout_sha }}
           path: ${{ runner.temp }}/native-runtime-aggregate/
@@ -4937,7 +4937,7 @@ jobs:
 
       - name: Publish exact amd64 protected runtime build cache
         if: ${{ matrix.platform == 'linux/amd64' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}
           path: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}/
@@ -6453,7 +6453,7 @@ jobs:
         run: node --no-warnings tools/e2e/release-qualification.mts
       - name: Upload PR E2E results
         if: ${{ always() && inputs.checkout_sha != '' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: review-queue-e2e-result-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/review-queue-e2e-result.json

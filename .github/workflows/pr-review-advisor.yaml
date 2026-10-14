@@ -171,7 +171,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node --no-warnings tools/pr-review-advisor/github-context.mts
       - name: Upload GitHub review context
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # A failed-job rerun does not rerun this successful producer. Keep the
           # context name stable across attempts, while a full rerun replaces it.
@@ -228,7 +228,7 @@ jobs:
           GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: bash "$ADVISOR_DIR/scripts/package-pr-review-advisor-runtime.sh" "$RUNNER_TEMP/advisor-runtime"
       - name: Upload trusted runtime
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pr-review-advisor-runtime-${{ github.run_id }}
           path: ${{ runner.temp }}/advisor-runtime/
@@ -426,7 +426,7 @@ jobs:
       - name: Upload specialist review
         id: upload-specialist-session
         if: ${{ always() && matrix.advisor.interest != '' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # A full or failed-job rerun shares github.run_id with prior attempts.
           # Scope immutable specialist artifacts to the current attempt.
@@ -578,7 +578,7 @@ jobs:
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-coordinator/shadow.mts"
 
       - name: Upload coordinator shadow decision
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pr-review-coordinator-shadow-${{ github.run_attempt }}
           path: artifacts/pr-review-coordinator-shadow/decision.json

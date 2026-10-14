@@ -504,7 +504,7 @@ jobs:
           test/platform/images/llama-cpp-stdio-image-proof.py "$IMAGE"
 
       - name: Upload anonymous pull evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: llama-cpp-anonymous-pull-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/llama-cpp-anonymous-pulls/anonymous-pull-${{ matrix.arch }}.json
@@ -512,7 +512,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.config.outputs.publication_receipt_retention_days) }}
 
       - name: Upload platform digest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: llama-cpp-platform-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/llama-cpp-digests/*
@@ -654,7 +654,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload candidate descriptors
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: llama-cpp-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/llama-cpp-candidate
@@ -701,7 +701,7 @@ jobs:
 
       - name: Upload vulnerability report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: llama-cpp-scan-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: scan-${{ matrix.arch }}.json
@@ -875,7 +875,7 @@ jobs:
             --output "$evidence/publication-receipt.json"
 
       - name: Upload canonical publication receipt
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: llama-cpp-publication-receipt-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/llama-cpp-evidence/publication-receipt.json

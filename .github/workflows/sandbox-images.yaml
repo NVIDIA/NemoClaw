@@ -111,7 +111,7 @@ jobs:
         run: gzip -t /tmp/isolation-image.tar.gz
 
       - name: Upload isolation image
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: isolation-image
           path: /tmp/isolation-image.tar.gz
@@ -217,7 +217,7 @@ jobs:
           gzip -t /tmp/hermes-isolation-image.tar.gz
 
       - name: Upload Hermes isolation image
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: hermes-isolation-image
           path: /tmp/hermes-isolation-image.tar.gz
@@ -285,7 +285,7 @@ jobs:
 
       - name: Upload Hermes sandbox secret boundary artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: hermes-sandbox-secret-boundary-artifacts
           path: |
@@ -310,7 +310,7 @@ jobs:
 
       - name: Upload Hermes root entrypoint smoke artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: hermes-root-entrypoint-smoke-artifacts
           path: e2e-artifacts/live/hermes-root-entrypoint-smoke/

@@ -1072,7 +1072,7 @@ jobs:
 
       - name: Upload exact published PR managed-image contract
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-pr-contract-${{ github.run_id }}-${{ matrix.agent }}
           path: ${{ runner.temp }}/managed-pr-contract/contract.json
@@ -1193,7 +1193,7 @@ jobs:
 
       - name: Upload managed runtime activation evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-image-activation-${{ github.run_id }}-${{ github.run_attempt }}
           path: e2e-artifacts/live/managed-image-activation/
@@ -1541,7 +1541,7 @@ jobs:
 
       - name: Upload managed Podman activation evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-image-podman-activation-${{ github.run_id }}-${{ github.run_attempt }}
           path: e2e-artifacts/live/managed-image-podman-activation/
@@ -1956,7 +1956,7 @@ jobs:
       # This candidate name is deliberately outside that pattern so a published
       # Pi digest cannot enter the atomic release cohort.
       - name: Upload the exact Pi candidate contract
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-candidate-contract-${{ github.run_id }}-${{ github.run_attempt }}-pi-${{ matrix.arch }}
           path: ${{ runner.temp }}/managed-candidate-contract/contract.json
@@ -2776,7 +2776,7 @@ jobs:
             "$contract_dir/contract.json" >/dev/null
 
       - name: Upload validated managed image candidate
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # A failed-job rerun keeps successful lanes and replaces only the
           # stable artifact owned by each retried agent/platform lane.
@@ -3640,7 +3640,7 @@ jobs:
              )' "$cohort_contract" >/dev/null
 
       - name: Upload complete managed image cohort contract
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-image-cohort-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/managed-image-contracts/cohort.json
@@ -3648,7 +3648,7 @@ jobs:
           retention-days: 90
 
       - name: Upload OpenClaw amd64 managed image contract
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-openclaw-linux-amd64
           path: ${{ runner.temp }}/managed-image-contracts/openclaw/linux-amd64/contract.json
@@ -3656,7 +3656,7 @@ jobs:
           retention-days: 90
 
       - name: Upload OpenClaw arm64 managed image contract
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-openclaw-linux-arm64
           path: ${{ runner.temp }}/managed-image-contracts/openclaw/linux-arm64/contract.json
@@ -3664,7 +3664,7 @@ jobs:
           retention-days: 90
 
       - name: Upload Hermes amd64 managed image contract
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-hermes-linux-amd64
           path: ${{ runner.temp }}/managed-image-contracts/hermes/linux-amd64/contract.json
@@ -3672,7 +3672,7 @@ jobs:
           retention-days: 90
 
       - name: Upload Hermes arm64 managed image contract
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-hermes-linux-arm64
           path: ${{ runner.temp }}/managed-image-contracts/hermes/linux-arm64/contract.json
@@ -3680,7 +3680,7 @@ jobs:
           retention-days: 90
 
       - name: Upload Deep Agents Code amd64 managed image contract
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-langchain-deepagents-code-linux-amd64
           path: ${{ runner.temp }}/managed-image-contracts/langchain-deepagents-code/linux-amd64/contract.json
@@ -3688,7 +3688,7 @@ jobs:
           retention-days: 90
 
       - name: Upload Deep Agents Code arm64 managed image contract
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-langchain-deepagents-code-linux-arm64
           path: ${{ runner.temp }}/managed-image-contracts/langchain-deepagents-code/linux-arm64/contract.json

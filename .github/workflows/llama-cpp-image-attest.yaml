@@ -127,7 +127,7 @@ jobs:
           upload-release-assets: false
 
       - name: Upload amd64 SPDX SBOM
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: llama-cpp-sbom-amd64-${{ needs.validate-inputs.outputs.candidate_tag }}
           path: llama-cpp-sbom-amd64.spdx.json
@@ -147,7 +147,7 @@ jobs:
           upload-release-assets: false
 
       - name: Upload arm64 SPDX SBOM
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: llama-cpp-sbom-arm64-${{ needs.validate-inputs.outputs.candidate_tag }}
           path: llama-cpp-sbom-arm64.spdx.json

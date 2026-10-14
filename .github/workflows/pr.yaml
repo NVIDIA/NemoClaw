@@ -309,7 +309,7 @@ jobs:
 
       - name: Publish SDK archive inside this CI run
         if: steps.locate.outputs.required == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: openshell-sdk-package
           path: ${{ runner.temp }}/openshell-sdk/${{ steps.locate.outputs.artifact_name }}
@@ -367,7 +367,7 @@ jobs:
         uses: ./.trusted-ci-actions/.github/actions/ci-compile-artifacts
 
       - name: Upload compiled test inputs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: compiled-test-inputs
           path: |
@@ -385,7 +385,7 @@ jobs:
 
       - name: Upload compiled CLI artifact
         if: steps.legacy_coverage.outputs.required == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cli-build-output
           path: dist
