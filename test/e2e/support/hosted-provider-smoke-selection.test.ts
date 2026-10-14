@@ -71,6 +71,11 @@ it("runs both OpenRouter agents through the existing trusted target", () => {
   expect(
     new RegExp(target.selector!).test("TC-INF-07D Deep Agents Code reaches native OpenRouter"),
   ).toBe(true);
+  expect(
+    new RegExp(target.selector!).test(
+      "'TC-INF-07' 'OpenRouter' answers through its native provider",
+    ),
+  ).toBe(true);
   expect(target.environment.NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE).toBe("openrouter");
 });
 
