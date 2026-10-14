@@ -158,7 +158,9 @@ describe("onboard shared gateway route containment", () => {
       );
       const matchingProvider = sourceEndpointUrl === "https://api.example/v1";
       expect(outcome.error?.message ?? null).toBe(matchingProvider ? null : "exit 1");
-      expect(outcome.result?.ok ?? false).toBe(matchingProvider);
+      expect(outcome.result && "ok" in outcome.result ? outcome.result.ok : false).toBe(
+        matchingProvider,
+      );
       expect(inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
       expect(upsertProvider).not.toHaveBeenCalled();
       expect(providerEndpoint).toBe(sourceEndpointUrl);
