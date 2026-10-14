@@ -178,6 +178,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "llama-cpp-dgx-spark-qualification",
+    {
+      name: "e2e-llama-cpp-dgx-spark-qualification",
+      path: "e2e-artifacts/live/llama-cpp-dgx-spark-qualification/published/",
+    },
+  ],
+  [
     "jetson-nvmap-gpu",
     {
       name: "e2e-jetson-nvmap-gpu",
@@ -342,6 +349,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
 ]);
 
 const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
+  ["llama-cpp-dgx-spark-qualification", "${{ always() && steps.evidence.outcome == 'success' }}"],
   ["generate-matrix", "${{ github.event_name == 'workflow_dispatch' }}"],
   ["native-runtime-qualification-podman-toolchain", "success()"],
   ["native-runtime-qualification-producer", "success()"],
