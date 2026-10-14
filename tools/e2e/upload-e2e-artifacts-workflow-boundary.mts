@@ -9,6 +9,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import {
   CLI_ARTIFACT_PUBLISH_STEP,
+  CLI_ARTIFACT_RESTORE_STEP,
   CLI_ARTIFACT_UPLOAD_ACTION,
 } from "./cli-artifact-workflow-boundary.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
@@ -655,4 +656,37 @@ export function validateUploadE2eArtifactsWorkflowBoundary(
     ...validateUploadE2eArtifactsAction(actionPath),
     ...validateUploadE2eArtifactsInvocations(workflow),
   ];
+}
+
+export function validatePortableHermesCliArtifactRestoreAction(workflow: WorkflowRecord): string[] {
+  const jobs = record(workflow.jobs);
+  const portableHermesRestores = steps(record(jobs["portable-hermes-finalization"]).steps).filter(
+    (step) => step.name === CLI_ARTIFACT_RESTORE_STEP,
+  );
+  if (
+    portableHermesRestores.length !== 1 ||
+    portableHermesRestores[0]?.uses !== E2E_ACTION_PROVENANCE.restoreCliArtifact.reference
+  ) {
+    return [
+      "portable-hermes-finalization must restore the exact-commit CLI artifact with the reviewed action reference",
+    ];
+  }
+  if (
+    Object.hasOwn(portableHermesRestores[0], "if") ||
+    Object.hasOwn(portableHermesRestores[0], "continue-on-error")
+  ) {
+    return [
+      "portable-hermes-finalization exact-commit CLI artifact restore must run unconditionally and propagate failures",
+    ];
+  }
+  if (
+    !isDeepStrictEqual(record(portableHermesRestores[0].with), {
+      "provenance-json": "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
+    })
+  ) {
+    return [
+      "portable-hermes-finalization must bind the exact-commit CLI artifact restore to the planned provenance output",
+    ];
+  }
+  return [];
 }
