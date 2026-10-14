@@ -164,7 +164,7 @@ function hasEntries(value: unknown): boolean {
     : value !== undefined && value !== null && value !== false;
 }
 
-function hasExportExcludedMessaging(entry: ObservedExportRegistry): boolean {
+export function hasExportExcludedMessaging(entry: ObservedExportRegistry): boolean {
   if (!hasEntries(entry.messaging)) return false;
   const plan = entry.messaging?.plan;
   if (

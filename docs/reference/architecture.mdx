@@ -329,7 +329,7 @@ If registry or catalog availability prevents resolution, stock onboarding stops 
 Available catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent fails closed before sandbox creation.
 An explicit `--from <Dockerfile>` remains a separate complete custom-image path.
 Native Podman is selected with `NEMOCLAW_GATEWAY_RUNTIME=podman`, consumes the registered Podman provider bundle, and accepts exact managed-image receipts plus digest-pinned OpenClaw and Hermes external-image receipts.
-Legacy and custom Dockerfile builds remain disabled for that provider.
+Native Podman does not select generated or user-supplied Dockerfile sources. Its managed-image onboarding does not build an image locally.
 <AgentOnly variant="openclaw">
 The direct blueprint runner still carries a pinned OpenShell Community OpenClaw image for legacy `openshell sandbox create --from` compatibility.
 </AgentOnly>

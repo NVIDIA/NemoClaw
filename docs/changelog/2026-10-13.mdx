@@ -1,0 +1,34 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.134
+
+NemoClaw v0.0.134 updates managed LangChain Deep Agents Code and strengthens onboarding, backup, download, and provider setup.
+Station WSL onboarding also binds managed llama.cpp to the GPU that passed host checks.
+
+- Managed LangChain Deep Agents Code now uses version 0.1.71 with a pinned Python dependency graph and matching startup and MCP behavior.
+  Related change: [PR #12376](https://github.com/NVIDIA/NemoClaw/pull/12376).
+- Generated and custom Dockerfile recipes on a local Docker gateway build and verify an image before sandbox creation.
+  A remote gateway, engine mismatch, failed build, or missing image stops creation.
+  Related changes: [PR #13035](https://github.com/NVIDIA/NemoClaw/pull/13035) and [PR #13077](https://github.com/NVIDIA/NemoClaw/pull/13077).
+- OpenClaw onboarding can request write access for a verified matching CLI device with pairing/read permissions after a probe refreshes its connection metadata.
+  Related change: [PR #13107](https://github.com/NVIDIA/NemoClaw/pull/13107).
+- Managed vLLM and llama.cpp installers declare the selected profile, recipe, runtime image, and model download size before acquisition.
+  Managed vLLM declares the image download size when the image is not cached.
+  Related change: [PR #12220](https://github.com/NVIDIA/NemoClaw/pull/12220).
+- Hermes backups accept a sanitized configuration that grows beyond the source file size.
+  The archive still excludes credentials, and the live configuration remains unchanged.
+  Related change: [PR #13049](https://github.com/NVIDIA/NemoClaw/pull/13049).
+- `nemoclaw <sandbox> download` rejects a symbolic link in any component of the host destination parent.
+  Related change: [PR #12870](https://github.com/NVIDIA/NemoClaw/pull/12870).
+- Runtime identity provider setup verifies the stored gateway profile after import and stops before provider creation if the export fails or differs.
+  A later profile change or failed export produces a warning without changing the completed operation.
+  Related change: [PR #12947](https://github.com/NVIDIA/NemoClaw/pull/12947).
+- Linux port checks ignore known `lsof` mount warnings when no listener exists.
+  Other `lsof` errors still leave port ownership unverified.
+  Related change: [PR #13048](https://github.com/NVIDIA/NemoClaw/pull/13048).
+- Station WSL managed llama.cpp selects the Docker-proved GB300 by UUID.
+  The serving recipes remain pinned to the published image while the new GB300 image awaits qualification.
+  Related change: [PR #13053](https://github.com/NVIDIA/NemoClaw/pull/13053).

@@ -235,7 +235,7 @@ describe("declarative llama.cpp server image", () => {
         runner: "ubuntu-24.04",
       },
       {
-        cudaArchitectures: "121a-real",
+        cudaArchitectures: "103-real;120-real;121a-real",
         platform: "linux/arm64",
         runner: "ubuntu-24.04-arm",
       },
@@ -264,7 +264,7 @@ describe("declarative llama.cpp server image", () => {
     expect(JSON.parse(output.publication_qualification_plan)).toMatchObject({
       contractVersion: 1,
       imageBuild: {
-        platform: { cudaArchitectures: "121a-real", platform: "linux/arm64" },
+        platform: { cudaArchitectures: "103-real;120-real;121a-real", platform: "linux/arm64" },
         source: { revision: manifest.spec?.source?.revision },
       },
       qualification: {

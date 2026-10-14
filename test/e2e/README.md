@@ -49,7 +49,8 @@ The install refuses package removals, preserving the runner's Docker and contain
   source commit. It reuses the reviewed native pasta, netavark, and aardvark-dns
   components. Select it with
   `jobs=portable-hermes-finalization`; the job selects Podman 5.7 regardless of
-  gateway-runtime inputs.
+  gateway-runtime inputs. The live scenario also runs the receipt-bound Hermes
+  build, registry publication, and OpenShell create transaction against those services.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
@@ -606,10 +607,13 @@ still verify the authenticated request, policy denials, absence of MCP URLs, pro
 credentials from the registry, and restart, rebuild and cleanup outcomes.
 
 The `sandbox-operations` target owns live final-gateway cleanup on Docker and native Podman. It leaves one sandbox live after removing only its local registry entry, then requires a
-`destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
-sandbox and recovery commands, and exit nonzero. After cleanup, it onboards and destroys one final
-sandbox,
+`destroy --cleanup-gateway` of the registered sandbox to preserve the gateway and report the live
+sandbox and recovery commands. CLI integration tests own the nonzero exit for that refusal.
+After cleanup, it onboards and destroys one final sandbox,
 requires the bounded command to finish, and proves both the sandbox and gateway runtime are absent.
+The survivor must reach OpenShell Ready before it is unregistered, and the gateway must still report
+connected after the preservation attempt. The OpenShell start exit, native health, and retained
+workspace marker prove the restart; the final install's successful exit proves its onboarding phase.
 The outer destroy command deadline is twice the CLI's heavy-operation deadline so the CLI can
 finish its own timeout, absence, and gateway checks. The survivor onboarding budget stays separate.
 Deterministic destroy tests own the exact 30-second retry schedule and delayed-list sequence.
@@ -649,6 +653,10 @@ List each additional source file or directory whose change requires the target.
 Changes to shared catalogue execution paths select every catalogue target.
 
 The `openclaw-inference-switch` target owns fresh custom-image route initialization.
+Its live `onboard --from` step exercises local Docker BuildKit and OpenShell image handoff;
+the successful onboard and authenticated baseline request require a ready sandbox from that image.
+The deterministic build, inspect, create-reference, and failed-build stop checks live in
+`test/onboarding/onboard-custom-dockerfile.test.ts`.
 Its fixture contains only a different baked model and stale limits.
 Custom Dockerfile onboarding uses the existing startup and pairing settlement checks before
 restarting the native gateway for the initial inference route, as external-image onboarding does.
@@ -1958,10 +1966,14 @@ Runs without a PR catalog require a trusted main base and managed-image publicat
 PR runs select the nearest fully successful publication on the trusted workflow commit's first-parent history.
 The publication must cover the PR base's latest reviewed image input.
 For that publication, the job binds the run ID, attempt, revision, cohort artifact ID, and artifact digest before it emits `managed_image_revision`.
-It validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that workflow attempt.
+It validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that publication attempt.
 `generate-matrix` runs first and selects whether publication is required.
 Stock-onboarding jobs still depend on publication, so incomplete publication creates no onboarding fanout.
 Direct `main` runs use the same publication workflow and artifact contract.
+
+Protected managed-image build jobs apply a separate rule to their reusable base receipt.
+The producer must be from the same workflow run and no later than the consumer attempt.
+Receipt verification remains bound to the producer attempt.
 
 The Deep Agents Code managed-image target uses the shared receipt check to verify its image digest, source revision, and cohort.
 Onboarding and fresh re-onboarding do not supply a base-image override.
@@ -2209,7 +2221,8 @@ The explicit `dgx-station-express` target runs the local Station Express install
 
 `live/inference-routing-provider-smoke.test.ts` owns credential-backed native inference smoke tests.
 Select `openai`, `anthropic`, `gemini`, `openrouter`, or `hermes` with
-`NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE`; `all` selects all five.
+`NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE`. Selecting `openrouter` runs both
+OpenRouter agent cases; `all` runs all six cases.
 Use an approved disposable environment and credentials from its approved source.
 These tests are outside the credential-free `inference-routing` PR lane.
 A skipped provider is missing qualification evidence.
@@ -2219,7 +2232,11 @@ support tests cover leak detection and control cleanup.
 
 OpenAI, Anthropic, Gemini, and OpenRouter onboard OpenClaw and start a fresh agent process.
 Hermes Provider onboards Hermes and submits a fresh request to its managed API.
-Each case checks the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer.
+The `hosted-inference-openrouter` target also onboards Deep Agents Code with the same
+OpenRouter key and model. Its six-assertion case checks onboarding, credential isolation,
+the native TOML route, and one fresh `dcode -n --json` response.
+The five OpenClaw and Hermes cases check the native endpoint, credential placeholder,
+selected adapter, response model, and nonempty answer.
 The OpenRouter case switches the running sandbox to a second model and back.
 It requires a fresh agent response with that model after each switch and checks that the return route is readable.
 Each `nemoclaw inference set` switch also verifies its selected model with a sandbox-side inference request.
@@ -2227,21 +2244,25 @@ An unavailable or rate-limited intermediate model fails the first switch.
 The alternate route read and return-route model assertion were removed from this live case:
 agent responses prove the effective model after each restart, while the recorded-model behavior
 belongs to the `inference get` source tests. Both switch exit checks and the return route read remain.
-Before these requests, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
+Before each of those requests, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
 for a salted fingerprint of the selected credential. Only the fingerprint enters the probe; reports contain
 booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
 The sample inspects up to 200 files smaller than 1 MiB, taking the first 64 KiB of each readable file.
 This is not an exhaustive filesystem scan. The scan checks only sandbox environment variables, process arguments, and sampled files.
 It does not prove credential isolation in host processes or upstream requests.
 Separate smoke assertions check native configuration and require a fresh, nonempty provider response.
+The Deep Agents Code case uses the same bounded credential scan before checking its generated
+provider route and a fresh, nonempty JSON response. Deterministic tests own its resolver handle
+rejection and credential binding.
 Deterministic tests own protocol/header construction, ownership collisions,
 sandbox isolation, restart, and failed-operation recovery.
 
 Each selected case requires its matching approved model variable, listed below. The smoke does not select a default model.
 The Hermes smoke uses `NOUS_API_KEY`. It does not prove interactive OAuth login or token refresh.
 Credentials remain in the test host environment and OpenShell provider store; artifacts redact them.
-The existing cleanup helper destroys each test sandbox. After successful onboarding, strict cleanup checks sandbox absence only.
-Failed onboarding uses best-effort cleanup. Neither path proves removal of credentials from the OpenShell provider store.
+The cleanup helper destroys each test sandbox. The Deep Agents Code case checks sandbox absence even if onboarding fails.
+Other hosted cases check absence after successful onboarding; failed onboarding uses best-effort cleanup.
+Neither path proves removal of credentials from the OpenShell provider store.
 Discard the approved disposable gateway after each run, including failed onboarding. Use a fresh gateway for a retry.
 
 Select one explicit target with `targets=hosted-inference-openai`, `hosted-inference-anthropic`,

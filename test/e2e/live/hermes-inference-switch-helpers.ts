@@ -106,6 +106,15 @@ export function mockAnthropicSwitchEnabled(runtimeEnv: NodeJS.ProcessEnv = proce
   );
 }
 
+export function useLocalHermesInferenceBaseline(
+  runtimeEnv: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    (runtimeEnv.NEMOCLAW_SWITCH_PROVIDER ?? SWITCH_PROVIDER) === PUBLIC_NVIDIA_SWITCH_PROVIDER ||
+    mockAnthropicSwitchEnabled(runtimeEnv)
+  );
+}
+
 export function expectAuthenticatedBaselineInventoryRequest(
   baseline: Pick<FakeOpenAiCompatibleServer, "requests"> | undefined,
 ): void {
@@ -762,12 +771,14 @@ export function expectedApiMode(): string | undefined {
 // This live lane runs on ubuntu-latest and intentionally uses GNU grep's
 // POSIX ERE character classes; support tests pin the accepted scalar shapes.
 export const API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("sk-[^"[:space:]]+"|'sk-[^'[:space:]]+'|sk-[^"'[:space:]]+)[[:space:]]*$`;
+const NVIDIA_REFERENCE =
+  "openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY";
+export const NVIDIA_API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("${NVIDIA_REFERENCE}"|'${NVIDIA_REFERENCE}'|${NVIDIA_REFERENCE})[[:space:]]*$`;
 
 export function apiKeyShapeCommand(provider: string = SWITCH_PROVIDER): string[] {
-  const nativeReference = String.raw`\$\{NVIDIA_INFERENCE_API_KEY\}`;
   const pattern =
     provider === PUBLIC_NVIDIA_SWITCH_PROVIDER
-      ? `^[[:space:]]*api_key:[[:space:]]*("${nativeReference}"|'${nativeReference}'|${nativeReference})[[:space:]]*$`
+      ? NVIDIA_API_KEY_SHAPE_PATTERN
       : API_KEY_SHAPE_PATTERN;
   return ["grep", "-Eq", pattern, "/sandbox/.hermes/config.yaml"];
 }
