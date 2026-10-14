@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_e2e::image_runtime::targets;
 use nemoclaw_e2e::openshell::Fixture;
-use nemoclaw_provider::openshell::{OpenShell, Secrets};
 use nemoclaw_sdk::{ObservationError, backend::Backend, compile::Generations, config::Document};
+use openshell_provider::{OpenShell, Secrets};
 use std::sync::Arc;
 struct Key(&'static str);
 impl Secrets for Key {

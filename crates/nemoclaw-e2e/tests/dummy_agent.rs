@@ -8,12 +8,12 @@
 //! not qualify a production adapter's health.
 
 use fabric_provider::AgentBridge as _;
-use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
 use nemoclaw_sdk::{
     CancellationToken, Deployment, OperationResult, Outcome,
     backend::Row,
     config::{ComputeDriver, Document, Gateway},
 };
+use openshell_provider::{EnvironmentSecrets, OpenShell};
 use serde_json::Value;
 use std::{fs, path::Path, process::Command, sync::Arc};
 

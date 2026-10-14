@@ -9,7 +9,6 @@ use k8s_openapi::api::{
     core::v1::{Namespace, PersistentVolumeClaim, Secret},
 };
 use kube::{Api, api::ListParams};
-use nemoclaw_provider::openshell::{OpenShell, Secrets};
 use nemoclaw_sdk::{
     ObservationError,
     bundle::Bundle,
@@ -20,6 +19,7 @@ use nemoclaw_sdk::{
         TOKEN_ENV, connect, operations::Operations, server,
     },
 };
+use openshell_provider::{OpenShell, Secrets};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{

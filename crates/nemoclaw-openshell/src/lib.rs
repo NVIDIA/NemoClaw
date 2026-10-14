@@ -15,6 +15,7 @@ pub mod policy;
 pub mod profile;
 pub mod runtime;
 pub mod search;
+mod wait;
 
 pub use capabilities::{GatewayCapabilities, OPENSHELL_VERSION};
 pub use connection::{
@@ -31,3 +32,4 @@ pub use lifecycle::{
 };
 pub use names::{NAME_PATTERN, valid_name};
 pub use observation::GatewayObservation;
+pub use wait::observe_with_wait;
