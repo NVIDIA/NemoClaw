@@ -35,7 +35,10 @@ import {
 } from "./llama-cpp-dgx-spark-qualification-contract.mts";
 import { runLlamaCppOpenClawAgentQualification } from "./llama-cpp-openclaw-agent-qualification.mts";
 import { resolveManagedImageLocalInferenceRoute } from "./managed-image-protected-runtime-contract.ts";
-import { runManagedImageOpenShellE2e } from "./run-managed-image-openshell-e2e.ts";
+import {
+  runManagedImageOpenShellE2e,
+  cleanupInterruptedManagedImageOpenShellE2e,
+} from "./run-managed-image-openshell-e2e.ts";
 
 export {
   startQualificationLoopbackRelay,
@@ -736,7 +739,14 @@ function runtimeNames(
 async function cleanupOwnedRuntime(
   names: RuntimeNames,
   loopbackPort?: number,
+  managedPlan?: { source: string; digest: string },
 ): Promise<CleanupEvidence> {
+  let managedRecoveryFailure: unknown;
+  try {
+    await cleanupInterruptedManagedAgent(names, managedPlan);
+  } catch (error) {
+    managedRecoveryFailure = error;
+  }
   const registryWasOwned = dockerContainerOwner(names.registryName) === names.registryOwner;
   for (const name of [names.containerName, names.registryName]) {
     const owner = dockerContainerOwner(name);
@@ -752,6 +762,10 @@ async function cleanupOwnedRuntime(
   if (networkOwner === names.registryOwner)
     runCommand("docker", ["network", "rm", names.networkName]);
   const keyFile = path.join(names.tempRoot, "api-key");
+  if (managedRecoveryFailure) {
+    fs.rmSync(keyFile, { force: true });
+    throw managedRecoveryFailure;
+  }
   fs.rmSync(names.tempRoot, { force: true, recursive: true });
   const evidence = {
     containerRemoved: dockerContainerOwner(names.containerName) === null,
@@ -765,6 +779,33 @@ async function cleanupOwnedRuntime(
   if (Object.values(evidence).includes(false))
     throw new Error("qualification cleanup is incomplete");
   return evidence;
+}
+
+async function cleanupInterruptedManagedAgent(
+  names: RuntimeNames,
+  boundPlan?: { source: string; digest: string },
+): Promise<void> {
+  const stateDir = path.join(names.tempRoot, "managed-openshell");
+  if (!fs.existsSync(stateDir)) return;
+  if (!boundPlan) throw new Error("managed recovery requires a bound qualification plan");
+  const plan = validateQualificationPlan(boundPlan.source, boundPlan.digest);
+  const agent = plan.qualification.agentQualification;
+  if (agent.execution !== "enabled")
+    throw new Error("managed recovery requires enabled qualification");
+  await cleanupInterruptedManagedImageOpenShellE2e(
+    {
+      agent: agent.agent,
+      image: agent.image.reference,
+      localProvider: "llama-cpp",
+      model: plan.recipe.model.servedName,
+      sandbox: agent.sandbox.name,
+    },
+    {
+      owner: names.registryOwner,
+      stateDir,
+      networkName: `nemoclaw-managed-${names.registryOwner}`,
+    },
+  );
 }
 
 async function removeOwnedRegistry(names: RuntimeNames): Promise<void> {
@@ -1172,6 +1213,11 @@ async function runQualificationCore(
             sandbox: agentPlan.sandbox.name,
           },
           (context) => runLlamaCppOpenClawAgentQualification(agentPlan, context),
+          {
+            owner: names.registryOwner,
+            stateDir: path.join(names.tempRoot, "managed-openshell"),
+            networkName: `nemoclaw-managed-${names.registryOwner}`,
+          },
         );
         if (!managedResult.probeEvidence) {
           throw new Error("OpenClaw qualification did not return bounded evidence");
@@ -1252,7 +1298,10 @@ async function runQualificationCore(
       failure ??= cleanupError;
     }
     try {
-      cleanupEvidence = await cleanupOwnedRuntime(names, loopbackPort);
+      cleanupEvidence = await cleanupOwnedRuntime(names, loopbackPort, {
+        source: planSource,
+        digest: invocation.planSha256,
+      });
       // Agent failure may include an unproven managed-gateway cleanup.
       progress.cleanupComplete = failurePhase !== "agent";
     } catch (cleanupError) {
@@ -1281,7 +1330,10 @@ async function main(): Promise<void> {
   if (invocation.cleanupOnly) {
     const names = runtimeNames(invocation, process.env);
     try {
-      await cleanupOwnedRuntime(names);
+      await cleanupOwnedRuntime(names, undefined, {
+        source: process.env.QUALIFICATION_PLAN ?? "",
+        digest: process.env.PLAN_SHA256 ?? "",
+      });
     } catch (error) {
       throw new QualificationFailureError(
         createLlamaCppDgxSparkFailureDiagnostic(
@@ -1384,7 +1436,10 @@ export async function runQualificationLauncher(): Promise<void> {
     const names = runtimeNames(invocation, process.env);
     try {
       if (workerStopFailed) throw new Error("worker termination is unproven");
-      await cleanupOwnedRuntime(names);
+      const source = fs.existsSync(path.join(names.tempRoot, "managed-openshell"))
+        ? readBoundedRegularFile(invocation.planFile, maximumPlanBytes)
+        : "";
+      await cleanupOwnedRuntime(names, undefined, { source, digest: invocation.planSha256 });
     } catch {
       process.stderr.write(
         "ERROR: Interrupted Spark cleanup is incomplete; inspect owned resources.\n",

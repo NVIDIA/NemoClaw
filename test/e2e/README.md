@@ -110,6 +110,10 @@ The launcher handles SIGINT and SIGTERM independently of synchronous worker comm
 It stops the worker process group before current-owner cleanup and records an interrupted
 failure, not a successful qualification. SIGKILL, host loss, or unavailable Docker can
 prevent cleanup; operators must inspect the recorded run's resources in those cases.
+Managed agent recovery uses an exact run-bound owner marker, isolated gateway state,
+and run-owned volume labels. Ordinary failure, interruption, and fallback cleanup share
+that recovery path. Foreign resources are preserved; unproven recovery retains its
+ownership evidence and still fails qualification.
 
 ### Candidate CLI Artifact
 

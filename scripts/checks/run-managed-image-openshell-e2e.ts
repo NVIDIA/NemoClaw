@@ -99,6 +99,169 @@ export type ManagedImageOpenShellE2eInputs = {
   failureInjection?: "bootstrap-completion";
 };
 
+export type ManagedImageOpenShellRecoveryScope = {
+  readonly owner: string;
+  readonly stateDir: string;
+  readonly networkName: string;
+};
+
+function recoveryIdentity(input: Inputs, scope: ManagedImageOpenShellRecoveryScope): string {
+  if (
+    !/^llama-cpp-dgx-spark-[1-9][0-9]*-[1-9][0-9]*$/u.test(scope.owner) ||
+    scope.networkName !== `nemoclaw-managed-${scope.owner}` ||
+    !path.isAbsolute(scope.stateDir) ||
+    path.basename(scope.stateDir) !== "managed-openshell" ||
+    path.basename(path.dirname(scope.stateDir)) !== scope.owner ||
+    fs.realpathSync(path.dirname(scope.stateDir)) !== path.dirname(scope.stateDir)
+  )
+    throw new Error("invalid managed qualification recovery scope");
+  return JSON.stringify({
+    kind: "managed-qualification-owner-v1",
+    input: {
+      agent: input.agent,
+      image: input.image,
+      sandbox: input.sandbox,
+      localProvider: input.localProvider,
+      model: input.model,
+      gpu: input.gpu,
+    },
+    scope,
+  });
+}
+
+export function prepareManagedImageOpenShellState(
+  input: Inputs,
+  scope?: ManagedImageOpenShellRecoveryScope,
+): { stateDir: string; networkName: string } {
+  if (!scope)
+    return {
+      stateDir: fs.mkdtempSync(
+        path.join(process.env.RUNNER_TEMP || os.tmpdir(), "nemoclaw-managed-openshell-"),
+      ),
+      networkName: `nemoclaw-managed-pr-${process.pid}-${Date.now().toString(36)}`,
+    };
+  const marker = recoveryIdentity(input, scope);
+  fs.mkdirSync(scope.stateDir, { mode: 0o700 });
+  fs.writeFileSync(path.join(scope.stateDir, "qualification-owner.json"), marker, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  return { stateDir: scope.stateDir, networkName: scope.networkName };
+}
+
+export async function cleanupInterruptedManagedImageOpenShellE2e(
+  input: Inputs,
+  scope: ManagedImageOpenShellRecoveryScope,
+): Promise<void> {
+  const expected = recoveryIdentity(input, scope);
+  if (!fs.existsSync(scope.stateDir)) return;
+  const state = fs.lstatSync(scope.stateDir);
+  if (
+    !state.isDirectory() ||
+    state.isSymbolicLink() ||
+    fs.realpathSync(scope.stateDir) !== scope.stateDir
+  )
+    throw new Error("managed recovery state directory is not owned");
+  const markerPath = path.join(scope.stateDir, "qualification-owner.json");
+  const markerStatus = fs.lstatSync(markerPath);
+  if (!markerStatus.isFile() || markerStatus.isSymbolicLink())
+    throw new Error("managed recovery identity must be a regular file");
+  const descriptor = fs.openSync(
+    markerPath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+  );
+  try {
+    const marker = fs.fstatSync(descriptor);
+    if (!marker.isFile() || marker.size > 8192 || fs.readFileSync(descriptor, "utf8") !== expected)
+      throw new Error("managed recovery identity mismatch");
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  const previousEnvironment = { ...process.env };
+  Object.assign(process.env, {
+    NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: scope.stateDir,
+    NEMOCLAW_GATEWAY_PORT: String(GATEWAY_PORT),
+    OPENSHELL_DOCKER_NETWORK_NAME: scope.networkName,
+    XDG_CONFIG_HOME: path.join(scope.stateDir, "xdg-config"),
+    XDG_DATA_HOME: path.join(scope.stateDir, "xdg-data"),
+    XDG_STATE_HOME: path.join(scope.stateDir, "xdg-state"),
+    PATH: `${path.join(os.homedir(), ".local", "bin")}:${process.env.PATH ?? ""}`,
+  });
+  try {
+    const onboard = resolveManagedImageOnboardModule(await import("../../src/lib/onboard.ts"));
+    commandResult(onboard.openshellArgv(["sandbox", "delete", input.sandbox]), process.env, 15000);
+    const gatewayStop = stopHostGatewayProcesses(
+      {},
+      {
+        clearRuntimeFiles: false,
+        openShellGatewayName: GATEWAY_NAME,
+        openShellGatewayPort: GATEWAY_PORT,
+        scopedGatewayStop: true,
+        stateDir: scope.stateDir,
+        usePgrepFallback: false,
+      },
+    );
+    if (gatewayStop.failed.length || gatewayStop.ownershipFailures?.length)
+      throw new Error("managed recovery gateway ownership or termination is unproven");
+    const removeGateway = commandResult(
+      onboard.openshellArgv(["gateway", "remove", GATEWAY_NAME]),
+      process.env,
+      15000,
+    );
+    if (removeGateway.status !== 0) throw new Error("managed recovery gateway removal failed");
+    const containers = exactHarnessContainerIds(input, scope.networkName, process.env);
+    if (containers.exactIds.length > 1)
+      throw new Error("managed recovery container identity is ambiguous");
+    if (containers.exactIds.length === 1) {
+      commandResult(["docker", "rm", "--force", containers.exactIds[0]!], process.env, 15000);
+      if (exactHarnessContainerIds(input, scope.networkName, process.env).exactIds.length !== 0)
+        throw new Error("managed recovery container cleanup is unproven");
+    }
+    const provider = createDockerRuntimeProviderBundle();
+    const roots = qualificationManagedStateRoots(
+      onboard.managedWorkloadOnboard.managedStartupStateRoots({
+        agent: input.agent,
+        sandboxName: input.sandbox,
+        agentIdentity: managedImageRuntimeIdentity(input.agent),
+      }),
+      scope.owner,
+    );
+    const failures = cleanupProtectedManagedStateVolumes({
+      onboard,
+      runtimeProvider: provider,
+      roots,
+      scope: null,
+      committed: true,
+    });
+    if (failures.length) throw new Error("managed recovery volume cleanup is unproven");
+    commandResult(["docker", "network", "rm", scope.networkName], process.env, 15000);
+    const network = commandResult(
+      ["docker", "network", "inspect", scope.networkName],
+      process.env,
+      15000,
+    );
+    const escapedNetwork = scope.networkName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const absentNetwork = new RegExp(
+      `^(?:Error(?: response from daemon)?:\\s*)?(?:No such (?:network|object): ${escapedNetwork}|network ${escapedNetwork} not found)$`,
+      "iu",
+    );
+    if (
+      network.error ||
+      network.status !== 1 ||
+      !absentNetwork.test(String(network.stderr ?? "").trim())
+    )
+      throw new Error("managed recovery network cleanup is unproven");
+    if (!removeManagedImageGatewayStateIfSafe(scope.stateDir, gatewayStop, removeGateway.status))
+      throw new Error("managed recovery state removal is unproven");
+  } finally {
+    for (const key of Object.keys(process.env)) {
+      if (!Object.hasOwn(previousEnvironment, key)) delete process.env[key];
+    }
+    Object.assign(process.env, previousEnvironment);
+  }
+}
+
 export type ManagedImageOpenShellE2eProbeResult = {
   readonly status: number | null;
   readonly stdout: string;
@@ -140,6 +303,21 @@ type ProtectedManagedStateRoot = {
   readonly mode: number;
   readonly readWrite: boolean;
 };
+
+function qualificationManagedStateRoots(
+  roots: readonly ProtectedManagedStateRoot[],
+  owner?: string,
+): readonly ProtectedManagedStateRoot[] {
+  return owner
+    ? roots.map((root) => ({
+        ...root,
+        ownershipLabels: {
+          ...root.ownershipLabels,
+          "io.nvidia.nemoclaw.qualification-owner": owner,
+        },
+      }))
+    : roots;
+}
 
 type ProtectedManagedStateVolumeMount = {
   readonly type: "volume";
@@ -1059,10 +1237,9 @@ function resolveLocalImageContentId(
 async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = never>(
   input: Inputs,
   afterLocalInference?: (context: ManagedImageOpenShellE2eProbeContext) => Promise<T> | T,
+  recoveryScope?: ManagedImageOpenShellRecoveryScope,
 ): Promise<ManagedImageOpenShellE2eResult<T>> {
-  const stateParent = process.env.RUNNER_TEMP || os.tmpdir();
-  const stateDir = fs.mkdtempSync(path.join(stateParent, "nemoclaw-managed-openshell-"));
-  const networkName = `nemoclaw-managed-pr-${process.pid}-${Date.now().toString(36)}`;
+  const { stateDir, networkName } = prepareManagedImageOpenShellState(input, recoveryScope);
   const previousEnvironment = Object.fromEntries(
     MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS.map((key) => [key, process.env[key]]),
   ) as Record<(typeof MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS)[number], string | undefined>;
@@ -1142,11 +1319,14 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     const selectedRuntimeProvider = createDockerRuntimeProviderBundle();
     runtimeProvider = selectedRuntimeProvider;
     const agentIdentity = managedImageRuntimeIdentity(input.agent);
-    managedStateRoots = onboard.managedWorkloadOnboard.managedStartupStateRoots({
-      agent: input.agent,
-      sandboxName: input.sandbox,
-      agentIdentity,
-    });
+    managedStateRoots = qualificationManagedStateRoots(
+      onboard.managedWorkloadOnboard.managedStartupStateRoots({
+        agent: input.agent,
+        sandboxName: input.sandbox,
+        agentIdentity,
+      }),
+      recoveryScope?.owner,
+    );
     managedStateVolumeScope = onboard.managedWorkloadOnboard.prepareManagedStateVolumes(
       { roots: managedStateRoots },
       { runtimeProvider: selectedRuntimeProvider },

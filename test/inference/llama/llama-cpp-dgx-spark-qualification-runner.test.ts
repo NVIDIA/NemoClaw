@@ -137,7 +137,9 @@ it("retains a phase-specific failure without leaking exception data", async () =
   }
 });
 
-it.each(["SIGINT", "SIGTERM"] as const)(
+it
+  .runIf(process.platform === "linux" && process.arch === "arm64")
+  .each(["SIGINT", "SIGTERM"] as const)(
   "interrupts a real synchronous worker command with %s and retains only failure evidence",
   async (signal) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-signal-process-"));
