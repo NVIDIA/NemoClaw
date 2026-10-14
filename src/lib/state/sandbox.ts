@@ -1606,12 +1606,14 @@ function scanNativeTarFilePayload(
   providerProfileSchema: boolean,
   privateKeyHeader: boolean,
   dependencyBinary: boolean,
-): boolean | null {
+  deadlineMs: number | undefined,
+): boolean | null | "deadline" {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
   let remaining = size;
   let offset = position;
   let overlap = "";
   while (remaining > 0) {
+    if (backupDeadlineExpired(deadlineMs)) return "deadline";
     const requested = Math.min(remaining, chunk.byteLength);
     const count = readSync(descriptor, chunk, 0, requested, offset);
     if (count === 0) return null;
@@ -1644,7 +1646,12 @@ function scanNativeTarFilePayload(
   return false;
 }
 
-function nativeArchiveRawCredentialViolation(archivePath: string): string | null {
+type NativeArchiveCredentialViolation = string | { entry: string; deadlineExpired: true } | null;
+
+function nativeArchiveRawCredentialViolation(
+  archivePath: string,
+  deadlineMs: number | undefined,
+): NativeArchiveCredentialViolation {
   let descriptor: number | null = null;
   try {
     descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -1688,9 +1695,11 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
         nextPath = null;
         if (type === "0" || type === "\0" || type === "7") {
           const fileName = path.posix.basename(entry).toLowerCase();
+          const dcodeSessionsDatabaseRole = dcodeSessionsDatabaseEntryRole(entry);
+          // SQLite inspection of the main database does not cover unused sidecar bytes.
           if (
             !shouldSkipNativeRawCredentialScan(fileName) &&
-            dcodeSessionsDatabaseEntryRole(entry) === null
+            dcodeSessionsDatabaseRole !== "database"
           ) {
             // Dependency source is not a credential authority and generated
             // bundles can contain accidental token-shaped bytes. Package
@@ -1701,12 +1710,15 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
               descriptor,
               dataOffset,
               size,
-              shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+              dcodeSessionsDatabaseRole === "sidecar" ||
+                shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
               fileName === ".npmrc",
               providerProfileSchema,
               !dependencyTree,
               dependencyTree,
+              deadlineMs,
             );
+            if (violation === "deadline") return { entry, deadlineExpired: true };
             if (violation === null) return "native state credential scan";
             if (violation) return entry;
           }
@@ -1725,8 +1737,9 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
 function nativeArchiveCredentialViolation(
   archivePath: string,
   entries: readonly string[],
-): string | null {
-  const rawViolation = nativeArchiveRawCredentialViolation(archivePath);
+  deadlineMs: number | undefined,
+): NativeArchiveCredentialViolation {
+  const rawViolation = nativeArchiveRawCredentialViolation(archivePath, deadlineMs);
   if (rawViolation) return rawViolation;
   const candidates: Array<{
     entry: string;
@@ -2413,7 +2426,16 @@ function backupNativeSandboxState(
     // Reject sparse encodings with the bounded raw parser before invoking the
     // platform tar. GNU tar and bsdtar diagnose malformed or unsupported sparse
     // fixtures differently, but the security boundary must be deterministic.
-    const rawArchiveViolation = nativeArchiveRawCredentialViolation(archivePath);
+    const rawArchiveViolation = nativeArchiveRawCredentialViolation(
+      archivePath,
+      options.deadlineMs,
+    );
+    if (rawArchiveViolation && typeof rawArchiveViolation !== "string") {
+      rmSync(backupPath, { recursive: true, force: true });
+      return nativeStateFailure(
+        `Native archive credential scan exceeded the backup deadline at '${rawArchiveViolation.entry}'`,
+      );
+    }
     if (rawArchiveViolation === "native state sparse archive entry") {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(`Native state archive validation failed: ${rawArchiveViolation}`);
@@ -2451,9 +2473,18 @@ function backupNativeSandboxState(
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(`Native state archive sanitation failed: ${sanitationFailure}`);
     }
-    const credentialViolation = nativeArchiveCredentialViolation(archivePath, validation.entries);
+    const credentialViolation = nativeArchiveCredentialViolation(
+      archivePath,
+      validation.entries,
+      options.deadlineMs,
+    );
     if (credentialViolation) {
       rmSync(backupPath, { recursive: true, force: true });
+      if (typeof credentialViolation !== "string") {
+        return nativeStateFailure(
+          `Native archive credential scan exceeded the backup deadline at '${credentialViolation.entry}'`,
+        );
+      }
       return nativeStateFailure(
         `Rebuild was aborted because the native state archive contains credential-bearing or uninspectable content at '${credentialViolation}'. Move credentials to supported OpenShell credential storage and retry.`,
       );
