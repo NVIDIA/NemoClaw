@@ -159,6 +159,52 @@ pub fn compose(row: &Row) -> Result<Value, String> {
     Ok(config)
 }
 
+/// The derived attribute holding the digest of the document an agent applies.
+pub const CONFIG_SHA256: &str = "config_sha256";
+
+/// The inputs an agent's document depends on.
+fn document_fields() -> impl Iterator<Item = &'static str> {
+    [NAME, DESCRIPTION, ADAPTER_ID, SETTINGS.1]
+        .into_iter()
+        .chain(SECTIONS.map(|(_, field)| field))
+}
+
+/// `sha256:<hex>` over a document's JSON with object keys sorted, so equal
+/// documents have equal digests whatever their key order.
+pub fn digest(config: &Value) -> String {
+    use sha2::{Digest, Sha256};
+    fn sorted(value: &Value) -> Value {
+        match value {
+            Value::Object(object) => Value::Object(
+                object
+                    .iter()
+                    .map(|(key, value)| (key.clone(), sorted(value)))
+                    .collect::<std::collections::BTreeMap<_, _>>()
+                    .into_iter()
+                    .collect(),
+            ),
+            Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
+            other => other.clone(),
+        }
+    }
+    let canonical = serde_json::to_string(&sorted(config)).expect("JSON serializes");
+    let hash = Sha256::digest(canonical.as_bytes());
+    format!(
+        "sha256:{}",
+        hash.iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    )
+}
+
+/// The digest of an agent's document, once the inputs it needs are known.
+pub fn config_digest(known: &Row, unknown: &[&str]) -> Option<String> {
+    if document_fields().any(|field| unknown.contains(&field)) {
+        return None;
+    }
+    compose(known).ok().map(|config| digest(&config))
+}
+
 /// The row fields a Fabric configuration document sets; every typed input is
 /// present, empty when the document omits it.
 pub fn decompose(config: &Value) -> Row {
@@ -419,6 +465,37 @@ mod tests {
             row.insert(input.field.into(), input.row_value(typed).unwrap().unwrap());
         }
         assert_eq!(compose(&row).unwrap(), config);
+    }
+
+    /// The digest identifies a document's content, whatever its key order.
+    #[test]
+    fn a_digest_identifies_a_document_regardless_of_key_order() {
+        let config = document();
+        let reordered: Value =
+            serde_json::from_str(r#"{"tools":{"enabled":["bash"]},"runtime":{"timeout_seconds":600,"artifacts":"/sandbox/artifacts"},"models":{"default":{"base_url":"https://inference.local/v1","model":"nemotron","provider":"openai"}},"metadata":{"description":"Plans trips.","name":"travel"},"instructions":{"system":{"mode":"replace","content":"Be brief."}},"harness":{"settings":{"budget":4},"adapter_id":"nvidia.fabric.pi"},"schema_version":"fabric.agent/v1alpha1"}"#)
+                .unwrap();
+        assert_eq!(digest(&reordered), digest(&config));
+        assert!(digest(&config).starts_with("sha256:"));
+        assert_eq!(digest(&config).len(), "sha256:".len() + 64);
+        let mut changed = config.clone();
+        changed["tools"]["enabled"] = json!(["read"]);
+        assert_ne!(digest(&changed), digest(&config));
+    }
+
+    /// An agent's digest is known once the inputs its document needs are.
+    #[test]
+    fn the_configuration_digest_waits_for_the_document_inputs() {
+        let row = decompose(&document());
+        assert_eq!(
+            config_digest(&row, &[]),
+            Some(digest(&compose(&row).unwrap()))
+        );
+        assert_eq!(
+            config_digest(&row, &["sandbox_id"]),
+            config_digest(&row, &[])
+        );
+        assert_eq!(config_digest(&row, &["models_json"]), None);
+        assert_eq!(config_digest(&row, &[NAME]), None);
     }
 
     #[test]

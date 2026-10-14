@@ -113,14 +113,10 @@ fn every_fabric_type_has_a_contract_test() {
         sources += &fs::read_to_string(entry.unwrap().path()).unwrap();
     }
     sources += include_str!("capabilities.rs");
-    let used: BTreeSet<&str> = [
-        "fabric_agent",
-        "fabric_sandbox_readiness",
-        "fabric_harnesses",
-    ]
-    .into_iter()
-    .filter(|kind| sources.contains(&format!("\"{kind}\"")))
-    .collect();
+    let used: BTreeSet<&str> = ["fabric_agent", "fabric_agent_readiness", "fabric_harnesses"]
+        .into_iter()
+        .filter(|kind| sources.contains(&format!("\"{kind}\"")))
+        .collect();
     assert_eq!(used.len(), 3, "types with a contract test: {used:?}");
 }
 

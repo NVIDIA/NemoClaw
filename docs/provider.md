@@ -141,11 +141,11 @@ resource "openshell_sandbox" "assistant" {
 | Type | Manages or observes |
 |---|---|
 | `fabric_agent` | The [agent a sandbox launches](#fabric-agents) and its Fabric configuration |
-| `fabric_sandbox_readiness` data source | [Sandbox completion](#sandbox-completion) |
+| `fabric_agent_readiness` data source | [Sandbox completion](#sandbox-completion) |
 | `fabric_harnesses` data source | [Fabric image catalog and compatibility](#engine-and-fabric-discovery) |
 | `fabric_harness` data source | One harness in an image, selected by `adapter_id`: the `launch_json` that starts it for `agent_name`, and a `ref` naming the harness (`type`, `adapter_id`, `image`, and `catalog_json`, the image catalog's records for the adapter); fails when the image installs no runtime for the adapter |
 
-The `fabric` provider also takes only `destroy`; `fabric_agent` and `fabric_sandbox_readiness` take the same `gateway` ref as the sandbox they configure.
+The `fabric` provider also takes only `destroy`; `fabric_agent` and `fabric_agent_readiness` take the same `gateway` ref as the sandbox they configure.
 It also accepts `destroy`, but no Fabric type requires it: removing an agent releases its binding without changing the sandbox.
 It reaches each sandbox's Fabric host by running commands in the sandbox through the gateway; `fabric_harnesses` instead reads the container engine named on it.
 
@@ -190,6 +190,9 @@ It also rejects one the harness does not accept, using the catalog records in th
 Once the sandbox is known, planning refuses a `name` or harness other than the agent and harness the sandbox launches.
 Changing the sandbox, harness, or `name` replaces the agent; any other change reconfigures it through the sandbox's Fabric host without replacing the sandbox.
 Removing the resource releases its binding without changing the sandbox.
+
+`fabric_agent` exports a `ref` with its sandbox's `workspace`, `sandbox` name, `sandbox_id`, `owner`, and `generation`, its own `name`, and `config_sha256`.
+`config_sha256` is `sha256:<hex>` over the composed document's JSON with object keys sorted; it is known while planning once the agent's inputs are.
 
 ### NemoClaw Resources
 
@@ -593,9 +596,10 @@ See [runtime ownership](design/runtime.md) and [recovery](models.md#diagnose-and
 
 ## Sandbox Completion
 
-The OpenShell graph uses `fabric_sandbox_readiness` after sandbox creation and any runtime configuration resource.
-It requires the sandbox's `workspace` (its ref's `workspace`), `name`, `id`, `owner`, `generation`, and `launch_json`, and the agent configuration's `config_json`.
-The provider checks that the sandbox still has that identity and agent runtime, waits for startup, and confirms the host applied that configuration before requesting the packaged bridge's health response.
+The OpenShell graph uses `fabric_agent_readiness` after sandbox creation and any runtime configuration resource.
+It takes `agent = fabric_agent.<name>.ref` and the same `gateway` ref.
+The agent's ref carries its sandbox's identity, the agent's `name`, and `config_sha256`, the digest of the document its inputs compose.
+The provider checks that the sandbox still has that identity and launches that agent, waits for startup, and confirms the host applied a document with that digest before requesting the packaged bridge's health response.
 It does not invoke an agent or model.
 The optional string `read_trigger` uses `uuid()` in generated graphs, making the read unknown during planning and recording a fresh token on every apply.
 

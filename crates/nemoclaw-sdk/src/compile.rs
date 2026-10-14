@@ -691,60 +691,28 @@ fn compile_with_plans(
         "condition":"${self.compatible}",
         "error_message":gateway_error_message("self")
     }]});
-    let sandbox_readiness = document
+    let agent_readiness: BTreeMap<_, _> = document
         .spec
         .sandboxes
         .iter()
-        .map(|sandbox| -> Result<(String, Value), ConfigError> {
-            // Readiness names the sandbox and configuration attributes it reads.
-            let mut readiness: serde_json::Map<String, Value> = [
-                "workspace",
-                "name",
-                "id",
-                "owner",
-                "generation",
-                "launch_json",
-            ]
-            .into_iter()
-            .map(|name| {
-                // The sandbox takes its workspace as a ref; its own ref
-                // carries the workspace name.
-                let attribute = if name == "workspace" { "ref.workspace" } else { name };
-                (
-                    name.to_owned(),
-                    json!(format!("${{openshell_sandbox.{}.{attribute}}}", sandbox.name)),
-                )
-            })
-            .collect();
-            readiness.insert("gateway".into(), json!(gateway_ref_expression()));
-            // The document the agent's inputs compose, read once it applies.
-            let config = crate::fabric_config::for_sandbox(document, sandbox)?;
-            let mut applied = json!(
-                nemoclaw_fabric::agent::compose(&nemoclaw_fabric::agent::decompose(&config))
-                    .map_err(|_| ConfigError::new("invalid public Fabric configuration"))?
-                    .to_string()
-            );
-            crate::docker_compute::literal(&mut applied);
-            readiness.insert("config_json".into(), applied);
-            readiness.insert(
-                "depends_on".into(),
-                json!([format!("{}.{}", nemoclaw_fabric::agent::RESOURCE_TYPE, sandbox.name)]),
-            );
-            // uuid() is unknown in a saved plan and records a unique observation
-            // token, so failed applies cannot report stale health as a new result.
-            readiness.insert("read_trigger".into(), json!("${uuid()}"));
-            readiness.insert(
-                "lifecycle".into(),
-                json!({"postcondition":[{
+        .map(|sandbox| {
+            // The agent's ref names its sandbox and the document it applied.
+            let readiness = json!({
+                "gateway": gateway_ref_expression(),
+                "agent": format!("${{{}.{}.ref}}", nemoclaw_fabric::agent::RESOURCE_TYPE, sandbox.name),
+                // uuid() is unknown in a saved plan and records a unique observation
+                // token, so failed applies cannot report stale health as a new result.
+                "read_trigger": "${uuid()}",
+                "lifecycle": {"postcondition":[{
                     "condition":"${self.ready}",
                     "error_message":"${self.error_message != null ? self.error_message : \"Fabric readiness could not be established; resources retained\"}"
-                }]}),
-            );
-            Ok((sandbox.name.clone(), Value::Object(readiness)))
+                }]},
+            });
+            (sandbox.name.clone(), readiness)
         })
-        .collect::<Result<BTreeMap<_, _>, _>>()?;
+        .collect();
     graph["resource"] = resources;
-    graph["data"]["fabric_sandbox_readiness"] = json!(sandbox_readiness);
+    graph["data"]["fabric_agent_readiness"] = json!(agent_readiness);
     graph["data"]["openshell_gateway"]["apply"] = apply_readiness;
     Ok(graph)
 }

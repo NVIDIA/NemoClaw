@@ -3,7 +3,7 @@
 //! The `fabric` provider's configuration, resources, and data sources.
 
 use crate::{
-    AgentBackend, FabricCapabilitiesDataSource, FabricHarnessDataSource, SandboxReadinessDataSource,
+    AgentBackend, AgentReadinessDataSource, FabricCapabilitiesDataSource, FabricHarnessDataSource,
 };
 use async_trait::async_trait;
 use nemoclaw_backend::{Backend, Error, Mutation, ObservationError, Row};
@@ -124,8 +124,8 @@ impl Provider for FabricProvider {
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
         Some(HashMap::from([
             (
-                "sandbox_readiness".into(),
-                Box::new(SandboxReadinessDataSource(self.client.clone()))
+                "agent_readiness".into(),
+                Box::new(AgentReadinessDataSource(self.client.clone()))
                     as Box<dyn DynamicDataSource>,
             ),
             (

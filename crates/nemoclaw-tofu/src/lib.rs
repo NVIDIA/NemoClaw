@@ -28,6 +28,10 @@ pub type ValidateAttribute =
 pub type ValidateInputs =
     fn(known: &Row, unknown: &[&str]) -> Result<(), std::borrow::Cow<'static, str>>;
 
+/// Computes an attribute from the known inputs, given the names of those still
+/// unknown; `None` while the inputs it needs are unknown.
+pub type Derive = fn(known: &Row, unknown: &[&str]) -> Option<String>;
+
 /// Generates a value for an omitted identity attribute when a resource is created.
 pub type Generate = fn() -> Result<String, nemoclaw_backend::Error>;
 
@@ -75,6 +79,8 @@ pub struct Definition {
     pub validate_spec: Option<ValidateSpec>,
     pub validate_attribute: Option<ValidateAttribute>,
     pub validate_inputs: Option<ValidateInputs>,
+    /// Computed attributes that are functions of the inputs.
+    pub derived: Vec<(&'static str, Derive)>,
     pub describe: Option<Describe>,
     /// Typed inputs carried as JSON in row fields.
     pub structured: Vec<crate::Structured>,
@@ -107,6 +113,7 @@ impl Definition {
             validate_spec: None,
             validate_attribute: None,
             validate_inputs: None,
+            derived: Vec::new(),
             describe: None,
             structured: Vec::new(),
             export: None,
@@ -161,6 +168,13 @@ impl Definition {
     }
     pub fn validate_inputs(mut self, validate: ValidateInputs) -> Self {
         self.validate_inputs = Some(validate);
+        self
+    }
+    /// Compute `name` from the inputs: known while planning once the inputs
+    /// it needs are, and recomputed from every observation.
+    pub fn derived(mut self, name: &'static str, derive: Derive) -> Self {
+        self.computed.push((name, carry_prior));
+        self.derived.push((name, derive));
         self
     }
     /// Expose row `field`, which holds JSON, as the typed input `attribute`.

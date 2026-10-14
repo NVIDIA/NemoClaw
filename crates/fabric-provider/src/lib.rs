@@ -4,6 +4,7 @@
 //! sandboxes, reached through the sandbox's Fabric host.
 
 mod agent;
+mod agent_readiness;
 mod bridge;
 mod capabilities;
 mod configuration;
@@ -12,9 +13,9 @@ mod fake_gateway_tests;
 #[cfg(all(test, unix))]
 mod fixture;
 mod provider;
-mod sandbox_readiness;
 
 pub use agent::{AgentBackend, definitions};
+pub use agent_readiness::{AgentReadinessDataSource, AgentReadinessState};
 pub use bridge::{AgentBridge, AgentSnapshot};
 pub use capabilities::{
     FabricCapabilitiesDataSource, FabricCapabilitiesState, FabricHarnessDataSource,
@@ -22,4 +23,3 @@ pub use capabilities::{
 };
 pub use configuration::fabric_binding;
 pub use provider::FabricProvider;
-pub use sandbox_readiness::{SandboxReadinessDataSource, SandboxReadinessState};

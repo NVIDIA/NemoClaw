@@ -5,8 +5,8 @@
 use crate::configuration;
 use nemoclaw_backend::{Backend, Error, Mutation, ObservationError, Row};
 use nemoclaw_fabric::agent::{
-    self, ADAPTER_ID, DESCRIPTION, HARNESS_CATALOG, HARNESS_IMAGE, NAME, SANDBOX, SECTIONS,
-    SETTINGS,
+    self, ADAPTER_ID, CONFIG_SHA256, DESCRIPTION, HARNESS_CATALOG, HARNESS_IMAGE, NAME, SANDBOX,
+    SECTIONS, SETTINGS,
 };
 use openshell_provider::OpenShell;
 use std::borrow::Cow;
@@ -144,6 +144,20 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 1] {
         .optional(&optional)
         .computed("running", rerun_when_stopped)
         .validate_inputs(validate)
+        // Readiness compares the applied document with this digest.
+        .derived(CONFIG_SHA256, agent::config_digest)
+        .exports(
+            agent::RESOURCE_TYPE,
+            &[
+                "workspace",
+                SANDBOX,
+                "sandbox_id",
+                "owner",
+                "generation",
+                NAME,
+                CONFIG_SHA256,
+            ],
+        )
         // The backend reaches the sandbox through these and observes only
         // the configuration document.
         .carried(&gateway)

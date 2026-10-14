@@ -225,7 +225,7 @@ pub(crate) fn resource_label(address: &str) -> String {
                 ),
                 ("docker_volume.inference_storage_inference_", "model cache/"),
                 ("openshell_sandbox.", "sandbox/"),
-                ("data.fabric_sandbox_readiness.", "sandbox readiness/"),
+                ("data.fabric_agent_readiness.", "sandbox readiness/"),
                 ("openshell_provider_registration.inference_", "provider/"),
                 ("openshell_provider_profile.inference_", "provider profile/"),
                 ("docker_image.", "image binding/"),

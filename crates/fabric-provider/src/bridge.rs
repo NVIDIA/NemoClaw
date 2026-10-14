@@ -329,10 +329,13 @@ impl AgentBridge for OpenShell {
 
     async fn configuration(&self, binding: &Row) -> Result<(), Error> {
         let snapshot = self.agent_snapshot(binding).await?;
-        let desired: Value = serde_json::from_str(value(binding, "config_json"))
-            .map_err(|_| ObservationError::Query)?;
-        if snapshot.runtime_state != "running" || snapshot.applied_config.as_ref() != Some(&desired)
-        {
+        // The agent applied the document whose digest its ref carries.
+        let desired = value(binding, nemoclaw_fabric::agent::CONFIG_SHA256);
+        let applied = snapshot
+            .applied_config
+            .as_ref()
+            .map(nemoclaw_fabric::agent::digest);
+        if snapshot.runtime_state != "running" || applied.as_deref() != Some(desired) {
             return Err(Error::Conflict(
                 "agent configuration cannot be independently established",
             ));

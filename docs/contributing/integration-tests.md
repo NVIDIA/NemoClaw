@@ -99,7 +99,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 ```
 
 `fabric_agent` applies a Pi agent from `tests/contract/fixtures` to a sandbox: an invalid configuration fails validation at its field without repeating the value, one the harness cannot apply fails at plan, the configuration updates without replacing the sandbox, a stopped host is reconfigured, and a lost reply is not retried.
-`fabric_sandbox_readiness` reports the configured agent ready, and not ready while its health fails, without writing to the sandbox.
+`fabric_agent_readiness` reports the configured agent ready, and not ready while its health fails, without writing to the sandbox.
 On Unix, `fabric_harnesses` reads a fake Docker engine's image metadata: a compatible image reports its runtime binaries; another platform, or a read policy without the runtime's paths, is unsupported; a missing image is unknown.
 `every_fabric_type_has_a_contract_test` requires a contract test for every Fabric type.
 

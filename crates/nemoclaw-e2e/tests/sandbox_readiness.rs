@@ -51,7 +51,7 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
         .unwrap();
     let health = observations
         .iter()
-        .find(|row| row["address"] == "data.fabric_sandbox_readiness.assistant")
+        .find(|row| row["address"] == "data.fabric_agent_readiness.assistant")
         .unwrap();
     assert_eq!(health["values"]["ready"], false);
     let failed_health: nemoclaw_sdk::RuntimeHealth =
@@ -123,7 +123,7 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
         .as_array()
         .unwrap()
         .iter()
-        .find(|row| row["address"] == "data.fabric_sandbox_readiness.assistant")
+        .find(|row| row["address"] == "data.fabric_agent_readiness.assistant")
         .unwrap();
     assert_ne!(observation["values"]["read_trigger"], token);
     assert_eq!(observation["values"]["ready"], true);
@@ -151,7 +151,7 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
         .as_array()
         .unwrap()
         .iter()
-        .find(|row| row["address"] == "data.fabric_sandbox_readiness.assistant")
+        .find(|row| row["address"] == "data.fabric_agent_readiness.assistant")
         .unwrap();
     let message = rejection["values"]["error_message"].as_str().unwrap();
     assert!(

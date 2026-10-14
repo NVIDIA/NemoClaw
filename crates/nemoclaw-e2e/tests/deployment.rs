@@ -906,7 +906,7 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
         .as_array()
         .unwrap()
         .iter()
-        .find(|resource| resource["type"] == "fabric_sandbox_readiness")
+        .find(|resource| resource["type"] == "fabric_agent_readiness")
         .unwrap();
     assert_eq!(readiness["instances"][0]["attributes"]["ready"], true);
     assert!(readiness["instances"][0]["attributes"]["error_message"].is_null());
@@ -1210,7 +1210,7 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
         .as_array()
         .unwrap()
         .iter()
-        .find(|resource| resource["type"] == "fabric_sandbox_readiness")
+        .find(|resource| resource["type"] == "fabric_agent_readiness")
         .unwrap();
     let observation = &readiness["instances"][0]["attributes"];
     assert_eq!(observation["ready"], false);

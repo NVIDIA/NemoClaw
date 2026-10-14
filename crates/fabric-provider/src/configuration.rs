@@ -95,6 +95,14 @@ async fn configuration_parent(
     fabric_binding(parent).map(Some)
 }
 
+/// The sandbox `want` names by identity, with the Fabric agent and runtime
+/// binding its launch metadata records.
+pub(crate) async fn bound_sandbox(client: &OpenShell, want: &Row) -> Result<Row, ObservationError> {
+    configuration_parent(client, want, false)
+        .await?
+        .ok_or(ObservationError::BindingMismatch)
+}
+
 /// A sandbox row with the Fabric agent name and runtime binding its launch
 /// metadata records; a sandbox that Fabric did not launch is refused.
 pub fn fabric_binding(mut sandbox: Row) -> Result<Row, ObservationError> {
