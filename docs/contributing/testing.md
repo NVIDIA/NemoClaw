@@ -145,7 +145,11 @@ The default steps are `tools`, `fmt`, `clippy`, `build`, `test`, `schema`, `bund
 The `ci` profile runs at most eight tests concurrently, retries nothing, and finishes the remaining tests after a failure.
 
 The contract, system, and live tests take one input: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle.
-`cargo ci bundle` builds the host platform's bundle in `dist/PLATFORM`, such as `dist/linux_arm64`, and `cargo ci lifecycle` passes that path to the `lifecycle` profile, which runs four tests at a time.
+`cargo ci bundle` builds the host platform's bundle in `dist/PLATFORM`, such as `dist/linux_arm64`, and `cargo ci lifecycle` passes that path to the `lifecycle` profile.
+Local lifecycle runs use the available CPU count, with a minimum of four workers and a maximum of eight.
+CI keeps the profile's four-worker setting; the runner treats `CI` or `GITHUB_ACTIONS` being set as CI.
+An explicit `NEXTEST_TEST_THREADS` value takes precedence, for example `NEXTEST_TEST_THREADS=4 cargo ci lifecycle`.
+The same selection applies when lifecycle tests run through `cargo ci` or from an archive; other test layers retain their profile settings.
 A contract test runs the provider built from the checkout, but a system test runs the bundle's CLI and providers: rebuild the bundle after changing them.
 [Run integration tests](integration-tests.md#opentofu-and-bundle-lifecycle) covers the fixture executables that a single `cargo test` needs.
 
