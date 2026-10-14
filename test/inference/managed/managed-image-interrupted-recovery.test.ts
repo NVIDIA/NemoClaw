@@ -139,7 +139,7 @@ it("recovers only the marked isolated sandbox, gateway, volumes and network", as
   const previous = { ...process.env };
   expect(
     JSON.parse(fs.readFileSync(path.join(scope.stateDir, "qualification-owner.json"), "utf8")),
-  ).toEqual({ kind: "managed-qualification-owner-v1", input, scope });
+  ).toEqual({ kind: "managed-qualification-owner-v2", input, scope });
   await cleanupInterruptedManagedImageOpenShellE2e(input, scope);
   expect(
     commands.mock.calls.map(([command, args]: [string, readonly string[]]) => [command, ...args]),
@@ -350,8 +350,20 @@ it("records the nonce-bound immutable identity from successful creation", () => 
 
 it("binds a generated create-attempt label and refuses a second create", async () => {
   fs.unlinkSync(path.join(scope.stateDir, "qualification-sandbox.json"));
+  fs.unlinkSync(path.join(scope.stateDir, "qualification-attempt.json"));
   const delegate = vi.fn(
     async (request: Parameters<ReturnType<typeof createManagedImageSandboxWithRecovery>>[0]) => {
+      expect(
+        JSON.parse(
+          fs.readFileSync(path.join(scope.stateDir, "qualification-attempt.json"), "utf8"),
+        ),
+      ).toEqual({
+        kind: "managed-qualification-attempt-v1",
+        owner: scope.owner,
+        sandbox: input.sandbox,
+        createAttemptNonce: request.labels![NEMOCLAW_CREATE_ATTEMPT_LABEL],
+      });
+      expect(fs.existsSync(path.join(scope.stateDir, "qualification-sandbox.json"))).toBe(false);
       mocks.capture.mockReturnValue(
         sandboxObservation(sandboxId, request.labels![NEMOCLAW_CREATE_ATTEMPT_LABEL]),
       );
@@ -405,16 +417,72 @@ it("rejects replacement between the nonce selector and named inspection", async 
   expect(fs.existsSync(scope.stateDir)).toBe(true);
 });
 
-it("retains partial creation without a persisted immutable sandbox identity", async () => {
+it("recovers interrupted creation from its durable attempt nonce", async () => {
   fs.unlinkSync(path.join(scope.stateDir, "qualification-sandbox.json"));
+  await cleanupInterruptedManagedImageOpenShellE2e(input, scope);
+  expect(commands.mock.calls[0]).toEqual([
+    "openshell",
+    ["sandbox", "delete", "-g", "nemoclaw", input.sandbox],
+    expect.anything(),
+  ]);
+  expect(fs.existsSync(scope.stateDir)).toBe(false);
+});
+
+it("cleans setup before any create submission without issuing sandbox deletion", async () => {
+  fs.unlinkSync(path.join(scope.stateDir, "qualification-sandbox.json"));
+  fs.unlinkSync(path.join(scope.stateDir, "qualification-attempt.json"));
+  commands.mockReset();
+  commands
+    .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
+    .mockReturnValueOnce({ status: 0, stdout: `sha256:${"b".repeat(64)}`, stderr: "" } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
+    .mockReturnValueOnce({
+      status: 1,
+      stdout: "",
+      stderr: `Error: No such network: ${scope.networkName}`,
+    } as any);
   mocks.capture.mockClear();
   mocks.run.mockClear();
+  await cleanupInterruptedManagedImageOpenShellE2e(input, scope);
+  expect(commands).not.toHaveBeenCalledWith(
+    "openshell",
+    expect.arrayContaining(["sandbox", "delete"]),
+    expect.anything(),
+  );
+  expect(commands.mock.calls[0]).toEqual([
+    "openshell",
+    ["gateway", "remove", "nemoclaw"],
+    expect.anything(),
+  ]);
+  expect(mocks.capture).not.toHaveBeenCalled();
+  expect(mocks.run).not.toHaveBeenCalled();
+  expect(fs.existsSync(scope.stateDir)).toBe(false);
+});
+
+it("retains an unresolved create attempt rather than guessing identity", async () => {
+  fs.unlinkSync(path.join(scope.stateDir, "qualification-sandbox.json"));
+  mocks.capture.mockReturnValue("[]");
   await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
     "inspection is required",
   );
   expect(commands).not.toHaveBeenCalled();
-  expect(mocks.capture).not.toHaveBeenCalled();
-  expect(mocks.run).not.toHaveBeenCalled();
+  expect(fs.existsSync(scope.stateDir)).toBe(true);
+});
+
+it("preserves legacy owner records without inferring that creation never happened", async () => {
+  fs.writeFileSync(
+    path.join(scope.stateDir, "qualification-owner.json"),
+    JSON.stringify({
+      kind: "managed-qualification-owner-v1",
+      input,
+      scope,
+    }),
+  );
+  await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
+    "identity mismatch",
+  );
+  expect(commands).not.toHaveBeenCalled();
   expect(fs.existsSync(scope.stateDir)).toBe(true);
 });
 

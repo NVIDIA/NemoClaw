@@ -122,7 +122,7 @@ function recoveryIdentity(input: Inputs, scope: ManagedImageOpenShellRecoverySco
   )
     throw new Error("invalid managed qualification recovery scope");
   return JSON.stringify({
-    kind: "managed-qualification-owner-v1",
+    kind: "managed-qualification-owner-v2",
     input: {
       agent: input.agent,
       image: input.image,
@@ -189,6 +189,34 @@ function requireManagedRecoveryOwner(
     throw new Error("managed recovery identity mismatch");
 }
 
+function optionalManagedRecoveryRecord(file: string): string | null {
+  try {
+    return readManagedRecoveryRecord(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function recordManagedRecoverySandbox(
+  input: Inputs,
+  scope: ManagedImageOpenShellRecoveryScope,
+  nonce: string,
+  sandboxId: string,
+): void {
+  fs.writeFileSync(
+    path.join(scope.stateDir, "qualification-sandbox.json"),
+    JSON.stringify({
+      kind: "managed-qualification-sandbox-v1",
+      owner: scope.owner,
+      sandbox: input.sandbox,
+      sandboxId,
+      createAttemptNonce: nonce,
+    }),
+    { flag: "wx", mode: 0o600 },
+  );
+}
+
 export function createManagedImageSandboxWithRecovery(
   input: Inputs,
   scope: ManagedImageOpenShellRecoveryScope | undefined,
@@ -212,6 +240,16 @@ export function createManagedImageSandboxWithRecovery(
     if (!/^[a-f0-9]{62}$/u.test(nonce))
       throw new Error("managed recovery create identity mismatch");
     submitted = true;
+    fs.writeFileSync(
+      path.join(scope.stateDir, "qualification-attempt.json"),
+      JSON.stringify({
+        kind: "managed-qualification-attempt-v1",
+        owner: scope.owner,
+        sandbox: input.sandbox,
+        createAttemptNonce: nonce,
+      }),
+      { flag: "wx", mode: 0o600 },
+    );
     const result = await create(
       {
         ...request,
@@ -230,17 +268,7 @@ export function createManagedImageSandboxWithRecovery(
             env: request.environment,
           }),
       });
-      fs.writeFileSync(
-        path.join(scope.stateDir, "qualification-sandbox.json"),
-        JSON.stringify({
-          kind: "managed-qualification-sandbox-v1",
-          owner: scope.owner,
-          sandbox: input.sandbox,
-          sandboxId,
-          createAttemptNonce: nonce,
-        }),
-        { flag: "wx", mode: 0o600 },
-      );
+      recordManagedRecoverySandbox(input, scope, nonce, sandboxId);
     }
     return result;
   };
@@ -254,33 +282,60 @@ function removeManagedImageSandbox(
   try {
     if (scope) {
       requireManagedRecoveryOwner(input, scope);
-      const source = readManagedRecoveryRecord(
+      const attemptSource = optionalManagedRecoveryRecord(
+        path.join(scope.stateDir, "qualification-attempt.json"),
+      );
+      const source = optionalManagedRecoveryRecord(
         path.join(scope.stateDir, "qualification-sandbox.json"),
       );
-      const record = JSON.parse(source) as Record<string, unknown>;
+      if (attemptSource === null) {
+        if (source !== null) throw new Error("managed recovery attempt authority is missing");
+        return [];
+      }
+      const attempt = JSON.parse(attemptSource) as Record<string, unknown>;
       if (
-        record.kind !== "managed-qualification-sandbox-v1" ||
-        record.owner !== scope.owner ||
-        record.sandbox !== input.sandbox ||
-        !isOpenShellSandboxId(record.sandboxId) ||
-        typeof record.createAttemptNonce !== "string" ||
-        !/^[a-f0-9]{62}$/u.test(record.createAttemptNonce) ||
-        source !==
+        attempt.kind !== "managed-qualification-attempt-v1" ||
+        attempt.owner !== scope.owner ||
+        attempt.sandbox !== input.sandbox ||
+        typeof attempt.createAttemptNonce !== "string" ||
+        !/^[a-f0-9]{62}$/u.test(attempt.createAttemptNonce) ||
+        attemptSource !==
           JSON.stringify({
-            kind: record.kind,
-            owner: record.owner,
-            sandbox: record.sandbox,
-            sandboxId: record.sandboxId,
-            createAttemptNonce: record.createAttemptNonce,
+            kind: attempt.kind,
+            owner: attempt.owner,
+            sandbox: attempt.sandbox,
+            createAttemptNonce: attempt.createAttemptNonce,
           })
+      )
+        throw new Error("managed recovery attempt authority is unproven");
+      const record = source === null ? null : (JSON.parse(source) as Record<string, unknown>);
+      if (
+        source !== null &&
+        (!record ||
+          record.kind !== "managed-qualification-sandbox-v1" ||
+          record.owner !== scope.owner ||
+          record.sandbox !== input.sandbox ||
+          !isOpenShellSandboxId(record.sandboxId) ||
+          record.createAttemptNonce !== attempt.createAttemptNonce ||
+          source !==
+            JSON.stringify({
+              kind: record.kind,
+              owner: record.owner,
+              sandbox: record.sandbox,
+              sandboxId: record.sandboxId,
+              createAttemptNonce: record.createAttemptNonce,
+            }))
       )
         throw new Error("managed recovery sandbox identity is unproven");
       const currentId = resolveCreatedOpenShellSandboxId({
         sandboxName: input.sandbox,
         gatewayName: GATEWAY_NAME,
-        createAttemptNonce: record.createAttemptNonce,
+        createAttemptNonce: attempt.createAttemptNonce,
         runCaptureOpenshell: onboard.runCaptureOpenshell,
       });
+      const expectedId = record?.sandboxId ?? currentId;
+      if (source === null)
+        recordManagedRecoverySandbox(input, scope, attempt.createAttemptNonce, currentId);
       const named = onboard.runOpenshell(["sandbox", "get", "-g", GATEWAY_NAME, input.sandbox], {
         ignoreError: true,
         env: process.env,
@@ -288,9 +343,9 @@ function removeManagedImageSandbox(
         stdio: ["ignore", "pipe", "pipe"],
       });
       if (
-        currentId !== record.sandboxId ||
+        currentId !== expectedId ||
         named.status !== 0 ||
-        parseOpenShellSandboxId(String(named.stdout ?? "")) !== record.sandboxId
+        parseOpenShellSandboxId(String(named.stdout ?? "")) !== expectedId
       )
         throw new Error("managed recovery sandbox identity changed; inspection is required");
     }

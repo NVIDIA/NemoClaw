@@ -115,10 +115,13 @@ and run-owned volume labels. Ordinary failure, interruption, and fallback cleanu
 that recovery path. Foreign resources are preserved; unproven recovery retains its
 ownership evidence and still fails qualification.
 
-Scoped creation records the immutable sandbox ID selected by its unique create-attempt
-label. Cleanup reconfirms that ID through the isolated gateway before deletion. A missing
-identity record, mismatched ID, or failed inspection preserves the recovery state and
-requires operator inspection; the sandbox name alone never authorizes recovery deletion.
+Scoped creation records its unique create-attempt label before submission and the
+immutable sandbox ID after confirmation. Cleanup reconfirms that ID through the isolated
+gateway before deletion. Interrupted creation can resolve its first ID from the saved
+nonce. When no attempt was submitted, cleanup skips sandbox deletion and removes only
+run-owned setup resources. Unresolved or mismatched identity requires operator inspection;
+the sandbox name alone never authorizes deletion. Legacy owner records remain unproven
+and are preserved rather than interpreted as a new transaction with no submitted create.
 
 ### Candidate CLI Artifact
 
