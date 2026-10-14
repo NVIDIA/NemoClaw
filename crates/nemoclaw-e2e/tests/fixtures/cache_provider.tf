@@ -3,8 +3,8 @@
 
 terraform {
   required_providers {
-    nemoclaw = { source = "registry.opentofu.org/nvidia/nemoclaw", version = "@PROVIDER_VERSION@" }
-    docker   = { source = "registry.opentofu.org/kreuzwerker/docker", version = "4.6.0" }
+    vllm   = { source = "registry.opentofu.org/nvidia/vllm", version = "@PROVIDER_VERSION@" }
+    docker = { source = "registry.opentofu.org/kreuzwerker/docker", version = "4.6.0" }
   }
 }
 variable "name" { type = string }
@@ -12,7 +12,7 @@ variable "owner" { type = string }
 variable "enabled" { default = true }
 variable "revision" { default = "initial" }
 variable "fail_start" { default = false }
-provider "nemoclaw" {}
+provider "vllm" {}
 provider "docker" { host = "@ENGINE@" }
 resource "docker_volume" "cache" {
   name = "${var.name}-data"
