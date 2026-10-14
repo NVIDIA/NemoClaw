@@ -12,6 +12,7 @@ vi.mock("../onboard/experimental/portable-agent-lifecycle", async (importOrigina
   assertHermesPortableCommandUnavailable: portableMocks.assertUnavailable,
 }));
 import { HERMES_PROXY_REWRITE_SENTINEL } from "../hermes-managed-route";
+import { NVIDIA_HOSTED_NATIVE_PROVIDER } from "../inference/native-nvidia/contract";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps, HERMES_TARGET } from "../../../test/helpers/inference-set";
@@ -19,6 +20,79 @@ import { baseSession, createDeps, HERMES_TARGET } from "../../../test/helpers/in
 describe("runInferenceSet Hermes routing", () => {
   beforeEach(() => {
     portableMocks.assertUnavailable.mockReset();
+  });
+
+  it("reads the attached native handle before publishing a Hermes switch", async () => {
+    const config: ConfigObject = { model: { default: "local-model", provider: "custom" } };
+    const deps = createDeps({
+      config,
+      entry: { name: "hermes", agent: "hermes", provider: "vllm-local", model: "local-model" },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+    });
+    await runInferenceSet(
+      {
+        provider: "nvidia-prod",
+        model: "nvidia/test-model",
+        sandboxName: "hermes",
+        noVerify: true,
+      },
+      deps,
+    );
+    expect(deps.calls.readNativeNvidiaCredentialHandle).toHaveBeenCalledWith("hermes", "nemoclaw");
+    expect(config.model).toMatchObject({
+      api_key: "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY",
+    });
+    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledOnce();
+  });
+
+  it("leaves the Hermes config unchanged when the attached handle is unavailable", async () => {
+    const config: ConfigObject = { model: { default: "local-model", provider: "custom" } };
+    const deps = createDeps({
+      config,
+      entry: { name: "hermes", agent: "hermes", provider: "vllm-local", model: "local-model" },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+      readNativeNvidiaCredentialHandle: async () => {
+        throw new Error("provider-bound handle unavailable");
+      },
+    });
+    const attachProvider = vi.spyOn(deps.providerAdapter, "attachProvider");
+    const detachProvider = vi.spyOn(deps.providerAdapter, "detachProvider");
+    await expect(
+      runInferenceSet(
+        {
+          provider: "nvidia-prod",
+          model: "nvidia/test-model",
+          sandboxName: "hermes",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow("provider-bound handle unavailable");
+    expect(config.model).toEqual({ default: "local-model", provider: "custom" });
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(attachProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "hermes",
+        providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+      }),
+    );
+    expect(detachProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "hermes",
+        providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+      }),
+    );
+    await expect(
+      deps.providerAdapter.listProviderAttachments({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        sandboxName: "hermes",
+      }),
+    ).resolves.toEqual({ ok: true, value: { names: [] } });
   });
 
   it("rejects schema-5 before OpenShell or registry mutation (#9203)", async () => {
