@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { addAbortListener } from "node:events";
 import fs from "node:fs";
@@ -646,6 +646,60 @@ describe("native Podman E2E setup boundary", () => {
       "retention-days": 3,
       "compression-level": 0,
     });
+  });
+
+  it("reproduces the Portable Hermes user-local OpenShell PATH gap", () => {
+    const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
+    const install = job.steps?.find((step) => step.name === "Install pinned OpenShell");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-handoff-"));
+    const home = path.join(root, "home");
+    const fakeBin = path.join(root, "bin");
+    const githubPath = path.join(root, "github-path");
+    const sudoLog = path.join(root, "sudo.log");
+    fs.mkdirSync(home);
+    fs.mkdirSync(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "bash"),
+      `#!/bin/sh
+set -eu
+if [ "\${1:-}" = scripts/install-openshell.sh ]; then
+  install_root="\${XDG_BIN_HOME:-$HOME/.local/bin}"
+  mkdir -p "$install_root"
+  for component in openshell openshell-gateway openshell-sandbox; do
+    printf '#!/bin/sh\\nexit 0\\n' >"$install_root/$component"
+    chmod 0755 "$install_root/$component"
+  done
+  exit 0
+fi
+exec /bin/bash "$@"
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "sudo"),
+      `#!/bin/sh
+printf '%s\\n' "$*" >>"$SUDO_LOG"
+exit 0
+`,
+    );
+
+    try {
+      const result = spawnSync("/bin/bash", ["-c", install?.run ?? ""], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GITHUB_PATH: githubPath,
+          HOME: home,
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+          SUDO_LOG: sudoLog,
+        },
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(fs.existsSync(path.join(home, ".local/bin/openshell"))).toBe(true);
+      expect(fs.existsSync(sudoLog)).toBe(false);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
   });
 
   // source-shape-contract: security -- The explicit selector must retain the reviewed GPU, runtime, candidate, and cleanup boundaries
