@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The metadata bundle a cluster sandbox names in `image.metadata`.
 
-use nemoclaw_build::images::metadata_bundle;
+use nemoclaw_build::images::{archived_image_metadata, metadata_bundle};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -66,6 +66,105 @@ fn layout_with_config_platform(
     add("blobs/sha256/layerlayerlayer", b"layer");
     add("index.json", outer.as_bytes());
     (archive.into_inner().unwrap(), digest(root.as_bytes()))
+}
+
+fn named_layout(images: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    use std::{collections::BTreeMap, io::Read};
+    let mut files = BTreeMap::new();
+    let mut manifests = Vec::new();
+    for (name, bytes) in images {
+        for entry in tar::Archive::new(bytes.as_slice()).entries().unwrap() {
+            let mut entry = entry.unwrap();
+            let path = entry.path().unwrap().into_owned();
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes).unwrap();
+            if path == std::path::Path::new("index.json") {
+                let index: Value = serde_json::from_slice(&bytes).unwrap();
+                let mut manifest = index["manifests"][0].clone();
+                manifest["annotations"] = json!({"io.containerd.image.name": name});
+                manifests.push(manifest);
+            } else {
+                files.insert(path, bytes);
+            }
+        }
+    }
+    files.insert(
+        "index.json".into(),
+        serde_json::to_vec(&json!({
+            "schemaVersion": 2, "manifests": manifests,
+        }))
+        .unwrap(),
+    );
+    let mut archive = tar::Builder::new(Vec::new());
+    for (path, bytes) in files {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, path, bytes.as_slice())
+            .unwrap();
+    }
+    archive.into_inner().unwrap()
+}
+
+#[test]
+fn a_named_image_in_a_shared_archive_keeps_its_digest_and_verified_metadata() {
+    for indexed in [false, true] {
+        let (agent, root) = layout_with_root("agent", indexed);
+        let expected = metadata_bundle(&agent, "linux/arm64").unwrap();
+        let (other, _) = layout("other");
+        let directory = tempfile::tempdir().unwrap();
+        let archive = directory.path().join("images.tar");
+        std::fs::write(
+            &archive,
+            named_layout(&[
+                ("docker.io/library/nc-live-images:dummy", other),
+                ("docker.io/library/nc-live-images:pi", agent),
+            ]),
+        )
+        .unwrap();
+        let (actual_root, bundle) = archived_image_metadata(
+            &archive,
+            "docker.io/library/nc-live-images:pi",
+            "linux/arm64",
+        )
+        .unwrap();
+        assert_eq!(actual_root, root);
+        assert_eq!(bundle, expected);
+    }
+}
+
+#[test]
+fn archive_selection_requires_one_exact_image_name() {
+    let (agent, _) = layout("agent");
+    let name = "docker.io/library/nc-live-images:pi";
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("images.tar");
+    for images in [
+        vec![("docker.io/library/other:pi", agent.clone())],
+        vec![(name, agent.clone()), (name, agent.clone())],
+    ] {
+        std::fs::write(&archive, named_layout(&images)).unwrap();
+        let error = archived_image_metadata(&archive, name, "linux/arm64").unwrap_err();
+        assert!(error.contains("exactly one entry"), "{error}");
+    }
+}
+
+#[test]
+fn selected_archive_metadata_still_checks_platform_and_blob_digests() {
+    let (agent, _) = layout("agent");
+    let name = "docker.io/library/nc-live-images:pi";
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("images.tar");
+    let mut bytes = named_layout(&[(name, agent)]);
+    std::fs::write(&archive, &bytes).unwrap();
+    assert!(archived_image_metadata(&archive, name, "linux/amd64").is_err());
+    let position = bytes.windows(5).position(|part| part == b"agent").unwrap();
+    bytes[position] = b'A';
+    std::fs::write(&archive, bytes).unwrap();
+    let error = archived_image_metadata(&archive, name, "linux/arm64").unwrap_err();
+    assert!(error.contains("does not match its digest"), "{error}");
 }
 
 #[test]
