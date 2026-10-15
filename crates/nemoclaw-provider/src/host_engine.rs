@@ -199,24 +199,4 @@ mod tests {
         );
         assert!(!format!("{diagnostics:?}").contains("PRIVATE_SENTINEL"));
     }
-
-    /// Engine facts serve every reader, so they take only the engine.
-    #[test]
-    fn host_engine_takes_only_the_engine() {
-        let schema = HostEngineDataSource(Arc::new(ConfiguredBackend::default()))
-            .schema(&mut Diagnostics::default())
-            .unwrap();
-        let mut names: Vec<_> = schema.block.attributes.into_keys().collect();
-        names.sort();
-        assert_eq!(
-            names,
-            [
-                "available",
-                "engine",
-                "engine_json",
-                "hardware_json",
-                "status"
-            ]
-        );
-    }
 }

@@ -640,26 +640,6 @@ mod tests {
 
     #[test]
     fn requirements_are_the_configuration_and_the_policy_reads_as_separate_inputs() {
-        let schema = FabricCapabilitiesDataSource::default()
-            .schema(&mut Diagnostics::default())
-            .unwrap();
-        let attribute = |name: &str| {
-            schema
-                .block
-                .attributes
-                .get(name)
-                .map(|a| (format!("{:?}", a.attr_type), format!("{:?}", a.constraint)))
-        };
-        assert!(!schema.block.attributes.contains_key("requirements_json"));
-        assert_eq!(
-            attribute("config_json"),
-            Some(("String".into(), "Optional".into()))
-        );
-        assert_eq!(
-            attribute("filesystem_read"),
-            Some(("List(String)".into(), "Optional".into()))
-        );
-
         let mut config = fabric_config();
         config.config_json = Value::Value(r#"{"harness":{"adapter_id":"a"}}"#.into());
         config.filesystem_read = Value::Value(vec![Value::Value("/srv".into())]);

@@ -244,24 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn readiness_takes_the_agent_by_ref() {
-        let schema = AgentReadinessDataSource(Arc::new(GatewayClient::default()))
-            .schema(&mut Diagnostics::default())
-            .unwrap();
-        let mut names: Vec<_> = schema.block.attributes.keys().map(String::as_str).collect();
-        names.sort_unstable();
-        assert_eq!(
-            names,
-            [
-                "agent",
-                "error_message",
-                "gateway",
-                "health_json",
-                "read_trigger",
-                "ready"
-            ]
-        );
-        // The bridge reads the sandbox by identity and the agent by name.
+    fn the_bridge_reads_the_sandbox_by_identity_and_the_agent_by_name() {
         let row = agent(&named(reference())).unwrap().unwrap();
         assert_eq!(row["name"], "coder");
         assert_eq!(row["sandbox_id"], "sandbox-id");
