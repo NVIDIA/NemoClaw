@@ -237,6 +237,7 @@ function mockNativeHostedSource(definition: HostedProviderDefinition) {
     host: string;
     port: number;
     allowed_ips?: string[];
+    tls?: string;
     rules: { allow: { method: string; path: string } }[];
   };
   const base = managedBraveProfile();
@@ -259,6 +260,7 @@ function mockNativeHostedSource(definition: HostedProviderDefinition) {
           host: endpoint.host,
           port: endpoint.port,
           allowedIps: endpoint.allowed_ips ?? [],
+          tls: endpoint.tls ?? "",
           access: "",
           rules: endpoint.rules.map((rule) => ({
             allow: {

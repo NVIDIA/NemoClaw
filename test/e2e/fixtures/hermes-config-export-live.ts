@@ -356,8 +356,11 @@ export async function verifyHermesConfigExportLive(
         (diagnostic) => {
           if (!expectsMessagingRefusal) return diagnostic === expectedDiagnostic;
           const lines = diagnostic.split("\n");
+          const categories = /^Config export failed \(([^)]+)\)\.$/
+            .exec(lines[0] ?? "")?.[1]
+            ?.split(", ");
           return (
-            lines[0] === "Config export failed (unsupported)." &&
+            categories?.includes("unsupported") === true &&
             expectedRefusals.every((refusal) => lines.includes(refusal))
           );
         },

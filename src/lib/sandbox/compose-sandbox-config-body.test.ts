@@ -42,7 +42,7 @@ const {
   ) => string;
   hermesConfigAllowsPrivateUrls: (config: Record<string, unknown>) => boolean;
   runOpenClawNativeConfigBatchUntilHandleReady: (
-    nativeNvidiaUpdate: boolean,
+    nativeProviderUpdate: boolean,
     run: () => { status: number; stderr: string; error?: Error; signal?: string },
     wait?: (ms: number) => void,
     warn?: (message: string) => void,
@@ -238,12 +238,66 @@ describe("composeSandboxConfigBody", () => {
   });
 
   it.each([
-    { value: undefined, expectedStatus: 75 },
-    { value: "nvapi-do-not-write", expectedStatus: 1 },
-    { value: "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY", expectedStatus: 1 },
+    ["inference", "COMPATIBLE_API_KEY", "http://10.1.1.225:8123/v1", "openai-completions"],
+    ["anthropic", "COMPATIBLE_ANTHROPIC_API_KEY", "https://fixture.example", "anthropic-messages"],
+    ["openai", "OPENAI_API_KEY", "https://api.openai.com/v1", "openai-completions"],
+    ["anthropic", "ANTHROPIC_API_KEY", "https://api.anthropic.com", "anthropic-messages"],
+    ["inference", "OPENAI_API_KEY", "https://hermes.example/v1", "openai-completions"],
   ])(
-    "refuses invalid native NVIDIA handle $value before config mutation",
-    ({ value, expectedStatus }) => {
+    "materializes %s native credentials from %s before the atomic config write",
+    (provider, key, baseUrl, api) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-config-"));
+      try {
+        fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
+          mode: 0o700,
+        });
+        const canonical = `openshell:resolve:env:${key}`;
+        const handle = `openshell:resolve:env:s${"a".repeat(64)}_${key}`;
+        const updates = [
+          { dotpath: "agents.defaults.model.primary", value: `${provider}/model-a` },
+          {
+            dotpath: `models.providers.${provider}`,
+            value: { baseUrl, api, apiKey: canonical, models: [{ id: "model-a" }] },
+          },
+          { dotpath: "channels.telegram.botToken", value: canonical },
+        ];
+        const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", updates);
+        const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
+        const result = spawnSync(command[0]!, command.slice(1), {
+          input: invocation.input,
+          encoding: "utf8",
+          timeout: 5_000,
+          env: { ...process.env, PATH: `${directory}:${process.env.PATH ?? ""}`, [key]: handle },
+        });
+        expect(result.status, result.stderr).toBe(0);
+        expect(JSON.parse(result.stdout)).toEqual([
+          { path: updates[0]!.dotpath, value: updates[0]!.value },
+          {
+            path: updates[1]!.dotpath,
+            value: { baseUrl, api, apiKey: handle, models: [{ id: "model-a" }] },
+          },
+          { path: updates[2]!.dotpath, value: canonical },
+        ]);
+        expect(invocation.input).not.toContain(handle);
+        expect(invocation.args.join(" ")).not.toContain(handle);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(
+    [
+      { value: undefined, expectedStatus: 75 },
+      { value: "nvapi-do-not-write", expectedStatus: 1 },
+      { value: "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY", expectedStatus: 1 },
+      { value: "openshell:resolve:env:v43_OTHER_API_KEY", expectedStatus: 1 },
+    ].flatMap((scenario) =>
+      ["NVIDIA_INFERENCE_API_KEY", "COMPATIBLE_API_KEY"].map((key) => ({ ...scenario, key })),
+    ),
+  )(
+    "refuses invalid native $key handle $value before config mutation",
+    ({ value, expectedStatus, key }) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-config-"));
       try {
         fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
@@ -252,7 +306,10 @@ describe("composeSandboxConfigBody", () => {
         const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [
           {
             dotpath: "models.providers.inference",
-            value: { baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT, apiKey: NVIDIA_INFERENCE_PLACEHOLDER },
+            value: {
+              baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+              apiKey: `openshell:resolve:env:${key}`,
+            },
           },
         ]);
         const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
@@ -263,7 +320,7 @@ describe("composeSandboxConfigBody", () => {
           env: {
             ...process.env,
             PATH: `${directory}:${process.env.PATH ?? ""}`,
-            NVIDIA_INFERENCE_API_KEY: value,
+            [key]: value,
           },
         });
         expect(failed.status).toBe(expectedStatus);
@@ -286,7 +343,7 @@ describe("composeSandboxConfigBody", () => {
     expect(run).toHaveBeenCalledTimes(2);
     expect(wait).toHaveBeenCalledExactlyOnceWith(2_000);
     expect(warn).toHaveBeenCalledExactlyOnceWith(
-      "Native NVIDIA provider handle pending; config attempt 1/10",
+      "Native provider handle pending; config attempt 1/10",
     );
 
     const exhaustedRun = vi.fn().mockReturnValue(pending);

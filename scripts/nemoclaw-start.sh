@@ -899,25 +899,31 @@ config = json.loads(parsed.stdout)
 refreshed = set()
 native_refreshed = False
 
-# A native NVIDIA handle persisted by the host-side config batch belongs to
-# the provider revision that issued it. After a supervisor restart, only the
-# current revision is available, so replace that exact config field before
-# OpenClaw starts. Never copy a raw value or rewrite config for other providers.
+# Persisted native handles belong to the provider revision that issued them.
+# Refresh only inference credentials before OpenClaw starts. Raw values and
+# unrelated fields must not cross this boundary.
 models = config.get("models") if isinstance(config, dict) else None
 providers = models.get("providers") if isinstance(models, dict) else None
-native = providers.get("inference") if isinstance(providers, dict) else None
-if isinstance(native, dict) and native.get("baseUrl") == "https://integrate.api.nvidia.com/v1":
-    key = "NVIDIA_INFERENCE_API_KEY"
-    scoped = re.compile(rf"^{re.escape(prefix)}(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{key}$")
+for provider_key in ("inference", "openai", "anthropic"):
+    native = providers.get(provider_key) if isinstance(providers, dict) else None
+    if not isinstance(native, dict):
+        continue
     saved = native.get("apiKey")
+    scoped = re.fullmatch(
+        rf"{re.escape(prefix)}(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_([A-Z][A-Z0-9_]*)",
+        saved if isinstance(saved, str) else "",
+    )
+    if not scoped:
+        continue
+    key = scoped.group(1)
+    if key == "NVIDIA_INFERENCE_API_KEY" and native.get("baseUrl") != "https://integrate.api.nvidia.com/v1":
+        continue
     state = runtime_state(key)
     current = state.get("value", "")
     if (
-        isinstance(saved, str)
-        and scoped.fullmatch(saved)
-        and state.get("kind") == "placeholder"
+        state.get("kind") == "placeholder"
         and isinstance(current, str)
-        and scoped.fullmatch(current)
+        and re.fullmatch(rf"{re.escape(prefix)}(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{re.escape(key)}", current)
         and saved != current
     ):
         native["apiKey"] = current

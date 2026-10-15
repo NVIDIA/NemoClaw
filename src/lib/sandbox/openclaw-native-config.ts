@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-// Host-side OpenClaw native config commands and scoped NVIDIA handle materialization.
+// Host-side OpenClaw native config commands and scoped provider handle materialization.
 
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/client";
 import type { ConfigValue } from "../security/credential-filter";
@@ -83,31 +83,40 @@ export interface OpenClawConfigUpdate {
 // gateway restart replaces that process image with its old environment. Pin
 // the supervisor-issued handle in the native config batch before restarting;
 // the actual credential remains outside the sandbox and endpoint-bound.
-const materializeNativeNvidiaHandle = [
+const materializeNativeProviderHandle = [
   "import json, os, re, sys",
-  'handle = os.environ.get("NVIDIA_INFERENCE_API_KEY", "")',
-  "if not handle:",
-  '    sys.stderr.write("NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING\\n")',
-  "    raise SystemExit(75)",
-  'if not re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY", handle):',
-  '    raise SystemExit("Native NVIDIA provider handle is unavailable or invalid")',
   'with open(sys.argv[1], "r+", encoding="utf-8") as stream:',
   "    updates = json.load(stream)",
   "    if not isinstance(updates, list):",
   '        raise SystemExit("Invalid OpenClaw config batch")',
   "    matched = 0",
   "    for update in updates:",
-  '        if not isinstance(update, dict) or update.get("path") != "models.providers.inference":',
+  '        if not isinstance(update, dict) or update.get("path") not in (',
+  '            "models.providers.inference", "models.providers.openai", "models.providers.anthropic"',
+  "        ):",
   "            continue",
   '        provider = update.get("value")',
-  '        if not isinstance(provider, dict) or provider.get("apiKey") != sys.argv[3]:',
+  "        if not isinstance(provider, dict):",
   "            continue",
-  '        if provider.get("baseUrl") != sys.argv[2]:',
+  '        api_key = provider.get("apiKey", "")',
+  "        if api_key == sys.argv[3]:",
+  '            api_key = "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY"',
+  '        key = re.fullmatch(r"openshell:resolve:env:([A-Z][A-Z0-9_]*)", str(api_key))',
+  "        if not key:",
+  "            continue",
+  "        key = key.group(1)",
+  '        if key == "NVIDIA_INFERENCE_API_KEY" and provider.get("baseUrl") != sys.argv[2]:',
   '            raise SystemExit("Native NVIDIA provider endpoint does not match")',
+  '        handle = os.environ.get(key, "")',
+  "        if not handle:",
+  '            sys.stderr.write("NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING\\n")',
+  "            raise SystemExit(75)",
+  '        if not re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + re.escape(key), handle):',
+  '            raise SystemExit("Native provider handle is unavailable or invalid")',
   '        provider["apiKey"] = handle',
   "        matched += 1",
   "    if matched != 1:",
-  '        raise SystemExit("Expected one native NVIDIA provider config update")',
+  '        raise SystemExit("Expected one native provider config update")',
   "    stream.seek(0)",
   '    json.dump(updates, stream, separators=(",", ":"))',
   "    stream.truncate()",
@@ -117,17 +126,23 @@ export function buildOpenClawNativeConfigBatchInvocation(
   updates: readonly OpenClawConfigUpdate[],
   gateway?: string | OpenShellRuntimeSelection,
 ) {
-  const nativeNvidiaUpdate = updates.some(
+  const nativeProviderUpdate = updates.some(
     ({ dotpath, value }) =>
-      dotpath === "models.providers.inference" &&
+      [
+        "models.providers.inference",
+        "models.providers.openai",
+        "models.providers.anthropic",
+      ].includes(dotpath) &&
       isConfigObject(value) &&
-      value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER,
+      typeof value.apiKey === "string" &&
+      (value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER ||
+        /^openshell:resolve:env:[A-Z][A-Z0-9_]*$/.test(value.apiKey)),
   );
-  const materializeCommand = nativeNvidiaUpdate
-    ? `python3 -c ${shellQuote(materializeNativeNvidiaHandle)} "$file" ${shellQuote(NVIDIA_HOSTED_NATIVE_ENDPOINT)} ${shellQuote(NVIDIA_INFERENCE_PLACEHOLDER)} || exit $?; `
+  const materializeCommand = nativeProviderUpdate
+    ? `python3 -c ${shellQuote(materializeNativeProviderHandle)} "$file" ${shellQuote(NVIDIA_HOSTED_NATIVE_ENDPOINT)} ${shellQuote(NVIDIA_INFERENCE_PLACEHOLDER)} || exit $?; `
     : "";
   return {
-    nativeNvidiaUpdate,
+    nativeProviderUpdate,
     ...(!gateway || typeof gateway === "string"
       ? {}
       : {
@@ -185,7 +200,7 @@ export function executeOpenClawNativeConfigBatch(
   gateway?: string | OpenShellRuntimeSelection,
 ): void {
   const invocation = buildOpenClawNativeConfigBatchInvocation(sandboxName, updates, gateway);
-  runOpenClawNativeConfigBatchUntilHandleReady(invocation.nativeNvidiaUpdate, () =>
+  runOpenClawNativeConfigBatchUntilHandleReady(invocation.nativeProviderUpdate, () =>
     runOpenshellCommand(binary, invocation.args, {
       env: invocation.env,
       replaceEnv: invocation.replaceEnv,
@@ -204,7 +219,7 @@ type NativeConfigBatchResult = Pick<
 >;
 
 export function runOpenClawNativeConfigBatchUntilHandleReady(
-  nativeNvidiaUpdate: boolean,
+  nativeProviderUpdate: boolean,
   run: () => NativeConfigBatchResult,
   wait: (ms: number) => void = (ms) =>
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
@@ -213,7 +228,7 @@ export function runOpenClawNativeConfigBatchUntilHandleReady(
   // OpenShell 0.0.116 attach can confirm desired state before a fresh process
   // receives the new environment. This retry is owned by native inference and
   // applies only when the materializer exited before OpenClaw changed config.
-  const maxAttempts = nativeNvidiaUpdate ? 10 : 1;
+  const maxAttempts = nativeProviderUpdate ? 10 : 1;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const result = run();
     if (!result.error && !result.signal && result.status === 0) return;
@@ -223,7 +238,7 @@ export function runOpenClawNativeConfigBatchUntilHandleReady(
       result.status === 75 &&
       String(result.stderr ?? "").includes("NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING");
     if (handlePending && attempt < maxAttempts) {
-      warn(`Native NVIDIA provider handle pending; config attempt ${attempt}/${maxAttempts}`);
+      warn(`Native provider handle pending; config attempt ${attempt}/${maxAttempts}`);
       wait(2_000);
       continue;
     }

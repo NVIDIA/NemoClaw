@@ -729,8 +729,8 @@ Custom Dockerfile onboarding uses the existing startup and pairing settlement ch
 restarting the native gateway for the initial inference route, as external-image onboarding does.
 The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.
 The OpenClaw native NVIDIA and mock Anthropic switch variants start with an authenticated local OpenAI-compatible fixture.
-The Anthropic variant starts on the legacy host-alias route, then switches to a native custom endpoint.
-It uses the runner's private address through the existing explicit private-host trust setting.
+The Anthropic variant starts on a native OpenAI-compatible route, then switches to a native Anthropic endpoint.
+Both endpoints use the runner's private address through the existing explicit private-host trust setting.
 Its mock rejects a missing or incorrect credential, and the existing sandbox request and OpenClaw model run must both succeed.
 The config probe validates the scoped Anthropic credential reference inside the sandbox before redaction.
 The native NVIDIA destination uses the public endpoint and its public credential only after switching.
