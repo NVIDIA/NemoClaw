@@ -3375,6 +3375,7 @@ module.exports = {
   MESSAGING_CHANNELS,
   selectOnboardAgent,
   setupNim,
+  handleNimLocalSelection,
   providerNameToOptionKey: providerKey,
   readRecordedProvider,
   readRecordedModel,

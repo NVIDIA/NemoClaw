@@ -1,12 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 
 import { makeDeps, makeHostState } from "./__test-helpers__/setup-nim-flow";
+import type * as NimModule from "../inference/nim";
 import { usesNativeLocalInferenceForAgent } from "../inference/native-local/contract";
 import { createSetupNim } from "./setup-nim-flow";
 import { clearNimContainerBeforeRetry } from "./setup-nim-selection";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 it("marks Local NIM as shared before its container starts", async () => {
   const routeGuard = vi.fn(() => ({
@@ -108,4 +114,53 @@ it("removes failed Local NIM before retrying as native standalone vLLM", async (
   expect(menuSelections).toBe(2);
   expect(removeNim).toHaveBeenCalledOnce();
   expect(result).toMatchObject({ provider: "vllm-local", nimContainer: null });
+});
+
+it("stops onboarding and removes the owned container when Local NIM health fails", async () => {
+  vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "1");
+  const nim = require("../inference/nim") as typeof NimModule;
+  vi.spyOn(nim, "getNimModelOptions").mockReturnValue({
+    models: [{ name: "test-nim-model" }],
+    usableMemoryMB: 16000,
+  } as ReturnType<typeof nim.getNimModelOptions>);
+  vi.spyOn(nim, "expectedServedModelId").mockReturnValue("local/test-nim-model");
+  vi.spyOn(nim, "isNgcLoggedIn").mockReturnValue(true);
+  vi.spyOn(nim, "pullNimImage").mockReturnValue("test-nim-image");
+  vi.spyOn(nim, "containerName").mockReturnValue("local-nim-container");
+  vi.spyOn(nim, "startNimContainerByName").mockReturnValue("local-nim-container");
+  vi.spyOn(nim, "waitForNimHealth").mockReturnValue(false);
+  const removeNim = vi
+    .spyOn(nim, "stopNimContainerByNameOrThrow")
+    .mockImplementation(() => undefined);
+  const adoptModel = vi.spyOn(nim, "adoptServedModelId");
+  const state = {
+    provider: "",
+    model: null,
+    endpointUrl: null,
+    nimContainer: null,
+    assertRouteCompatible: vi.fn(),
+    revalidateSandboxIdentity: vi.fn(),
+  };
+  const { handleNimLocalSelection } = require("../onboard") as {
+    handleNimLocalSelection: (
+      gpu: unknown,
+      args: {
+        requestedModel: string | null;
+        recoveredFromSandbox: boolean;
+        recoveredModel: string | null;
+      },
+      state: unknown,
+    ) => Promise<unknown>;
+  };
+
+  await expect(
+    handleNimLocalSelection(
+      { type: "nvidia", platform: "other", nimCapable: true },
+      { requestedModel: null, recoveredFromSandbox: false, recoveredModel: null },
+      state,
+    ),
+  ).rejects.toThrow("Local NVIDIA NIM failed to become healthy. Onboarding stopped.");
+  expect(removeNim).toHaveBeenCalledExactlyOnceWith("local-nim-container");
+  expect(state.nimContainer).toBeNull();
+  expect(adoptModel).not.toHaveBeenCalled();
 });
