@@ -29,6 +29,25 @@
         "downloadSizeBytes": { "$ref": "#/$defs/positiveSafeInteger" },
         "gated": { "type": "boolean" },
         "installFastSafetensors": { "type": "boolean" },
+        "reviewedCode": {
+          "type": "object",
+          "required": ["revision", "files"],
+          "properties": {
+            "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            "files": {
+              "type": "array", "minItems": 2, "maxItems": 64,
+              "items": {
+                "type": "object", "required": ["path", "digest"],
+                "properties": {
+                  "path": { "type": "string", "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_.-]+$", "maxLength": 256 },
+                  "digest": { "$ref": "#/$defs/sha256" }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "preparation": {
           "oneOf": [
             {
