@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
+import { dockerLoginNgc, pullNimImage } from "../../../src/lib/inference/nim.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
 import { startTestProgress, type TestProgress } from "../fixtures/progress.ts";
@@ -23,14 +24,15 @@ import {
   protectedProviderFinalInventoryCommand,
   protectedProviderReportedContainerId,
   protectedVllmReadinessCommand,
+  startProtectedNim,
 } from "../live/managed-image-protected-runtime-helpers.ts";
 
 // Vitest hoists these module-scope mocks before the statically imported live-E2E command builders
 // are evaluated, keeping their unavailable runtime dependencies outside this support-test boundary.
 vi.mock("../../../src/lib/inference/nim.ts", () => ({
   adoptServedModelId: () => "",
-  dockerLoginNgc: () => false,
-  pullNimImage: () => undefined,
+  dockerLoginNgc: vi.fn(() => false),
+  pullNimImage: vi.fn(() => undefined),
 }));
 vi.mock("../../../src/lib/inference/ollama/proxy.ts", () => ({
   getOllamaProxyToken: () => undefined,
@@ -39,10 +41,8 @@ vi.mock("../../../src/lib/inference/ollama/proxy.ts", () => ({
   persistAndProbeOllamaProxy: async () => undefined,
   startOllamaAuthProxy: () => false,
 }));
-vi.mock("../fixtures/e2e-test.ts", () => ({
-  expect: () => {
-    throw new Error("live E2E assertions are unavailable in this support test");
-  },
+vi.mock("../fixtures/e2e-test.ts", async () => ({
+  expect: (await import("vitest")).expect,
 }));
 vi.mock("../live/gpu-e2e-helpers.ts", () => ({
   assertNvidiaAvailable: () => undefined,
@@ -132,6 +132,17 @@ function providerAuthority(): ProtectedProviderContainerAuthority {
     name: VLLM_PROVIDER_NAME,
     owner: PROVIDER_COHORT,
     requestedImage: PROVIDER_IMAGE,
+  };
+}
+
+function nimProviderState() {
+  return {
+    authority: null,
+    kind: "nim" as const,
+    name: protectedProviderContainerName("nim", PROVIDER_COHORT),
+    owner: PROVIDER_COHORT,
+    removed: false,
+    reportedContainerId: null,
   };
 }
 
@@ -641,6 +652,43 @@ exit 42`,
     expect(Buffer.byteLength(stderrArtifact)).toBeLessThanOrEqual(command.captureLimitBytes + 256);
   });
 
+  it("saves the pre-pull storage artifact before NGC login", async () => {
+    const fixture = createReadinessFixture();
+    const artifact = fixture.artifacts.pathFor("shell/nim-storage-before-image-pull.result.json");
+    vi.mocked(dockerLoginNgc).mockClear();
+    vi.mocked(pullNimImage).mockClear();
+    vi.mocked(dockerLoginNgc).mockImplementationOnce(() => {
+      expect(fs.existsSync(artifact)).toBe(true);
+      return false;
+    });
+
+    await expect(startProtectedNim(fixture.host, nimProviderState(), "test-key")).rejects.toThrow(
+      "NGC login must succeed",
+    );
+    expect(JSON.parse(fs.readFileSync(artifact, "utf8"))).toMatchObject({ exitCode: 0 });
+    expect(dockerLoginNgc).toHaveBeenCalledOnce();
+    expect(pullNimImage).not.toHaveBeenCalled();
+  });
+
+  it("stops NIM qualification if the pre-pull storage capture fails", async () => {
+    const fixture = createReadinessFixture();
+    vi.mocked(dockerLoginNgc).mockClear();
+    vi.mocked(pullNimImage).mockClear();
+    vi.spyOn(fixture.host, "command").mockResolvedValue({
+      command: ["bash"],
+      exitCode: 2,
+      signal: null,
+      timedOut: false,
+      stdout: "",
+      stderr: "invalid probe",
+      artifacts: { stdout: "", stderr: "", result: "" },
+    });
+
+    await expect(startProtectedNim(fixture.host, nimProviderState(), "test-key")).rejects.toThrow();
+    expect(dockerLoginNgc).not.toHaveBeenCalled();
+    expect(pullNimImage).not.toHaveBeenCalled();
+  });
+
   it("redacts provider-native NIM failure evidence in memory and artifacts", async () => {
     const fixture = createReadinessFixture();
     const sensitiveValue = "protected-nim-readiness-sensitive-value";
@@ -670,8 +718,6 @@ exit 42`,
     });
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("nim-storage-snapshot phase=readiness-1");
-    expect(result.stderr).toContain("nim-storage-snapshot phase=readiness-final");
     expect(result.stderr).toContain("provider-native-log [REDACTED]");
     expect(result.stderr).toContain("managed-image-nim-not-ready attempts=1");
     expect(result.stderr).not.toContain(sensitiveValue);

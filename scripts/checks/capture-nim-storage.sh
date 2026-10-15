@@ -29,6 +29,10 @@ for target in / "$workspace" "$docker_root"; do
   timeout 5 df -P -B1 "$target" 2>&1 || true
   timeout 5 df -P -i "$target" 2>&1 || true
 done
+if [[ "$sample" == initial || "$sample" == 1 || "$sample" == final ]]; then
+  printf 'docker-storage-usage\n'
+  timeout 10 docker system df 2>&1 || true
+fi
 if [[ -n "$container" ]]; then
   cache_mount="$(timeout 5 docker container inspect "$container" --format '{{range .Mounts}}{{if eq .Destination "/opt/nim/.cache"}}{{.Type}}:{{.Source}}{{end}}{{end}}' 2>/dev/null)" || cache_mount=unavailable
   printf 'nim-cache-mount=%s\n' "${cache_mount:-none}"
