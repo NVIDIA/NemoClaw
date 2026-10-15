@@ -71,9 +71,6 @@ pub fn compile_teardown(
             graph["provider"][name]["destroy"] = json!(true);
         }
     }
-    // Without data sources, retained objects name their gateway literally.
-    let gateway = crate::compile::gateway_ref(document, generations)?;
-    let gateway_expression = crate::compile::gateway_ref_expression();
     let resources = graph["resource"]
         .as_object_mut()
         .expect("compiled resources");
@@ -81,9 +78,6 @@ pub fn compile_teardown(
         let instances = instances.as_object_mut().expect("compiled instances");
         instances.retain(|name, _| retained.contains(&format!("{kind}.{name}")));
         for attrs in instances.values_mut() {
-            if attrs["gateway"] == json!(gateway_expression) {
-                attrs["gateway"] = gateway.clone();
-            }
             attrs["lifecycle"] = json!({"prevent_destroy":true});
             if let Some(dependencies) = attrs.get_mut("depends_on").and_then(Value::as_array_mut) {
                 dependencies.retain(|dependency| {

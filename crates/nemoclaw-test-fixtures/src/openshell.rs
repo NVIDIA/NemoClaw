@@ -1073,10 +1073,9 @@ pub fn contract_rows(
                     // These rows reach a gateway client directly, which never
                     // sees the connection the resource adapter carries.
                     if reference.kind == nemoclaw_openshell::GATEWAY_TYPE {
-                        assert!(
-                            value
-                                .as_str()
-                                .is_some_and(|text| text.starts_with("${data.openshell_gateway.")),
+                        assert_eq!(
+                            value["type"],
+                            nemoclaw_openshell::GATEWAY_TYPE,
                             "{name}: {value} is not a gateway ref"
                         );
                         continue;

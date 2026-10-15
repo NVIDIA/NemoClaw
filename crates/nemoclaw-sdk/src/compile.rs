@@ -396,7 +396,9 @@ pub(crate) fn gateway_connection(
     Ok(provider)
 }
 
-/// The gateway's `ref` as a literal object, for graphs without its data source.
+/// The gateway's `ref` as a literal object, equal to what the gateway data
+/// source exports. Objects take it so their gateway is known while planning,
+/// even when the read waits for apply.
 pub(crate) fn gateway_ref(
     document: &Document,
     generations: &Generations,
@@ -414,11 +416,6 @@ pub(crate) fn gateway_ref(
         );
     }
     Ok(Value::Object(reference))
-}
-
-/// The expression every OpenShell object and Fabric configuration takes as `gateway`.
-pub(crate) fn gateway_ref_expression() -> String {
-    format!("${{{GATEWAY_CAPABILITIES_ADDRESS}.ref}}")
 }
 
 fn graph_base(
@@ -455,6 +452,9 @@ fn compile_with_plans(
     let providers = document.selected_providers()?;
     let mut graph = graph_base(document, generations, version)?;
     let mut resources = json!({});
+    // Objects take the gateway's ref as a literal, known while planning; the
+    // gateway reads gate them through depends_on and a precondition.
+    let gateway = gateway_ref(document, generations)?;
     let provider_dependencies: BTreeMap<_, _> = targets
         .iter()
         .filter_map(|target| {
@@ -538,7 +538,7 @@ fn compile_with_plans(
                 .filter_map(|(_, field)| object.remove(*field))
                 .collect();
             if reference.kind == nemoclaw_openshell::GATEWAY_TYPE {
-                attributes[reference.attribute] = json!(gateway_ref_expression());
+                attributes[reference.attribute] = gateway.clone();
                 continue;
             }
             // The server a registration reaches, as the ref a readiness read
@@ -699,7 +699,7 @@ fn compile_with_plans(
         .map(|sandbox| {
             // The agent's ref names its sandbox and the document it applied.
             let readiness = json!({
-                "gateway": gateway_ref_expression(),
+                "gateway": gateway.clone(),
                 "agent": format!("${{{}.{}.ref}}", nemoclaw_fabric::agent::RESOURCE_TYPE, sandbox.name),
                 // uuid() is unknown in a saved plan and records a unique observation
                 // token, so failed applies cannot report stale health as a new result.

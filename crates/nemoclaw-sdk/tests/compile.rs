@@ -225,6 +225,22 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
             "${openshell_workspace.deployment.ref}"
         );
     }
+    // Objects take a literal gateway ref, known while planning, equal to
+    // what the gateway data source exports; that read gates the resources.
+    let read = &graph["data"]["openshell_gateway"]["current"];
+    for resource in [
+        workspace,
+        provider,
+        sandbox,
+        &resources["fabric_agent"]["worker"],
+    ] {
+        assert!(
+            resource["depends_on"].as_array().is_some_and(
+                |dependencies| dependencies.contains(&json!("data.openshell_gateway.apply"))
+            ),
+            "the gateway read gates {resource}"
+        );
+    }
     for resource in [
         workspace,
         provider,
@@ -233,15 +249,23 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
         &graph["data"]["fabric_agent_readiness"]["worker"],
     ] {
         assert_eq!(
-            resource["gateway"], "${data.openshell_gateway.current.ref}",
+            resource["gateway"]["type"], "openshell_gateway",
             "{resource}"
         );
+        for (attribute, _) in nemoclaw_openshell::GATEWAY_FIELDS {
+            assert_eq!(
+                resource["gateway"][attribute],
+                read.get(attribute).cloned().unwrap_or(json!("")),
+                "{attribute}: {resource}"
+            );
+        }
         for field in [
             "gateway_endpoint",
             "gateway_credential_env",
             "gateway_tls_ca_env",
             "gateway_tls_certificate_env",
             "gateway_tls_key_env",
+            "gateway_kubernetes",
         ] {
             assert!(resource.get(field).is_none(), "{field}: {resource}");
         }
