@@ -3,6 +3,10 @@
 
 import { nativeHostedAgentConfig } from "./inference/native-provider/agent-config.ts";
 import {
+  nativeLocalCredentialReference,
+  NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN,
+} from "./inference/native-local/agent-config.ts";
+import {
   NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN,
   managedInferenceApiKey,
   NVIDIA_INFERENCE_PLACEHOLDER,
@@ -89,7 +93,15 @@ export function applyHermesManagedRoute(
     ? `\${${nativeHosted.credentialEnv}}`
     : managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
   if (route.nativeCredentialHandle !== undefined) {
-    if (
+    if (nativeLocalCredentialReference(route.upstreamProvider, route.baseUrl)) {
+      const match = new RegExp(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN).exec(
+        route.nativeCredentialHandle,
+      );
+      // Require the entire value: JavaScript's `$` also matches before a final newline.
+      if (!match || match[0] !== route.nativeCredentialHandle) {
+        throw new Error("Hermes native local route requires a provider-bound credential handle.");
+      }
+    } else if (
       route.upstreamProvider !== "nvidia-prod" ||
       apiKey !== NVIDIA_INFERENCE_PLACEHOLDER ||
       !NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN.test(route.nativeCredentialHandle)

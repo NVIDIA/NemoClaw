@@ -282,6 +282,14 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     path.join(import.meta.dirname, "../..", nativeConfigDir, "contract.ts"),
     path.join(fixtureRoot, nativeConfigDir, "contract.ts"),
   );
+  for (const source of [
+    "src/lib/inference/native-local/agent-config.ts",
+    "src/lib/core/endpoint-url-safety.ts",
+  ]) {
+    const target = path.join(fixtureRoot, source);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(import.meta.dirname, "../..", source), target);
+  }
   return fixtureScriptPath;
 }
 
