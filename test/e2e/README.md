@@ -2439,11 +2439,12 @@ Selection does not grant dispatch or credential access.
 The credential-free `inference-routing` target remains separate.
 
 OpenAI, Anthropic, Gemini, and Hermes Provider use deterministic source contracts for fixed
-endpoint and method selection, request headers and body, response parsing, native agent
-configuration, provider-bound credentials, and rejection of crossed routes. Their four former
-credentialed selectors are unavailable. These contracts do not demonstrate live upstream
-authentication, model availability, or a fresh remote answer. That evidence is deferred for
-issues #12589 and #12955; neither issue waits on those E2Es.
+endpoint and method selection, request headers and body, native agent configuration,
+provider-bound credentials, and rejection of crossed routes. OpenAI, Anthropic, and Gemini
+also have response-parsing contracts. Hermes malformed HTTP 2xx body parsing is deferred
+to #13290. Their four former credentialed selectors are unavailable. These contracts do not
+demonstrate live upstream authentication, model availability, or a fresh remote answer.
+That evidence is deferred for issues #12589 and #12955; neither issue waits on those E2Es.
 
 Before dispatch, obtain an approved disposable environment and OpenRouter credential source.
 Credential-bearing hosted runs require the canonical `e2e.yaml` workflow from `main`.
