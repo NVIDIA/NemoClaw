@@ -101,7 +101,9 @@ impl OllamaProxy {
             }),
             "proxy engine must be a local Unix socket",
         )?;
-        crate::config::validate_endpoint(&self.endpoint, false)?;
+        // Sandboxes reach the proxy's endpoint, which OpenShell checks; the
+        // proxy itself connects to its upstream.
+        crate::config::validate_endpoint_url(&self.endpoint)?;
         crate::config::validate_endpoint(&self.upstream.endpoint, false)?;
         let upstream = Url::parse(&self.upstream.endpoint)
             .map_err(|_| crate::config::ConfigError::new("invalid Ollama upstream"))?;

@@ -56,9 +56,9 @@ variable "model_endpoint" {
   default     = "http://127.0.0.1:11434/v1"
 }
 variable "sandbox_model_endpoint" {
-  description = "Ollama's OpenAI-compatible URL from the gateway and sandboxes, ending in /v1; over HTTP its host must currently be a literal loopback or private IP address (#13232). Defaults to model_endpoint."
+  description = "Ollama's OpenAI-compatible URL from the gateway and sandboxes, ending in /v1. The default reaches a server on the gateway's host through OpenShell's alias; OpenShell checks the destination."
   type        = string
-  default     = null
+  default     = "http://host.openshell.internal:11434/v1"
 }
 variable "destroy" {
   description = "Permit deleting provider-owned objects; set for tofu destroy."

@@ -12,7 +12,7 @@ mod observation;
 mod secrets;
 
 pub use contract::{Backend, Mutation, Row};
-pub use endpoint::validate_endpoint;
+pub use endpoint::{validate_endpoint, validate_endpoint_url};
 pub use error::Error;
 pub use health::{RuntimeHealth, SandboxHealth};
 pub use identity::{generate_generation, generate_owner};

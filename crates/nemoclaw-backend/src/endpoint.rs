@@ -23,9 +23,11 @@ fn host_ip(url: &Url) -> Option<IpAddr> {
     url.host_str()?.trim_matches(['[', ']']).parse().ok()
 }
 
-/// Accept an HTTPS endpoint, or local HTTP on a literal loopback or private
-/// inference address. A gateway endpoint is an origin without a path.
-pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
+/// Accept a well-formed HTTP or HTTPS endpoint: a host, no credentials, query,
+/// or fragment, and no characters OpenTofu would interpolate. Destinations
+/// are not checked: for endpoints handed to OpenShell, OpenShell decides
+/// which a sandbox may reach when it connects.
+pub fn validate_endpoint_url(raw: &str) -> Result<(), ConfigError> {
     require(
         !raw.contains(['\r', '\n', '\t', '$', '%', '{', '}', '\\']),
         "endpoint contains unsupported characters",
@@ -42,8 +44,17 @@ pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
     )?;
     require(
         matches!(url.scheme(), "https" | "http"),
-        "expected HTTPS or local HTTP",
-    )?;
+        "expected an HTTP or HTTPS endpoint",
+    )
+}
+
+/// Accept an endpoint NemoClaw connects to itself: a well-formed HTTPS
+/// endpoint, or local HTTP on a literal loopback or private inference address.
+/// A gateway endpoint is an origin without a path.
+pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
+    validate_endpoint_url(raw)?;
+    let url =
+        Url::parse(raw).map_err(|_| ConfigError::new("expected an HTTP or HTTPS endpoint"))?;
     require(
         !gateway || url.path() == "/" || url.path().is_empty(),
         "gateway endpoint must not include a path",
