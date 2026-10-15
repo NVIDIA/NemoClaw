@@ -375,6 +375,98 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o700 });
 }
 
+type OpenShellHandoffContext = {
+  fakeBin: string;
+  home: string;
+  root: string;
+  xdgBinHome: string;
+};
+
+type OpenShellHandoffPreparation = {
+  pathValue: string;
+  sourceRoot: string;
+  verifySelection?: () => void;
+};
+
+function runOpenShellHandoffFixture(
+  tempPrefix: string,
+  prepare: (context: OpenShellHandoffContext) => OpenShellHandoffPreparation,
+): void {
+  const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
+  const install = job.steps?.find((step) => step.name === "Install pinned OpenShell");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), tempPrefix));
+  const home = path.join(root, "home");
+  const fakeBin = path.join(root, "bin");
+  const xdgBinHome = String(install?.env?.XDG_BIN_HOME ?? "").replace("${{ runner.temp }}", root);
+  const githubPath = path.join(root, "github-path");
+  const installedRoot = path.join(root, "installed");
+  const sudoLog = path.join(root, "sudo.log");
+  fs.mkdirSync(home);
+  fs.mkdirSync(fakeBin);
+  fs.mkdirSync(installedRoot);
+
+  try {
+    const { pathValue, sourceRoot, verifySelection } = prepare({
+      fakeBin,
+      home,
+      root,
+      xdgBinHome,
+    });
+    writeExecutable(
+      path.join(fakeBin, "sudo"),
+      `#!/bin/sh
+set -eu
+previous=
+last=
+for argument in "$@"; do
+  previous="$last"
+  last="$argument"
+done
+[ -x "$previous" ]
+destination="$SUDO_INSTALL_ROOT/$(basename "$last")"
+cp "$previous" "$destination"
+chmod 0755 "$destination"
+printf '%s\\n' "$*" >>"$SUDO_LOG"
+exit 0
+`,
+    );
+    const result = spawnSync("/bin/bash", ["-c", install?.run ?? ""], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_PATH: githubPath,
+        HOME: home,
+        PATH: pathValue,
+        SUDO_INSTALL_ROOT: installedRoot,
+        SUDO_LOG: sudoLog,
+        XDG_BIN_HOME: xdgBinHome,
+      },
+    });
+
+    requireFixture(result.status === 0, result.stderr);
+    verifySelection?.();
+    requirePrivilegedOpenShellInstallLog(fs.readFileSync(sudoLog, "utf8"), sourceRoot);
+    for (const component of OPENSHELL_COMPONENTS) {
+      const source = path.join(sourceRoot, component);
+      const destination = path.join(installedRoot, component);
+      requireFixture(
+        fs.readFileSync(destination).equals(fs.readFileSync(source)),
+        `Portable Hermes changed ${component} bytes during handoff`,
+      );
+      requireFixture(
+        (fs.statSync(destination).mode & 0o777) === 0o755,
+        `Portable Hermes installed ${component} with the wrong mode`,
+      );
+    }
+    requireFixture(
+      fs.readFileSync(githubPath, "utf8") === "/usr/bin\n",
+      "Portable Hermes did not publish the privileged OpenShell root",
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+}
+
 async function runPodmanCleanupFixture(
   ownerContext: ProcessOwner,
   withDockerState: boolean,
@@ -665,21 +757,10 @@ describe("native Podman E2E setup boundary", () => {
   });
 
   it("copies Portable Hermes OpenShell components from a nondefault XDG bin home", () => {
-    const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
-    const install = job.steps?.find((step) => step.name === "Install pinned OpenShell");
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-handoff-"));
-    const home = path.join(root, "home");
-    const fakeBin = path.join(root, "bin");
-    const xdgBinHome = String(install?.env?.XDG_BIN_HOME ?? "").replace("${{ runner.temp }}", root);
-    const githubPath = path.join(root, "github-path");
-    const installedRoot = path.join(root, "installed");
-    const sudoLog = path.join(root, "sudo.log");
-    fs.mkdirSync(home);
-    fs.mkdirSync(fakeBin);
-    fs.mkdirSync(installedRoot);
-    writeExecutable(
-      path.join(fakeBin, "bash"),
-      `#!/bin/sh
+    runOpenShellHandoffFixture("nemoclaw-openshell-handoff-", ({ fakeBin, xdgBinHome }) => {
+      writeExecutable(
+        path.join(fakeBin, "bash"),
+        `#!/bin/sh
 set -eu
 if [ "\${1:-}" = scripts/install-openshell.sh ]; then
   install_root="\${XDG_BIN_HOME:-$HOME/.local/bin}"
@@ -692,190 +773,49 @@ if [ "\${1:-}" = scripts/install-openshell.sh ]; then
 fi
 exec /bin/bash "$@"
 `,
-    );
-    writeExecutable(
-      path.join(fakeBin, "sudo"),
-      `#!/bin/sh
-set -eu
-previous=
-last=
-for argument in "$@"; do
-  previous="$last"
-  last="$argument"
-done
-[ -x "$previous" ]
-destination="$SUDO_INSTALL_ROOT/$(basename "$last")"
-cp "$previous" "$destination"
-chmod 0755 "$destination"
-printf '%s\\n' "$*" >>"$SUDO_LOG"
-exit 0
-`,
-    );
-
-    try {
-      const result = spawnSync("/bin/bash", ["-c", install?.run ?? ""], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          GITHUB_PATH: githubPath,
-          HOME: home,
-          PATH: `${fakeBin}:/usr/bin:/bin`,
-          SUDO_INSTALL_ROOT: installedRoot,
-          SUDO_LOG: sudoLog,
-          XDG_BIN_HOME: xdgBinHome,
-        },
-      });
-
-      requireFixture(result.status === 0, result.stderr);
-      requirePrivilegedOpenShellInstallLog(fs.readFileSync(sudoLog, "utf8"), xdgBinHome);
-      const openshellSource = path.join(xdgBinHome, "openshell");
-      const openshellDestination = path.join(installedRoot, "openshell");
-      requireFixture(
-        fs.readFileSync(openshellDestination).equals(fs.readFileSync(openshellSource)),
-        "Portable Hermes changed the OpenShell bytes during handoff",
       );
-      requireFixture(
-        (fs.statSync(openshellDestination).mode & 0o777) === 0o755,
-        "Portable Hermes installed OpenShell with the wrong mode",
-      );
-      const gatewaySource = path.join(xdgBinHome, "openshell-gateway");
-      const gatewayDestination = path.join(installedRoot, "openshell-gateway");
-      requireFixture(
-        fs.readFileSync(gatewayDestination).equals(fs.readFileSync(gatewaySource)),
-        "Portable Hermes changed the OpenShell gateway bytes during handoff",
-      );
-      requireFixture(
-        (fs.statSync(gatewayDestination).mode & 0o777) === 0o755,
-        "Portable Hermes installed the OpenShell gateway with the wrong mode",
-      );
-      const sandboxSource = path.join(xdgBinHome, "openshell-sandbox");
-      const sandboxDestination = path.join(installedRoot, "openshell-sandbox");
-      requireFixture(
-        fs.readFileSync(sandboxDestination).equals(fs.readFileSync(sandboxSource)),
-        "Portable Hermes changed the OpenShell sandbox bytes during handoff",
-      );
-      requireFixture(
-        (fs.statSync(sandboxDestination).mode & 0o777) === 0o755,
-        "Portable Hermes installed the OpenShell sandbox with the wrong mode",
-      );
-      requireFixture(
-        fs.readFileSync(githubPath, "utf8") === "/usr/bin\n",
-        "Portable Hermes did not publish the privileged OpenShell root",
-      );
-    } finally {
-      fs.rmSync(root, { force: true, recursive: true });
-    }
+      return {
+        pathValue: `${fakeBin}:/usr/bin:/bin`,
+        sourceRoot: xdgBinHome,
+      };
+    });
   });
 
   it("prefers a compatible preinstalled root over a stale default user-local root", () => {
-    const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
-    const install = job.steps?.find((step) => step.name === "Install pinned OpenShell");
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-preinstalled-"));
-    const home = path.join(root, "home");
-    const fakeBin = path.join(root, "bin");
-    const xdgBinHome = String(install?.env?.XDG_BIN_HOME ?? "").replace("${{ runner.temp }}", root);
-    const preinstalledRoot = path.join(root, "preinstalled");
-    const staleUserLocalRoot = path.join(home, ".local", "bin");
-    const installedRoot = path.join(root, "installed");
-    const githubPath = path.join(root, "github-path");
-    const sudoLog = path.join(root, "sudo.log");
-    fs.mkdirSync(home);
-    fs.mkdirSync(fakeBin);
-    fs.mkdirSync(preinstalledRoot);
-    fs.mkdirSync(staleUserLocalRoot, { recursive: true });
-    fs.mkdirSync(installedRoot);
-    writeExecutable(
-      path.join(fakeBin, "bash"),
-      `#!/bin/sh
+    runOpenShellHandoffFixture(
+      "nemoclaw-openshell-preinstalled-",
+      ({ fakeBin, home, root, xdgBinHome }) => {
+        const preinstalledRoot = path.join(root, "preinstalled");
+        const staleUserLocalRoot = path.join(home, ".local", "bin");
+        fs.mkdirSync(preinstalledRoot);
+        fs.mkdirSync(staleUserLocalRoot, { recursive: true });
+        writeExecutable(
+          path.join(fakeBin, "bash"),
+          `#!/bin/sh
 set -eu
 if [ "\${1:-}" = scripts/install-openshell.sh ]; then
   exit 0
 fi
 exec /bin/bash "$@"
 `,
+        );
+        writeExecutable(path.join(preinstalledRoot, "openshell"), "#!/bin/sh\nexit 0\n");
+        writeExecutable(path.join(preinstalledRoot, "openshell-gateway"), "#!/bin/sh\nexit 0\n");
+        writeExecutable(path.join(preinstalledRoot, "openshell-sandbox"), "#!/bin/sh\nexit 0\n");
+        writeExecutable(path.join(staleUserLocalRoot, "openshell"), "#!/bin/sh\nexit 91\n");
+        writeExecutable(path.join(staleUserLocalRoot, "openshell-gateway"), "#!/bin/sh\nexit 92\n");
+        writeExecutable(path.join(staleUserLocalRoot, "openshell-sandbox"), "#!/bin/sh\nexit 93\n");
+        return {
+          pathValue: `${fakeBin}:${preinstalledRoot}:/usr/bin:/bin`,
+          sourceRoot: preinstalledRoot,
+          verifySelection: () =>
+            requireFixture(
+              !fs.existsSync(xdgBinHome),
+              "A compatible preinstalled OpenShell unexpectedly triggered a fresh install",
+            ),
+        };
+      },
     );
-    writeExecutable(path.join(preinstalledRoot, "openshell"), "#!/bin/sh\nexit 0\n");
-    writeExecutable(path.join(preinstalledRoot, "openshell-gateway"), "#!/bin/sh\nexit 0\n");
-    writeExecutable(path.join(preinstalledRoot, "openshell-sandbox"), "#!/bin/sh\nexit 0\n");
-    writeExecutable(path.join(staleUserLocalRoot, "openshell"), "#!/bin/sh\nexit 91\n");
-    writeExecutable(path.join(staleUserLocalRoot, "openshell-gateway"), "#!/bin/sh\nexit 92\n");
-    writeExecutable(path.join(staleUserLocalRoot, "openshell-sandbox"), "#!/bin/sh\nexit 93\n");
-    writeExecutable(
-      path.join(fakeBin, "sudo"),
-      `#!/bin/sh
-set -eu
-previous=
-last=
-for argument in "$@"; do
-  previous="$last"
-  last="$argument"
-done
-[ -x "$previous" ]
-destination="$SUDO_INSTALL_ROOT/$(basename "$last")"
-cp "$previous" "$destination"
-chmod 0755 "$destination"
-printf '%s\\n' "$*" >>"$SUDO_LOG"
-exit 0
-`,
-    );
-
-    try {
-      const result = spawnSync("/bin/bash", ["-c", install?.run ?? ""], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          GITHUB_PATH: githubPath,
-          HOME: home,
-          PATH: `${fakeBin}:${preinstalledRoot}:/usr/bin:/bin`,
-          SUDO_INSTALL_ROOT: installedRoot,
-          SUDO_LOG: sudoLog,
-          XDG_BIN_HOME: xdgBinHome,
-        },
-      });
-
-      requireFixture(result.status === 0, result.stderr);
-      requireFixture(
-        !fs.existsSync(xdgBinHome),
-        "A compatible preinstalled OpenShell unexpectedly triggered a fresh install",
-      );
-      requirePrivilegedOpenShellInstallLog(fs.readFileSync(sudoLog, "utf8"), preinstalledRoot);
-      const openshellSource = path.join(preinstalledRoot, "openshell");
-      const openshellDestination = path.join(installedRoot, "openshell");
-      requireFixture(
-        fs.readFileSync(openshellDestination).equals(fs.readFileSync(openshellSource)),
-        "Portable Hermes changed the preinstalled OpenShell bytes during handoff",
-      );
-      requireFixture(
-        (fs.statSync(openshellDestination).mode & 0o777) === 0o755,
-        "Portable Hermes installed preinstalled OpenShell with the wrong mode",
-      );
-      const gatewaySource = path.join(preinstalledRoot, "openshell-gateway");
-      const gatewayDestination = path.join(installedRoot, "openshell-gateway");
-      requireFixture(
-        fs.readFileSync(gatewayDestination).equals(fs.readFileSync(gatewaySource)),
-        "Portable Hermes changed the preinstalled gateway bytes during handoff",
-      );
-      requireFixture(
-        (fs.statSync(gatewayDestination).mode & 0o777) === 0o755,
-        "Portable Hermes installed the preinstalled gateway with the wrong mode",
-      );
-      const sandboxSource = path.join(preinstalledRoot, "openshell-sandbox");
-      const sandboxDestination = path.join(installedRoot, "openshell-sandbox");
-      requireFixture(
-        fs.readFileSync(sandboxDestination).equals(fs.readFileSync(sandboxSource)),
-        "Portable Hermes changed the preinstalled sandbox bytes during handoff",
-      );
-      requireFixture(
-        (fs.statSync(sandboxDestination).mode & 0o777) === 0o755,
-        "Portable Hermes installed the preinstalled sandbox with the wrong mode",
-      );
-      requireFixture(
-        fs.readFileSync(githubPath, "utf8") === "/usr/bin\n",
-        "Portable Hermes did not publish the privileged OpenShell root",
-      );
-    } finally {
-      fs.rmSync(root, { force: true, recursive: true });
-    }
   });
 
   it("rejects a Portable Hermes handoff without root ownership arguments", () => {
