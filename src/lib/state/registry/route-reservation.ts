@@ -215,12 +215,15 @@ export function isPublishedSandboxRegistration(entry: { pendingRouteReservation?
 /** True when an entry participates in the inference route shared by its gateway. */
 export function isSharedGatewayRouteParticipant(entry: {
   nativeLocalProviderAttachment?: unknown;
+  nimContainer?: string | null;
   pendingRouteReservation?: true;
   createdAt?: string;
   provider?: string | null;
   model?: string | null;
 }): boolean {
-  if (normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment)) return false;
+  const ownedLocalNim = entry.provider === "vllm-local" && Boolean(entry.nimContainer?.trim());
+  if (!ownedLocalNim && normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment))
+    return false;
   if (isPublishedSandboxRegistration(entry)) return true;
   return (
     isRouteOnlySandboxReservation(entry) &&
