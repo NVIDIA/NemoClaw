@@ -164,6 +164,71 @@ onboardModule.onboard(options).then(
   }
 }
 
+function runInterruptedDcodeOnboard(mode: "thread-opt-in" | "disabled") {
+  const repoRoot = path.join(import.meta.dirname, "../..");
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-interruption-"));
+  const scriptPath = path.join(tmpDir, "onboard.cjs");
+  const modulePath = (relative: string) => JSON.stringify(path.join(repoRoot, relative));
+  fs.writeFileSync(
+    scriptPath,
+    `
+const { OnboardRuntimeBoundary } = require(${modulePath("src/lib/onboard/runtime-boundary.ts")});
+const onboard = require(${modulePath("src/lib/onboard.ts")});
+const sentinel = new Error("interrupt before sandbox registration");
+const original = OnboardRuntimeBoundary.prototype.recordOnboardStarted;
+let observedResume;
+OnboardRuntimeBoundary.prototype.recordOnboardStarted = async function(resumed) {
+  observedResume = resumed;
+  await original.call(this, resumed);
+  throw sentinel;
+};
+const resume = process.env.TEST_RESUME === "1";
+onboard.onboard({
+  nonInteractive: true,
+  acceptThirdPartySoftware: true,
+  noGpu: true,
+  agent: "langchain-deepagents-code",
+  sandboxName: "dcode-interrupted",
+  resume,
+  ...(resume ? {} : { dcodeAutoApprovalMode: ${JSON.stringify(mode)} }),
+}).then(() => {
+  throw new Error("expected interruption");
+}, (error) => {
+  if (error !== sentinel) throw error;
+  const session = onboard.onboardSession.loadSession();
+  console.log(JSON.stringify({
+    resumed: observedResume,
+    sessionId: session.sessionId,
+    mode: session.dcodeAutoApprovalMode,
+    explicit: session.dcodeAutoApprovalRequestedExplicitly,
+    sandboxName: session.sandboxName,
+  }));
+});
+`,
+  );
+  type SavedCapability = {
+    resumed: boolean;
+    sessionId: string;
+    mode: string | null;
+    explicit: boolean;
+    sandboxName: string | null;
+  };
+  try {
+    const env = { HOME: tmpDir, NEMOCLAW_TEST_STATE_DIR: path.join(tmpDir, "state") };
+    const fresh = runOnboardEntrypoint<SavedCapability>(scriptPath, repoRoot, {
+      ...env,
+      TEST_RESUME: "0",
+    });
+    const resumed = runOnboardEntrypoint<SavedCapability>(scriptPath, repoRoot, {
+      ...env,
+      TEST_RESUME: "1",
+    });
+    return { fresh, resumed };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 function runResumeConflictEntrypoint(
   options: { failEventEmission?: boolean } = {},
 ): ResumeConflictPayload {
@@ -268,6 +333,18 @@ onboardModule.onboard({
 }
 
 describe("onboard entrypoint lifecycle events", () => {
+  it.each(["thread-opt-in", "disabled"] as const)(
+    "preserves explicit DCode mode %s across interruption before sandbox registration",
+    (mode) => {
+      const { fresh, resumed } = runInterruptedDcodeOnboard(mode);
+      assert.equal(fresh.resumed, false);
+      assert.equal(fresh.mode, mode);
+      assert.equal(fresh.explicit, true);
+      assert.equal(fresh.sandboxName, null);
+      assert.deepEqual(resumed, { ...fresh, resumed: true });
+    },
+  );
+
   it("emits onboard.started after creating a fresh session", () => {
     const payload = runLifecycleEntrypoint("fresh");
 
