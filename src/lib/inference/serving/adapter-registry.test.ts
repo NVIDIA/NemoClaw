@@ -197,6 +197,31 @@ describe("managed inference adapter registries", () => {
     );
   });
 
+  it.each([
+    ["--chat-template", "{{ messages }}\n{# literal 'quotes' and $(printf ignored) #}", true],
+    ["--chat-template", "{{ messages }}\0", false],
+    ["--chat-template", "{{ messages }}" + "x".repeat(16_384), false],
+    ["--chat-template", "{{ messages }}" + "é".repeat(8_192), false],
+    ["--chat-template", "/tmp/template;touch /tmp/unsafe", false],
+    ["--speculative-config", "{{ messages }}\n", false],
+  ])("bounds template text without widening %s: %j", (name, value, accepted) => {
+    const recipe = shippedLightningRecipe();
+    const changed = {
+      ...recipe,
+      spec: {
+        ...recipe.spec,
+        serve: {
+          ...recipe.spec.serve,
+          arguments: [...recipe.spec.serve.arguments, { name, value }],
+        },
+      },
+    } as ManagedInferenceServingRecipe;
+    const error = getManagedInferenceRecipeRegistrationError(changed);
+    expect(error).toBe(
+      accepted ? undefined : "host-local vLLM serving values must be bounded safe text",
+    );
+  });
+
   it("validates declarative direct-install authentication and receipt combinations", () => {
     const withDirectInstall = (
       authentication: "none" | "bearer",

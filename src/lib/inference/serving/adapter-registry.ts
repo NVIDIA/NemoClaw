@@ -6,6 +6,7 @@ import {
   MANAGED_CLUSTER_TOPOLOGY_ID,
   MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
 } from "./managed-cluster-topology.js";
+import { reviewedModelCodeError, REVIEWED_MODEL_SERVE_ARGUMENTS } from "./reviewed-model-code.js";
 import type {
   HostLocalInferenceServingRecipe,
   LlamaCppServingRecipe,
@@ -191,6 +192,36 @@ function validateDeclarativeVllmModel(
   recipe: ManagedInferenceServingRecipe | HostLocalInferenceServingRecipe,
 ): string | undefined {
   const { model, runtime } = recipe.spec;
+  if (
+    recipe.spec.serve.arguments.some(
+      ({ name }) =>
+        name === "--trust-remote-code" ||
+        name.startsWith("--trust-remote-code=") ||
+        name === "--code-revision" ||
+        name.startsWith("--code-revision="),
+    )
+  ) {
+    return "remote model code flags are materializer-owned; use a reviewed code manifest";
+  }
+  if (model.reviewedCode) {
+    if (
+      Object.keys(runtime.environment).length !== 0 ||
+      recipe.spec.serve.arguments.some(({ name }) => !REVIEWED_MODEL_SERVE_ARGUMENTS.has(name))
+    ) {
+      return "reviewed model code requires the bounded serving arguments and no recipe environment overrides";
+    }
+    if (
+      recipe.spec.execution.materializerRef !== HOST_LOCAL_VLLM_MATERIALIZER_REF ||
+      recipe.spec.serve.directInstall?.fixedArguments !== true ||
+      recipe.spec.serve.directInstall?.authentication !== "bearer" ||
+      recipe.spec.serve.directInstall?.catalogReceipt !== true ||
+      model.installFastSafetensors !== false
+    ) {
+      return "reviewed model code requires fixed authenticated host-local serving with receipts";
+    }
+    const error = reviewedModelCodeError(model.revision, model.reviewedCode);
+    if (error) return error;
+  }
   if (
     !VLLM_ENVIRONMENT_VALUE.test(model.environmentValue) ||
     typeof model.displayName !== "string" ||
@@ -473,11 +504,12 @@ function validateHostLocalVllmMaterializerRecipe(
   }
   if (
     recipe.spec.serve.arguments.some(
-      ({ value }) =>
+      ({ name, value }) =>
         typeof value === "string" &&
         (Buffer.byteLength(value, "utf8") > 16_384 ||
           value.includes("\0") ||
-          !HOST_LOCAL_SAFE_ARGUMENT_VALUE.test(value)),
+          (!HOST_LOCAL_SAFE_ARGUMENT_VALUE.test(value) &&
+            !(name === "--chat-template" && /\{[%{]/u.test(value)))),
     ) ||
     Object.values(recipe.spec.runtime.environment).some(
       (value) =>
