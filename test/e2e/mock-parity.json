@@ -83,6 +83,7 @@
       "fast": [
         "src/lib/inference/nim.test.ts",
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
+        "test/e2e/support/managed-image-protected-runtime-readiness.test.ts",
         "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
         "test/inference/managed/managed-image-protected-runtime-contract.test.ts",
         "test/inference/llama/llama-cpp-dgx-spark-qualification-runner.test.ts",
