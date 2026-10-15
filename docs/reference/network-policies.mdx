@@ -90,7 +90,7 @@ When you select NVIDIA Endpoints, NemoClaw attaches the `nemoclaw-nvidia-prod-v1
 This attached provider is the effective NVIDIA Endpoints route. Its profile permits only `GET /v1/models` and `POST /v1/chat/completions` at `integrate.api.nvidia.com:443` from the listed agent-runtime and readiness-verification binaries.
 The NVIDIA API key remains in OpenShell provider state and does not enter the sandbox.
 
-OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider also use sandbox-attached native providers. NemoClaw derives the `native_hosted_inference` policy from the selected provider profile, restricting endpoint hosts, request paths, methods, and agent-runtime binaries. OpenShell replaces credential placeholders at that boundary; raw provider credentials remain outside the sandbox. Retained legacy routes, custom endpoints, and local providers continue to use the shared `inference.local` route.
+OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider also use sandbox-attached native providers. NemoClaw derives the `native_hosted_inference` policy from the selected provider profile, restricting endpoint hosts, request paths, methods, and agent-runtime binaries. OpenShell replaces credential placeholders at that boundary; raw provider credentials remain outside the sandbox. New Deep Agents Code Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers for their qualified local endpoints. Owned Local NVIDIA NIM, retained legacy and other custom shared routes, and local routes for other agents continue to use `inference.local`.
 
 All endpoints use TLS termination and are enforced at port 443.
 
@@ -219,7 +219,7 @@ Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced
 
 ### Inference
 
-NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. Custom and local providers retain the shared `inference.local` route. In both cases, OpenShell mediates inference traffic and keeps provider credentials outside the sandbox.
+NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. New Deep Agents Code Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections also use sandbox-attached providers. Owned Local NVIDIA NIM, retained legacy and other custom shared routes, and local routes for other agents use `inference.local`. OpenShell mediates both routes and keeps provider credentials outside the sandbox.
 
 <AgentOnly variant="deepagents">
 
