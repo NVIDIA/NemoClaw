@@ -65,6 +65,17 @@ function requirePrivilegedOpenShellInstallLog(log: string, sourceRoot: string): 
   );
 }
 
+function requirePrivilegedOpenShellReuseLog(log: string, destinationRoot: string): void {
+  const expected = `${OPENSHELL_COMPONENTS.flatMap((component) => [
+    `chown root:root ${destinationRoot}/${component}`,
+    `chmod 0755 ${destinationRoot}/${component}`,
+  ]).join("\n")}\n`;
+  requireFixture(
+    log === expected,
+    "Portable Hermes must enforce root:root ownership and mode 0755 on reused components",
+  );
+}
+
 vi.setConfig({ maxConcurrency: 5 });
 
 function shellQuote(value: string): string {
@@ -432,16 +443,30 @@ function runOpenShellHandoffFixture(
       path.join(fakeBin, "sudo"),
       `#!/bin/sh
 set -eu
-previous=
-last=
-for argument in "$@"; do
-  previous="$last"
-  last="$argument"
-done
-[ -x "$previous" ]
-destination="$SUDO_INSTALL_ROOT/$(basename "$last")"
-cp "$previous" "$destination"
-chmod 0755 "$destination"
+case "$1" in
+  install)
+    previous=
+    last=
+    for argument in "$@"; do
+      previous="$last"
+      last="$argument"
+    done
+    [ -x "$previous" ]
+    destination="$SUDO_INSTALL_ROOT/$(basename "$last")"
+    cp "$previous" "$destination"
+    chmod 0755 "$destination"
+    ;;
+  chown)
+    [ "$2" = root:root ]
+    [ -f "$3" ] && [ ! -L "$3" ]
+    ;;
+  chmod)
+    [ "$2" = 0755 ]
+    [ -f "$3" ] && [ ! -L "$3" ]
+    chmod 0755 "$3"
+    ;;
+  *) exit 64 ;;
+esac
 printf '%s\\n' "$*" >>"$SUDO_LOG"
 exit 0
 `,
@@ -854,11 +879,7 @@ exec /bin/bash "$@"
         writeOpenShellComponents(privilegedRoot);
         return {
           pathValue: `${fakeBin}:${privilegedRoot}:/usr/bin:/bin`,
-          requireInstallLog: (log) =>
-            requireFixture(
-              log === "",
-              "Portable Hermes recopied OpenShell components already installed in the privileged root",
-            ),
+          requireInstallLog: (log) => requirePrivilegedOpenShellReuseLog(log, privilegedRoot),
           rewritePrivilegedRoot: true,
           sourceRoot: privilegedRoot,
         };
@@ -895,13 +916,12 @@ exec /bin/bash "$@"
           path.join(privilegedRoot, "openshell-sandbox"),
           path.join(preinstalledRoot, "openshell-sandbox"),
         );
+        fs.chmodSync(path.join(preinstalledRoot, "openshell"), 0o777);
+        fs.chmodSync(path.join(preinstalledRoot, "openshell-gateway"), 0o777);
+        fs.chmodSync(path.join(preinstalledRoot, "openshell-sandbox"), 0o777);
         return {
           pathValue: `${fakeBin}:${preinstalledRoot}:/usr/bin:/bin`,
-          requireInstallLog: (log) =>
-            requireFixture(
-              log === "",
-              "Portable Hermes recopied OpenShell components aliased to the privileged root",
-            ),
+          requireInstallLog: (log) => requirePrivilegedOpenShellReuseLog(log, privilegedRoot),
           rewritePrivilegedRoot: true,
           sourceRoot: preinstalledRoot,
         };

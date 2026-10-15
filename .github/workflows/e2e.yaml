@@ -5757,7 +5757,11 @@ jobs:
             source="$install_root/$component"
             [[ -f "$source" && ! -L "$source" && -x "$source" ]]
             destination="/usr/bin/$component"
-            if [[ ! "$source" -ef "$destination" ]]; then
+            if [[ "$source" -ef "$destination" ]]; then
+              [[ -f "$destination" && ! -L "$destination" ]]
+              sudo chown root:root "$destination"
+              sudo chmod 0755 "$destination"
+            else
               sudo install -o root -g root -m 0755 "$source" "$destination"
             fi
           done
