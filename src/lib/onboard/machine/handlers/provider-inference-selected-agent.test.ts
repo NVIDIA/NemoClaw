@@ -72,7 +72,65 @@ it.each(["openclaw", "pi", "hermes"])(
 it.each(["openclaw", "langchain-deepagents-code"])(
   "keeps selected %s Local NIM on its owned shared route",
   async (name) => {
-    const { deps, calls } = createDeps();
+    let sharedRoute = { provider: "vllm-local", model: "prior-nim-model" };
+    const inferenceRouteMutator = {
+      setInferenceRoute: vi.fn(async (request: { route: typeof sharedRoute }) => {
+        sharedRoute = request.route;
+        return { ok: true as const };
+      }),
+    };
+    const nativeProviderAdapter = { registerProvider: vi.fn(), attachProvider: vi.fn() };
+    const requireNativeProviderPolicy = vi.fn(async () => {
+      throw new Error("native policy must not run for NIM");
+    });
+    const upsertProvider = vi.fn(async () => ({ ok: true as const }));
+    const setup = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_sandbox: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_gateway: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "nemoclaw",
+      getSandbox: () => ({
+        agent: name,
+        provider: "vllm-local",
+        model: "prior-nim-model",
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        nimContainer: "nemoclaw-nim-owned",
+      }),
+      localInference: {
+        loadPendingOllamaModelCleanup: vi.fn(() => []),
+        loadPersistedOllamaHost: vi.fn(() => null),
+      },
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      inferenceRouteMutator,
+      inferenceRouteObserver: {
+        observeInferenceRoute: vi.fn(async () => ({
+          ok: true as const,
+          value: { state: "configured" as const, route: sharedRoute },
+        })),
+      },
+      upsertProvider,
+      updateSandbox: vi.fn(() => true),
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke: vi.fn(),
+      validateLocalProvider: vi.fn(() => ({ ok: true as const })),
+      getLocalProviderBaseUrl: () => "http://host.openshell.internal:8000/v1",
+      getManagedVllmProviderBinding: () => null,
+      vllmLocalCredentialEnv: "NEMOCLAW_VLLM_LOCAL_TOKEN",
+      localInferenceTimeoutSecs: 60,
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      requireNativeProviderPolicy,
+      providerAdapter: nativeProviderAdapter,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: (code: number): never => {
+        throw new Error(`exit ${code}`);
+      },
+    } as unknown as SetupInferenceDeps);
+    const { deps, calls } = createDeps({ setupInference: setup });
     calls.setupNim.mockResolvedValue({
       ...baseSelection,
       provider: "vllm-local",
@@ -87,26 +145,27 @@ it.each(["openclaw", "langchain-deepagents-code"])(
       agent: { name },
     });
 
-    expect(calls.setupInference).toHaveBeenCalledOnce();
-    expect(calls.setupInference.mock.calls[0]?.[7]).toEqual(
-      expect.objectContaining({ agentName: name, localNimSelected: true }),
-    );
-    const policyFailure = new Error("native policy must not run for NIM");
-    const requireNativeProviderPolicy = vi.fn(async () => {
-      throw policyFailure;
-    });
-    const setup = createSetupInference({
-      getGatewayName: () => "nemoclaw",
-      getSandbox: () => ({ agent: name, nimContainer: "nemoclaw-nim-owned" }),
-      requireNativeProviderPolicy,
-      withSandboxMutationLock: (_name: string, operation: () => unknown) => operation(),
-      withGatewayRouteMutationLock: () => {
-        throw new Error("reached the existing shared route");
-      },
-    } as unknown as SetupInferenceDeps);
-    await expect(setup(...calls.setupInference.mock.calls[0]!)).rejects.toThrow(
-      "reached the existing shared route",
+    expect(inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        route: { provider: "vllm-local", model: "nim-model" },
+      }),
     );
     expect(requireNativeProviderPolicy).not.toHaveBeenCalled();
+    expect(nativeProviderAdapter.registerProvider).not.toHaveBeenCalled();
+    expect(nativeProviderAdapter.attachProvider).not.toHaveBeenCalled();
+    expect(upsertProvider).toHaveBeenCalledWith(
+      "vllm-local",
+      "openai",
+      "NEMOCLAW_VLLM_LOCAL_TOKEN",
+      "http://host.openshell.internal:8000/v1",
+      { NEMOCLAW_VLLM_LOCAL_TOKEN: "dummy" },
+      "nemoclaw",
+    );
+    const probeInferenceLocal = (url: string) => {
+      expect(url).toBe("http://inference.local/v1/models");
+      return sharedRoute.model;
+    };
+    expect(probeInferenceLocal("http://inference.local/v1/models")).toBe("nim-model");
   },
 );
