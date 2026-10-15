@@ -203,6 +203,8 @@ export interface SandboxGpuCreateFlowInput {
     sandboxIdentityFingerprint?: string,
     createAttemptNonce?: string,
   ) => boolean;
+  /** Capture recovery authority before submitting each create request. */
+  beforeCreateAttempt?: (createAttemptNonce: string) => void;
   provider: string;
   sandboxGpuConfig: SandboxGpuConfig;
   gpuRoutePlan: import("./docker-gpu-route").DockerGpuRoutePlan;

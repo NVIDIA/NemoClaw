@@ -62,7 +62,15 @@ describe("retained sandbox recovery state", () => {
   it("records an explicit missing identity", async () => {
     const recovery = await import("./onboard-session");
 
+    const createAuthority = {
+      schemaVersion: 1 as const,
+      runtime: "native-linux-default-docker" as const,
+      reservationSessionId: "original-session",
+      gatewayStateDir: path.join(home, "gateway"),
+      daemonId: "original-daemon",
+    };
     const recorded = recovery.recordRetainedSandboxRecovery({
+      createAuthority,
       sandboxName: "missing-id",
       sandboxIdentityFingerprint: null,
       gatewayName: "nemoclaw",
@@ -81,6 +89,31 @@ describe("retained sandbox recovery state", () => {
       sandboxIdentityFingerprint: null,
       identityWasUnavailable: true,
       lifecycleGeneration: null,
+      createAuthority,
+    });
+    expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([recorded]);
+    expect(
+      JSON.parse(fs.readFileSync(recovery.RETAINED_SANDBOX_RECOVERY_FILE, "utf8")).schemaVersion,
+    ).toBe(2);
+    expect(() =>
+      recovery.recordRetainedSandboxRecovery({
+        ...recorded,
+        createAuthority: { ...createAuthority, daemonId: "replacement-daemon" },
+      }),
+    ).toThrow(/original create authority/u);
+    expect(() =>
+      recovery.recordRetainedSandboxRecovery({
+        ...recorded,
+        createAuthority: { ...createAuthority, daemonId: "" },
+      }),
+    ).toThrow(/invalid retained/u);
+    fs.chmodSync(recovery.RETAINED_SANDBOX_RECOVERY_FILE, 0o644);
+    expect(() => recovery.listRetainedSandboxRecoveryRecords()).toThrow(/private file/u);
+    fs.chmodSync(recovery.RETAINED_SANDBOX_RECOVERY_FILE, 0o600);
+    recovery.resolveRetainedSandboxRecovery(recorded);
+    expect(JSON.parse(fs.readFileSync(recovery.RETAINED_SANDBOX_RECOVERY_FILE, "utf8"))).toEqual({
+      schemaVersion: 1,
+      unresolved: [],
     });
   });
 

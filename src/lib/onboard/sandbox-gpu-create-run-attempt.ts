@@ -817,6 +817,7 @@ export function createSandboxGpuCreateAttemptRunner(
             ? "create"
             : undefined,
       } as const;
+      if (createAttemptNonce) input.beforeCreateAttempt?.(createAttemptNonce);
       const createResult = await deps.createSandbox(
         Object.freeze({ ...attemptRequest, environment: Object.freeze({ ...input.sandboxEnv }) }),
         createOptions,
