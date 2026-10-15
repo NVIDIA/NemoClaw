@@ -68,6 +68,33 @@ describe("Hermes onboard smoke verification", () => {
     ]);
   });
 
+  it("uses the fixed Hermes endpoint, NOUS credential, and Chat Completions payload (#13280)", async () => {
+    const calls = await runVerifyOnboardSmokeHarness([
+      {
+        provider: "hermes-provider",
+        credentialEnv: "NOUS_API_KEY",
+        endpointUrl: "https://inference-api.nousresearch.com/v1",
+        model: "nous/test-model",
+        capturePayload: true,
+      },
+    ]);
+    expect(calls.filter((call) => call[0] === "resolveProviderCredential")).toEqual([
+      ["resolveProviderCredential", "NOUS_API_KEY"],
+    ]);
+    expect(calls.filter((call) => call[0] === "runCurlProbe")).toEqual([
+      [
+        "runCurlProbe",
+        "https://inference-api.nousresearch.com/v1/chat/completions",
+        "Authorization: Bearer resolved-NOUS_API_KEY",
+        expect.objectContaining({
+          model: "nous/test-model",
+          messages: [{ role: "user", content: expect.any(String) }],
+        }),
+      ],
+    ]);
+    expect(JSON.stringify(calls)).not.toContain("OPENAI_API_KEY");
+  });
+
   it("does not send a duplicate smoke request for a matching selected Chat Completions capability", async () => {
     const calls = await runVerifyOnboardSmokeHarness([
       {

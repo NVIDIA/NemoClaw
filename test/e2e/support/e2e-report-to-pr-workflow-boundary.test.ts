@@ -976,7 +976,7 @@ const HOSTED_CANDIDATE_ENV: ReportEnv = {
   WORKFLOW_SHA: "c".repeat(40),
   MATRIX_RESULT: "success",
   SELECTED_WORKFLOW_JOBS: '["catalogue-hosted-inference"]',
-  JOB_TARGETS: "hosted-inference-openai",
+  JOB_TARGETS: "hosted-inference-openrouter",
 };
 
 function hostedCandidatePr() {
@@ -1035,7 +1035,7 @@ it.each(["success", "failure", "skipped"])(
     });
     expect(report.body).toContain(`**Candidate commit:** \`${"a".repeat(40)}\``);
     expect(report.body).toContain(`**Trusted workflow commit:** \`${"c".repeat(40)}\``);
-    expect(report.body).toContain("hosted-inference-openai");
+    expect(report.body).toContain("hosted-inference-openrouter");
     expect(report.body).toContain(` ${result} |`);
     expect(report.body).toContain("cleanup.json");
     expect(report.body.includes("All selected tests passed")).toBe(result === "success");

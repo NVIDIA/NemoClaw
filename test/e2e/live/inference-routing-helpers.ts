@@ -43,15 +43,12 @@ const CREDENTIAL_CLASSIFICATION_PATTERN =
 const TRANSPORT_CLASSIFICATION_PATTERN =
   /unreachable|timeout|connect|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENOTFOUND|EAI_AGAIN|No route to host|transport|network|endpoint|dns/i;
 
-function shouldRunProviderSmoke(
-  provider: "openai" | "anthropic" | "gemini" | "openrouter" | "hermes",
-): boolean {
+function shouldRunProviderSmoke(provider: "openrouter"): boolean {
   // The former shell script auto-ran these smokes when provider secrets were
-  // present. This live migration requires an explicit opt-in so PR-safe jobs
-  // cannot spend third-party quota accidentally; any future secret-backed lane
-  // must set NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE=all or a provider name.
+  // present. This live smoke requires explicit selection so PR-safe jobs do
+  // not spend third-party quota accidentally.
   const requested = process.env.NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE?.trim().toLowerCase();
-  return requested === "1" || requested === "true" || requested === "all" || requested === provider;
+  return requested === provider;
 }
 
 type SkipFn = (note?: string) => void;
@@ -440,15 +437,12 @@ async function expectAnthropicMessageThroughSandbox(
   );
 }
 
-export function requireProviderSmokeSelected(
-  provider: "openai" | "anthropic" | "gemini" | "openrouter" | "hermes",
-  skip: SkipFn,
-): void {
+export function requireProviderSmokeSelected(provider: "openrouter", skip: SkipFn): void {
   if (!shouldRunProviderSmoke(provider)) {
     const label = provider;
     skipLive(
       skip,
-      `set NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE=${provider} or all to run ${label} smoke`,
+      `set NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE=${provider} to run ${label} smoke`,
     );
   }
 }

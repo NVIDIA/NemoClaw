@@ -29,13 +29,7 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label qualification selection", (se
   const id = `hosted-inference-${selected.selector}`;
   it("selects only the named provider in the existing smoke owner", () => {
     const target = catalogueTarget(id);
-    expect(target.agentRuntime).toBe(
-      selected.selector === "hermes"
-        ? "hermes"
-        : selected.selector === "openrouter"
-          ? "openclaw + langchain-deepagents-code"
-          : "openclaw",
-    );
+    expect(target.agentRuntime).toBe("openclaw + langchain-deepagents-code");
     expect(target.testFile).toBe("test/e2e/live/inference-routing-provider-smoke.test.ts");
     expect(
       new RegExp(target.selector!).test(
@@ -65,6 +59,20 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label qualification selection", (se
     ).toThrow("requires");
   });
 });
+
+it.each(["openai", "anthropic", "gemini", "hermes"])(
+  "does not register or route the retired %s credentialed target",
+  (provider) => {
+    const id = `hosted-inference-${provider}`;
+    expect(E2E_TARGET_CATALOGUE.map((target) => target.id)).not.toContain(id);
+    expect(catalogueRecommendationSelectorIds()).not.toContain(id);
+    expect(() => catalogueTarget(id)).toThrow("Unknown catalogue E2E target");
+    expect(() => buildE2eWorkflowPlan({ targets: id })).toThrow();
+    expect(() => hostedProviderSmokeEnvironment(id, {})).toThrow(
+      "Unknown hosted inference qualification target",
+    );
+  },
+);
 
 it("runs both OpenRouter agents through the existing trusted target", () => {
   const target = catalogueTarget("hosted-inference-openrouter");
@@ -161,6 +169,10 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label workflow credential boundary"
     const secrets = {
       DOCKERHUB_USERNAME: "registry-user",
       DOCKERHUB_TOKEN: "registry-canary",
+      OPENAI_API_KEY: "retired-openai-canary",
+      ANTHROPIC_API_KEY: "retired-anthropic-canary",
+      GEMINI_API_KEY: "retired-gemini-canary",
+      NOUS_API_KEY: "retired-hermes-canary",
       ...Object.fromEntries(
         HOSTED_PROVIDER_SMOKE_CASES.map((provider) => [provider.credential, provider.selector]),
       ),
@@ -209,6 +221,45 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label workflow credential boundary"
     });
   });
 });
+
+it.each(["openai", "anthropic", "gemini", "hermes"])(
+  "does not forward the retired %s secret even in a trusted workflow",
+  (provider) => {
+    const expression = workflow.jobs["catalogue-hosted-inference"].secrets.HOSTED_INFERENCE_API_KEY;
+    const context = {
+      github: {
+        repository: "NVIDIA/NemoClaw",
+        ref: "refs/heads/main",
+        workflow_ref: "NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main",
+        event_name: "workflow_dispatch",
+      },
+      inputs: { checkout_sha: "" },
+      needs: { "generate-matrix": { outputs: { e2e_credentials_allowed: "true" } } },
+      matrix: { id: `hosted-inference-${provider}` },
+      secrets: {
+        OPENROUTER_API_KEY: "selected-canary",
+        OPENAI_API_KEY: "retired-canary",
+        ANTHROPIC_API_KEY: "retired-canary",
+        GEMINI_API_KEY: "retired-canary",
+        NOUS_API_KEY: "retired-canary",
+      },
+    };
+    const observed = execFileSync(
+      process.execPath,
+      [
+        "-e",
+        `const { readFileSync } = require("node:fs");
+        const { runInNewContext } = require("node:vm");
+        const { expression, context } = JSON.parse(readFileSync(0, "utf8"));
+        process.stdout.write(runInNewContext(
+          expression.slice(3, -2).replaceAll("needs.generate-matrix", 'needs["generate-matrix"]'),
+          context, { timeout: 1000 }));`,
+      ],
+      { input: JSON.stringify({ expression, context }), env: {}, encoding: "utf8", timeout: 5000 },
+    );
+    expect(observed).toBe("");
+  },
+);
 
 // Evaluate the reusable workflow expression with distinct models to detect provider crossover.
 it.each(HOSTED_PROVIDER_SMOKE_CASES)("routes only the approved $label model", (selected) => {
@@ -262,14 +313,17 @@ it.each(HOSTED_PROVIDER_SMOKE_CASES)("routes only the approved $label model", (s
 describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label local smoke prerequisites", (selected) => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it.each([undefined, "unrelated-provider"])("skips without matching opt-in %s", (requested) => {
-    vi.stubEnv("NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE", requested);
-    const skip = vi.fn();
-    expect(() => requireProviderSmokeSelected(selected.selector, skip)).toThrow(
-      `NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE=${selected.selector}`,
-    );
-    expect(skip).toHaveBeenCalledOnce();
-  });
+  it.each([undefined, "unrelated-provider", "all", "openai", "anthropic", "gemini", "hermes"])(
+    "skips without matching opt-in %s",
+    (requested) => {
+      vi.stubEnv("NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE", requested);
+      const skip = vi.fn();
+      expect(() => requireProviderSmokeSelected(selected.selector, skip)).toThrow(
+        `NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE=${selected.selector}`,
+      );
+      expect(skip).toHaveBeenCalledOnce();
+    },
+  );
 
   it("runs only after explicit selection and validates its named key and model", () => {
     vi.stubEnv("NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE", selected.selector);

@@ -1006,38 +1006,22 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   ...HOSTED_PROVIDER_SMOKE_CASES.map((selected) =>
     dockerOnlyTarget(`hosted-inference-${selected.selector}`, {
-      displayName:
-        selected.selector === "openrouter"
-          ? "Inference: completes native OpenRouter agent requests"
-          : `Inference: completes a native ${selected.label} agent request`,
-      agentRuntime:
-        selected.selector === "hermes"
-          ? "hermes"
-          : selected.selector === "openrouter"
-            ? "openclaw + langchain-deepagents-code"
-            : "openclaw",
+      displayName: "Inference: completes native OpenRouter agent requests",
+      agentRuntime: "openclaw + langchain-deepagents-code",
       prAdvisorSelectable: true,
       owningPaths: [
         "test/e2e/live/inference-routing-credential-scan.ts",
         `managed-inference/provider-profiles/nemoclaw-${selected.selector}-inference-v1.yaml`,
-        ...(["openai", "anthropic", "hermes"].includes(selected.selector)
-          ? ["src/lib/inference/native-provider/", "src/lib/onboard/setup-inference.ts"]
-          : []),
-        ...(selected.selector === "hermes" ? ["src/lib/hermes-provider-auth.ts"] : []),
-        ...(selected.selector === "openrouter"
-          ? [
-              "agents/langchain-deepagents-code/managed-dcode-runtime.py",
-              "agents/langchain-deepagents-code/generate-config.ts",
-              "src/lib/inference/managed-dcode/",
-            ]
-          : []),
+        "agents/langchain-deepagents-code/managed-dcode-runtime.py",
+        "agents/langchain-deepagents-code/generate-config.ts",
+        "src/lib/inference/managed-dcode/",
       ],
       environmentOrInferenceEndpoint: `Ubuntu; ${selected.label} hosted inference`,
       profile: "hosted-inference",
       releaseRequired: false,
       testFile: "test/e2e/live/inference-routing-provider-smoke.test.ts",
-      selector: selected.selector === "openrouter" ? selected.id : `^${selected.id}`,
-      timeoutMinutes: selected.selector === "openrouter" ? 45 : 30,
+      selector: selected.id,
+      timeoutMinutes: 45,
       installMode: "none",
       restoreCli: true,
       exposeCliBin: true,
