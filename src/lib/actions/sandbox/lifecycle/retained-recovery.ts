@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import { captureNativeDockerRecoveryAuthority } from "../../../onboard/gateway/state-ownership";
 
 import { dockerRun } from "../../../adapters/docker/run";
 import { dockerContextIsDefaultFromBuild } from "../../../adapters/docker/client-isolation";
@@ -29,6 +30,7 @@ type RecoveryState = {
   registryEntryGatewayPort: typeof registryEntryGatewayPort;
   retireRemovedImmutabilityState?: () => void;
   timeoutMs: number;
+  forceLocal?: boolean;
   session: Pick<
     typeof OnboardSession,
     | "withOwnedOnboardLock"
@@ -36,6 +38,7 @@ type RecoveryState = {
     | "listRetainedSandboxRecoveryRecords"
     | "retainedSandboxRecoveryMatchesSession"
     | "resolveRetainedSandboxRecovery"
+    | "archiveRetainedSandboxRecoveryForLocalDiscard"
   >;
   registry: Pick<typeof Registry, "getSandbox" | "removeSandboxRouteReservationIfCurrent">;
 };
@@ -103,16 +106,30 @@ function requireAbsence(record: Recovery, state: RecoveryState): void {
 
 function requireReservationOwner(
   record: Recovery,
-  entry: Registry.SandboxEntry,
+  entry: Registry.SandboxEntry | null,
   session: OnboardSession.Session | null,
   state: RecoveryState,
 ): void {
+  if (!entry) {
+    if (
+      (state.forceLocal || record.createAuthority) &&
+      session?.sandboxName === record.sandboxName &&
+      (session.status !== "recovery_required" ||
+        !state.session.retainedSandboxRecoveryMatchesSession(record, session))
+    ) {
+      refuse(record.sandboxName, "another onboarding session still claims this name");
+    }
+    return;
+  }
   const { name, gatewayName, gatewayPort } = entry;
+  const sessionMustMatch =
+    (!state.forceLocal && !record.createAuthority) || session?.sandboxName === record.sandboxName;
   if (
-    session?.status !== "recovery_required" ||
-    session.sandboxName !== record.sandboxName ||
-    session.cancellationRecovery?.reason !== record.reason ||
-    !state.session.retainedSandboxRecoveryMatchesSession(record, session) ||
+    (sessionMustMatch &&
+      (session?.status !== "recovery_required" ||
+        session.sandboxName !== record.sandboxName ||
+        session.cancellationRecovery?.reason !== record.reason ||
+        !state.session.retainedSandboxRecoveryMatchesSession(record, session))) ||
     state.registryEntryGatewayPort({ name, gatewayName, gatewayPort }) !== record.gatewayPort ||
     entry.hostLocalInferenceReceipt != null ||
     entry.nativeNvidiaProviderAttachment !== undefined ||
@@ -120,7 +137,13 @@ function requireReservationOwner(
       {
         sandboxName: record.sandboxName,
         gatewayName: record.gatewayName,
-        sessionId: session.sessionId,
+        // Force is an explicit local-record discard, not proof of the original session owner.
+        sessionId:
+          (!state.forceLocal && record.createAuthority
+            ? record.createAuthority.reservationSessionId
+            : sessionMustMatch
+              ? session?.sessionId
+              : entry.reservationSessionId) ?? "",
         selection: normalizeInferenceSelection(entry),
       },
       entry,
@@ -168,17 +191,36 @@ export function reconcileIdentityFreeRecovery(
     if (!isDeepStrictEqual(entry, observedEntry) || !unpublished(entry)) {
       refuse(sandboxName, "the registry changed before reconciliation");
     }
-    if (entry) requireReservationOwner(record, entry, sessionState.loadSession(), state);
+    requireReservationOwner(record, entry, sessionState.loadSession(), state);
     const requireOwnedRuntime = () => {
       if (
         resolveGatewayCleanupRuntimeProviderId(record.gatewayName, entry?.openshellDriver, {
           requireOwnedRuntime: true,
-          recoveryRecordedAt: record.recordedAt,
+          ...(state.forceLocal || record.createAuthority
+            ? { requireDefaultDockerDaemon: true }
+            : { recoveryRecordedAt: record.recordedAt }),
         }) !== "docker"
       ) {
         refuse(
           sandboxName,
           "the owning Docker runtime on the original default daemon could not be established",
+        );
+      }
+      if (
+        !state.forceLocal &&
+        record.createAuthority &&
+        !isDeepStrictEqual(
+          record.createAuthority,
+          captureNativeDockerRecoveryAuthority(
+            record.gatewayName,
+            record.gatewayPort,
+            record.createAuthority.reservationSessionId,
+          ),
+        )
+      ) {
+        refuse(
+          sandboxName,
+          "the Docker daemon or gateway binding changed since the create attempt",
         );
       }
     };
@@ -202,7 +244,14 @@ export function reconcileIdentityFreeRecovery(
     if (!isDeepStrictEqual(currentRecords, candidates)) {
       refuse(sandboxName, "the recovery record changed during absence verification");
     }
-    if (entry) requireReservationOwner(record, entry, sessionState.loadSession(), state);
+    const currentSession = sessionState.loadSession();
+    requireReservationOwner(record, entry, currentSession, state);
+    if (state.forceLocal) {
+      const archivePath = sessionState.archiveRetainedSandboxRecoveryForLocalDiscard(record, entry);
+      console.warn(
+        `  --force discards local recovery tracking only; original runtime cleanup is not asserted. Archive: ${archivePath}`,
+      );
+    }
     // Legacy state retirement must succeed while the recovery authority is still available for retry.
     state.retireRemovedImmutabilityState?.();
     if (entry && !registry.removeSandboxRouteReservationIfCurrent(entry)) {
@@ -212,7 +261,11 @@ export function reconcileIdentityFreeRecovery(
       refuse(sandboxName, "a registry entry appeared during reconciliation");
     }
     // Keep the independent record until both earlier local writes succeed so a retry can finish.
-    if (!sessionState.resolveRetainedSandboxRecovery(record)) {
+    if (
+      !sessionState.resolveRetainedSandboxRecovery(record, {
+        preserveSession: currentSession?.sandboxName !== sandboxName,
+      })
+    ) {
       refuse(sandboxName, "the recovery record could not be retired");
     }
     return true;
