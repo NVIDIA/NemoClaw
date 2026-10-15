@@ -1174,9 +1174,19 @@ export function startNimContainerByName(
   );
   const id = started.stdout?.toString("utf-8").trim() ?? "";
   if (!/^[0-9a-f]{64}$/u.test(id)) {
-    throw new Error(
-      `Docker did not return a verifiable ID for NIM container '${name}'. Inspect and remove this container before retrying onboarding.`,
-    );
+    const receiptError = `Docker did not return a verifiable ID for NIM container '${name}'.`;
+    try {
+      const removed = dockerForceRm(name, { ignoreError: true, suppressOutput: true });
+      if (removed.status !== 0) {
+        throw new Error(`docker rm -f exited with status ${removed.status ?? "unknown"}`);
+      }
+    } catch (error) {
+      const cleanupFailure = error instanceof Error ? error.message : "docker rm -f could not run";
+      throw new Error(
+        `${receiptError} Cleanup failed: ${cleanupFailure}. Inspect and remove this container before retrying onboarding.`,
+      );
+    }
+    throw new Error(`${receiptError} Removed the named container.`);
   }
   return { name, id };
 }
