@@ -228,7 +228,7 @@ fn targets_with_plans(
         }
     }
     // OpenShell objects and Fabric configurations name their gateway.
-    let gateway = gateway_values(&document.spec.gateway);
+    let gateway = gateway_values(document, generations)?;
     for target in &mut result {
         if nemoclaw_openshell::references(&target.kind)
             .iter()
@@ -303,7 +303,7 @@ pub(crate) fn deployment_graph(
         crate::services::InstallStage::Deployment,
     )?;
     let raw = targets_with_plans(document, generations, &service_plans)?;
-    let mut graph = compile_with_plans(document, version, &service_plans, &raw)?;
+    let mut graph = compile_with_plans(document, generations, version, &service_plans, &raw)?;
     crate::docker_compute::configure(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid Docker compute graph"))?;
     crate::services::configure_proxy_readiness(&mut graph, &raw)
@@ -350,9 +350,12 @@ fn gateway_data(connection: &Value, drivers: Value) -> Value {
 }
 
 /// The gateway connection a deployment's objects carry in their rows.
-fn gateway_values(gateway: &crate::config::Gateway) -> BTreeMap<String, String> {
-    let connection = gateway_provider(gateway);
-    nemoclaw_openshell::GATEWAY_FIELDS
+fn gateway_values(
+    document: &Document,
+    generations: &Generations,
+) -> Result<BTreeMap<String, String>, ConfigError> {
+    let connection = gateway_connection(document, generations)?;
+    Ok(nemoclaw_openshell::GATEWAY_FIELDS
         .iter()
         .map(|(attribute, field)| {
             (
@@ -363,11 +366,25 @@ fn gateway_values(gateway: &crate::config::Gateway) -> BTreeMap<String, String> 
                     .to_owned(),
             )
         })
-        .collect()
+        .collect())
 }
 
-pub(crate) fn gateway_provider(gateway: &crate::config::Gateway) -> Value {
+/// How a deployment's objects reach its gateway: an endpoint and the
+/// variables naming its credentials, or a managed Kubernetes gateway's
+/// specification, from which providers connect themselves.
+pub(crate) fn gateway_connection(
+    document: &Document,
+    generations: &Generations,
+) -> Result<Value, ConfigError> {
+    let gateway = &document.spec.gateway;
     let mut provider = json!({"endpoint":gateway.endpoint()});
+    let invalid = || ConfigError::new("invalid managed Kubernetes gateway");
+    if let Some(spec) =
+        crate::kubernetes::gateway_spec(document, generations).map_err(|_| invalid())?
+    {
+        provider["kubernetes"] = json!(serde_json::to_string(&spec).map_err(|_| invalid())?);
+        return Ok(provider);
+    }
     if let Some(c) = gateway.credential() {
         provider["credential_env"] = json!(c.env);
     }
@@ -376,18 +393,15 @@ pub(crate) fn gateway_provider(gateway: &crate::config::Gateway) -> Value {
         provider["tls_certificate_env"] = json!(tls.certificate.env);
         provider["tls_key_env"] = json!(tls.key.env);
     }
-    if gateway.as_kubernetes().is_some() {
-        provider["credential_env"] = json!("NEMOCLAW_MANAGED_K8S_TOKEN");
-        provider["tls_ca_env"] = json!("NEMOCLAW_MANAGED_K8S_CA");
-        provider["tls_certificate_env"] = json!("NEMOCLAW_MANAGED_K8S_CERT");
-        provider["tls_key_env"] = json!("NEMOCLAW_MANAGED_K8S_KEY");
-    }
-    provider
+    Ok(provider)
 }
 
 /// The gateway's `ref` as a literal object, for graphs without its data source.
-pub(crate) fn gateway_ref(gateway: &crate::config::Gateway) -> Value {
-    let connection = gateway_provider(gateway);
+pub(crate) fn gateway_ref(
+    document: &Document,
+    generations: &Generations,
+) -> Result<Value, ConfigError> {
+    let connection = gateway_connection(document, generations)?;
     let mut reference = serde_json::Map::new();
     reference.insert(
         nemoclaw_tofu::REF_TYPE.into(),
@@ -399,7 +413,7 @@ pub(crate) fn gateway_ref(gateway: &crate::config::Gateway) -> Value {
             json!(connection[attribute].as_str().unwrap_or_default()),
         );
     }
-    Value::Object(reference)
+    Ok(Value::Object(reference))
 }
 
 /// The expression every OpenShell object and Fabric configuration takes as `gateway`.
@@ -407,8 +421,12 @@ pub(crate) fn gateway_ref_expression() -> String {
     format!("${{{GATEWAY_CAPABILITIES_ADDRESS}.ref}}")
 }
 
-fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> {
-    let connection = gateway_provider(&document.spec.gateway);
+fn graph_base(
+    document: &Document,
+    generations: &Generations,
+    version: &str,
+) -> Result<Value, ConfigError> {
+    let connection = gateway_connection(document, generations)?;
     let drivers = [document.spec.gateway.runtime().provider.openshell_driver()];
     let mut graph = json!({
         "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{
@@ -429,12 +447,13 @@ fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> 
 
 fn compile_with_plans(
     document: &Document,
+    generations: &Generations,
     version: &str,
     service_plans: &crate::services::InstallPlans,
     targets: &[Target],
 ) -> Result<Value, ConfigError> {
     let providers = document.selected_providers()?;
-    let mut graph = graph_base(document, version)?;
+    let mut graph = graph_base(document, generations, version)?;
     let mut resources = json!({});
     let provider_dependencies: BTreeMap<_, _> = targets
         .iter()
@@ -665,7 +684,7 @@ fn compile_with_plans(
     // timestamp() is unknown while planning. Its nonempty test becomes a
     // stable true at apply, forcing a fresh read without perpetual state drift.
     let mut apply_readiness = gateway_data(
-        &gateway_provider(&document.spec.gateway),
+        &gateway_connection(document, generations)?,
         graph["data"]["openshell_gateway"]["current"]["required_compute_drivers"].clone(),
     );
     apply_readiness["read_trigger"] = json!("${timestamp() != \"\"}");

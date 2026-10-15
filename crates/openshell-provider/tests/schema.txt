@@ -27,7 +27,7 @@ resource openshell_inference (version 2)
   api: string, required
   binaries: list(string), optional
   cluster_source: string, optional, computed
-  gateway: object({ credential_env = string, endpoint = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
+  gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   generation: string, optional, computed
   id: string, computed
   name: string, required
@@ -94,7 +94,7 @@ resource openshell_podman_gateway (version 0)
   running: string, computed
 
 resource openshell_sandbox (version 2)
-  gateway: object({ credential_env = string, endpoint = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
+  gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   generation: string, optional, computed
   id: string, computed
   image: string, required
@@ -303,7 +303,7 @@ resource openshell_sandbox (version 2)
 resource openshell_web_search (version 2)
   binaries: list(string), optional
   credential_env: string, optional, computed
-  gateway: object({ credential_env = string, endpoint = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
+  gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   generation: string, optional, computed
   id: string, computed
   name: string, required
@@ -313,7 +313,7 @@ resource openshell_web_search (version 2)
   workspace: object({ name = string, owner = string, type = string }), required
 
 resource openshell_workspace (version 2)
-  gateway: object({ credential_env = string, endpoint = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
+  gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   generation: string, optional, computed
   id: string, computed
   name: string, required
@@ -371,9 +371,10 @@ data openshell_gateway (version 0)
   endpoint: string, required
   gateway_version: string, computed
   incompatibility: string, computed
+  kubernetes: string, optional
   observation_json: string, computed
   read_trigger: bool, optional
-  ref: object({ credential_env = string, endpoint = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), computed
+  ref: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), computed
   required_compute_drivers: set(string), required
   status: string, computed
   tls_ca_env: string, optional

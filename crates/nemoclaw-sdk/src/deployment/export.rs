@@ -161,9 +161,7 @@ impl Deployment {
             ));
         }
 
-        let (operation, _connection) = self
-            .connected(&record.document, &record.generations, cancel)
-            .await?;
+        let operation = self;
         operation
             .export_runtime(&bundle, &store, &record, cancel)
             .await?;

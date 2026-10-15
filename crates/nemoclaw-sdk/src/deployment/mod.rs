@@ -144,7 +144,6 @@ pub struct Deployment {
     bundle_directory: PathBuf,
     secrets: Arc<dyn Secrets>,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
-    operation_environment: BTreeMap<String, String>,
     /// Shared by clones, so a deployment hashes an unchanged bundle once.
     bundle: Arc<crate::bundle::VerifiedBundle>,
 }
@@ -155,7 +154,6 @@ impl Deployment {
             bundle_directory: bundle_directory.into(),
             secrets: Arc::new(EnvironmentSecrets),
             progress: Arc::new(|_| {}),
-            operation_environment: BTreeMap::new(),
             bundle: Arc::default(),
         }
     }
@@ -166,29 +164,6 @@ impl Deployment {
     pub fn with_progress(mut self, progress: Arc<dyn Fn(Progress) + Send + Sync>) -> Self {
         self.progress = progress;
         self
-    }
-    async fn connected(
-        &self,
-        document: &Document,
-        generations: &compile::Generations,
-        cancel: &CancellationToken,
-    ) -> Result<(Self, Option<crate::kubernetes::Connection>), Error> {
-        if document.spec.gateway.as_kubernetes().is_none() {
-            return Ok((self.clone(), None));
-        }
-        let directory = std::path::absolute(&self.state_directory)
-            .map_err(|_| Error::State("cannot resolve Kubernetes state directory"))?;
-        let connection = crate::kubernetes::connection(
-            document,
-            generations,
-            &directory,
-            self.secrets.as_ref(),
-            cancel,
-        )
-        .await?;
-        let mut operation = self.clone();
-        operation.operation_environment = connection.environment();
-        Ok((operation, Some(connection)))
     }
     fn open(&self) -> Result<(Bundle, Store), Error> {
         let started = std::time::Instant::now();
@@ -305,9 +280,8 @@ impl Deployment {
                 .push("OpenShell registration and sandbox require the managed gateway".into());
             return Ok(result);
         }
-        let (operation, _connection) = self
-            .connected(&document, &record.generations, cancel)
-            .await?;
+        // Providers connect to a managed Kubernetes gateway themselves.
+        let operation = self;
         let (graph, targets) =
             compile::deployment_graph(&document, &record.generations, &bundle.manifest.version)?;
         (operation.progress)(Progress::Validating);

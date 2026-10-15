@@ -30,7 +30,7 @@ use std::{
 /// are named `STAGE.NAME`: `apply` (`ok`, `fail` or `block`, which sleeps 30 s
 /// unless the SDK interrupts it; it execs `sleep` so that the interrupt reaches
 /// the blocked process, because a shell that waits for a child can lose it),
-/// `state` (the `show -json` state), and the name
+/// `planning` (`ok` or `fail`, for `plan`), `state` (the `show -json` state), and the name
 /// of a saved plan (the `show -json PLAN` plan). A `show` without a control file
 /// prints an empty state or plan. An `apply` that finds the saved record,
 /// `intent.json`, creates the control file `STAGE.record-at-apply`.
@@ -43,7 +43,11 @@ esac
 printf '%s\n' "$stage $*" >> "$control/calls"
 case "$1" in
   init) ;;
-  plan) printf '{"type":"version","ui":"1.0"}\n' ;;
+  plan)
+    planning=ok
+    [ -f "$control/$stage.planning" ] && planning=$(cat "$control/$stage.planning")
+    if [ "$planning" = fail ]; then printf 'provider failed\n' >&2; exit 1; fi
+    printf '{"type":"version","ui":"1.0"}\n' ;;
   show)
     canned="$control/$stage.${3:-state}"
     if [ -f "$canned" ]; then cat "$canned"; else printf '{"format_version":"1.0"}\n'; fi ;;
@@ -183,17 +187,6 @@ impl Secrets for Values {
             _ => Err(ObservationError::Authentication),
         }
     }
-}
-
-/// A kubeconfig whose one context selects `server`.
-pub fn write_kubeconfig(path: &Path, server: &str) {
-    let config = json!({
-        "apiVersion": "v1", "kind": "Config", "current-context": "test-cluster",
-        "clusters": [{"name": "fixture", "cluster": {"server": server}}],
-        "contexts": [{"name": "test-cluster", "context": {"cluster": "fixture", "user": "fixture"}}],
-        "users": [{"name": "fixture", "user": {}}],
-    });
-    fs::write(path, serde_json::to_vec(&config).unwrap()).unwrap();
 }
 
 /// The local configuration on a managed Kubernetes gateway. The same `uid`

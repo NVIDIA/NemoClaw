@@ -25,7 +25,10 @@ mod gateway;
 mod transport;
 use nemoclaw_backend::{ObservationError, Row};
 
-pub use client::{GatewayClient, GatewayConfig, GatewaySettings, OpenShellBackend};
+pub use client::{
+    GatewayClient, GatewayConfig, GatewayConnection, GatewaySettings, KubernetesConnection,
+    KubernetesConnector, OpenShellBackend,
+};
 pub use gateway_source::{GatewayDataSource, GatewayState, observe_with_wait};
 pub use nemoclaw_backend::{EnvironmentSecrets, Secrets};
 use nemoclaw_openshell::credential_metadata;

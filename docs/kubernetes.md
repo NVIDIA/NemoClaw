@@ -45,13 +45,14 @@ See [Build agent images](build.md#build-agent-images) for the harnesses each pla
 
 ## Deploy with a Managed Gateway
 
-The SDK creates the namespace and a credential key, starts a development token issuer, installs the pinned OpenShell chart, and reaches the gateway through a port forward that lasts only for each command.
+The SDK creates the namespace and a credential key, starts a development token issuer, and installs the pinned OpenShell chart.
+The `openshell` and `fabric` providers reach the gateway through port forwards they open on free loopback ports while OpenTofu runs.
 Start from [the Kubernetes example](../examples/kubernetes/managed-development.yaml) and set:
 
 - `metadata.uid` to a new UUID.
 - `gateway.kubernetes.kubeconfig` to the environment variable holding the kubeconfig path, and `context` to the exact context.
 - `gateway.kubernetes.namespace` to a namespace that does not exist yet; NemoClaw does not take over an existing one.
-- `gateway.endpoint` to `https://127.0.0.1:` and a free local port for the port forward.
+- `gateway.endpoint` to `https://127.0.0.1:` and an explicit port. Providers forward on free ports of their own, so this port is not bound.
 - Each sandbox's `image.ref` and `image.metadata`.
 
 ```yaml

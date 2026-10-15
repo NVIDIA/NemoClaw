@@ -65,13 +65,16 @@ pub const GATEWAY_TYPE: &str = "openshell_gateway";
 pub const INFERENCE_SERVER_TYPE: &str = "inference_server";
 
 /// How to reach a gateway: `(ref attribute, row field)` for each part of
-/// its `ref`. Rows carry them without the gateway observing them.
-pub const GATEWAY_FIELDS: [(&str, &str); 5] = [
+/// its `ref`. Rows carry them without the gateway observing them. A managed
+/// Kubernetes gateway's `kubernetes` specification replaces the credential
+/// variables: providers connect to it themselves.
+pub const GATEWAY_FIELDS: [(&str, &str); 6] = [
     ("endpoint", "gateway_endpoint"),
     ("credential_env", "gateway_credential_env"),
     ("tls_ca_env", "gateway_tls_ca_env"),
     ("tls_certificate_env", "gateway_tls_certificate_env"),
     ("tls_key_env", "gateway_tls_key_env"),
+    ("kubernetes", "gateway_kubernetes"),
 ];
 
 /// A row without the gateway connection it carries. Gateways never observe

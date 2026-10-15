@@ -97,12 +97,7 @@ impl Deployment {
             return Ok(result);
         }
         // Observe and validate both complete saved plans before the first delete.
-        let (operation, _connection) = if !record.root_destroyed() && !bindings.is_empty() {
-            self.connected(&record.document, &record.generations, cancel)
-                .await?
-        } else {
-            (self.clone(), None)
-        };
+        let operation = self;
         let mut stages = Vec::new();
         if !record.root_destroyed() {
             let (changes, planned) = operation

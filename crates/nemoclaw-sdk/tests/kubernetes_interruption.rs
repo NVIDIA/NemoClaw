@@ -13,9 +13,9 @@
 //! The saved record marks an apply or destroy unfinished when it starts to
 //! change resources; the tests call that mark the unfinished marker.
 //!
-//! The gateway kubeconfig is a missing file unless a test says otherwise, so an
-//! operation that no refusal stops fails with `ObservationError::Authentication`
-//! when it first reads the cluster; the tests take that error as proof that the
+//! The OpenShell stage's plan fails unless a test says otherwise, standing in
+//! for a provider that cannot reach the gateway, so an operation that no
+//! refusal stops fails there; the tests take that failure as proof that the
 //! operation was not refused.
 //!
 //! A test that expects a refusal revises the namespace, which is part of every
@@ -34,20 +34,17 @@
 use crate::scripted_tofu::{
     Events, Scripted, apply_failed, destroy_plan_json, destroying, kubernetes_document, mid_apply,
     placeholder_generations, plan_json, planning, retained_workspace_state_json, state_json,
-    write_kubeconfig,
 };
 use nemoclaw_sdk::{
-    CancellationToken, Deployment, Error, ObservationError, OperationResult, Outcome, Progress,
+    CancellationToken, Deployment, Error, OperationResult, Outcome, Progress,
     compile::{self, Target},
     config::Document,
-    kubernetes::{AUTH_KIND, STORAGE_KIND, cluster::Owned, receipt::Receipt},
+    kubernetes::{AUTH_KIND, STORAGE_KIND},
 };
 use std::{
     fmt::Debug,
     fs,
-    net::TcpListener,
     path::{Path, PathBuf},
-    time::Duration,
 };
 
 const STORAGE: &str = "openshell_kubernetes_storage.runtime";
@@ -71,6 +68,7 @@ fn renamed(name: &str) -> Document {
 /// plan creates every platform resource.
 fn fresh() -> Scripted {
     let scripted = Scripted::new();
+    scripted.set("root.planning", "fail");
     let targets = compile::runtime_targets(&original(), &placeholder_generations()).unwrap();
     scripted.set("runtime.apply.plan", plan_json(&targets, "create"));
     scripted
@@ -93,10 +91,11 @@ fn assert_conflict<T: Debug>(result: Result<T, Error>, reason: &str, context: &s
     }
 }
 
-fn assert_observation<T: Debug>(result: Result<T, Error>, class: ObservationError, context: &str) {
+/// The operation reached the OpenShell stage, whose plan failed.
+fn assert_reached_openshell<T: Debug>(result: Result<T, Error>, context: &str) {
     assert!(
-        matches!(&result, Err(Error::Observation(found)) if *found == class),
-        "{context}: expected the {class:?} observation, got {result:?}"
+        matches!(&result, Err(Error::Execution { operation, .. }) if operation == "plan"),
+        "{context}: expected the OpenShell stage's plan to fail, got {result:?}"
     );
 }
 
@@ -204,9 +203,8 @@ async fn interrupted_first_apply(scripted: &Scripted, kubeconfig: &Path) {
 async fn settled(scripted: &Scripted) -> Deployment {
     scripted.set("runtime.apply", "ok");
     let deployment = scripted.deployment(&missing(scripted));
-    assert_observation(
+    assert_reached_openshell(
         deployment.apply(&original(), &uncancelled()).await,
-        ObservationError::Authentication,
         "the first apply settles the runtime stage",
     );
     deployment
@@ -280,202 +278,16 @@ async fn cancelling_the_first_kubernetes_runtime_apply_leaves_an_unfinished_appl
     untouched.assert_unchanged(&scripted);
 
     scripted.set("runtime.apply", "ok");
-    assert_observation(
+    assert_reached_openshell(
         deployment.apply(&original(), &uncancelled()).await,
-        ObservationError::Authentication,
-        "the same document settles the runtime stage and stops at the missing kubeconfig",
+        "the same document settles the runtime stage and stops at the OpenShell stage's plan",
     );
     assert_runtime_applies(&scripted, 2, "the same document");
-    assert_observation(
+    assert_conflict(
         deployment.export(&uncancelled()).await,
-        ObservationError::Authentication,
+        "export requires all declared resource bindings",
         "export after the runtime settled is no longer refused as unfinished",
     );
-}
-
-/// The receipt of a deployment that already created its namespace. Reading the
-/// gateway then reaches the cluster; without it the read fails at once.
-fn seed_receipt(scripted: &Scripted, document: &Document) {
-    let mut receipt = Receipt::new(
-        &document.metadata.uid,
-        &format!("{}-gateway", document.workspace()),
-    );
-    receipt.objects.push(Owned {
-        api_version: "v1".into(),
-        kind: "Namespace".into(),
-        namespace: String::new(),
-        name: "agents".into(),
-        uid: "namespace-uid".into(),
-    });
-    receipt.storage_ready = true;
-    receipt.save(&scripted.state().join("kubernetes")).unwrap();
-}
-
-/// A kubeconfig for a cluster whose API server accepts connections and never
-/// answers, with the receipt that makes the gateway read connect to it. Keep
-/// the listener for the length of the test.
-fn silent_cluster(scripted: &Scripted, document: &Document) -> (TcpListener, PathBuf) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let kubeconfig = scripted.path("silent-kubeconfig");
-    write_kubeconfig(
-        &kubeconfig,
-        &format!("http://{}", listener.local_addr().unwrap()),
-    );
-    seed_receipt(scripted, document);
-    (listener, kubeconfig)
-}
-
-/// The address of an API server that refuses connections, and the socket that
-/// keeps it refusing: bound but never listening, so connections are refused and
-/// no other test's server can take the port while the socket lives.
-fn refused_server() -> (tokio::net::TcpSocket, String) {
-    let socket = tokio::net::TcpSocket::new_v4().unwrap();
-    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
-    let address = format!("http://{}", socket.local_addr().unwrap());
-    (socket, address)
-}
-
-/// A cancel that arrives while the gateway connection waits for the cluster,
-/// after the runtime stage settled, ends the operation, starts no OpenShell
-/// stage, and leaves the runtime settled, so the next operation is not blocked.
-/// The cluster accepts the connection and never answers, and the test cancels
-/// once it has accepted. The receipt makes the connection read the cluster;
-/// without it the connection fails at once.
-///
-/// Catches a marker that stays set until the OpenShell stage ends, a gateway
-/// connection that ignores a cancel while a request is outstanding, and an
-/// OpenShell stage that starts after a cancel.
-#[tokio::test]
-async fn cancelling_between_the_stages_of_a_kubernetes_apply_while_the_cluster_is_silent_settles_the_runtime_and_starts_no_openshell_stage()
- {
-    let scripted = fresh();
-    scripted.set("runtime.apply", "ok");
-    let (cluster, silent) = silent_cluster(&scripted, &original());
-    let receipt = fs::read(scripted.state().join("kubernetes/receipt.json")).unwrap();
-
-    let (events, token) = (Events::default(), uncancelled());
-    let cancel = token.clone();
-    // A thread that never accepts leaves the 10 s guard below to fail the test.
-    std::thread::spawn(move || {
-        let held = cluster.accept().unwrap();
-        cancel.cancel();
-        std::thread::park_timeout(Duration::from_secs(15));
-        drop(held);
-    });
-    let deployment = scripted
-        .deployment(&silent)
-        .with_progress(events.recording());
-    let document = original();
-    let result = tokio::time::timeout(Duration::from_secs(10), deployment.apply(&document, &token))
-        .await
-        .expect("the gateway connection ignored the cancel while it waited for the cluster");
-
-    assert_cancelled(
-        result,
-        "the apply cancelled while the gateway connection waited",
-    );
-    assert!(
-        !events.contains(|event| matches!(event, Progress::Validating | Progress::Applying)),
-        "the OpenShell stage started after the cancel"
-    );
-    assert_runtime_applies(&scripted, 1, "the cancelled apply");
-    assert_runtime_only(&scripted);
-    assert_eq!(
-        fs::read(scripted.state().join("kubernetes/receipt.json")).unwrap(),
-        receipt,
-        "the cancelled connection changed the receipt"
-    );
-
-    // The follow-up deployment has no cluster to reach, so an operation that is
-    // not refused stops at the missing kubeconfig.
-    let deployment = scripted.deployment(&missing(&scripted));
-    assert_observation(
-        deployment.export(&uncancelled()).await,
-        ObservationError::Authentication,
-        "export after the cancel is no longer refused as unfinished",
-    );
-    assert_observation(
-        deployment.apply(&another_namespace(), &uncancelled()).await,
-        ObservationError::Authentication,
-        "a revised document is not refused as unfinished after the cancel",
-    );
-    assert_runtime_applies(&scripted, 2, "the revised document");
-}
-
-/// Apply after which the gateway connection fails with `class`: the error keeps
-/// its class, the runtime stage stays settled, and no OpenShell stage starts. A
-/// revised document is then not refused as unfinished: its apply settles the
-/// runtime stage again and fails the same way.
-///
-/// Catches an error whose class changes before it is returned (a failed read
-/// treated as absence), a failed connection that lets the OpenShell stage run,
-/// and a marker that stays set when the operation stops at the connection.
-async fn assert_failed_connection_keeps_its_class(
-    scripted: &Scripted,
-    kubeconfig: &Path,
-    class: ObservationError,
-) {
-    scripted.set("runtime.apply", "ok");
-    let deployment = scripted.deployment(kubeconfig);
-
-    assert_observation(
-        deployment.apply(&original(), &uncancelled()).await,
-        class.clone(),
-        "the first apply",
-    );
-    assert_runtime_applies(scripted, 1, "the first apply");
-    assert_runtime_only(scripted);
-    assert!(
-        scripted.state().join("runtime/terraform.tfstate").exists(),
-        "the settled runtime state is gone"
-    );
-
-    assert_observation(
-        deployment.apply(&another_namespace(), &uncancelled()).await,
-        class,
-        "a revised document is not refused as unfinished",
-    );
-    assert_runtime_applies(scripted, 2, "the revised document");
-    assert_runtime_only(scripted);
-}
-
-#[tokio::test]
-async fn a_missing_kubeconfig_after_the_runtime_stage_settles_keeps_its_error_class_and_starts_no_openshell_stage()
- {
-    let scripted = fresh();
-
-    assert_failed_connection_keeps_its_class(
-        &scripted,
-        &missing(&scripted),
-        ObservationError::Authentication,
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn a_missing_receipt_after_the_runtime_stage_settles_keeps_its_error_class_and_starts_no_openshell_stage()
- {
-    let scripted = fresh();
-    // The gateway read fails at once, so the server is never contacted.
-    let kubeconfig = scripted.path("kubeconfig");
-    let (_reserved, server) = refused_server();
-    write_kubeconfig(&kubeconfig, &server);
-
-    assert_failed_connection_keeps_its_class(&scripted, &kubeconfig, ObservationError::Incomplete)
-        .await;
-}
-
-#[tokio::test]
-async fn a_refused_connection_after_the_runtime_stage_settles_keeps_its_error_class_and_starts_no_openshell_stage()
- {
-    let scripted = fresh();
-    seed_receipt(&scripted, &original());
-    let kubeconfig = scripted.path("kubeconfig");
-    let (_reserved, server) = refused_server();
-    write_kubeconfig(&kubeconfig, &server);
-
-    assert_failed_connection_keeps_its_class(&scripted, &kubeconfig, ObservationError::Transport)
-        .await;
 }
 
 /// A destroy that is cancelled after its record is saved blocks apply and plan
@@ -601,9 +413,9 @@ async fn a_kubernetes_destroy_plan_that_deletes_retained_storage_is_refused_befo
 
     assert_runtime_applies(&scripted, 1, "the refused plan");
     assert_record(&scripted, &saved, "the refused destroy");
-    assert_observation(
+    assert_conflict(
         deployment.export(&uncancelled()).await,
-        ObservationError::Authentication,
+        "export requires all declared resource bindings",
         "export after the refusal is not blocked by an unfinished destroy",
     );
 }
@@ -671,14 +483,13 @@ async fn a_failed_first_kubernetes_runtime_apply_leaves_an_unfinished_apply_that
     untouched.assert_unchanged(&scripted);
 
     scripted.set("runtime.apply", "ok");
-    assert_observation(
+    assert_reached_openshell(
         deployment.apply(&original(), &uncancelled()).await,
-        ObservationError::Authentication,
-        "the same document settles the runtime stage and stops at the missing kubeconfig",
+        "the same document settles the runtime stage and stops at the OpenShell stage's plan",
     );
-    assert_observation(
+    assert_conflict(
         deployment.export(&uncancelled()).await,
-        ObservationError::Authentication,
+        "export requires all declared resource bindings",
         "export after the runtime settled is no longer refused as unfinished",
     );
 }
@@ -717,9 +528,8 @@ async fn cancelling_before_the_runtime_mutation_saves_no_record_and_a_revised_do
         "export after the cancel",
     );
 
-    assert_observation(
+    assert_reached_openshell(
         deployment.apply(&another_namespace(), &uncancelled()).await,
-        ObservationError::Authentication,
         "a revised document is accepted and settles the runtime stage",
     );
     assert_runtime_applies(&scripted, 1, "the revised document");
@@ -755,11 +565,10 @@ async fn cancelling_an_unchanged_kubernetes_runtime_apply_keeps_the_saved_docume
     assert_record(&scripted, &saved, "the cancelled apply");
 
     scripted.set("runtime.apply", "ok");
-    assert_observation(
+    assert_reached_openshell(
         deployment
             .apply(&renamed("another-name"), &uncancelled())
             .await,
-        ObservationError::Authentication,
         "a revised document is accepted after the cancel",
     );
     assert_record(&scripted, &saved, "the accepted revision");

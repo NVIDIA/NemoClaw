@@ -52,6 +52,33 @@ pub struct Operations {
 pub const OPENSHIFT_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl Operations {
+    /// Operations from a provider's environment: the kubeconfig the spec
+    /// names, and the state directory the SDK passes through
+    /// [`STATE_ENV`](super::STATE_ENV).
+    pub async fn from_environment(spec: &Spec) -> Result<Self, ObservationError> {
+        let target = spec
+            .settings
+            .kubernetes
+            .as_ref()
+            .ok_or(ObservationError::Query)?;
+        let kubeconfig: PathBuf = std::env::var_os(&target.kubeconfig.env)
+            .filter(|path| !path.is_empty())
+            .ok_or(ObservationError::Authentication)?
+            .into();
+        let state: PathBuf = std::env::var_os(super::STATE_ENV)
+            .ok_or(ObservationError::Incomplete)?
+            .into();
+        let cluster = super::ClusterTarget {
+            kubeconfig,
+            context: target.context.clone(),
+        };
+        Ok(Self {
+            server: super::server(&cluster)?,
+            client: super::connect(&cluster).await?,
+            state,
+            openshift_wait: OPENSHIFT_WAIT,
+        })
+    }
     fn target<'a>(
         &self,
         spec: &'a Spec,
@@ -469,14 +496,20 @@ impl Operations {
             .into());
         }
         let target = self.target(spec)?;
-        let endpoint =
+        let mut endpoint =
             url::Url::parse(&spec.settings.endpoint).map_err(|_| ObservationError::Query)?;
-        let port = endpoint.port().ok_or(ObservationError::Query)?;
-        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
+        // Each provider process connects on its own, so each takes a free
+        // port. The gateway certificate names the address, not the port.
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
             .await
-            .map_err(|_| {
-                Error::Conflict("the managed Kubernetes loopback port is already in use")
-            })?;
+            .map_err(|_| ObservationError::Transport)?;
+        let port = listener
+            .local_addr()
+            .map_err(|_| ObservationError::Transport)?
+            .port();
+        endpoint
+            .set_port(Some(port))
+            .map_err(|()| ObservationError::Query)?;
         let directory = self.state.join("client");
         super::receipt::private_directory(&directory)?;
         let secret = self

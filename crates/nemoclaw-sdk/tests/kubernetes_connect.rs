@@ -6,12 +6,9 @@
 
 use crate::{kube_api::Objects, kube_client::client};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use nemoclaw_sdk::{
-    Error,
-    kubernetes::{
-        AUTH_KIND, CA_ENV, CERT_ENV, GATEWAY_KIND, KEY_ENV, STORAGE_KIND, Spec, TOKEN_ENV,
-        connection::forward, operations::Operations,
-    },
+use nemoclaw_sdk::kubernetes::{
+    AUTH_KIND, CA_ENV, CERT_ENV, GATEWAY_KIND, KEY_ENV, STORAGE_KIND, Spec, TOKEN_ENV,
+    connection::forward, operations::Operations,
 };
 use serde_json::json;
 use std::path::Path;
@@ -124,9 +121,17 @@ async fn a_connection_supplies_private_client_credentials_and_a_token() {
     let objects = Objects::default();
     let directory = tempfile::tempdir().unwrap();
     let (_fixture, operations) = running(&objects, directory.path()).await;
-    let port = free_port();
-    let connection = operations.connect(&spec(GATEWAY_KIND, port)).await.unwrap();
-    assert_eq!(connection.endpoint(), format!("https://127.0.0.1:{port}"));
+    let connection = operations
+        .connect(&spec(GATEWAY_KIND, free_port()))
+        .await
+        .unwrap();
+    // Each connection listens on its own free loopback port.
+    let port = connection
+        .endpoint()
+        .strip_prefix("https://127.0.0.1:")
+        .and_then(|port| port.parse::<u16>().ok())
+        .expect("a loopback endpoint");
+    std::net::TcpStream::connect(("127.0.0.1", port)).expect("the connection listens");
     let environment = connection.environment();
     assert_eq!(environment.len(), 4);
     for (name, expected) in [
@@ -157,17 +162,24 @@ async fn a_connection_supplies_private_client_credentials_and_a_token() {
     assert_eq!(claims["aud"], OWNER);
 }
 
+/// Several providers connect at once, so none may need the authored port.
 #[tokio::test]
-async fn an_occupied_loopback_port_is_refused() {
+async fn connections_do_not_need_the_authored_loopback_port() {
     let objects = Objects::default();
     let directory = tempfile::tempdir().unwrap();
     let (_fixture, operations) = running(&objects, directory.path()).await;
     let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = held.local_addr().unwrap().port();
-    assert!(matches!(
-        operations.connect(&spec(GATEWAY_KIND, port)).await,
-        Err(Error::Conflict(_))
-    ));
+    let authored = held.local_addr().unwrap().port();
+    let first = operations
+        .connect(&spec(GATEWAY_KIND, authored))
+        .await
+        .unwrap();
+    let second = operations
+        .connect(&spec(GATEWAY_KIND, authored))
+        .await
+        .unwrap();
+    assert_ne!(first.endpoint(), format!("https://127.0.0.1:{authored}"));
+    assert_ne!(first.endpoint(), second.endpoint());
 }
 
 #[tokio::test]

@@ -130,7 +130,7 @@ fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directori
         env: "UNREAD_INFERENCE_KEY".into(),
     });
     let temporary = tempfile::tempdir().unwrap();
-    let mut deployment = Deployment::new(temporary.path(), Path::new("unused-bundle"))
+    let deployment = Deployment::new(temporary.path(), Path::new("unused-bundle"))
         .with_secrets(Arc::new(ProvisioningOnly));
     let expected = temporary
         .path()
@@ -160,14 +160,8 @@ fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directori
         assert!(!environment.contains_key(crate::kubernetes::TOKEN_ENV));
         assert!(!environment.contains_key("UNREAD_INFERENCE_KEY"));
     }
-    deployment.operation_environment.insert(
-        crate::kubernetes::TOKEN_ENV.into(),
-        "synthetic-token".into(),
-    );
-    let environment = deployment
-        .provider_environment(&document, temporary.path(), true)
-        .unwrap();
-    assert_eq!(environment[crate::kubernetes::TOKEN_ENV], "synthetic-token");
+    // Providers open their own connections; the reserved names stay
+    // unavailable to configurations.
     for name in [
         crate::kubernetes::STATE_ENV,
         crate::kubernetes::TOKEN_ENV,

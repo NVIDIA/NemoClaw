@@ -12,11 +12,9 @@ use crate::{
 };
 use async_trait::async_trait;
 use nemoclaw_sdk::kubernetes::{
-    AUTH_KIND, ClusterTarget, GATEWAY_KIND, STATE_ENV, STORAGE_KIND, Spec, connect,
+    AUTH_KIND, GATEWAY_KIND, STORAGE_KIND, Spec,
     operations::{Operations, Response},
-    server,
 };
-use std::path::PathBuf;
 
 #[derive(Default)]
 pub struct KubernetesBackend;
@@ -74,30 +72,7 @@ fn row(spec: &Spec, response: Response) -> Result<Option<Row>, ObservationError>
 }
 
 async fn operations(spec: &Spec) -> Result<Operations, ObservationError> {
-    let target = spec
-        .settings
-        .kubernetes
-        .as_ref()
-        .ok_or(ObservationError::Query)?;
-    let kubeconfig: PathBuf = std::env::var_os(&target.kubeconfig.env)
-        .filter(|path| !path.is_empty())
-        .ok_or(ObservationError::Authentication)?
-        .into();
-    let state: PathBuf = std::env::var_os(STATE_ENV)
-        .ok_or(ObservationError::Incomplete)?
-        .into();
-    let cluster = ClusterTarget {
-        kubeconfig: kubeconfig.clone(),
-        context: target.context.clone(),
-    };
-    let server = server(&cluster)?;
-    let client = connect(&cluster).await?;
-    Ok(Operations {
-        server,
-        client,
-        state,
-        openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
-    })
+    Operations::from_environment(spec).await
 }
 
 fn failed_mutation(

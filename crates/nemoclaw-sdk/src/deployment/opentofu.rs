@@ -154,7 +154,6 @@ impl Deployment {
                 crate::kubernetes::STATE_ENV.into(),
                 state.to_string_lossy().into_owned(),
             );
-            environment.extend(self.operation_environment.clone());
             let kubeconfig = crate::kubernetes::kubeconfig_path(
                 environment
                     .get(&target.kubeconfig.env)

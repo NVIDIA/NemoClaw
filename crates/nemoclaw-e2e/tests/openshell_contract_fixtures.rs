@@ -111,6 +111,7 @@ fn fixture(mut document: Document) -> Option<String> {
             "tls_ca_env",
             "tls_certificate_env",
             "tls_key_env",
+            "kubernetes",
         ] {
             read.remove(attribute);
         }

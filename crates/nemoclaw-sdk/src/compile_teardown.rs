@@ -72,7 +72,7 @@ pub fn compile_teardown(
         }
     }
     // Without data sources, retained objects name their gateway literally.
-    let gateway = crate::compile::gateway_ref(&document.spec.gateway);
+    let gateway = crate::compile::gateway_ref(document, generations)?;
     let gateway_expression = crate::compile::gateway_ref_expression();
     let resources = graph["resource"]
         .as_object_mut()
