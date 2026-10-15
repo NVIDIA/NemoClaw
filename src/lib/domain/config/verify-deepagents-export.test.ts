@@ -78,8 +78,7 @@ describe("Deep Agents config export (#11860)", () => {
           },
         }),
       });
-      value.sandbox = { ...value.sandbox, providerNames: [receipt.providerName] };
-      value.inference = {
+      const inference: ObservedExportSnapshot["inference"] = {
         ...value.inference,
         provider,
         endpoint,
@@ -100,7 +99,11 @@ describe("Deep Agents config export (#11860)", () => {
           },
         },
       };
-      const result = verify(value);
+      const result = verify({
+        ...value,
+        sandbox: { ...value.sandbox, providerNames: [receipt.providerName] },
+        inference,
+      });
       // Receipt fidelity does not expand V1's authenticated HTTP export contract.
       expect(result).toMatchObject({
         kind: "rejected",
