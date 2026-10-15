@@ -252,7 +252,7 @@ jobs:
           save-cache: "false"
       - uses: ./.github/actions/containerd-store
       - name: Build and save the live images
-        run: cargo ci live-images --image-exporter containerd
+        run: cargo ci live-images
       - name: Identify live images artifact
         id: identity
         run: echo "artifact=live-images-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"

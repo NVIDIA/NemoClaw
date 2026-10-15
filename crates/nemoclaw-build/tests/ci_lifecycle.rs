@@ -126,6 +126,7 @@ exit "${CARGO_RESULT:-0}"
                 r#"#!/bin/sh
 printf '%s\n' "$*" >> docker.log
 case "$1 $2" in
+    'info --format') printf '%s\n' '{"Address":"/test/containerd.sock","Namespaces":{"Containers":"test-images"}}' ;;
     'version '*) printf '29.0.0\n' ;;
     'buildx bake')
         if [ "$3" = --print ]; then
@@ -146,6 +147,17 @@ exit 0
 "#,
             ),
             (
+                "sudo",
+                r#"#!/bin/sh
+printf '%s\n' "$*" > containerd.log
+[ "$1 $2 $3 $4 $5 $6 $7 $8 $9" = '-n ctr --address /test/containerd.sock --namespace test-images images export --all-platforms' ] || exit 1
+shift 9
+output=$1
+shift
+printf 'exported %s\n' "$*" > "$output"
+"#,
+            ),
+            (
                 "zstd",
                 r#"#!/bin/sh
 output=
@@ -160,6 +172,8 @@ for argument; do
 done
 if [ -n "$decompress" ]; then
     while IFS= read -r line; do printf '%s\n' "$line"; done < "$input"
+elif [ "$input" != "$output" ]; then
+    /bin/cat "$input" > "$output"
 else
     while IFS= read -r line; do printf '%s\n' "$line"; done > "$output"
 fi
@@ -435,16 +449,12 @@ fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compr
             "{log}"
         );
     }
-    assert!(
-        log.contains(
-            "save nc-live-images:pi nc-live-images:dummy nc-live-images:proxy-a nc-live-images:proxy-b"
-        ),
-        "{log}"
-    );
+    assert!(!log.lines().any(|line| line.starts_with("save ")), "{log}");
     let archive =
         fs::read_to_string(fixture.0.path().join(".build/ci/live-images.tar.zst")).unwrap();
     assert!(
-        archive.starts_with("saved save nc-live-images:pi"),
+        archive.trim()
+            == "exported docker.io/library/nc-live-images:pi docker.io/library/nc-live-images:dummy docker.io/library/nc-live-images:proxy-a docker.io/library/nc-live-images:proxy-b",
         "{archive}"
     );
 }
