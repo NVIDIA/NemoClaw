@@ -17,6 +17,14 @@ Fixes and regression coverage for those behaviors belong upstream.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
+The DCode Auto-mode check captures bounded, redacted per-thread debug logs before
+failure recovery. Its cleanup removes those logs from the disposable sandbox.
+The authenticated native-local routing scenario uses a serial timeout contract
+for both onboarding calls, rebuild, restart, consumer, credential scan and sibling
+denial. Its catalogue job retains the allowance for the other routing scenarios.
+Manual PR runs use the catalogue from the trusted workflow commit on `main`, so
+a candidate's job-timeout change applies only after it reaches that commit.
+
 On disposable GitHub runners, the `full-e2e` OpenClaw launch segment uses the
 final host user's home at mode `0775` with `umask 0002`. It removes only that
 test sandbox's persistent readiness receipt before the existing probe and two
