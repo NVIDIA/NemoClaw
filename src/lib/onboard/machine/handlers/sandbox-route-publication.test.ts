@@ -95,7 +95,7 @@ describe("sandbox route publication", () => {
     expect(registryEntry.reservationSessionId).toBe(session.sessionId);
   });
 
-  it("reserves the session route from the published row before a resumed recreate", async () => {
+  it("keeps the published route until the resumed recreate passes backup", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";
     const registryEntry: SandboxEntry = {
@@ -112,7 +112,12 @@ describe("sandbox route publication", () => {
       registryEntry.reservationSessionId = session.sessionId;
       return true;
     });
-    const createSandbox = vi.fn(async () => {
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      expect(registryEntry.pendingRouteReservation).toBeUndefined();
+      const intent = args.at(-2) as {
+        reservePublishedRouteAfterBackup: () => void | Promise<void>;
+      };
+      await intent.reservePublishedRouteAfterBackup();
       expect(registryEntry).toMatchObject({
         pendingRouteReservation: true,
         reservationSessionId: session.sessionId,
@@ -146,9 +151,148 @@ describe("sandbox route publication", () => {
       reservationSessionId: session.sessionId,
     });
     expect(createSandbox).toHaveBeenCalledOnce();
-    expect(reserveSandboxInferenceRoute.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(reserveSandboxInferenceRoute.mock.invocationCallOrder[0]).toBeGreaterThan(
       createSandbox.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("checks peers without rejecting the published source of a deferred model change", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    session.steps.sandbox.status = "complete";
+    let gatewayLockHeld = false;
+    const withGatewayRouteMutationLock = async <T>(
+      _name: string,
+      operation: () => Promise<T> | T,
+    ): Promise<T> => {
+      expect(gatewayLockHeld).toBe(false);
+      gatewayLockHeld = true;
+      try {
+        return await operation();
+      } finally {
+        gatewayLockHeld = false;
+      }
+    };
+    const registryEntry: SandboxEntry = {
+      name: "saved",
+      provider: "provider",
+      model: "old-model",
+      endpointUrl: null,
+      preferredInferenceApi: "openai-completions",
+      gatewayName: "nemoclaw",
+      createdAt: "2026-09-16T00:00:00.000Z",
+    };
+    const checkGatewayRouteCompatibility = vi.fn((request: { sandboxName: string | null }) =>
+      request.sandboxName === null
+        ? {
+            ok: false as const,
+            gatewayName: "nemoclaw",
+            sandboxName: null,
+            route: { provider: "provider", model: "changed-model" },
+            conflicts: [{ sandboxName: "saved", reason: "provider-model" as const }],
+          }
+        : { ok: true as const },
+    );
+    const reserveSandboxInferenceRoute = vi.fn(() => {
+      registryEntry.model = "changed-model";
+      registryEntry.pendingRouteReservation = true;
+      registryEntry.reservationSessionId = session.sessionId;
+      return true;
+    });
+    const deferredInferenceRoute = vi.fn(async (reserve: () => void) => {
+      expect(gatewayLockHeld).toBe(true);
+      expect(registryEntry.model).toBe("old-model");
+      reserve();
+    });
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      expect(registryEntry.model).toBe("old-model");
+      const intent = args.at(-2) as {
+        reservePublishedRouteAfterBackup: () => Promise<void>;
+      };
+      await intent.reservePublishedRouteAfterBackup();
+      return "saved";
+    });
+    const { deps } = createDeps(
+      {
+        checkGatewayRouteCompatibility,
+        createSandbox,
+        reserveSandboxInferenceRoute,
+        withGatewayRouteMutationLock,
+        getSandboxReuseState: () => "ready",
+        getSandboxRegistryEntry: () => registryEntry,
+      },
+      session,
+    );
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      recreateSandbox: () => true,
+      sandboxName: "saved",
+      model: "changed-model",
+      deferredInferenceRoute,
+    });
+
+    expect(checkGatewayRouteCompatibility).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: "saved" }),
+    );
+    expect(createSandbox).toHaveBeenCalledOnce();
+    expect(deferredInferenceRoute).toHaveBeenCalledOnce();
+    expect(reserveSandboxInferenceRoute).toHaveBeenCalledOnce();
+    expect(gatewayLockHeld).toBe(false);
+  });
+
+  it("checks peers before a fresh non-forced model change resolves to recreation", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    const registryEntry: SandboxEntry = {
+      name: "saved",
+      provider: "provider",
+      model: "old-model",
+      endpointUrl: null,
+      preferredInferenceApi: "openai-completions",
+      gatewayName: "nemoclaw",
+    };
+    const checkGatewayRouteCompatibility = vi.fn((request: { sandboxName: string | null }) =>
+      request.sandboxName === "saved"
+        ? { ok: true as const }
+        : {
+            ok: false as const,
+            gatewayName: "nemoclaw",
+            sandboxName: null,
+            route: { provider: "provider", model: "changed-model" },
+            conflicts: [{ sandboxName: "saved", reason: "provider-model" as const }],
+          },
+    );
+    const deferredInferenceRoute = vi.fn(async (reserve: () => void) => reserve());
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      const intent = args.at(-2) as {
+        recreate: boolean;
+        reservePublishedRouteAfterBackup: () => Promise<void>;
+      };
+      expect(intent.recreate).toBe(false);
+      await intent.reservePublishedRouteAfterBackup();
+      return "saved";
+    });
+    const { deps } = createDeps(
+      {
+        checkGatewayRouteCompatibility,
+        createSandbox,
+        getSandboxRegistryEntry: () => registryEntry,
+      },
+      session,
+    );
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      sandboxName: "saved",
+      model: "changed-model",
+      deferredInferenceRoute,
+    });
+
+    expect(checkGatewayRouteCompatibility).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: "saved" }),
+    );
+    expect(createSandbox).toHaveBeenCalledOnce();
+    expect(deferredInferenceRoute).toHaveBeenCalledOnce();
   });
 
   it("does not reserve again when the session already owns the pending create reservation", async () => {

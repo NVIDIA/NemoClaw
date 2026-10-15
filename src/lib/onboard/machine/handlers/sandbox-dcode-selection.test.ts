@@ -212,9 +212,10 @@ describe("handleSandboxState live DCode selection", () => {
       null,
       false,
     );
-    expect(calls.createSandbox.mock.calls[0]?.at(-2)).toEqual({
+    expect(calls.createSandbox.mock.calls[0]?.at(-2)).toMatchObject({
       resolved: expect.any(Object),
       recreate: true,
+      reservePublishedRouteAfterBackup: expect.any(Function),
       toolDisclosure: "progressive",
       observabilityEnabled: false,
       endpointSource: null,
@@ -235,9 +236,10 @@ describe("handleSandboxState live DCode selection", () => {
     await handleSandboxState(dcodeOptions(deps));
 
     expect(calls.removeSandbox).not.toHaveBeenCalled();
-    expect(calls.createSandbox.mock.calls[0]?.at(-2)).toEqual({
+    expect(calls.createSandbox.mock.calls[0]?.at(-2)).toMatchObject({
       resolved: expect.any(Object),
       recreate: true,
+      reservePublishedRouteAfterBackup: expect.any(Function),
       toolDisclosure: "progressive",
       observabilityEnabled: false,
       endpointSource: null,

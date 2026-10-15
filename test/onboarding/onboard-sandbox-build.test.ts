@@ -365,6 +365,18 @@ agentOnboard.createAgentSandbox = () => {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("provider get -g nemoclaw hermes-sandbox-hermes-tool-gateway")) {
+    return {
+      status: 0,
+      stdout: "Name: hermes-sandbox-hermes-tool-gateway\nType: nemoclaw-hermes-tool-gateway-v1\nCredential keys: NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN\nConfig keys: <none>\n",
+    };
+  }
+  if (normalized.includes("provider profile -g nemoclaw export nemoclaw-hermes-tool-gateway-v1")) {
+    return {
+      status: 0,
+      stdout: JSON.stringify(require(path.join(${JSON.stringify(repoRoot)}, "node_modules/yaml")).parse(fs.readFileSync(${JSON.stringify(path.join(repoRoot, "agents", "hermes", "host", "nemoclaw-hermes-tool-gateway-v1.yaml"))}, "utf8"))),
+    };
+  }
   const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   const sandboxResult = createdSandbox.run(command);

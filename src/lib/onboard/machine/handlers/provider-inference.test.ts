@@ -28,6 +28,7 @@ function setupOptions(
   return {
     gatewayName: "nemoclaw",
     allowToolsIncompatible: false,
+    deferPublishedRouteReservation: true,
     endpointSource: null,
     reservationSessionId: session.sessionId,
     ...overrides,
@@ -83,6 +84,7 @@ describe("handleProviderInferenceState", () => {
       [],
       setupOptions(session, {
         preferredInferenceApi: "openai-responses",
+        deferPublishedRouteReservation: true,
       }),
     );
     expect(calls.deleteEnv).toHaveBeenCalledWith("NVIDIA_INFERENCE_API_KEY");
@@ -152,6 +154,7 @@ describe("handleProviderInferenceState", () => {
       [],
       setupOptions(session, {
         preferredInferenceApi: "openai-completions",
+        deferPublishedRouteReservation: true,
       }),
     );
     expect(result.preferredInferenceApi).toBe("openai-completions");
@@ -1467,6 +1470,7 @@ describe("handleProviderInferenceState", () => {
       setupOptions(session, {
         allowToolsIncompatible: true,
         preferredInferenceApi: "openai-responses",
+        deferPublishedRouteReservation: true,
       }),
     );
   });

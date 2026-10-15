@@ -165,6 +165,20 @@ function jsonRequest(
   };
 }
 
+function visibleChatRequest(
+  authorization: string,
+  body: JsonRecord,
+  timeoutMilliseconds: number,
+  signal = requestSignal(timeoutMilliseconds),
+): RequestInit {
+  return jsonRequest(
+    authorization,
+    { ...body, chat_template_kwargs: { enable_thinking: false } },
+    timeoutMilliseconds,
+    signal,
+  );
+}
+
 function exactSizeChatRequest(model: string, targetBytes: number): string {
   const request = {
     max_tokens: 1,
@@ -503,7 +517,7 @@ async function recoveryCompletion(
     try {
       response = await fetchImpl(
         url,
-        jsonRequest(
+        visibleChatRequest(
           authorization,
           {
             max_tokens: maxTokens,
@@ -725,11 +739,11 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
     readonly init?: RequestInit;
   }[] = [
     { label: "UI", path: "/", status: 404 },
-    { label: "slot inspection", path: "/slots", status: 501 },
-    { label: "MCP proxy", path: "/cors-proxy", status: 403 },
-    { label: "server tools", path: "/tools", status: 403 },
+    { label: "slot inspection", path: "/slots", status: 404 },
+    { label: "MCP proxy", path: "/cors-proxy", status: 404 },
+    { label: "server tools", path: "/tools", status: 404 },
     { label: "router", path: "/models/load", status: 404, init: { method: "POST" } },
-    { label: "properties mutation", path: "/props", status: 501, init: { method: "POST" } },
+    { label: "properties mutation", path: "/props", status: 404, init: { method: "POST" } },
   ];
   for (const probe of disabledSurfaceRequests) {
     const response = await fetchImpl(`${baseUrl}${probe.path}`, {
@@ -808,7 +822,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
   );
   const bodyLimitContinuationResponse = await fetchImpl(
     chatUrl,
-    jsonRequest(
+    visibleChatRequest(
       authorization,
       {
         max_tokens: bounds.maxTokens.synchronousChat,
@@ -832,7 +846,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
 
   const synchronousResponse = await fetchImpl(
     chatUrl,
-    jsonRequest(
+    visibleChatRequest(
       authorization,
       {
         max_tokens: bounds.maxTokens.synchronousChat,
@@ -856,7 +870,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
 
   const streamingResponse = await fetchImpl(
     chatUrl,
-    jsonRequest(
+    visibleChatRequest(
       authorization,
       {
         max_tokens: bounds.maxTokens.streamingChat,
@@ -883,7 +897,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
 
   const structuredResponse = await fetchImpl(
     chatUrl,
-    jsonRequest(
+    visibleChatRequest(
       authorization,
       {
         max_tokens: bounds.maxTokens.structuredOutput,
@@ -929,7 +943,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
   ];
   const toolResponse = await fetchImpl(
     chatUrl,
-    jsonRequest(
+    visibleChatRequest(
       authorization,
       {
         max_tokens: bounds.maxTokens.toolCall,
@@ -949,7 +963,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
 
   const continuationResponse = await fetchImpl(
     chatUrl,
-    jsonRequest(
+    visibleChatRequest(
       authorization,
       {
         max_tokens: bounds.maxTokens.toolResultContinuation,
@@ -1006,13 +1020,13 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
     cancellation: { aborted: true, ok: true, recovered: true },
     contextWindow,
     disabledSurfaces: {
-      corsProxyHttpStatus: 403,
+      corsProxyHttpStatus: 404,
       multimodal: propertiesEvidence.disabledState.multimodal,
       ok: true,
-      propertiesMutationHttpStatus: 501,
+      propertiesMutationHttpStatus: 404,
       routerHttpStatus: 404,
-      slotsHttpStatus: 501,
-      toolsHttpStatus: 403,
+      slotsHttpStatus: 404,
+      toolsHttpStatus: 404,
       uiHttpStatus: 404,
     },
     health: { httpStatus: 200, ok: true },

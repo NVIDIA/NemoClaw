@@ -64,6 +64,62 @@ function createProviderRequest() {
 }
 
 describe("provider profile warnings after a binding mutation (#12940)", () => {
+  it.each([
+    ["matching export", captured(0, JSON.stringify(PROFILE)), null],
+    [
+      "changed export",
+      captured(0, JSON.stringify({ ...PROFILE, binaries: ["/tmp/widened"] })),
+      "cannot confirm which definition was used at bind time",
+    ],
+    ["failed export", captured(1, "", SECRET), "did not complete"],
+    [
+      "timed-out export",
+      captured(null, "", SECRET, Object.assign(new Error(), { code: "ETIMEDOUT" })),
+      "did not complete",
+    ],
+    ["invalid export", captured(0, "not JSON"), "did not complete"],
+  ])("checks a direct sandbox-create attachment after %s", (_case, after, warning) => {
+    const warn = vi.fn();
+    const run = vi
+      .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(0, JSON.stringify(PROFILE)))
+      .mockReturnValueOnce(after);
+    const adapter = createCliOpenShellProviderAdapter({
+      run,
+      warn,
+      readProfileFile: () => PROFILE_YAML,
+    });
+
+    expect(
+      adapter.importProviderProfile({ target: TARGET, profilePath: "/repo/profile.yaml" }),
+    ).toEqual({
+      ok: true,
+    });
+    expect(() =>
+      adapter.warnIfVerifiedProfilesChangedAfterSandboxCreate({ target: TARGET }, [
+        PROFILE.id,
+        PROFILE.id,
+        "unowned-profile",
+      ]),
+    ).not.toThrow();
+    expect(run.mock.calls[1]?.[0]).toEqual(PROFILE_EXPORT_ARGS);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledTimes(warning ? 1 : 0);
+    expect(warn.mock.calls[0]?.[0] ?? null).toEqual(
+      warning ? expect.stringContaining(warning) : null,
+    );
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(SECRET);
+  });
+
+  it("does not claim verification for an unverified profile on sandbox create", () => {
+    const warn = vi.fn();
+    const run = vi.fn<RunProviderCommand>();
+    const adapter = createCliOpenShellProviderAdapter({ run, warn });
+    adapter.warnIfVerifiedProfilesChangedAfterSandboxCreate({ target: TARGET }, [PROFILE.id]);
+    expect(run).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it("warns on post-create drift without changing a successful result", async () => {
     const warn = vi.fn();
     const run = vi

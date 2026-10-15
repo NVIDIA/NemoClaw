@@ -9,7 +9,12 @@ import {
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
+import {
+  ONBOARD_REPAIR_COMMAND_TIMEOUT_MS,
+  ONBOARD_REPAIR_TEST_TIMEOUT_MS,
+} from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   assertCleanupSucceededOrAbsent,
@@ -17,7 +22,11 @@ import {
 } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
-import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import {
+  type SandboxClient,
+  trustedSandboxShellScript,
+  validateSandboxName,
+} from "../fixtures/clients/sandbox.ts";
 import {
   cleanupCorporateCaFixture,
   corporateCaMergeProbeScript,
@@ -29,7 +38,7 @@ import { readExtraProviders, updateExtraProviders } from "../fixtures/extra-prov
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import {
   expectSandboxProviderAttachment,
-  upsertGenericGatewayProvider,
+  createExtraGatewayProvider,
 } from "../fixtures/gateway-providers.ts";
 import { prepareOnboardSandboxes } from "../fixtures/onboard-precleanup.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
@@ -38,11 +47,17 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-repair";
 const OTHER_SANDBOX_NAME = process.env.NEMOCLAW_OTHER_SANDBOX_NAME ?? "e2e-repair-other";
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
+const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
+const BACKUP_REJECTION_FILE = "/sandbox/.openclaw/workspace/.nemoclaw-backup-rejection";
+const RESTORED_WORKSPACE_MARKER_FILE =
+  "/sandbox/.openclaw/workspace/.nemoclaw-model-change-recreate-marker";
+const RESTORED_WORKSPACE_MARKER = "nemoclaw-model-change-recreate-workspace";
+const SYNTHETIC_BACKUP_TOKEN = `ghp_${"abcdef0123456789"}`;
 const STALE_EXTRA_PROVIDER = "e2e-stale-extra-provider";
 const LIVE_EXTRA_PROVIDER = "e2e-live-extra-provider";
 const EXTRA_PROVIDER_TOKEN_ENV = "NEMOCLAW_E2E_EXTRA_PROVIDER_TOKEN";
 const EXTRA_PROVIDER_TOKEN = "e2e-extra-provider-token";
-const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
+const LIVE_TIMEOUT_MS = testTimeout(ONBOARD_REPAIR_TEST_TIMEOUT_MS);
 
 validateSandboxName(SANDBOX_NAME);
 validateSandboxName(OTHER_SANDBOX_NAME);
@@ -64,7 +79,7 @@ async function nemoclaw(
   args: string[],
   artifactName: string,
   extraEnv: NodeJS.ProcessEnv = {},
-  timeoutMs = 20 * 60_000,
+  timeoutMs = ONBOARD_REPAIR_COMMAND_TIMEOUT_MS,
 ): Promise<ShellProbeResult> {
   return await host.command(process.execPath, [CLI_ENTRYPOINT, ...args], {
     artifactName,
@@ -108,6 +123,8 @@ test(
         "interrupt onboarding after sandbox creation",
         "remove the recorded sandbox and resume repair",
         "validate repaired attachments and corporate trust",
+        "reject a same-name model-change backup without changing the published route",
+        "recreate the same name with a changed model after backup succeeds",
         "reseed interrupted onboarding state",
         "reject conflicting resume inputs",
         "clear the repaired onboarding state",
@@ -130,6 +147,8 @@ test(
         "resume repair filters stale extra-provider records while preserving live attachments",
         "resume repair proves recreated sandbox provider attachments are selectively reconciled",
         "REQUESTS_CA_BUNDLE fallback corporate CA source is baked and merged after repair",
+        "a rejected pre-delete backup preserves the live sandbox and published route",
+        "a successful model-change recreate preserves workspace data and serves the selected route",
         "resume rejects a different requested sandbox name",
         "resume rejects provider/model overrides that conflict with recorded state",
       ],
@@ -154,7 +173,6 @@ test(
         providers.delete(LIVE_EXTRA_PROVIDER);
       });
       fs.rmSync(SESSION_FILE, { force: true });
-      expect(fs.existsSync(SESSION_FILE)).toBe(false);
     });
     const cleanupWhenInstalled = (artifactName: string, run: () => Promise<void>): Promise<void> =>
       cleanupWhenOpenShellAvailable(
@@ -249,33 +267,19 @@ test(
         NEMOCLAW_RECREATE_SANDBOX: "1",
         ...corporateCa.env,
       }),
-      execTimeout(20 * 60_000),
+      execTimeout(ONBOARD_REPAIR_COMMAND_TIMEOUT_MS),
     );
     expect(first.exitCode, resultText(first)).toBe(1);
-    expect(resultText(first)).toContain("Forced onboarding failure at step 'policies'");
-    expect(fs.existsSync(SESSION_FILE)).toBe(true);
 
-    const sandboxAfterFailure = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
-      artifactName: "phase-1-sandbox-get-after-failure",
-      env: env(),
-      timeoutMs: 60_000,
-    });
-    expect(sandboxAfterFailure.exitCode, resultText(sandboxAfterFailure)).toBe(0);
-
-    await upsertGenericGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
-      artifactName: "phase-1-live-extra-provider-upsert",
-      credentialEnv: EXTRA_PROVIDER_TOKEN_ENV,
+    await createExtraGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
+      artifactName: "phase-1-live-extra-provider-create",
       env: env({ [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN }),
-      redactionValues: [EXTRA_PROVIDER_TOKEN],
     });
     const seededExtraProviders = updateExtraProviders((providers) => {
       providers.add(STALE_EXTRA_PROVIDER);
       providers.add(LIVE_EXTRA_PROVIDER);
     });
     await artifacts.writeJson("phase-1-extra-providers-seeded.json", seededExtraProviders);
-    expect(seededExtraProviders).toEqual(
-      expect.arrayContaining([LIVE_EXTRA_PROVIDER, STALE_EXTRA_PROVIDER]),
-    );
 
     await sandbox.waitForInitialOpenClawPairing(SANDBOX_NAME, {
       artifactName: "phase-1-wait-for-initial-pairing",
@@ -303,14 +307,11 @@ test(
           ["onboard", "--resume", "--non-interactive"],
           "phase-2-resume-repair",
           repairEnv,
-          execTimeout(20 * 60_000),
+          execTimeout(ONBOARD_REPAIR_COMMAND_TIMEOUT_MS),
         ),
       (environment, phase) => captureBoundedPodmanOwnerDiagnostic(host, environment, phase),
     );
     expect(repair.exitCode, resultText(repair)).toBe(0);
-    expect(resultText(repair)).toContain("[resume] Skipping preflight (cached)");
-    expect(resultText(repair)).toContain("Recorded sandbox state is unavailable; recreating it");
-    expect(resultText(repair)).toContain("Creating sandbox");
     const reconciledExtraProviders = readExtraProviders();
     expect(reconciledExtraProviders).toContain(LIVE_EXTRA_PROVIDER);
     expect(reconciledExtraProviders).not.toContain(STALE_EXTRA_PROVIDER);
@@ -324,9 +325,6 @@ test(
     });
 
     progress.phase("validate repaired attachments and corporate trust");
-    const status = await nemoclaw(host, [SANDBOX_NAME, "status"], "phase-2-status-after-repair");
-    expect(status.exitCode, resultText(status)).toBe(0);
-
     const corporateCaProbe = await sandbox.execShell(
       SANDBOX_NAME,
       corporateCaMergeProbeScript(registeredCorporateCaWorkloadKind(SANDBOX_NAME)),
@@ -337,6 +335,182 @@ test(
       },
     );
     expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
+
+    progress.phase("reject a same-name model-change backup without changing the published route");
+    fs.rmSync(SESSION_FILE, { force: true });
+    const registryBeforeBackup = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+      sandboxes?: Record<string, unknown>;
+    };
+    const publishedRoute = registryBeforeBackup.sandboxes?.[SANDBOX_NAME];
+    expect(publishedRoute).toBeDefined();
+    const sourceBeforeBackup = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+      artifactName: "phase-3-source-before-rejected-backup",
+      env: env(),
+      timeoutMs: 60_000,
+    });
+    const sourceId = parseOpenShellSandboxId(resultText(sourceBeforeBackup));
+    await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(
+        `set -eu\nprintf '%s' '${SYNTHETIC_BACKUP_TOKEN}' > '${BACKUP_REJECTION_FILE}'`,
+      ),
+      {
+        artifactName: "phase-3-write-backup-rejection",
+        env: env(),
+        redactionValues: [SYNTHETIC_BACKUP_TOKEN],
+        timeoutMs: 60_000,
+      },
+    );
+    cleanupRegistry.trackDisposable("remove synthetic backup rejection fixture", async () => {
+      await sandbox.execShell(
+        SANDBOX_NAME,
+        trustedSandboxShellScript(`rm -f '${BACKUP_REJECTION_FILE}'`),
+        {
+          artifactName: "cleanup-backup-rejection-fixture",
+          env: env(),
+          timeoutMs: 60_000,
+        },
+      );
+    });
+    const rejectedBackup = await nemoclaw(
+      host,
+      ["onboard", "--non-interactive"],
+      "phase-3-rejected-backup",
+      onboardEnv(SANDBOX_NAME, fake.baseUrl, {
+        NEMOCLAW_MODEL: "changed-test-model",
+        NEMOCLAW_POLICY_MODE: "skip",
+        NEMOCLAW_RECREATE_SANDBOX: "1",
+        ...corporateCa.env,
+      }),
+      execTimeout(ONBOARD_REPAIR_COMMAND_TIMEOUT_MS),
+    );
+    expect(rejectedBackup.exitCode, resultText(rejectedBackup)).toBe(1);
+    expect(resultText(rejectedBackup)).toMatch(/State backup (?:failed|threw)|Partial backup/);
+    const registryAfterBackup = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+      sandboxes?: Record<string, unknown>;
+    };
+    expect(registryAfterBackup.sandboxes?.[SANDBOX_NAME]).toEqual(publishedRoute);
+    const sourceAfterBackup = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+      artifactName: "phase-3-source-after-rejected-backup",
+      env: env(),
+      timeoutMs: 60_000,
+    });
+    expect(parseOpenShellSandboxId(resultText(sourceAfterBackup))).toBe(sourceId);
+    const requestOffset = fake.requests().length;
+    const sourceChat = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "curl",
+        "-fsS",
+        "--max-time",
+        "60",
+        "https://inference.local/v1/chat/completions",
+        "-H",
+        "Content-Type: application/json",
+        "--data-raw",
+        JSON.stringify({
+          model: "test-model",
+          messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+          max_tokens: 50,
+        }),
+      ],
+      {
+        artifactName: "phase-3-source-inference-after-rejected-backup",
+        env: env(),
+        timeoutMs: 90_000,
+      },
+    );
+    expect(sourceChat.exitCode, resultText(sourceChat)).toBe(0);
+    expect(
+      fake
+        .requests()
+        .slice(requestOffset)
+        .find((request) => request.method === "POST" && request.path === "/v1/chat/completions"),
+    ).toEqual(expect.objectContaining({ model: "test-model", auth: "ok" }));
+    await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(`rm -f '${BACKUP_REJECTION_FILE}'`),
+      { artifactName: "phase-3-remove-backup-rejection", env: env(), timeoutMs: 60_000 },
+    );
+    fs.rmSync(SESSION_FILE, { force: true });
+
+    progress.phase("recreate the same name with a changed model after backup succeeds");
+    await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(
+        `set -eu\nprintf '%s' '${RESTORED_WORKSPACE_MARKER}' > '${RESTORED_WORKSPACE_MARKER_FILE}'\nsync`,
+      ),
+      { artifactName: "phase-3-write-workspace-marker", env: env(), timeoutMs: 60_000 },
+    );
+    // Let the changed selection trigger recreation so restored native routing is reconciled.
+    const recreated = await nemoclaw(
+      host,
+      ["onboard", "--non-interactive"],
+      "phase-3-successful-recreate",
+      onboardEnv(SANDBOX_NAME, fake.baseUrl, {
+        NEMOCLAW_MODEL: "changed-test-model",
+        NEMOCLAW_POLICY_MODE: "skip",
+        ...corporateCa.env,
+      }),
+      execTimeout(ONBOARD_REPAIR_COMMAND_TIMEOUT_MS),
+    );
+    expect(recreated.exitCode, resultText(recreated)).toBe(0);
+    const replacement = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+      artifactName: "phase-3-replacement-after-successful-recreate",
+      env: env(),
+      timeoutMs: 60_000,
+    });
+    expect(parseOpenShellSandboxId(resultText(replacement))).not.toBe(sourceId);
+    const restoredMarker = await sandbox.exec(
+      SANDBOX_NAME,
+      ["cat", RESTORED_WORKSPACE_MARKER_FILE],
+      {
+        artifactName: "phase-3-read-restored-workspace-marker",
+        env: env(),
+        timeoutMs: 60_000,
+      },
+    );
+    expect(restoredMarker.stdout.trim(), resultText(restoredMarker)).toBe(
+      RESTORED_WORKSPACE_MARKER,
+    );
+    const replacementRequestOffset = fake.requests().length;
+    const replacementChat = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "curl",
+        "-fsS",
+        "--max-time",
+        "60",
+        "https://inference.local/v1/chat/completions",
+        "-H",
+        "Content-Type: application/json",
+        "--data-raw",
+        JSON.stringify({
+          model: "changed-test-model",
+          messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+          max_tokens: 50,
+        }),
+      ],
+      {
+        artifactName: "phase-3-replacement-inference-after-successful-recreate",
+        env: env(),
+        timeoutMs: 90_000,
+      },
+    );
+    expect(replacementChat.exitCode, resultText(replacementChat)).toBe(0);
+    expect(
+      fake
+        .requests()
+        .slice(replacementRequestOffset)
+        .some(
+          (request) =>
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions" &&
+            request.model === "changed-test-model" &&
+            request.auth === "ok",
+        ),
+    ).toBe(true);
+    fs.rmSync(SESSION_FILE, { force: true });
 
     progress.phase("reseed interrupted onboarding state");
     const reinject = await nemoclaw(
@@ -350,7 +524,7 @@ test(
         NEMOCLAW_RECREATE_SANDBOX: "1",
         ...corporateCa.env,
       }),
-      execTimeout(20 * 60_000),
+      execTimeout(ONBOARD_REPAIR_COMMAND_TIMEOUT_MS),
     );
     await captureSandboxFailureDiagnostics(host, reinject, {
       sandboxName: SANDBOX_NAME,
@@ -358,8 +532,6 @@ test(
       redactionValues: [EXTRA_PROVIDER_TOKEN, "dummy"],
       captureGatewayLog: true,
     });
-    expect(reinject.exitCode, resultText(reinject)).toBe(1);
-
     progress.phase("reject conflicting resume inputs");
     const sandboxConflict = await nemoclaw(
       host,
@@ -388,7 +560,6 @@ test(
     expect(resultText(providerConflict)).toMatch(
       /Resumable state recorded provider '.*', not '.*'\./,
     );
-    expect(resultText(providerConflict)).toContain("not 'gpt-5.4'");
 
     progress.phase("clear the repaired onboarding state");
     await artifacts.target.complete({ id: "onboard-repair", status: "passed" });

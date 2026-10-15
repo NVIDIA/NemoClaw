@@ -15,6 +15,9 @@ import {
   liveTargetTimeoutContract,
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
+  ONBOARD_REPAIR_COMMAND_TIMEOUT_MS,
+  ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES,
+  ONBOARD_REPAIR_TEST_TIMEOUT_MS,
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_RESUME_TEST_TIMEOUT_MS,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
@@ -33,7 +36,7 @@ import { CONFIG_EXPORT_EXPECTATIONS, type ConfigExportExpectation } from "../reg
 
 const MINUTE_MS = 60_000;
 const finalHandoffTimeoutMs = getDockerGpuSupervisorReconnectTimeoutSecs(1, {}) * 1_000;
-const affectedTargetIds = ["inference-routing", "onboard-resume"] as const;
+const affectedTargetIds = ["inference-routing", "onboard-repair", "onboard-resume"] as const;
 const timeoutContractPath = "tools/e2e/onboard-timeout-contract.mts";
 const commandDiagnosticHeadroomMs = 10 * MINUTE_MS;
 const testHeadroomMs = 10 * MINUTE_MS;
@@ -91,6 +94,12 @@ describe("onboard final-handoff timeout contract", () => {
     );
   });
 
+  it("keeps onboard-repair alive through seven serial command deadlines and probes", () => {
+    expect(ONBOARD_REPAIR_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      7 * ONBOARD_REPAIR_COMMAND_TIMEOUT_MS + testHeadroomMs,
+    );
+  });
+
   it("pins the reviewed command, test, and target timeout values", () => {
     expect({
       finalHandoffCommandMinutes: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS / MINUTE_MS,
@@ -105,6 +114,9 @@ describe("onboard final-handoff timeout contract", () => {
       dcodeExpectedRefusalTargetMinutes: dcodeExpectedRefusalTimeout.targetTimeoutMinutes,
       onboardResumeTestMinutes: ONBOARD_RESUME_TEST_TIMEOUT_MS / MINUTE_MS,
       onboardResumeTargetMinutes: ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
+      onboardRepairCommandMinutes: ONBOARD_REPAIR_COMMAND_TIMEOUT_MS / MINUTE_MS,
+      onboardRepairTestMinutes: ONBOARD_REPAIR_TEST_TIMEOUT_MS / MINUTE_MS,
+      onboardRepairTargetMinutes: ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES,
       dcodeTypedTargetTestMinutes: DCODE_TYPED_TARGET_TEST_TIMEOUT_MS / MINUTE_MS,
       dcodeTypedTargetMinutes: DCODE_TYPED_TARGET_TIMEOUT_MINUTES,
     }).toEqual({
@@ -120,6 +132,9 @@ describe("onboard final-handoff timeout contract", () => {
       dcodeExpectedRefusalTargetMinutes: 152,
       onboardResumeTestMinutes: 150,
       onboardResumeTargetMinutes: 170,
+      onboardRepairCommandMinutes: 20,
+      onboardRepairTestMinutes: 150,
+      onboardRepairTargetMinutes: 170,
       dcodeTypedTargetTestMinutes: 130,
       dcodeTypedTargetMinutes: 150,
     });
@@ -132,6 +147,7 @@ describe("onboard final-handoff timeout contract", () => {
       ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
     ],
     ["onboard-resume", ONBOARD_RESUME_TEST_TIMEOUT_MS, ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES],
+    ["onboard-repair", ONBOARD_REPAIR_TEST_TIMEOUT_MS, ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES],
   ] as const)(
     "reserves at least 20 minutes of catalogue-job headroom after the %s test timeout",
     (targetId, testTimeoutMs, targetTimeoutMinutes) => {
@@ -264,6 +280,9 @@ describe("onboard final-handoff timeout contract", () => {
     LIVE_TARGET_BASE_TEST_TIMEOUT_MS,
     ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
     ONBOARD_RESUME_TEST_TIMEOUT_MS,
+    ONBOARD_REPAIR_COMMAND_TIMEOUT_MS,
+    ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES,
+    ONBOARD_REPAIR_TEST_TIMEOUT_MS,
     ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
     ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
   ])("uses positive whole numbers for timeout contract values [case %#]", (value) => {
