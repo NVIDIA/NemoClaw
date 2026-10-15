@@ -11,7 +11,11 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { patchOpenClawContainerRestart } from "../../../scripts/lib/patch-openclaw-container-restart.mts";
-import { buildManagedInferenceSafeguardCompaction } from "../../../scripts/generate-openclaw-config.mts";
+import {
+  buildConfig,
+  buildManagedInferenceSafeguardCompaction,
+} from "../../../scripts/generate-openclaw-config.mts";
+import { baseOpenClawGenerationEnv } from "../../helpers/openclaw-env-fixture";
 import { runRealOpenClawAgentReloadProof } from "../../helpers/openclaw-real-agent-reload-proof";
 import { runRealOpenClawCompactionRetryProof } from "../../helpers/openclaw-real-compaction-retry-proof";
 import { runRealOpenClawDeviceSelfApprovalProof } from "../../helpers/openclaw-real-device-self-approval-proof";
@@ -928,6 +932,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         });
 
         await runRealOpenClawAgentReloadProof({
+          gatewayConfig: buildConfig(baseOpenClawGenerationEnv()).gateway,
           dist,
           nodeExecutable: nodeRuntime.executable,
         });

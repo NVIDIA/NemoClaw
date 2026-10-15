@@ -10,13 +10,11 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { buildConfig } from "../../scripts/generate-openclaw-config.mts";
-import { baseOpenClawGenerationEnv } from "./openclaw-env-fixture";
-
-/** Exercise the generated reload policy against the pinned gateway, without inference. */
+/** Exercise the supplied reload policy against the pinned gateway, without inference. */
 export async function runRealOpenClawAgentReloadProof(options: {
   dist: string;
   nodeExecutable: string;
+  gatewayConfig: Record<string, unknown>;
 }): Promise<void> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-reload-"));
   const reservation = net.createServer();
@@ -26,13 +24,12 @@ export async function runRealOpenClawAgentReloadProof(options: {
   assert(address && typeof address !== "string");
   const port = address.port;
   await new Promise<void>((resolve) => reservation.close(() => resolve()));
-  const gatewayConfig = buildConfig(baseOpenClawGenerationEnv()).gateway;
   const configPath = path.join(root, "openclaw.json");
   fs.writeFileSync(
     configPath,
     JSON.stringify({
       gateway: {
-        ...gatewayConfig,
+        ...options.gatewayConfig,
         port,
         bind: "loopback",
         auth: { mode: "token", token: "agent-reload-test-token" },

@@ -1074,6 +1074,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
       auth: { token: "" },
       // Agent entries must reach the live gateway after creation (#13268).
       // Hybrid mode applies those changes through OpenClaw's hot reload.
+      // Google Chat retains its channel-owned reload-off override to preserve
+      // webhook routes; its agent activation repair is tracked in #13274.
       // Restart-class changes retain the container fresh-process patch in
       // patch-openclaw-container-restart.mts; do not restore the in-process
       // restart path that could leave a process without a listener (#4710).
