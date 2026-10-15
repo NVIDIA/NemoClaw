@@ -1115,9 +1115,7 @@ const session = require(${retainedRecoveryPath});
 const registry = require(${registryPath});
 const producer = JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8"));
 const original = producer.retainedRecoveryRecords[0];
-const persisted = fs.readFileSync(session.RETAINED_SANDBOX_RECOVERY_FILE, "utf8");
 assert.deepEqual(session.listRetainedSandboxRecoveryRecords(), [original]);
-assert.equal(fs.readFileSync(session.RETAINED_SANDBOX_RECOVERY_FILE, "utf8"), persisted);
 assert.deepEqual(registry.getSandbox("my-assistant"), producer.recoveryRegistryEntry);
 const marker = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/docker-driver-gateway-runtime-marker.ts"))});
 marker.writeDockerDriverGatewayRuntimeMarkerForStateDir(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR, {

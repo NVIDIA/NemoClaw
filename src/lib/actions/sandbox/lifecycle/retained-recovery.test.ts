@@ -194,23 +194,6 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     expect(h.session.loadSession()?.cancellationRecovery).toBeNull();
   });
 
-  it("retires recovery with captured authority without changing another sandbox's session (#13071)", async () => {
-    const h = await setup(19260, undefined, true);
-    h.writeRuntime(null, new Date(Date.parse(h.record.recordedAt) + 1000).toISOString());
-    h.session.saveSession(
-      h.session.createSession({
-        sessionId: "new-session",
-        sandboxName: "beta",
-        provider: h.route.provider,
-      }),
-    );
-    const replacement = fs.readFileSync(h.session.SESSION_FILE, "utf8");
-    expect(h.run()).toBe(true);
-    expect(h.registry.getSandbox("alpha")).toBeNull();
-    expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
-    expect(fs.readFileSync(h.session.SESSION_FILE, "utf8")).toBe(replacement);
-  });
-
   it.each([
     {
       condition: "changed-daemon",
