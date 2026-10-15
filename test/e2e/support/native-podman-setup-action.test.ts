@@ -375,15 +375,26 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o700 });
 }
 
+function writeOpenShellComponents(root: string): void {
+  for (const component of OPENSHELL_COMPONENTS) {
+    const componentPath = path.join(root, component);
+    writeExecutable(componentPath, "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(componentPath, 0o755);
+  }
+}
+
 type OpenShellHandoffContext = {
   fakeBin: string;
   home: string;
+  privilegedRoot: string;
   root: string;
   xdgBinHome: string;
 };
 
 type OpenShellHandoffPreparation = {
   pathValue: string;
+  requireInstallLog?: (log: string) => void;
+  rewritePrivilegedRoot?: boolean;
   sourceRoot: string;
   verifySelection?: () => void;
 };
@@ -399,19 +410,24 @@ function runOpenShellHandoffFixture(
   const fakeBin = path.join(root, "bin");
   const xdgBinHome = String(install?.env?.XDG_BIN_HOME ?? "").replace("${{ runner.temp }}", root);
   const githubPath = path.join(root, "github-path");
-  const installedRoot = path.join(root, "installed");
+  const privilegedRoot = path.join(root, "installed");
   const sudoLog = path.join(root, "sudo.log");
   fs.mkdirSync(home);
   fs.mkdirSync(fakeBin);
-  fs.mkdirSync(installedRoot);
+  fs.mkdirSync(privilegedRoot);
+  fs.writeFileSync(sudoLog, "");
 
   try {
-    const { pathValue, sourceRoot, verifySelection } = prepare({
-      fakeBin,
-      home,
-      root,
-      xdgBinHome,
-    });
+    const { pathValue, requireInstallLog, rewritePrivilegedRoot, sourceRoot, verifySelection } =
+      prepare({
+        fakeBin,
+        home,
+        privilegedRoot,
+        root,
+        xdgBinHome,
+      });
+    const validateInstallLog =
+      requireInstallLog ?? ((log) => requirePrivilegedOpenShellInstallLog(log, sourceRoot));
     writeExecutable(
       path.join(fakeBin, "sudo"),
       `#!/bin/sh
@@ -430,14 +446,17 @@ printf '%s\\n' "$*" >>"$SUDO_LOG"
 exit 0
 `,
     );
-    const result = spawnSync("/bin/bash", ["-c", install?.run ?? ""], {
+    const installScript = rewritePrivilegedRoot
+      ? (install?.run ?? "").replaceAll("/usr/bin", privilegedRoot)
+      : (install?.run ?? "");
+    const result = spawnSync("/bin/bash", ["-c", installScript], {
       encoding: "utf8",
       env: {
         ...process.env,
         GITHUB_PATH: githubPath,
         HOME: home,
         PATH: pathValue,
-        SUDO_INSTALL_ROOT: installedRoot,
+        SUDO_INSTALL_ROOT: privilegedRoot,
         SUDO_LOG: sudoLog,
         XDG_BIN_HOME: xdgBinHome,
       },
@@ -445,10 +464,11 @@ exit 0
 
     requireFixture(result.status === 0, result.stderr);
     verifySelection?.();
-    requirePrivilegedOpenShellInstallLog(fs.readFileSync(sudoLog, "utf8"), sourceRoot);
+    const installLog = fs.readFileSync(sudoLog, "utf8");
+    validateInstallLog(installLog);
     for (const component of OPENSHELL_COMPONENTS) {
       const source = path.join(sourceRoot, component);
-      const destination = path.join(installedRoot, component);
+      const destination = path.join(privilegedRoot, component);
       requireFixture(
         fs.readFileSync(destination).equals(fs.readFileSync(source)),
         `Portable Hermes changed ${component} bytes during handoff`,
@@ -459,7 +479,8 @@ exit 0
       );
     }
     requireFixture(
-      fs.readFileSync(githubPath, "utf8") === "/usr/bin\n",
+      fs.readFileSync(githubPath, "utf8") ===
+        `${rewritePrivilegedRoot ? privilegedRoot : "/usr/bin"}\n`,
       "Portable Hermes did not publish the privileged OpenShell root",
     );
   } finally {
@@ -799,9 +820,7 @@ fi
 exec /bin/bash "$@"
 `,
         );
-        writeExecutable(path.join(preinstalledRoot, "openshell"), "#!/bin/sh\nexit 0\n");
-        writeExecutable(path.join(preinstalledRoot, "openshell-gateway"), "#!/bin/sh\nexit 0\n");
-        writeExecutable(path.join(preinstalledRoot, "openshell-sandbox"), "#!/bin/sh\nexit 0\n");
+        writeOpenShellComponents(preinstalledRoot);
         writeExecutable(path.join(staleUserLocalRoot, "openshell"), "#!/bin/sh\nexit 91\n");
         writeExecutable(path.join(staleUserLocalRoot, "openshell-gateway"), "#!/bin/sh\nexit 92\n");
         writeExecutable(path.join(staleUserLocalRoot, "openshell-sandbox"), "#!/bin/sh\nexit 93\n");
@@ -813,6 +832,35 @@ exec /bin/bash "$@"
               !fs.existsSync(xdgBinHome),
               "A compatible preinstalled OpenShell unexpectedly triggered a fresh install",
             ),
+        };
+      },
+    );
+  });
+
+  it("accepts OpenShell components already installed in the privileged root", () => {
+    runOpenShellHandoffFixture(
+      "nemoclaw-openshell-privileged-preinstalled-",
+      ({ fakeBin, privilegedRoot }) => {
+        writeExecutable(
+          path.join(fakeBin, "bash"),
+          `#!/bin/sh
+set -eu
+if [ "\${1:-}" = scripts/install-openshell.sh ]; then
+  exit 0
+fi
+exec /bin/bash "$@"
+`,
+        );
+        writeOpenShellComponents(privilegedRoot);
+        return {
+          pathValue: `${fakeBin}:${privilegedRoot}:/usr/bin:/bin`,
+          requireInstallLog: (log) =>
+            requireFixture(
+              log === "",
+              "Portable Hermes recopied OpenShell components already installed in the privileged root",
+            ),
+          rewritePrivilegedRoot: true,
+          sourceRoot: privilegedRoot,
         };
       },
     );

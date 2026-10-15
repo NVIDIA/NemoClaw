@@ -5753,7 +5753,10 @@ jobs:
           for component in openshell openshell-gateway openshell-sandbox; do
             source="$install_root/$component"
             [[ -f "$source" && ! -L "$source" && -x "$source" ]]
-            sudo install -o root -g root -m 0755 "$source" "/usr/bin/$component"
+            destination="/usr/bin/$component"
+            if [[ "$source" != "$destination" ]]; then
+              sudo install -o root -g root -m 0755 "$source" "$destination"
+            fi
           done
           echo /usr/bin >>"$GITHUB_PATH"
 
