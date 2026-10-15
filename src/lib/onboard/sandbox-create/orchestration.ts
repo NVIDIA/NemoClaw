@@ -2128,12 +2128,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           provider,
           preferredInferenceApi,
           endpointUrl: createIntent?.endpointUrl ?? null,
+          localNimSelected: createIntent?.localNimSelected === true,
           nativeLocalProviderAttachment: resolvedCreateIntent.nativeLocalProviderAttachment,
-          nativeProvider: Boolean(
-            resolvedCreateIntent.nativeLocalProviderAttachment ||
-            resolvedCreateIntent.nativeHostedProviderAttachment ||
-            resolvedCreateIntent.nativeNvidiaProviderAttachment,
-          ),
+          nativeProvider:
+            createIntent?.localNimSelected === true
+              ? false
+              : Boolean(
+                  resolvedCreateIntent.nativeLocalProviderAttachment ||
+                  resolvedCreateIntent.nativeHostedProviderAttachment ||
+                  resolvedCreateIntent.nativeNvidiaProviderAttachment,
+                ),
           startupProfile: {
             chatUiUrl,
             effectiveDashboardPort: effectivePort,

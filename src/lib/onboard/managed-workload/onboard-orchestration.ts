@@ -198,6 +198,7 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly provider: string | null;
   readonly preferredInferenceApi: string | null;
   readonly endpointUrl: string | null;
+  readonly localNimSelected?: boolean;
   readonly nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   readonly nativeProvider?: boolean;
   readonly startupProfile: ManagedProfileInput;
@@ -407,6 +408,7 @@ export function createManagedWorkloadOnboardRuntime(
       agentName: input.agentName,
       provider: selectedProvider,
       endpointUrl: input.endpointUrl,
+      localNimSelected: input.localNimSelected,
       nativeLocalProviderAttachment,
     });
     const inferenceApi =

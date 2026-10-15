@@ -516,6 +516,13 @@ function compatibleEndpointReasoningForCreateIntent(
   return value === "true" || value === "false" ? { compatibleEndpointReasoning: value } : {};
 }
 
+function ownedLocalNimCreateIntentFields(
+  provider: string,
+  nimContainer: string | null,
+): Pick<SandboxCreateIntent, "localNimSelected"> {
+  return provider === "vllm-local" && nimContainer ? { localNimSelected: true } : {};
+}
+
 function deferredSandboxEffectsIntent(enabled: boolean): {
   readonly deferSandboxEffectsUntilIdentityVerification?: true;
 } {
@@ -1945,7 +1952,11 @@ class SandboxStateFlow<
     const registeredEntry = this.deps.getSandboxRegistryEntry(sandboxName);
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
-      ...nativeInferenceCreateIntentFields(this.options.provider, registeredEntry),
+      ...nativeInferenceCreateIntentFields(
+        this.options.provider,
+        registeredEntry,
+        Boolean(this.options.nimContainer),
+      ),
       hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
       enabledChannels: state.selectedMessagingChannels,
       webSearchConfig: state.webSearchConfig,
@@ -1983,6 +1994,7 @@ class SandboxStateFlow<
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(endpointUrl ? { endpointUrl } : {}),
+      ...ownedLocalNimCreateIntentFields(this.options.provider, this.options.nimContainer),
       ...compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
       endpointSource: this.options.endpointSource ?? null,
       ...(this.options.deferredN1xManagedVllmPreviewIntent === true

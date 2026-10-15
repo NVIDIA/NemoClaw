@@ -93,9 +93,11 @@ export function resolveManagedStartupInferenceEndpoint(input: {
   agentName: string;
   provider: string | null;
   endpointUrl: string | null;
+  localNimSelected?: boolean;
   nativeLocalProviderAttachment?: { endpointUrl: string };
 }): string | null {
   if (input.agentName !== "langchain-deepagents-code") return input.endpointUrl;
+  if (input.provider === "vllm-local" && input.localNimSelected) return input.endpointUrl;
   if (usesNativeLocalInference(input.provider, input.endpointUrl)) {
     if (!input.nativeLocalProviderAttachment) {
       throw new Error("Deep Agents Code local inference requires its native provider attachment.");

@@ -138,6 +138,10 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(
       nativeInferenceCreateIntentFields("vllm-local", standalone).nativeLocalProviderAttachment,
     ).toEqual(attachment);
+    expect(
+      nativeInferenceCreateIntentFields("vllm-local", standalone, true)
+        .nativeLocalProviderAttachment,
+    ).toBeUndefined();
   });
 
   it("records only an exact native NVIDIA provider identity", () => {

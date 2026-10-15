@@ -555,6 +555,7 @@ export function nativeLocalReservationStatus(input: {
 export function nativeInferenceCreateIntentFields(
   provider: string | null | undefined,
   entry: SandboxEntry | null,
+  localNimSelected = false,
 ): {
   inferenceProvider: string | null;
   nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
@@ -563,7 +564,7 @@ export function nativeInferenceCreateIntentFields(
 } {
   // Local NIM keeps its shared route even if a stale vLLM attachment exists.
   const nativeLocalProviderAttachment =
-    provider === "vllm-local" && entry?.nimContainer
+    provider === "vllm-local" && (localNimSelected || entry?.nimContainer)
       ? undefined
       : normalizeNativeLocalProviderAttachment(entry?.nativeLocalProviderAttachment);
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
