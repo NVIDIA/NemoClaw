@@ -160,7 +160,9 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
 
   it("reads redacted output from the one OpenShell container labeled with the sandbox name", () => {
     const opaqueSecret = "opaque-value-9f8e7d6c5b4a";
-    const dockerRun = vi.fn((_args: readonly string[]) => dockerResult(`${CONTAINER_ID}\n`));
+    const dockerRun = vi.fn((_args: readonly string[], _options?: { timeout?: number }) =>
+      dockerResult(`${CONTAINER_ID}\n`),
+    );
     const dockerCapture = vi.fn((args: readonly string[]) =>
       args.includes("--format") ? "" : inspectWithEnv([`PROVIDER_TOKEN=${opaqueSecret}`]),
     );
@@ -179,6 +181,8 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
       ]),
     );
     expect(dockerLogs).toHaveBeenCalledWith(CONTAINER_ID, expect.anything());
+    // A stalled lookup must not hold the failed sandbox before rollback.
+    expect(dockerRun.mock.calls[0][1]).toMatchObject({ timeout: 2_000 });
     expect(output).toContain(STARTUP_FAILURE);
     expect(output).not.toContain(opaqueSecret);
   });

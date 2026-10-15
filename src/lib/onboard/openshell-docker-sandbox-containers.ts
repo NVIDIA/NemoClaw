@@ -79,6 +79,9 @@ export function findOpenShellDockerSandboxContainerIds(
     .filter(Boolean);
 }
 
+/** Matches the failure-evidence call bound so diagnostics never delay rollback. */
+const SANDBOX_FAILURE_OUTPUT_QUERY_TIMEOUT_MS = 2_000;
+
 type SandboxFailureOutputDeps = Pick<
   DockerGpuPatchDeps,
   "dockerCapture" | "dockerLogs" | "dockerRun"
@@ -112,7 +115,7 @@ export function captureOpenShellDockerSandboxFailureOutput(
       const containers = queryOpenShellDockerSandboxContainers(
         sandboxName,
         { dockerRun: deps.dockerRun ?? dockerRun },
-        DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+        SANDBOX_FAILURE_OUTPUT_QUERY_TIMEOUT_MS,
       );
       if (!containers.ok || containers.ids.length !== 1) return null;
       containerId = containers.ids[0];
