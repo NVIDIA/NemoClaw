@@ -407,7 +407,8 @@ See [deletion and retention](state.md#deletion-and-retention) before removing wo
 
 An observation error is not absence.
 Authentication, transport, and incomplete observations preserve prior state and stop planning.
-The backend verifies ownership again immediately before mutation because objects can change after planning.
+Planning a new object reaches no gateway, so the same apply can install the gateway it uses.
+The backend checks who owns an existing name immediately before each mutation, which also covers objects that changed after planning.
 Creation readback must match the physical ID, owner, and generation established by the creation response.
 If readback fails or identifies a substituted object, the provider returns the original established binding together with the error.
 OpenTofu retains that failed creation as tainted state; automatic untainting is not a recovery guarantee.

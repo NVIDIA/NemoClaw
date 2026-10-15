@@ -414,11 +414,12 @@ impl Backend for OpenShellBackend {
         if crate::composite::KINDS.contains(&kind) {
             return crate::composite::plan(self, kind, desired, prior).await;
         }
-        self.0
-            .planning_client(desired)
-            .await?
-            .plan(kind, desired, prior)
-            .await
+        // Planning reaches no gateway: a new object's gateway may not exist
+        // until this apply installs it. Applying checks who owns an existing
+        // name before it changes anything.
+        let _ = prior;
+        row_connection(desired).map_err(Error::State)?;
+        Ok(())
     }
     async fn read(
         &self,

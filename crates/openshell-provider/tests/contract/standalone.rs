@@ -326,6 +326,24 @@ async fn standalone_registration_authentication_mode_replaces_but_secret_referen
     tofu.noop();
 }
 
+/// Planning new objects reaches no gateway, so one configuration can plan a
+/// gateway installation together with the objects it will serve. Ownership of
+/// an existing name is checked when applying them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
+async fn new_objects_plan_without_reaching_the_gateway() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("https://{}", listener.local_addr().unwrap());
+    drop(listener);
+    let tofu = Standalone::new(&endpoint);
+    let output = tofu.run(&["plan", "-input=false"], true);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("openshell_workspace.example will be created"),
+        "{stdout}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_hcl_applies_resources_without_sdk_encoding_or_coordination() {
