@@ -54,7 +54,8 @@ The sandbox does not receive the raw upstream API key.
 
 Local Ollama and local vLLM routes do not require the host `OPENAI_API_KEY`.
 NemoClaw uses provider-specific local tokens for those routes.
-Rebuilds of legacy local-inference sandboxes migrate away from stale OpenAI credential requirements.
+For retained shared local routes, rebuilds migrate away from stale OpenAI credential requirements.
+Legacy Deep Agents local sandboxes without an attachment require a backup and fresh recreation.
 When a rebuild reuses an automatically bridged compatible-endpoint route without a host API key, NemoClaw reapplies the config-only bridge rewrite without reading or passing the credential stored in OpenShell.
 
 <AgentOnly variant="deepagents">

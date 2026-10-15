@@ -1308,7 +1308,7 @@ test(
       fake
         .requests()
         .slice(requestOffset)
-        .map((request) => request.model),
-    ).toContain(model);
+        .find((request) => request.model === model)?.authorizationSent,
+    ).toBe(false);
   },
 );
