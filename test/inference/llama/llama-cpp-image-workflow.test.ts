@@ -198,6 +198,9 @@ describe("llama.cpp image PR workflow", () => {
 
   it("keeps pull requests read-only while exposing only an explicit manual publication trigger (#8250)", () => {
     expect(Object.keys(workflow.on ?? {})).toEqual(["pull_request", "workflow_dispatch"]);
+    expect(workflow.on?.pull_request?.paths).toContain(
+      "src/lib/onboard/runtime-provider/docker-operation-authority.ts",
+    );
     expect(workflow.on?.workflow_dispatch?.inputs?.publish).toEqual({
       description: "Publish the declaratively enabled run-unique candidate from main",
       required: true,

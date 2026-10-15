@@ -19,6 +19,8 @@ const AUTH_MODE = "api-key-fd3";
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 const MAX_REQUEST_HEADER_BYTES = Math.min(http.maxHeaderSize, 32 * 1024);
 const MAX_OUTPUT_TOKENS = 4096;
+// The recipe configures llama-server's socket read/write timeout. This fixed
+// ceiling bounds total request duration and cannot be raised by a recipe.
 const REQUEST_TIMEOUT_MS = 900_000;
 const REJECTION_CLOSE_GRACE_MS = 500;
 const REMOTE_CLEANUP_MS = 20_000;

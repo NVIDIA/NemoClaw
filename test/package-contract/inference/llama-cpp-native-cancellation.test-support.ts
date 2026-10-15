@@ -190,6 +190,10 @@ export async function createNativeLlamaDockerFixture(
       const args = [
         "--name",
         `${name}-client-${++sequence}`,
+        "--user",
+        `${uid}:${gid}`,
+        "--env",
+        "NVIDIA_VISIBLE_DEVICES=void",
         "--network",
         name,
         "--entrypoint",

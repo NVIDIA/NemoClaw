@@ -16,6 +16,7 @@ on:
       - "test/inference/llama/llama-cpp-image-publication-evidence.test.ts"
       - "test/inference/llama/llama-cpp-image-workflow.test.ts"
       - "src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge*.ts"
+      - "src/lib/onboard/runtime-provider/docker-operation-authority.ts"
       - "test/package-contract/inference/llama-cpp-native-cancellation*.ts"
   workflow_dispatch:
     inputs:
@@ -285,6 +286,16 @@ jobs:
             --reporter=default --reporter=json \
             --outputFile.json="$RUNNER_TEMP/llama-cpp-native-evidence/result.json" \
             > "$RUNNER_TEMP/llama-cpp-native-evidence/run.log" 2>&1
+          node - "$RUNNER_TEMP/llama-cpp-native-evidence/result.json" \
+            "$NEMOCLAW_NATIVE_LLAMA_TEST_EVIDENCE" <<'NODE'
+          const fs = require("node:fs");
+          const result = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const evidence = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          if (result.success !== true || result.numPassedTests !== 10 ||
+              result.numPendingTests !== 0 || evidence.bridgeCancellationPassed !== true) {
+            throw new Error("Native cancellation proof must pass all ten real-Docker cases.");
+          }
+          NODE
 
       - name: Retain native cancellation evidence
         if: always()

@@ -269,6 +269,8 @@ The recipe disables the Web UI, slot inspection, server tools, agent mode, Model
 The API key enters the container through an owner-only read-only file, not a process argument.
 Managed requests have a 1 MiB body limit, a header ceiling of 32 KiB, a 4,096-token output ceiling, and a 900-second request deadline.
 The host's stricter HTTP header limit continues to apply when present.
+The recipe's `serve.limits.requestTimeoutSeconds` configures native `llama-server` read/write timeouts.
+The bridge's fixed 900-second budget applies to the total request.
 On cancellation, deadline expiry, or bridge shutdown, NemoClaw verifies that the owned remote request has stopped before releasing admission.
 If cleanup cannot be verified, new requests remain unavailable.
 

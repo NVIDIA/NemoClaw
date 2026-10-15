@@ -611,6 +611,7 @@
               ],
               "properties": {
                 "requestTimeoutSeconds": {
+                  "description": "Native llama-server read/write socket timeout. The host bridge separately enforces its fixed total request-duration cap.",
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 86400
