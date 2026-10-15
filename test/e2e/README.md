@@ -92,7 +92,7 @@ The hosted plan job authenticates the open PR and exact revisions. It loads cand
 manifest and activation data without executing candidate code. Candidate runner,
 approval environment, and staged model path must match trusted main. Executable
 llama.cpp image build inputs must also match trusted main; the candidate's digest-bound
-plan supplies the pinned source, CUDA, Go, recipe, and agent qualification inputs.
+plan supplies the pinned source, CUDA, recipe, and agent qualification inputs.
 
 The configured runner must be a physical DGX Spark with NVIDIA GB10, a supported
 Docker/NVIDIA runtime, OpenShell prerequisites, and the exact locally staged GGUF.
