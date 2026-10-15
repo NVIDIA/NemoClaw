@@ -5759,6 +5759,8 @@ jobs:
           npm run build:policy-boundary
 
       - name: Install pinned OpenShell
+        env:
+          XDG_BIN_HOME: ${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin
         run: |
           set -euo pipefail
           env -u GH_TOKEN -u GITHUB_TOKEN NEMOCLAW_NON_INTERACTIVE=1 bash scripts/install-openshell.sh

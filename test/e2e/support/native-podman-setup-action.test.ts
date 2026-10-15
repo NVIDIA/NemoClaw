@@ -18,6 +18,7 @@ import {
   validateNativePodmanRestoreAction,
   validateNativePodmanSetupAction,
 } from "../../../tools/e2e/workflow-boundary.mts";
+import { requireFixture } from "./require-fixture.ts";
 
 const RESTORE_ACTION = path.resolve(".github/actions/restore-native-podman-e2e/action.yaml");
 const SETUP_ACTION = path.resolve(".github/actions/setup-native-podman-e2e/action.yaml");
@@ -648,12 +649,13 @@ describe("native Podman E2E setup boundary", () => {
     });
   });
 
-  it("copies Portable Hermes OpenShell components from the explicit user-local install root", () => {
+  it("copies Portable Hermes OpenShell components from a nondefault XDG bin home", () => {
     const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
     const install = job.steps?.find((step) => step.name === "Install pinned OpenShell");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-handoff-"));
     const home = path.join(root, "home");
     const fakeBin = path.join(root, "bin");
+    const xdgBinHome = String(install?.env?.XDG_BIN_HOME ?? "").replace("${{ runner.temp }}", root);
     const githubPath = path.join(root, "github-path");
     const installedRoot = path.join(root, "installed");
     const sudoLog = path.join(root, "sudo.log");
@@ -705,50 +707,76 @@ exit 0
           PATH: `${fakeBin}:/usr/bin:/bin`,
           SUDO_INSTALL_ROOT: installedRoot,
           SUDO_LOG: sudoLog,
-          XDG_BIN_HOME: "",
+          XDG_BIN_HOME: xdgBinHome,
         },
       });
 
-      expect(result.status, result.stderr).toBe(0);
-      expect(fs.readFileSync(sudoLog, "utf8")).toBe(
-        [
-          `${home}/.local/bin/openshell -> /usr/bin/openshell`,
-          `${home}/.local/bin/openshell-gateway -> /usr/bin/openshell-gateway`,
-          `${home}/.local/bin/openshell-sandbox -> /usr/bin/openshell-sandbox`,
-          "",
-        ].join("\n"),
+      requireFixture(result.status === 0, result.stderr);
+      const expectedSudoLog = [
+        `${xdgBinHome}/openshell -> /usr/bin/openshell`,
+        `${xdgBinHome}/openshell-gateway -> /usr/bin/openshell-gateway`,
+        `${xdgBinHome}/openshell-sandbox -> /usr/bin/openshell-sandbox`,
+        "",
+      ].join("\n");
+      requireFixture(
+        fs.readFileSync(sudoLog, "utf8") === expectedSudoLog,
+        "Portable Hermes copied OpenShell from the wrong install root",
       );
-      const openshellSource = path.join(home, ".local", "bin", "openshell");
+      const openshellSource = path.join(xdgBinHome, "openshell");
       const openshellDestination = path.join(installedRoot, "openshell");
-      expect(fs.readFileSync(openshellDestination)).toEqual(fs.readFileSync(openshellSource));
-      expect(fs.statSync(openshellDestination).mode & 0o777).toBe(0o755);
-      const gatewaySource = path.join(home, ".local", "bin", "openshell-gateway");
+      requireFixture(
+        fs.readFileSync(openshellDestination).equals(fs.readFileSync(openshellSource)),
+        "Portable Hermes changed the OpenShell bytes during handoff",
+      );
+      requireFixture(
+        (fs.statSync(openshellDestination).mode & 0o777) === 0o755,
+        "Portable Hermes installed OpenShell with the wrong mode",
+      );
+      const gatewaySource = path.join(xdgBinHome, "openshell-gateway");
       const gatewayDestination = path.join(installedRoot, "openshell-gateway");
-      expect(fs.readFileSync(gatewayDestination)).toEqual(fs.readFileSync(gatewaySource));
-      expect(fs.statSync(gatewayDestination).mode & 0o777).toBe(0o755);
-      const sandboxSource = path.join(home, ".local", "bin", "openshell-sandbox");
+      requireFixture(
+        fs.readFileSync(gatewayDestination).equals(fs.readFileSync(gatewaySource)),
+        "Portable Hermes changed the OpenShell gateway bytes during handoff",
+      );
+      requireFixture(
+        (fs.statSync(gatewayDestination).mode & 0o777) === 0o755,
+        "Portable Hermes installed the OpenShell gateway with the wrong mode",
+      );
+      const sandboxSource = path.join(xdgBinHome, "openshell-sandbox");
       const sandboxDestination = path.join(installedRoot, "openshell-sandbox");
-      expect(fs.readFileSync(sandboxDestination)).toEqual(fs.readFileSync(sandboxSource));
-      expect(fs.statSync(sandboxDestination).mode & 0o777).toBe(0o755);
-      expect(fs.readFileSync(githubPath, "utf8")).toBe("/usr/bin\n");
+      requireFixture(
+        fs.readFileSync(sandboxDestination).equals(fs.readFileSync(sandboxSource)),
+        "Portable Hermes changed the OpenShell sandbox bytes during handoff",
+      );
+      requireFixture(
+        (fs.statSync(sandboxDestination).mode & 0o777) === 0o755,
+        "Portable Hermes installed the OpenShell sandbox with the wrong mode",
+      );
+      requireFixture(
+        fs.readFileSync(githubPath, "utf8") === "/usr/bin\n",
+        "Portable Hermes did not publish the privileged OpenShell root",
+      );
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
   });
 
-  it("copies Portable Hermes OpenShell components from a compatible preinstalled root", () => {
+  it("prefers a compatible preinstalled root over a stale default user-local root", () => {
     const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
     const install = job.steps?.find((step) => step.name === "Install pinned OpenShell");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-preinstalled-"));
     const home = path.join(root, "home");
     const fakeBin = path.join(root, "bin");
+    const xdgBinHome = String(install?.env?.XDG_BIN_HOME ?? "").replace("${{ runner.temp }}", root);
     const preinstalledRoot = path.join(root, "preinstalled");
+    const staleUserLocalRoot = path.join(home, ".local", "bin");
     const installedRoot = path.join(root, "installed");
     const githubPath = path.join(root, "github-path");
     const sudoLog = path.join(root, "sudo.log");
     fs.mkdirSync(home);
     fs.mkdirSync(fakeBin);
     fs.mkdirSync(preinstalledRoot);
+    fs.mkdirSync(staleUserLocalRoot, { recursive: true });
     fs.mkdirSync(installedRoot);
     writeExecutable(
       path.join(fakeBin, "bash"),
@@ -763,6 +791,9 @@ exec /bin/bash "$@"
     writeExecutable(path.join(preinstalledRoot, "openshell"), "#!/bin/sh\nexit 0\n");
     writeExecutable(path.join(preinstalledRoot, "openshell-gateway"), "#!/bin/sh\nexit 0\n");
     writeExecutable(path.join(preinstalledRoot, "openshell-sandbox"), "#!/bin/sh\nexit 0\n");
+    writeExecutable(path.join(staleUserLocalRoot, "openshell"), "#!/bin/sh\nexit 91\n");
+    writeExecutable(path.join(staleUserLocalRoot, "openshell-gateway"), "#!/bin/sh\nexit 92\n");
+    writeExecutable(path.join(staleUserLocalRoot, "openshell-sandbox"), "#!/bin/sh\nexit 93\n");
     writeExecutable(
       path.join(fakeBin, "sudo"),
       `#!/bin/sh
@@ -792,33 +823,59 @@ exit 0
           PATH: `${fakeBin}:${preinstalledRoot}:/usr/bin:/bin`,
           SUDO_INSTALL_ROOT: installedRoot,
           SUDO_LOG: sudoLog,
-          XDG_BIN_HOME: "",
+          XDG_BIN_HOME: xdgBinHome,
         },
       });
 
-      expect(result.status, result.stderr).toBe(0);
-      expect(fs.existsSync(path.join(home, ".local", "bin"))).toBe(false);
-      expect(fs.readFileSync(sudoLog, "utf8")).toBe(
-        [
-          `${preinstalledRoot}/openshell -> /usr/bin/openshell`,
-          `${preinstalledRoot}/openshell-gateway -> /usr/bin/openshell-gateway`,
-          `${preinstalledRoot}/openshell-sandbox -> /usr/bin/openshell-sandbox`,
-          "",
-        ].join("\n"),
+      requireFixture(result.status === 0, result.stderr);
+      requireFixture(
+        !fs.existsSync(xdgBinHome),
+        "A compatible preinstalled OpenShell unexpectedly triggered a fresh install",
+      );
+      const expectedSudoLog = [
+        `${preinstalledRoot}/openshell -> /usr/bin/openshell`,
+        `${preinstalledRoot}/openshell-gateway -> /usr/bin/openshell-gateway`,
+        `${preinstalledRoot}/openshell-sandbox -> /usr/bin/openshell-sandbox`,
+        "",
+      ].join("\n");
+      requireFixture(
+        fs.readFileSync(sudoLog, "utf8") === expectedSudoLog,
+        "Portable Hermes did not preserve the compatible preinstalled root",
       );
       const openshellSource = path.join(preinstalledRoot, "openshell");
       const openshellDestination = path.join(installedRoot, "openshell");
-      expect(fs.readFileSync(openshellDestination)).toEqual(fs.readFileSync(openshellSource));
-      expect(fs.statSync(openshellDestination).mode & 0o777).toBe(0o755);
+      requireFixture(
+        fs.readFileSync(openshellDestination).equals(fs.readFileSync(openshellSource)),
+        "Portable Hermes changed the preinstalled OpenShell bytes during handoff",
+      );
+      requireFixture(
+        (fs.statSync(openshellDestination).mode & 0o777) === 0o755,
+        "Portable Hermes installed preinstalled OpenShell with the wrong mode",
+      );
       const gatewaySource = path.join(preinstalledRoot, "openshell-gateway");
       const gatewayDestination = path.join(installedRoot, "openshell-gateway");
-      expect(fs.readFileSync(gatewayDestination)).toEqual(fs.readFileSync(gatewaySource));
-      expect(fs.statSync(gatewayDestination).mode & 0o777).toBe(0o755);
+      requireFixture(
+        fs.readFileSync(gatewayDestination).equals(fs.readFileSync(gatewaySource)),
+        "Portable Hermes changed the preinstalled gateway bytes during handoff",
+      );
+      requireFixture(
+        (fs.statSync(gatewayDestination).mode & 0o777) === 0o755,
+        "Portable Hermes installed the preinstalled gateway with the wrong mode",
+      );
       const sandboxSource = path.join(preinstalledRoot, "openshell-sandbox");
       const sandboxDestination = path.join(installedRoot, "openshell-sandbox");
-      expect(fs.readFileSync(sandboxDestination)).toEqual(fs.readFileSync(sandboxSource));
-      expect(fs.statSync(sandboxDestination).mode & 0o777).toBe(0o755);
-      expect(fs.readFileSync(githubPath, "utf8")).toBe("/usr/bin\n");
+      requireFixture(
+        fs.readFileSync(sandboxDestination).equals(fs.readFileSync(sandboxSource)),
+        "Portable Hermes changed the preinstalled sandbox bytes during handoff",
+      );
+      requireFixture(
+        (fs.statSync(sandboxDestination).mode & 0o777) === 0o755,
+        "Portable Hermes installed the preinstalled sandbox with the wrong mode",
+      );
+      requireFixture(
+        fs.readFileSync(githubPath, "utf8") === "/usr/bin\n",
+        "Portable Hermes did not publish the privileged OpenShell root",
+      );
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
