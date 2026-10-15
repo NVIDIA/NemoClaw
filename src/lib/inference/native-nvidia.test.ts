@@ -138,7 +138,7 @@ describe("native NVIDIA OpenShell provider", () => {
 
   it("rejects missing NVIDIA credentials without activating composition (#12558)", async () => {
     const providerAdapter = adapter({
-      getProvider: vi.fn(async () => ({
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
         ok: false,
         error: { kind: "command", reason: "not_found", message: "absent" },
       })),
@@ -573,7 +573,7 @@ it.each([false, true])(
   "does not publish credentials when native policy is unavailable and provider exists=%s",
   async (exists) => {
     const providerAdapter = adapter({
-      getProvider: vi.fn(async () =>
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () =>
         exists
           ? { ok: true, value: metadata() }
           : { ok: false, error: { kind: "command", reason: "not_found", message: "absent" } },
