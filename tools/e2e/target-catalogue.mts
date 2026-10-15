@@ -1037,7 +1037,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       releaseRequired: false,
       testFile: "test/e2e/live/inference-routing-provider-smoke.test.ts",
       selector: selected.selector === "openrouter" ? selected.id : `^${selected.id}`,
-      timeoutMinutes: selected.selector === "openrouter" ? 45 : 30,
+      timeoutMinutes: selected.selector === "openrouter" ? 90 : 30,
       installMode: "none",
       restoreCli: true,
       exposeCliBin: true,
