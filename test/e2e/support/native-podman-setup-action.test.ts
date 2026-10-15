@@ -419,7 +419,10 @@ function runOpenShellHandoffFixture(
   const root = fs.mkdtempSync(path.join(os.tmpdir(), tempPrefix));
   const home = path.join(root, "home");
   const fakeBin = path.join(root, "bin");
-  const xdgBinHome = String(install?.env?.XDG_BIN_HOME ?? "").replace("${{ runner.temp }}", root);
+  const xdgBinHome = String(install?.env?.XDG_BIN_HOME ?? "")
+    .replace("${{ runner.temp }}", root)
+    .replace("${{ github.run_id }}", "123456")
+    .replace("${{ github.run_attempt }}", "1");
   const githubPath = path.join(root, "github-path");
   const privilegedRoot = path.join(root, "installed");
   const sudoLog = path.join(root, "sudo.log");
@@ -481,6 +484,7 @@ exit 0
         GITHUB_PATH: githubPath,
         HOME: home,
         PATH: pathValue,
+        RUNNER_TEMP: root,
         SUDO_INSTALL_ROOT: privilegedRoot,
         SUDO_LOG: sudoLog,
         XDG_BIN_HOME: xdgBinHome,
@@ -827,7 +831,7 @@ exec /bin/bash "$@"
     });
   });
 
-  it("prefers a compatible preinstalled root over a stale default user-local root", () => {
+  it("prefers a compatible preinstalled root over stale temporary and user-local roots", () => {
     runOpenShellHandoffFixture(
       "nemoclaw-openshell-preinstalled-",
       ({ fakeBin, home, root, xdgBinHome }) => {
@@ -835,6 +839,7 @@ exec /bin/bash "$@"
         const staleUserLocalRoot = path.join(home, ".local", "bin");
         fs.mkdirSync(preinstalledRoot);
         fs.mkdirSync(staleUserLocalRoot, { recursive: true });
+        fs.mkdirSync(xdgBinHome, { recursive: true });
         writeExecutable(
           path.join(fakeBin, "bash"),
           `#!/bin/sh
@@ -846,6 +851,9 @@ exec /bin/bash "$@"
 `,
         );
         writeOpenShellComponents(preinstalledRoot);
+        writeExecutable(path.join(xdgBinHome, "openshell"), "#!/bin/sh\nexit 81\n");
+        writeExecutable(path.join(xdgBinHome, "openshell-gateway"), "#!/bin/sh\nexit 82\n");
+        writeExecutable(path.join(xdgBinHome, "openshell-sandbox"), "#!/bin/sh\nexit 83\n");
         writeExecutable(path.join(staleUserLocalRoot, "openshell"), "#!/bin/sh\nexit 91\n");
         writeExecutable(path.join(staleUserLocalRoot, "openshell-gateway"), "#!/bin/sh\nexit 92\n");
         writeExecutable(path.join(staleUserLocalRoot, "openshell-sandbox"), "#!/bin/sh\nexit 93\n");
@@ -1024,7 +1032,8 @@ exec /bin/bash "$@"
     expect(fixtureInstall?.run).toContain("--owner=root --group=root --mode=0555");
     expect(openshellInstall?.run).toContain("bash scripts/install-openshell.sh");
     expect(openshellInstall?.env).toEqual({
-      XDG_BIN_HOME: "${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin",
+      XDG_BIN_HOME:
+        "${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin.${{ github.run_id }}.${{ github.run_attempt }}",
     });
     expect(setup?.with).toEqual({
       "cleanup-fixture":

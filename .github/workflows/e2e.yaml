@@ -5737,11 +5737,13 @@ jobs:
 
       - name: Install pinned OpenShell
         env:
-          XDG_BIN_HOME: ${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin
+          XDG_BIN_HOME: ${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin.${{ github.run_id }}.${{ github.run_attempt }}
         run: |
           set -euo pipefail
+          install_root="${XDG_BIN_HOME:?}"
+          [[ "$install_root" == "$RUNNER_TEMP"/nemoclaw-portable-hermes-openshell-bin.* ]]
+          rm -rf -- "$install_root"
           env -u GH_TOKEN -u GITHUB_TOKEN NEMOCLAW_NON_INTERACTIVE=1 bash scripts/install-openshell.sh
-          install_root="${XDG_BIN_HOME:-$HOME/.local/bin}"
           openshell_install_root_is_complete() {
             local root="$1" component
             for component in openshell openshell-gateway openshell-sandbox; do
