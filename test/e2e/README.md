@@ -2383,6 +2383,16 @@ test, and makes `full-e2e` the source of truth for the hard cold-path contract.
 
 The explicit `dgx-station-express` target runs the local Station Express installer with cached Ultra weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
 
+### Native host-local inference
+
+`managed-image-activation` owns real OpenClaw and DCode agent turns before and after restart. Its authenticated compatible-server fixture listens on native-local port 8000, so those turns exercise sandbox-attached providers and the server's selected-model request ledger. A second DCode sandbox uses the existing credentialless vLLM selection against a separate fixture port. Its real agent turns before and after restart must reach that endpoint and model, and its recorded attachment must declare `authMode: sentinel`. Each case keeps separate artifacts and verifies sandbox removal. Hermes uses its shared route. `double-onboard` owns two real OpenShell sandboxes; its sibling uses a native provider on port 11434, and the first sandbox must receive a policy denial when it requests that endpoint. Existing GPU qualification owns Ollama, vLLM, llama.cpp, startup, and cleanup.
+
+Profile rules, ownership collisions, credential custody, mutation reconciliation, gateway prerequisites, and generated request behavior belong to the native-local, provider-policy, gateway bootstrap, and compatible-endpoint-smoke source tests. Sibling denial remains live because a source test cannot prove OpenShell composes provider policy per sandbox. No assertion about terminal formatting is added.
+
+`gpu-e2e` and `gpu-double-onboard` retain their existing live chat assertions against the qualified Ollama proxy endpoint with the attached provider placeholder. They protect native routing after GPU startup and recreation. Request construction and credential reference selection remain in source and generator tests; these live assertions prove the real OpenShell proxy boundary. Their assertion counts are unchanged.
+
+Native Ollama and managed vLLM export reuse the existing GPU export cases. SDK metadata, exact native profile permissions, attachment identity, stable observation, credential custody, and unchanged service serialization are covered by the live-export-source Ollama/vLLM pipeline tests in the CLI lane. Export adds no live assertions.
+
 ## Fixed hosted provider qualification
 
 `live/inference-routing-provider-smoke.test.ts` owns credential-backed native inference smoke tests.
@@ -2429,9 +2439,7 @@ sandbox isolation, restart, and failed-operation recovery.
 Each selected case requires its matching approved model variable, listed below. The smoke does not select a default model.
 The Hermes smoke uses `NOUS_API_KEY`. It does not prove interactive OAuth login or token refresh.
 Credentials remain in the test host environment and OpenShell provider store; artifacts redact them.
-The cleanup helper destroys each test sandbox. The Deep Agents Code case checks sandbox absence even if onboarding fails.
-Other hosted cases check absence after successful onboarding; failed onboarding uses best-effort cleanup.
-Neither path proves removal of credentials from the OpenShell provider store.
+The cleanup helper destroys each test sandbox. After successful onboarding, strict cleanup checks sandbox absence and requires public `nemoclaw destroy` to succeed so provider retirement cannot be silently skipped. The Deep Agents Code case also checks sandbox absence if onboarding fails; other hosted cases use best-effort cleanup after failed onboarding. Neither path proves removal of credentials from the OpenShell provider store.
 Discard the approved disposable gateway after each run, including failed onboarding. Use a fresh gateway for a retry.
 
 Select one explicit target with `targets=hosted-inference-openai`, `hosted-inference-anthropic`,

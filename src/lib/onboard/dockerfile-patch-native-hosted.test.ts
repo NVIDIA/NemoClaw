@@ -18,28 +18,44 @@ function dockerfileWith(content: string): string {
 describe("Hermes Dockerfile route selection", () => {
   it.each([
     {
+      provider: "hermes-provider",
       nativeProvider: false,
       upstreamEndpointUrl: "https://custom.example/v1",
       expected: "https://inference.local/v1",
     },
     {
+      provider: "hermes-provider",
       nativeProvider: undefined,
       upstreamEndpointUrl: "https://custom.example/v1",
       expected: "https://inference.local/v1",
     },
     {
+      provider: "hermes-provider",
       nativeProvider: true,
       upstreamEndpointUrl: "https://authenticated.example/v1",
       expected: "https://authenticated.example/v1",
     },
     {
+      provider: "hermes-provider",
       nativeProvider: true,
       upstreamEndpointUrl: "https://inference-api.nousresearch.com/v1",
       expected: "https://inference-api.nousresearch.com/v1",
     },
+    {
+      provider: "vllm-local",
+      nativeProvider: false,
+      upstreamEndpointUrl: "http://host.openshell.internal:8000/v1",
+      expected: "https://inference.local/v1",
+    },
+    {
+      provider: "compatible-endpoint",
+      nativeProvider: false,
+      upstreamEndpointUrl: "http://host.openshell.internal:8000/v1",
+      expected: "https://inference.local/v1",
+    },
   ])(
     "renders $upstreamEndpointUrl with nativeProvider=$nativeProvider",
-    ({ expected, ...options }) => {
+    ({ expected, provider, ...options }) => {
       const file = dockerfileWith(
         "FROM example/base\nARG NEMOCLAW_INFERENCE_BASE_URL=old\nARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old\n",
       );
@@ -48,7 +64,7 @@ describe("Hermes Dockerfile route selection", () => {
         "fixture-model",
         "",
         "build",
-        "hermes-provider",
+        provider,
         null,
         null,
         null,

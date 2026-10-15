@@ -21,6 +21,10 @@ const {
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
 }: typeof import("../inference/native-nvidia/contract") = require("../inference/native-nvidia/contract");
 const {
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+  nativeLocalCredentialReference,
+}: typeof import("../inference/native-local/agent-config") = require("../inference/native-local/agent-config");
+const {
   nativeHostedAgentConfig,
 }: typeof import("../inference/native-provider/agent-config") = require("../inference/native-provider/agent-config");
 const {
@@ -123,9 +127,11 @@ const materializeNativeProviderHandle = [
 ].join("\n");
 
 function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
+  const localReference = `openshell:resolve:env:${NATIVE_LOCAL_CREDENTIAL_ENV}`;
   const matching = updates.filter(({ dotpath, value }) => {
     if (!dotpath.startsWith("models.providers.") || !isConfigObject(value)) return false;
-    if (value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER) return true;
+    if (value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER || value.apiKey === localReference)
+      return true;
     if (
       typeof value.apiKey !== "string" ||
       !/^openshell:resolve:env:[A-Z][A-Z0-9_]*$/u.test(value.apiKey)
@@ -139,6 +145,24 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
   if (matching.length !== 1) throw new Error("Expected one native provider config update");
   const value = matching[0]!.value;
   if (!isConfigObject(value)) throw new Error("Invalid native provider config update");
+  if (value.apiKey === localReference) {
+    if (
+      typeof value.baseUrl !== "string" ||
+      nativeLocalCredentialReference("compatible-endpoint", value.baseUrl) !== localReference
+    ) {
+      throw new Error("Native local OpenClaw credential requires a qualified private endpoint.");
+    }
+    const providerPath = "models.providers.inference";
+    if (matching[0]!.dotpath !== providerPath) {
+      throw new Error("Native provider config path does not match its identity");
+    }
+    return {
+      credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+      endpoint: value.baseUrl,
+      placeholder: localReference,
+      providerPath,
+    };
+  }
   const headers = isConfigObject(value.headers) ? value.headers : {};
   const provider = headers["X-NemoClaw-Upstream-Provider"];
   const native =

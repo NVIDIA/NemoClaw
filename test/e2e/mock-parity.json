@@ -102,6 +102,8 @@
         "test/e2e/live/openclaw-admin-scope.ts"
       ],
       "fast": [
+        "src/lib/inference/native-local.test.ts",
+        "src/lib/onboard/managed-workload/native-local-startup-route.test.ts",
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
@@ -197,6 +199,7 @@
         "test/e2e/support/onboard-timeout-contract.test.ts",
         "test/onboarding/onboard-inference-gateway-scope.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+        "test/e2e/support/inference-routing-cleanup.test.ts",
         "test/e2e/support/hosted-provider-smoke-selection.test.ts"
       ]
     },
@@ -576,6 +579,7 @@
     {
       "live": "test/e2e/live/double-onboard.test.ts",
       "fast": [
+        "src/lib/inference/native-local.test.ts",
         "test/cli/sandbox-status-text.test.ts",
         "src/lib/onboard/created-sandbox-finalization.test.ts",
         "src/lib/onboard/gateway-reuse.test.ts",
@@ -591,6 +595,7 @@
     {
       "live": "test/e2e/live/gpu-double-onboard.test.ts",
       "fast": [
+        "src/lib/inference/native-local.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts"

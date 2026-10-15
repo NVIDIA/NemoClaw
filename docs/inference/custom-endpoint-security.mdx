@@ -13,9 +13,10 @@ NemoClaw keeps provider credentials on the host and validates explicit custom en
 
 ## Protect Provider Credentials
 
-The agent inside the sandbox sends requests to `inference.local` instead of connecting to the upstream endpoint directly.
-OpenShell forwards the traffic and injects the provider credential at egress.
-The sandbox does not receive the raw API key.
+For qualified host-local OpenAI-compatible endpoints, new OpenClaw and Deep Agents Code sandboxes use a sandbox-attached OpenShell provider at the host-local endpoint.
+The agent presents an opaque credential reference, and OpenShell injects the provider credential at egress.
+Other custom endpoints, Hermes, and retained legacy routes use `inference.local`, where OpenShell forwards the request and injects the credential.
+Neither path exposes the raw upstream API key to the sandbox.
 
 Use `COMPATIBLE_API_KEY` for an OpenAI-compatible endpoint that requires authentication.
 For an HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]`, you can select no authentication on the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`.

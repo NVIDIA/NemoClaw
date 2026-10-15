@@ -2,11 +2,34 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { serializedLlamaCppHostLocalInferenceReceipt } from "../../test/helpers/host-local-inference-receipt";
 import { buildChain } from "./dashboard/contract.js";
-import { probeOnboardInferenceInvocation, verifyDeployment } from "./verify-deployment.js";
+import {
+  nativeLocalIdentity,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+} from "./inference/native-local/contract.js";
+import {
+  onboardInferenceVerificationContext,
+  probeOnboardInferenceInvocation,
+  verifyDeployment,
+} from "./verify-deployment.js";
 
 const NO_RETRY = { retryDelaysMs: [], sleep: async (_ms: number) => {} };
 const DCODE_AGENT = "langchain-deepagents-code";
+const localBinding = {
+  provider: "ollama-local" as const,
+  endpointUrl: "http://host.openshell.internal:11434/v1",
+  credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+  authMode: "sentinel" as const,
+  gatewayName: "my-gateway",
+  sandboxName: "my-sandbox",
+};
+const localAttachment = {
+  ...localBinding,
+  ...nativeLocalIdentity(localBinding),
+  schemaVersion: 1 as const,
+  providerId: "provider-1",
+};
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
   return {
@@ -35,6 +58,237 @@ function makeModelsRouteDeps(code: string, overrides: Record<string, unknown> = 
 }
 
 describe("verifyDeployment inference route model-catalog validation", () => {
+  it.each([
+    ["openclaw", true],
+    [DCODE_AGENT, true],
+    ["pi", false],
+    ["hermes", false],
+  ])("selects the same onboarding verification route for %s", (agentName, expected) => {
+    const context = onboardInferenceVerificationContext("my-sandbox", "my-gateway", agentName, {
+      provider: "compatible-endpoint",
+      model: "test-model",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      preferredInferenceApi: "openai-completions",
+    });
+
+    expect(context.route.nativeLocalExpected).toBe(expected);
+    expect(context.invocation.nativeLocalExpected).toBe(expected);
+  });
+
+  it("uses the recorded native local attachment instead of the shared models route", async () => {
+    const scripts: string[] = [];
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
+    const result = await verifyDeployment(
+      "my-sandbox",
+      buildChain(),
+      makeDeps({
+        executeSandboxCommand: async (_name: string, script: string) => {
+          scripts.push(script);
+          return { status: 0, stdout: "200", stderr: "" };
+        },
+        probeInferenceInvocation,
+      }),
+      {
+        ...NO_RETRY,
+        inferenceRouteContext: {
+          provider: "ollama-local",
+          gatewayName: "my-gateway",
+          nativeLocalExpected: true,
+          nativeLocalProviderAttachment: localAttachment,
+        },
+      },
+    );
+
+    expect(result.verification.inferenceRouteWorking).toBe(true);
+    expect(probeInferenceInvocation).toHaveBeenCalledOnce();
+    expect(scripts.join("\n")).not.toContain("inference.local");
+  });
+
+  it("fails closed when a selected native local route has no attachment", async () => {
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
+    const result = await verifyDeployment(
+      "my-sandbox",
+      buildChain(),
+      makeModelsRouteDeps("200", { probeInferenceInvocation }),
+      {
+        ...NO_RETRY,
+        inferenceRouteContext: { provider: "ollama-local", nativeLocalExpected: true },
+      },
+    );
+
+    expect(result.verification.inferenceRouteWorking).toBe(false);
+    expect(result.diagnostics.find((entry) => entry.link === "inference")?.detail).toContain(
+      "attachment is missing or invalid",
+    );
+    expect(probeInferenceInvocation).not.toHaveBeenCalled();
+  });
+
+  it("rejects a native local attachment from another gateway before probing inference", async () => {
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
+    const result = await verifyDeployment(
+      "my-sandbox",
+      buildChain(),
+      makeModelsRouteDeps("200", { probeInferenceInvocation }),
+      {
+        ...NO_RETRY,
+        inferenceRouteContext: {
+          provider: "ollama-local",
+          gatewayName: "other-gateway",
+          nativeLocalExpected: true,
+          nativeLocalProviderAttachment: localAttachment,
+        },
+      },
+    );
+
+    expect(result.verification.inferenceRouteWorking).toBe(false);
+    expect(result.diagnostics.find((entry) => entry.link === "inference")?.detail).toContain(
+      "attachment is missing or invalid",
+    );
+    expect(probeInferenceInvocation).not.toHaveBeenCalled();
+  });
+
+  it.each(["openclaw", DCODE_AGENT])(
+    "accepts a managed local provider's canonical application route for %s",
+    async (agentName) => {
+      const binding = {
+        ...localBinding,
+        provider: "llama-cpp-local" as const,
+        endpointUrl: "http://host.openshell.internal:8081/v1",
+        authMode: "authenticated" as const,
+      };
+      const attachment = {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "provider-1",
+      };
+      const context = onboardInferenceVerificationContext(
+        "my-sandbox",
+        "my-gateway",
+        agentName,
+        {
+          provider: "llama-cpp-local",
+          model: "test-model",
+          endpointUrl: "https://inference.local/v1",
+          preferredInferenceApi: "openai-completions",
+        },
+        { nativeLocalProviderAttachment: attachment },
+      );
+      const routeProbe = vi.fn(async () => ({ ok: true }) as const);
+      const deployment = await verifyDeployment(
+        "my-sandbox",
+        buildChain(),
+        makeDeps({ probeInferenceInvocation: routeProbe }),
+        { ...NO_RETRY, inferenceRouteContext: context.route },
+      );
+      expect(deployment.verification.inferenceRouteWorking).toBe(true);
+      expect(routeProbe).toHaveBeenCalledOnce();
+
+      const invocationProbe = vi.fn(async () => ({ ok: true }) as const);
+      expect(await probeOnboardInferenceInvocation(context.invocation, invocationProbe)).toEqual({
+        ok: true,
+      });
+      expect(invocationProbe).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("uses the published managed route when the provider phase still holds the host URL", async () => {
+    const binding = {
+      ...localBinding,
+      provider: "llama-cpp-local" as const,
+      endpointUrl: "http://host.openshell.internal:8081/v1",
+      authMode: "authenticated" as const,
+    };
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "provider-1",
+    };
+    const context = onboardInferenceVerificationContext(
+      "my-sandbox",
+      "my-gateway",
+      "openclaw",
+      {
+        provider: "llama-cpp-local",
+        model: "test-model",
+        endpointUrl: "http://127.0.0.1:8081/v1",
+        preferredInferenceApi: "openai-completions",
+      },
+      {
+        provider: "llama-cpp-local",
+        model: "test-model",
+        endpointUrl: "https://inference.local/v1",
+        hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
+        nativeLocalProviderAttachment: attachment,
+      },
+    );
+    expect(context.route.endpointUrl).toBe("https://inference.local/v1");
+    expect(context.invocation.endpointUrl).toBe("https://inference.local/v1");
+    const probe = vi.fn(async () => ({ ok: true }) as const);
+    expect(await probeOnboardInferenceInvocation(context.invocation, probe)).toEqual({ ok: true });
+    expect(probe).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a native local attachment for a different selected endpoint in both probes", async () => {
+    const context = onboardInferenceVerificationContext(
+      "my-sandbox",
+      "my-gateway",
+      DCODE_AGENT,
+      {
+        provider: "ollama-local",
+        model: "test-model",
+        endpointUrl: "http://host.openshell.internal:11435/v1",
+        preferredInferenceApi: "openai-completions",
+      },
+      { nativeLocalProviderAttachment: localAttachment },
+    );
+    const routeProbe = vi.fn(async () => ({ ok: true }) as const);
+    const deployment = await verifyDeployment(
+      "my-sandbox",
+      buildChain(),
+      makeDeps({ probeInferenceInvocation: routeProbe }),
+      { ...NO_RETRY, inferenceRouteContext: context.route },
+    );
+    expect(deployment.verification.inferenceRouteWorking).toBe(false);
+    expect(routeProbe).not.toHaveBeenCalled();
+
+    const invocationProbe = vi.fn(async () => ({ ok: true }) as const);
+    expect(
+      await probeOnboardInferenceInvocation(context.invocation, invocationProbe),
+    ).toMatchObject({
+      ok: false,
+    });
+    expect(invocationProbe).not.toHaveBeenCalled();
+  });
+
+  it("accepts a normalized spelling of the selected native local endpoint", async () => {
+    const context = onboardInferenceVerificationContext(
+      "my-sandbox",
+      "my-gateway",
+      DCODE_AGENT,
+      {
+        provider: "ollama-local",
+        model: "test-model",
+        endpointUrl: `${localBinding.endpointUrl}/`,
+        preferredInferenceApi: "openai-completions",
+      },
+      { nativeLocalProviderAttachment: localAttachment },
+    );
+    const probe = vi.fn(async () => ({ ok: true }) as const);
+    expect(await probeOnboardInferenceInvocation(context.invocation, probe)).toEqual({ ok: true });
+    expect(probe).toHaveBeenCalledOnce();
+    const routeProbe = vi.fn(async () => ({ ok: true }) as const);
+    const deployment = await verifyDeployment(
+      "my-sandbox",
+      buildChain(),
+      makeDeps({ probeInferenceInvocation: routeProbe }),
+      { ...NO_RETRY, inferenceRouteContext: context.route },
+    );
+    expect(deployment.verification.inferenceRouteWorking).toBe(true);
+    expect(routeProbe).toHaveBeenCalledOnce();
+  });
+
   it("uses the native NVIDIA invocation instead of probing inference.local", async () => {
     const scripts: string[] = [];
     const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
@@ -298,6 +552,52 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       ok: false,
       detail: "no provider and model were recorded for this sandbox",
     });
+  });
+
+  it("passes the native local receipt to the bounded agent request", async () => {
+    const probe = vi.fn(async () => ({ ok: true }) as const);
+    const result = await probeOnboardInferenceInvocation(
+      {
+        sandboxName: "my-sandbox",
+        gatewayName: "my-gateway",
+        agentName: DCODE_AGENT,
+        model: "test-model",
+        provider: "ollama-local",
+        preferredInferenceApi: "openai-completions",
+        nativeLocalExpected: true,
+        nativeLocalProviderAttachment: localAttachment,
+      },
+      probe,
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(probe).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        gatewayName: "my-gateway",
+        provider: "ollama-local",
+        model: "test-model",
+        nativeLocalProviderAttachment: localAttachment,
+      }),
+    );
+  });
+
+  it("does not request inference without the selected native local receipt", async () => {
+    const probe = vi.fn(async () => ({ ok: true }) as const);
+    const result = await probeOnboardInferenceInvocation(
+      {
+        sandboxName: "my-sandbox",
+        gatewayName: "my-gateway",
+        agentName: DCODE_AGENT,
+        model: "test-model",
+        provider: "ollama-local",
+        preferredInferenceApi: "openai-completions",
+        nativeLocalExpected: true,
+      },
+      probe,
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    expect(probe).not.toHaveBeenCalled();
   });
 
   it("fails closed when a model was recorded without its provider (#10543)", async () => {

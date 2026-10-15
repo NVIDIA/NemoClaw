@@ -540,6 +540,66 @@ describe("composeSandboxConfigBody", () => {
     }
   });
 
+  it("pins a native local OpenClaw handle before the gateway restarts", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-local-config-"));
+    const endpoint = "http://host.openshell.internal:8000/v1";
+    const reference = "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+    const handle = "openshell:resolve:env:v42_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+    try {
+      fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
+        mode: 0o700,
+      });
+      const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [
+        {
+          dotpath: "models.providers.inference",
+          value: { baseUrl: endpoint, apiKey: reference, api: "openai-completions" },
+        },
+      ]);
+      const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
+      const run = (value: string | undefined) =>
+        spawnSync(command[0]!, command.slice(1), {
+          input: invocation.input,
+          encoding: "utf8",
+          timeout: 5_000,
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH ?? ""}`,
+            NEMOCLAW_LOCAL_INFERENCE_TOKEN: value,
+          },
+        });
+
+      const success = run(handle);
+      expect(success.status, success.stderr).toBe(0);
+      const batch = JSON.parse(success.stdout) as Array<{ value: { apiKey: string } }>;
+      expect(batch[0]?.value.apiKey).toBe(handle);
+      expect(invocation.input).toContain(reference);
+      expect(invocation.input).not.toContain(handle);
+      expect(invocation.args.join(" ")).not.toContain(handle);
+      expect(run(undefined).status).toBe(75);
+      expect(run(reference).status).toBe(1);
+      expect(run("raw-secret").status).toBe(1);
+      expect(run("openshell:resolve:env:v42_OPENAI_API_KEY").status).toBe(1);
+      expect(() =>
+        buildOpenClawNativeConfigBatchInvocation("alpha", [
+          {
+            dotpath: "models.providers.openai",
+            value: { baseUrl: endpoint, apiKey: reference },
+          },
+        ]),
+      ).toThrow("config path does not match its identity");
+      expect(() =>
+        buildOpenClawNativeConfigBatchInvocation("alpha", [
+          {
+            dotpath: "models.providers.inference",
+            value: { baseUrl: "https://untrusted.example/v1", apiKey: reference },
+          },
+        ]),
+      ).toThrow("qualified private endpoint");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("retries only a missing newly attached handle before OpenClaw mutates config", () => {
     const pending = { status: 75, stderr: "NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING\n" };
     const succeeded = { status: 0, stderr: "" };

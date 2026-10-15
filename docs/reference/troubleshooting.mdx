@@ -2192,7 +2192,7 @@ $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 
 <AgentOnly variant="openclaw">
 
-Every OpenClaw onboarding run with a custom OpenAI-compatible endpoint sends a validation request through `inference.local` from inside the sandbox, even when you select no messaging channel.
+OpenClaw onboarding sends a validation request from inside the sandbox, even when you select no messaging channel. Supported host-local OpenAI-compatible endpoints use the sandbox-attached native provider; other custom OpenAI-compatible endpoints use `inference.local`.
 If that sandbox validation request fails, fix the compatible-endpoint base URL, credentials, model, or network route before continuing onboarding.
 Messaging setup is not the root cause.
 

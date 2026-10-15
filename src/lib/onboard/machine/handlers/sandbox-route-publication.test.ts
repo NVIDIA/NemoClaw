@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
@@ -12,6 +13,24 @@ vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
   detectUnconfiguredMessagingChannels: vi.fn(() => []),
 }));
+
+const testHome = await vi.hoisted(async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "sandbox-route-publication-"));
+  vi.stubEnv("HOME", directory);
+  return directory;
+});
+
+beforeEach((context) => {
+  vi.stubEnv("HOME", testHome);
+  fs.mkdirSync(testHome, { recursive: true });
+  context.onTestFinished(() => {
+    vi.unstubAllEnvs();
+    fs.rmSync(testHome, { recursive: true, force: true });
+  });
+});
 
 describe("sandbox route publication", () => {
   it("reuses an already-published route without finalizing a stale session reservation", async () => {

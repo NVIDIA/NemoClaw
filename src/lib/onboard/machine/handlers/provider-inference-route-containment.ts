@@ -34,7 +34,19 @@ export function assertProviderInferenceRouteCompatible(
   gatewayName: string,
   sandboxName: string | null,
   route: GatewayInferenceRoute,
+  nativeLocalSelection = false,
 ): void {
+  if (nativeLocalSelection) {
+    const preflight = deps.preflightGatewayRouteDiscovery({
+      gatewayName,
+      sandboxName,
+      route: { ...route, model: route.model ?? null },
+      nativeLocalSelection: true,
+    });
+    if (preflight.ok) return;
+    deps.error(`  Error: ${formatGatewayRouteConflict(preflight.result)}`);
+    deps.exitProcess(1);
+  }
   const compatibility = deps.checkGatewayRouteCompatibility({ gatewayName, sandboxName, route });
   if (!compatibility.ok) {
     if (isAdvisoryGatewayRouteConflict(compatibility)) return;
@@ -48,6 +60,7 @@ export function guardProviderInferenceRouteSelection(
   deps: ProviderInferenceRouteContainmentDeps,
   gatewayName: string,
   sandboxName: string | null,
+  nativeLocalSelection: boolean,
   route: ProviderInferenceProbeRoute,
 ): GatewayRouteDiscoveryConstraints {
   const model = typeof route.model === "string" && route.model.trim() ? route.model : null;
@@ -55,6 +68,7 @@ export function guardProviderInferenceRouteSelection(
     gatewayName,
     sandboxName,
     route: { ...route, model },
+    ...(nativeLocalSelection ? { nativeLocalSelection: true } : {}),
   });
   if (!preflight.ok) {
     if (isAdvisoryGatewayRouteConflict(preflight.result)) {
@@ -63,6 +77,7 @@ export function guardProviderInferenceRouteSelection(
     deps.error(`  Error: ${formatGatewayRouteConflict(preflight.result)}`);
     deps.exitProcess(1);
   }
+  if (nativeLocalSelection) return unconstrainedGatewayRouteDiscovery();
   const provider = typeof route.provider === "string" ? route.provider.trim() : "";
   const completeCustomRoute =
     !["compatible-endpoint", "compatible-anthropic-endpoint", "llama-cpp-local"].includes(

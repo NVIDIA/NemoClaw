@@ -54,12 +54,14 @@ function check(requested: GatewayInferenceRoute, sandboxes: SandboxEntry[]) {
 function discover(
   requested: Omit<GatewayInferenceRoute, "model"> & { model: string | null },
   sandboxes: SandboxEntry[],
+  nativeLocalSelection = false,
 ) {
   return preflightGatewayRouteDiscovery({
     gatewayName: "nemoclaw",
     sandboxName: "target",
     route: requested,
     sandboxes,
+    ...(nativeLocalSelection ? { nativeLocalSelection: true } : {}),
   });
 }
 
@@ -173,6 +175,46 @@ describe("shared gateway inference route compatibility", () => {
       requiredModel: "custom/model",
       requiredEndpointUrl: "https://example.test/v1",
       requiredInferenceApi: "openai-completions",
+    });
+  });
+
+  it("allows native local discovery beside a different shared endpoint while rejecting damaged peers (#12975)", () => {
+    const selected = discoveryRoute("compatible-endpoint", {
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+      preferredInferenceApi: "openai-completions",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+    const peer = sandbox("shared-peer", {
+      provider: "compatible-endpoint",
+      model: "test-model",
+      endpointUrl: "http://host.openshell.internal:19001/v1",
+      preferredInferenceApi: "openai-completions",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+
+    expect(discover(selected, [peer], true)).toEqual({
+      ok: true,
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    });
+    expect(discover(selected, [peer])).toMatchObject({
+      ok: false,
+      result: { conflicts: [{ sandboxName: "shared-peer", reason: "custom-endpoint" }] },
+    });
+    expect(
+      discover(
+        selected,
+        [sandbox("broken-binding", { gatewayName: "invalid", gatewayPort: null })],
+        true,
+      ),
+    ).toMatchObject({
+      ok: false,
+      result: { conflicts: [{ sandboxName: "broken-binding", reason: "invalid-gateway-binding" }] },
+    });
+    expect(discover(selected, [{ ...peer, endpointUrl: null }], true)).toMatchObject({
+      ok: false,
+      result: { conflicts: [{ sandboxName: "shared-peer", reason: "incomplete-custom-route" }] },
     });
   });
 

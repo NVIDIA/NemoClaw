@@ -32,7 +32,9 @@ Do not expose the port to your LAN or the internet.
 
 An authenticated fixed profile publishes the configured host port on exactly two host addresses: `127.0.0.1` and the private IPv4 gateway of the `openshell-docker` bridge. The container continues to listen on its recipe-owned internal port `8000`.
 It never publishes that host port on `0.0.0.0` or `::`.
-The provider route remains `https://inference.local` inside the sandbox, and OpenShell reaches the server through the private bridge binding.
+New OpenClaw and Deep Agents Code local selections use a sandbox-attached provider at the qualified host-local endpoint.
+Hermes and retained legacy selections use `https://inference.local`.
+OpenShell reaches the server through the private bridge binding.
 The managed Muse Glimmer profile uses the same bearer-protected listener and two-address publication boundary.
 
 The qualified two-DGX Spark and two-DGX Station paths use bearer-protected `/v1` routes and Docker host networking on both runtime containers; network isolation remains required for other endpoints and distributed traffic.

@@ -4,6 +4,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { finalizationHandlerDeps, finalizationHandlerRuntime } from "./finalization-deps";
+import { onboardInferenceVerificationContext } from "../../verify-deployment";
+import {
+  nativeLocalIdentity,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+} from "../../inference/native-local/contract";
 
 const input = {
   sandboxName: "deep-code",
@@ -11,6 +16,20 @@ const input = {
   provider: "openrouter-api",
   model: "moonshotai/kimi-k2.6",
   preferredInferenceApi: "openai-completions",
+};
+const localBinding = {
+  provider: "ollama-local" as const,
+  endpointUrl: "http://host.openshell.internal:11434/v1",
+  credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+  authMode: "sentinel" as const,
+  gatewayName: "nemoclaw-19090",
+  sandboxName: "deep-code",
+};
+const localAttachment = {
+  ...localBinding,
+  ...nativeLocalIdentity(localBinding),
+  schemaVersion: 1 as const,
+  providerId: "provider-1",
 };
 
 describe("terminal inference finalization dependency", () => {
@@ -22,6 +41,7 @@ describe("terminal inference finalization dependency", () => {
     } as never);
     const probeOnboardInferenceInvocation = vi.fn(async () => ({ ok: true }));
     vi.spyOn(finalizationHandlerRuntime, "loadVerifyDeployment").mockReturnValue({
+      onboardInferenceVerificationContext,
       probeOnboardInferenceInvocation,
     } as never);
 
@@ -31,6 +51,42 @@ describe("terminal inference finalization dependency", () => {
     expect(probeOnboardInferenceInvocation).toHaveBeenCalledExactlyOnceWith({
       ...input,
       gatewayName: "nemoclaw-19090",
+      endpointUrl: null,
+      nativeLocalExpected: false,
+      nativeLocalProviderAttachment: undefined,
+      nativeHostedProviderAttachment: undefined,
+    });
+  });
+
+  it("passes the selected native local receipt to DCode's terminal agent probe", async () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockReturnValue({
+      load: () => ({
+        sandboxes: {
+          "deep-code": {
+            gatewayName: "nemoclaw-19090",
+            endpointUrl: localBinding.endpointUrl,
+            nativeLocalProviderAttachment: localAttachment,
+          },
+        },
+      }),
+    } as never);
+    const probeOnboardInferenceInvocation = vi.fn(async () => ({ ok: true }));
+    vi.spyOn(finalizationHandlerRuntime, "loadVerifyDeployment").mockReturnValue({
+      onboardInferenceVerificationContext,
+      probeOnboardInferenceInvocation,
+    } as never);
+
+    await expect(
+      finalizationHandlerDeps.probeTerminalInference({ ...input, provider: "ollama-local" }),
+    ).resolves.toEqual({ ok: true });
+    expect(probeOnboardInferenceInvocation).toHaveBeenCalledExactlyOnceWith({
+      ...input,
+      provider: "ollama-local",
+      gatewayName: "nemoclaw-19090",
+      endpointUrl: localBinding.endpointUrl,
+      nativeLocalExpected: true,
+      nativeLocalProviderAttachment: localAttachment,
+      nativeHostedProviderAttachment: undefined,
     });
   });
 
@@ -43,12 +99,16 @@ describe("terminal inference finalization dependency", () => {
     } as never);
     const probeOnboardInferenceInvocation = vi.fn(async () => ({ ok: true }));
     vi.spyOn(finalizationHandlerRuntime, "loadVerifyDeployment").mockReturnValue({
+      onboardInferenceVerificationContext,
       probeOnboardInferenceInvocation,
     } as never);
     await finalizationHandlerDeps.probeTerminalInference(input);
     expect(probeOnboardInferenceInvocation).toHaveBeenCalledExactlyOnceWith({
       ...input,
       gatewayName: "nemoclaw",
+      endpointUrl: null,
+      nativeLocalExpected: false,
+      nativeLocalProviderAttachment: undefined,
       nativeHostedProviderAttachment,
     });
   });

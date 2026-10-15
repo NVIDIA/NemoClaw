@@ -1,6 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rejectInferenceSelectionProbe } from "./inference-set-provider-diagnostics";
+import {
+  type NativeLocalProviderAttachment,
+  usesNativeLocalInferenceForAgent,
+} from "../inference/config";
+import {
+  requireNativeProviderPolicy,
+  prepareNativeLocalSwitch,
+  rollbackNativeLocalSelection,
+  restoreSharedInferenceSelection,
+  prepareNativeLocalSelectionBoundary,
+  detachPreviousNativeLocalBeforePublish,
+  nativeLocalSelectionRegistryFields,
+  retireUnselectedNativeLocalProviders,
+} from "./inference-set-provider";
 import { captureResolvedOpenshellAsync, getOpenshellBinary } from "../adapters/openshell/runtime";
 import type {
   OpenShellInferenceRouteObservation,
@@ -23,7 +38,13 @@ import {
   ensureHttpsPinRuntimeAdapter,
   revokeHttpsPinRuntimeAdapterRoute,
 } from "../inference/https-pin-runtime-adapter";
-import { type ValidationResult, validateLocalProvider } from "../inference/local";
+import {
+  type ValidationResult,
+  validateLocalProvider,
+  getLocalProviderBaseUrl,
+  getManagedVllmProviderBinding,
+  shouldFrontOllamaWithProxy,
+} from "../inference/local";
 import {
   inferenceSelectionRegistryFields,
   type ReasoningEffortRequest,
@@ -69,7 +90,7 @@ import {
   nativeSelectionRegistryFields,
 } from "./inference-set/native";
 import type { NativeProviderAttachment } from "../inference/native-provider/contract";
-import { InferenceSetError, inferenceProbeRecoveryMessage } from "./inference-set-error";
+import { InferenceSetError } from "./inference-set-error";
 import {
   completeInferencePostCommit,
   defaultInferenceGatewayRestart,
@@ -183,12 +204,18 @@ function providerCommitFailureAfterSelection(options: {
 }
 
 export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
+  requireNativeProviderPolicy?: typeof requireNativeProviderPolicy;
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
   listSandboxes: () => {
     sandboxes: SandboxEntry[];
     defaultSandbox: string | null;
   };
+  prepareNativeLocalSwitch?: typeof prepareNativeLocalSwitch;
+  getNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").getNativeLocalProviderAuthority;
+  setNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").setNativeLocalProviderAuthority;
+  listNativeLocalProviderAuthorities?: typeof import("../state/registry/native-local-provider-authority").listNativeLocalProviderAuthorities;
+  clearNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").clearNativeLocalProviderAuthority;
   getNativeHostedProviderAuthority?: typeof registry.getNativeHostedProviderAuthority;
   setNativeHostedProviderAuthority?: typeof registry.setNativeHostedProviderAuthority;
   getNativeNvidiaProviderAuthority?: typeof registry.getNativeNvidiaProviderAuthority;
@@ -1260,13 +1287,20 @@ async function runInferenceSetWithoutHostLock(
   // Registered peers are compared exactly as recorded. In particular, a
   // stopped legacy Hermes row that still records the Anthropic frontend will
   // depend on that route when restarted and must not be normalized away.
-  const selectingNative = isNativeInferenceSelection(
+  const selectingNativeLocal = usesNativeLocalInferenceForAgent(
+    agentName,
     provider,
-    entry,
-    options.endpointUrl,
-    expectedGatewayName,
-    deps,
+    options.endpointUrl ?? (entry.provider === provider ? entry.endpointUrl : null),
   );
+  const selectingNative =
+    selectingNativeLocal ||
+    isNativeInferenceSelection(provider, entry, options.endpointUrl, expectedGatewayName, deps);
+  const previousNativeLocalAttachment = await prepareNativeLocalSelectionBoundary({
+    entry,
+    selectingNativeLocal,
+    gatewayName: expectedGatewayName,
+    requirePolicy: deps.requireNativeProviderPolicy,
+  });
   const routeSandboxes = deps.listSandboxes().sandboxes;
   const preparedRoute = prepareInferenceSetRoute({
     entry: routeEntry,
@@ -1461,7 +1495,7 @@ async function runInferenceSetWithoutHostLock(
       httpsPinProviderBinding: Boolean(httpsPinProviderBinding),
       probeDirectSandboxBridge: probeSandboxRoute,
       rollbackRoute: Boolean(rollbackRoute),
-      previousNativeAttachment: Boolean(previousNativeAttachment),
+      previousNativeAttachment: Boolean(previousNativeAttachment || previousNativeLocalAttachment),
     })
   ) {
     throw new InferenceSetError(
@@ -1479,6 +1513,11 @@ async function runInferenceSetWithoutHostLock(
   let providerMutation: Awaited<ReturnType<typeof prepareInferenceSetProviderBinding>> | null =
     null;
   let assertProviderCurrentBeforeSelection: (() => Promise<void>) | null = null;
+  let nativeLocalProviderAttachment: NativeLocalProviderAttachment | undefined;
+  let nativeLocalAttachmentChanged = false;
+  let nativeLocalRegistryCommitted = false;
+  let previousNativeLocalDetached = false;
+  let previousNativeLocalDetachCommitted = false;
   let nativeNvidiaCredentialHandle: string | undefined;
   let nativeProviderAttachment: NativeProviderAttachment | undefined;
   let nativeAttachmentChanged = false;
@@ -1486,38 +1525,20 @@ async function runInferenceSetWithoutHostLock(
   let previousNativeDetached = false;
   let previousNativeDetachCommitted = false;
   const restorePreviousInferenceSelection = async (): Promise<string | null> => {
-    if (selectingNative) {
-      appliedInferenceSelection = false;
-      return null;
-    }
-    if (!rollbackRoute) return "the pre-mutation gateway route was not configured";
-    if (rollbackRoute.provider === provider && rollbackRoute.model === model) {
-      return (
-        `the route observed immediately before this attempt already selected '${provider}' / '${model}', ` +
-        "so there is no distinct prior inference selection to restore"
-      );
-    }
-    const restoreResult = await deps.inferenceRouteMutator.setInferenceRoute({
-      target: { kind: "named", gatewayName: preparedRoute.gatewayName },
-      route: rollbackRoute,
-      verification: "skip",
+    const detail = await restoreSharedInferenceSelection({
+      nativeSelection: selectingNative,
+      rollbackRoute,
+      provider,
+      model,
+      gatewayName: preparedRoute.gatewayName,
+      mutator: deps.inferenceRouteMutator,
     });
-    if (!restoreResult.ok) {
-      if (
-        !restoreResult.ambiguous &&
-        restoreResult.error.kind === "command" &&
-        restoreResult.error.exitCode !== null
-      ) {
-        return `the restore command exited with status ${String(restoreResult.error.exitCode)}`;
-      }
-      return restoreResult.error.message;
-    }
-    appliedInferenceSelection = false;
-    return null;
+    if (detail === null) appliedInferenceSelection = false;
+    return detail;
   };
   try {
     const nativeSelection = await prepareNativeSelection({
-      selectingNative,
+      selectingNative: selectingNative && !selectingNativeLocal,
       provider,
       expectedAttachment: nativeProviderAuthority,
       gatewayName: preparedRoute.gatewayName,
@@ -1534,7 +1555,27 @@ async function runInferenceSetWithoutHostLock(
       read: deps.readNativeNvidiaCredentialHandle,
     });
     const providerBinding = httpsPinProviderBinding ?? directProviderBinding;
-    if (providerBinding) {
+    if (selectingNativeLocal) {
+      const selected = await (deps.prepareNativeLocalSwitch ?? prepareNativeLocalSwitch)({
+        local: {
+          getLocalProviderBaseUrl,
+          getManagedVllmProviderBinding,
+          shouldFrontOllamaWithProxy,
+        },
+        provider,
+        sandboxName,
+        gatewayName: preparedRoute.gatewayName,
+        previous: previousNativeLocalAttachment,
+        binding: directProviderBinding,
+        adapter: deps.providerAdapter,
+        resolveCredentialValue: deps.resolveCredentialValue,
+        readAuthority: deps.getNativeLocalProviderAuthority,
+        writeAuthority: deps.setNativeLocalProviderAuthority,
+      });
+      nativeLocalProviderAttachment = selected.receipt;
+      nativeLocalAttachmentChanged = selected.changed;
+      previousNativeLocalDetached = selected.previousDetached;
+    } else if (providerBinding) {
       providerMutation = await prepareInferenceSetProviderBinding({
         gatewayName: preparedRoute.gatewayName,
         providerName: provider,
@@ -1631,7 +1672,9 @@ async function runInferenceSetWithoutHostLock(
               model,
               preferredInferenceApi: preMutationInferenceApi,
               ...(selectingNative ? { nativeProvider: true } : {}),
-              nativeEndpointUrl: nativeSelection.endpointUrl,
+              nativeLocalProviderAttachment,
+              nativeEndpointUrl:
+                nativeLocalProviderAttachment?.endpointUrl ?? nativeSelection.endpointUrl,
             },
             previousProvider,
             previousModel,
@@ -1667,23 +1710,16 @@ async function runInferenceSetWithoutHostLock(
         };
       }
       if (!probe.ok) {
-        const restoreFailure = await restorePreviousInferenceSelection();
-        if (restoreFailure) {
-          throw new InferenceSetError(
-            `Sandbox-side verification rejected provider '${provider}' / '${model}': ${probe.detail}. ` +
-              `Failed to restore the previous OpenShell inference selection '${rollbackRoute?.provider ?? previousProvider}' / ` +
-              `'${rollbackRoute?.model ?? previousModel}': ${restoreFailure}. Re-run onboarding before using this route.`,
-          );
-        }
-        const recovery = inferenceProbeRecoveryMessage(
-          selectingNative,
-          previousProvider,
-          previousModel,
-          rollbackRoute,
-        );
-        throw new InferenceSetError(
-          `Sandbox-side verification rejected provider '${provider}' / '${model}': ${probe.detail}. ${recovery}`,
-        );
+        await rejectInferenceSelectionProbe({
+          nativeLocal: selectingNativeLocal,
+          sandboxName,
+          provider,
+          model,
+          detail: probe.detail,
+          previousProvider: rollbackRoute?.provider ?? previousProvider,
+          previousModel: rollbackRoute?.model ?? previousModel,
+          restorePreviousSelection: restorePreviousInferenceSelection,
+        });
       }
     }
 
@@ -1697,6 +1733,14 @@ async function runInferenceSetWithoutHostLock(
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
       deps,
+    });
+
+    previousNativeLocalDetached = await detachPreviousNativeLocalBeforePublish({
+      adapter: deps.providerAdapter,
+      sandboxName,
+      detached: previousNativeLocalDetached,
+      previous: previousNativeLocalAttachment,
+      next: nativeLocalProviderAttachment,
     });
 
     // Write minimal registry state before any sandbox-facing config read so the
@@ -1724,8 +1768,16 @@ async function runInferenceSetWithoutHostLock(
         nimContainer: registryMetadata.nimContainer ?? null,
       }),
       ...(openClawConfigSyncPending ? { openClawConfigSyncPending: true as const } : {}),
+      ...nativeLocalSelectionRegistryFields(
+        nativeLocalProviderAttachment,
+        previousNativeLocalDetached,
+      ),
       ...nativeSelectionRegistryFields(nativeProviderAttachment, previousNativeDetached),
-      ...(nativeSelection.endpointUrl ? { endpointUrl: nativeSelection.endpointUrl } : {}),
+      ...(nativeLocalProviderAttachment?.endpointUrl
+        ? { endpointUrl: nativeLocalProviderAttachment.endpointUrl }
+        : nativeSelection.endpointUrl
+          ? { endpointUrl: nativeSelection.endpointUrl }
+          : {}),
     });
     if (
       !deps.updateSandbox(
@@ -1743,6 +1795,8 @@ async function runInferenceSetWithoutHostLock(
         `Failed to update NemoClaw registry for sandbox '${sandboxName}'.`,
       );
     }
+    nativeLocalRegistryCommitted = Boolean(nativeLocalProviderAttachment);
+    previousNativeLocalDetachCommitted = previousNativeLocalDetached;
     nativeRegistryCommitted = Boolean(nativeProviderAttachment);
     previousNativeDetachCommitted = previousNativeDetached;
 
@@ -1802,7 +1856,7 @@ async function runInferenceSetWithoutHostLock(
         model,
         preferredInferenceApi,
         contextWindow,
-        nativeSelection.endpointUrl,
+        nativeLocalProviderAttachment?.endpointUrl ?? nativeSelection.endpointUrl,
         selectingNative,
         nativeNvidiaCredentialHandle,
       );
@@ -1827,7 +1881,7 @@ async function runInferenceSetWithoutHostLock(
         provider,
         reasoningEffortRequest,
         true,
-        nativeSelection.endpointUrl,
+        nativeLocalProviderAttachment?.endpointUrl ?? nativeSelection.endpointUrl,
         selectingNative,
       );
     }
@@ -1958,29 +2012,58 @@ async function runInferenceSetWithoutHostLock(
       expectedGatewayName,
     );
     if (error instanceof OpenClawInferenceConfigSyncError) throw error;
-    await restorePreviousNativeAfterFailedPublish({
+    let failure = await rollbackNativeLocalSelection({
+      adapter: deps.providerAdapter,
+      sandboxName,
+      provider,
+      attachment: nativeLocalProviderAttachment,
+      previous: previousNativeLocalAttachment,
+      attachmentChanged: nativeLocalAttachmentChanged,
+      registryCommitted: nativeLocalRegistryCommitted,
+      previousDetached: previousNativeLocalDetached,
+      previousDetachCommitted: previousNativeLocalDetachCommitted,
+      getSandbox: deps.getSandbox,
+    }).then(
+      () => error,
+      (rollbackError: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        const rollbackDetail =
+          rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+        return new InferenceSetError(
+          `${detail}\n  Native local access compensation failed: ${rollbackDetail}`,
+          error instanceof InferenceSetError ? error.exitCode : 1,
+        );
+      },
+    );
+    failure = await restorePreviousNativeAfterFailedPublish({
       detached: previousNativeDetached,
       committed: previousNativeDetachCommitted,
       previousAttachment: previousNativeAttachment,
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
-      error,
+      error: failure,
       deps,
-    });
-    await rollbackNativeSelection({
+    }).then(
+      () => failure,
+      (rollbackError: unknown) => rollbackError,
+    );
+    failure = await rollbackNativeSelection({
       attachmentChanged: nativeAttachmentChanged,
       registryCommitted: nativeRegistryCommitted,
       attachment: nativeProviderAttachment,
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
-      error,
+      error: failure,
       deps,
-    });
-    if (!providerMutation) throw error;
-    if (ambiguousInferenceSelection) throw error;
-    if (restoredSelectionAfterProviderFailure) throw error;
-    const detail = error instanceof Error ? error.message : String(error);
-    const exitCode = error instanceof InferenceSetError ? error.exitCode : 1;
+    }).then(
+      () => failure,
+      (rollbackError: unknown) => rollbackError,
+    );
+    if (!providerMutation) throw failure;
+    if (ambiguousInferenceSelection) throw failure;
+    if (restoredSelectionAfterProviderFailure) throw failure;
+    const detail = failure instanceof Error ? failure.message : String(failure);
+    const exitCode = failure instanceof InferenceSetError ? failure.exitCode : 1;
     if (!appliedInferenceSelection) {
       if (providerMutation.action === "create") {
         try {
@@ -2079,6 +2162,19 @@ export async function runInferenceSet(
       recordInferenceSetResult(selected.sandboxName, "failed", "partial", gatewayName);
       throw error;
     }
+    const committed = deps.getSandbox(selected.sandboxName);
+    if (!committed)
+      throw new InferenceSetError(
+        "Sandbox cleanup authority is unavailable after inference selection.",
+      );
+    await retireUnselectedNativeLocalProviders({
+      adapter: deps.providerAdapter,
+      sandboxName: selected.sandboxName,
+      gatewayName,
+      selected: committed.nativeLocalProviderAttachment,
+      listAuthorities: deps.listNativeLocalProviderAuthorities,
+      clearAuthority: deps.clearNativeLocalProviderAuthority,
+    });
     completeInferenceSetTelemetry(selected.sandboxName, gatewayName);
     return mutation.result;
   });

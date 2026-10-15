@@ -42,11 +42,9 @@ export interface EndpointProvenanceOptions {
   endpointSource?: InferenceEndpointSource | null;
   endpointSourceProvider?: string | null;
   endpointSourceEndpointUrl?: string | null;
-  getSandboxRegistryEntry: (name: string) => {
-    provider?: unknown;
-    endpointUrl?: unknown;
-    endpointSource?: unknown;
-  } | null;
+  getSandboxRegistryEntry: (
+    name: string,
+  ) => Partial<import("../../state/registry").SandboxEntry> | null;
 }
 
 export interface ProviderInferenceOnboardFlowPhaseOptions<
@@ -281,7 +279,10 @@ export function createProviderInferenceOnboardFlowPhase<
       selectedMessagingChannels: context.selectedMessagingChannels,
       env: options.env,
       constants: options.constants,
-      deps: options.deps,
+      deps: {
+        ...options.deps,
+        getSandboxRegistryEntry: options.endpointProvenance.getSandboxRegistryEntry,
+      },
     });
 
     return {

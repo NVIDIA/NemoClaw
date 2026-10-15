@@ -35,6 +35,7 @@ import {
   hasRawNodeStackTrace,
   inferenceSandboxName,
   onboardSandbox,
+  providerPolicyRestoreArgs,
   redactedResultText,
   requireLivePrerequisites,
   runNemoclawCli,
@@ -271,16 +272,11 @@ async function runRuntimeIdentityE2EScenario(
     cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
   );
   await cleanupSandbox(host, sandbox, sandboxName);
-  const inference = await startFakeOpenAiCompatibleServer({
+  const cloudflaredBin = await resolveVerifiedCloudflaredBinary(cleanup, host);
+  const inference = await startFakeHttpsCompatibleServer({
     apiKey: inferenceKey,
     chatContent: "PONG",
-    host: "0.0.0.0",
     model,
-    port: 8000,
-    progress,
-    publicHost: "localhost",
-    requireAuth: true,
-    requireAuthModels: true,
   });
   cleanup.add("close runtime identity inference prerequisite", async () => {
     try {
@@ -289,13 +285,24 @@ async function runRuntimeIdentityE2EScenario(
       await inference.close();
     }
   });
+  // Arbitrary loopback ports are intentionally not rewritten by onboarding.
+  // Use a public prerequisite route while preserving the shared inference path.
+  const inferenceTunnel = await startPublicMcpHttpsTunnel({
+    cloudflaredBin,
+    cleanup,
+    label: "runtime identity inference prerequisite",
+    progress,
+    readinessPath: "/v1/models",
+    readinessStatus: 401,
+    server: inference,
+  });
   progress.phase("onboard a real OpenShell sandbox");
   const onboard = await onboardSandbox(
     artifacts,
     sandboxName,
     {
       COMPATIBLE_API_KEY: inferenceKey,
-      NEMOCLAW_ENDPOINT_URL: inference.baseUrl,
+      NEMOCLAW_ENDPOINT_URL: `${inferenceTunnel.origin}/v1`,
       NEMOCLAW_MODEL: model,
       NEMOCLAW_PREFERRED_API: "openai-completions",
       NEMOCLAW_PROVIDER: "custom",
@@ -328,17 +335,7 @@ async function runRuntimeIdentityE2EScenario(
     settings?: Record<string, string>;
   };
   const priorProvidersV2Setting = settingsDocument.settings?.providers_v2_enabled;
-  const restoreSettingArgs = new Map<string, string[]>([
-    ["<unset>", ["settings", "delete", "--global", "--key", "providers_v2_enabled", "--yes"]],
-    [
-      "false",
-      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "false", "--yes"],
-    ],
-    [
-      "true",
-      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "true", "--yes"],
-    ],
-  ]).get(priorProvidersV2Setting ?? "");
+  const restoreSettingArgs = providerPolicyRestoreArgs(priorProvidersV2Setting);
   expect(restoreSettingArgs).toBeDefined();
   cleanup.add("restore OpenShell provider-derived policy setting", async () => {
     const restored = await sandbox.openshell(restoreSettingArgs!, {
@@ -379,7 +376,6 @@ async function runRuntimeIdentityE2EScenario(
       await oauth.close();
     }
   });
-  const cloudflaredBin = await resolveVerifiedCloudflaredBinary(cleanup, host);
   const tunnel = await startPublicMcpHttpsTunnel({
     cloudflaredBin,
     cleanup,
@@ -718,100 +714,6 @@ test
 );
 
 test(
-  "TC-INF-09 local compatible endpoint routes through inference.local (#5744)",
-  {
-    timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm compatible-endpoint prerequisites",
-        "start the local compatible endpoint",
-        "onboard to the compatible endpoint",
-        "request sandbox chat through inference.local",
-      ],
-    },
-  },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
-    const model = "nemoclaw-e2e-compatible";
-    const apiKey = "sk-compatible-TEST-NOT-A-REAL-VALUE";
-    await requireLivePrerequisites(host, runtimeProvider);
-    const sandboxName = inferenceSandboxName("e2e-compat");
-    cleanup.add(
-      `best-effort inference-routing compatible-endpoint cleanup for ${sandboxName}`,
-      () => cleanupSandbox(host, sandbox, sandboxName),
-    );
-    cleanup.add(`strict inference-routing compatible-endpoint cleanup for ${sandboxName}`, () =>
-      cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
-    );
-    await cleanupSandbox(host, sandbox, sandboxName);
-    progress.phase("start the local compatible endpoint");
-    const fake = await startFakeOpenAiCompatibleServer({
-      apiKey,
-      chatContent: "PONG",
-      host: "0.0.0.0",
-      model,
-      port: 8000,
-      progress,
-      publicHost: "localhost",
-      requireAuth: true,
-      requireAuthModels: true,
-    });
-    cleanup.add("close inference-routing compatible endpoint", async () => {
-      try {
-        await artifacts.writeJson("tc-inf-09-compatible-endpoint-requests.json", fake.requests());
-      } finally {
-        await fake.close();
-      }
-    });
-    await artifacts.target.declare({
-      id: "inference-routing-compatible-endpoint",
-      contract: [
-        "a custom OpenAI-compatible endpoint onboards",
-        "sandbox inference.local routes chat to compatible endpoint",
-      ],
-      endpointUrl: fake.baseUrl,
-      model,
-    });
-    progress.phase("onboard to the compatible endpoint");
-    const onboard = await onboardSandbox(
-      artifacts,
-      sandboxName,
-      {
-        COMPATIBLE_API_KEY: apiKey,
-        NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
-        NEMOCLAW_MODEL: model,
-        NEMOCLAW_PREFERRED_API: "openai-completions",
-        NEMOCLAW_PROVIDER: "custom",
-      },
-      [apiKey],
-      "tc-inf-09-onboard-compatible-endpoint",
-      progress,
-      ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
-    );
-    expectOnboardSuccess(onboard, "TC-INF-09 compatible-endpoint onboard");
-    progress.phase("request sandbox chat through inference.local");
-    const sandboxRequestOffset = fake.requests().length;
-    await expectOpenAiChatThroughSandbox(
-      sandbox,
-      sandboxName,
-      model,
-      [apiKey],
-      "compatible-endpoint-inference-local-chat",
-    );
-    expect(
-      fake
-        .requests()
-        .slice(sandboxRequestOffset)
-        .some(
-          (request) =>
-            request.auth === "ok" &&
-            request.method === "POST" &&
-            request.path === "/v1/chat/completions",
-        ),
-    ).toBe(true);
-  },
-);
-
-test(
   "TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinning adapter (#6141)",
   {
     timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
@@ -880,24 +782,30 @@ test(
       endpointUrl,
       model,
     });
-    // Onboarding's own SSRF preflight (assertEndpointResolvesPublic) only
-    // rejects private/internal addresses; it does not fail closed on
-    // DNS-backed HTTPS the way the HTTPS Pin Runtime adapter's call site does,
-    // and onboarding never wires that adapter itself (only
-    // inference-set-route-containment.ts's normalizeCustomEndpointUrl does, on
-    // the `inference set --endpoint-url` path). Onboard with a disposable
-    // plain-HTTP placeholder endpoint first -- the same shape TC-INF-09 already
-    // onboards successfully with -- then switch to the DNS-backed HTTPS
-    // endpoint through `inference set --endpoint-url`, the actual #6141 call
-    // site this test exercises.
-    // Advertise localhost so onboarding exercises its host-bridge rewrite, but
-    // listen beyond host loopback so the resulting sandbox route can reach it.
+    // A distinct public onboarding endpoint keeps inference set on the pinning
+    // path: reusing the exact onboarded URL intentionally bypasses that adapter.
+    const onboarding = await startFakeHttpsCompatibleServer({
+      apiKey,
+      chatContent: "placeholder",
+      model,
+    });
+    cleanup.add("close https-pin onboarding endpoint", () => onboarding.close());
+    const onboardingTunnel = await startPublicMcpHttpsTunnel({
+      cloudflaredBin,
+      cleanup,
+      label: "https-pin onboarding prerequisite",
+      progress,
+      readinessPath: "/v1/models",
+      readinessStatus: 401,
+      server: onboarding,
+    });
+    // Keep a separate private target to witness that redirects are never followed.
     const placeholder = await startFakeOpenAiCompatibleServer({
       apiKey,
       chatContent: "placeholder",
       host: "0.0.0.0",
       model,
-      port: 8000,
+      port: 0,
       progress,
       publicHost: "localhost",
       requireAuth: true,
@@ -910,7 +818,7 @@ test(
       sandboxName,
       {
         COMPATIBLE_API_KEY: apiKey,
-        NEMOCLAW_ENDPOINT_URL: placeholder.baseUrl,
+        NEMOCLAW_ENDPOINT_URL: `${onboardingTunnel.origin}/v1`,
         NEMOCLAW_MODEL: model,
         NEMOCLAW_PREFERRED_API: "openai-completions",
         NEMOCLAW_PROVIDER: "custom",

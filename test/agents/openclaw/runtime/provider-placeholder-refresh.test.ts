@@ -382,6 +382,77 @@ os.fsync = sync_or_fail`
   });
 
   it.each([
+    { rootMode: false, endpoint: "http://host.openshell.internal:11436/v1" },
+    { rootMode: true, endpoint: "http://host.openshell.internal:11436/v1" },
+    { rootMode: false, endpoint: "http://10.2.3.4:11436/v1" },
+  ])(
+    "refreshes a persisted native local handle after sandbox rebuild (root=$rootMode, endpoint=$endpoint)",
+    async ({ rootMode, endpoint }) => {
+      const oldHandle = "openshell:resolve:env:v42_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+      const currentHandle = "openshell:resolve:env:v43_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+      const run = await runRefresh(
+        {
+          models: {
+            providers: {
+              inference: {
+                baseUrl: endpoint,
+                apiKey: oldHandle,
+              },
+            },
+          },
+          channels: { telegram: { botToken: oldHandle } },
+        },
+        { NEMOCLAW_LOCAL_INFERENCE_TOKEN: currentHandle },
+        rootMode,
+      );
+
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.config.models.providers.inference.apiKey).toBe(currentHandle);
+      expect(run.config.channels.telegram.botToken).toBe(oldHandle);
+      expect(run.result.stderr).toContain(
+        "Refreshed provider placeholders from OpenShell runtime env: NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      );
+    },
+  );
+
+  it.each([
+    {
+      reason: "raw credential",
+      endpoint: "http://host.openshell.internal:11436/v1",
+      runtime: "raw-secret",
+    },
+    {
+      reason: "public endpoint",
+      endpoint: "https://example.com/v1",
+      runtime: "openshell:resolve:env:v43_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    },
+    {
+      reason: "loopback endpoint",
+      endpoint: "http://127.0.0.1:11436/v1",
+      runtime: "openshell:resolve:env:v43_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    },
+    {
+      reason: "missing runtime handle",
+      endpoint: "http://host.openshell.internal:11436/v1",
+      runtime: "",
+    },
+  ])(
+    "keeps a persisted native local handle when refresh has $reason",
+    async ({ endpoint, runtime }) => {
+      const saved = "openshell:resolve:env:v42_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+      const run = await runRefresh(
+        { models: { providers: { inference: { baseUrl: endpoint, apiKey: saved } } } },
+        runtime ? { NEMOCLAW_LOCAL_INFERENCE_TOKEN: runtime } : {},
+      );
+
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.config.models.providers.inference.apiKey).toBe(saved);
+      expect(JSON.stringify(run.config)).not.toContain("raw-secret");
+      expect(run.result.stderr).not.toContain("raw-secret");
+    },
+  );
+
+  it.each([
     {
       reason: "raw credential in root environment",
       endpoint: "https://integrate.api.nvidia.com/v1",

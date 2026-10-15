@@ -72,6 +72,31 @@ function identity(
 
 describe("live DCode selection drift", () => {
   it.each([
+    ["http://host.openshell.internal:42103/v1", "https://inference.local/v1"],
+    ["http://host.openshell.internal:8000/v1", "http://host.openshell.internal:8000/v1"],
+  ])("accepts the selected compatible transport for %s (#12558)", async (endpoint, expected) => {
+    const output = identity({
+      Provider: "compatible-endpoint",
+      Model: "openai:model-a",
+      Endpoint: expected,
+    });
+    expect(
+      await getDcodeSelectionDrift(
+        "alpha",
+        "compatible-endpoint",
+        "model-a",
+        "openai-completions",
+        driftDeps(() => output, endpoint),
+      ),
+    ).toMatchObject({
+      changed: false,
+      providerChanged: false,
+      modelChanged: false,
+      unknown: false,
+    });
+  });
+
+  it.each([
     [
       "openai-api",
       "openai",

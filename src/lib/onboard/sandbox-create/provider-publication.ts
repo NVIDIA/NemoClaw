@@ -3,6 +3,7 @@
 
 import path from "node:path";
 
+import { ensureNativeLocalProviderAttached } from "../../inference/native-local/profile";
 import { isNativeHostedProviderName } from "../../inference/native-provider/hosted-attachment";
 import { hostedNativeProviderForAttachment } from "../../inference/native-provider/hosted-attachment";
 import { nativeProviderLifecycle } from "../../inference/native-provider";
@@ -248,6 +249,21 @@ export async function verifyNativeNvidiaAttachmentAfterCreate(input: {
   await ensureNativeNvidiaProviderAttached({
     adapter: resolveProviderAdapter(input.deps),
     target: namedOpenShellGateway(input.gatewayName),
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
+}
+
+export async function verifyNativeLocalAttachmentAfterCreate(input: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly expected: NonNullable<SandboxEntry["nativeLocalProviderAttachment"]>;
+  readonly deps: ProviderPreparationDeps;
+}): Promise<void> {
+  if (input.expected.gatewayName !== input.gatewayName)
+    throw new Error("Native local provider gateway authority changed.");
+  await ensureNativeLocalProviderAttached({
+    adapter: resolveProviderAdapter(input.deps),
     sandboxName: input.sandboxName,
     expected: input.expected,
   });

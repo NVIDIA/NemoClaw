@@ -22,7 +22,11 @@ import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import { assertAgentExecutionSucceeded, hasExactReadyPhase } from "./gpu-e2e-helpers.ts";
+import {
+  assertAgentExecutionSucceeded,
+  captureManagedRuntimeLogArtifact,
+  hasExactReadyPhase,
+} from "./gpu-e2e-helpers.ts";
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 
 const TIMEOUT_MS = 110 * 60_000;
@@ -172,20 +176,13 @@ test(
     const runtimeId = receipt.runtime.runtimeId;
     const runtimeOperation = runtimeProvider.hostLocalInference.createOperation({ env: env() });
     runtimeOperation.assertAuthority();
-    const captureManagedRuntimeLogs = async (phase: "setup" | "post-agent") => {
-      const runtimeLogs = runtimeOperation.engine.capture(
-        ["container", "logs", "--tail", "20000", runtimeId],
-        30_000,
+    const captureManagedRuntimeLogs = (phase: "setup" | "pre-approval-agent" | "post-agent") =>
+      captureManagedRuntimeLogArtifact(artifacts, phase, receipt.providerId, runtimeId, () =>
+        runtimeOperation.engine.capture(
+          ["container", "logs", "--tail", "20000", runtimeId],
+          30_000,
+        ),
       );
-      await artifacts.writeJson(`managed-runtime-logs-${phase}.json`, {
-        providerId: receipt.providerId,
-        runtimeId,
-        status: runtimeLogs.status,
-        error: runtimeLogs.error?.message ?? null,
-        stdout: runtimeLogs.stdout,
-        stderr: runtimeLogs.stderr,
-      });
-    };
     await captureManagedRuntimeLogs("setup");
     const runtimeInspection = runtimeOperation.engine.capture(
       ["container", "inspect", receipt.runtime.runtimeId],
@@ -345,6 +342,7 @@ NODE`),
       env: env(),
       timeoutMs: 12 * 60_000,
     });
+    await captureManagedRuntimeLogs("pre-approval-agent");
     expect(preApprovalAgent.exitCode, resultText(preApprovalAgent)).toBe(0);
     assertAgentExecutionSucceeded(
       preApprovalAgent.stdout,

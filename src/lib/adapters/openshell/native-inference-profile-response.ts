@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { prepareNativeLocalProfile } from "../../inference/native-local/profile";
+
+type NativeLocalBinding = Parameters<typeof prepareNativeLocalProfile>[0];
+
 type NativeProfileResponse<Id extends string> = Readonly<{
   profile: Readonly<{
     id: Id;
@@ -18,6 +22,7 @@ export type NativeProfileBoundary<Id extends string = string> = Readonly<{
   host: string;
   port?: number;
   allowedIps?: readonly string[];
+  binaries?: readonly string[];
   rules: readonly Readonly<{ method: "GET" | "POST"; path: string }>[];
 }>;
 
@@ -123,18 +128,21 @@ function nativeEndpoint(value: unknown, expected: NativeProfileBoundary): boolea
   );
 }
 
-function nativeBinaries(value: unknown): boolean {
+function nativeBinaries(value: unknown, expected?: readonly string[]): boolean {
   if (!Array.isArray(value)) return false;
   const paths = value.map((item) => record(item)?.path);
-  return stringArrayEquals(paths, [
-    "/usr/local/bin/node",
-    "/usr/bin/node",
-    "/opt/hermes/.venv/bin/python",
-    "/opt/hermes/.venv/bin/python3",
-    "/opt/venv/bin/python3",
-    "/usr/local/bin/curl",
-    "/usr/bin/curl",
-  ]);
+  return stringArrayEquals(
+    paths,
+    expected ?? [
+      "/usr/local/bin/node",
+      "/usr/bin/node",
+      "/opt/hermes/.venv/bin/python",
+      "/opt/hermes/.venv/bin/python3",
+      "/opt/venv/bin/python3",
+      "/usr/local/bin/curl",
+      "/usr/bin/curl",
+    ],
+  );
 }
 
 /** Verify the live custom profile at the credential, egress, and binary security boundary. */
@@ -162,7 +170,7 @@ export function isManagedNativeProfileResponse<Id extends string>(
     Array.isArray(endpoints) &&
     endpoints.length === 1 &&
     nativeEndpoint(endpoints[0], expected) &&
-    nativeBinaries(profile.binaries)
+    nativeBinaries(profile.binaries, expected.binaries)
   );
 }
 
@@ -170,4 +178,28 @@ export function isManagedNativeNvidiaProfileResponse(
   value: unknown,
 ): value is NativeProfileResponse<typeof nvidiaBoundary.profileId> {
   return isManagedNativeProfileResponse(value, nvidiaBoundary);
+}
+
+export function isManagedNativeLocalProfileResponse(
+  value: unknown,
+  binding: NativeLocalBinding,
+): value is NativeProfileResponse<string> {
+  const expected = prepareNativeLocalProfile(binding);
+  const endpoint = expected.document.endpoints[0];
+  if (!endpoint) return false;
+  const url = new URL(binding.endpointUrl);
+  return isManagedNativeProfileResponse(value, {
+    profileId: expected.profileId,
+    credentialEnv: binding.credentialEnv,
+    authStyle: "bearer",
+    headerName: "authorization",
+    host: url.hostname,
+    port: Number(url.port || (url.protocol === "https:" ? 443 : 80)),
+    allowedIps: endpoint.allowed_ips,
+    rules: [
+      { method: "GET", path: `${url.pathname}/models` },
+      { method: "POST", path: `${url.pathname}/chat/completions` },
+    ],
+    binaries: expected.document.binaries,
+  });
 }

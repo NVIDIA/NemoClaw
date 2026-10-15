@@ -15,7 +15,7 @@ import {
 } from "./provider-inference";
 import { guardProviderInferenceRouteSelection } from "./provider-inference-route-containment";
 
-type Options = ProviderInferenceStateOptions<null, null, { cpus?: number }>;
+type Options = ProviderInferenceStateOptions<null, { name: string } | null, { cpus?: number }>;
 
 const fallbackSelection: ProviderSelectionResult = {
   model: "nvidia/test",
@@ -202,6 +202,78 @@ function reportDifferentRoute(
   });
 }
 
+function localEndpointGuard() {
+  const { calls } = createDeps();
+  const containmentDeps = {
+    checkGatewayRouteCompatibility: calls.checkGatewayRouteCompatibility,
+    preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
+    error: calls.error,
+    exitProcess: calls.exit,
+  };
+  calls.checkGatewayRouteCompatibility.mockReturnValue({
+    ok: false,
+    gatewayName: "nemoclaw-9090",
+    sandboxName: "target-sandbox",
+    route: { provider: "compatible-endpoint", model: "test-model" },
+    conflicts: [{ sandboxName: "shared-peer", reason: "custom-endpoint" }],
+  });
+  const select = (
+    nativeLocalSelection: boolean,
+    endpointUrl = "http://host.openshell.internal:11434/v1",
+  ) =>
+    guardProviderInferenceRouteSelection(
+      containmentDeps,
+      "nemoclaw-9090",
+      "target-sandbox",
+      nativeLocalSelection,
+      {
+        provider: "compatible-endpoint",
+        model: "test-model",
+        endpointUrl,
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
+    );
+  return { calls, select };
+}
+
+function freshLocalSelection(agentName: string) {
+  const { calls, deps } = createDeps();
+  const selected = {
+    ...fallbackSelection,
+    provider: "compatible-endpoint",
+    model: "test-model",
+    endpointUrl: "http://host.openshell.internal:11434/v1",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    preferredInferenceApi: "openai-completions",
+  };
+  calls.setupNim.mockImplementation(
+    async (_gpu, _sandbox, _agent, _recover, _gateway, guard, canProbeRoute) => {
+      calls.canProbeResult(canProbeRoute?.("ollama-local"));
+      calls.routeConstraints(guard?.(selected));
+      return selected;
+    },
+  );
+  calls.checkGatewayRouteCompatibility.mockReturnValue({
+    ok: false,
+    gatewayName: "nemoclaw-9090",
+    sandboxName: "target-sandbox",
+    route: { provider: "compatible-endpoint", model: "test-model" },
+    conflicts: [{ sandboxName: "shared-peer", reason: "custom-endpoint" }],
+  });
+  const options = resumeOptions(deps, createSession());
+  return {
+    calls,
+    run: () =>
+      handleProviderInferenceState({
+        ...options,
+        resume: false,
+        sandboxName: "target-sandbox",
+        agent: { name: agentName },
+      }),
+  };
+}
+
 describe("provider route containment", () => {
   it("defers exact endpoint comparison until llama.cpp route discovery is complete (#8161)", () => {
     const { calls } = createDeps();
@@ -213,19 +285,187 @@ describe("provider route containment", () => {
     };
 
     expect(
-      guardProviderInferenceRouteSelection(containmentDeps, "nemoclaw-9090", "target-sandbox", {
-        provider: "llama-cpp-local",
-        model: "team/model-alias",
-        endpointUrl: null,
-        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
-        preferredInferenceApi: null,
-      }),
+      guardProviderInferenceRouteSelection(
+        containmentDeps,
+        "nemoclaw-9090",
+        "target-sandbox",
+        true,
+        {
+          provider: "llama-cpp-local",
+          model: "team/model-alias",
+          endpointUrl: null,
+          credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+          preferredInferenceApi: null,
+        },
+      ),
     ).toEqual({
       requiredModel: null,
       requiredEndpointUrl: null,
       requiredInferenceApi: null,
     });
     expect(calls.preflightGatewayRouteDiscovery).toHaveBeenCalledOnce();
+    expect(calls.checkGatewayRouteCompatibility).not.toHaveBeenCalled();
+  });
+
+  it("allows native local selection beside a shared route (#12975)", () => {
+    const { calls, select } = localEndpointGuard();
+    expect(select(true)).toEqual({
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    });
+    expect(calls.preflightGatewayRouteDiscovery).toHaveBeenCalledWith(
+      expect.objectContaining({ nativeLocalSelection: true }),
+    );
+    expect(calls.checkGatewayRouteCompatibility).not.toHaveBeenCalled();
+  });
+
+  it("keeps non-native selection on the shared route (#12975)", () => {
+    const { calls, select } = localEndpointGuard();
+    expect(() => select(false)).toThrow("exit 1");
+    expect(calls.preflightGatewayRouteDiscovery.mock.calls[0]?.[0]).not.toHaveProperty(
+      "nativeLocalSelection",
+    );
+    expect(calls.checkGatewayRouteCompatibility).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a hosted compatible endpoint on the shared route (#12975)", () => {
+    const { calls, select } = localEndpointGuard();
+    expect(() => select(false, "https://example.test/v1")).toThrow("exit 1");
+    expect(calls.preflightGatewayRouteDiscovery.mock.calls[0]?.[0]).not.toHaveProperty(
+      "nativeLocalSelection",
+    );
+    expect(calls.checkGatewayRouteCompatibility).toHaveBeenCalledOnce();
+  });
+
+  it.each(["openclaw", "langchain-deepagents-code"])(
+    "carries %s native local selection through the early route guard (#12975)",
+    async (agent) => {
+      const { calls, run } = freshLocalSelection(agent);
+      await expect(run()).resolves.toMatchObject({
+        provider: "compatible-endpoint",
+        model: "test-model",
+      });
+      expect(calls.preflightGatewayRouteDiscovery).toHaveBeenCalledWith(
+        expect.objectContaining({ nativeLocalSelection: true }),
+      );
+      expect(calls.checkGatewayRouteCompatibility).not.toHaveBeenCalled();
+      expect(calls.setupInference).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("rejects malformed shared peers while resuming native local inference (#12975)", async () => {
+    const session = createSession({
+      provider: "compatible-endpoint",
+      model: "test-model",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { calls, deps } = createDeps();
+    calls.preflightGatewayRouteDiscovery.mockReturnValue({
+      ok: false,
+      result: {
+        ok: false,
+        gatewayName: "nemoclaw-9090",
+        sandboxName: "target-sandbox",
+        route: { provider: "compatible-endpoint", model: "test-model" },
+        conflicts: [{ sandboxName: "broken-peer", reason: "incomplete-custom-route" }],
+      },
+    });
+
+    await expect(
+      handleProviderInferenceState({
+        ...resumeOptions(deps, session),
+        agent: { name: "openclaw" },
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("broken-peer"));
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.checkGatewayRouteCompatibility).not.toHaveBeenCalled();
+  });
+
+  it.each(["pi", "hermes"])(
+    "keeps %s shared route conflicts in the early guard (#12975)",
+    async (agent) => {
+      const { calls, run } = freshLocalSelection(agent);
+      await expect(run()).rejects.toThrow("exit 1");
+      expect(calls.preflightGatewayRouteDiscovery.mock.calls.at(-1)?.[0]).not.toHaveProperty(
+        "nativeLocalSelection",
+      );
+      expect(calls.checkGatewayRouteCompatibility).toHaveBeenCalledOnce();
+      expect(calls.setupInference).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["openclaw", "langchain-deepagents-code"])(
+    "resumes %s native local inference beside a shared route (#12975)",
+    async (agent) => {
+      const session = createSession({
+        provider: "compatible-endpoint",
+        model: "test-model",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      });
+      session.steps.provider_selection.status = "complete";
+      session.steps.sandbox.status = "complete";
+      const { calls, deps } = createDeps();
+      calls.checkGatewayRouteCompatibility.mockReturnValue({
+        ok: false,
+        gatewayName: "nemoclaw-9090",
+        sandboxName: "target-sandbox",
+        route: { provider: "compatible-endpoint", model: "test-model" },
+        conflicts: [{ sandboxName: "shared-peer", reason: "custom-endpoint" }],
+      });
+
+      await expect(
+        handleProviderInferenceState({ ...resumeOptions(deps, session), agent: { name: agent } }),
+      ).resolves.toMatchObject({ provider: "compatible-endpoint", model: "test-model" });
+
+      expect(calls.preflightGatewayRouteDiscovery).toHaveBeenCalledWith(
+        expect.objectContaining({ nativeLocalSelection: true }),
+      );
+      expect(calls.checkGatewayRouteCompatibility).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects malformed shared peer state before native local selection (#12975)", () => {
+    const { calls } = createDeps();
+    calls.preflightGatewayRouteDiscovery.mockReturnValue({
+      ok: false,
+      result: {
+        ok: false,
+        gatewayName: "nemoclaw-9090",
+        sandboxName: "target-sandbox",
+        route: { provider: "compatible-endpoint", model: "test-model" },
+        conflicts: [{ sandboxName: "broken-peer", reason: "invalid-gateway-binding" }],
+      },
+    });
+
+    expect(() =>
+      guardProviderInferenceRouteSelection(
+        {
+          checkGatewayRouteCompatibility: calls.checkGatewayRouteCompatibility,
+          preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
+          error: calls.error,
+          exitProcess: calls.exit,
+        },
+        "nemoclaw-9090",
+        "target-sandbox",
+        true,
+        {
+          provider: "compatible-endpoint",
+          model: "test-model",
+          endpointUrl: "http://host.openshell.internal:11434/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          preferredInferenceApi: "openai-completions",
+        },
+      ),
+    ).toThrow("exit 1");
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("broken-peer"));
     expect(calls.checkGatewayRouteCompatibility).not.toHaveBeenCalled();
   });
 

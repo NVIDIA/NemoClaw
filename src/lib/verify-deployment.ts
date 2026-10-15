@@ -34,12 +34,20 @@ import { retryUntilAsync } from "./core/retry";
 import { isNativeNvidiaProvider } from "./inference/native-nvidia";
 import { requireHostedProviderAttachment } from "./inference/native-provider/hosted-attachment";
 import {
+  normalizeNativeLocalBinding,
+  normalizeNativeLocalProviderAttachment,
+  usesNativeLocalInferenceForAgent,
+  type NativeLocalProviderAttachment,
+} from "./inference/native-local/contract";
+import {
   buildCustomOpenClawRuntimeFailureHints,
   classifyOpenClawRuntimeFailure,
   type SandboxCommandExecutor,
 } from "./onboard/custom-openclaw-runtime-diagnosis";
 import { GATEWAY_PORT, resolveGatewayLogPathForPort } from "./onboard/gateway/state-dir";
 import { getMessagingProviderNamesForChannel } from "./onboard/messaging-reuse";
+import { HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL } from "./onboard/runtime-provider/host-local-inference-routing";
+import { nativeLocalAttachmentMatchesHostLocalReceipt } from "./state/registry/host-local-inference";
 
 export { shouldDiagnoseCustomOpenClawRuntime } from "./onboard/custom-openclaw-runtime-diagnosis";
 
@@ -114,8 +122,8 @@ export interface VerifyDeploymentDeps {
 
   /**
    * Send one bounded inference request over the sandbox's configured route.
-   * This request is authoritative for native NVIDIA, which has no shared
-   * `inference.local` route. It also validates OpenRouter runtime adapters,
+   * This request is authoritative for attached native providers, which have
+   * no shared `inference.local` route. It also validates OpenRouter runtime adapters,
    * whose models route returns HTTP 404 (#12621). When this dependency is
    * absent, both exceptional paths fail closed because no request validated
    * the selected model (#10543).
@@ -269,6 +277,10 @@ type InferenceRouteStatus = "ok" | "unreachable" | "unhealthy";
  */
 export type InferenceRouteContext = {
   provider?: string | null;
+  endpointUrl?: string | null;
+  gatewayName?: string;
+  nativeLocalExpected?: boolean;
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   nativeHostedProviderAttachment?: unknown;
 };
 
@@ -391,6 +403,28 @@ async function resolveExpectedModelsRoute404(
   };
 }
 
+function matchesNativeLocalVerificationRoute(
+  context: InferenceRouteContext,
+  sandboxName: string,
+): boolean {
+  const attachment = normalizeNativeLocalProviderAttachment(context.nativeLocalProviderAttachment);
+  if (
+    !attachment ||
+    attachment.sandboxName !== sandboxName ||
+    attachment.gatewayName !== context.gatewayName ||
+    attachment.provider !== context.provider
+  )
+    return false;
+  if (context.endpointUrl === undefined) return true;
+  if (
+    context.nativeLocalExpected &&
+    context.endpointUrl === HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL
+  )
+    return true;
+  const selected = normalizeNativeLocalBinding({ ...attachment, endpointUrl: context.endpointUrl });
+  return selected?.endpointUrl === attachment.endpointUrl;
+}
+
 async function verifyInferenceRoute(
   sandboxName: string,
   deps: VerifyDeploymentDeps,
@@ -398,6 +432,8 @@ async function verifyInferenceRoute(
   sleep: (ms: number) => Promise<void>,
   context: InferenceRouteContext,
 ): Promise<InferenceRouteProbe> {
+  const nativeLocal =
+    context.nativeLocalExpected || context.nativeLocalProviderAttachment !== undefined;
   let hostedAttachment;
   try {
     hostedAttachment = requireHostedProviderAttachment(
@@ -412,8 +448,20 @@ async function verifyInferenceRoute(
       hint: "Restore the recorded provider ownership before retrying onboarding.",
     };
   }
-  if (isNativeNvidiaProvider(context.provider) || hostedAttachment) {
-    const label = hostedAttachment ? (context.provider?.trim() ?? "hosted") : "NVIDIA";
+  if (nativeLocal && !matchesNativeLocalVerificationRoute(context, sandboxName)) {
+    return {
+      status: "unhealthy",
+      detail: "native local provider attachment is missing or invalid",
+      httpCode: 0,
+      hint: "Reconcile the recorded native local provider before retrying onboarding.",
+    };
+  }
+  if (isNativeNvidiaProvider(context.provider) || hostedAttachment || nativeLocal) {
+    const label = nativeLocal
+      ? "local"
+      : hostedAttachment
+        ? (context.provider?.trim() ?? "hosted")
+        : "NVIDIA";
     const invocation = await retryUntilAsync(
       async () => (await deps.probeInferenceInvocation?.()) ?? null,
       {
@@ -918,7 +966,75 @@ export type InferenceInvocationContext = InferenceRouteContext & {
   model: string | null;
   provider: string | null;
   preferredInferenceApi: string | null;
+  nativeLocalExpected?: boolean;
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
 };
+
+/** Keep onboarding route verification and its request on the same selected route. */
+export function onboardInferenceVerificationContext(
+  sandboxName: string,
+  gatewayName: string,
+  agentName: string,
+  flow: Pick<InferenceInvocationContext, "model" | "provider" | "preferredInferenceApi"> & {
+    endpointUrl?: string | null;
+  },
+  attachment?:
+    | (Pick<
+        InferenceRouteContext,
+        "nativeLocalProviderAttachment" | "nativeHostedProviderAttachment"
+      > &
+        Partial<Pick<InferenceInvocationContext, "provider" | "model" | "endpointUrl">> & {
+          hostLocalInferenceReceipt?: string | null;
+        })
+    | null,
+): { route: InferenceRouteContext; invocation: InferenceInvocationContext } {
+  const nativeLocalExpected = usesNativeLocalInferenceForAgent(
+    agentName,
+    flow.provider,
+    flow.endpointUrl,
+  );
+  const nativeLocalProviderAttachment = attachment?.nativeLocalProviderAttachment;
+  const nativeHostedProviderAttachment = attachment?.nativeHostedProviderAttachment;
+  const recordedHostLocalRouteMatchesAttachment =
+    nativeLocalProviderAttachment &&
+    nativeLocalAttachmentMatchesHostLocalReceipt(
+      attachment?.endpointUrl,
+      nativeLocalProviderAttachment.endpointUrl,
+      attachment?.hostLocalInferenceReceipt,
+    );
+  // The provider phase can still hold the host listener URL after publishing a
+  // managed local route. Verify the exact recorded application route instead.
+  const endpointUrl =
+    nativeLocalExpected &&
+    nativeLocalProviderAttachment &&
+    attachment?.provider === flow.provider &&
+    attachment?.model === flow.model &&
+    recordedHostLocalRouteMatchesAttachment
+      ? attachment.endpointUrl
+      : (flow.endpointUrl ?? null);
+  return {
+    route: {
+      provider: flow.provider,
+      endpointUrl,
+      gatewayName,
+      nativeLocalExpected,
+      nativeLocalProviderAttachment,
+      nativeHostedProviderAttachment,
+    },
+    invocation: {
+      sandboxName,
+      gatewayName,
+      agentName,
+      model: flow.model,
+      provider: flow.provider,
+      endpointUrl,
+      preferredInferenceApi: flow.preferredInferenceApi,
+      nativeLocalExpected,
+      nativeLocalProviderAttachment,
+      nativeHostedProviderAttachment,
+    },
+  };
+}
 
 /**
  * The standard `probeInferenceInvocation` dependency: send one bounded
@@ -929,10 +1045,17 @@ export type InferenceInvocationContext = InferenceRouteContext & {
  */
 export async function probeOnboardInferenceInvocation(
   context: InferenceInvocationContext,
+  probe: typeof runSandboxInferenceInvocationProbe = runSandboxInferenceInvocationProbe,
 ): Promise<{ ok: boolean; detail?: string }> {
   const { model, provider } = context;
   if (!model || !provider) {
     return { ok: false, detail: "no provider and model were recorded for this sandbox" };
+  }
+  if (
+    (context.nativeLocalExpected || context.nativeLocalProviderAttachment !== undefined) &&
+    !matchesNativeLocalVerificationRoute(context, context.sandboxName)
+  ) {
+    return { ok: false, detail: "native local provider attachment is missing or invalid" };
   }
   let hostedAttachment;
   try {
@@ -952,14 +1075,21 @@ export async function probeOnboardInferenceInvocation(
       detail: "the recorded native hosted provider attachment could not be verified",
     };
   }
-  const result = await runSandboxInferenceInvocationProbe({
+  const result = await probe({
     sandboxName: context.sandboxName,
     gatewayName: context.gatewayName,
     agentName: context.agentName ?? null,
     provider,
     model,
     preferredInferenceApi: context.preferredInferenceApi,
-    ...(isNativeNvidiaProvider(provider) || hostedAttachment ? { nativeProvider: true } : {}),
+    ...(context.nativeLocalProviderAttachment
+      ? { nativeLocalProviderAttachment: context.nativeLocalProviderAttachment }
+      : {}),
+    ...(isNativeNvidiaProvider(provider) ||
+    hostedAttachment ||
+    context.nativeLocalProviderAttachment
+      ? { nativeProvider: true }
+      : {}),
     ...(hostedAttachment?.endpointUrl ? { nativeEndpointUrl: hostedAttachment.endpointUrl } : {}),
   });
   return result.ok ? { ok: true } : { ok: false, detail: result.detail };

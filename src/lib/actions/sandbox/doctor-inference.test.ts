@@ -8,6 +8,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderHealthStatus } from "../../inference/health";
 import { collectInferenceChecks, collectManagedLlamaCppDoctorChecks } from "./doctor-inference";
+import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
 
 const endpoint = "https://inference.local/v1/models";
 
@@ -516,4 +517,29 @@ describe("hosted native doctor", () => {
       );
     },
   );
+});
+
+it("fails a reachable native local route when gateway authority is missing", async () => {
+  const verify = vi.fn();
+  const probe = vi.fn();
+  const checks = await collectInferenceChecks(
+    "alpha",
+    {
+      provider: "ollama-local",
+      model: "model",
+      nativeLocalProviderAttachment: nativeLocalTestReceipt(),
+    },
+    true,
+    {
+      verifyNativeLocalStatusAttachmentImpl: verify,
+      nativeLocalInvocationProbe: probe,
+      probeProviderHealthImpl: () => null,
+      includeServingProcessCheck: false,
+    },
+  );
+  expect(checks).toContainEqual(
+    expect.objectContaining({ label: "Inference route (native local)", status: "fail" }),
+  );
+  expect(verify).not.toHaveBeenCalled();
+  expect(probe).not.toHaveBeenCalled();
 });

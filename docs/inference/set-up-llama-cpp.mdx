@@ -11,13 +11,15 @@ content:
 ---
 NemoClaw provides two first-class llama.cpp paths.
 You can attach an authenticated server that you operate, or let NemoClaw select and materialize a compatible repository-owned profile.
-Both paths are experimental and use OpenAI Chat Completions through `https://inference.local/v1`.
+Both paths are experimental and use OpenAI Chat Completions.
+New OpenClaw and Deep Agents Code sandboxes use a sandbox-attached OpenShell provider at the host-local endpoint.
+Hermes and retained legacy routes use `https://inference.local/v1`.
 
 ## Choose a llama.cpp Path
 
 | Path | NemoClaw manages | You manage | Use it when |
 |---|---|---|---|
-| Existing server | Provider registration, route validation, and sandbox traffic through `inference.local`. | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle. | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081`. |
+| Existing server | Provider registration, route validation, and credential injection at sandbox egress. | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle. | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081`. |
 | Managed NVIDIA GPU host | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | A qualified DGX Spark Arm64, Linux x86_64 NVIDIA GPU, or Windows WSL N1x or Station GB300 host, plus the recipe readiness requirements and any required Hugging Face credential. | You want a repository-owned managed llama.cpp profile without managing `llama-server` directly. |
 
 Compared with other local options, Ollama emphasizes a simple local model workflow, while managed vLLM provides host-specific NVIDIA GPU profiles and broader model selection.
@@ -247,7 +249,7 @@ Onboarding performs these actions:
 - Verifies the GGUF size and SHA-256 digest before it starts the runtime.
 - Runs the authenticated container as the current non-root user with one NVIDIA GPU and no CPU fallback.
 - Starts a host-owned private bridge on `127.0.0.1:8081` and connects the container to a Docker internal network without a Docker-published port.
-- Registers `llama-cpp-local` and routes agent traffic through `https://inference.local/v1`.
+- Registers the local provider and attaches it to new OpenClaw and Deep Agents Code sandboxes. Hermes and retained legacy routes use `llama-cpp-local` through `https://inference.local/v1`.
 
 The runtime cannot download a model and has no egress on its internal Docker network.
 The recipe disables the Web UI, slot inspection, server tools, agent mode, Model Context Protocol proxy, router, and multimodal projection.

@@ -206,26 +206,9 @@ async function cleanupSandbox(
   const cleanupEvidence: string[] = [];
   let deletionConfirmedAbsent = false;
   try {
-    const destroy = await host.command(
-      process.execPath,
-      [CLI_ENTRYPOINT, sandboxName, "destroy", "--yes"],
-      {
-        artifactName: `cleanup-nemoclaw-destroy-${sandboxName}`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 120_000,
-      },
-    );
-    cleanupEvidence.push(probeSummary("nemoclaw destroy", destroy));
-  } catch (error) {
-    cleanupEvidence.push(
-      `nemoclaw destroy threw: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  try {
     const deletion = await sandbox.openshell(["sandbox", "delete", sandboxName], {
       artifactName: `cleanup-openshell-sandbox-delete-${sandboxName}`,
-      env: buildAvailabilityProbeEnv(),
+      env: rawOpenShellEnv(),
       timeoutMs: 60_000,
     });
     cleanupEvidence.push(probeSummary("openshell sandbox delete", deletion));
@@ -238,18 +221,61 @@ async function cleanupSandbox(
     );
   }
 
-  clearOnboardState();
-  if (deletionConfirmedAbsent) return;
+  // A failed Deep Agents Code onboarding may never create the sandbox. Its
+  // explicit not-found result is sufficient absence evidence; otherwise retain
+  // the public destroy proof that retires provider ownership after success.
+  if (deletionConfirmedAbsent) {
+    clearOnboardState();
+    return;
+  }
 
-  const inventory = await sandbox.list({
-    artifactName: `cleanup-openshell-sandbox-list-${sandboxName}`,
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  });
-  cleanupEvidence.push(probeSummary("openshell sandbox list", inventory));
-  if (inventory.exitCode !== 0 || outputContainsSandbox(inventory, sandboxName)) {
+  // Observe absence while the gateway is still running. Public destroy may
+  // stop the last gateway after reconciling its registry and provider ownership.
+  let absenceVerified = false;
+  try {
+    const listing = await sandbox.list({
+      artifactName: `cleanup-openshell-sandbox-list-${sandboxName}`,
+      env: rawOpenShellEnv(),
+      timeoutMs: 30_000,
+    });
+    cleanupEvidence.push(probeSummary("openshell sandbox list", listing));
+    absenceVerified =
+      listing.exitCode === 0 &&
+      !listing.timedOut &&
+      listing.signal === null &&
+      !outputContainsSandbox(listing, sandboxName);
+  } catch (error) {
+    cleanupEvidence.push(
+      `openshell sandbox list threw: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  let destroySucceeded = false;
+  try {
+    const destroy = await host.command(
+      process.execPath,
+      [CLI_ENTRYPOINT, sandboxName, "destroy", "--yes"],
+      {
+        artifactName: `cleanup-nemoclaw-destroy-${sandboxName}`,
+        env: rawOpenShellEnv(),
+        timeoutMs: 120_000,
+      },
+    );
+    cleanupEvidence.push(probeSummary("nemoclaw destroy", destroy));
+    destroySucceeded = destroy.exitCode === 0 && !destroy.timedOut && destroy.signal === null;
+    if (destroy.timedOut) cleanupEvidence.push("nemoclaw destroy timed out");
+    if (destroy.signal !== null) cleanupEvidence.push(`nemoclaw destroy signal=${destroy.signal}`);
+  } catch (error) {
+    cleanupEvidence.push(
+      `nemoclaw destroy threw: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  } finally {
+    clearOnboardState();
+  }
+  if (!absenceVerified || !destroySucceeded) {
+    const reason = absenceVerified ? "public destroy was not verified" : "absence was not verified";
     throw new Error(
-      `sandbox '${sandboxName}' absence is unverified after strict cleanup\n${cleanupEvidence.join("\n")}`,
+      `sandbox '${sandboxName}' ${reason} after strict cleanup\n${cleanupEvidence.join("\n")}`,
     );
   }
 }
@@ -503,3 +529,17 @@ export {
   skipLive,
   TRANSPORT_CLASSIFICATION_PATTERN,
 };
+
+export function providerPolicyRestoreArgs(value: unknown): string[] | undefined {
+  return new Map<string, string[]>([
+    ["<unset>", ["settings", "delete", "--global", "--key", "providers_v2_enabled", "--yes"]],
+    [
+      "false",
+      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "false", "--yes"],
+    ],
+    [
+      "true",
+      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "true", "--yes"],
+    ],
+  ]).get(typeof value === "string" ? value : value === undefined ? "<unset>" : "");
+}

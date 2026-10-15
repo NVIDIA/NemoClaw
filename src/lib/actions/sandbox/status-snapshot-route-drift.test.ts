@@ -709,7 +709,7 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
       probed: false,
       providerLabel: "Native NVIDIA provider attachment",
       detail: expect.stringContaining(
-        "Native NVIDIA provider attachment is unavailable for sandbox 'alpha'",
+        "Sandbox 'alpha' does not have its native NVIDIA inference provider attached.",
       ),
     });
     expect(snapshot.inferenceHealth?.detail).toContain(

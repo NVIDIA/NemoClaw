@@ -119,9 +119,11 @@ export async function resolveSignals<Agent>(
     options.provider,
     options.model,
     options.preferredInferenceApi,
-    options.endpointUrl,
+    registryEntry.nativeLocalProviderAttachment?.endpointUrl ?? options.endpointUrl,
     Boolean(
-      registryEntry.nativeHostedProviderAttachment || registryEntry.nativeNvidiaProviderAttachment,
+      registryEntry.nativeLocalProviderAttachment ||
+      registryEntry.nativeHostedProviderAttachment ||
+      registryEntry.nativeNvidiaProviderAttachment,
     ),
   );
   return {
