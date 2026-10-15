@@ -34,6 +34,7 @@ describe("setupNim selection state helpers", () => {
   it("applies a complete cloud fallback and clears stale local-provider state", () => {
     const state = makeState();
     state.allowToolsIncompatible = true;
+    state.localNimSelected = true;
 
     applyCloudFallbackSelection(state, {
       providerName: "nvidia-prod",
@@ -109,7 +110,10 @@ describe("createRemoteModelValidator", () => {
         ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
         requireValue,
         isBackToSelection: (_value): _value is never => false,
-        validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+        validateCustomOpenAiLikeSelection: async () => ({
+          ok: false,
+          retry: "selection",
+        }),
         validateCustomAnthropicSelection: async (
           _label,
           _endpointUrl,
@@ -125,7 +129,10 @@ describe("createRemoteModelValidator", () => {
           ok: false,
           retry: "selection",
         }),
-        validateOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+        validateOpenAiLikeSelection: async () => ({
+          ok: false,
+          retry: "selection",
+        }),
         shouldRequireResponsesToolCalling: () => false,
         shouldSkipResponsesProbe: () => false,
         getProbeAuthMode: () => undefined,
@@ -180,9 +187,18 @@ describe("createRemoteModelValidator", () => {
         receivedCapabilityCache = selectedCapabilityCache;
         return { ok: true, api: "responses" };
       },
-      validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
-      validateAnthropicSelectionWithRetryMessage: async () => ({ ok: false, retry: "selection" }),
-      validateOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+      validateCustomAnthropicSelection: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
+      validateAnthropicSelectionWithRetryMessage: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
+      validateOpenAiLikeSelection: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
       shouldRequireResponsesToolCalling: () => false,
       shouldSkipResponsesProbe: () => false,
       getProbeAuthMode: () => undefined,
@@ -225,10 +241,22 @@ describe("createRemoteModelValidator", () => {
         return value;
       },
       isBackToSelection: (_value): _value is never => false,
-      validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
-      validateCustomAnthropicSelection: async () => ({ ok: false, retry: "model" }),
-      validateAnthropicSelectionWithRetryMessage: async () => ({ ok: false, retry: "selection" }),
-      validateOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+      validateCustomOpenAiLikeSelection: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
+      validateCustomAnthropicSelection: async () => ({
+        ok: false,
+        retry: "model",
+      }),
+      validateAnthropicSelectionWithRetryMessage: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
+      validateOpenAiLikeSelection: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
       shouldRequireResponsesToolCalling: () => false,
       shouldSkipResponsesProbe: () => false,
       getProbeAuthMode: () => undefined,
@@ -263,8 +291,14 @@ describe("createRemoteModelValidator", () => {
         ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
         requireValue,
         isBackToSelection: (_value): _value is never => false,
-        validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
-        validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
+        validateCustomOpenAiLikeSelection: async () => ({
+          ok: false,
+          retry: "selection",
+        }),
+        validateCustomAnthropicSelection: async () => ({
+          ok: false,
+          retry: "selection",
+        }),
         validateAnthropicSelectionWithRetryMessage: async () => ({
           ok: false,
           retry: "selection",

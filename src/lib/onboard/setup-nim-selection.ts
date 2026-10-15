@@ -19,7 +19,9 @@ export {
   selectFeaturedModelAfterCredentialPrompt,
 } from "./nvidia-featured-model-selection";
 
-export type SetupNimSelectionBackNavigation = Readonly<{ kind: "NEMOCLAW_BACK_TO_SELECTION" }>;
+export type SetupNimSelectionBackNavigation = Readonly<{
+  kind: "NEMOCLAW_BACK_TO_SELECTION";
+}>;
 
 /** Defaults passed into Ollama model selection and runtime context adoption. */
 export type OllamaModelSelectionDefaults = {
@@ -44,6 +46,8 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   compatibleEndpointReasoning?: string | null;
   compatibleEndpointReasoningEffort?: string | null;
   nimContainer: string | null;
+  /** Ephemeral selection identity before the owned NIM container is started. */
+  localNimSelected?: boolean;
   allowToolsIncompatible: boolean;
   /** Minimum Ollama daemon context length to request for this agent. */
   ollamaContextWindowFloor?: number;
@@ -109,6 +113,7 @@ export function applyCloudFallbackSelection(
   state.onModelSelected?.(cloudConfig.defaultModel, "product_catalog");
   state.preferredInferenceApi = null;
   state.nimContainer = null;
+  delete state.localNimSelected;
   state.allowToolsIncompatible = false;
   state.skipHostInferenceSmoke = false;
   state.reuseGatewayCredentialWithoutLocalKey = false;
@@ -256,7 +261,11 @@ type ValidationResult =
       pinnedAddresses?: string[];
       trustedPrivateCapability?: TrustedPrivateEndpointCapability;
     }
-  | { ok: false; api?: string; retry?: "credential" | "retry" | "model" | "selection" | string };
+  | {
+      ok: false;
+      api?: string;
+      retry?: "credential" | "retry" | "model" | "selection" | string;
+    };
 
 type RemoteModelValidationResult = "selected" | "retry-model" | "retry-selection";
 

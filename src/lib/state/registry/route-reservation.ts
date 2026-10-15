@@ -135,7 +135,10 @@ export interface QualifiedPendingSandboxCreateReservation {
 
 export type SandboxInferenceRouteReservationDisposition =
   | { readonly kind: "missing" }
-  | { readonly kind: "owned"; readonly reservation: QualifiedSandboxInferenceRouteReservation }
+  | {
+      readonly kind: "owned";
+      readonly reservation: QualifiedSandboxInferenceRouteReservation;
+    }
   | { readonly kind: "not-reservation" }
   | { readonly kind: "conflict"; readonly detail: string };
 
@@ -170,7 +173,10 @@ export function qualifyPendingSandboxCreateReservation(
   ) {
     throw new Error("The sandbox create route reservation is not owned by this onboarding session");
   }
-  return { authority: structuredClone(authority), entry: structuredClone(entry) };
+  return {
+    authority: structuredClone(authority),
+    entry: structuredClone(entry),
+  };
 }
 
 /** Compare the complete admitted create reservation before its first checkpoint write. */
@@ -248,7 +254,10 @@ export function classifySandboxInferenceRouteReservation(
   if (!entry) return { kind: "missing" };
   if (entry.pendingRouteReservation !== true) return { kind: "not-reservation" };
   if (!isRouteOnlySandboxReservation(entry)) {
-    return { kind: "conflict", detail: "the inference route reservation is already completed" };
+    return {
+      kind: "conflict",
+      detail: "the inference route reservation is already completed",
+    };
   }
   if (!isPendingReservationForSession(entry, authority.sessionId)) {
     return {
@@ -257,11 +266,17 @@ export function classifySandboxInferenceRouteReservation(
     };
   }
   if (Object.keys(entry).some((key) => !ROUTE_RESERVATION_KEYS.has(key as keyof SandboxEntry))) {
-    return { kind: "conflict", detail: "the inference route reservation has sandbox authority" };
+    return {
+      kind: "conflict",
+      detail: "the inference route reservation has sandbox authority",
+    };
   }
   const checkpointClass = verifiedCreateCheckpointClass(entry);
   if (checkpointClass === "sandbox-authority") {
-    return { kind: "conflict", detail: "the inference route reservation has sandbox authority" };
+    return {
+      kind: "conflict",
+      detail: "the inference route reservation has sandbox authority",
+    };
   }
   if (checkpointClass === "malformed") {
     return {
@@ -293,7 +308,10 @@ export function classifySandboxInferenceRouteReservation(
       expectedSelection,
     )
   ) {
-    return { kind: "conflict", detail: "the inference route reservation has another route" };
+    return {
+      kind: "conflict",
+      detail: "the inference route reservation has another route",
+    };
   }
   if (
     (entry.gatewayPort !== undefined &&
@@ -313,7 +331,10 @@ export function classifySandboxInferenceRouteReservation(
         Array.isArray(entry.hostLocalInferenceProvenance) ||
         typeof entry.hostLocalInferenceReceipt !== "string"))
   ) {
-    return { kind: "conflict", detail: "the inference route reservation is malformed" };
+    return {
+      kind: "conflict",
+      detail: "the inference route reservation is malformed",
+    };
   }
   return {
     kind: "owned",
@@ -376,9 +397,12 @@ export { normalizeNativeLocalProviderAttachment };
 /** Keep a native attachment only when reusing its recorded route and gateway. */
 export function retainedNativeLocalProviderAttachment(
   existing: SandboxEntry | undefined,
-  selection: Pick<InferenceSelection, "provider" | "endpointUrl"> & { gatewayName: string },
+  selection: Pick<InferenceSelection, "provider" | "endpointUrl"> & {
+    gatewayName: string;
+  },
 ): SandboxEntry["nativeLocalProviderAttachment"] {
   return existing &&
+    !(selection.provider === "vllm-local" && existing.nimContainer) &&
     usesNativeLocalInference(selection.provider, selection.endpointUrl) &&
     selection.provider === existing.provider &&
     selection.endpointUrl === existing.endpointUrl &&

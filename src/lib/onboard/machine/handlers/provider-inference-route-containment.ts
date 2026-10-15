@@ -19,6 +19,7 @@ export interface ProviderInferenceRouteContainmentDeps {
 
 export type ProviderInferenceProbeRoute = Omit<GatewayInferenceRoute, "model"> & {
   model: string | null;
+  localNimSelected?: boolean;
 };
 
 function unconstrainedGatewayRouteDiscovery(): GatewayRouteDiscoveryConstraints {
@@ -47,7 +48,11 @@ export function assertProviderInferenceRouteCompatible(
     deps.error(`  Error: ${formatGatewayRouteConflict(preflight.result)}`);
     deps.exitProcess(1);
   }
-  const compatibility = deps.checkGatewayRouteCompatibility({ gatewayName, sandboxName, route });
+  const compatibility = deps.checkGatewayRouteCompatibility({
+    gatewayName,
+    sandboxName,
+    route,
+  });
   if (!compatibility.ok) {
     if (isAdvisoryGatewayRouteConflict(compatibility)) return;
     deps.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
@@ -88,7 +93,10 @@ export function guardProviderInferenceRouteSelection(
       typeof route.preferredInferenceApi === "string" &&
       route.preferredInferenceApi.trim().length > 0);
   if (model && completeCustomRoute) {
-    assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, { ...route, model });
+    assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
+      ...route,
+      model,
+    });
   }
   return unconstrainedGatewayRouteDiscovery();
 }
