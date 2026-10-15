@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ModelSelectionProvenance } from "../domain/telemetry/provenance";
+import type { NimStartReceipt } from "../inference/nim";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import { canonicalEndpoint, normalizeProviderBaseUrl } from "../core/url-utils";
 import { applyCompatibleEndpointContextWindow } from "../inference/compatible-endpoint-context";
@@ -111,9 +112,24 @@ export function clearNimContainerBeforeRetry(
 /** Stop onboarding after failed Local NIM startup without changing its selected route. */
 export function abortFailedNimStartup(
   state: SetupNimSelectionState,
-  removeOwnedContainer: (name: string) => void,
+  started: NimStartReceipt,
+  removeExactContainer: (id: string) => void,
 ): never {
-  clearNimContainerBeforeRetry(state, removeOwnedContainer);
+  if (state.nimContainer !== started.name) {
+    throw new Error("Local NIM startup receipt does not match the selected container");
+  }
+  try {
+    assertSelectionMutationAuthority(
+      state,
+      "remove the local NIM runtime after failed health validation",
+    );
+  } catch {
+    // The exact ID from `docker run -d` still proves which container this
+    // attempt created, even when the sandbox identity changed during the wait.
+  }
+  removeExactContainer(started.id);
+  state.nimContainer = null;
+  delete state.localNimSelected;
   throw new Error("Local NVIDIA NIM failed to become healthy. Onboarding stopped.");
 }
 

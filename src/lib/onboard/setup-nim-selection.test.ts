@@ -66,12 +66,13 @@ describe("setupNim selection state helpers", () => {
   it("stops onboarding after unhealthy NIM cleanup without selecting cloud inference", () => {
     const state = makeState();
     state.localNimSelected = true;
-    const remove = vi.fn((name: string) => {
-      expect(name).toBe("nemoclaw-nim-test");
+    const remove = vi.fn((id: string) => {
+      expect(id).toBe("a".repeat(64));
       expect(state.localNimSelected).toBe(true);
     });
 
-    expect(() => abortFailedNimStartup(state, remove)).toThrow(
+    const started = { name: "nemoclaw-nim-test", id: "a".repeat(64) };
+    expect(() => abortFailedNimStartup(state, started, remove)).toThrow(
       "Local NVIDIA NIM failed to become healthy. Onboarding stopped.",
     );
 
@@ -81,6 +82,41 @@ describe("setupNim selection state helpers", () => {
     expect(state.model).toBe("nvidia/local-nim");
     expect(state.provider).toBe("vllm-local");
     expect(state.credentialEnv).toBeNull();
+  });
+
+  it("removes the exact started NIM container even when identity revalidation fails", () => {
+    const state = makeState();
+    state.localNimSelected = true;
+    state.revalidateSandboxIdentity = vi.fn(() => {
+      throw new Error("sandbox identity changed");
+    });
+    const started = { name: "nemoclaw-nim-test", id: "b".repeat(64) };
+    const remove = vi.fn((id: string) => {
+      expect(id).toBe(started.id);
+      expect(state.nimContainer).toBe(started.name);
+    });
+
+    expect(() => abortFailedNimStartup(state, started, remove)).toThrow(
+      "Local NVIDIA NIM failed to become healthy. Onboarding stopped.",
+    );
+    expect(state.revalidateSandboxIdentity).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledExactlyOnceWith(started.id);
+    expect(state.nimContainer).toBeNull();
+    expect(state.localNimSelected).toBeUndefined();
+  });
+
+  it("retains the NIM marker when exact-container cleanup fails", () => {
+    const state = makeState();
+    state.localNimSelected = true;
+    const started = { name: "nemoclaw-nim-test", id: "c".repeat(64) };
+
+    expect(() =>
+      abortFailedNimStartup(state, started, () => {
+        throw new Error(`Remove container ${started.id} manually`);
+      }),
+    ).toThrow(started.id);
+    expect(state.nimContainer).toBe(started.name);
+    expect(state.localNimSelected).toBe(true);
   });
 });
 

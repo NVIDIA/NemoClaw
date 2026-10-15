@@ -1766,13 +1766,14 @@ async function handleNimLocalSelection(
   console.log("  Starting NIM container...");
   const nimContainerNameLocal = nim.containerName(GATEWAY_NAME);
   assertSelectionMutationAuthority(state, "start the local NIM runtime");
-  state.nimContainer = nim.startNimContainerByName(nimContainerNameLocal, catalogModel, undefined, {
+  const startedNim = nim.startNimContainerByName(nimContainerNameLocal, catalogModel, undefined, {
     ngcApiKey: ngcApiKey ?? undefined,
   });
+  state.nimContainer = startedNim.name;
 
   console.log("  Waiting for NIM to become healthy...");
   if (!nim.waitForNimHealth(undefined, undefined, { container: nimContainerNameLocal })) {
-    abortFailedNimStartup(state, nim.stopNimContainerByNameOrThrow);
+    abortFailedNimStartup(state, startedNim, nim.stopNimContainerByIdOrThrow);
   }
 
   state.model = nim.adoptServedModelId(catalogModel);

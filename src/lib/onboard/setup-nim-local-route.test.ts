@@ -127,10 +127,11 @@ it("stops onboarding and removes the owned container when Local NIM health fails
   vi.spyOn(nim, "isNgcLoggedIn").mockReturnValue(true);
   vi.spyOn(nim, "pullNimImage").mockReturnValue("test-nim-image");
   vi.spyOn(nim, "containerName").mockReturnValue("local-nim-container");
-  vi.spyOn(nim, "startNimContainerByName").mockReturnValue("local-nim-container");
+  const startedNim = { name: "local-nim-container", id: "a".repeat(64) };
+  vi.spyOn(nim, "startNimContainerByName").mockReturnValue(startedNim);
   vi.spyOn(nim, "waitForNimHealth").mockReturnValue(false);
   const removeNim = vi
-    .spyOn(nim, "stopNimContainerByNameOrThrow")
+    .spyOn(nim, "stopNimContainerByIdOrThrow")
     .mockImplementation(() => undefined);
   const adoptModel = vi.spyOn(nim, "adoptServedModelId");
   const state = {
@@ -160,7 +161,7 @@ it("stops onboarding and removes the owned container when Local NIM health fails
       state,
     ),
   ).rejects.toThrow("Local NVIDIA NIM failed to become healthy. Onboarding stopped.");
-  expect(removeNim).toHaveBeenCalledExactlyOnceWith("local-nim-container");
+  expect(removeNim).toHaveBeenCalledExactlyOnceWith(startedNim.id);
   expect(state.nimContainer).toBeNull();
   expect(adoptModel).not.toHaveBeenCalled();
 });
