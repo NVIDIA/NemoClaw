@@ -74,6 +74,27 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     expect(context.invocation.nativeLocalExpected).toBe(expected);
   });
 
+  it("selects OpenClaw native local verification while keeping Local NIM shared", () => {
+    const local = onboardInferenceVerificationContext("my-sandbox", "my-gateway", "openclaw", {
+      provider: "ollama-local",
+      model: "test-model",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      preferredInferenceApi: "openai-completions",
+    });
+    const nim = onboardInferenceVerificationContext("my-sandbox", "my-gateway", "openclaw", {
+      provider: "ollama-local",
+      model: "test-model",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      preferredInferenceApi: "openai-completions",
+      nimContainer: "local-nim",
+    });
+
+    expect(local.route.nativeLocalExpected).toBe(true);
+    expect(local.invocation.nativeLocalExpected).toBe(true);
+    expect(nim.route.nativeLocalExpected).toBe(false);
+    expect(nim.invocation.nativeLocalExpected).toBe(false);
+  });
+
   it("uses the recorded native local attachment instead of the shared models route", async () => {
     const scripts: string[] = [];
     const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);

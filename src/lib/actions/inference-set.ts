@@ -67,6 +67,13 @@ import {
   detachPreviousNativeBeforePublish,
   restorePreviousNativeAfterFailedPublish,
   nativeSelectionRegistryFields,
+  clearNativeLocalProviderAuthority,
+  resolveOpenClawLocalSwitch,
+  detachPreviousOpenClawLocal,
+  restorePreviousOpenClawLocal,
+  retirePreviousOpenClawLocal,
+  openClawLocalProbeFields,
+  openClawLocalRegistryFields,
 } from "./inference-set/native";
 import type { NativeProviderAttachment } from "../inference/native-provider/contract";
 import { InferenceSetError, inferenceProbeRecoveryMessage } from "./inference-set-error";
@@ -193,6 +200,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   setNativeHostedProviderAuthority?: typeof registry.setNativeHostedProviderAuthority;
   getNativeNvidiaProviderAuthority?: typeof registry.getNativeNvidiaProviderAuthority;
   setNativeNvidiaProviderAuthority: typeof registry.setNativeNvidiaProviderAuthority;
+  clearNativeLocalProviderAuthority: typeof clearNativeLocalProviderAuthority;
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
   getRequestedAgent: () => string | null | undefined;
   loadSession: () => onboardSession.Session | null;
@@ -330,6 +338,7 @@ function defaultDeps(): InferenceSetDeps {
     setNativeHostedProviderAuthority: registry.setNativeHostedProviderAuthority,
     getNativeNvidiaProviderAuthority: registry.getNativeNvidiaProviderAuthority,
     setNativeNvidiaProviderAuthority: registry.setNativeNvidiaProviderAuthority,
+    clearNativeLocalProviderAuthority,
     updateSandbox: registry.updateSandbox,
     getRequestedAgent: () => process.env.NEMOCLAW_AGENT,
     loadSession: onboardSession.loadSession,
@@ -742,6 +751,7 @@ export function patchOpenClawInferenceConfig(
     preferredInferenceApi,
     nativeProvider,
     nativeEndpointUrl,
+    "openclaw",
   );
   const inheritedMaxTokens = inheritPrimaryReplyBudget
     ? readOpenClawPrimaryReplyBudget(config)
@@ -1260,13 +1270,17 @@ async function runInferenceSetWithoutHostLock(
   // Registered peers are compared exactly as recorded. In particular, a
   // stopped legacy Hermes row that still records the Anthropic frontend will
   // depend on that route when restarted and must not be normalized away.
-  const selectingNative = isNativeInferenceSelection(
-    provider,
+  const localSwitch = await resolveOpenClawLocalSwitch({
+    agentName,
     entry,
-    options.endpointUrl,
-    expectedGatewayName,
+    provider,
+    sandboxName,
+    gatewayName: expectedGatewayName,
     deps,
-  );
+  });
+  const selectingNative =
+    Boolean(localSwitch.selected) ||
+    isNativeInferenceSelection(provider, entry, options.endpointUrl, expectedGatewayName, deps);
   const routeSandboxes = deps.listSandboxes().sandboxes;
   const preparedRoute = prepareInferenceSetRoute({
     entry: routeEntry,
@@ -1485,6 +1499,8 @@ async function runInferenceSetWithoutHostLock(
   let nativeRegistryCommitted = false;
   let previousNativeDetached = false;
   let previousNativeDetachCommitted = false;
+  let previousLocalDetached = false;
+  let previousLocalDetachCommitted = false;
   const restorePreviousInferenceSelection = async (): Promise<string | null> => {
     if (selectingNative) {
       appliedInferenceSelection = false;
@@ -1631,7 +1647,7 @@ async function runInferenceSetWithoutHostLock(
               model,
               preferredInferenceApi: preMutationInferenceApi,
               ...(selectingNative ? { nativeProvider: true } : {}),
-              nativeEndpointUrl: nativeSelection.endpointUrl,
+              ...openClawLocalProbeFields(nativeSelection.endpointUrl, localSwitch.selected),
             },
             previousProvider,
             previousModel,
@@ -1690,6 +1706,12 @@ async function runInferenceSetWithoutHostLock(
     // Removing previous native access is a security gate for publishing another
     // route. Do not commit the non-native registry/config while the sandbox can
     // still use the credential-bearing attached provider.
+    previousLocalDetached = await detachPreviousOpenClawLocal({
+      previous: localSwitch.previous,
+      selected: localSwitch.selected,
+      sandboxName,
+      deps,
+    });
     previousNativeDetached = await detachPreviousNativeBeforePublish({
       selectingNative,
       selectedProvider: provider,
@@ -1725,7 +1747,10 @@ async function runInferenceSetWithoutHostLock(
       }),
       ...(openClawConfigSyncPending ? { openClawConfigSyncPending: true as const } : {}),
       ...nativeSelectionRegistryFields(nativeProviderAttachment, previousNativeDetached),
-      ...(nativeSelection.endpointUrl ? { endpointUrl: nativeSelection.endpointUrl } : {}),
+      ...openClawLocalRegistryFields(localSwitch.selected, previousLocalDetached),
+      ...((nativeSelection.endpointUrl ?? localSwitch.selected?.endpointUrl)
+        ? { endpointUrl: nativeSelection.endpointUrl ?? localSwitch.selected?.endpointUrl }
+        : {}),
     });
     if (
       !deps.updateSandbox(
@@ -1745,6 +1770,7 @@ async function runInferenceSetWithoutHostLock(
     }
     nativeRegistryCommitted = Boolean(nativeProviderAttachment);
     previousNativeDetachCommitted = previousNativeDetached;
+    previousLocalDetachCommitted = previousLocalDetached;
 
     const preferredInferenceApi =
       explicitPreferredInferenceApi ??
@@ -1802,7 +1828,7 @@ async function runInferenceSetWithoutHostLock(
         model,
         preferredInferenceApi,
         contextWindow,
-        nativeSelection.endpointUrl,
+        nativeSelection.endpointUrl ?? localSwitch.selected?.endpointUrl,
         selectingNative,
         nativeNvidiaCredentialHandle,
       );
@@ -1827,7 +1853,7 @@ async function runInferenceSetWithoutHostLock(
         provider,
         reasoningEffortRequest,
         true,
-        nativeSelection.endpointUrl,
+        nativeSelection.endpointUrl ?? localSwitch.selected?.endpointUrl,
         selectingNative,
       );
     }
@@ -1930,6 +1956,13 @@ async function runInferenceSetWithoutHostLock(
           `Hermes configuration did not fully converge. Run '${CLI_NAME} ${sandboxName} rebuild' to converge it.`,
       );
     }
+    await retirePreviousOpenClawLocal({
+      previous: localSwitch.previous,
+      detached: previousLocalDetached,
+      sandboxName,
+      gatewayName: preparedRoute.gatewayName,
+      deps,
+    });
     recordInferenceSetChange(
       sandboxName,
       [
@@ -1958,6 +1991,13 @@ async function runInferenceSetWithoutHostLock(
       expectedGatewayName,
     );
     if (error instanceof OpenClawInferenceConfigSyncError) throw error;
+    await restorePreviousOpenClawLocal({
+      previous: localSwitch.previous,
+      detached: previousLocalDetached,
+      committed: previousLocalDetachCommitted,
+      sandboxName,
+      deps,
+    });
     await restorePreviousNativeAfterFailedPublish({
       detached: previousNativeDetached,
       committed: previousNativeDetachCommitted,

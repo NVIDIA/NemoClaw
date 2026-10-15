@@ -4,11 +4,15 @@
 import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
 import { VLLM_PORT } from "../../core/vllm-port";
 import { createHash } from "node:crypto";
-import { qualifiedNativeLocalEndpointUrl } from "./agent-config";
+import { isLocalInferenceProvider, qualifiedNativeLocalEndpointUrl } from "./agent-config";
 import { isValidName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
 import type { NativeProviderAttachment } from "../native-provider/lifecycle";
 
-export { NATIVE_LOCAL_CREDENTIAL_ENV, nativeLocalCredentialReference } from "./agent-config";
+export {
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+  isLocalInferenceProvider,
+  nativeLocalCredentialReference,
+} from "./agent-config";
 
 export type NativeLocalProvider =
   | "ollama-local"
@@ -17,6 +21,7 @@ export type NativeLocalProvider =
   | "compatible-endpoint";
 export type NativeLocalBinding = Readonly<{
   provider: NativeLocalProvider;
+  agent?: "openclaw";
   endpointUrl: string;
   credentialEnv: string;
   authMode: "authenticated" | "sentinel";
@@ -27,10 +32,6 @@ export type NativeLocalBinding = Readonly<{
 }>;
 export type NativeLocalProviderAttachment = NativeProviderAttachment & NativeLocalBinding;
 
-export function isLocalInferenceProvider(provider: string | null | undefined): boolean {
-  return provider === "ollama-local" || provider === "vllm-local" || provider === "llama-cpp-local";
-}
-
 /** Consume only the host-reachable address already selected by the local runtime owner. */
 export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -38,6 +39,8 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
   if (
     (!isLocalInferenceProvider(input.provider as string) &&
       input.provider !== "compatible-endpoint") ||
+    (input.agent !== undefined && input.agent !== "openclaw") ||
+    (input.agent === "openclaw" && !isLocalInferenceProvider(input.provider as string)) ||
     typeof input.endpointUrl !== "string" ||
     typeof input.credentialEnv !== "string" ||
     !/^[A-Z][A-Z0-9_]*$/.test(input.credentialEnv) ||
@@ -54,6 +57,7 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
   if (!endpointUrl) return undefined;
   return {
     provider: input.provider as NativeLocalProvider,
+    ...(input.agent === "openclaw" ? { agent: "openclaw" as const } : {}),
     endpointUrl,
     credentialEnv: input.credentialEnv,
     authMode: input.authMode,
@@ -70,6 +74,7 @@ export function nativeLocalIdentity(binding: NativeLocalBinding) {
     .update(
       JSON.stringify([
         normalized.provider,
+        ...(normalized.agent ? [normalized.agent] : []),
         normalized.endpointUrl,
         normalized.credentialEnv,
         normalized.authMode,
@@ -159,8 +164,11 @@ export function usesNativeLocalInferenceForAgent(
   agentName: string | null | undefined,
   provider: string | null | undefined,
   endpointUrl?: string | null,
+  nimContainer?: string | null,
 ): boolean {
   return (
-    agentName === "langchain-deepagents-code" && usesNativeLocalInference(provider, endpointUrl)
+    (agentName === "langchain-deepagents-code" &&
+      usesNativeLocalInference(provider, endpointUrl)) ||
+    (agentName === "openclaw" && !nimContainer && isLocalInferenceProvider(provider))
   );
 }

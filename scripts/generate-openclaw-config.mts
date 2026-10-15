@@ -28,6 +28,7 @@
 //   NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION.
 
 import { nativeHostedAgentConfig } from "../src/lib/inference/native-provider/agent-config.ts";
+import { nativeLocalCredentialReference } from "../src/lib/inference/native-local/agent-config.ts";
 
 import { hasProviderlessInferenceEnvironment } from "../src/lib/providerless-inference.ts";
 import { managedInferenceApiKey } from "../src/lib/inference-credential.ts";
@@ -974,10 +975,14 @@ export function buildConfig(env: Env = process.env): JsonObject {
     });
   }
   const nativeHosted = nativeHostedAgentConfig(upstreamProvider, inferenceBaseUrl);
+  const nativeLocal = ["ollama-local", "vllm-local", "llama-cpp-local"].includes(upstreamProvider)
+    ? nativeLocalCredentialReference(upstreamProvider, inferenceBaseUrl)
+    : null;
   const providers = {
     [providerKey]: {
       baseUrl: inferenceBaseUrl,
-      apiKey: nativeHosted?.apiKey ?? managedInferenceApiKey(inferenceBaseUrl, "unused"),
+      apiKey:
+        nativeHosted?.apiKey ?? nativeLocal ?? managedInferenceApiKey(inferenceBaseUrl, "unused"),
       ...(nativeHosted?.headers ? { headers: nativeHosted.headers } : {}),
       api: inferenceApi,
       timeoutSeconds: agentTimeout,

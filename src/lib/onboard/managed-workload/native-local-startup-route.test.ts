@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { nativeLocalIdentity } from "../../inference/native-local/contract";
+import {
+  nativeLocalIdentity,
+  type NativeLocalProviderAttachment,
+} from "../../inference/native-local/contract";
 import { getSandboxInferenceConfig, resolveAgentInferenceApi } from "../../inference/config";
 import { createManagedWorkloadOnboardRuntime } from "./onboard-orchestration";
 
@@ -38,7 +41,8 @@ type AgentName = "openclaw" | "hermes" | "langchain-deepagents-code";
 
 function prepareProfile(
   agentName: AgentName,
-  route: { endpointUrl: string | null; attachment?: typeof nativeAttachment },
+  route: { endpointUrl: string | null; attachment?: NativeLocalProviderAttachment },
+  provider = "compatible-endpoint",
 ) {
   const runtime = createManagedWorkloadOnboardRuntime(
     {
@@ -52,7 +56,7 @@ function prepareProfile(
       customDockerfilePath: null,
       rootDir: process.cwd(),
       model: "fixture-model",
-      provider: "compatible-endpoint",
+      provider,
       preferredInferenceApi: "openai-completions",
       endpointUrl: route.endpointUrl,
       ...("attachment" in route ? { nativeLocalProviderAttachment: route.attachment } : {}),
@@ -112,4 +116,28 @@ it("rejects unattached Deep Agents Code native inference (#13197)", () => {
   expect(() =>
     prepareProfile("langchain-deepagents-code", { endpointUrl: nativeBinding.endpointUrl }),
   ).toThrow("requires its native provider attachment");
+});
+
+it("routes new OpenClaw Ollama through its sandbox attachment", () => {
+  const localBinding = {
+    ...nativeBinding,
+    provider: "ollama-local" as const,
+    agent: "openclaw" as const,
+  };
+  const attachment = {
+    ...localBinding,
+    ...nativeLocalIdentity(localBinding),
+    schemaVersion: 1 as const,
+    providerId: "local-fixture",
+  };
+  const prepared = prepareProfile(
+    "openclaw",
+    { endpointUrl: localBinding.endpointUrl, attachment },
+    "ollama-local",
+  );
+  expect(prepared?.profile.inference).toMatchObject({
+    upstreamProvider: "ollama-local",
+    routedBaseUrl: localBinding.endpointUrl,
+    upstreamEndpointUrl: null,
+  });
 });

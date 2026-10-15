@@ -37,7 +37,7 @@ For an endpoint returned by Hermes login, NemoClaw records its accepted public I
 A different destination cannot gain access through a later DNS change.
 
 Existing sandboxes without a native attachment retain their recorded shared route.
-New Deep Agents Code local-inference selections use a sandbox-attached provider for the qualified host-local endpoint. OpenClaw, Pi, Hermes, Local NVIDIA NIM, other custom endpoints, and Model Router retain the shared route.
+New Deep Agents Code and OpenClaw selections for Ollama, standalone vLLM, and llama.cpp use a sandbox-attached provider for the qualified host-local endpoint. Deep Agents Code also uses one for qualified host-local compatible endpoints. Pi, Hermes, Local NVIDIA NIM, other custom endpoints, and Model Router retain the shared route.
 
 ```text
 Sandbox agent -> inference.local -> shared OpenShell route -> selected provider and model
@@ -55,7 +55,7 @@ The sandbox does not receive the raw upstream API key.
 Local Ollama and local vLLM routes do not require the host `OPENAI_API_KEY`.
 NemoClaw uses provider-specific local tokens for those routes.
 For retained shared local routes, rebuilds migrate away from stale OpenAI credential requirements.
-Legacy Deep Agents local sandboxes without an attachment require a backup and fresh recreation.
+Legacy Deep Agents Code local sandboxes without an attachment require a backup and fresh recreation. Existing OpenClaw local sandboxes without an attachment retain supported live switches on their shared route; back up and recreate one before a rebuild or resume that cannot safely preserve that route.
 When a rebuild reuses an automatically bridged compatible-endpoint route without a host API key, NemoClaw reapplies the config-only bridge rewrite without reading or passing the credential stored in OpenShell.
 
 <AgentOnly variant="deepagents">

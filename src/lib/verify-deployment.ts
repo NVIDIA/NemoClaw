@@ -976,16 +976,20 @@ export function onboardInferenceVerificationContext(
   agentName: string,
   flow: Pick<InferenceInvocationContext, "model" | "provider" | "preferredInferenceApi"> & {
     endpointUrl?: string | null;
+    nimContainer?: string | null;
   },
-  attachment?: Pick<
-    InferenceRouteContext,
-    "nativeLocalProviderAttachment" | "nativeHostedProviderAttachment"
-  > | null,
+  attachment?:
+    | (Pick<
+        InferenceRouteContext,
+        "nativeLocalProviderAttachment" | "nativeHostedProviderAttachment"
+      > & { nimContainer?: string | null })
+    | null,
 ): { route: InferenceRouteContext; invocation: InferenceInvocationContext } {
   const nativeLocalExpected = usesNativeLocalInferenceForAgent(
     agentName,
     flow.provider,
     flow.endpointUrl,
+    flow.nimContainer ?? attachment?.nimContainer,
   );
   const nativeLocalProviderAttachment = attachment?.nativeLocalProviderAttachment;
   const nativeHostedProviderAttachment = attachment?.nativeHostedProviderAttachment;

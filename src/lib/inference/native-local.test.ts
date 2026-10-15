@@ -119,7 +119,7 @@ function fixture(selectedBinding: NativeLocalBinding = binding) {
 
 describe("native local inference", () => {
   it.each([
-    { reason: "wrong agent", override: { agent: "openclaw" } },
+    { reason: "wrong agent", override: { agent: "hermes" } },
     { reason: "wrong provider", override: { provider: "compatible-endpoint" } },
     { reason: "wrong sandbox", override: { sandboxName: "bob" } },
     { reason: "wrong gateway", override: { gatewayName: "nemoclaw-8081" } },
@@ -234,7 +234,7 @@ describe("native local inference", () => {
   });
 
   it.each([
-    ["openclaw", false],
+    ["openclaw", true],
     ["langchain-deepagents-code", true],
     ["pi", false],
     ["hermes", false],
@@ -247,6 +247,11 @@ describe("native local inference", () => {
   it("restricts the selected bridge to models and chat requests (#12558)", () => {
     const profile = prepareNativeLocalProfile(binding);
     expect(profile.document.binaries).toContain("/usr/bin/python3");
+    expect(profile.document.binaries).not.toContain("/usr/local/bin/node");
+    const openClawProfile = prepareNativeLocalProfile({ ...binding, agent: "openclaw" });
+    expect(openClawProfile.document.binaries).toContain("/usr/local/bin/node");
+    expect(openClawProfile.document.binaries).not.toContain("/usr/bin/python3");
+    expect(openClawProfile.profileId).not.toBe(profile.profileId);
     expect(profile.document.binaries).not.toContain("/usr/local/bin/openclaw");
     expect(profile.document.binaries).not.toContain("/opt/hermes/.venv/bin/python");
     expect(profile.document.endpoints).toEqual([
@@ -517,3 +522,20 @@ it.each(["http://10.1.2.3:8000/v1", "http://host.openshell.internal:42103/v1"])(
     ).toBe(false);
   },
 );
+
+it("keeps Local NIM and generic compatible endpoints on the shared OpenClaw route", () => {
+  expect(
+    usesNativeLocalInferenceForAgent(
+      "openclaw",
+      "vllm-local",
+      binding.endpointUrl,
+      "nim-container",
+    ),
+  ).toBe(false);
+  expect(
+    usesNativeLocalInferenceForAgent("openclaw", "compatible-endpoint", binding.endpointUrl),
+  ).toBe(false);
+  expect(usesNativeLocalInferenceForAgent("openclaw", "vllm-local", binding.endpointUrl)).toBe(
+    true,
+  );
+});

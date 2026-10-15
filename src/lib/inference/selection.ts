@@ -19,13 +19,16 @@ export function hasLegacySharedLocalInferenceRoute(recorded: {
   provider?: string | null;
   endpointUrl?: string | null;
   nativeLocalProviderAttachment?: unknown;
+  nimContainer?: string | null;
 }): boolean {
   return (
     recorded.nativeLocalProviderAttachment === undefined &&
+    !recorded.nimContainer &&
     usesNativeLocalInferenceForAgent(
       recorded.agent ?? "openclaw",
       recorded.provider,
       recorded.endpointUrl,
+      recorded.nimContainer,
     )
   );
 }

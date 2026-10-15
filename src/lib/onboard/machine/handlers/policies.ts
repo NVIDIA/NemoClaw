@@ -165,6 +165,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     normalizeAgentNameForResumeState((agent as { name?: string } | null)?.name),
     provider,
     endpointUrl,
+    latestSession?.nimContainer,
   );
   const nativeLocal = nativeLocalSelected ? recordedNativeLocal : undefined;
   if (nativeLocalSelected && !nativeLocal)

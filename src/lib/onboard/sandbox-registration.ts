@@ -520,13 +520,23 @@ export function nativeLocalReservationStatus(input: {
   credentialEnv: string | null;
   preferredInferenceApi: string | null;
 }): "shared" | "exact" | "changed" {
-  if (!usesNativeLocalInferenceForAgent(input.agentName, input.provider, input.endpointUrl)) {
+  if (
+    !usesNativeLocalInferenceForAgent(
+      input.agentName,
+      input.provider,
+      input.endpointUrl,
+      input.entry.nimContainer,
+    )
+  ) {
     return "shared";
   }
   const attachment = normalizeNativeLocalProviderAttachment(
     input.entry.nativeLocalProviderAttachment,
   );
   return attachment &&
+    (input.agentName === "openclaw"
+      ? attachment.agent === "openclaw"
+      : attachment.agent === undefined) &&
     attachment.sandboxName === input.sandboxName &&
     attachment.gatewayName === input.gatewayName &&
     attachment.provider === input.provider &&

@@ -144,7 +144,9 @@ const nativeInferenceRouteDeps: InitialOpenclawInferenceRouteDeps = {
     return {
       endpointUrl: entry.endpointUrl,
       nativeProvider: Boolean(
-        entry.nativeHostedProviderAttachment || entry.nativeNvidiaProviderAttachment,
+        entry.nativeHostedProviderAttachment ||
+        entry.nativeNvidiaProviderAttachment ||
+        entry.nativeLocalProviderAttachment,
       ),
     };
   },

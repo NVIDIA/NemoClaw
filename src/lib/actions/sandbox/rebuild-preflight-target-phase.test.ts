@@ -251,6 +251,9 @@ describe("rebuild legacy local route preflight", () => {
     },
     { agent: "langchain-deepagents-code", provider: "ollama-local", createdAt: undefined },
     { agent: "langchain-deepagents-code", provider: "vllm-local", createdAt: undefined },
+    { agent: "openclaw", provider: "ollama-local", createdAt: undefined },
+    { agent: "openclaw", provider: "vllm-local", createdAt: undefined },
+    { agent: "openclaw", provider: "llama-cpp-local", createdAt: undefined },
     {
       agent: "langchain-deepagents-code",
       provider: "ollama-local",
@@ -280,6 +283,21 @@ describe("rebuild legacy local route preflight", () => {
       expect(bail).toHaveBeenCalledOnce();
     },
   );
+
+  it("leaves Local NIM on its existing shared rebuild path", () => {
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+    const entry = {
+      name: "alpha",
+      agent: "openclaw",
+      provider: "vllm-local",
+      model: "nim-model",
+      nimContainer: "nim-alpha",
+    } as RebuildSandboxEntry;
+    expect(blockRebuildOnLegacySharedLocalRoute("alpha", entry, bail)).toBe(false);
+    expect(bail).not.toHaveBeenCalled();
+  });
 
   it("leaves attached selections on their existing preflight path", () => {
     const bail = vi.fn((message: string): never => {

@@ -25,6 +25,7 @@ import {
 } from "./contract";
 
 export { normalizeNativeLocalProviderAttachment };
+export type { NativeLocalProviderAttachment };
 
 export function prepareNativeLocalProfile(input: NativeLocalBinding) {
   const binding = normalizeNativeLocalBinding(input);
@@ -69,8 +70,9 @@ export function prepareNativeLocalProfile(input: NativeLocalBinding) {
         },
       ],
       binaries: [
-        "/usr/bin/python3",
-        "/opt/venv/bin/python3",
+        ...(binding.agent === "openclaw"
+          ? ["/usr/local/bin/node", "/usr/bin/node"]
+          : ["/usr/bin/python3", "/opt/venv/bin/python3"]),
         "/usr/local/bin/curl",
         "/usr/bin/curl",
       ],
@@ -163,7 +165,8 @@ export async function verifyRecordedNativeLocalProviderAttachment(input: {
   const expected = normalizeNativeLocalProviderAttachment(input.expected);
   if (
     !expected ||
-    input.agent !== "langchain-deepagents-code" ||
+    (input.agent !== "langchain-deepagents-code" && input.agent !== "openclaw") ||
+    (input.agent === "openclaw" ? expected.agent !== "openclaw" : expected.agent !== undefined) ||
     expected.provider !== input.provider ||
     expected.sandboxName !== input.sandboxName ||
     (input.gatewayName !== undefined && expected.gatewayName !== input.gatewayName)
