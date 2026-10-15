@@ -11,6 +11,13 @@ pub(super) const SHARED: &str = "nc-live-images";
 /// Where `ci live-images` writes the shared archive.
 const ARCHIVE: &str = ".build/ci/live-images.tar.zst";
 
+#[derive(Clone, Copy, Default, clap::ValueEnum)]
+pub(crate) enum Exporter {
+    #[default]
+    Docker,
+    Containerd,
+}
+
 fn docker() -> Command {
     let mut command = Command::new("docker");
     command.stdin(Stdio::null());
@@ -78,9 +85,8 @@ pub(super) fn build_proxies(prefix: &str) -> Result<()> {
     Ok(())
 }
 
-/// Build the platform's images under the shared names and save them to
-/// [`ARCHIVE`], streamed through zstd: uncompressed, they are gigabytes.
-pub(super) fn build(platform: &str) -> Result<()> {
+/// Build the platform's images under the shared names and save them to [`ARCHIVE`].
+pub(super) fn build(platform: &str, exporter: Exporter) -> Result<()> {
     if !platform.starts_with("linux_") {
         return Err("the live images are built on Linux only".into());
     }
@@ -89,18 +95,23 @@ pub(super) fn build(platform: &str) -> Result<()> {
     build_proxies(SHARED)?;
     let tags = names(platform).map(|name| format!("{SHARED}:{name}"));
     fs::create_dir_all(".build/ci")?;
-    let mut save = docker()
-        .arg("save")
-        .args(&tags)
-        .stdout(Stdio::piped())
-        .spawn()?;
-    let images = save.stdout.take().ok_or("cannot read the saved images")?;
-    let compressed = Command::new("zstd")
-        .args(["-T0", "-3", "-q", "-f", "-o", ARCHIVE])
-        .stdin(images)
-        .status()
-        .map_err(|_| "saving the live images needs the zstd command")?;
-    let saved = save.wait()?;
+    let start = Instant::now();
+    // ctr needs the fully qualified names that Docker stores internally.
+    let export_tags = tags.each_ref().map(|tag| match exporter {
+        Exporter::Docker => tag.clone(),
+        Exporter::Containerd => format!("docker.io/library/{tag}"),
+    });
+    let saved = save(&export_tags, Path::new(ARCHIVE), exporter);
+    if saved.is_ok()
+        && let Ok(metadata) = fs::metadata(ARCHIVE)
+    {
+        eprintln!(
+            "Saved live images: {} bytes in {:.1}s",
+            metadata.len(),
+            start.elapsed().as_secs_f64()
+        );
+    }
+    let cleanup = Instant::now();
     // The archive holds them; the local names would only take space.
     for tag in &tags {
         let _ = docker()
@@ -109,9 +120,87 @@ pub(super) fn build(platform: &str) -> Result<()> {
             .stderr(Stdio::null())
             .status();
     }
+    eprintln!(
+        "Removed live image names in {:.1}s",
+        cleanup.elapsed().as_secs_f64()
+    );
+    saved
+}
+
+fn save(tags: &[String], archive: &Path, exporter: Exporter) -> Result<()> {
+    if matches!(exporter, Exporter::Containerd) {
+        return save_containerd(tags, archive);
+    }
+    let mut save = docker()
+        .arg("save")
+        .args(tags)
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let images = save.stdout.take().ok_or("cannot read the saved images")?;
+    let compressed = Command::new("zstd")
+        .args(["-T0", "-3", "-q", "-f", "-o"])
+        .arg(archive)
+        .stdin(images)
+        .status()
+        .map_err(|_| "saving the live images needs the zstd command")?;
+    let saved = save.wait()?;
     if !saved.success() || !compressed.success() {
         return Err("cannot save the live images".into());
     }
+    Ok(())
+}
+
+/// Export directly to a file: piping ctr's small writes loses much of the gain.
+/// This opt-in path requires local Docker and passwordless access to ctr.
+fn save_containerd(tags: &[String], archive: &Path) -> Result<()> {
+    let info = docker()
+        .args(["info", "--format", "{{json .Containerd}}"])
+        .stderr(Stdio::inherit())
+        .output()?;
+    if !info.status.success() {
+        return Err("cannot inspect Docker's containerd connection".into());
+    }
+    let connection: serde_json::Value = serde_json::from_slice(&info.stdout)?;
+    let address = connection["Address"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or("Docker did not report its containerd address; use --image-exporter docker")?;
+    let namespace = connection["Namespaces"]["Containers"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or("Docker did not report its containerd namespace; use --image-exporter docker")?;
+    // ctr runs as root. A new path inside a private directory also works with
+    // Linux's protected_regular restriction on user-owned files in /tmp.
+    let directory = tempfile::tempdir()?;
+    let tar = directory.path().join("images.tar");
+    let start = Instant::now();
+    run(Command::new("sudo")
+        .args([
+            "-n",
+            "ctr",
+            "--address",
+            address,
+            "--namespace",
+            namespace,
+            "images",
+            "export",
+            "--all-platforms",
+        ])
+        .arg(&tar)
+        .args(tags))?;
+    eprintln!(
+        "Exported live images with containerd in {:.1}s",
+        start.elapsed().as_secs_f64()
+    );
+    let start = Instant::now();
+    run(Command::new("zstd")
+        .args(["-T0", "-3", "-q", "-f", "-o"])
+        .arg(archive)
+        .arg(&tar))?;
+    eprintln!(
+        "Compressed live images in {:.1}s",
+        start.elapsed().as_secs_f64()
+    );
     Ok(())
 }
 
@@ -177,5 +266,209 @@ mod tests {
             [DUMMY, "proxy-a", "proxy-b"]
         );
         assert!(unused("linux_amd64", &names("linux_amd64")).is_empty());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod export_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn exercise(exporter: &str, failure: &str) {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("out")).unwrap();
+        fs::write(root.path().join("fixture"), b"complete image archive").unwrap();
+        for (name, script) in [
+            (
+                "docker",
+                r#"#!/bin/sh
+case "$1" in
+  info)
+    [ "$EXPORT_FAILURE" = info ] && exit 1
+    printf '%s\n' '{"Address":"/test/containerd.sock","Namespaces":{"Containers":"test-images"}}' ;;
+  save)
+    [ "$EXPORTER" = docker ] || exit 91
+    /bin/cat "$EXPORT_ROOT/fixture"
+    [ "$EXPORT_FAILURE" != export ] ;;
+  *) exit 92 ;;
+esac
+"#,
+            ),
+            (
+                "sudo",
+                r#"#!/bin/sh
+[ "$1 $2 $3 $4 $5 $6 $7 $8 $9" = '-n ctr --address /test/containerd.sock --namespace test-images images export --all-platforms' ] || exit 93
+shift 9
+destination=$1
+shift
+[ "$*" = 'docker.io/library/nc-test:agent docker.io/library/nc-test:proxy' ] || exit 94
+printf called > "$EXPORT_ROOT/containerd-called"
+/bin/cp "$EXPORT_ROOT/fixture" "$destination"
+[ "$EXPORT_FAILURE" != export ]
+"#,
+            ),
+            (
+                "zstd",
+                r#"#!/bin/sh
+while [ "$1" != -o ]; do shift; done
+shift
+destination=$1
+shift
+if [ "$#" = 0 ]; then /bin/cat > "$destination"; else /bin/cat "$1" > "$destination"; fi
+[ "$EXPORT_FAILURE" != compression ]
+"#,
+            ),
+        ] {
+            let path = root.path().join(name);
+            fs::write(&path, script).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "run_ci::live_images::export_tests::export_child",
+                "--nocapture",
+            ])
+            .env("EXPORT_ROOT", root.path())
+            .env("EXPORTER", exporter)
+            .env("EXPORT_FAILURE", failure)
+            .env("PATH", root.path())
+            .env("TMPDIR", root.path().join("out"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if failure.is_empty() {
+            assert_eq!(
+                fs::read(root.path().join("out/images.tar.zst")).unwrap(),
+                b"complete image archive"
+            );
+        }
+        assert_eq!(
+            root.path().join("containerd-called").exists(),
+            exporter == "containerd" && failure != "info"
+        );
+        assert!(
+            fs::read_dir(root.path().join("out"))
+                .unwrap()
+                .all(|entry| entry.unwrap().file_name() == "images.tar.zst")
+        );
+    }
+
+    #[test]
+    fn docker_export_preserves_bytes_and_propagates_pipeline_failures() {
+        for failure in ["", "export", "compression"] {
+            exercise("docker", failure);
+        }
+    }
+
+    #[test]
+    fn containerd_export_preserves_bytes_without_docker_save() {
+        exercise("containerd", "");
+    }
+
+    #[test]
+    fn containerd_failures_are_reported_and_temporary_archives_removed() {
+        for failure in ["info", "export", "compression"] {
+            exercise("containerd", failure);
+        }
+    }
+
+    /// Read-only comparison using caller-selected local images. No tags are changed.
+    #[test]
+    #[ignore = "needs local containerd Docker, sudo -n ctr, zstd, and NEMOCLAW_EXPORT_TEST_IMAGES"]
+    fn native_exporters_preserve_image_metadata_and_blobs() {
+        let tags: Vec<String> = std::env::var("NEMOCLAW_EXPORT_TEST_IMAGES")
+            .expect("set space-separated, fully qualified local image tags")
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect();
+        assert!(!tags.is_empty());
+        let root = tempfile::tempdir().unwrap();
+        let platform = format!(
+            "linux/{}",
+            host_platform().unwrap().trim_start_matches("linux_")
+        );
+        let mut baseline = None;
+        for (name, exporter) in [
+            ("docker", Exporter::Docker),
+            ("containerd", Exporter::Containerd),
+        ] {
+            let archive = root.path().join(format!("{name}.tar.zst"));
+            let start = Instant::now();
+            save(&tags, &archive, exporter).unwrap();
+            eprintln!(
+                "{name}: {:.2}s, {} bytes",
+                start.elapsed().as_secs_f64(),
+                fs::metadata(&archive).unwrap().len()
+            );
+            let tar = root.path().join(format!("{name}.tar"));
+            run(Command::new("zstd")
+                .args(["-d", "-q", "-o"])
+                .arg(&tar)
+                .arg(&archive))
+            .unwrap();
+            let metadata: Vec<_> = tags
+                .iter()
+                .map(|tag| {
+                    nemoclaw_build::images::archived_image_metadata(&tar, tag, &platform).unwrap()
+                })
+                .collect();
+            let mut blobs = std::collections::BTreeMap::new();
+            let mut archive = tar::Archive::new(fs::File::open(&tar).unwrap());
+            for entry in archive.entries().unwrap() {
+                use std::io::Read as _;
+                let mut entry = entry.unwrap();
+                let path = entry.path().unwrap().into_owned();
+                if !entry.header().entry_type().is_file() || !path.starts_with("blobs/sha256") {
+                    continue;
+                }
+                let mut hash = Sha256::new();
+                let mut buffer = [0; 65536];
+                loop {
+                    let read = entry.read(&mut buffer).unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    hash.update(&buffer[..read]);
+                }
+                blobs.insert(path, hash.finalize());
+            }
+            let contents = (metadata, blobs);
+            if let Some(baseline) = &baseline {
+                assert_eq!(&contents, baseline);
+            } else {
+                baseline = Some(contents);
+            }
+        }
+    }
+
+    #[test]
+    fn export_child() {
+        let Some(root) = std::env::var_os("EXPORT_ROOT") else {
+            return;
+        };
+        let exporter = if std::env::var("EXPORTER").unwrap() == "containerd" {
+            Exporter::Containerd
+        } else {
+            Exporter::Docker
+        };
+        let result = save(
+            &[
+                "docker.io/library/nc-test:agent".into(),
+                "docker.io/library/nc-test:proxy".into(),
+            ],
+            &PathBuf::from(root).join("out/images.tar.zst"),
+            exporter,
+        );
+        if std::env::var("EXPORT_FAILURE").unwrap().is_empty() {
+            result.unwrap();
+        } else {
+            assert!(result.is_err(), "failed export must fail the step");
+        }
     }
 }

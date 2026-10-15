@@ -10,6 +10,7 @@ use std::{ffi::OsString, time::Instant};
 mod live_docker;
 #[path = "run_ci/live_images.rs"]
 mod live_images;
+pub(super) use live_images::Exporter as ImageExporter;
 #[path = "run_ci/live_kind.rs"]
 mod live_kind;
 
@@ -164,6 +165,7 @@ fn run_step(
     partition: Option<&str>,
     archive_file: Option<&Path>,
     images: Option<&Path>,
+    image_exporter: ImageExporter,
 ) -> Result<()> {
     let protoc = protoc_command(tools.protobuf);
     let path = tool_path(tools)?;
@@ -186,7 +188,7 @@ fn run_step(
                 images,
             );
         }
-        Step::LiveImages => return live_images::build(platform),
+        Step::LiveImages => return live_images::build(platform, image_exporter),
         Step::LiveKind => unreachable!("live-kind runs asynchronously"),
         Step::Schema | Step::Bundle => {
             if step == Step::Bundle {
@@ -448,6 +450,7 @@ pub(super) async fn run_steps(
     archive_file: Option<&Path>,
     images: Option<&Path>,
     plan: Option<&nemoclaw_build::changes::Plan>,
+    image_exporter: ImageExporter,
 ) -> Result<()> {
     let tools = Tools {
         pins,
@@ -489,7 +492,15 @@ pub(super) async fn run_steps(
             };
             live_kind::run_live_kind(tools.pins, &platform, &configure, archive_file, images).await
         } else {
-            run_step(&tools, &platform, step, partition, archive_file, images)
+            run_step(
+                &tools,
+                &platform,
+                step,
+                partition,
+                archive_file,
+                images,
+                image_exporter,
+            )
         };
         let elapsed = begun.elapsed().as_secs();
         if matches!(step, Step::Build | Step::Bundle) {

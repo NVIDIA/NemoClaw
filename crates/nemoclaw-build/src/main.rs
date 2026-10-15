@@ -83,6 +83,9 @@ enum Action {
         /// instead of building them.
         #[arg(long)]
         images: Option<PathBuf>,
+        /// Export live images with Docker (default) or local containerd via sudo -n ctr.
+        #[arg(long, value_enum)]
+        image_exporter: Option<run_ci::ImageExporter>,
     },
     /// Build agent images with their installed Fabric metadata, or qualify them.
     Images {
@@ -568,11 +571,15 @@ async fn main() -> Result<()> {
         partition,
         archive_file,
         images,
+        image_exporter,
         base,
         full,
         dry_run,
     } = &cli.command
     {
+        if image_exporter.is_some() && step.as_deref() != Some("live-images") {
+            return Err("--image-exporter requires ci live-images".into());
+        }
         if partition.is_some() && step.as_deref() != Some("lifecycle") {
             return Err("--partition requires ci lifecycle".into());
         }
@@ -627,6 +634,7 @@ async fn main() -> Result<()> {
             archive_file.as_deref(),
             images.as_deref(),
             plan.as_ref(),
+            image_exporter.unwrap_or_default(),
         )
         .await;
     }

@@ -169,6 +169,10 @@ It deletes the cluster and its image tag whether or not the tests pass; set `NEM
 
 To build the live images once for both suites, run `cargo ci live-images`.
 It builds the agent image, the reference dummy image, and both proxy images under `nc-live-images`, saves them to `.build/ci/live-images.tar.zst` through the `zstd` command, and removes the local names.
+The hosted job uses `cargo ci live-images --image-exporter containerd` to export directly from Docker's local containerd store before compression.
+This requires Docker to report its containerd address and namespace, `sudo -n ctr` access, and temporary disk space for the uncompressed archive.
+The default `docker` exporter streams `docker save` through zstd and works without direct containerd access.
+Both exporters retain the image contents, names, and digests; the job logs archive size and save/cleanup timings, with separate export and compression timings for containerd.
 Then pass `--images .build/ci/live-images.tar.zst` to `cargo ci live-docker` or `cargo ci live-kind`: each loads the archive and names the images it needs under its own fresh prefix instead of building them, so its cleanup still removes only what it created.
 
 ## Budgets and Per-Test Limits
