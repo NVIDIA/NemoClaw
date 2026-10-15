@@ -106,6 +106,8 @@ export interface ProviderInferenceSetupOptions {
   inferenceCapabilityCache?: OnboardInferenceCapabilityCache;
   /** Onboard session that owns the route reservation this setup creates. */
   reservationSessionId?: string;
+  /** Keep a published source row intact until the sandbox create phase passes backup. */
+  deferPublishedRouteReservation?: boolean;
   /** Recheck recorded-route ownership after acquiring route mutation locks. */
   isRecordedProviderRecoveryAuthorized?: () => boolean;
   /** Recheck live OpenShell sandbox identity at each inference mutation edge. */
@@ -116,6 +118,14 @@ export interface ProviderInferenceSetupOptions {
   preparedOllamaProxyToken?: string;
   /** Narrow rebuild authority for the historical default no-auth proxy port. */
   allowLegacyRecordedNoAuthEndpoint?: boolean;
+}
+
+/** Defer fresh routes and incomplete resumes until sandbox backup. */
+function preBackupRouteReservationOptions(
+  effectiveResume: boolean,
+  sandboxStepComplete: boolean,
+): Pick<ProviderInferenceSetupOptions, "deferPublishedRouteReservation"> {
+  return !effectiveResume || !sandboxStepComplete ? { deferPublishedRouteReservation: true } : {};
 }
 
 function legacyRecordedNoAuthEndpointSetupOptions(options: {
@@ -351,6 +361,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
 }
 
 export interface ProviderInferenceStateResult {
+  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
   sandboxName: string | null;
   model: string;
   provider: string;
@@ -1324,6 +1335,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   const effectiveResume = resume && !fresh;
   let hostLocalInferenceRouteOnly = false;
   let hostLocalInferenceProofAuthority: HostLocalInferenceSandboxProofAuthority | null = null;
+  let deferredInferenceRoute: ((reserve: () => void) => Promise<void>) | undefined;
   const hostLocalInferenceResolutionCache = new Map<
     string,
     HostLocalInferenceStartupSelection | null
@@ -1832,6 +1844,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
             ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
             reservationSessionId: session?.sessionId,
+            ...preBackupRouteReservationOptions(
+              effectiveResume,
+              session?.steps?.sandbox?.status === "complete",
+            ),
             ...resolveCachedHostLocalInferenceSetupOptions(confirmedSandboxName),
           };
           await deps.startRecordedStep("inference", { provider, model });
@@ -1864,6 +1880,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           forceProviderSelection = true;
           continue;
         }
+        deferredInferenceRoute = inferenceResult.deferredInferenceRoute;
         ({ endpointUrl, credentialEnv } = selectedNativeInference(
           inferenceResult?.nativeInference,
           endpointUrl,
@@ -2137,6 +2154,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
         ...(freshManagedOllama ? { reservationSessionId: session?.sessionId } : {}),
+        ...preBackupRouteReservationOptions(
+          effectiveResume,
+          session?.steps?.sandbox?.status === "complete",
+        ),
         ...providerRecovery.setupOptions(
           recoveredRecordedProvider,
           confirmedSandboxName,
@@ -2174,6 +2195,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       forceProviderSelection = true;
       continue;
     }
+    deferredInferenceRoute = inferenceResult.deferredInferenceRoute;
     ({ endpointUrl, credentialEnv } = selectedNativeInference(
       inferenceResult?.nativeInference,
       endpointUrl,
@@ -2258,6 +2280,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     webSearchConfig,
     hostLocalInferenceRouteOnly,
     hostLocalInferenceSandboxProofAuthority: hostLocalInferenceProofAuthority,
+    deferredInferenceRoute,
     session,
     stateResult,
     stateResults,

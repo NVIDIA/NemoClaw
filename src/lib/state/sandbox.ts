@@ -1025,7 +1025,9 @@ function sha256File(filePath: string): string {
   }
 }
 
-function structuredContentIsCredentialFree(fileName: string, raw: string): boolean {
+function structuredContentIsCredentialFree(entry: string, raw: string): boolean {
+  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  const fileName = path.posix.basename(normalized).toLowerCase();
   let value: unknown;
   try {
     value = fileName.endsWith(".json") ? JSON.parse(raw) : parseYaml(raw);
@@ -1035,6 +1037,22 @@ function structuredContentIsCredentialFree(fileName: string, raw: string): boole
   if (value === null || value === undefined) return true;
   if (!isConfigValue(value)) return false;
   if (typeof value === "string" && valueLooksLikeSecret(value)) return false;
+  if (nativeStructuredAuthorityKind(normalized, fileName) === "openclaw-config") {
+    const models = isObjectRecord(value) ? value.models : null;
+    const providers = isObjectRecord(models) ? models.providers : null;
+    const inference = isObjectRecord(providers) ? providers.inference : null;
+    if (
+      isObjectRecord(inference) &&
+      inference.apiKey === "${NVIDIA_INFERENCE_API_KEY}" &&
+      inference.baseUrl === "https://integrate.api.nvidia.com/v1"
+    ) {
+      value = structuredClone(value);
+      const clonedModels = (value as Record<string, unknown>).models as Record<string, unknown>;
+      const clonedProviders = clonedModels.providers as Record<string, unknown>;
+      const clonedInference = clonedProviders.inference as Record<string, unknown>;
+      clonedInference.apiKey = "unused";
+    }
+  }
   return isDeepStrictEqual(stripCredentials(value), value);
 }
 
@@ -1588,9 +1606,10 @@ function shouldScanNativeOpaqueAssignments(
   providerProfileSchema: boolean,
 ): boolean {
   const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  const structuredKind = nativeStructuredAuthorityKind(normalized, fileName);
   return (
     providerProfileSchema ||
-    nativeStructuredAuthorityKind(normalized, fileName) !== null ||
+    structuredKind !== null ||
     fileName === ".env" ||
     fileName.endsWith(".env") ||
     /^\.openclaw\/agents\/[^/]+\/(?:history|session)\.log$/u.test(normalized)
@@ -1604,6 +1623,7 @@ function scanNativeTarFilePayload(
   opaqueAssignments: boolean,
   npmConfig: boolean,
   providerProfileSchema: boolean,
+  openclawConfig: boolean,
   privateKeyHeader: boolean,
   dependencyBinary: boolean,
   deadlineMs: number | undefined,
@@ -1630,7 +1650,9 @@ function scanNativeTarFilePayload(
           /^([ \t]*(?:"secret"|secret)[ \t]*:[ \t]*)(?:true|false)([ \t]*,?[ \t]*(?:#.*)?)$/gimu,
           "$1unused$2",
         )
-      : raw;
+      : openclawConfig
+        ? raw.replace(/("apiKey"\s*:\s*")\$\{NVIDIA_INFERENCE_API_KEY\}(")/gu, "$1unused$2")
+        : raw;
     if (
       textContainsCredential(credentialScanInput, {
         opaqueAssignments,
@@ -1706,6 +1728,11 @@ function nativeArchiveRawCredentialViolation(
             // manifests still receive a structure-aware scan below.
             const providerProfileSchema = isBundledProviderProfileSchema(entry);
             const dependencyTree = isNativeDependencyTreeEntry(entry);
+            const openclawConfig =
+              nativeStructuredAuthorityKind(
+                path.posix.normalize(entry.replace(/^\.\//u, "")),
+                fileName,
+              ) === "openclaw-config";
             const violation = scanNativeTarFilePayload(
               descriptor,
               dataOffset,
@@ -1714,6 +1741,7 @@ function nativeArchiveRawCredentialViolation(
                 shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
               fileName === ".npmrc",
               providerProfileSchema,
+              openclawConfig,
               !dependencyTree,
               dependencyTree,
               deadlineMs,
@@ -1757,13 +1785,17 @@ function nativeArchiveCredentialViolation(
     const isDependencyPackage = fileName === "package.json" && segments.includes("node_modules");
     const dcodeSessionsDatabaseRole = dcodeSessionsDatabaseEntryRole(entry);
     const isSensitive = isSensitiveFile(fileName);
+    const isOpenClawConfig =
+      nativeStructuredAuthorityKind(path.posix.normalize(entry.replace(/^\.\//u, "")), fileName) ===
+      "openclaw-config";
     const isEnv = fileName === ".env" || fileName.endsWith(".env");
     if (
       !isLockfile &&
       !isDependencyPackage &&
       dcodeSessionsDatabaseRole === null &&
       !isEnv &&
-      !isSensitive
+      !isSensitive &&
+      !isOpenClawConfig
     ) {
       continue;
     }
@@ -1838,7 +1870,7 @@ function nativeArchiveCredentialViolation(
         (!candidate.isLockfile &&
           !candidate.isDependencyPackage &&
           !candidate.isEnv &&
-          !structuredContentIsCredentialFree(candidate.fileName, raw))
+          !structuredContentIsCredentialFree(candidate.entry, raw))
       ) {
         return candidate.entry;
       }

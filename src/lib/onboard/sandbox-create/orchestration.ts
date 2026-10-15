@@ -2312,6 +2312,52 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       getSandbox: registry.getSandbox,
       note,
     });
+    const backupSourceObservation = () => getSandboxRecreateObservation(sandboxName, GATEWAY_NAME);
+    const abortFailedRecreateBackup = (
+      expectedEntry: SandboxEntry | null,
+      source: ReturnType<typeof backupSourceObservation>,
+    ): never => {
+      let sourceUnchanged = false;
+      try {
+        const current = backupSourceObservation();
+        sourceUnchanged =
+          expectedEntry !== null &&
+          expectedEntry.pendingRouteReservation !== true &&
+          isDeepStrictEqual(registry.getSandbox(sandboxName), expectedEntry) &&
+          source.state === "ready" &&
+          current.state === "ready" &&
+          Boolean(source.liveIdentityFingerprint) &&
+          current.liveIdentityFingerprint === source.liveIdentityFingerprint;
+        if (sourceUnchanged) {
+          if ("abandon" in recreateRuntime) recreateRuntime.abandon();
+          else if (createIntent?.recreateTransaction) {
+            onboardSession.updateSession((session) => {
+              sandboxRecreateTransaction.abandonSandboxRecreateTransaction(
+                session,
+                createIntent.recreateTransaction!.id,
+              );
+              return session;
+            });
+          }
+        }
+      } catch {
+        sourceUnchanged = false;
+      }
+      if (sourceUnchanged) {
+        console.error(`  Existing sandbox '${sandboxName}' remains registered and available.`);
+        console.error(
+          `  If the failure names a credential-bearing file, run '${cliName()} ${sandboxName} connect' to remove or relocate its sensitive content, then retry onboarding.`,
+        );
+      } else {
+        console.error(
+          `  Sandbox '${sandboxName}' changed during backup failure; its recreate journal needs recovery before another onboarding attempt.`,
+        );
+      }
+      console.error(
+        "  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 only if losing workspace state is acceptable.",
+      );
+      process.exit(1);
+    };
     let reconcileOpenClawInference = false;
     const openRecreateJournal = (): OwnedSandboxRecreateRuntime =>
       recreateJournal.openOnboardRecreateJournal({
@@ -2583,12 +2629,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         console.log(`  Messaging credential(s) rotated: ${rotatedNames}`);
         console.log("  Rebuilding sandbox to propagate new credentials to the L7 proxy...");
         if (!shouldSkipPreRecreateBackup(process.env)) {
+          const expectedEntry = registry.getSandbox(sandboxName);
+          const source = backupSourceObservation();
           const result = recreateProtection.backup();
           if (!result.ok) {
-            console.error(
-              "  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 to recreate without preserving state.",
-            );
-            process.exit(1);
+            abortFailedRecreateBackup(expectedEntry, source);
           }
           pendingStateRestore = result.backup;
         }
@@ -2644,12 +2689,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         !shouldSkipPreRecreateBackup(process.env)
       ) {
         note("  Backing up workspace state before recreating sandbox...");
+        const expectedEntry = registry.getSandbox(sandboxName);
+        const source = backupSourceObservation();
         const result = recreateProtection.backup();
         if (!result.ok) {
-          console.error(
-            "  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 to recreate without preserving state.",
-          );
-          process.exit(1);
+          abortFailedRecreateBackup(expectedEntry, source);
         }
         pendingStateRestore = result.backup;
       }
@@ -2693,6 +2737,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           );
       }
       recreateRuntime.confirmDeleted();
+      // Keep the source route published through every pre-delete check. A failure
+      // before confirmed deletion must leave the live source route untouched.
+      await createIntent?.reservePublishedRouteAfterBackup?.();
       finalizeRecreatedSourceHermesVolume(
         true,
         previousEntry,
@@ -2720,6 +2767,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           (root) => root.mountTarget === MANAGED_HERMES_STATE_ROOT,
         ),
       );
+    }
+    if (!liveExists && existingEntry) {
+      await createIntent?.reservePublishedRouteAfterBackup?.();
     }
     runForNewSandboxCreate(resumingVerifiedCreate, () => {
       revalidateSandboxIdentity(false, `creating sandbox '${sandboxName}'`);
