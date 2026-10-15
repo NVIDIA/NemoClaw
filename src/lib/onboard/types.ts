@@ -59,6 +59,8 @@ export interface SandboxCreateIntent {
   /** Defer provider, credential, and attachment effects until the created sandbox identity is verified. */
   readonly deferSandboxEffectsUntilIdentityVerification?: true;
   readonly recreate: boolean;
+  /** Stage a published source's replacement route only after its pre-delete backup succeeds. */
+  readonly reservePublishedRouteAfterBackup?: () => void | Promise<void>;
   /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
   readonly apfInterceptorRequested?: true;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;

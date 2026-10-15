@@ -2013,7 +2013,9 @@ Use `--since <duration>` to show recent logs only, such as `5m`, `1h`, or `30s`.
   OpenShell log entries.
 </AgentOnly>
 If NemoClaw cannot enable OpenShell audit logs, it prints a warning and policy-denial events can be
-missing.
+missing. With `NEMOCLAW_NO_AUTO_AUDIT_LOGS=1`, NemoClaw leaves the audit setting unchanged and does
+not print that warning; policy-denial events can also be missing if audit logging was disabled. See
+[the audit-setting guidance](./troubleshooting#a-request-inside-the-sandbox-fails-with-connect-tunnel-failed-response-403).
 
 <AgentOnly variant="openclaw">
   NemoClaw labels nonempty OpenClaw gateway log lines with `[gateway]` after any recognized leading
@@ -4204,6 +4206,8 @@ The centralized CLI logger writes its output to `stderr` and uses `info` verbosi
 The environment precedence is `NEMOCLAW_LOG_LEVEL`, then `NEMOCLAW_DEBUG`, followed by the default `info` level. The `error` level prints errors only, `warn` also prints warnings, `info` also prints informational messages, and `debug` prints all levels with timestamps. Use these NemoClaw-specific variables instead of the generic `DEBUG` variable. `DEBUG` is not a NemoClaw logger control and can enable dependency diagnostics that include raw command arguments.
 
 Commands whose parser owns the base logging options also accept the hidden long-form `--debug` and `--quiet` flags, even though these options do not appear in command help. The flags are mutually exclusive. `--debug` overrides the environment-derived threshold and selects `debug`, while `--quiet` caps verbosity at `warn` without increasing an environment-derived `error` threshold. There is no global `-q` logging shorthand. Passthrough commands do not consume flags intended for the downstream command as host logging options, so use the environment variables when you need unambiguous host logging around a passthrough invocation.
+
+Set `NEMOCLAW_NO_AUTO_AUDIT_LOGS=1` to prevent `$$nemoclaw <name> logs` and failed `$$nemoclaw <name> exec` policy checks from enabling OpenShell OCSF JSON audit logging. Setting `NEMOCLAW_NO_POLICY_HINT=1` skips the failed-`exec` policy-denial probe and its audit-setting attempt entirely. NemoClaw prints a notice before attempting to enable the setting when automatic audit logging remains active. Policy denial hints may be unavailable if audit logging remains disabled.
 
 | Variable                        | Default                                             | Service                                                                                                                                                                                                                            |
 | ------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
