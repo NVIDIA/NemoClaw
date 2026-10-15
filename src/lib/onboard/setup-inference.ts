@@ -220,6 +220,12 @@ type ProviderBranchDeps = Pick<
   Pick<RoutedDeps, "reconcileModelRouter" | "routedInference">;
 
 export type SetupInferenceDeps = ProviderBranchDeps & {
+  recordMigratedProviderCredential?: (
+    name: string,
+    credentialEnv: string,
+    persistedValue: string,
+    revalidateSandboxIdentity?: (operation: string) => void,
+  ) => void;
   /** Injectable resolver for resumed custom-endpoint SSRF preflight tests. */
   resolveEndpointHost?: EndpointDnsLookupFn;
   /** Exact private endpoint hosts trusted by the operator (tests may inject this). */
@@ -1228,6 +1234,14 @@ export function createSetupInference(
               trustedPrivateHosts: deps.trustedPrivateEndpointHosts,
               readAuthority: deps.getNativeHostedProviderAuthority,
               writeAuthority: deps.setNativeHostedProviderAuthority,
+              onCredentialPersisted: (env, value) => {
+                deps.recordMigratedProviderCredential?.(
+                  provider,
+                  env,
+                  value,
+                  revalidateSandboxIdentity,
+                );
+              },
             });
             retainedNativeHostedCredential = !credentialValue;
             return null;

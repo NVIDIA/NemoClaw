@@ -770,6 +770,7 @@ export function reserveSandboxInferenceRoute(
         nativeHostedProviderAttachment,
         normalized.provider,
         existing ?? undefined,
+        { ...normalized, gatewayName: route.gatewayName },
       ),
       nativeNvidiaProviderAttachment: isNativeNvidiaProvider(normalized.provider)
         ? (nativeNvidiaProviderAttachment ?? existing?.nativeNvidiaProviderAttachment)

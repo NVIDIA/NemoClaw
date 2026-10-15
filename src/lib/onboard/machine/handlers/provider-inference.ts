@@ -266,7 +266,12 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       provider: string | null | undefined,
       credentialEnv: string | null | undefined,
       revalidateSandboxIdentity?: (operation: string) => void,
-    ): Promise<{ forceInferenceSetup: boolean; credentialEnv: string | null }>;
+      selection?: { sandboxName: string | null; endpointUrl: string | null },
+    ): Promise<{
+      forceInferenceSetup: boolean;
+      credentialEnv: string | null;
+      nativeCustomSetup?: boolean;
+    }>;
     ensureManagedLlamaCppResumeReady(
       provider: string | null | undefined,
       sandboxName: string | null | undefined,
@@ -1496,7 +1501,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         sandboxName,
         deps.ensureManagedLlamaCppResumeReady,
       );
-      const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
+      const recovery = await deps.ensureResumeProviderReady(
+        gatewayName,
+        provider,
+        credentialEnv,
+        undefined,
+        { sandboxName: reusableResumeSandboxName, endpointUrl },
+      );
       forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       // Rebuild may be resuming a legacy session whose step marker was never
@@ -1549,6 +1560,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       // of the stored gateway credential and suppression of the unauthenticated
       // host smoke.
       if (
+        !recovery.nativeCustomSetup &&
         shouldRefreshCompatibleEndpointRouteForMessaging(
           provider,
           selectedMessagingChannels,

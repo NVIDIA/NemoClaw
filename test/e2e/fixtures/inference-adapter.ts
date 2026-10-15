@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes } from "node:crypto";
-import { nativeHostedAuthHeaderScript } from "../../../src/lib/actions/sandbox/inference-invocation-probe.ts";
+import { nativeHostedAuthHeaderScript } from "../../../src/lib/inference/native-provider/contract.ts";
 import {
   NATIVE_NVIDIA_AUTH_HEADER_SCRIPT,
   NVIDIA_HOSTED_LOGICAL_PROVIDER,

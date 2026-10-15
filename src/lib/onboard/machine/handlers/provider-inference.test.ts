@@ -308,6 +308,8 @@ describe("handleProviderInferenceState", () => {
       "nemoclaw",
       "compatible-endpoint",
       "COMPATIBLE_API_KEY",
+      undefined,
+      { sandboxName: "mcp-rebuild", endpointUrl: "https://compatible.example.test/v1" },
     );
     expect(calls.complete).toHaveBeenCalledWith(
       "provider_selection",
@@ -450,7 +452,13 @@ describe("handleProviderInferenceState", () => {
 
     expect(calls.setupNim).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();
-    expect(calls.recoverProvider).toHaveBeenCalledWith("nemoclaw", "ollama-local", null);
+    expect(calls.recoverProvider).toHaveBeenCalledWith(
+      "nemoclaw",
+      "ollama-local",
+      null,
+      undefined,
+      { sandboxName: null, endpointUrl: null },
+    );
     expect(calls.skipped).toHaveBeenCalledWith("provider_selection", "ollama-local / llama3.1");
     expect(calls.recordSkip).toHaveBeenCalledWith("provider_selection", {
       reason: "resume",
@@ -878,41 +886,46 @@ describe("handleProviderInferenceState", () => {
     expect(calls.repairEvent).not.toHaveBeenCalledWith("state.repair.completed", expect.anything());
   });
 
-  it("reruns inference setup when resumed provider recovery forces recreation", async () => {
-    const session = createSession({
-      provider: "compatible-endpoint",
-      model: "custom-model",
-      credentialEnv: null,
-    });
-    session.steps.provider_selection.status = "complete";
-    const { deps, calls } = createDeps({
-      isInferenceRouteReady: vi.fn(() => true),
-      ensureResumeProviderReady: vi.fn(async () => ({
-        forceInferenceSetup: true,
-        credentialEnv: "COMPATIBLE_API_KEY",
-      })),
-    });
-    calls.complete.mockResolvedValue(session);
+  it.each([false, true])(
+    "reruns resumed provider setup with native custom recovery %s",
+    async (nativeCustomSetup) => {
+      const session = createSession({
+        provider: "compatible-endpoint",
+        model: "custom-model",
+        credentialEnv: null,
+      });
+      session.steps.provider_selection.status = "complete";
+      const { deps, calls } = createDeps({
+        isInferenceRouteReady: vi.fn(() => true),
+        ensureResumeProviderReady: vi.fn(async () => ({
+          forceInferenceSetup: true,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          nativeCustomSetup,
+        })),
+      });
+      calls.complete.mockResolvedValue(session);
 
-    await handleProviderInferenceState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "my-assistant",
-    });
+      await handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+        ...(nativeCustomSetup ? { selectedMessagingChannels: ["telegram"] } : {}),
+      });
 
-    expect(calls.setupNim).not.toHaveBeenCalled();
-    expect(calls.hydrate).toHaveBeenCalledWith("COMPATIBLE_API_KEY");
-    expect(calls.setupInference).toHaveBeenCalledWith(
-      "my-assistant",
-      "custom-model",
-      "compatible-endpoint",
-      null,
-      "COMPATIBLE_API_KEY",
-      null,
-      [],
-      setupOptions(session),
-    );
-  });
+      expect(calls.setupNim).not.toHaveBeenCalled();
+      expect(calls.hydrate).toHaveBeenCalledWith("COMPATIBLE_API_KEY");
+      expect(calls.setupInference).toHaveBeenCalledWith(
+        "my-assistant",
+        "custom-model",
+        "compatible-endpoint",
+        null,
+        "COMPATIBLE_API_KEY",
+        null,
+        [],
+        setupOptions(session),
+      );
+    },
+  );
 
   it("forces canonical setup for a preflighted provider even if a matching route appears (#6114)", async () => {
     const session = createSession({

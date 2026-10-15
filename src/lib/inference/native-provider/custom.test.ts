@@ -219,16 +219,24 @@ describe("custom native endpoint ownership", () => {
 
   it("reuses verified credentials without rotating them, even when a host key is present", async () => {
     const h = harness();
-    const first = await prepareCustomNativeProvider(h.input);
+    const onCredentialPersisted = vi.fn();
+    const first = await prepareCustomNativeProvider({ ...h.input, onCredentialPersisted });
+    expect(onCredentialPersisted).toHaveBeenCalledExactlyOnceWith(
+      binding.credentialEnv,
+      "synthetic-host-secret",
+    );
+    onCredentialPersisted.mockClear();
     const second = await prepareCustomNativeProvider({
       ...h.input,
       recordedAttachment: first,
       credentialValue: "another-host-key",
+      onCredentialPersisted,
       lookup: async () => {
         throw new Error("Do not re-resolve admitted pins");
       },
     });
     expect(second).toEqual(first);
+    expect(onCredentialPersisted).not.toHaveBeenCalled();
     expect(h.adapter.createProvider).toHaveBeenCalledTimes(1);
     expect(h.adapter.updateProvider).not.toHaveBeenCalled();
     expect(JSON.stringify(h.writeAuthority.mock.calls)).not.toContain("synthetic-host-secret");
@@ -242,6 +250,21 @@ describe("custom native endpoint ownership", () => {
       }),
     ).rejects.toThrow("A new credential is required");
     expect(h.adapter.createProvider).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retire a credential when authority persistence fails", async () => {
+    const h = harness();
+    const onCredentialPersisted = vi.fn();
+    await expect(
+      prepareCustomNativeProvider({
+        ...h.input,
+        onCredentialPersisted,
+        writeAuthority: () => {
+          throw new Error("authority write failed");
+        },
+      }),
+    ).rejects.toThrow("authority write failed");
+    expect(onCredentialPersisted).not.toHaveBeenCalled();
   });
 
   it("rejects profile collisions before provider or attachment changes", async () => {
@@ -331,6 +354,7 @@ describe("custom native endpoint ownership", () => {
 
   it("keeps Bedrock AWS credentials in the existing adapter and injects only its token", async () => {
     const h = harness();
+    const onCredentialPersisted = vi.fn();
     const bedrock = {
       ...binding,
       provider: "compatible-anthropic-endpoint",
@@ -350,6 +374,7 @@ describe("custom native endpoint ownership", () => {
       provider: bedrock.provider,
       endpointUrl: bedrock.endpointUrl,
       ensureBedrockAdapter,
+      onCredentialPersisted,
     });
     expect(h.adapter.createProvider).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -369,5 +394,6 @@ describe("custom native endpoint ownership", () => {
     expect(h.adapter.updateProvider).not.toHaveBeenCalled();
     expect(JSON.stringify(receipt)).not.toContain("synthetic-");
     expect(h.lookup).not.toHaveBeenCalled();
+    expect(onCredentialPersisted).not.toHaveBeenCalled();
   });
 });

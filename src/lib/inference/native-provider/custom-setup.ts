@@ -57,6 +57,7 @@ export async function prepareCustomNativeProvider(input: {
   ensureBedrockAdapter?: typeof ensureBedrockRuntimeAdapter;
   readAuthority: (gateway: string, provider: string) => NativeProviderAttachment | undefined;
   writeAuthority: (gateway: string, provider: string, receipt: NativeProviderAttachment) => void;
+  onCredentialPersisted?: (credentialEnv: string, value: string) => void;
 }): Promise<NativeProviderAttachment> {
   if (unsafeEndpointUrlViolation(input.endpointUrl) || /%2f|%5c|%2e/iu.test(input.endpointUrl))
     throw new Error("Custom native inference requires a valid credential-free HTTP(S) endpoint");
@@ -142,5 +143,9 @@ export async function prepareCustomNativeProvider(input: {
     writeAuthority: (gateway, authority) =>
       input.writeAuthority(gateway, input.provider, authority),
   });
+  // Reuse does not prove that an ambient legacy value was stored. Bedrock
+  // stores an adapter token, so its source credential is not retired here.
+  if (!expected && !bedrock && credentialValue)
+    input.onCredentialPersisted?.(input.credentialEnv, credentialValue);
   return receipt;
 }

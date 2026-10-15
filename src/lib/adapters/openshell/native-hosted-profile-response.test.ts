@@ -29,6 +29,7 @@ function response(definition: HostedProviderDefinition) {
   const endpoint = contract.boundary.endpoints[0] as {
     host: string;
     port: number;
+    tls?: string;
     allowed_ips?: string[];
     rules: { allow: { method: string; path: string } }[];
   };
@@ -50,6 +51,7 @@ function response(definition: HostedProviderDefinition) {
           ...base.endpoints[0],
           host: endpoint.host,
           port: endpoint.port,
+          tls: endpoint.tls ?? "",
           allowedIps: endpoint.allowed_ips ?? [],
           access: "",
           rules: endpoint.rules.map((rule) => ({
@@ -128,6 +130,7 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label profile read boundary", (d
 });
 
 it.each([
+  ["compatible-endpoint", "openai-completions", "http://custom.example/team/v1", ["8.8.8.8"]],
   ["compatible-endpoint", "openai-responses", "https://custom.example/team/v1", ["8.8.8.8"]],
   [
     "compatible-anthropic-endpoint",
@@ -155,6 +158,19 @@ it.each([
         binding,
       );
     expect(read(value)).toBe(value);
+    expect(
+      read({
+        profile: {
+          ...value.profile,
+          endpoints: [
+            {
+              ...value.profile.endpoints[0],
+              tls: endpointUrl.startsWith("https:") ? "" : "terminate",
+            },
+          ],
+        },
+      }),
+    ).toBeUndefined();
     expect(
       read(value, { ...definition.custom!, credentialEnv: "DIFFERENT_SOURCE" }),
     ).toBeUndefined();

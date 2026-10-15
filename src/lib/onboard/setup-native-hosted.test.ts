@@ -77,6 +77,7 @@ describe.each(providers)("native $label onboarding", (provider) => {
     const verifyOnboardInferenceSmoke = vi.fn(async () => undefined);
     const updateSandbox = vi.fn(() => true);
     const writeAuthority = vi.fn();
+    const recordMigratedProviderCredential = vi.fn();
     const setup = createSetupInference({
       checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true })),
       withSandboxMutationLock: async <T>(_name: string, fn: () => T | Promise<T>) => await fn(),
@@ -106,6 +107,7 @@ describe.each(providers)("native $label onboarding", (provider) => {
           : null,
       resolveEndpointHost: async () => [{ address: "8.8.8.8", family: 4 }],
       upsertProvider: vi.fn(),
+      recordMigratedProviderCredential,
       verifyInferenceRoute,
       verifyOnboardInferenceSmoke,
       isNonInteractive: () => true,
@@ -172,6 +174,18 @@ describe.each(providers)("native $label onboarding", (provider) => {
         credentials: [{ name: provider.credentialEnv, value: "host-secret" }],
         type: provider.profileId,
       }),
+    );
+    expect(recordMigratedProviderCredential.mock.calls).toEqual(
+      provider.custom
+        ? [
+            [
+              provider.logicalProvider,
+              provider.custom.credentialEnv,
+              "host-secret",
+              expect.any(Function),
+            ],
+          ]
+        : [],
     );
     expect(writeAuthority).toHaveBeenCalledWith("gateway", provider.logicalProvider, receipt);
     expect(updateSandbox).toHaveBeenCalledWith(

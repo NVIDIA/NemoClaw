@@ -65,3 +65,18 @@ export function normalizeNativeProviderAttachment<P extends string, N extends st
     ...(definition.custom ? { custom: definition.custom } : {}),
   };
 }
+
+/** Accept only an OpenShell-issued placeholder, never a host credential. */
+export function nativeHostedAuthHeaderScript(definition: {
+  credentialEnv: string;
+  api: string;
+}): string {
+  const env = definition.credentialEnv;
+  const value = "${" + env + ":-}";
+  const header = definition.api === "anthropic-messages" ? "x-api-key:" : "Authorization: Bearer";
+  return [
+    `case "${value}" in *[!a-zA-Z0-9:_]*) exit 2 ;; esac`,
+    `printf '%s' "${value}" | LC_ALL=C grep -Eq '^openshell:resolve:env:((v[0-9]{1,20}|s[a-f0-9]{64})_)?${env}$' || exit 2`,
+    `AUTH_HEADER="${header} ${value}"`,
+  ].join("; ");
+}

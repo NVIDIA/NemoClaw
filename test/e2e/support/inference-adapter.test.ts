@@ -21,6 +21,18 @@ import {
 } from "../fixtures/inference-adapter.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 
+// Protected image qualification imports the fixture before CLI artifacts exist.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const readFileSync = new Proxy(actual.readFileSync, {
+    apply(target, thisArg, args) {
+      expect(String(args[0])).not.toMatch(/\/dist\/managed-inference\/catalog\.json$/u);
+      return Reflect.apply(target, thisArg, args);
+    },
+  });
+  return { ...actual, readFileSync, default: { ...actual, readFileSync } };
+});
+
 const adapters: E2EInferenceAdapter[] = [];
 const NOOP_PROGRESS = startTestProgress(
   "inference adapter support",

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeHostedAuthHeaderScript } from "../../inference/native-provider/contract";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
 import {
   hostedNativeProvider,
@@ -178,21 +179,6 @@ export function resolveSandboxInferenceInvocationEndpoint(
   input: SandboxInferenceInvocationInput,
 ): string {
   return buildProbeRequest(input).endpoint;
-}
-
-/** Accept only an OpenShell-issued placeholder, never a host credential. */
-export function nativeHostedAuthHeaderScript(definition: {
-  credentialEnv: string;
-  api: string;
-}): string {
-  const env = definition.credentialEnv;
-  const value = "${" + env + ":-}";
-  const header = definition.api === "anthropic-messages" ? "x-api-key:" : "Authorization: Bearer";
-  return [
-    `case "${value}" in *[!a-zA-Z0-9:_]*) exit 2 ;; esac`,
-    `printf '%s' "${value}" | LC_ALL=C grep -Eq '^openshell:resolve:env:((v[0-9]{1,20}|s[a-f0-9]{64})_)?${env}$' || exit 2`,
-    `AUTH_HEADER="${header} ${value}"`,
-  ].join("; ");
 }
 
 export function buildSandboxInferenceInvocationCommand(

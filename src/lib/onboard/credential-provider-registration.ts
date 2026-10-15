@@ -239,6 +239,22 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
   const refreshReceipts = new Map<string, string>();
   const gatewayRunner = (gatewayName = deps.getGatewayName()) =>
     createGatewayScopedOpenshellRunner(deps.runOpenshell, gatewayName);
+  function recordMigratedProviderCredential(
+    name: string,
+    credentialEnv: string,
+    persistedValue: string | null,
+    revalidateSandboxIdentity?: (operation: string) => void,
+  ): void {
+    // Retire only the staged value actually written, including declared aliases.
+    const migrationKeys = stagedMigrationKeys(credentialEnv, deps.stagedLegacyValues);
+    if (migrationKeys.length === 0) return;
+    revalidateSandboxIdentity?.(`record migrated credential for provider ${JSON.stringify(name)}`);
+    for (const key of migrationKeys) {
+      if (persistedValue === deps.stagedLegacyValues.get(key)) deps.migratedLegacyKeys.add(key);
+      else deps.migratedLegacyKeys.delete(key);
+    }
+  }
+
   async function upsertProvider(
     name: string,
     type: string,
@@ -257,26 +273,17 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       gatewayRunner(gatewayName),
       options,
     );
-    if (result.ok && credentialEnv) {
-      // The legacy file can carry the value under an alias of the canonical
-      // credential env (NVIDIA_API_KEY for NVIDIA_INFERENCE_API_KEY), which
-      // resolveProviderCredential resolves transparently. Account the alias
-      // too, or the staged key never looks migrated and the plaintext file
-      // survives an onboard that used it (#10373).
-      const migrationKeys = stagedMigrationKeys(credentialEnv, deps.stagedLegacyValues);
-      if (migrationKeys.length > 0) {
-        options.revalidateSandboxIdentity?.(
-          `record migrated credential for provider ${JSON.stringify(name)}`,
-        );
-        const upsertedValue = env[credentialEnv] ?? deps.getCredential(credentialEnv);
-        for (const key of migrationKeys) {
-          if (upsertedValue === deps.stagedLegacyValues.get(key)) {
-            deps.migratedLegacyKeys.add(key);
-          } else {
-            deps.migratedLegacyKeys.delete(key);
-          }
-        }
-      }
+    if (
+      result.ok &&
+      credentialEnv &&
+      stagedMigrationKeys(credentialEnv, deps.stagedLegacyValues).length > 0
+    ) {
+      recordMigratedProviderCredential(
+        name,
+        credentialEnv,
+        env[credentialEnv] ?? deps.getCredential(credentialEnv),
+        options.revalidateSandboxIdentity,
+      );
     }
     return result;
   }
@@ -487,6 +494,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
   }
 
   return {
+    recordMigratedProviderCredential,
     inspectGatewayCredential,
     providerMatchesGatewayCredential,
     applyMessagingProviders,

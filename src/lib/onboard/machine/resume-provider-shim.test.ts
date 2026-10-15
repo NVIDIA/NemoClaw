@@ -7,6 +7,7 @@ vi.mock("../../credentials/store", () => ({
   resolveProviderCredential: vi.fn(() => null),
 }));
 
+import { customNativeProvider } from "../../inference/native-provider/custom";
 import { createResumeProviderShim } from "./resume-provider-shim";
 
 describe("createResumeProviderShim", () => {
@@ -92,3 +93,67 @@ describe("createResumeProviderShim", () => {
     ).rejects.toBe(ownershipConflict);
   });
 });
+
+it.each([
+  ["native", "TEAM_KEY"],
+  ["native", null],
+  ["reservation", "TEAM_KEY"],
+  ["legacy", "TEAM_KEY"],
+] as const)(
+  "routes %s custom resume through its owning credential recovery",
+  async (state, credentialEnv) => {
+    const definition = customNativeProvider({
+      provider: "compatible-endpoint",
+      endpointUrl: "https://custom.example/v1",
+      api: "openai-completions",
+      credentialEnv: "TEAM_KEY",
+      allowedIps: ["8.8.8.8"],
+    });
+    const recorded =
+      state === "native"
+        ? {
+            nativeHostedProviderAttachment: {
+              schemaVersion: 1 as const,
+              profileId: definition.profileId,
+              providerName: definition.providerName,
+              providerId: "owned-id",
+              endpointUrl: definition.endpointUrl,
+              allowedIps: definition.allowedIps,
+              custom: definition.custom,
+            },
+          }
+        : { pendingRouteReservation: state === "reservation" };
+    const providerExistsInGateway = vi.fn(() => true);
+    const replaceNamedCredential = vi.fn(async () => "unexpected");
+    const shim = createResumeProviderShim({
+      getSandbox: (name) => {
+        expect(name).toBe("alpha");
+        return recorded;
+      },
+      isNonInteractive: () => true,
+      providerExistsInGateway,
+      isRoutedInferenceProvider: () => false,
+      replaceNamedCredential,
+    });
+    const result = await shim.ensureResumeProviderReady(
+      "gateway-west",
+      "compatible-endpoint",
+      credentialEnv,
+      undefined,
+      { sandboxName: "alpha", endpointUrl: "https://custom.example/v1" },
+    );
+    expect(result).toEqual(
+      state === "legacy"
+        ? { forceInferenceSetup: false, credentialEnv: "TEAM_KEY" }
+        : {
+            forceInferenceSetup: true,
+            credentialEnv: credentialEnv ?? "COMPATIBLE_API_KEY",
+            nativeCustomSetup: true,
+          },
+    );
+    expect(providerExistsInGateway.mock.calls).toEqual(
+      state === "legacy" ? [["compatible-endpoint", "gateway-west"]] : [],
+    );
+    expect(replaceNamedCredential).not.toHaveBeenCalled();
+  },
+);

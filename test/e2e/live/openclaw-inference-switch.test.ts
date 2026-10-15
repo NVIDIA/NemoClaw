@@ -17,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
-import { nativeHostedAuthHeaderScript } from "../../../src/lib/actions/sandbox/inference-invocation-probe.ts";
+import { nativeHostedAuthHeaderScript } from "../../../src/lib/inference/native-provider/contract.ts";
 import { discoverHostAddress } from "../fixtures/host-address.ts";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
@@ -171,7 +171,7 @@ interface MockAnthropicRequest {
 }
 
 function proveMockBaselineAuthentication(
-  baseline: Pick<FakeOpenAiCompatibleServer, "requests"> | undefined,
+  baseline: Pick<FakeOpenAiCompatibleServer, "requests" | "baseUrl"> | undefined,
   sandbox: SandboxClient,
   home: string,
   artifacts: { writeJson(path: string, value: unknown): Promise<string> },
@@ -182,7 +182,7 @@ function proveMockBaselineAuthentication(
 }
 
 async function proveSelectedMockBaselineAuthentication(
-  baseline: Pick<FakeOpenAiCompatibleServer, "requests">,
+  baseline: Pick<FakeOpenAiCompatibleServer, "requests" | "baseUrl">,
   sandbox: SandboxClient,
   home: string,
   artifacts: { writeJson(path: string, value: unknown): Promise<string> },
@@ -199,7 +199,9 @@ async function proveSelectedMockBaselineAuthentication(
   const probe = await sandboxShell(
     sandbox,
     home,
-    `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data ${shellQuote(JSON.stringify(payload))} >/dev/null`,
+    SWITCH_NATIVE_CUSTOM
+      ? `${nativeHostedAuthHeaderScript({ credentialEnv: "COMPATIBLE_API_KEY", api: "openai-completions" })}; curl -fsS --max-time 60 ${shellQuote(`${baseline.baseUrl}/chat/completions`)} -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data ${shellQuote(JSON.stringify(payload))} >/dev/null`
+      : `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data ${shellQuote(JSON.stringify(payload))} >/dev/null`,
     {
       artifactName: "baseline-explicit-authenticated-inference-post",
       timeoutMs: 90_000,
@@ -632,7 +634,7 @@ async function readAndAssertOpenClawConfig(
 ): Promise<OpenClawModelConfig | undefined> {
   const configResult = await readOpenClawConfig(sandbox, SANDBOX_NAME, {
     nativeNvidia: expected.nativeNvidia,
-    nativeAnthropic: Boolean(expected.nativeCustomEndpoint),
+    nativeCustomApi: expected.nativeCustomEndpoint ? expected.inferenceApi : undefined,
     artifactName: expected.artifactName,
     env: commandEnv(home),
     timeoutMs: COMMAND_TIMEOUT_MS,
@@ -995,6 +997,7 @@ exit "$rc"
 }
 
 async function runInitialRouteLifecycle(options: {
+  nativeCustomEndpoint?: string;
   artifacts: ArtifactSink;
   baselineProvider?: Pick<FakeOpenAiCompatibleServer, "requests">;
   home: string;
@@ -1009,6 +1012,7 @@ async function runInitialRouteLifecycle(options: {
       model: options.model,
       inferenceApi: "openai-completions",
       artifactName: `read-openclaw-initial-route-${artifactSuffix}`,
+      nativeCustomEndpoint: options.nativeCustomEndpoint,
     });
     await checkOpenClawGatewayInference(
       options.host,
@@ -1192,8 +1196,11 @@ test(
       (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1");
     // OpenShell reaches this fixture from its gateway network namespace, where
     // the runner's loopback address is not routable.
+    const nativeBaselineHost = SWITCH_NATIVE_CUSTOM
+      ? (await discoverHostAddress(host, "native-baseline-endpoint-address")).address
+      : undefined;
     const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
-      ? await startMockOpenClawBaselineProvider(progress)
+      ? await startMockOpenClawBaselineProvider(progress, nativeBaselineHost)
       : undefined;
     cleanup.trackDisposable("close baseline inference provider", async () => {
       await baselineProvider?.close();
@@ -1248,6 +1255,9 @@ test(
         artifactName: "onboard-custom-image-openclaw-inference-switch",
         env: commandEnv(home, {
           ...baseline.env,
+          ...(nativeBaselineHost
+            ? { NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: nativeBaselineHost }
+            : {}),
           NEMOCLAW_RECREATE_SANDBOX: "1",
         }),
         redactionValues,
@@ -1282,6 +1292,7 @@ test(
       false,
     );
     await runInitialRouteLifecycle({
+      nativeCustomEndpoint: nativeBaselineHost ? baseline.endpointUrl : undefined,
       artifacts,
       baselineProvider,
       home,
