@@ -459,7 +459,8 @@ Use these details when your first-run path needs more control.
 
     `nemohermes inference set` changes the active model or provider without rebuilding the sandbox.
     For shared routes, it patches `/sandbox/.hermes/config.yaml` without restarting Hermes.
-    A switch to or from a native hosted provider restarts the Hermes gateway after configuration sync, which can interrupt active agent requests.
+    If the current or selected route uses a native hosted provider, NemoClaw restarts the Hermes gateway after configuration sync.
+    The restart can interrupt active agent requests.
     If the restart fails, the route and configuration remain committed. Run `nemohermes <sandbox-name> gateway restart` to apply the switch.
     Custom and local providers retain the shared OpenShell route.
 
