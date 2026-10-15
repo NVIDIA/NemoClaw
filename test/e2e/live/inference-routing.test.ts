@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS,
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
@@ -1107,8 +1108,8 @@ async function onboardNativeDcode(
   { artifacts, cleanup, host, progress, runtimeProvider, sandbox }: NativeDcodeContext,
 ) {
   await requireLivePrerequisites(host, runtimeProvider);
-  const owner = inferenceSandboxName(authenticated ? "e2e-dcode-auth" : "e2e-dcode-none");
-  const sibling = `${owner}-peer`;
+  const owner = inferenceSandboxName(authenticated ? "e2e-dc-auth" : "e2e-dc-none");
+  const sibling = inferenceSandboxName("e2e-dc-peer");
   const model = "nemoclaw-dcode-native-local";
   const apiKey = "sk-native-local-TEST-NOT-A-REAL-VALUE";
   const fake = await startFakeOpenAiCompatibleServer({
@@ -1189,7 +1190,7 @@ async function requestNativeDcode(
 test(
   "TC-INF-15 DCode uses its authenticated native local provider after rebuild and restart with sibling and credential isolation (#13197)",
   {
-    timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    timeout: DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm live inference prerequisites",

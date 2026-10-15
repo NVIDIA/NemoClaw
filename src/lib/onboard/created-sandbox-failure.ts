@@ -45,6 +45,8 @@ export type SandboxCreateFailureReportOptions = {
   createArgs?: readonly string[];
   /** Safe ordinary create context. Runtime environment and startup values are excluded. */
   createContext?: SandboxCreateRecoveryContext;
+  /** Sandbox container output captured before rollback; `null` when none was found. */
+  sandboxContainerOutput?: string | null;
 };
 
 export type SandboxCreateRecoveryContext = {
@@ -73,7 +75,10 @@ export function createSandboxRecoveryContext(
 
 export type SandboxCreateFailureReportDeps = {
   classifyCreateFailure(output: string): { kind: string };
-  printCreateFailureDiagnostics(sandboxName: string, options: { backupPath: string | null }): void;
+  printCreateFailureDiagnostics(
+    sandboxName: string,
+    options: { backupPath: string | null; sandboxContainerOutput?: string | null },
+  ): void;
   printRecoveryHints(
     output: string,
     options: {
@@ -117,6 +122,9 @@ export function reportSandboxCreateFailure(
   }
   deps.printCreateFailureDiagnostics(options.sandboxName, {
     backupPath: options.restoreBackupPath,
+    ...(options.sandboxContainerOutput !== undefined
+      ? { sandboxContainerOutput: options.sandboxContainerOutput }
+      : {}),
   });
   deps.error("  Try:  openshell sandbox list        # check gateway state");
   if (options.createArgs || options.createContext) {

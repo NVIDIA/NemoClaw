@@ -568,11 +568,103 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
+      sandboxContainerOutput: null,
     });
     expect(errorOutput()).toContain(
       "NemoClaw left the sandbox in place for inspection and recovery",
     );
     expect(errorOutput()).toContain("Verify that it targets this NemoClaw release");
+  });
+
+  it("captures failed replacement output before rollback when the create stream fails (#13178)", async () => {
+    const replacementContainerId = "e".repeat(64);
+    let rolledBack = false;
+    const patch = {
+      ...createPatch(),
+      replacementRuntimeId: vi.fn(() => (rolledBack ? null : replacementContainerId)),
+      rollbackManagedStartupAfterCreateFailure: vi.fn(async () => {
+        rolledBack = true;
+      }),
+    };
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
+    const deps = createDeps();
+    deps.createSandbox = vi.fn(async () => ({
+      status: 1,
+      output: "x509: certificate signed by unknown authority",
+      sawProgress: false,
+      ambiguous: false,
+      diagnostic: "x509: certificate signed by unknown authority",
+    }));
+    deps.captureSandboxContainerOutput = vi.fn((_name: string, containerId: string | null) =>
+      !rolledBack && containerId === replacementContainerId
+        ? "Error: Failed to prepare sandbox: Landlock path unavailable"
+        : null,
+    );
+    mockExit();
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+
+    expect(deps.captureSandboxContainerOutput).toHaveBeenCalledWith(
+      "alpha",
+      replacementContainerId,
+    );
+    expect(vi.mocked(deps.captureSandboxContainerOutput!).mock.invocationCallOrder[0]).toBeLessThan(
+      patch.rollbackManagedStartupAfterCreateFailure.mock.invocationCallOrder[0]!,
+    );
+    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
+      backupPath: null,
+      sandboxContainerOutput: "Error: Failed to prepare sandbox: Landlock path unavailable",
+    });
+  });
+
+  it("captures failed replacement output before rollback restores the prior container (#13178)", async () => {
+    const input = createInput();
+    const replacementContainerId = "d".repeat(64);
+    let rolledBack = false;
+    const patch = {
+      ...createPatch(),
+      replacementRuntimeId: vi.fn(() => (rolledBack ? null : replacementContainerId)),
+      rollbackManagedStartupAfterCreateFailure: vi.fn(async () => {
+        rolledBack = true;
+      }),
+    };
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
+    input.sandboxGpuConfig = {
+      ...input.sandboxGpuConfig,
+      mode: "0",
+      sandboxGpuEnabled: false,
+    };
+    input.gpuRoutePlan = "none";
+    input.initialGpuRoute = "none";
+    input.persistStartupCommand = true;
+    const deps = createDeps();
+    deps.captureSandboxContainerOutput = vi.fn((_name: string, containerId: string | null) =>
+      !rolledBack && containerId === replacementContainerId
+        ? "Error: Failed to prepare sandbox: Landlock path unavailable"
+        : "restored prior container output",
+    );
+    vi.mocked(deps.runOpenshell).mockImplementation(
+      createSequencedOpenShellRunner([
+        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult(), readySandboxGetResult()]],
+      ]),
+    );
+    mocks.waitForCreatedSandboxReadyWithTrace.mockResolvedValueOnce({
+      ready: false,
+      reason: "timeout",
+      failurePhase: "Error",
+    });
+    mockExit();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
+
+    expect(deps.captureSandboxContainerOutput).toHaveBeenCalledWith(
+      "alpha",
+      replacementContainerId,
+    );
+    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
+      backupPath: null,
+      sandboxContainerOutput: "Error: Failed to prepare sandbox: Landlock path unavailable",
+    });
   });
 
   it("does not retry a signal-terminated recreated-sandbox readiness probe (#12758)", async () => {
@@ -1033,6 +1125,12 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       expect.anything(),
     );
     expect(errorOutput()).toContain("left the portable sandbox in place");
+    // Portable lifecycles own no Docker container to inspect (#13178).
+    expect(deps.captureSandboxContainerOutput).not.toHaveBeenCalled();
+    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
+      backupPath: null,
+      sandboxContainerOutput: null,
+    });
   });
 });
 

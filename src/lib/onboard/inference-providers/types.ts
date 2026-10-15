@@ -23,11 +23,18 @@ import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider
 import type { HermesAuthMethod } from "../hermes-auth";
 import type { OnboardInferenceCapabilityCache } from "../inference-capability-cache";
 
+/** Process-local replacement prepared while the published legacy source stays intact. */
+export interface StagedNativeLocalRecreation {
+  source: import("../../state/registry").SandboxEntry;
+  attachment: import("../../inference/native-local/contract").NativeLocalProviderAttachment;
+}
+
 export type SetupInferenceResult =
   | {
       ok: true;
       retry?: undefined;
       nativeInference?: { endpointUrl: string; credentialEnv: string };
+      stagedNativeLocalRecreation?: StagedNativeLocalRecreation;
       deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
     }
   | { retry: "selection" };

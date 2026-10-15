@@ -33,7 +33,7 @@ afterEach(() => {
   fs.rmSync(testHome, { recursive: true, force: true });
 });
 
-async function setup(port = 19260, dockerHost?: string) {
+async function setup(port = 19260, dockerHost?: string, captureAuthority = false) {
   vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
   vi.stubEnv("DOCKER_HOST", dockerHost);
   vi.stubEnv("DOCKER_CONTEXT", "default");
@@ -84,11 +84,22 @@ async function setup(port = 19260, dockerHost?: string) {
     }),
   );
   registry.reserveSandboxInferenceRoute("alpha", route);
+  let daemonId = "original-daemon-id";
+  const volumes = vi.spyOn(docker, "dockerRun").mockImplementation((args) => ({
+    ...emptyDockerResult,
+    stdout: args.includes("info") ? daemonId : "",
+  }));
+  const { captureNativeDockerRecoveryAuthority } =
+    await import("../../../onboard/gateway/state-ownership");
+  const createAuthority = captureAuthority
+    ? captureNativeDockerRecoveryAuthority(gatewayName, port, route.reservationSessionId)
+    : undefined;
   session.markRetainedSandboxRecovery("alpha", "identity lookup failed", undefined, {
     gatewayName,
     gatewayPort: port,
     lifecycleGeneration: "failed-generation",
     createAttemptNonce: "a".repeat(62),
+    ...(createAuthority ? { createAuthority } : {}),
   });
   const record = session.listRetainedSandboxRecoveryRecords()[0]!;
   const capture = vi
@@ -104,18 +115,18 @@ async function setup(port = 19260, dockerHost?: string) {
     rows: [],
     malformedRows: 0,
   });
-  const volumes = vi.spyOn(docker, "dockerRun").mockReturnValue(emptyDockerResult);
   const files = [
     registry.REGISTRY_FILE,
     session.SESSION_FILE,
     session.RETAINED_SANDBOX_RECOVERY_FILE,
   ];
   const snapshot = () => files.map((file) => fs.readFileSync(file, "utf8"));
-  const run = () =>
+  const run = (forceLocal = false) =>
     reconcileIdentityFreeRecovery("alpha", session.listRetainedSandboxRecoveryRecords(), port, {
       session,
       registry,
       captureOpenshell: capture,
+      forceLocal,
     });
   return {
     session,
@@ -125,11 +136,36 @@ async function setup(port = 19260, dockerHost?: string) {
     capture,
     containers,
     volumes,
+    setDaemonId: (value: string) => {
+      daemonId = value;
+    },
     clearRuntime: () => clearDockerDriverGatewayRuntimeMarker(stateDir),
     writeRuntime,
     snapshot,
     run,
   };
+}
+
+async function setupNativeLocalRecovery() {
+  const h = await setup();
+  const { nativeLocalIdentity } = await import("../../../inference/native-local/contract");
+  const { setNativeLocalProviderAuthority } =
+    await import("../../../state/registry/native-local-provider-authority");
+  const binding = {
+    provider: "vllm-local",
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "sentinel",
+    gatewayName: h.route.gatewayName,
+    sandboxName: "alpha",
+  } as const;
+  const receipt = {
+    ...binding,
+    ...nativeLocalIdentity(binding),
+    schemaVersion: 1 as const,
+    providerId: "owned-native-provider",
+  };
+  return { ...h, receipt, recordAuthority: () => setNativeLocalProviderAuthority(receipt) };
 }
 
 async function setupDestroy(port = 19260) {
@@ -158,7 +194,7 @@ async function setupDestroy(port = 19260) {
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   return {
     ...h,
-    destroy: () => destroySandbox("alpha", { yes: true }),
+    destroy: (force = false) => destroySandbox("alpha", { yes: true, force }),
     ordinaryDestroy,
     exit,
     log,
@@ -168,6 +204,131 @@ async function setupDestroy(port = 19260) {
 }
 
 describe.skipIf(process.platform !== "linux")("identity-free retained recovery", () => {
+  type Harness = Awaited<ReturnType<typeof setup>>;
+
+  it("retires recovery with captured authority after gateway restart (#13071)", async () => {
+    const h = await setup(19260, undefined, true);
+    expect(h.record.createAuthority?.daemonId).toBe("original-daemon-id");
+    h.writeRuntime(null, new Date(Date.parse(h.record.recordedAt) + 1000).toISOString());
+    expect(h.run()).toBe(true);
+    expect(h.registry.getSandbox("alpha")).toBeNull();
+    expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
+    expect(h.session.loadSession()?.cancellationRecovery).toBeNull();
+  });
+
+  it.each([
+    {
+      condition: "changed-daemon",
+      prepare: (h: Harness) => h.setDaemonId("replacement-daemon-id"),
+    },
+    {
+      condition: "daemon-changes-during-probe",
+      prepare: (h: Harness) =>
+        h.containers.mockImplementation(() => {
+          h.setDaemonId("replacement-daemon-id");
+          return { status: "observed", rows: [], malformedRows: 0 };
+        }),
+    },
+    {
+      condition: "changed-owner",
+      prepare: (h: Harness) =>
+        h.registry.updateSandbox("alpha", { reservationSessionId: "another-owner" }),
+    },
+  ])(
+    "preserves captured recovery when $condition invalidates its authority (#13071)",
+    async ({ prepare }) => {
+      const h = await setup(19260, undefined, true);
+      prepare(h);
+      const before = h.snapshot();
+      expect(() => h.run()).toThrow(/daemon|conflicting ownership/u);
+      expect(h.snapshot()).toEqual(before);
+    },
+  );
+
+  it("archives an explicit local discard after gateway restart without changing another session", async () => {
+    const h = await setupDestroy();
+    const originalReservation = h.registry.getSandbox("alpha");
+    h.session.saveSession(
+      h.session.createSession({
+        sessionId: "new-owner",
+        sandboxName: "other-sandbox",
+        status: "complete",
+      }),
+    );
+    const otherSession = fs.readFileSync(h.session.SESSION_FILE, "utf8");
+    h.writeRuntime(null, new Date(Date.parse(h.record.recordedAt) + 1_000).toISOString());
+    await expect(h.destroy()).rejects.toThrow("process.exit(1)");
+
+    await h.destroy(true);
+
+    expect(h.registry.getSandbox("alpha")).toBeNull();
+    expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
+    expect(fs.readFileSync(h.session.SESSION_FILE, "utf8")).toBe(otherSession);
+    const archive = path.join(
+      h.session.SESSION_DIR,
+      ".retained-recovery-archive",
+      `${h.record.recordId}.json`,
+    );
+    expect(JSON.parse(fs.readFileSync(archive, "utf8"))).toMatchObject({
+      operation: "forced-local-recovery-discard",
+      originalResourceAbsence: "unverified",
+      record: h.record,
+      reservation: originalReservation,
+    });
+    expect(fs.statSync(archive).mode & 0o777).toBe(0o600);
+    expect(h.ordinaryDestroy).not.toHaveBeenCalled();
+    expect(
+      h.capture.mock.calls.every(([args]) => args[0] === "sandbox" && args[1] === "list"),
+    ).toBe(true);
+  });
+
+  it.each([
+    {
+      condition: "present",
+      prepare: (h: Harness) =>
+        h.capture.mockReturnValue({
+          status: 0,
+          output: '[{"name":"alpha","phase":"Ready"}]',
+          stdout: '[{"name":"alpha","phase":"Ready"}]',
+          stderr: "",
+        }),
+    },
+    {
+      condition: "other-daemon",
+      prepare: (h: Harness) =>
+        h.writeRuntime("unix:///tmp/other-docker.sock", new Date().toISOString()),
+    },
+    {
+      condition: "same-name-owner",
+      prepare: (h: Harness) =>
+        h.session.saveSession({ ...h.session.loadSession()!, sessionId: "replacement-owner" }),
+    },
+  ])(
+    "preserves state under --force when $condition prevents local retirement",
+    async ({ prepare }) => {
+      const h = await setup();
+      prepare(h);
+      const before = h.snapshot();
+      expect(() => h.run(true)).toThrow();
+      expect(h.snapshot()).toEqual(before);
+      expect(fs.existsSync(path.join(h.session.SESSION_DIR, ".retained-recovery-archive"))).toBe(
+        false,
+      );
+    },
+  );
+
+  it("preserves active metadata and an existing conflicting archive under --force", async () => {
+    const h = await setup();
+    const directory = path.join(h.session.SESSION_DIR, ".retained-recovery-archive");
+    fs.mkdirSync(directory, { mode: 0o700 });
+    const archive = path.join(directory, `${h.record.recordId}.json`);
+    fs.writeFileSync(archive, "{}\n", { mode: 0o600 });
+    const before = h.snapshot();
+    expect(() => h.run(true)).toThrow(/archive conflicts/u);
+    expect(h.snapshot()).toEqual(before);
+    expect(fs.readFileSync(archive, "utf8")).toBe("{}\n");
+  });
+
   it.each([8080, 19260])(
     "releases the retained name through destroy on gateway port %s without resource cleanup (#12260)",
     async (port) => {
@@ -350,6 +511,41 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     expect(h.snapshot()).toEqual(before);
   });
 
+  it("preserves attached native local provider ownership during forced recovery (#13197)", async () => {
+    const h = await setupNativeLocalRecovery();
+    expect(
+      h.registry.updateSandbox("alpha", {
+        provider: h.receipt.provider,
+        endpointUrl: h.receipt.endpointUrl,
+        credentialEnv: h.receipt.credentialEnv,
+        nativeLocalProviderAttachment: h.receipt,
+      }),
+    ).toBe(true);
+    const before = h.snapshot();
+
+    expect(() => h.run(true)).toThrow(/native local provider cleanup authority/u);
+    expect(h.snapshot()).toEqual(before);
+  });
+
+  it("preserves independent native local authority during forced recovery (#13197)", async () => {
+    const h = await setupNativeLocalRecovery();
+    h.recordAuthority();
+    const before = h.snapshot();
+
+    expect(() => h.run(true)).toThrow(/native local provider cleanup authority/u);
+    expect(h.snapshot()).toEqual(before);
+  });
+
+  it("preserves native local authority without a reservation during forced recovery (#13197)", async () => {
+    const h = await setupNativeLocalRecovery();
+    h.recordAuthority();
+    h.registry.removeSandboxRouteReservationIfCurrent(h.registry.getSandbox("alpha")!);
+    const before = h.snapshot();
+
+    expect(() => h.run(true)).toThrow(/native local provider cleanup authority/u);
+    expect(h.snapshot()).toEqual(before);
+  });
+
   it("preserves recovery when the recorded Docker runtime marker is missing (#12260)", async () => {
     const h = await setup();
     h.registry.updateSandbox("alpha", { openshellDriver: "docker" });
@@ -515,33 +711,37 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     expect(h.snapshot()).toEqual(before);
   });
 
-  it("finishes on retry after recovery record retirement fails (#12260)", async () => {
-    const h = await setup();
-    const { hasIdentityFreeRetainedRecovery } = await import("../../../registry-recovery-action");
-    const rename = fs.renameSync;
-    const failure = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
-      String(destination) === h.session.RETAINED_SANDBOX_RECOVERY_FILE
-        ? (() => {
-            throw new Error("recovery storage unavailable");
-          })()
-        : rename(source, destination),
-    );
-    expect(h.run).toThrow(/storage unavailable/u);
-    expect(h.registry.getSandbox("alpha")).toBeNull();
-    expect(h.session.loadSession()?.cancellationRecovery).toBeNull();
-    expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([h.record]);
-    expect(hasIdentityFreeRetainedRecovery("alpha")).toBe(true);
-    failure.mockRestore();
-    h.session.saveSession(
-      h.session.createSession({ sessionId: "replacement-session", sandboxName: "other-sandbox" }),
-    );
-    const replacement = fs.readFileSync(h.session.SESSION_FILE, "utf8");
+  it.each(["legacy", "force", "captured"])(
+    "finishes on retry after recovery retirement fails (%s) (#12260, #13071)",
+    async (mode) => {
+      const forceLocal = mode === "force";
+      const h = await setup(19260, undefined, mode === "captured");
+      const { hasIdentityFreeRetainedRecovery } = await import("../../../registry-recovery-action");
+      const rename = fs.renameSync;
+      const failure = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+        String(destination) === h.session.RETAINED_SANDBOX_RECOVERY_FILE
+          ? (() => {
+              throw new Error("recovery storage unavailable");
+            })()
+          : rename(source, destination),
+      );
+      expect(() => h.run(forceLocal)).toThrow(/storage unavailable/u);
+      expect(h.registry.getSandbox("alpha")).toBeNull();
+      expect(h.session.loadSession()?.cancellationRecovery).toBeNull();
+      expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([h.record]);
+      expect(hasIdentityFreeRetainedRecovery("alpha")).toBe(true);
+      failure.mockRestore();
+      h.session.saveSession(
+        h.session.createSession({ sessionId: "replacement-session", sandboxName: "other-sandbox" }),
+      );
+      const replacement = fs.readFileSync(h.session.SESSION_FILE, "utf8");
 
-    expect(h.run()).toBe(true);
-    expect(fs.readFileSync(h.session.SESSION_FILE, "utf8")).toBe(replacement);
-    expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
-    expect(hasIdentityFreeRetainedRecovery("alpha")).toBe(false);
-  });
+      expect(h.run(forceLocal)).toBe(true);
+      expect(fs.readFileSync(h.session.SESSION_FILE, "utf8")).toBe(replacement);
+      expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
+      expect(hasIdentityFreeRetainedRecovery("alpha")).toBe(false);
+    },
+  );
 
   it("does not admit destroy from recovery retained in another gateway root (#12260)", async () => {
     const h = await setup(19260);

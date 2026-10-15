@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeLocalSetupReceipt } from "../../../../../test/support/native-local-setup-harness";
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../../../state/onboard-session";
@@ -11,6 +12,22 @@ import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
   detectUnconfiguredMessagingChannels: vi.fn(() => []),
+}));
+
+// Host-wide GC locking is covered by sandbox-route-mutation-lock.test.ts.
+vi.mock("../../sandbox-registration", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../sandbox-registration")>()),
+  withSandboxImageRegistrationFence: async <T>(operation: () => Promise<T> | T): Promise<T> =>
+    operation(),
+}));
+
+vi.mock("../../sandbox-lifecycle", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../sandbox-lifecycle")>()),
+  reserveRecoveredSandboxInferenceRoute: <R>(
+    reserve: (name: string, route: R) => boolean,
+    name: string,
+    route: R,
+  ) => reserve(name, route),
 }));
 
 describe("sandbox route publication", () => {
@@ -414,5 +431,100 @@ describe("sandbox route publication", () => {
       pendingRouteReservation: true,
       reservationSessionId: "session-new",
     });
+  });
+});
+
+function nativeRecreationHarness() {
+  const session = createSession({ sandboxName: "saved" });
+  const row: SandboxEntry = {
+    name: "saved",
+    agent: "langchain-deepagents-code",
+    provider: "vllm-local",
+    model: "meta-llama",
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    gatewayName: "nemoclaw",
+    preferredInferenceApi: "openai-completions",
+  };
+  const source = structuredClone(row);
+  const attachment = nativeLocalSetupReceipt({
+    provider: "vllm-local",
+    sandboxName: "saved",
+    gatewayName: "nemoclaw",
+    endpointUrl: row.endpointUrl!,
+    authMode: "sentinel",
+  });
+  const reserve = vi.fn((_name: string, route: Record<string, unknown>) => {
+    Object.assign(row, route, { pendingRouteReservation: true });
+    return true;
+  });
+  const { deps, calls } = createDeps(
+    { reserveSandboxInferenceRoute: reserve, getSandboxRegistryEntry: () => row },
+    session,
+  );
+  const resolve: NonNullable<
+    NonNullable<Parameters<typeof createDeps>[0]>["resolveSandboxCreateIntent"]
+  > = deps.resolveSandboxCreateIntent;
+  deps.resolveSandboxCreateIntent = async (input: Parameters<typeof resolve>[0]) => ({
+    ...(await resolve(input)),
+    nativeLocalProviderAttachment: input.nativeLocalProviderAttachment,
+  });
+  const run = () =>
+    handleSandboxState({
+      ...baseOptions(deps, session),
+      sandboxName: row.name,
+      agent: { name: row.agent! },
+      provider: row.provider!,
+      model: source.model!,
+      endpointUrl: row.endpointUrl!,
+      recreateSandbox: () => true,
+      stagedNativeLocalRecreation: { source, attachment },
+    });
+  return { row, source, attachment, session, reserve, deps, calls, run };
+}
+
+describe("legacy DCode recreation publication", () => {
+  it("publishes the native attachment only at the post-backup replacement seam (#13197)", async () => {
+    const { row, source, attachment, session, reserve, deps, run } = nativeRecreationHarness();
+    deps.createSandbox = async (...args: unknown[]) => {
+      expect(row).toEqual(source);
+      expect(reserve).not.toHaveBeenCalled();
+      const intent = args.at(-2) as {
+        resolved: { inferenceProvider: string; nativeLocalProviderAttachment: unknown };
+        reservePublishedRouteAfterBackup: () => Promise<void>;
+      };
+      expect(intent.resolved).toMatchObject({
+        inferenceProvider: attachment.providerName,
+        nativeLocalProviderAttachment: attachment,
+      });
+      await intent.reservePublishedRouteAfterBackup();
+      expect(row.nativeLocalProviderAttachment).toEqual(attachment);
+      return "saved";
+    };
+    await run();
+    expect(reserve).toHaveBeenCalledExactlyOnceWith(
+      "saved",
+      expect.objectContaining({
+        nativeLocalProviderAttachment: attachment,
+        reservationSessionId: session.sessionId,
+      }),
+    );
+  });
+
+  it("preserves the legacy source when backup rejects recreation (#13197)", async () => {
+    const { row, source, reserve, deps, run } = nativeRecreationHarness();
+    deps.createSandbox = async () => {
+      throw new Error("backup refused");
+    };
+    await expect(run()).rejects.toThrow("backup refused");
+    expect(reserve).not.toHaveBeenCalled();
+    expect(row).toEqual(source);
+  });
+
+  it("rejects a changed legacy source before starting recreation (#13197)", async () => {
+    const { row, reserve, calls, run } = nativeRecreationHarness();
+    row.model = "another-model";
+    await expect(run()).rejects.toThrow("legacy route ownership changed");
+    expect(reserve).not.toHaveBeenCalled();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 });

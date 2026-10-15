@@ -502,6 +502,40 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).toContain('export_baseline_registry_state)" = "disabled:disabled"');
   });
 
+  it("redacts DCode autorun diagnostics and preserves failure handling when capture fails", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-autorun-diagnostics-"));
+    try {
+      const secret = "diagnostic-provider-secret-canary";
+      fs.writeFileSync(
+        path.join(tempDir, "timeout"),
+        '#!/bin/sh\nprintf "tool event: %s\\n" "$COMPATIBLE_API_KEY"\nexit 1\n',
+        { mode: 0o755 },
+      );
+      const result = spawnSync("bash", ["-s", "--", dcodeApprovalCheck], {
+        encoding: "utf8",
+        input: 'source "$1"\ncapture_autorun_diagnostics\n',
+        env: {
+          ...process.env,
+          PATH: `${tempDir}:${DEFAULT_TEST_PATH}`,
+          REPO: process.cwd(),
+          SANDBOX_NAME: "e2e-dcode",
+          COMPATIBLE_API_KEY: secret,
+        },
+      });
+      expect({
+        status: result.status,
+        output: result.stdout.trim(),
+        stderr: result.stderr,
+      }).toEqual({
+        status: 0,
+        output: "tool event: [REDACTED]",
+        stderr: "",
+      });
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
   it("restores the DCode export baseline and preserves the triggering failure status", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-baseline-recovery-"));
     const mockCli = path.join(tempDir, "nemoclaw");

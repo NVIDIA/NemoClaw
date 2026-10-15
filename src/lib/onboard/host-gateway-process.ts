@@ -241,6 +241,7 @@ export function resolveOwnedHostGatewayRuntimeProviderId(options: {
   platform?: NodeJS.Platform;
   uid?: number;
   recoveryRecordedAt?: string;
+  requireDefaultDockerDaemon?: boolean;
 }): string | null {
   const platform = options.platform ?? process.platform;
   const architecture = options.architecture ?? process.arch;
@@ -261,6 +262,13 @@ export function resolveOwnedHostGatewayRuntimeProviderId(options: {
     return null;
   }
   if (markerPort !== options.gatewayPort) return null;
+  if (
+    options.requireDefaultDockerDaemon &&
+    marker.dockerHost !== null &&
+    marker.dockerHost !== "unix:///var/run/docker.sock"
+  ) {
+    return null;
+  }
   if (options.recoveryRecordedAt !== undefined) {
     // A replacement gateway cannot establish the daemon used by an earlier failed create.
     const recordedAt = Date.parse(options.recoveryRecordedAt);

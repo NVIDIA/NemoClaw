@@ -764,6 +764,7 @@ async function destroySandboxUnlocked(
         {
           session: onboardSession,
           registry,
+          forceLocal: normalized.force === true,
           ...(retireRemovedImmutabilityState
             ? {
                 retireRemovedImmutabilityState: () => {

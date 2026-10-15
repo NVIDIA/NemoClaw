@@ -551,7 +551,7 @@ function releaseSupersededOllamaModel(
 ): void {
   // A reselection retry left the recorded route untouched, so the sandbox
   // still owns its model.
-  if (!previous || result.retry) return;
+  if (!previous || result.retry || result.stagedNativeLocalRecreation) return;
   let authorityRefusal: unknown;
   let cleanupWarning: string | null = null;
   let attemptedModels: readonly string[] = [];
@@ -1186,6 +1186,7 @@ export function createSetupInference(
           | undefined;
         let hostLocalInferenceGatewayPortAuthority: number | undefined;
         let hostLocalInferenceRuntimeProviderId: string | undefined;
+        let nativeLocalRecreationSource: SandboxEntry | undefined;
         let nativeLocalProviderAttachment: NativeLocalProviderAttachment | undefined;
         let nativeHostedEndpoint: string | undefined;
         let nativeHostedCredentialEnv: string | undefined;
@@ -1193,7 +1194,7 @@ export function createSetupInference(
         let retainedNativeHostedCredential = false;
         let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
-          if (routeReserved) return true;
+          if (routeReserved || nativeLocalRecreationSource) return true;
           // Local Ollama cleanup runs after this reservation; it must not unload
           // a model while its source route remains published.
           const publishedSource = options.deferPublishedRouteReservation
@@ -1291,7 +1292,15 @@ export function createSetupInference(
               usesNativeLocalInference(recorded.provider, recorded.endpointUrl) &&
               !normalizeNativeLocalProviderAttachment(recorded.nativeLocalProviderAttachment)
             ) {
-              throw new Error("Recreate this beta sandbox before using native local inference.");
+              if (
+                !options.recreatePublishedSandbox ||
+                !options.deferPublishedRouteReservation ||
+                !options.reservationSessionId ||
+                recorded.agent !== "langchain-deepagents-code"
+              ) {
+                throw new Error("Recreate this beta sandbox before using native local inference.");
+              }
+              nativeLocalRecreationSource = structuredClone(recorded);
             }
             const value = env?.[sourceCredentialEnv] ?? null;
             const hostReachableEndpoint =
@@ -1835,6 +1844,15 @@ export function createSetupInference(
           }
           revalidateSandboxIdentity?.("report successful inference provider setup");
           shouldLogSuccessfulRoute = true;
+          if (nativeLocalRecreationSource && nativeLocalProviderAttachment) {
+            return {
+              ok: true,
+              stagedNativeLocalRecreation: {
+                source: nativeLocalRecreationSource,
+                attachment: nativeLocalProviderAttachment,
+              },
+            };
+          }
           return routeStager.successResult();
         } catch (error) {
           if (!hostLocalRoute || !hostLocalSelection) {
