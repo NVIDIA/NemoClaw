@@ -4,6 +4,7 @@
 import { nativeHostedAgentConfig } from "./inference/native-provider/agent-config.ts";
 import {
   nativeLocalCredentialReference,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
   NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN,
 } from "./inference/native-local/agent-config.ts";
 import {
@@ -89,11 +90,14 @@ export function applyHermesManagedRoute(
   route: HermesManagedRoute,
 ): asserts config is Record<string, unknown> & HermesManagedRouting {
   const nativeHosted = nativeHostedAgentConfig(route.upstreamProvider, route.baseUrl);
-  let apiKey = nativeHosted
-    ? `\${${nativeHosted.credentialEnv}}`
-    : managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
+  const nativeLocal = nativeLocalCredentialReference(route.upstreamProvider, route.baseUrl);
+  let apiKey = nativeLocal
+    ? `\${${NATIVE_LOCAL_CREDENTIAL_ENV}}`
+    : nativeHosted
+      ? `\${${nativeHosted.credentialEnv}}`
+      : managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
   if (route.nativeCredentialHandle !== undefined) {
-    if (nativeLocalCredentialReference(route.upstreamProvider, route.baseUrl)) {
+    if (nativeLocal) {
       const match = new RegExp(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN).exec(
         route.nativeCredentialHandle,
       );

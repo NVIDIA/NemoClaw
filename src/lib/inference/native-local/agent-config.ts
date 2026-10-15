@@ -54,3 +54,12 @@ export function nativeLocalCredentialReference(
 /** Endpoint-bound credentials require a supervisor-issued revision or stable identity. */
 export const NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN =
   "^openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_NEMOCLAW_LOCAL_INFERENCE_TOKEN$";
+
+// Validate the entire environment value before emitting anything. In particular,
+// grep alone would accept one valid line embedded in a multiline raw credential.
+export const NATIVE_LOCAL_SCOPED_HANDLE_READ_SCRIPT = [
+  'if [ -z "${NEMOCLAW_LOCAL_INFERENCE_TOKEN:-}" ]; then printf "%s\\n" NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING >&2; exit 75; fi',
+  'case "$NEMOCLAW_LOCAL_INFERENCE_TOKEN" in *[!a-zA-Z0-9:_]*) exit 2 ;; esac',
+  `printf "%s" "$NEMOCLAW_LOCAL_INFERENCE_TOKEN" | LC_ALL=C grep -Eq "${NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN}" || exit 2`,
+  'printf "%s" "$NEMOCLAW_LOCAL_INFERENCE_TOKEN"',
+].join("; ");

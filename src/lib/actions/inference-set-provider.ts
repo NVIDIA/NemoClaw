@@ -26,6 +26,10 @@ import {
   NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT,
 } from "../inference-credential";
 import { NVIDIA_HOSTED_LOGICAL_PROVIDER } from "../inference/native-nvidia/contract";
+import {
+  NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN,
+  NATIVE_LOCAL_SCOPED_HANDLE_READ_SCRIPT,
+} from "../inference/native-local/agent-config";
 import { matchesGatewayProviderBinding } from "../onboard/gateway-provider-metadata";
 import { assertHermesPortableCommandUnavailable } from "../onboard/experimental/portable-agent-lifecycle";
 import {
@@ -59,9 +63,42 @@ export async function readNativeNvidiaCredentialHandle(
     sleep: sleepInferenceSetRouteConvergence,
   },
 ): Promise<string> {
+  return readNativeCredentialHandle(sandboxName, gatewayName, {
+    script: NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT,
+    pattern: NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN,
+    providerLabel: "NVIDIA",
+    sleep: deps.sleep,
+  });
+}
+
+export async function readNativeLocalCredentialHandle(
+  sandboxName: string,
+  gatewayName: string,
+  deps: { sleep: (milliseconds: number) => Promise<void> } = {
+    sleep: sleepInferenceSetRouteConvergence,
+  },
+): Promise<string> {
+  return readNativeCredentialHandle(sandboxName, gatewayName, {
+    script: NATIVE_LOCAL_SCOPED_HANDLE_READ_SCRIPT,
+    pattern: new RegExp(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN),
+    providerLabel: "local inference",
+    sleep: deps.sleep,
+  });
+}
+
+async function readNativeCredentialHandle(
+  sandboxName: string,
+  gatewayName: string,
+  deps: {
+    script: string;
+    pattern: RegExp;
+    providerLabel: string;
+    sleep: (milliseconds: number) => Promise<void>;
+  },
+): Promise<string> {
   const failure = () =>
     new InferenceSetError(
-      `OpenShell did not expose a provider-bound NVIDIA credential handle to sandbox '${sandboxName}'. The inference route was not changed.`,
+      `OpenShell did not expose a provider-bound ${deps.providerLabel} credential handle to sandbox '${sandboxName}'. The inference route was not changed.`,
     );
   try {
     // OpenShell can confirm an attachment before a fresh exec receives its
@@ -81,7 +118,7 @@ export async function readNativeNvidiaCredentialHandle(
             "--",
             "sh",
             "-c",
-            buildSandboxExecMarkedCommand(NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT, marker),
+            buildSandboxExecMarkedCommand(deps.script, marker),
           ],
           {
             ignoreError: true,
@@ -106,8 +143,10 @@ export async function readNativeNvidiaCredentialHandle(
     const handle = extractSandboxExecCommandStdoutFromStreams(result.capture, result.marker);
     if (
       result.capture.status !== 0 ||
+      result.capture.error !== undefined ||
+      Boolean(result.capture.signal) ||
       handle === null ||
-      !NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN.test(handle)
+      deps.pattern.exec(handle)?.[0] !== handle
     ) {
       throw failure();
     }

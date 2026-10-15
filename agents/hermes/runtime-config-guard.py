@@ -3201,13 +3201,99 @@ def ensure_api_key(hermes_dir: str, hash_file: str, mode: str) -> None:
     print("minted=1" if minted else "updated=1")
 
 
+def _refresh_native_local_config(hermes_dir: str, hash_file: str, mode: str) -> None:
+    """Materialize only the managed local route from a fresh supervisor env.
+
+    An internal gateway relaunch must not call this: its parent environment can
+    predate a host model switch that already wrote a newer issued reference.
+    """
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    text, snapshot = _read_text(config_path, MAX_CONFIG_INPUT_BYTES)
+    try:
+        config = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise UnsafePathError("Hermes configuration is not valid YAML") from exc
+    if not isinstance(config, dict):
+        raise UnsafePathError("Hermes configuration must be a mapping")
+    upstream = config.get("_nemoclaw_upstream", {})
+    model = config.get("model", {})
+    if not isinstance(upstream, dict) or not isinstance(model, dict):
+        return
+    provider = upstream.get("provider")
+    if provider not in (
+        "ollama-local",
+        "vllm-local",
+        "llama-cpp-local",
+        "compatible-endpoint",
+    ):
+        return
+    env_key = "NEMOCLAW_LOCAL_INFERENCE_TOKEN"
+    template = "${" + env_key + "}"
+    current = model.get("api_key")
+    # Shared inference routes retain their proxy sentinel. Only the native
+    # route emitted by the managed policy owner consumes this runtime value.
+    if not isinstance(current, str) or (
+        current != template
+        and not (
+            current.startswith(SCOPED_PLACEHOLDER_PREFIX) and current.endswith(env_key)
+        )
+    ):
+        return
+    reference_pattern = rf"openshell:resolve:env:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{env_key}"
+    reference = os.environ.get(env_key, "")
+    if not re.fullmatch(reference_pattern, reference):
+        raise UnsafePathError(
+            "Hermes native local route requires a provider-bound credential handle"
+        )
+    providers = config.get("providers", {})
+    custom = config.get("custom_providers", [])
+    managed = providers.get(provider) if isinstance(providers, dict) else None
+    matches = (
+        [entry for entry in custom if isinstance(entry, dict) and entry.get("name") == provider]
+        if isinstance(custom, list)
+        else []
+    )
+    if (
+        upstream.get("provider_key") != provider
+        or model.get("provider") != "custom"
+        or not isinstance(managed, dict)
+        or len(matches) != 1
+        or managed.get("api_key") != current
+        or matches[0].get("api_key") != current
+        or managed.get("api") != model.get("base_url")
+        or matches[0].get("base_url") != model.get("base_url")
+        or (current != template and not re.fullmatch(reference_pattern, current))
+    ):
+        raise UnsafePathError(
+            "Hermes native local managed credential slots are inconsistent"
+        )
+    if current == reference:
+        return
+    # YAML aliases can share these mappings with unrelated providers or MCP
+    # configuration. Replace only the owned slots, never mutate shared objects.
+    config["model"] = {**model, "api_key": reference}
+    config["providers"] = {**providers, provider: {**managed, "api_key": reference}}
+    config["custom_providers"] = [
+        {**entry, "api_key": reference} if entry is matches[0] else entry
+        for entry in custom
+    ]
+    updated_text = yaml.safe_dump(config, sort_keys=False)
+    _validate_hermes_config_candidate(updated_text.encode("utf-8"))
+    _write_existing(config_path, updated_text, snapshot)
+    refresh_hashes(hermes_dir, hash_file, mode)
+    print("[config] Refreshed Hermes native local credential reference", file=sys.stderr)
+
+
 def provider_placeholders(
     hermes_dir: str,
     hash_file: str,
     mode: str,
     runtime_plan_path: str | None,
     boundary_validator_path: str | None,
+    refresh_native_local: bool = False,
 ) -> None:
+    if refresh_native_local:
+        _refresh_native_local_config(hermes_dir, hash_file, mode)
     env_path = os.path.join(hermes_dir, ".env")
     if not os.path.exists(env_path):
         return
@@ -3310,12 +3396,15 @@ def main() -> int:
     parser.add_argument("--expected-config-sha256", default="")
     parser.add_argument("--lock-token", default="")
     parser.add_argument("--startup-owner", action="store_true")
+    parser.add_argument("--refresh-native-local", action="store_true")
     parser.add_argument("--mcp-state-exit-code", action="store_true")
     args = parser.parse_args()
 
     previous_alarm_handler = signal.signal(signal.SIGALRM, _deadline_expired)
     signal.alarm(GUARD_DEADLINE_SECONDS)
     try:
+        if args.refresh_native_local and args.action != "provider-placeholders":
+            raise UnsafePathError("--refresh-native-local requires provider-placeholders")
         if args.mcp_state_exit_code and args.action != "inspect-mcp-integrity":
             raise UnsafePathError(
                 "--mcp-state-exit-code requires inspect-mcp-integrity"
@@ -3372,6 +3461,7 @@ def main() -> int:
                 args.mode,
                 args.runtime_plan,
                 args.boundary_validator,
+                args.refresh_native_local,
             )
         elif args.action == "publish-startup-ready":
             publish_startup_ready()
