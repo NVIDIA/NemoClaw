@@ -220,10 +220,10 @@ describe("declarative llama.cpp server image", () => {
     expect(manifest.spec?.runtime?.gid).toBeGreaterThan(0);
     expect(manifest.spec?.build?.requestGuardToolchain).toEqual({
       archives: {
-        amd64: "sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89",
-        arm64: "sha256:d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e",
+        amd64: "sha256:42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d",
+        arm64: "sha256:4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052",
       },
-      version: "1.26.6",
+      version: "1.26.9",
     });
   });
 
@@ -235,7 +235,7 @@ describe("declarative llama.cpp server image", () => {
         runner: "ubuntu-24.04",
       },
       {
-        cudaArchitectures: "121a-real",
+        cudaArchitectures: "103-real;120-real;121a-real",
         platform: "linux/arm64",
         runner: "ubuntu-24.04-arm",
       },
@@ -264,7 +264,7 @@ describe("declarative llama.cpp server image", () => {
     expect(JSON.parse(output.publication_qualification_plan)).toMatchObject({
       contractVersion: 1,
       imageBuild: {
-        platform: { cudaArchitectures: "121a-real", platform: "linux/arm64" },
+        platform: { cudaArchitectures: "103-real;120-real;121a-real", platform: "linux/arm64" },
         source: { revision: manifest.spec?.source?.revision },
       },
       qualification: {
@@ -272,8 +272,8 @@ describe("declarative llama.cpp server image", () => {
           execution: "enabled",
           image: {
             reference:
-              "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:3648441718cdd6c2bc4c8fe39fa0d04d3931656b2063af34215cc51841cd0d5e",
-            sourceRevision: "eb1d2f5700393892f227ac9fd56f485fc6718bce",
+              "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:473643565f557517f4139b0cf6ac552160f555cfd8f6241ef221144c25e9ed4d",
+            sourceRevision: "95d6505265ba1f2cb05355f83786353e654de096",
           },
           probes: [
             "synchronous-chat",
@@ -391,12 +391,12 @@ describe("declarative llama.cpp server image", () => {
     ],
     [
       "an unreviewed request guard Go version",
-      manifestSource.replace("version: 1.26.6", "version: 1.26.5"),
+      manifestSource.replace("version: 1.26.9", "version: 1.26.6"),
     ],
     [
       "a substituted request guard Go archive",
       manifestSource.replace(
-        "sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89",
+        "sha256:42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d",
         `sha256:${"0".repeat(64)}`,
       ),
     ],

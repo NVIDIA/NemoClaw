@@ -38,6 +38,7 @@ export interface DockerFixture {
   readonly driftEntrypoint: () => void;
   readonly dropTmpfs: () => void;
   readonly driftGpuRequest: (driver: string | undefined, count: number) => void;
+  readonly driftGpuDeviceIds: (ids: readonly string[]) => void;
   readonly driftExtraDeviceAuthority: (kind: "cap-add" | "legacy-device") => void;
   readonly failInspectWithDaemonError: () => void;
   readonly setAbsentNetworkInspectError: (value: string) => void;
@@ -91,6 +92,7 @@ export function createDockerFixture(
   };
   let gpuDriver: string | undefined = "nvidia";
   let gpuCount = 1;
+  let gpuDeviceIds: readonly string[] | null = null;
   let capAdd: null | string[] = null;
   let legacyDevices: null | object[] = null;
   let inspectDaemonError = false;
@@ -139,7 +141,7 @@ export function createDockerFixture(
           {
             ...(gpuDriver === undefined ? {} : { Driver: gpuDriver }),
             Count: gpuCount,
-            DeviceIDs: null,
+            DeviceIDs: gpuDeviceIds,
             Capabilities: [["gpu"]],
             Options: {},
           },
@@ -298,6 +300,11 @@ export function createDockerFixture(
             )
             .filter(([name, value]) => Boolean(name && value)),
         );
+        const requestedGpus = args[args.indexOf("--gpus") + 1] ?? "";
+        if (requestedGpus.startsWith("driver=nvidia,device=")) {
+          gpuCount = 0;
+          gpuDeviceIds = [requestedGpus.slice("driver=nvidia,device=".length)];
+        }
         container = {
           labels,
           running: false,
@@ -385,6 +392,7 @@ export function createDockerFixture(
       gpuDriver = driver;
       gpuCount = count;
     },
+    driftGpuDeviceIds: (ids) => (gpuDeviceIds = [...ids]),
     driftExtraDeviceAuthority: (kind) => {
       kind === "cap-add"
         ? (capAdd = ["SYS_ADMIN"])

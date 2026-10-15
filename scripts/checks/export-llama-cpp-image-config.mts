@@ -682,18 +682,18 @@ export function loadLlamaCppImageConfig(
   const requestGuardGoVersion = requiredString(
     requestGuardToolchain?.version,
     "request guard Go version",
-    /^1\.26\.6$/u,
+    /^1\.26\.9$/u,
   );
   const requestGuardGoArchives = {
     amd64: requiredString(
       requestGuardToolchainArchives?.amd64,
       "amd64 request guard Go archive SHA-256",
-      /^sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89$/u,
+      /^sha256:42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d$/u,
     ),
     arm64: requiredString(
       requestGuardToolchainArchives?.arm64,
       "arm64 request guard Go archive SHA-256",
-      /^sha256:d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e$/u,
+      /^sha256:4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052$/u,
     ),
   };
   if (
@@ -759,6 +759,10 @@ export function loadLlamaCppImageConfig(
         platform: arm64.platform,
       },
       repository: publicationRepository,
+      requestGuardToolchain: {
+        archiveSha256: requestGuardGoArchives.arm64,
+        version: requestGuardGoVersion,
+      },
       runtime: {
         gid: spec?.runtime?.gid,
         port: spec?.runtime?.port,

@@ -221,6 +221,7 @@ export interface SandboxStateOptions<
   model: string;
   provider: string;
   hostLocalInferenceRouteOnly?: boolean;
+  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
   endpointUrl: string | null;
   compatibleEndpointReasoning: string | null;
   credentialEnv: string | null;
@@ -1187,7 +1188,10 @@ class SandboxStateFlow<
     return { ...state, session };
   }
 
-  private assertGatewayRouteCompatible(sandboxName: string | null): asserts sandboxName is string {
+  private assertGatewayRouteCompatible(
+    sandboxName: string | null,
+    excludePublishedRecreateSource = false,
+  ): asserts sandboxName is string {
     const targetEntry = sandboxName ? this.deps.getSandboxRegistryEntry(sandboxName) : null;
     if (!sandboxName || !targetEntry) {
       this.failGatewayRouteCheck(
@@ -1229,7 +1233,13 @@ class SandboxStateFlow<
     const selection = this.sandboxCreateSelection();
     const compatibility = this.deps.checkGatewayRouteCompatibility({
       gatewayName: this.options.gatewayName,
-      sandboxName: null,
+      // A deferred route still belongs to the published source until backup
+      // succeeds. Exclude only that source while checking the replacement.
+      sandboxName: this.publishedRecreateSourceForRouteCheck(
+        sandboxName,
+        targetEntry,
+        excludePublishedRecreateSource,
+      ),
       route: {
         provider: selection.provider,
         model: selection.model,
@@ -1242,6 +1252,16 @@ class SandboxStateFlow<
     // The target registry row is the route reservation this transaction owns.
     // A changed target is a lost-reservation race, not an advisory peer drift.
     this.failGatewayRouteCheck(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+  }
+
+  private publishedRecreateSourceForRouteCheck(
+    sandboxName: string,
+    targetEntry: SandboxEntry,
+    excludePublishedRecreateSource: boolean,
+  ): string | null {
+    return excludePublishedRecreateSource && targetEntry.pendingRouteReservation !== true
+      ? sandboxName
+      : null;
   }
 
   private failGatewayRouteCheck(message: string): never {
@@ -1286,6 +1306,39 @@ class SandboxStateFlow<
       this.deps.reserveSandboxInferenceRoute,
       this.deps.cliName(),
     );
+  }
+
+  private prepareCreateRouteReservation(
+    sandboxName: string,
+    createIntent: CompleteSandboxCreateIntent,
+    model: string,
+    provider: string,
+  ): CompleteSandboxCreateIntent {
+    const currentEntry = this.deps.getSandboxRegistryEntry(sandboxName);
+    if (
+      this.options.deferredInferenceRoute &&
+      (currentEntry === null || currentEntry.pendingRouteReservation === true)
+    ) {
+      throw new Error(
+        `Sandbox '${sandboxName}' route ownership changed before its backed-up inference route could be applied. Retry onboarding.`,
+      );
+    }
+    if (currentEntry === null || currentEntry.pendingRouteReservation === true) {
+      this.reserveCreateRouteForSession(sandboxName, model, provider);
+      return createIntent;
+    }
+    return {
+      ...createIntent,
+      reservePublishedRouteAfterBackup: async () => {
+        if (this.options.deferredInferenceRoute) {
+          await this.options.deferredInferenceRoute(() =>
+            this.reserveCreateRouteForSession(sandboxName, model, provider),
+          );
+        } else {
+          this.reserveCreateRouteForSession(sandboxName, model, provider);
+        }
+      },
+    };
   }
 
   private finalizeInferenceRouteReservation(
@@ -1926,6 +1979,8 @@ class SandboxStateFlow<
             !this.options.fromDockerfile,
           agentName: (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
           provider: selection.provider,
+          model: selection.model,
+          deferredN1xManagedVllmPreviewIntent: this.options.deferredN1xManagedVllmPreviewIntent,
           entry: registeredEntry,
           sessionId: state.session?.sessionId,
           env: this.options.env,
@@ -2324,7 +2379,12 @@ class SandboxStateFlow<
       this.assertProviderlessApfCreatePlan(createIntent);
       const providerlessApf = this.isProviderlessApfCreate();
       const { model: createModel, provider: createProvider } = this.sandboxCreateSelection();
-      this.assertGatewayRouteCompatible(requestedSandboxName);
+      // Fresh, non-forced selection drift resolves recreation inside createSandbox.
+      // The staged route already proves this source must remain published until backup.
+      this.assertGatewayRouteCompatible(
+        requestedSandboxName,
+        Boolean(this.options.deferredInferenceRoute),
+      );
       await this.assertCheckpointBindingsStillLive(state);
       this.assertCheckpointCreateInputsStillMatch(
         state,
@@ -2352,7 +2412,12 @@ class SandboxStateFlow<
 
       let sandboxName: string;
       try {
-        this.reserveCreateRouteForSession(requestedSandboxName, createModel, createProvider);
+        const createIntentWithReservation = this.prepareCreateRouteReservation(
+          requestedSandboxName,
+          effectiveCreateIntent,
+          createModel,
+          createProvider,
+        );
         sandboxName = await withSandboxPhaseTrace(
           requestedSandboxName,
           createProvider,
@@ -2391,7 +2456,7 @@ class SandboxStateFlow<
                     }),
                   }
                 : null,
-              effectiveCreateIntent,
+              createIntentWithReservation,
               activateVerifiedCredentialProviders
                 ? async (
                     verifiedContext: import("../../types").VerifiedSandboxCreateEffectsContext,

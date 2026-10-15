@@ -9,6 +9,7 @@ import { isDeepStrictEqual } from "node:util";
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { resolveRegisteredAgentDefinition } from "../../agent/runtime";
+import { DEEP_AGENTS_CODE_SANDBOX_USER } from "../../agent/deep-agents-code-runtime-identity";
 import {
   createCliOpenShellSandboxLifecycleFromRunner,
   createCliOpenShellSandboxLookupFromRunner,
@@ -67,6 +68,23 @@ import {
 
 export function redactDestroyError(error: unknown): string {
   return redactFull(error instanceof Error ? error.message : String(error));
+}
+
+export function stopSandboxInferenceResources(
+  sandboxName: string,
+  sandbox: SandboxEntry | null,
+): void {
+  const nim = require("../../inference/nim") as {
+    stopNimContainer: (name: string, opts?: { silent?: boolean }) => void;
+    stopNimContainerByName: (name: string) => void;
+  };
+  if (sandbox?.nimContainer) {
+    console.log(`  Stopping NIM for '${sandboxName}'...`);
+    nim.stopNimContainerByName(sandbox.nimContainer);
+  } else {
+    // Older registry entries may not record the convention-named container.
+    nim.stopNimContainer(sandboxName, { silent: true });
+  }
 }
 
 const SANDBOX_NATIVE_ROOT = "/sandbox";
@@ -141,6 +159,7 @@ export function wipeAgentNativeHome(
     root: string,
     protectedPaths: readonly string[],
   ) => RuntimeProviderStoppedSandboxStateCleanupResult,
+  runAsSandboxUser?: (command: readonly string[]) => RuntimeProviderPrivilegedSandboxCommandResult,
 ): void {
   if (!COMPLETE_NATIVE_HOME_AGENTS.has(agentName)) return;
   const agent = resolveRegisteredAgentDefinition({ agent: agentName });
@@ -234,6 +253,22 @@ export function wipeAgentNativeHome(
     } catch (error) {
       if (clearStoppedNativeHome?.(nativeRoot, protectedEntries).cleared) return;
       throw error;
+    }
+    // Deep Agents' native tree contains both sandbox-owned state and root-owned
+    // managed files. Rootless Podman cannot always remove the former as root.
+    // Complete the same validated wipe as the image's pinned sandbox user.
+    if (
+      agentName === "langchain-deepagents-code" &&
+      result.status === 1 &&
+      !result.error &&
+      runAsSandboxUser
+    ) {
+      result = runAsSandboxUser(command);
+      if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+        throw new Error(
+          `${agent.displayName} native-home cleanup timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds; its result is unknown.`,
+        );
+      }
     }
   }
   if (
@@ -781,6 +816,9 @@ export async function executeSandboxDestroy({
               protectedPaths: readonly string[],
             ) => RuntimeProviderStoppedSandboxStateCleanupResult)
           | undefined;
+        let runAsSandboxUser:
+          | ((command: readonly string[]) => RuntimeProviderPrivilegedSandboxCommandResult)
+          | undefined;
         if (runtimeProvider?.lifecycle.supported === true) {
           const control = runtimeProvider.lifecycle.privilegedSandboxControl;
           runPrivileged = (command) =>
@@ -796,6 +834,22 @@ export async function executeSandboxDestroy({
                 ? { expectedResourceHandle: expectedRuntimeProviderIdentity.resourceHandle }
                 : {}),
             });
+          if (sandbox.agent === "langchain-deepagents-code" && control.executeAsSandboxUser) {
+            runAsSandboxUser = (command) =>
+              control.executeAsSandboxUser!({
+                sandbox,
+                sandboxName,
+                registeredSandboxNames: [...registeredSandboxNames],
+                sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER,
+                command,
+                sanitizeEnvironment: true,
+                timeoutMs: SANDBOX_DESTROY_TIMEOUT_MS,
+                maxOutputBytes: 1024 * 1024,
+                ...(expectedRuntimeProviderIdentity?.resourceHandle
+                  ? { expectedResourceHandle: expectedRuntimeProviderIdentity.resourceHandle }
+                  : {}),
+              });
+          }
           if (control.clearStoppedNativeHome) {
             clearStoppedNativeHome = (root, protectedPaths) =>
               control.clearStoppedNativeHome!({
@@ -818,6 +872,7 @@ export async function executeSandboxDestroy({
           sandbox.hostMounts,
           runPrivileged,
           clearStoppedNativeHome,
+          runAsSandboxUser,
         );
       } catch (error) {
         const mcpRecoveryFailure = await restoreMcpForAbort();

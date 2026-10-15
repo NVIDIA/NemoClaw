@@ -28,6 +28,7 @@ export type SetupInferenceResult =
       ok: true;
       retry?: undefined;
       nativeInference?: { endpointUrl: string; credentialEnv: string };
+      deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
     }
   | { retry: "selection" };
 
@@ -220,8 +221,11 @@ export type HermesDeps = CommonDeps &
     };
     getHermesToolGatewayBroker: () => {
       getHermesToolGatewayProviderName(sandboxName: string): string;
+      isHermesToolGatewayRefreshProviderRegistered(
+        sandboxName: string,
+        runOpenshell: any,
+      ): Promise<boolean>;
     };
-    providerExistsInGateway: (name: string) => Promise<boolean>;
     normalizeHermesAuthMethod: (m: HermesAuthMethod | string | null) => HermesAuthMethod | null;
     resolveHermesNousApiKey: () => any;
     checkHermesProviderStoreReachable: (

@@ -111,6 +111,7 @@ it.each(["jobs", "targets"] as const)(
     expect(plan.testMatrix).toEqual([]);
     expect(plan.runtimeProvidersByJob).toEqual({ "dgx-station-express": ["none"] });
     expect(plan.explicitOnlyJobs).toEqual([
+      "llama-cpp-dgx-spark-qualification",
       "staging-brev-launchable-identity",
       "external-gateway-health",
       "mcp-bridge-dev",

@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText } from "../fixtures/clients/command.ts";
+import { outputContainsSandbox, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -204,6 +204,7 @@ async function cleanupSandbox(
   }
 
   const cleanupEvidence: string[] = [];
+  let deletionConfirmedAbsent = false;
   try {
     const destroy = await host.command(
       process.execPath,
@@ -228,6 +229,9 @@ async function cleanupSandbox(
       timeoutMs: 60_000,
     });
     cleanupEvidence.push(probeSummary("openshell sandbox delete", deletion));
+    deletionConfirmedAbsent =
+      deletion.exitCode !== 0 &&
+      /\bmessage:\s*["']sandbox not found["']/i.test(resultText(deletion));
   } catch (error) {
     cleanupEvidence.push(
       `openshell sandbox delete threw: ${error instanceof Error ? error.message : String(error)}`,
@@ -235,16 +239,17 @@ async function cleanupSandbox(
   }
 
   clearOnboardState();
+  if (deletionConfirmedAbsent) return;
 
-  const status = await sandbox.status(sandboxName, {
-    artifactName: `cleanup-openshell-sandbox-status-${sandboxName}`,
+  const inventory = await sandbox.list({
+    artifactName: `cleanup-openshell-sandbox-list-${sandboxName}`,
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 30_000,
   });
-  cleanupEvidence.push(probeSummary("openshell sandbox status", status));
-  if (status.exitCode === 0) {
+  cleanupEvidence.push(probeSummary("openshell sandbox list", inventory));
+  if (inventory.exitCode !== 0 || outputContainsSandbox(inventory, sandboxName)) {
     throw new Error(
-      `sandbox '${sandboxName}' still exists after strict cleanup\n${cleanupEvidence.join("\n")}`,
+      `sandbox '${sandboxName}' absence is unverified after strict cleanup\n${cleanupEvidence.join("\n")}`,
     );
   }
 }

@@ -139,7 +139,7 @@ For Windows WSL N1x, also confirm these requirements:
 For Windows WSL Station GB300, also confirm these requirements:
 
 - Use Arm64 WSL on a Windows product identified as Station GB300.
-- Require the Docker Desktop proof to reconcile every reported GPU and include an `NVIDIA GB300` device.
+- Require the Docker Desktop proof to reconcile every reported GPU and identify exactly one proved `NVIDIA GB300` GPU UUID.
 - Use the default local Docker Desktop context with at least 48,000 MiB of Docker memory.
 - Unset `DOCKER_HOST` and select Docker's `default` context before you select the managed recipe.
 - Provide at least 48,000 MiB of aggregate GPU memory.
@@ -343,8 +343,10 @@ The installed runtime remains bound to the repository YAML authority recorded du
 Do not edit the ownership, receipt, or recipe-digest state to force a migration.
 
 If an updated NemoClaw release changes that authority, resume fails closed and preserves the existing state.
-NemoClaw does not currently define a managed llama.cpp migration procedure for that case.
-Follow release-specific migration guidance when it becomes available.
+For an earlier Station GB300 runtime with no recorded GPU UUID, NemoClaw also refuses startup because the old one-GPU request can select another card.
+After a qualified GB300 image is pinned in the recipe, save any sandbox files you need, run `$$nemoclaw <sandbox-name> destroy --yes`, confirm the sandbox is absent with `$$nemoclaw list`, and onboard again.
+The destroy command verifies and removes the exact owned runtime; do not edit the owner file or remove a same-name Docker resource by hand.
+Other managed llama.cpp recipe changes need release-specific migration guidance.
 
 ## Remove the Managed Runtime
 

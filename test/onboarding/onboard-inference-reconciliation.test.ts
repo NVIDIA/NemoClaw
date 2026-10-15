@@ -538,14 +538,22 @@ const { onboard } = require(${onboardPath});
         "hermes-resume",
         "resume inference persists the canonical sandbox identity before sandbox creation",
       );
-      assert.ok(
-        payload.registryUpdates.some(
-          (call) =>
-            call.name === "hermes-resume" &&
-            call.updates.provider === "hermes-provider" &&
-            call.updates.model === "moonshotai/kimi-k2.6",
-        ),
-        "Hermes setup should reconcile inference against the resolved sandbox name",
+      assert.deepEqual(
+        payload.registryUpdates.map(({ name, updates }) => ({
+          name,
+          provider: updates.provider,
+          model: updates.model,
+          endpointUrl: updates.endpointUrl,
+        })),
+        [
+          {
+            name: "hermes-resume",
+            provider: "hermes-provider",
+            model: "moonshotai/kimi-k2.6",
+            endpointUrl: "https://8.8.8.8/v1",
+          },
+        ],
+        "a non-staged Hermes route must keep the registry aligned with the immediate gateway update",
       );
     },
   );

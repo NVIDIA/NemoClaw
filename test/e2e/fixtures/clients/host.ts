@@ -134,6 +134,33 @@ export class HostCliClient {
     return result;
   }
 
+  async recordSandboxContainerDiscoveryOnFailure(
+    sandboxName: string,
+    exitCode: number | null,
+    redactionValues: string[] = [],
+  ): Promise<void> {
+    if (exitCode === 0 || !/^[a-z][a-z0-9-]*$/u.test(sandboxName)) return;
+    const format = "{{.ID}}\t{{.Names}}\t{{.Status}}";
+    const filters = [
+      ["label", `label=openshell.ai/sandbox-name=${sandboxName}`],
+      ["name", `name=${sandboxName}`],
+    ] as const;
+    await Promise.allSettled(
+      filters.map(async ([kind, filter]) => {
+        await this.command(
+          "docker",
+          ["ps", "--all", "--no-trunc", "--filter", filter, "--format", format],
+          {
+            artifactName: `sandbox-container-discovery-${kind}`,
+            captureLimitBytes: 8_192,
+            redactionValues,
+            timeoutMs: 5_000,
+          },
+        );
+      }),
+    );
+  }
+
   async isCommandAvailable(command: string, options: ShellProbeRunOptions = {}): Promise<boolean> {
     const result = await this.command(
       "bash",

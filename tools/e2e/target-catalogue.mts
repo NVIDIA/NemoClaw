@@ -20,6 +20,7 @@ import {
 } from "./gateway-runtime.mts";
 import { FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES } from "./full-e2e-timeout-contract.mts";
 import {
+  ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES,
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
@@ -892,6 +893,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     runnerKey: "hermes-discord",
     hostPreparation: "hermes-swap",
     runnerComparison: true,
+    owningPaths: ["test/e2e/fixtures/hermes-config-export-live.ts"],
     environment: {
       ...hostedInference,
       NEMOCLAW_AGENT: "hermes",
@@ -1004,8 +1006,16 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   ...HOSTED_PROVIDER_SMOKE_CASES.map((selected) =>
     dockerOnlyTarget(`hosted-inference-${selected.selector}`, {
-      displayName: `Inference: completes a native ${selected.label} agent request`,
-      agentRuntime: selected.selector === "hermes" ? "hermes" : "openclaw",
+      displayName:
+        selected.selector === "openrouter"
+          ? "Inference: completes native OpenRouter agent requests"
+          : `Inference: completes a native ${selected.label} agent request`,
+      agentRuntime:
+        selected.selector === "hermes"
+          ? "hermes"
+          : selected.selector === "openrouter"
+            ? "openclaw + langchain-deepagents-code"
+            : "openclaw",
       prAdvisorSelectable: true,
       owningPaths: [
         "test/e2e/live/inference-routing-credential-scan.ts",
@@ -1014,13 +1024,20 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
           ? ["src/lib/inference/native-provider/", "src/lib/onboard/setup-inference.ts"]
           : []),
         ...(selected.selector === "hermes" ? ["src/lib/hermes-provider-auth.ts"] : []),
+        ...(selected.selector === "openrouter"
+          ? [
+              "agents/langchain-deepagents-code/managed-dcode-runtime.py",
+              "agents/langchain-deepagents-code/generate-config.ts",
+              "src/lib/inference/managed-dcode/",
+            ]
+          : []),
       ],
       environmentOrInferenceEndpoint: `Ubuntu; ${selected.label} hosted inference`,
       profile: "hosted-inference",
       releaseRequired: false,
       testFile: "test/e2e/live/inference-routing-provider-smoke.test.ts",
-      selector: `^${selected.id}`,
-      timeoutMinutes: 30,
+      selector: selected.selector === "openrouter" ? selected.id : `^${selected.id}`,
+      timeoutMinutes: selected.selector === "openrouter" ? 45 : 30,
       installMode: "none",
       restoreCli: true,
       exposeCliBin: true,
@@ -1148,10 +1165,11 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu Docker host; local onboarding fixtures",
     profile: "standard",
-    timeoutMinutes: 75,
+    timeoutMinutes: ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES,
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
     environment: { ...nonInteractive, NEMOCLAW_SANDBOX_NAME: "e2e-repair" },
   }),
   managedRuntimeTarget("onboard-policy-preset-sequencing", {
@@ -1241,6 +1259,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/onboard/machine/handlers/sandbox.ts",
       "src/lib/onboard/openclaw-setup.ts",
       "src/lib/onboard/openclaw/initial-inference-route.ts",
+      "src/lib/onboard/sandbox-prebuild.ts",
       "src/lib/onboard/sandbox-recreate-transaction.ts",
       "test/e2e/live/openclaw-inference-switch-helpers.ts",
       "test/e2e/live/public-nvidia-switch-provider.ts",

@@ -58,6 +58,8 @@ describe("sandboxName command hardening in onboard.js", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dns-argv-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "create-sandbox-dns-argv.cjs");
+    const customDockerfilePath = path.join(tmpDir, "custom.Dockerfile");
+    fs.copyFileSync(path.join(repoRoot, "Dockerfile"), customDockerfilePath);
     const sourceModule = (...segments: string[]) =>
       JSON.stringify(path.join(repoRoot, "src", "lib", ...segments));
     const onboardPath = sourceModule("onboard.ts");
@@ -171,6 +173,13 @@ sandboxCreateStream.streamSandboxCreate = async (...args) => {
     sawProgress: true,
   };
 };
+const prebuild = require(${sourceModule("onboard", "sandbox-prebuild.ts")});
+prebuild.prebuildSandboxImageIfEligible = async () => ({
+  createArgs: [],
+  sourceReference: "nemoclaw-sandbox-local:fixture-dns",
+  imageRef: "nemoclaw-sandbox-local:fixture-dns",
+  imageId: "sha256:" + "a".repeat(64),
+});
 const { createSandbox } = require(${onboardPath});
 (async () => {
 try {
@@ -189,7 +198,7 @@ try {
         "my-assistant",
         null,
         null,
-        null,
+        ${JSON.stringify(customDockerfilePath)},
         null,
         null,
         null,

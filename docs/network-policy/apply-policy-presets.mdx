@@ -147,6 +147,8 @@ $$nemoclaw my-assistant policy list
 $$nemoclaw my-assistant policy remove github --yes
 ```
 
+During verification, NemoClaw ignores provider-composed `_provider_*` entries that OpenShell adds to policy readback.
+It rejects the removal if another operator-owned rule is missing or changed.
 When NemoClaw cannot read the OpenShell policy, it refuses the mutation rather than falling back to local policy state.
 
 ## Understand Persistence

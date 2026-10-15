@@ -1,11 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { redactString } from "../fixtures/redaction.ts";
+import { patchOpenClawInferenceConfig } from "../../../src/lib/actions/inference-set.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 
 import { startTestProgress } from "../fixtures/progress.ts";
 
 import {
+  getRouteOutput,
+  readOpenClawConfig,
   agentReplyContainsToken,
   anthropicToolCount,
   classifyExhaustedPostSwitchEvidence,
@@ -152,6 +161,13 @@ describe("openclaw-inference-switch post-switch retry classification", () => {
 });
 
 describe("openclaw-inference-switch agent reply matching", () => {
+  it.each([
+    { reply: "PONG", accepted: true },
+    { reply: "ok", accepted: false },
+  ])("requires the baseline reply token ($reply)", ({ reply, accepted }) => {
+    expect(agentReplyContainsToken(reply, "PONG")).toBe(accepted);
+  });
+
   it("tolerates wrapped PONG", () => {
     expect(agentReplyContainsToken("P\nO N G", "PONG")).toBe(true);
     expect(agentReplyContainsToken("wrapped: p o\nng", "PONG")).toBe(false);
@@ -291,3 +307,158 @@ describe("openclaw-inference-switch mock-Anthropic baseline", () => {
     expect(baseline.env.NEMOCLAW_ENDPOINT_URL).toBe("http://10.0.0.5:9000/v1");
   });
 });
+
+const disposables: Array<() => unknown> = [];
+afterEach(async () => {
+  for (const dispose of disposables.splice(0).reverse()) await dispose();
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
+
+it("requests structured route output instead of aligned terminal columns", async () => {
+  const command = vi.fn(async (_command: string, args: string[]) => ({
+    exitCode: 0,
+    stderr: "",
+    stdout: args.includes("--json")
+      ? JSON.stringify({ provider: "compatible-anthropic-endpoint", model: "mock-anthropic-model" })
+      : "Provider: compatible-anthropic-endpoint\nModel:    mock-anthropic-model\n",
+  }));
+  const result = await getRouteOutput({ command } as unknown as HostCliClient, {
+    env: { HOME: "/tmp/switch-test-home" },
+    timeoutMs: 1000,
+  });
+  expect(JSON.parse(result.stdout)).toEqual({
+    provider: "compatible-anthropic-endpoint",
+    model: "mock-anthropic-model",
+  });
+});
+
+async function probeOpenClawConfig(
+  sandbox: Parameters<typeof readOpenClawConfig>[0],
+  home: string,
+  expected: {
+    model: string;
+    inferenceApi: string;
+    artifactName: string;
+    nativeNvidia?: boolean;
+  },
+) {
+  const result = await readOpenClawConfig(sandbox, "switch-test", {
+    artifactName: expected.artifactName,
+    env: { HOME: home },
+    timeoutMs: 1000,
+    nativeNvidia: expected.nativeNvidia,
+  });
+  expect(result.exitCode).toBe(0);
+  const config = JSON.parse(result.stdout);
+  const providerKey = expected.inferenceApi === "anthropic-messages" ? "anthropic" : "inference";
+  const provider = config.models.providers[providerKey];
+  expect(config.agents.defaults.model.primary).toBe(`${providerKey}/${expected.model}`);
+  expect(provider.api).toBe(expected.inferenceApi);
+  expect(provider.apiKey).toBe(expected.nativeNvidia ? undefined : "unused");
+  const model = provider.models.find((entry: { id: string }) => entry.id === expected.model);
+  expect(
+    expected.inferenceApi === "anthropic-messages"
+      ? model.maxTokens > 0
+      : model.maxTokens === undefined,
+  ).toBe(true);
+}
+
+const scopedNativeHandle = "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY";
+
+function sandboxForOpenClawConfig(config: object, handle = scopedNativeHandle) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "switch-config-probe-"));
+  disposables.push(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const configPath = path.join(directory, "openclaw.json");
+  fs.writeFileSync(configPath, JSON.stringify(config));
+  return {
+    exec: vi.fn(async (_sandboxName: string, argv: string[]) => ({
+      exitCode: 0,
+      stdout: redactString(
+        execFileSync(
+          argv[0]!,
+          argv
+            .slice(1)
+            .map((arg) => arg.replaceAll("/sandbox/.openclaw/openclaw.json", configPath)),
+          {
+            encoding: "utf8",
+            env: { ...process.env, NVIDIA_INFERENCE_API_KEY: handle },
+            stdio: ["pipe", "pipe", "pipe"],
+          },
+        ),
+      ),
+      stderr: "",
+    })),
+  };
+}
+
+it("checks the actual switched native model budget with a materialized handle", async () => {
+  const model = "nvidia/nemotron-3-super-120b-a12b";
+  const config: any = {};
+  patchOpenClawInferenceConfig(config, "nvidia-prod", model, "openai-completions");
+  config.models.providers.inference.apiKey = scopedNativeHandle;
+  await probeOpenClawConfig(sandboxForOpenClawConfig(config) as never, "/tmp/switch-home", {
+    model,
+    inferenceApi: "openai-completions",
+    artifactName: "switched-native-config",
+    nativeNvidia: true,
+  });
+});
+
+it("checks the actual switched Anthropic model budget", async () => {
+  const model = "mock-anthropic-model";
+  const config = {};
+  patchOpenClawInferenceConfig(
+    config,
+    "compatible-anthropic-endpoint",
+    model,
+    "anthropic-messages",
+  );
+  await probeOpenClawConfig(sandboxForOpenClawConfig(config) as never, "/tmp/switch-home", {
+    model,
+    inferenceApi: "anthropic-messages",
+    artifactName: "switched-anthropic-config",
+  });
+});
+
+it.each([
+  "unused",
+  "nvapi-fixture-secret",
+  "native",
+  "${OTHER_API_KEY}",
+  "${NVIDIA_INFERENCE_API_KEY}",
+  "openshell:resolve:env:v2_NVIDIA_INFERENCE_API_KEY",
+  "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
+  null,
+])("rejects an incorrect native OpenClaw credential value after redaction: %s", async (value) => {
+  const model = "nvidia/nemotron-3-super-120b-a12b";
+  const config: any = {};
+  patchOpenClawInferenceConfig(config, "nvidia-prod", model, "openai-completions");
+  config.models.providers.inference.apiKey = value;
+  await expect(
+    probeOpenClawConfig(sandboxForOpenClawConfig(config) as never, "/tmp/switch-home", {
+      model,
+      inferenceApi: "openai-completions",
+      artifactName: "invalid-native-credential",
+      nativeNvidia: true,
+    }),
+  ).rejects.toThrow();
+});
+
+it.each(["", "nvapi-fixture-secret", "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY"])(
+  "rejects a missing or unscoped native handle even when config matches: %s",
+  async (handle) => {
+    const model = "nvidia/nemotron-3-super-120b-a12b";
+    const config: any = {};
+    patchOpenClawInferenceConfig(config, "nvidia-prod", model, "openai-completions");
+    config.models.providers.inference.apiKey = handle;
+    await expect(
+      probeOpenClawConfig(sandboxForOpenClawConfig(config, handle) as never, "/tmp/switch-home", {
+        model,
+        inferenceApi: "openai-completions",
+        artifactName: "invalid-native-handle",
+        nativeNvidia: true,
+      }),
+    ).rejects.toThrow();
+  },
+);

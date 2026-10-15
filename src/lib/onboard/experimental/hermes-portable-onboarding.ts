@@ -49,7 +49,11 @@ import {
   assertNoExplicitOpenShellGatewayEndpoint,
   assertNoOpenShellGatewayEndpointOverride,
 } from "../../openshell-gateway-endpoint-guard";
-import { isPortableExperimentalProfile } from "./portable-profile";
+import {
+  isPortableExperimentalProfile,
+  LOCAL_SANDBOX_IMAGE_REPO,
+  PORTABLE_LOCAL_REGISTRY,
+} from "./portable-profile";
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
 import { portableLifecycleLockOptions } from "./portable-lifecycle-lock";
 export { defaultPortableDemoStateDir as defaultHermesPortableStateDir };
@@ -109,10 +113,10 @@ import {
   type HermesPortableReceiptSnapshot,
 } from "./hermes-portable-receipt";
 import {
+  buildHermesPortableSandboxImage,
   createHermesPortableBuildContextPlan,
   type HermesPortableBuildContextSettings,
   type HermesPortableBuildContextPlan,
-  type HermesPortableStagedBuildContext,
 } from "./hermes-portable-build-context";
 
 export type HermesPortableSandboxObservation =
@@ -174,6 +178,7 @@ export interface HermesPortableOnboardingDeps<T> {
     createRequest: CreateOpenShellSandboxRequest,
     effectivePolicySourcePath: string,
   ) => Promise<T>;
+  readonly imageAvailable?: (reference: string) => Promise<boolean>;
   readonly readRegistry: () => SandboxEntry | null;
   readonly revalidatePendingCreateRegistry?: () => SandboxEntry;
   readonly compareAndSetRegistryGatewayPort: (
@@ -606,16 +611,44 @@ function createHermesPortableCreateIntentSha256(
 function rewriteHermesPortableCreateSourceRequest(
   request: CreateOpenShellSandboxRequest,
   expectedSource: string,
-  context: HermesPortableStagedBuildContext,
+  imageReference: string,
 ): CreateOpenShellSandboxRequest {
   if (request.source.reference !== expectedSource) {
     fail("create source changed before staged-context dispatch");
   }
   return Object.freeze({
     ...request,
-    source: Object.freeze({ reference: context.dockerfilePath }),
-    workingDirectory: context.buildContextPath,
+    source: Object.freeze({ reference: imageReference }),
   });
+}
+
+async function defaultPortableImageAvailable(reference: string): Promise<boolean> {
+  const prefix = `${PORTABLE_LOCAL_REGISTRY}/${LOCAL_SANDBOX_IMAGE_REPO}:`;
+  if (!reference.startsWith(prefix)) return false;
+  const tag = reference.slice(prefix.length);
+  if (!/^[a-f0-9-]{36}$/u.test(tag)) return false;
+  try {
+    const response = await fetch(
+      `http://${PORTABLE_LOCAL_REGISTRY}/v2/${LOCAL_SANDBOX_IMAGE_REPO}/manifests/${tag}`,
+      {
+        method: "HEAD",
+        headers: {
+          Accept: [
+            "application/vnd.oci.image.index.v1+json",
+            "application/vnd.oci.image.manifest.v1+json",
+            "application/vnd.docker.distribution.manifest.list.v2+json",
+            "application/vnd.docker.distribution.manifest.v2+json",
+          ].join(", "),
+        },
+        redirect: "error",
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    await response.body?.cancel();
+    return response.status === 200;
+  } catch {
+    return false;
+  }
 }
 
 function escapedRegExp(value: string): string {
@@ -1446,11 +1479,18 @@ export async function runHermesPortableOnboardingTransaction<T>(
         assertOpenShellExecutableAuthority();
         buildContext.assertCurrent();
         input.buildContext.assertCurrentSource();
+        const imageReference = await buildHermesPortableSandboxImage(
+          buildContext,
+          snapshot.receipt.transactionId,
+          snapshot.receipt.sandboxName,
+          containerDeps.podman,
+          deps.imageAvailable ?? defaultPortableImageAvailable,
+        );
         createResult = await deps.createSandbox(
           rewriteHermesPortableCreateSourceRequest(
             createRequest,
             input.buildContext.sourceDockerfilePath,
-            buildContext,
+            imageReference,
           ),
           createPolicySourcePath,
         );

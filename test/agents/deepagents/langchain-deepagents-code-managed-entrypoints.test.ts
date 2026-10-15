@@ -158,7 +158,7 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
     );
     expect(wrapper).not.toContain("call-mutating");
     expect(command).toContain('_COMMAND = "tools call-read-only"');
-    expect(validator).toContain("from mcp.server.fastmcp import FastMCP");
+    expect(validator).toContain("from fastmcp import FastMCP");
     expect(validator).toContain('"worker-broker_worker_task_context"');
     expect(validator).toContain('"output_attestation"');
     expect(validator).toContain('name="hanging"');

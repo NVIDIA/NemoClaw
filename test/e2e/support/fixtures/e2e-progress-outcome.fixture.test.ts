@@ -4,9 +4,13 @@
 import fs from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { vi } from "vitest";
 import { test } from "../../fixtures/e2e-test.ts";
 
 const outcome = process.env.NEMOCLAW_E2E_PROGRESS_OUTCOME_FIXTURE;
+const routerDiagnostics = outcome?.startsWith("router-")
+  ? await import("../../live/model-router-provider-routed-inference-helpers.ts")
+  : undefined;
 
 test.runIf(outcome === "failed")(
   "records failed phase outcome",
@@ -103,5 +107,31 @@ test.runIf(outcome === "redacted-event")(
     expect(secret, "redacted-event fixture secret is required").toBeTruthy();
     progress.event(`retry cleanup for ${secret}`);
     progress.phase("finish redacted progress event");
+  },
+);
+
+const routerOutcomes: Record<string, () => void> = {
+  "router-primary": () => {
+    throw new Error("original completion failure");
+  },
+  "router-success": () => {},
+};
+
+test.runIf(outcome?.startsWith("router-"))(
+  "router diagnostic failure preserves the test outcome and sandbox cleanup",
+  async ({ artifacts, cleanup, progress }) => {
+    vi.spyOn(artifacts, "writeJson").mockImplementationOnce(async () => {
+      await artifacts.writeText("diagnostics-attempted.txt", "before destruction");
+      throw new Error("diagnostic storage unavailable");
+    });
+    cleanup.add("destroy fake sandbox", async () => {
+      await artifacts.writeText(
+        "sandbox-destroyed.txt",
+        fs.readFileSync(artifacts.pathFor("diagnostics-attempted.txt"), "utf8"),
+      );
+    });
+    routerDiagnostics!.registerRouterDiagnostics(cleanup, artifacts, {});
+    progress.phase("record E2E fixture support outcome");
+    routerOutcomes[outcome!]!();
   },
 );

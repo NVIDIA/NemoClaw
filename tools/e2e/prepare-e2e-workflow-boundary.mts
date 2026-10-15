@@ -28,7 +28,7 @@ const PREINSTALLED_E2E_JOBS = new Set([
   "staging-brev-launchable-identity",
 ]);
 const NATIVE_RUNTIME_QUALIFICATION_PRODUCER_PREPARE_CONDITION =
-  "${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}";
+  "${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}";
 
 export const PREPARE_E2E_NO_BUILD_JOBS = new Set<string>(E2E_JOB_POLICY.prepareNoBuild);
 
