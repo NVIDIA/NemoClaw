@@ -461,7 +461,8 @@ Use these details when your first-run path needs more control.
     For shared routes, it patches `/sandbox/.hermes/config.yaml` without restarting Hermes.
     If the current or selected route uses a native hosted provider, NemoClaw restarts the Hermes gateway after configuration sync.
     The restart can interrupt active agent requests.
-    If the restart fails, the route and configuration remain committed. Run `nemohermes <sandbox-name> gateway restart` to apply the switch.
+    If the restart fails, the route and configuration remain committed.
+    Run `nemohermes <sandbox-name> gateway restart` to apply the switch.
     Custom and local providers retain the shared OpenShell route.
 
     ```bash
