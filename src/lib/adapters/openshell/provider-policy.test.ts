@@ -4,6 +4,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { initializeNativeProviderPolicy, requireNativeProviderPolicy } from "./provider-policy";
 
+import type { OpenShellProviderAdapter, OpenShellProviderMetadata } from "./provider-adapter";
+import { ensureNativeLocalProvider } from "../../inference/native-local/profile";
+
 import { fixture } from "./provider-policy.test-support";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -170,4 +173,59 @@ describe("native provider policy prerequisites", () => {
     await expect(requireNativeProviderPolicy("selected", run)).rejects.toThrow();
     expect(run).not.toHaveBeenCalled();
   });
+});
+
+// Native local callers verify policy prerequisites without taking ownership of settings.
+function nativeLocalPolicyFixture(enabled: "true" | "false") {
+  const policyCommand = fixture(enabled);
+  let provider: OpenShellProviderMetadata | undefined;
+  const providerAdapter = {
+    importProviderProfile: vi.fn(async () => ({ ok: true })),
+    getProvider: vi.fn(async () =>
+      provider
+        ? { ok: true, value: provider }
+        : { ok: false, error: { kind: "command", reason: "not_found", message: "absent" } },
+    ),
+    ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),
+    createProvider: vi.fn<OpenShellProviderAdapter["createProvider"]>(async (request) => {
+      provider = {
+        name: request.name,
+        type: request.type,
+        credentialKeys: request.credentials.map((credential) => credential.name),
+        configKeys: [],
+        revision: { id: "owned", resourceVersion: 1 },
+      };
+      return { ok: true };
+    }),
+  };
+  const action = ensureNativeLocalProvider({
+    adapter: providerAdapter as unknown as OpenShellProviderAdapter,
+    binding: {
+      provider: "vllm-local",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "sentinel",
+      gatewayName: "selected",
+      sandboxName: "alice",
+    },
+    credentialValue: "test-key",
+    policyCommand,
+    readAuthority: () => undefined,
+    writeAuthority: vi.fn(),
+  });
+  return { action, providerAdapter, policyCommand };
+}
+
+it("keeps enabled native-local composition read-only (#12558)", async () => {
+  const { action, providerAdapter, policyCommand } = nativeLocalPolicyFixture("true");
+  await expect(action).resolves.toMatchObject({ sandboxName: "alice" });
+  expect(providerAdapter.ensureProviderPolicyComposition).not.toHaveBeenCalled();
+  expect(policyCommand.mock.calls.some(([args]) => args.includes("set"))).toBe(false);
+});
+
+it("rejects disabled native-local composition without activating it (#12558)", async () => {
+  const { action, providerAdapter, policyCommand } = nativeLocalPolicyFixture("false");
+  await expect(action).rejects.toThrow("administrator");
+  expect(providerAdapter.ensureProviderPolicyComposition).not.toHaveBeenCalled();
+  expect(policyCommand.mock.calls.some(([args]) => args.includes("set"))).toBe(false);
 });

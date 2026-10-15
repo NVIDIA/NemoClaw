@@ -1201,8 +1201,8 @@ test(
       ],
     },
   },
-  async (context) => {
-    const { artifacts, cleanup, host, progress, sandbox } = context;
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    const context = { artifacts, cleanup, host, progress, runtimeProvider, sandbox };
     const selected = await onboardNativeDcode(true, context);
     const { owner, sibling, model, apiKey, fake, onboard, attachment } = selected;
     expectOnboardSuccess(onboard, `${owner} onboard`);
@@ -1295,7 +1295,8 @@ test(
       ],
     },
   },
-  async (context) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    const context = { artifacts, cleanup, host, progress, runtimeProvider, sandbox };
     const selected = await onboardNativeDcode(false, context);
     const { owner, model, fake, onboard, attachment } = selected;
     expectOnboardSuccess(onboard, `${owner} onboard`);
