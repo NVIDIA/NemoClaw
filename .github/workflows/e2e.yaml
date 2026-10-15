@@ -5737,6 +5737,7 @@ jobs:
 
       - name: Install pinned OpenShell
         env:
+          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
           XDG_BIN_HOME: ${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin.${{ github.run_id }}.${{ github.run_attempt }}
         run: |
           set -euo pipefail
@@ -5752,8 +5753,8 @@ jobs:
             done
           }
           if ! openshell_install_root_is_complete "$install_root"; then
-            openshell_path="$(command -v openshell)"
-            install_root="$(dirname "$openshell_path")"
+            echo "::error::The pinned OpenShell installer did not populate the isolated install root." >&2
+            exit 1
           fi
           for component in openshell openshell-gateway openshell-sandbox; do
             source="$install_root/$component"

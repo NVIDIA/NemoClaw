@@ -386,11 +386,11 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o700 });
 }
 
-function writeOpenShellComponents(root: string): void {
+function writeOpenShellComponents(root: string, mode = 0o755): void {
   for (const component of OPENSHELL_COMPONENTS) {
     const componentPath = path.join(root, component);
     writeExecutable(componentPath, "#!/bin/sh\nexit 0\n");
-    fs.chmodSync(componentPath, 0o755);
+    fs.chmodSync(componentPath, mode);
   }
 }
 
@@ -487,6 +487,9 @@ exit 0
         RUNNER_TEMP: root,
         SUDO_INSTALL_ROOT: privilegedRoot,
         SUDO_LOG: sudoLog,
+        NEMOCLAW_OPENSHELL_FORCE_INSTALL: String(
+          install?.env?.NEMOCLAW_OPENSHELL_FORCE_INSTALL ?? "",
+        ),
         XDG_BIN_HOME: xdgBinHome,
       },
     });
@@ -831,7 +834,7 @@ exec /bin/bash "$@"
     });
   });
 
-  it("prefers a compatible preinstalled root over stale temporary and user-local roots", () => {
+  it("forces a fresh isolated install instead of promoting a compatible preinstalled root", () => {
     runOpenShellHandoffFixture(
       "nemoclaw-openshell-preinstalled-",
       ({ fakeBin, home, root, xdgBinHome }) => {
@@ -845,6 +848,12 @@ exec /bin/bash "$@"
           `#!/bin/sh
 set -eu
 if [ "\${1:-}" = scripts/install-openshell.sh ]; then
+  [ "\${NEMOCLAW_OPENSHELL_FORCE_INSTALL:-}" = 1 ]
+  mkdir -p "$XDG_BIN_HOME"
+  for component in openshell openshell-gateway openshell-sandbox; do
+    printf '#!/bin/sh\\nexit 7\\n' >"$XDG_BIN_HOME/$component"
+    chmod 0755 "$XDG_BIN_HOME/$component"
+  done
   exit 0
 fi
 exec /bin/bash "$@"
@@ -859,79 +868,42 @@ exec /bin/bash "$@"
         writeExecutable(path.join(staleUserLocalRoot, "openshell-sandbox"), "#!/bin/sh\nexit 93\n");
         return {
           pathValue: `${fakeBin}:${preinstalledRoot}:/usr/bin:/bin`,
-          sourceRoot: preinstalledRoot,
+          sourceRoot: xdgBinHome,
           verifySelection: () =>
             requireFixture(
-              !fs.existsSync(xdgBinHome),
-              "A compatible preinstalled OpenShell unexpectedly triggered a fresh install",
+              fs.existsSync(xdgBinHome),
+              "A compatible preinstalled OpenShell bypassed the required fresh install",
             ),
         };
       },
     );
   });
 
-  it("accepts OpenShell components already installed in the privileged root", () => {
+  it("enforces ownership and mode when the isolated install aliases the privileged root", () => {
     runOpenShellHandoffFixture(
       "nemoclaw-openshell-privileged-preinstalled-",
-      ({ fakeBin, privilegedRoot }) => {
+      ({ fakeBin, privilegedRoot, xdgBinHome }) => {
         writeExecutable(
           path.join(fakeBin, "bash"),
           `#!/bin/sh
 set -eu
 if [ "\${1:-}" = scripts/install-openshell.sh ]; then
+  [ "\${NEMOCLAW_OPENSHELL_FORCE_INSTALL:-}" = 1 ]
+  mkdir -p "$XDG_BIN_HOME"
+  for component in openshell openshell-gateway openshell-sandbox; do
+    ln "$SUDO_INSTALL_ROOT/$component" "$XDG_BIN_HOME/$component"
+  done
   exit 0
 fi
 exec /bin/bash "$@"
 `,
         );
-        writeOpenShellComponents(privilegedRoot);
+        writeOpenShellComponents(privilegedRoot, 0o777);
         return {
           pathValue: `${fakeBin}:${privilegedRoot}:/usr/bin:/bin`,
           requireInstallLog: (log) => requirePrivilegedOpenShellReuseLog(log, privilegedRoot),
           rewritePrivilegedRoot: true,
-          sourceRoot: privilegedRoot,
-        };
-      },
-    );
-  });
-
-  it("accepts OpenShell components aliased to the privileged root", () => {
-    runOpenShellHandoffFixture(
-      "nemoclaw-openshell-privileged-alias-",
-      ({ fakeBin, privilegedRoot, root }) => {
-        const preinstalledRoot = path.join(root, "preinstalled");
-        fs.mkdirSync(preinstalledRoot);
-        writeExecutable(
-          path.join(fakeBin, "bash"),
-          `#!/bin/sh
-set -eu
-if [ "\${1:-}" = scripts/install-openshell.sh ]; then
-  exit 0
-fi
-exec /bin/bash "$@"
-`,
-        );
-        writeOpenShellComponents(privilegedRoot);
-        fs.linkSync(
-          path.join(privilegedRoot, "openshell"),
-          path.join(preinstalledRoot, "openshell"),
-        );
-        fs.linkSync(
-          path.join(privilegedRoot, "openshell-gateway"),
-          path.join(preinstalledRoot, "openshell-gateway"),
-        );
-        fs.linkSync(
-          path.join(privilegedRoot, "openshell-sandbox"),
-          path.join(preinstalledRoot, "openshell-sandbox"),
-        );
-        fs.chmodSync(path.join(preinstalledRoot, "openshell"), 0o777);
-        fs.chmodSync(path.join(preinstalledRoot, "openshell-gateway"), 0o777);
-        fs.chmodSync(path.join(preinstalledRoot, "openshell-sandbox"), 0o777);
-        return {
-          pathValue: `${fakeBin}:${preinstalledRoot}:/usr/bin:/bin`,
-          requireInstallLog: (log) => requirePrivilegedOpenShellReuseLog(log, privilegedRoot),
-          rewritePrivilegedRoot: true,
-          sourceRoot: preinstalledRoot,
+          sourceRoot: xdgBinHome,
         };
       },
     );
@@ -1032,6 +1004,7 @@ exec /bin/bash "$@"
     expect(fixtureInstall?.run).toContain("--owner=root --group=root --mode=0555");
     expect(openshellInstall?.run).toContain("bash scripts/install-openshell.sh");
     expect(openshellInstall?.env).toEqual({
+      NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1",
       XDG_BIN_HOME:
         "${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin.${{ github.run_id }}.${{ github.run_attempt }}",
     });
