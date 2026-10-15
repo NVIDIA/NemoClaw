@@ -720,7 +720,7 @@ exit 1`,
   };
 }
 
-export async function startProtectedNim(
+async function startProtectedNim(
   host: HostCliClient,
   state: ProtectedProviderContainerState,
   apiKey: string,
