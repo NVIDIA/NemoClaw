@@ -135,14 +135,15 @@ digest_pattern='sha256:[0-9a-f]{64}'
 owned_image='ghcr.io/nvidia/nemoclaw/llama-cpp-server'
 image="${reference%@*}"
 reference_digest="${reference##*@}"
-case "$certificate_identity" in
-  https://github.com/NVIDIA/NemoClaw/.github/workflows/llama-cpp-image-attest.yaml@refs/heads/main | \
-    https://github.com/NVIDIA/NemoClaw/.github/workflows/llama-cpp-image-attest.yaml@refs/heads/fix/issue-12285-wsl-transport) ;;
-  *)
+if [ "$certificate_identity" != "https://github.com/NVIDIA/NemoClaw/.github/workflows/llama-cpp-image-attest.yaml@refs/heads/main" ]; then
+  # Branch publication executes this verifier from its immutable publisher source.
+  trusted_revision="$(git -C "$(dirname "$0")/../.." rev-parse HEAD)"
+  if [[ ! "$trusted_revision" =~ ^[0-9a-f]{40}$ ]] \
+    || [ "$certificate_identity" != "https://github.com/NVIDIA/NemoClaw/.github/workflows/llama-cpp-image-attest.yaml@$trusted_revision" ]; then
     echo "ERROR: llama.cpp publication signer is not approved." >&2
     exit 1
-    ;;
-esac
+  fi
+fi
 if [[ ! "$reference" =~ ^ghcr\.io/nvidia/nemoclaw/llama-cpp-server@${digest_pattern}$ ]] \
   || [ "$image" != "$owned_image" ] \
   || [ "$repository" != "NVIDIA/NemoClaw" ] \

@@ -8,6 +8,7 @@ on:
     paths:
       - ".github/workflows/llama-cpp-image.yaml"
       - ".github/workflows/llama-cpp-image-attest.yaml"
+      - "ci/llama-cpp-branch-publication.yaml"
       - "managed-inference/images/llama-cpp/**"
       - "managed-inference/recipes/llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml"
       - "scripts/checks/export-llama-cpp-image-config.mts"
@@ -25,20 +26,33 @@ on:
         required: true
         default: false
         type: boolean
+  workflow_call:
+    inputs:
+      publish:
+        required: true
+        type: boolean
+      publisher_call:
+        default: true
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.publisher_call && 'publisher' || 'controller' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   config:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || inputs.publisher_call
     name: Compile declarative image configuration
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
+      trusted_revision: ${{ steps.identity.outputs.revision }}
+      definition_ref: ${{ steps.identity.outputs.definition_ref }}
+      wrapper_sha: ${{ steps.source.outputs.wrapper_sha }}
+      image_context_sha: ${{ steps.source.outputs.image_context_sha }}
       backend_directory: ${{ steps.manifest.outputs.backend_directory }}
       compiler_c: ${{ steps.manifest.outputs.compiler_c }}
       compiler_cuda_host_cxx: ${{ steps.manifest.outputs.compiler_cuda_host_cxx }}
@@ -73,10 +87,44 @@ jobs:
       source_archive_sha256: ${{ steps.manifest.outputs.source_archive_sha256 }}
       source_revision: ${{ steps.manifest.outputs.source_revision }}
     steps:
+      - name: Resolve the workflow's own source
+        id: identity
+        env:
+          WORKFLOW_JOB: ${{ toJSON(job) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="$(jq -er --arg repo "$GITHUB_REPOSITORY" '
+            select(.workflow_repository == $repo and
+              .workflow_file_path == ".github/workflows/llama-cpp-image.yaml")
+            | .workflow_sha | select(type == "string" and test("^[0-9a-f]{40}$"))
+          ' <<< "$WORKFLOW_JOB")"
+          definition_ref="$(jq -er '.workflow_ref | select(type == "string" and test("^[^\\r\\n]+$"))' <<< "$WORKFLOW_JOB")"
+          {
+            printf 'revision=%s\n' "$revision"
+            printf 'definition_ref=%s\n' "$definition_ref"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ steps.identity.outputs.revision }}
           persist-credentials: false
+
+      - name: Bind trusted build and caller inputs
+        id: source
+        env:
+          TRUSTED_REVISION: ${{ steps.identity.outputs.revision }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TRUSTED_REVISION"
+          wrapper_sha="$( { cat .github/workflows/llama-cpp-image.yaml; sed "s/PUBLISHER_REVISION/$TRUSTED_REVISION/g" ci/llama-cpp-branch-publication.yaml; } | git hash-object --stdin)"
+          image_context_sha="$(git rev-parse HEAD:managed-inference/images/llama-cpp)"
+          {
+            printf 'wrapper_sha=%s\n' "$wrapper_sha"
+            printf 'image_context_sha=%s\n' "$image_context_sha"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -106,6 +154,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.config.outputs.trusted_revision }}
           persist-credentials: false
 
       - name: Set up Docker Buildx
@@ -328,6 +377,12 @@ jobs:
           ALLOWED_REF: ${{ needs.config.outputs.publication_allowed_ref }}
           ANONYMOUS_EXACT_DIGEST_PULL: ${{ needs.config.outputs.publication_anonymous_exact_digest_pull }}
           CANDIDATE_TAG_TEMPLATE: ${{ needs.config.outputs.publication_candidate_tag_template }}
+          CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          ROOT_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          TRUSTED_REVISION: ${{ needs.config.outputs.trusted_revision }}
+          DEFINITION_REF: ${{ needs.config.outputs.definition_ref }}
+          WRAPPER_SHA: ${{ needs.config.outputs.wrapper_sha }}
+          IMAGE_CONTEXT_SHA: ${{ needs.config.outputs.image_context_sha }}
           GH_TOKEN: ${{ github.token }}
           IMAGE: ${{ needs.config.outputs.image }}
           PLATFORMS: ${{ needs.config.outputs.publication_platforms }}
@@ -368,10 +423,22 @@ jobs:
           # Match main's required checks and signatures before granting write jobs.
           if [ "$GITHUB_REF" != "$ALLOWED_REF" ]; then
             if [ "$GITHUB_REF" != "refs/heads/fix/issue-12285-wsl-transport" ] \
-              || [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              || [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] \
+              || [[ ! "$TRUSTED_REVISION" =~ ^[0-9a-f]{40}$ ]] \
+              || [ "$ROOT_WORKFLOW_SHA" != "$GITHUB_SHA" ] \
+              || [ "$DEFINITION_REF" != "NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@$TRUSTED_REVISION" ] \
+              || [ "$CALLER_WORKFLOW_REF" != "NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@$GITHUB_REF" ]; then
               echo "ERROR: publication ref is not approved." >&2
               exit 1
             fi
+            gh api "repos/NVIDIA/NemoClaw/contents/.github/workflows/llama-cpp-image.yaml?ref=$GITHUB_SHA" \
+              | jq -e --arg expected "$WRAPPER_SHA" '.type == "file" and .sha == $expected' >/dev/null
+            gh api graphql \
+              -f query="query(\$expression:String!){repository(owner:\"NVIDIA\",name:\"NemoClaw\"){object(expression:\$expression){__typename oid}}}" \
+              -f "expression=$GITHUB_SHA:managed-inference/images/llama-cpp" \
+              | jq -e --arg expected "$IMAGE_CONTEXT_SHA" '
+                  .data.repository.object | .__typename == "Tree" and .oid == $expected
+                ' >/dev/null
             gh api repos/NVIDIA/NemoClaw/pulls/12664 | jq -e --arg sha "$GITHUB_SHA" '
               .state == "open" and .head.sha == $sha
               and .head.ref == "fix/issue-12285-wsl-transport"
@@ -395,6 +462,17 @@ jobs:
                       and all(.[]; .status == "completed" and
                         (.conclusion == "success" or ($name == "changes" and .conclusion == "skipped"))))
               ' >/dev/null
+            # GitHub requires both forms when a name has check runs and commit
+            # statuses. In particular, admission also owns check-hash status.
+            gh api --paginate --slurp "repos/NVIDIA/NemoClaw/commits/$GITHUB_SHA/statuses?per_page=100" \
+              | jq -e '
+                add | group_by(.context) | map(max_by(.id))
+                | all(.[] | select(.context == "checks" or .context == "commit-lint" or
+                    .context == "dco-check" or .context == "check-hash" or .context == "changes");
+                    .state == "success" and .creator.id == 41898282 and .creator.type == "Bot")
+              ' >/dev/null
+          else
+            test "$CALLER_WORKFLOW_REF" = "NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@$GITHUB_REF"
           fi
           if ! jq -e '
             (keys | sort) == ["environment", "execution", "gpu", "model", "platform", "probeBounds", "probes", "profile", "recipeRef", "required", "runner"]
@@ -422,7 +500,11 @@ jobs:
           {
             printf 'candidate_tag=%s\n' "$candidate_tag"
             printf 'publication_ref=%s\n' "$GITHUB_REF"
-            printf 'signature_identity=%s@%s\n' "${SIGNATURE_IDENTITY%@*}" "$GITHUB_REF"
+            if [ "$GITHUB_REF" = "$ALLOWED_REF" ]; then
+              printf 'signature_identity=%s\n' "$SIGNATURE_IDENTITY"
+            else
+              printf 'signature_identity=%s@%s\n' "${SIGNATURE_IDENTITY%@*}" "$TRUSTED_REVISION"
+            fi
           } >> "$GITHUB_OUTPUT"
 
   publish-platform:
@@ -440,6 +522,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.config.outputs.trusted_revision }}
           persist-credentials: false
 
       - name: Set up Docker Buildx
@@ -606,6 +689,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.config.outputs.trusted_revision }}
           persist-credentials: false
 
       - name: Set up Docker Buildx
@@ -792,6 +876,7 @@ jobs:
     permissions:
       attestations: write
       contents: read
+      checks: read
       id-token: write
       packages: write
       pull-requests: read
@@ -816,6 +901,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.config.outputs.trusted_revision }}
           persist-credentials: false
 
       - name: Set up Docker Buildx
@@ -867,6 +953,7 @@ jobs:
           CERTIFICATE_OIDC_ISSUER: ${{ needs.config.outputs.publication_signature_issuer }}
           EXPECTED_REF: ${{ needs.publication-gate.outputs.publication_ref }}
           EXPECTED_REVISION: ${{ github.sha }}
+          SIGNER_REVISION: ${{ needs.config.outputs.trusted_revision }}
           GH_TOKEN: ${{ github.token }}
           PROVENANCE_PREDICATE_TYPE: ${{ needs.config.outputs.publication_provenance_predicate_type }}
           REFERENCE: ${{ needs.assemble-candidate.outputs.reference }}
@@ -897,6 +984,7 @@ jobs:
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/llama-cpp-image-attest.yaml" \
             --source-ref "$EXPECTED_REF" \
             --source-digest "$EXPECTED_REVISION" \
+            --signer-digest "$SIGNER_REVISION" \
             --predicate-type "$PROVENANCE_PREDICATE_TYPE" \
             --format json > "$evidence/provenance-verification.json"
 

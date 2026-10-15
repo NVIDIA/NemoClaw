@@ -477,7 +477,10 @@ export function advanceNativeRequestDeadline(
 
 export async function spawnNativeBridge(fixture: NativeFixture, listenPort = 0) {
   const reservation = http.createServer();
-  await new Promise<void>((resolve) => reservation.listen(listenPort, "127.0.0.1", resolve));
+  await new Promise<void>((resolve, reject) => {
+    reservation.once("error", reject);
+    reservation.listen(listenPort, "127.0.0.1", resolve);
+  });
   const port = (reservation.address() as { port: number }).port;
   await new Promise<void>((resolve) => reservation.close(() => resolve()));
   const descriptor = fs.openSync(fixture.keyPath, "r");

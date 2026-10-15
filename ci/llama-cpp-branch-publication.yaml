@@ -1,0 +1,18 @@
+
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# SHA-pinned caller. No executable steps are allowed here.
+  publish-approved-branch:
+    name: Publish the approved branch through the immutable publisher
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && !inputs.publisher_call && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/fix/issue-12285-wsl-transport'
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
+      packages: write
+      attestations: write
+      id-token: write
+    uses: NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@PUBLISHER_REVISION
+    with:
+      publish: true
+      publisher_call: true
