@@ -102,10 +102,6 @@ pub struct OperationResult {
     pub connection: Option<DeploymentConnection>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deferred: Vec<String>,
-    /// Known graph resources in a stage whose OpenTofu plan is not yet available.
-    /// These are not planned actions and do not contribute to `changes`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub deferred_resources: Vec<String>,
     /// Authored definition paths for opaque, scoped provider registrations.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub resource_sources: BTreeMap<String, ResourceSource>,
@@ -126,7 +122,6 @@ impl OperationResult {
             changes,
             connection: None,
             deferred: Vec::new(),
-            deferred_resources: Vec::new(),
             resource_sources: BTreeMap::new(),
             unverified: Vec::new(),
             retained: Vec::new(),
@@ -227,15 +222,12 @@ impl Deployment {
             ));
         }
         record.allocate_missing_generations(&document)?;
-        let bindings = if (record.pending() && !record.runtime_pending())
-            || record.digest != document.digest()
-        {
+        let bindings = if record.pending() || record.digest != document.digest() {
             self.state_bindings(
                 &bundle,
                 &store,
                 &record.document,
                 &record.generations,
-                false,
                 cancel,
             )
             .await?
@@ -249,76 +241,35 @@ impl Deployment {
             gateway_endpoint: document.spec.gateway.endpoint().into(),
             workspace: document.workspace(),
         });
-        let (runtime_changes, deferred, runtime_discovery, mut discovery) = self
-            .runtime_stage(&bundle, &store, &document, &mut record, apply, cancel)
-            .await?;
-        if deferred {
-            let mut result = OperationResult::planned(runtime_changes);
-            result.describe_sources(&document)?;
-            result.deferred_resources = compile::targets(&document, &record.generations)?
-                .into_iter()
-                .filter(|target| !target.address.starts_with("data."))
-                .map(|target| target.address)
-                .collect();
-            result.deferred_resources.sort();
-            result.connection = connection;
-            result.deferred = runtime_discovery;
-            discovery.credentials =
-                crate::inference_discovery::observe_credentials(&document, self.secrets.as_ref())?;
-            append_credential_deferrals(&mut result.deferred, &discovery.credentials);
-            discovery.gateway_target(&document);
-            discovery.endpoints(
-                crate::inference_discovery::observe_endpoints(&document, self.secrets.as_ref())
-                    .await?,
-            );
-            result.unverified = discovery.unverified();
-            result.unverified.sort();
-            result.unverified.dedup();
-            result.discovery = discovery;
-            result
-                .deferred
-                .push("OpenShell registration and sandbox require the managed gateway".into());
-            return Ok(result);
-        }
-        // Providers connect to a managed Kubernetes gateway themselves.
-        let operation = self;
-        let (graph, targets) =
+        let compiled =
             compile::deployment_graph(&document, &record.generations, &bundle.manifest.version)?;
-        (operation.progress)(Progress::Validating);
-        operation
-            .initialize(&bundle, &store, &graph, cancel)
+        (self.progress)(Progress::Validating);
+        self.initialize(&bundle, &store, &compiled.graph, cancel)
             .await?;
         let bindings = store.bindings(&bundle.tofu(), cancel).await?;
-        let allowed = allowed(&targets);
-        if bindings.iter().any(|(address, binding)| {
-            (!allowed.contains_key(address)
-                && !plan::disposable(address)
-                && !plan::reconstructible(address))
-                || !binding.spec.is_empty()
-        }) {
-            return Err(Error::Conflict(
-                "undeclared resource binding in deployment state",
-            ));
-        }
-        (operation.progress)(Progress::Planning);
-        let plan = operation
+        let expected = expected_bindings(&compiled, &bindings)?;
+        (self.progress)(Progress::Planning);
+        let plan = self
             .saved_plan(&bundle, &store, &document, "apply.plan", cancel)
             .await?;
-        let root_changes = check_plan(
+        runtime::preserve_docker_models(&document, &plan)?;
+        let changes = check_plan(
             &plan,
-            &with_observations(&allowed, &compile::observations(&graph)),
+            &with_observations(&expected, &compile::observations(&compiled.graph)),
             &bindings,
         )?;
-        let creations = root_changes
+        // Only OpenShell and Fabric creations can lose their identity with a
+        // lost reply; OpenTofu saves every other resource's ID.
+        let objects = allowed(&compiled.objects);
+        let creations = changes
             .iter()
             .filter(|change| {
-                !plan::disposable(&change.resource)
+                objects.contains_key(&change.resource)
+                    && !plan::disposable(&change.resource)
                     && change.actions.iter().any(|action| action == "create")
             })
-            .map(|change| (change.resource.clone(), allowed[&change.resource].clone()))
+            .map(|change| (change.resource.clone(), objects[&change.resource].clone()))
             .collect();
-        let mut changes = runtime_changes;
-        changes.extend(root_changes);
         let mut result = OperationResult::planned(changes);
         result.describe_sources(&document)?;
         result.connection = connection;
@@ -328,20 +279,18 @@ impl Deployment {
                 &record.generations,
                 &bundle.manifest.version,
                 &bindings.keys().cloned().collect(),
-                false,
             )?
             .retained;
-            discovery.extend(plan.discovery_report(
-                DiscoveryScope::Deployment,
-                &bindings,
-                &retained,
-            )?);
+            let runtime: BTreeSet<String> = compiled
+                .runtime
+                .iter()
+                .map(|target| target.address.clone())
+                .collect();
+            let mut discovery = plan.discovery_report(&runtime, &bindings, &retained)?;
             discovery.credentials =
                 crate::inference_discovery::observe_credentials(&document, self.secrets.as_ref())?;
             result.deferred = if discovery.observations.is_empty() {
-                let mut deferred = runtime_discovery;
-                deferred.extend(plan.discovery_deferred(&discovery));
-                deferred
+                plan.discovery_deferred(&discovery)
             } else {
                 discovery.deferred()
             };
@@ -363,10 +312,36 @@ impl Deployment {
             }
             return Ok(result);
         }
+        let earlier = record.pending_creation_addresses();
         record.begin_apply(&document, creations);
         store.save(&record)?;
-        (operation.progress)(Progress::Applying);
-        let applied = operation
+        (self.progress)(Progress::Applying);
+        // OpenTofu reports each resource apply as it starts; a failure stops it
+        // before the resources that depend on what failed.
+        let started: Arc<std::sync::Mutex<(BTreeSet<String>, bool)>> = Arc::default();
+        let observed = {
+            let (progress, started) = (self.progress.clone(), started.clone());
+            self.clone().with_progress(Arc::new(move |event: Progress| {
+                if let Progress::Resource {
+                    address,
+                    action: "create" | "replace",
+                    status: "started",
+                    ..
+                } = &event
+                {
+                    let mut started = started.lock().expect("started creations");
+                    match address {
+                        Some(address) => {
+                            started.0.insert(address.clone());
+                        }
+                        // An unreported address could be any pending creation.
+                        None => started.1 = true,
+                    }
+                }
+                progress(event)
+            }))
+        };
+        let applied = observed
             .tofu(
                 &bundle,
                 &store,
@@ -376,6 +351,13 @@ impl Deployment {
             )
             .await;
         let mutations_settled = applied.is_ok();
+        if !mutations_settled {
+            let (started, unreported) = &*started.lock().expect("started creations");
+            if !unreported {
+                record.forget_unstarted_creations(&earlier, started);
+                store.save(&record)?;
+            }
+        }
         if mutations_settled {
             // Persist known mutation completion before an interruptible health read.
             record.finish_apply();
@@ -385,7 +367,7 @@ impl Deployment {
             Err(error) if apply::readiness_failures(&error).is_none() => return Err(error),
             applied => applied,
         };
-        let observations = operation
+        let observations = self
             .sandbox_observations(&bundle, &store, &document, &plan, cancel)
             .await;
         let health = match apply::ApplyOutcome::classify(applied, observations) {
@@ -421,7 +403,6 @@ impl Deployment {
         store: &Store,
         document: &Document,
         generations: &compile::Generations,
-        runtime: bool,
         cancel: &CancellationToken,
     ) -> Result<BTreeMap<String, StateBinding>, Error> {
         if !store
@@ -434,11 +415,7 @@ impl Deployment {
         }
         // show needs the exact provider schemas. Reinitialize from the current
         // verified bundle, including after an SDK upgrade or state-directory move.
-        let graph = if runtime {
-            compile::compile_runtime(document, generations, &bundle.manifest.version)?
-        } else {
-            compile::compile(document, generations, &bundle.manifest.version)?
-        };
+        let graph = compile::compile(document, generations, &bundle.manifest.version)?;
         self.initialize(bundle, store, &graph, cancel).await?;
         store.bindings(&bundle.tofu(), cancel).await
     }
@@ -453,9 +430,34 @@ impl Deployment {
         cancel: &CancellationToken,
         preview: bool,
     ) -> Result<OperationResult, Error> {
-        self.teardown_stages(cancel, preview).await
+        self.teardown_deployment(cancel, preview).await
     }
 }
+/// The rows a plan may establish. Managed processes keep their bound
+/// specifications; every saved binding must belong to the deployment.
+fn expected_bindings(
+    compiled: &compile::Compiled,
+    bindings: &BTreeMap<String, StateBinding>,
+) -> Result<BTreeMap<String, Row>, Error> {
+    let objects = allowed(&compiled.objects);
+    if bindings
+        .iter()
+        .any(|(address, binding)| objects.contains_key(address) && !binding.spec.is_empty())
+    {
+        return Err(Error::Conflict(
+            "undeclared resource binding in deployment state",
+        ));
+    }
+    let runtime: BTreeMap<String, StateBinding> = bindings
+        .iter()
+        .filter(|(address, _)| !objects.contains_key(*address) && !plan::reconstructible(address))
+        .map(|(address, binding)| (address.clone(), binding.clone()))
+        .collect();
+    let mut expected = runtime::runtime_bindings(&compiled.runtime, &runtime)?;
+    expected.extend(objects);
+    Ok(expected)
+}
+
 fn allowed(targets: &[Target]) -> BTreeMap<String, Row> {
     targets
         .iter()

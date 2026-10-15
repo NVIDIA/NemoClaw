@@ -158,7 +158,6 @@ For each resource, `existed` means it appeared in retained state or the refreshe
 These entries contain no resource IDs, specifications, or credential values.
 Retaining a workspace does not preserve sandbox files; see [retention](state.md#deletion-and-retention).
 Always inspect the operation's `deferred` list before treating the resource preview as complete.
-If a missing managed gateway prevents planning the deployment stage, `OperationResult.deferred_resources` lists its compiled resource addresses without assigning actions or adding them to `changes`.
 `OperationResult.resource_sources` maps opaque scoped provider registrations to their authored `name` and definition `path`, including route-inline providers.
 These source entries describe intent and can precede resource creation; they contain no credential references or values.
 `DiscoveryReport::deferred()` reports unresolved engine, hardware, image, and gateway prerequisites; missing credential references are added to `OperationResult.deferred`.

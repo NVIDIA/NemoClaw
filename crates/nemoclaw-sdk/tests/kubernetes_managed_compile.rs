@@ -228,10 +228,17 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
     for provider in ["openshell", "fabric"] {
         assert_eq!(agents["provider"][provider], json!({}), "{provider}");
     }
+    // One graph installs the gateway and creates the objects it serves; the
+    // gateway read waits for the installation.
+    assert_eq!(
+        gateway["depends_on"],
+        json!(["openshell_kubernetes_gateway.runtime"])
+    );
     assert!(
-        agents["resource"]
-            .get("openshell_kubernetes_gateway")
-            .is_none()
+        agents["data"]["openshell_gateway"]["apply"]["depends_on"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("openshell_kubernetes_gateway.runtime"))
     );
     assert!(agents["provider"].get("docker").is_none());
 }

@@ -221,31 +221,7 @@ fn replacement_cleanup_keeps_current_and_deposed_objects_distinct() {
 }
 
 #[test]
-fn runtime_reconciliation_does_not_clear_unfinished_openshell_recovery() {
-    let document = crate::config::Document::parse(
-        include_bytes!("../../tests/fixtures/config/spark.yaml").as_slice(),
-    )
-    .unwrap();
-    let mut record = Record::new(document).unwrap();
-    record.begin_runtime_apply(&record.document.clone());
-    assert!(record.pending && record.runtime_pending);
-    record.finish_runtime_apply();
-    assert!(!record.pending && !record.runtime_pending);
-    let target = crate::compile::targets(&record.document, &record.generations)
-        .unwrap()
-        .remove(0);
-    record.begin_apply(
-        &record.document.clone(),
-        [(target.address, target.values)].into(),
-    );
-    record.begin_runtime_apply(&record.document.clone());
-    assert!(!record.runtime_pending);
-    record.finish_runtime_apply();
-    assert!(record.pending && !record.runtime_pending);
-}
-
-#[test]
-fn pending_creation_guards_only_unresolved_targets_and_survives_runtime_recovery() {
+fn pending_creation_guards_only_unresolved_targets() {
     let document =
         Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
             .unwrap();
@@ -275,9 +251,7 @@ fn pending_creation_guards_only_unresolved_targets_and_survives_runtime_recovery
         record.validate_pending_intent(&revised),
         Err(Error::Conflict(_))
     ));
-    record.begin_runtime_apply(&record.document.clone());
-    record.finish_runtime_apply();
-    assert!(record.pending && !record.runtime_pending);
+    assert!(record.pending);
     assert_eq!(record.pending_creations[&pending.address], pending.values);
     let directory = tempfile::tempdir().unwrap();
     let store = Store::open(directory.path()).unwrap();
@@ -304,12 +278,12 @@ fn subsequent_apply_preserves_all_unresolved_creations_until_success() {
     );
     assert_eq!(record.pending_creations.len(), 2);
     record.begin_apply(&document, BTreeMap::new());
-    assert!(record.pending && !record.runtime_pending);
+    assert!(record.pending);
     assert_eq!(record.pending_creations.len(), 2);
     record.finish_apply();
     assert!(!record.pending && record.pending_creations.is_empty());
     record.begin_apply(&document, BTreeMap::new());
-    assert!(!record.pending && !record.runtime_pending);
+    assert!(!record.pending);
     assert!(record.validate_pending_intent(&document).is_ok());
 }
 
@@ -328,7 +302,6 @@ fn applying_only_bound_resources_does_not_require_creation_recovery() {
         !recovered.pending,
         "OpenTofu already owns every planned resource binding"
     );
-    assert!(!recovered.runtime_pending);
     assert!(recovered.pending_creations.is_empty());
 }
 
@@ -458,13 +431,12 @@ fn adding_a_service_allocates_one_generation_and_preserves_checkpoint_identity()
 
     record.allocate_missing_generations(&document).unwrap();
     let generations = record.generations.clone();
-    record.begin_runtime_apply(&document);
+    record.begin_apply(&document, BTreeMap::new());
     let directory = tempfile::tempdir().unwrap();
     let store = Store::open(directory.path()).unwrap();
     store.save(&record).unwrap();
     let mut recovered = store.load().unwrap().unwrap();
     assert_eq!(recovered.generations, generations);
-    recovered.finish_runtime_apply();
     recovered.begin_apply(&document, BTreeMap::new());
     store.save(&recovered).unwrap();
     let mut recovered = store.load().unwrap().unwrap();
@@ -482,18 +454,6 @@ fn adding_a_service_allocates_one_generation_and_preserves_checkpoint_identity()
 }
 
 #[test]
-fn runtime_pending_without_a_runtime_is_rejected_without_rewriting_state() {
-    let document =
-        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
-            .unwrap();
-    assert!(!document.has_runtime());
-    let mut value = serde_json::to_value(Record::new(document).unwrap()).unwrap();
-    value["pending"] = serde_json::json!(true);
-    value["runtimePending"] = serde_json::json!(true);
-    assert_rejected_record_preserves_state(value);
-}
-
-#[test]
 fn recovery_checkpoints_survive_reload_and_reapply() {
     let document =
         Document::parse(include_bytes!("../../tests/fixtures/config/spark.yaml").as_slice())
@@ -502,13 +462,10 @@ fn recovery_checkpoints_survive_reload_and_reapply() {
     let generations = record.generations.clone();
     let directory = tempfile::tempdir().unwrap();
     let store = Store::open(directory.path()).unwrap();
-    record.begin_runtime_apply(&document);
+    record.begin_apply(&document, BTreeMap::new());
     store.save(&record).unwrap();
     record = store.load().unwrap().unwrap();
-    assert!(record.pending && record.runtime_pending);
     assert!(!record.succeeded);
-    record.finish_runtime_apply();
-    record.begin_apply(&document, BTreeMap::new());
     record.finish_apply();
     assert!(!record.pending && !record.succeeded);
     store.save(&record).unwrap();
@@ -524,47 +481,16 @@ fn recovery_checkpoints_survive_reload_and_reapply() {
     record.begin_destroy();
     store.save(&record).unwrap();
     record = store.load().unwrap().unwrap();
-    assert!(record.destroying && !record.succeeded && !record.destroy_runtime);
-    record.finish_root_destroy();
-    store.save(&record).unwrap();
-    record = store.load().unwrap().unwrap();
-    record.begin_destroy();
-    assert!(
-        record.destroy_runtime,
-        "retry must retain the completed root stage"
-    );
+    assert!(record.destroying && !record.succeeded);
     record.finish_destroy();
     store.save(&record).unwrap();
     record = store.load().unwrap().unwrap();
-    assert!(record.destroyed && !record.destroying && !record.pending && !record.runtime_pending);
+    assert!(record.destroyed && !record.destroying && !record.pending);
     record.begin_apply(&document, BTreeMap::new());
-    assert!(!record.destroyed && !record.destroy_runtime && !record.succeeded);
+    assert!(!record.destroyed && !record.succeeded);
     assert_eq!(record.generations, generations);
     assert_eq!(record.document, document);
     assert_eq!(record.digest, document.digest());
-    store.save(&record).unwrap();
-    assert_eq!(store.load().unwrap().unwrap(), record);
-}
-
-#[test]
-fn teardown_takes_over_interrupted_runtime_recovery_without_losing_its_checkpoint() {
-    let document =
-        Document::parse(include_bytes!("../../tests/fixtures/config/spark.yaml").as_slice())
-            .unwrap();
-    let mut record = Record::new(document.clone()).unwrap();
-    record.begin_runtime_apply(&document);
-    record.begin_destroy();
-    let directory = tempfile::tempdir().unwrap();
-    let store = Store::open(directory.path()).unwrap();
-    store.save(&record).unwrap();
-    record = store.load().unwrap().unwrap();
-    assert!(record.destroying && !record.pending && !record.succeeded);
-    record.finish_root_destroy();
-    store.save(&record).unwrap();
-    record = store.load().unwrap().unwrap();
-    assert!(record.root_destroyed());
-    record.finish_destroy();
-    assert!(!record.runtime_pending && record.pending_creations.is_empty());
     store.save(&record).unwrap();
     assert_eq!(store.load().unwrap().unwrap(), record);
 }
@@ -773,4 +699,36 @@ fn gateway_storage_bindings_record_their_typed_settings() {
     let mut changed = compiled.clone();
     changed.insert("image".into(), "changed".into());
     assert!(bindings[address].differs(&changed));
+}
+
+#[test]
+fn a_failed_apply_forgets_only_new_creations_it_never_started() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut record = Record::new(document.clone()).unwrap();
+    let targets = crate::compile::targets(&document, &record.generations).unwrap();
+    let (first, second, third) = (&targets[0], &targets[1], &targets[2]);
+    record.begin_apply(
+        &document,
+        [(first.address.clone(), first.values.clone())].into(),
+    );
+    let earlier = record.pending_creation_addresses();
+    record.begin_apply(
+        &document,
+        [
+            (second.address.clone(), second.values.clone()),
+            (third.address.clone(), third.values.clone()),
+        ]
+        .into(),
+    );
+    record.forget_unstarted_creations(&earlier, &[second.address.clone()].into());
+    assert_eq!(
+        record.pending_creation_addresses(),
+        [first.address.clone(), second.address.clone()].into(),
+        "an earlier lost reply and a started creation stay unresolved"
+    );
+    assert!(record.pending());
+    record.forget_unstarted_creations(&BTreeSet::new(), &BTreeSet::new());
+    assert!(!record.pending(), "nothing started, so nothing is at risk");
 }

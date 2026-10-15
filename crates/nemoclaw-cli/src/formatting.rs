@@ -384,26 +384,6 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             ));
         }
     }
-    if !result.deferred_resources.is_empty() {
-        output.push_str("\nResources awaiting a complete plan:\n");
-        let mut images = 0;
-        for address in &result.deferred_resources {
-            if !context.verbose && address.starts_with("docker_image.") {
-                images += 1;
-                continue;
-            }
-            output.push_str(&format!("  {}\n", result_resource_label(result, address)));
-            if context.verbose {
-                output.push_str(&format!("    {}\n", terminal_text(address)));
-            }
-        }
-        if images > 0 {
-            output.push_str(&format!(
-                "  {images} image binding{}\n",
-                if images == 1 { "" } else { "s" }
-            ));
-        }
-    }
     if planned && !result.discovery.is_empty() {
         output.push_str("\nDiscovery:\n");
         if !result.discovery.resources.is_empty() {
@@ -808,12 +788,12 @@ mod tests {
             {"resource":"fabric_agent.host", "actions":["update"]},
             {"resource":"openshell_inference.inference_local-1234", "actions":["update"]},
             {"resource":"openshell_web_search.tavily_1234_search_key", "actions":["create"]},
-            {"resource":"vllm_credential_storage.inference_tiny_auth", "actions":["create"]}
+            {"resource":"vllm_credential_storage.inference_tiny_auth", "actions":["create"]},
+            {"resource":"docker_container.ollama_proxy_local", "actions":["create"]},
+            {"resource":"ollama_proxy_credential_storage.local", "actions":["create"]}
         ], "resourceSources": {
             "openshell_inference.inference_local-1234":{"name":"responses", "path":"spec.sandboxes[host].inferenceProviders[responses]"}
-        }, "deferred":["Gateway is required"], "deferredResources":[
-            "docker_container.ollama_proxy_local", "data.ollama_model.local", "ollama_proxy_credential_storage.local", "docker_image.image_1234"
-        ], "discovery":{"resources":[
+        }, "deferred":["Gateway is required"], "discovery":{"resources":[
             {"address":"fabric_agent.host", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":true, "retained":false, "reusePlanned":false, "agentRunning":false},
             {"address":"openshell_inference.inference_local-1234", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":false, "retained":false, "reusePlanned":false},
             {"address":"docker_container.managed_gateway_runtime", "scope":"runtime", "existed":true, "plannedActions":["no-op"], "drifted":true, "retained":false, "reusePlanned":false}
@@ -825,12 +805,10 @@ mod tests {
             "web search/tavily",
             "inference credentials/tiny",
             "ollama proxy/local",
-            "Ollama model/local",
             "proxy credentials/local",
             "Agent runtime is not running; apply restarts it.",
             "Resources: 3 established (1 unchanged, 2 with planned changes); 0 new.",
             "Refresh differences: 2 resources; may include computed metadata.",
-            "Resources awaiting a complete plan:",
         ] {
             assert!(text.contains(expected), "missing {expected}: {text}");
         }
@@ -846,7 +824,6 @@ mod tests {
             result.clone(),
         ))
         .unwrap();
-        assert_eq!(json["deferredResources"], result["deferredResources"]);
         assert_eq!(json["resourceSources"], result["resourceSources"]);
         assert_eq!(json["discovery"]["resources"][0]["agentRunning"], false);
     }

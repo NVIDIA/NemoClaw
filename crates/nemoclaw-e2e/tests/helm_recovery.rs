@@ -463,10 +463,7 @@ impl Fixture {
             name,
             namespace,
         };
-        fixture
-            .deployment
-            .scenario_interrupt_runtime_apply(&document)
-            .unwrap();
+        fixture.deployment.scenario_save_record(&document).unwrap();
         fixture
     }
 
@@ -490,7 +487,7 @@ impl Fixture {
     }
 
     fn stage(&self) -> PathBuf {
-        self.directory.path().join("state/runtime")
+        self.directory.path().join("state")
     }
 
     /// The managed Kubernetes ownership receipt (`kubernetes/receipt.json`).
@@ -739,8 +736,12 @@ async fn an_interrupted_destroy_recovers_on_retry_without_mutating_during_previe
     let snapshot = |directory: &Path| -> BTreeMap<String, Vec<u8>> {
         files(directory)
             .into_iter()
-            // Preview regenerates the OpenTofu configuration; it is not state.
-            .filter(|name| name != "main.tf.json" && directory.join(name).is_file())
+            // Preview regenerates the OpenTofu configuration and its provider
+            // lock; neither is state.
+            .filter(|name| {
+                !matches!(name.as_str(), "main.tf.json" | ".terraform.lock.hcl")
+                    && directory.join(name).is_file()
+            })
             .map(|name| {
                 let bytes = fs::read(directory.join(&name)).unwrap();
                 (name, bytes)

@@ -12,7 +12,7 @@
 #![cfg(unix)]
 
 use nemoclaw_sdk::{
-    CancellationToken, Deployment, ObservationError, Progress, Secrets, StepOutcome,
+    CancellationToken, Deployment, ObservationError, Progress, Secrets,
     compile::{Generations, Target},
     config::Document,
     kubernetes::{GATEWAY_KIND, STORAGE_KIND, gateway::ADDRESS as HELM_RELEASE},
@@ -25,21 +25,16 @@ use std::{
 };
 
 /// `@CONTROL@` and `@STATE@` become the control directory and the state
-/// directory. The stage is `runtime` when the working directory is `runtime/`
-/// under the state directory, else `root`, the OpenShell stage. Control files
-/// are named `STAGE.NAME`: `apply` (`ok`, `fail` or `block`, which sleeps 30 s
+/// directory. Control files are named `root.NAME`: `apply` (`ok`, `fail` or `block`, which sleeps 30 s
 /// unless the SDK interrupts it; it execs `sleep` so that the interrupt reaches
 /// the blocked process, because a shell that waits for a child can lose it),
 /// `planning` (`ok` or `fail`, for `plan`), `state` (the `show -json` state), and the name
 /// of a saved plan (the `show -json PLAN` plan). A `show` without a control file
 /// prints an empty state or plan. An `apply` that finds the saved record,
-/// `intent.json`, creates the control file `STAGE.record-at-apply`.
+/// `intent.json`, creates the control file `root.record-at-apply`.
 const SCRIPT: &str = r##"#!/bin/sh
 control='@CONTROL@'
-case "$PWD" in
-  '@STATE@'/runtime | '@STATE@'/runtime/*) stage=runtime ;;
-  *) stage=root ;;
-esac
+stage=root
 printf '%s\n' "$stage $*" >> "$control/calls"
 case "$1" in
   init) ;;
@@ -148,13 +143,6 @@ impl Scripted {
             .with_secrets(Arc::new(Values(kubeconfig.to_owned())))
     }
 
-    /// Whether the saved record existed when an `apply` of `stage` started.
-    pub fn record_saved_before_apply(&self, stage: &str) -> bool {
-        self.control()
-            .join(format!("{stage}.record-at-apply"))
-            .exists()
-    }
-
     /// The saved record's text, to check that an operation left it unchanged.
     pub fn intent(&self) -> Option<String> {
         fs::read_to_string(self.state().join("intent.json")).ok()
@@ -212,9 +200,16 @@ pub fn kubernetes_document(name: &str, namespace: &str) -> Document {
 /// has allocated its own. A plan that creates resources checks only their
 /// addresses, so it needs none of the allocated ones.
 pub fn placeholder_generations() -> Generations {
-    [GATEWAY_KIND, STORAGE_KIND]
-        .map(|kind| (kind.into(), "a".repeat(32)))
-        .into()
+    [
+        GATEWAY_KIND,
+        STORAGE_KIND,
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into()
 }
 
 /// A target's values and the identity its binding records: the Helm release is
@@ -279,14 +274,6 @@ pub fn state_json(targets: &[Target]) -> String {
         .to_string()
 }
 
-/// `show -json` state of the OpenShell stage after a destroy kept the workspace.
-pub fn retained_workspace_state_json() -> String {
-    json!({"format_version": "1.0", "values": {"root_module": {"resources": [
-        {"address": "openshell_workspace.deployment", "mode": "managed", "values": {"id": "workspace-1"}}
-    ]}}})
-    .to_string()
-}
-
 type Hook = Arc<dyn Fn(Progress) + Send + Sync>;
 
 /// Records progress and cancels at the event a test names.
@@ -294,11 +281,6 @@ type Hook = Arc<dyn Fn(Progress) + Send + Sync>;
 pub struct Events(Arc<Mutex<Vec<Progress>>>);
 
 impl Events {
-    pub fn recording(&self) -> Hook {
-        let events = self.0.clone();
-        Arc::new(move |event| events.lock().unwrap().push(event))
-    }
-
     /// Records every event and cancels `token` at each one `when` accepts.
     pub fn cancelling(
         &self,
@@ -324,24 +306,6 @@ impl Events {
             .count();
         assert_eq!(started, expected, "{context}: OpenTofu applies started");
     }
-
-    pub fn contains(&self, wanted: impl Fn(&Progress) -> bool) -> bool {
-        self.0.lock().unwrap().iter().any(wanted)
-    }
-}
-
-/// OpenTofu has printed its first resource event: the apply is under way and
-/// the script has logged the call. Cancelling at `MutationStarted` instead
-/// interrupts the script before it logs, because the SDK emits that event as
-/// soon as the child exists.
-pub fn mid_apply(event: &Progress) -> bool {
-    matches!(
-        event,
-        Progress::Resource {
-            status: "started",
-            ..
-        }
-    )
 }
 
 /// A plan is about to start; the SDK has not yet spawned it.
@@ -358,16 +322,4 @@ pub fn planning(event: &Progress) -> bool {
 /// The destroy record is saved and no stage has started.
 pub fn destroying(event: &Progress) -> bool {
     matches!(event, Progress::Destroying)
-}
-
-/// An OpenTofu apply that failed.
-pub fn apply_failed(event: &Progress) -> bool {
-    matches!(
-        event,
-        Progress::Completed {
-            operation: "tofu.apply",
-            outcome: StepOutcome::Failed,
-            ..
-        }
-    )
 }

@@ -287,11 +287,137 @@ pub fn compile(
     document: &Document,
     generations: &Generations,
     version: &str,
-) -> Result<Value, ConfigError> {
-    deployment_graph(document, generations, version).map(|(graph, _)| graph)
+) -> Result<Value, crate::Error> {
+    deployment_graph(document, generations, version).map(|compiled| compiled.graph)
+}
+
+/// One deployment's graph: the runtime NemoClaw manages and the OpenShell and
+/// Fabric objects it serves, planned and applied together.
+pub(crate) struct Compiled {
+    pub graph: Value,
+    /// OpenShell and Fabric objects, and the containers that serve them.
+    pub objects: Vec<Target>,
+    /// The managed gateway, model servers, and their storage.
+    pub runtime: Vec<Target>,
 }
 
 pub(crate) fn deployment_graph(
+    document: &Document,
+    generations: &Generations,
+    version: &str,
+) -> Result<Compiled, crate::Error> {
+    let (mut graph, objects) = objects_graph(document, generations, version)?;
+    let runtime = if document.has_runtime() {
+        let (runtime_graph, runtime) = compiled_runtime(document, generations, version)?;
+        join(&mut graph, runtime_graph)?;
+        runtime
+    } else {
+        Vec::new()
+    };
+    Ok(Compiled {
+        graph,
+        objects,
+        runtime,
+    })
+}
+
+/// Add the runtime graph to the objects graph. Objects change only after the
+/// runtime settles: each waits on the apply-time gateway read, which waits on
+/// every runtime resource and readiness read.
+fn join(graph: &mut Value, mut runtime: Value) -> Result<(), crate::Error> {
+    let conflict =
+        || crate::Error::State("runtime and objects graphs declare the same address differently");
+    // The runtime graph's gateway read waits for the gateway it installs, so it
+    // replaces the plan-time read of the same gateway.
+    let current = runtime["data"]["openshell_gateway"]
+        .as_object_mut()
+        .and_then(|reads| reads.remove("current"));
+    let mut gates: Vec<Value> = Vec::new();
+    for section in ["resource", "data"] {
+        for (kind, instances) in runtime[section].as_object().into_iter().flatten() {
+            for (name, value) in instances.as_object().into_iter().flatten() {
+                let slot = &mut graph[section][kind][name];
+                if !slot.is_null() && slot != value {
+                    return Err(conflict());
+                }
+                *slot = value.clone();
+                let prefix = if section == "data" { "data." } else { "" };
+                gates.push(json!(format!("{prefix}{kind}.{name}")));
+            }
+        }
+    }
+    for (name, value) in runtime["terraform"]["required_providers"]
+        .as_object()
+        .into_iter()
+        .flatten()
+    {
+        let slot = &mut graph["terraform"]["required_providers"][name];
+        if !slot.is_null() && slot != value {
+            return Err(conflict());
+        }
+        *slot = value.clone();
+    }
+    for (name, value) in runtime["provider"].as_object().into_iter().flatten() {
+        let slot = &mut graph["provider"][name];
+        // Docker providers are aliased per engine; both graphs may reach one.
+        if let (true, Some(added)) = (slot.is_array(), value.as_array()) {
+            let existing = slot.as_array_mut().expect("provider list");
+            for provider in added {
+                if !existing.contains(provider) {
+                    existing.push(provider.clone());
+                }
+            }
+        } else if slot.is_null() || slot == value {
+            *slot = value.clone();
+        } else {
+            return Err(conflict());
+        }
+    }
+    // Variables, locals, outputs, and checks are maps of named blocks.
+    for (block, entries) in runtime.as_object().into_iter().flatten() {
+        if matches!(
+            block.as_str(),
+            "resource" | "data" | "terraform" | "provider"
+        ) {
+            continue;
+        }
+        for (name, value) in entries.as_object().into_iter().flatten() {
+            let slot = &mut graph[block.as_str()][name];
+            if !slot.is_null() && slot != value {
+                return Err(conflict());
+            }
+            *slot = value.clone();
+        }
+    }
+    let reads = &mut graph["data"]["openshell_gateway"];
+    if let Some(current) = current {
+        reads["current"] = current;
+    } else {
+        // A Kubernetes gateway's read waits for its installation instead.
+        let installed: Vec<Value> = gates
+            .iter()
+            .filter(|gate| {
+                gate.as_str().is_some_and(|address| {
+                    address.starts_with(&format!(
+                        "{}.",
+                        resource_type(crate::kubernetes::GATEWAY_KIND)
+                    ))
+                })
+            })
+            .cloned()
+            .collect();
+        if !installed.is_empty() {
+            reads["current"]["depends_on"] = json!(installed);
+        }
+    }
+    let apply = &mut reads["apply"];
+    let mut dependencies = apply["depends_on"].as_array().cloned().unwrap_or_default();
+    dependencies.extend(gates);
+    apply["depends_on"] = json!(dependencies);
+    Ok(())
+}
+
+fn objects_graph(
     document: &Document,
     generations: &Generations,
     version: &str,

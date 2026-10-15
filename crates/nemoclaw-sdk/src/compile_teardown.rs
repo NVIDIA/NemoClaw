@@ -14,7 +14,7 @@ pub struct CompiledTeardown {
 
 /// Compile removal of workloads while keeping established storage tracked.
 ///
-/// `established` contains resource addresses from the selected stage's saved
+/// `established` contains resource addresses from the deployment's saved
 /// OpenTofu state. The caller must verify that bindings belong to this deployment
 /// and agree with its retained intent before applying the graph. Missing retained
 /// resources are omitted so teardown cannot create storage after partial apply.
@@ -23,26 +23,17 @@ pub fn compile_teardown(
     generations: &Generations,
     version: &str,
     established: &BTreeSet<String>,
-    runtime: bool,
 ) -> Result<CompiledTeardown, crate::Error> {
-    let mut graph = if runtime {
-        compile_runtime(document, generations, version)?
-    } else {
-        compile(document, generations, version)?
-    };
+    let mut graph = compile(document, generations, version)?;
     let mut retained: BTreeSet<String> = crate::services::remove_plans(document, generations)?
         .into_iter()
         .flat_map(|plan| plan.retained)
         .collect();
-    retained.insert(if runtime {
-        if document.spec.gateway.as_kubernetes().is_some() {
-            "openshell_kubernetes_storage.runtime".into()
-        } else {
-            "openshell_gateway_storage.runtime".into()
-        }
-    } else {
-        "openshell_workspace.deployment".into()
-    });
+    retained.extend([
+        "openshell_kubernetes_storage.runtime".into(),
+        "openshell_gateway_storage.runtime".into(),
+        "openshell_workspace.deployment".into(),
+    ]);
     retained.retain(|address| {
         established.contains(address)
             && address.split_once('.').is_some_and(|(kind, name)| {
@@ -172,7 +163,7 @@ mod tests {
             retained.clone(),
         ] {
             let compiled =
-                compile_teardown(&document, &generations, "0.1.0", &established, true).unwrap();
+                compile_teardown(&document, &generations, "0.1.0", &established).unwrap();
             assert_eq!(compiled.retained, established);
             let graph = compiled.graph;
             if established.is_empty() {
@@ -240,20 +231,20 @@ mod tests {
             ]),
         ] {
             let compiled =
-                compile_teardown(&document, &generations, "0.1.0", &established, true).unwrap();
+                compile_teardown(&document, &generations, "0.1.0", &established).unwrap();
             let expected = established
                 .into_iter()
                 .filter(|address| address == &storage)
                 .collect();
             assert_eq!(compiled.retained, expected);
             assert_eq!(addresses(&compiled.graph), expected);
-            // The platform stage installs the gateway: openshell serves the
-            // Kubernetes gateway types; fabric needs a running gateway.
-            assert_eq!(
-                compiled.graph["provider"]["openshell"],
-                json!({"destroy": true})
-            );
-            assert!(compiled.graph["provider"].get("fabric").is_none());
+            for provider in ["openshell", "fabric"] {
+                assert_eq!(
+                    compiled.graph["provider"][provider],
+                    json!({"destroy": true}),
+                    "{provider}"
+                );
+            }
             assert!(compiled.graph.get("data").is_none());
             assert!(compiled.graph.get("output").is_none());
             if compiled.retained.contains(&storage) {
@@ -266,31 +257,17 @@ mod tests {
     }
 
     #[test]
-    fn reported_retention_matches_the_selected_stage_graph() {
+    fn reported_retention_matches_the_teardown_graph() {
         let (document, generations) = fixture();
-        let established: BTreeSet<_> =
-            addresses(&compile(&document, &generations, "0.1.0").unwrap())
-                .union(&addresses(
-                    &compile_runtime(&document, &generations, "0.1.0").unwrap(),
-                ))
-                .cloned()
-                .collect();
-        for runtime in [false, true] {
-            let compiled =
-                compile_teardown(&document, &generations, "0.1.0", &established, runtime).unwrap();
-            assert_eq!(compiled.retained, addresses(&compiled.graph));
-            assert_eq!(compiled.retained.len(), if runtime { 3 } else { 1 });
-            let repeated = compile_teardown(
-                &document,
-                &generations,
-                "0.1.0",
-                &compiled.retained,
-                runtime,
-            )
-            .unwrap();
-            assert_eq!(repeated.retained, compiled.retained);
-            assert_eq!(repeated.graph, compiled.graph);
-        }
+        let established = addresses(&compile(&document, &generations, "0.1.0").unwrap());
+        let compiled = compile_teardown(&document, &generations, "0.1.0", &established).unwrap();
+        assert_eq!(compiled.retained, addresses(&compiled.graph));
+        // Gateway storage, the model cache and credentials, and the workspace.
+        assert_eq!(compiled.retained.len(), 4);
+        let repeated =
+            compile_teardown(&document, &generations, "0.1.0", &compiled.retained).unwrap();
+        assert_eq!(repeated.retained, compiled.retained);
+        assert_eq!(repeated.graph, compiled.graph);
     }
 
     #[test]
@@ -304,7 +281,7 @@ mod tests {
             ]),
         ] {
             let compiled =
-                compile_teardown(&document, &generations, "0.1.0", &established, false).unwrap();
+                compile_teardown(&document, &generations, "0.1.0", &established).unwrap();
             let graph = compiled.graph;
             let expected = established
                 .into_iter()

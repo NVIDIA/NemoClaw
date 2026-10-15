@@ -86,7 +86,7 @@ async fn an_authentication_failure_before_planning_stops_destroy_and_changes_not
     before.assert_unchanged(&fixture, "401 before planning");
     before.assert_state_unchanged(&fixture, "401 before planning");
     fixture
-        .assert_export_refused("cannot export while apply is unfinished")
+        .assert_export_refused("export requires all declared resource bindings")
         .await;
     fixture.finish().await;
 }
@@ -250,7 +250,7 @@ async fn cancelling_at_the_first_refresh_returns_promptly_while_the_api_is_unrea
         before.assert_unchanged(&fixture, &format!("{fault:?}"));
         before.assert_state_unchanged(&fixture, &format!("{fault:?}"));
         fixture
-            .assert_export_refused("cannot export while apply is unfinished")
+            .assert_export_refused("export requires all declared resource bindings")
             .await;
     }
     fixture.finish().await;

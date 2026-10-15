@@ -315,15 +315,9 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     assert!(deployment.plan_destroy(&cancel).await.is_err());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert_apply_unfinished(&deployment, &cancel).await;
+    // The lost reply was the inference registration's: its target cannot change.
     let mut changed = document.clone();
-    changed.spec.sandboxes[0]
-        .agent
-        .inference
-        .as_mut()
-        .unwrap()
-        .routes[0]
-        .overrides
-        .model = "changed".into();
+    changed.spec.inference_providers[0].endpoint = "http://172.20.0.1:11437/v1".into();
     let error = deployment.apply(&changed, &cancel).await.unwrap_err();
     assert!(
         error

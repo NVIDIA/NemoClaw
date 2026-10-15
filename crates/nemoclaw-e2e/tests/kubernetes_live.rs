@@ -438,7 +438,6 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
             &generations,
             &tofu.bundle.manifest.version,
             &tofu.addresses().await,
-            true,
         )
         .unwrap();
         assert_eq!(teardown.retained, storage);

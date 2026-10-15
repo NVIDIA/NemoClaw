@@ -4,7 +4,25 @@
 use super::*;
 use crate::{deployment::tests::kubernetes_context, managed::GATEWAY_STORAGE_KIND};
 
+use crate::deployment::plan::check_plan as check_runtime_plan;
+
 const GATEWAY: &str = "openshell_podman_gateway.runtime";
+
+/// The rows a runtime's bindings allow, after the Docker model check.
+struct Checked {
+    expected: BTreeMap<String, Row>,
+}
+
+fn runtime_observations(
+    document: &Document,
+    targets: &[Target],
+    bindings: &BTreeMap<String, StateBinding>,
+    plan: &Plan,
+) -> Result<Checked, Error> {
+    let expected = runtime_bindings(targets, bindings)?;
+    preserve_docker_models(document, plan)?;
+    Ok(Checked { expected })
+}
 
 #[test]
 fn docker_model_updates_preserve_running_containers_unless_recreation_is_explicit() {
@@ -135,7 +153,7 @@ fn docker_model_updates_preserve_running_containers_unless_recreation_is_explici
 }
 
 #[test]
-fn kubernetes_gateway_requires_storage_and_fresh_readiness_without_replacement() {
+fn kubernetes_gateway_requires_storage_without_replacement() {
     let (document, generations) = kubernetes_context();
     let targets = compile::runtime_targets(&document, &generations).unwrap();
     let bindings = kubernetes_bindings(&targets);
@@ -146,22 +164,10 @@ fn kubernetes_gateway_requires_storage_and_fresh_readiness_without_replacement()
         json!({"address":target.address, "change":{"actions":["no-op"], "before":before, "after":before}})
     }).collect::<Vec<_>>()})).unwrap();
     let checked = runtime_observations(&document, &targets, &bindings, &plan).unwrap();
-    assert!(checked.gateway_running);
     assert!(
         check_runtime_plan(&plan, &checked.expected, &bindings)
             .unwrap()
             .is_empty()
-    );
-    let gateway = plan
-        .resource_changes
-        .iter_mut()
-        .find(|change| change.address == "openshell_kubernetes_gateway.runtime")
-        .unwrap();
-    gateway.change.before["running"] = json!("false");
-    assert!(
-        !runtime_observations(&document, &targets, &bindings, &plan)
-            .unwrap()
-            .gateway_running
     );
     let mut missing = bindings.clone();
     missing.remove(KUBERNETES_STORAGE);
@@ -175,135 +181,6 @@ fn kubernetes_gateway_requires_storage_and_fresh_readiness_without_replacement()
         }
     }
     assert!(check_runtime_plan(&plan, &checked.expected, &bindings).is_err());
-}
-
-#[test]
-fn interrupted_kubernetes_platform_apply_cannot_move_to_another_namespace() {
-    let (document, _) = kubernetes_context();
-    let mut record = Record::new(document.clone()).unwrap();
-    record.begin_runtime_apply(&document);
-    assert!(record.validate_pending_intent(&document).is_ok());
-    let mut changed = document.clone();
-    changed
-        .spec
-        .gateway
-        .as_managed_mut()
-        .unwrap()
-        .kubernetes
-        .as_mut()
-        .unwrap()
-        .namespace = "another-target".into();
-    assert!(record.validate_pending_intent(&changed).is_err());
-}
-
-fn context() -> (Document, crate::compile::Generations) {
-    let document =
-        Document::parse(include_bytes!("../../../../../examples/spark/vllm.yaml").as_slice())
-            .unwrap();
-    let generations = Record::new(document.clone()).unwrap().generations;
-    (document, generations)
-}
-
-fn gateway_targets() -> (Spec, Vec<Target>) {
-    let fixtures: Vec<Value> = serde_json::from_str(include_str!(
-        "../../../../nemoclaw-provider/src/managed/reference.json"
-    ))
-    .unwrap();
-    let mut spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
-    spec.compute_driver = crate::config::ComputeDriver::Podman;
-    spec.gateway.network_cidr = "172.30.161.0/24".into();
-    let mut targets = Vec::new();
-    for (kind, address, layout) in [
-        (GATEWAY_STORAGE_KIND, GATEWAY_STORAGE, 0),
-        (GATEWAY_KIND, GATEWAY, 2),
-    ] {
-        spec.layout = layout;
-        targets.push(Target {
-            kind: kind.into(),
-            address: address.into(),
-            values: spec.gateway_row(kind).unwrap(),
-        });
-    }
-    (spec, targets)
-}
-
-/// The binding OpenTofu state records for a compiled target.
-fn bound(id: impl Into<String>, target: &Target) -> StateBinding {
-    let value = |name: &str| target.values.get(name).cloned().unwrap_or_default();
-    StateBinding {
-        id: id.into(),
-        spec: value("spec"),
-        name: value("name"),
-        owner: value("owner"),
-        generation: value("generation"),
-        engine: value("engine"),
-        compute_driver: value("compute_driver"),
-        endpoint: value("endpoint"),
-        image: value("image"),
-        network_cidr: value("network_cidr"),
-        ..Default::default()
-    }
-}
-
-/// Planned prior attributes of a bound resource.
-fn before(binding: &StateBinding) -> Value {
-    let mut before = json!(binding.typed_values());
-    before["id"] = json!(binding.id);
-    if !binding.spec.is_empty() {
-        before["spec"] = json!(binding.spec);
-    }
-    before["running"] = json!("true");
-    before
-}
-
-#[test]
-fn gateway_deferral_uses_refreshed_plan_observations() {
-    let (document, _) = context();
-    let (_, mut targets) = gateway_targets();
-    let bindings: BTreeMap<String, StateBinding> = targets
-        .iter()
-        .map(|target| {
-            (
-                target.address.clone(),
-                bound(format!("physical-{}", target.kind), target),
-            )
-        })
-        .collect();
-    let mut want = Spec::from_values(GATEWAY_KIND, &targets[1].values).unwrap();
-    want.gateway.endpoint = "http://127.0.0.1:17682".into();
-    want.write_values(GATEWAY_KIND, &mut targets[1].values)
-        .unwrap();
-    let changes: Vec<Value> = targets.iter().map(|target| json!({
-        "address": target.address,
-        "change": {
-            "actions": if target.kind == GATEWAY_KIND { vec!["delete", "create"] } else { vec!["no-op"] },
-            "before": before(&bindings[&target.address])
-        }
-    })).collect();
-    let mut plan: Plan = serde_json::from_value(json!({"resource_changes": changes})).unwrap();
-    let checked = runtime_observations(&document, &targets, &bindings, &plan).unwrap();
-    assert!(checked.gateway_running);
-    assert_eq!(
-        check_runtime_plan(&plan, &checked.expected, &bindings)
-            .unwrap()
-            .len(),
-        1
-    );
-    plan.resource_changes[1].change.before["running"] = json!("false");
-    assert!(
-        !runtime_observations(&document, &targets, &bindings, &plan)
-            .unwrap()
-            .gateway_running
-    );
-    for invalid in [
-        json!({"actions": ["create"], "before": null}),
-        json!({"actions": ["no-op"], "before": {"id": "other", "spec": bindings[GATEWAY_STORAGE].spec}}),
-        json!({"actions": ["no-op"], "before": {"id": bindings[GATEWAY_STORAGE].id, "spec": "changed"}}),
-    ] {
-        plan.resource_changes[0].change = serde_json::from_value(invalid).unwrap();
-        let checked = runtime_observations(&document, &targets, &bindings, &plan).unwrap();
-        assert!(check_runtime_plan(&plan, &checked.expected, &bindings).is_err());
-    }
 }
 
 #[test]
@@ -346,7 +223,7 @@ fn bound_podman_gateway_requires_its_retained_storage_binding() {
 }
 
 #[test]
-fn unbound_gateway_is_deferred_and_retained_intent_is_checked_locally() {
+fn unbound_gateway_intent_is_checked_locally() {
     let (document, _) = context();
     let (_, targets) = gateway_targets();
     let plan: Plan = serde_json::from_value(
@@ -356,7 +233,6 @@ fn unbound_gateway_is_deferred_and_retained_intent_is_checked_locally() {
     )
     .unwrap();
     let checked = runtime_observations(&document, &targets, &BTreeMap::new(), &plan).unwrap();
-    assert!(!checked.gateway_running);
     assert_eq!(
         check_runtime_plan(&plan, &checked.expected, &BTreeMap::new(),)
             .unwrap()
@@ -409,49 +285,30 @@ fn native_compute_binding_does_not_require_a_nemoclaw_spec_or_replacement_author
     );
 }
 
-#[tokio::test]
-async fn removing_the_last_runtime_cannot_orphan_retained_state() {
-    let directory = tempfile::tempdir().unwrap();
-    let store = Store::open(directory.path()).unwrap();
-    let stage = directory.path().join("runtime");
-    fs::create_dir(&stage).unwrap();
-    let state = stage.join("terraform.tfstate");
-    let bytes = serde_json::to_vec(&json!({"resources":[{"type":"vllm_credential_storage","name":"model","instances":[{"attributes":{"id":"daemon/volume/created","spec":"retained"}}]}]})).unwrap();
-    fs::write(&state, &bytes).unwrap();
-    let (document, _) = context();
-    let mut record = Record::new(document).unwrap();
+#[test]
+fn removing_the_last_runtime_cannot_orphan_retained_state() {
     let desired =
         Document::parse(include_bytes!("../../../tests/fixtures/config/local.yaml").as_slice())
             .unwrap();
     assert!(!desired.has_runtime());
-    let bundle = Bundle {
-        directory: directory.path().into(),
-        manifest: crate::bundle::Manifest {
-            version: "unused".into(),
-            rust: "unused".into(),
-            opentofu: "unused".into(),
-            files: BTreeMap::new(),
+    let record = Record::new(desired.clone()).unwrap();
+    let compiled = compile::deployment_graph(&desired, &record.generations, "0.1.0").unwrap();
+    let bindings = BTreeMap::from([(
+        "vllm_credential_storage.model".to_owned(),
+        StateBinding {
+            id: "daemon/volume/created".into(),
+            spec: "retained".into(),
+            ..Default::default()
         },
-    };
-    let deployment = Deployment::new(directory.path(), directory.path());
-    assert!(
-        deployment
-            .runtime_stage(
-                &bundle,
-                &store,
-                &desired,
-                &mut record,
-                true,
-                &CancellationToken::new()
-            )
-            .await
-            .is_err()
-    );
-    assert_eq!(fs::read(state).unwrap(), bytes);
+    )]);
+    assert!(matches!(
+        expected_bindings(&compiled, &bindings),
+        Err(Error::Conflict(_))
+    ));
 }
 
 #[test]
-fn docker_gateway_plan_uses_provider_reconciliation_but_requires_durable_identity() {
+fn docker_gateway_requires_durable_identity() {
     let (document, generations) = context();
     let targets = compile::runtime_targets(&document, &generations).unwrap();
     let gateway = targets
@@ -472,15 +329,8 @@ fn docker_gateway_plan_uses_provider_reconciliation_but_requires_durable_identit
     )]);
     assert!(runtime_bindings(&targets, &bindings).is_err());
     bindings.insert(storage.address.clone(), bound("durable", storage));
-    for (actions, running) in [
-        (vec!["no-op"], true),
-        (vec!["delete", "create"], false),
-        (vec!["create"], false),
-    ] {
-        let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"address":gateway.address,"change":{"actions":actions,"before":{"id":"container"}}}]})).unwrap();
-        let observed = runtime_observations(&document, &targets, &bindings, &plan).unwrap();
-        assert_eq!(observed.gateway_running, running);
-    }
+    let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"address":gateway.address,"change":{"actions":["no-op"],"before":{"id":"container"}}}]})).unwrap();
+    runtime_observations(&document, &targets, &bindings, &plan).unwrap();
 }
 
 #[test]
@@ -542,4 +392,64 @@ fn kubernetes_helm_binding_requires_auth_and_the_same_release() {
     partial.remove("openshell_kubernetes_gateway.runtime");
     partial.remove(crate::kubernetes::gateway::ADDRESS);
     runtime_bindings(&targets, &partial).unwrap();
+}
+
+fn context() -> (Document, crate::compile::Generations) {
+    let document =
+        Document::parse(include_bytes!("../../../../../examples/spark/vllm.yaml").as_slice())
+            .unwrap();
+    let generations = Record::new(document.clone()).unwrap().generations;
+    (document, generations)
+}
+
+fn gateway_targets() -> (Spec, Vec<Target>) {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!(
+        "../../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
+    let mut spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    spec.compute_driver = crate::config::ComputeDriver::Podman;
+    spec.gateway.network_cidr = "172.30.161.0/24".into();
+    let mut targets = Vec::new();
+    for (kind, address, layout) in [
+        (GATEWAY_STORAGE_KIND, GATEWAY_STORAGE, 0),
+        (GATEWAY_KIND, GATEWAY, 2),
+    ] {
+        spec.layout = layout;
+        targets.push(Target {
+            kind: kind.into(),
+            address: address.into(),
+            values: spec.gateway_row(kind).unwrap(),
+        });
+    }
+    (spec, targets)
+}
+
+/// The binding OpenTofu state records for a compiled target.
+fn bound(id: impl Into<String>, target: &Target) -> StateBinding {
+    let value = |name: &str| target.values.get(name).cloned().unwrap_or_default();
+    StateBinding {
+        id: id.into(),
+        spec: value("spec"),
+        name: value("name"),
+        owner: value("owner"),
+        generation: value("generation"),
+        engine: value("engine"),
+        compute_driver: value("compute_driver"),
+        endpoint: value("endpoint"),
+        image: value("image"),
+        network_cidr: value("network_cidr"),
+        ..Default::default()
+    }
+}
+
+/// Planned prior attributes of a bound resource.
+fn before(binding: &StateBinding) -> Value {
+    let mut before = json!(binding.typed_values());
+    before["id"] = json!(binding.id);
+    if !binding.spec.is_empty() {
+        before["spec"] = json!(binding.spec);
+    }
+    before["running"] = json!("true");
+    before
 }

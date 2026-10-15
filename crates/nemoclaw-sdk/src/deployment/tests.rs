@@ -143,7 +143,7 @@ fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directori
         .to_string_lossy()
         .into_owned();
     for directory in [
-        temporary.path().join("runtime"),
+        temporary.path().to_path_buf(),
         temporary.path().join(".export-copy"),
     ] {
         let environment = deployment
@@ -192,7 +192,7 @@ fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown()
                     .is_empty()
             );
             assert!(
-                runtime::check_runtime_plan(&plan, &declared, &BTreeMap::new())
+                crate::deployment::plan::check_plan(&plan, &declared, &BTreeMap::new())
                     .unwrap()
                     .is_empty()
             );
@@ -212,7 +212,9 @@ fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown()
             let value = json!({"mode":mode, "address":address, "change":{"actions":[action]}});
             let plan: Plan = serde_json::from_value(json!({"resource_changes":[value]})).unwrap();
             assert!(check_plan(&plan, &declared, &BTreeMap::new()).is_err());
-            assert!(runtime::check_runtime_plan(&plan, &declared, &BTreeMap::new()).is_err());
+            assert!(
+                crate::deployment::plan::check_plan(&plan, &declared, &BTreeMap::new()).is_err()
+            );
         }
         let change = json!({"mode":"data", "address":address, "change":{"actions":["read"]}});
         let duplicate: Plan =
@@ -668,15 +670,15 @@ fn gateway_replacement_preserves_the_old_binding_and_rejects_other_actions() {
     .into();
     let plan:Plan = serde_json::from_value(json!({"resource_changes":[{"address":address,"change":{"actions":["delete","create"],"before":{"id":"physical","spec":"old"}}}]})).unwrap();
     assert_eq!(
-        runtime::check_runtime_plan(&plan, &expected, &bindings)
+        crate::deployment::plan::check_plan(&plan, &expected, &bindings)
             .unwrap()
             .len(),
         1
     );
     let mut wrong:Plan = serde_json::from_value(json!({"resource_changes":[{"address":address,"change":{"actions":["delete","create"],"before":{"id":"other","spec":"old"}}}]})).unwrap();
-    assert!(runtime::check_runtime_plan(&wrong, &expected, &bindings).is_err());
+    assert!(crate::deployment::plan::check_plan(&wrong, &expected, &bindings).is_err());
     wrong.resource_changes.clear();
-    assert!(runtime::check_runtime_plan(&wrong, &expected, &bindings).is_err());
+    assert!(crate::deployment::plan::check_plan(&wrong, &expected, &bindings).is_err());
     for action in [
         vec!["create"],
         vec!["delete"],
@@ -684,7 +686,7 @@ fn gateway_replacement_preserves_the_old_binding_and_rejects_other_actions() {
         vec!["create", "delete"],
     ] {
         let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"address":address,"change":{"actions":action,"before":{"id":"physical","spec":"old"}}}]})).unwrap();
-        assert!(runtime::check_runtime_plan(&plan, &expected, &bindings).is_err());
+        assert!(crate::deployment::plan::check_plan(&plan, &expected, &bindings).is_err());
     }
 }
 
@@ -815,7 +817,7 @@ fn runtime_plans_accept_only_declared_local_image_observations_and_teardown_dele
         }
         let plan: Plan = serde_json::from_value(json!({"resource_changes":changes})).unwrap();
         assert_eq!(
-            runtime::check_runtime_plan(&plan, &allowed, &BTreeMap::new()).is_ok(),
+            crate::deployment::plan::check_plan(&plan, &allowed, &BTreeMap::new()).is_ok(),
             valid
         );
     }
@@ -886,7 +888,7 @@ fn removed_disposable_compute_accepts_confirmed_absence() {
             .is_empty()
     );
     assert!(
-        runtime::check_runtime_plan(&plan, &BTreeMap::new(), &bindings)
+        crate::deployment::plan::check_plan(&plan, &BTreeMap::new(), &bindings)
             .unwrap()
             .is_empty()
     );
@@ -967,7 +969,7 @@ fn replacement_cleanup_reports_opentofu_objects_within_deployment_scope() {
     let apply = plan(json!([current, old]));
     assert_eq!(check_plan(&apply, &allowed, &bindings).unwrap().len(), 1);
     assert_eq!(
-        runtime::check_runtime_plan(&apply, &allowed, &bindings)
+        crate::deployment::plan::check_plan(&apply, &allowed, &bindings)
             .unwrap()
             .len(),
         1
@@ -1075,15 +1077,18 @@ fn compiled_examples() -> Vec<(String, Value, BTreeMap<String, Row>)> {
     let mut compiled = Vec::new();
     for (name, document) in example_documents() {
         let generations = Record::new(document.clone()).unwrap().generations;
-        let (graph, targets) = compile::deployment_graph(&document, &generations, "0.0.0").unwrap();
-        let expected = with_observations(&allowed(&targets), &compile::observations(&graph));
-        compiled.push((format!("{name} deployment"), graph, expected));
-        if document.has_runtime() {
-            let (graph, targets) =
-                compile::compiled_runtime(&document, &generations, "0.0.0").unwrap();
-            let expected = with_observations(&allowed(&targets), &compile::observations(&graph));
-            compiled.push((format!("{name} runtime"), graph, expected));
-        }
+        let deployment = compile::deployment_graph(&document, &generations, "0.0.0").unwrap();
+        let targets: Vec<_> = deployment
+            .objects
+            .iter()
+            .chain(&deployment.runtime)
+            .cloned()
+            .collect();
+        let expected = with_observations(
+            &allowed(&targets),
+            &compile::observations(&deployment.graph),
+        );
+        compiled.push((name, deployment.graph, expected));
     }
     compiled
 }
@@ -1180,23 +1185,17 @@ fn teardown_discards_only_observations_the_applied_graph_read() {
     let mut rejected = 0;
     for (name, document) in example_documents() {
         let generations = Record::new(document.clone()).unwrap().generations;
-        for runtime in [false, true] {
-            if runtime && !document.has_runtime() {
-                continue;
-            }
-            let compiled = compile::compile_teardown(
-                &document,
-                &generations,
-                "0.0.0",
-                &BTreeSet::new(),
-                runtime,
-            )
-            .unwrap();
-            let (applied, targets) = if runtime {
-                compile::compiled_runtime(&document, &generations, "0.0.0").unwrap()
-            } else {
-                compile::deployment_graph(&document, &generations, "0.0.0").unwrap()
-            };
+        for runtime in [false] {
+            let compiled =
+                compile::compile_teardown(&document, &generations, "0.0.0", &BTreeSet::new())
+                    .unwrap();
+            let deployment = compile::deployment_graph(&document, &generations, "0.0.0").unwrap();
+            let applied = deployment.graph;
+            let targets: Vec<_> = deployment
+                .objects
+                .into_iter()
+                .chain(deployment.runtime)
+                .collect();
             assert_eq!(
                 compiled.observations,
                 declared_reads(&applied),

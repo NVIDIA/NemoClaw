@@ -105,7 +105,7 @@ Run it explicitly for candidate dependency upgrades, outside the default build; 
 The read-only live storage test requires an explicit OpenTofu runtime state file containing the test deployment's retained inference credential-volume binding from an authenticated vLLM service:
 
 ```sh
-NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/runtime/terraform.tfstate \
+NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/deployment-state/terraform.tfstate \
   cargo test -p nemoclaw-sdk --test integration \
   managed_live::retained_inference_credentials_preserve_their_reference_binding -- --ignored
 ```
