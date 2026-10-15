@@ -10,7 +10,12 @@ import {
   type CheckpointLoadResult,
   type OnboardCheckpoint,
 } from "../state/onboard-checkpoint-types";
-import { createSession, type Session, type SessionRecoveryReceipt } from "../state/onboard-session";
+import {
+  createSession,
+  normalizeSession,
+  type Session,
+  type SessionRecoveryReceipt,
+} from "../state/onboard-session";
 import type { ResumeConfigConflict } from "./resume-config";
 import {
   checkpointSandboxName,
@@ -92,6 +97,58 @@ function createDeps(
 }
 
 describe("prepareOnboardSession", () => {
+  it.each(["thread-opt-in", "disabled"] as const)(
+    "preserves explicit DCode %s intent across interruption before sandbox registration",
+    async (mode) => {
+      const { deps } = createDeps();
+      const input = {
+        resume: false,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: "saved",
+        cannotPrompt: true,
+        nonInteractive: true,
+        requestedDcodeAutoApprovalMode: mode,
+      };
+      const fresh = await prepareOnboardSession(input, deps);
+      const persisted = normalizeSession(JSON.parse(JSON.stringify(fresh.session)));
+      const resumed = await prepareOnboardSession(
+        { ...input, resume: true, requestedDcodeAutoApprovalMode: null },
+        createDeps(persisted).deps,
+      );
+      expect(resumed.session).toMatchObject({
+        dcodeAutoApprovalMode: mode,
+        dcodeAutoApprovalRequestedExplicitly: true,
+      });
+    },
+  );
+  it("retains explicit disabled after replacing a pending thread opt-in on resume", async () => {
+    const { deps } = createDeps(
+      createSession({
+        dcodeAutoApprovalMode: "thread-opt-in",
+        dcodeAutoApprovalRequestedExplicitly: true,
+      }),
+    );
+    const input = {
+      resume: true,
+      fresh: false,
+      requestedFromDockerfile: null,
+      requestedSandboxName: "saved",
+      cannotPrompt: true,
+      nonInteractive: true,
+    };
+    const changed = await prepareOnboardSession(
+      { ...input, requestedDcodeAutoApprovalMode: "disabled" },
+      deps,
+    );
+    const persisted = normalizeSession(JSON.parse(JSON.stringify(changed.session)));
+    const resumed = await prepareOnboardSession(input, createDeps(persisted).deps);
+    expect(resumed.session).toMatchObject({
+      dcodeAutoApprovalMode: "disabled",
+      dcodeAutoApprovalRequestedExplicitly: true,
+    });
+  });
+
   it("stops resume before side effects when saved sandbox identity is invalid (#9833)", async () => {
     const loadSession = vi.fn((): Session | null => {
       throw new Error(

@@ -695,7 +695,9 @@ Recreation without an explicit flag or environment value preserves the recorded 
 Choose the managed Deep Agents Code auto-approval capability during onboarding. A new sandbox defaults to `disabled`.
 Omitting the flag preserves the sandbox registry’s recorded capability, including a previously disabled capability, during resume or recreation.
 `thread-opt-in` permits explicit activation inside Deep Agents Code; onboarding does not activate an approval mode or run `dcode -y`.
-It is rejected for other agents and custom images. An explicit capability change for an existing sandbox requires recreation through the existing onboarding lifecycle.
+`thread-opt-in` is rejected for other agents and custom images. Pass `--dcode-auto-approval disabled` to clear a recorded capability when switching agents.
+Before sandbox registration, resume preserves the explicit choice saved in the onboarding session.
+An explicit capability change for an existing sandbox requires recreation through the existing onboarding lifecycle.
 See [Configure Thread Auto-Approval](../manage-sandboxes/operate-sandboxes/run-deep-agents-code#configure-thread-auto-approval) for activation, status, and revocation.
 
 #### `--observability` and `--no-observability`

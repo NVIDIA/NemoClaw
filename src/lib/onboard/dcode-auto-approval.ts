@@ -40,6 +40,7 @@ export function resolveDcodeAutoApprovalRequest(input: {
   agent: string | null | undefined;
   requestedMode: DcodeAutoApprovalMode | null | undefined;
   recordedMode: unknown;
+  pendingMode?: DcodeAutoApprovalMode | null;
 }): { mode: DcodeAutoApprovalMode; error: string | null } {
   if (invalidRecordedDcodeAutoApprovalMode(input.recordedMode)) {
     return {
@@ -51,6 +52,7 @@ export function resolveDcodeAutoApprovalRequest(input: {
   const resolution = resolveManagedSandboxFeature(DCODE_AUTO_APPROVAL_FEATURE, {
     agent: input.agent,
     requested: input.requestedMode,
+    sessionValue: input.pendingMode,
     registryValue: isDcodeAutoApprovalMode(input.recordedMode) ? input.recordedMode : null,
   });
   const error =

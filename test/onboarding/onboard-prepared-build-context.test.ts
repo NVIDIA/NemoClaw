@@ -280,7 +280,33 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const agent = loadAgent("langchain-deepagents-code");
   let errorMessage = null;
+  let resumedMode = mode;
   try {
+    if (scenario === "fallback") {
+      const sessionStore = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
+      const { prepareOnboardSession } = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/session-bootstrap.ts"))});
+      const { resolveAutoApprovalMode } = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/machine/handlers/sandbox-dcode-resume.ts"))});
+      const { getResumeConfigConflicts } = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/resume-config.ts"))});
+      const deps = {
+        ...sessionStore,
+        applySessionRecovery: () => {}, setOnboardBrandingAgent: () => {},
+        getResumeConfigConflicts, recordResumeConflict: async () => {},
+        resolvePath: (value) => value, cliName: () => "nemoclaw",
+        error: (message) => { throw new Error(message); },
+        exitProcess: (code) => { throw new Error("exit " + code); },
+        requireHostMountRuntimeSupport: () => {},
+        resolveResumeCheckpoint: () => ({ status: "none" }),
+      };
+      const input = { resume: false, fresh: false, requestedFromDockerfile: null,
+        requestedSandboxName: sandboxName, cannotPrompt: true, nonInteractive: true,
+        requestedDcodeAutoApprovalMode: mode };
+      await prepareOnboardSession(input, deps);
+      // Resume from disk before any sandbox registration, without repeating the flag.
+      const resumed = await prepareOnboardSession({ ...input, resume: true, requestedDcodeAutoApprovalMode: null }, deps);
+      resumedMode = resolveAutoApprovalMode({ agent, fromDockerfile: null, provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b", resume: true, session: resumed.session },
+        sandboxName, { ...deps, getSandboxRegistryEntry: () => null });
+    }
     await createSandbox(
       ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
         [
@@ -299,7 +325,7 @@ const { createSandbox } = require(${onboardPath});
           [],
           null,
           null,
-          scenario === "fallback" ? { dcodeAutoApprovalMode: mode } : null,
+          scenario === "fallback" ? { dcodeAutoApprovalMode: resumedMode } : null,
           null,
           scenario === "fallback" ? null : preparedBuildContext,
         ],

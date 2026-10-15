@@ -243,8 +243,9 @@ For initial onboarding, select the capability explicitly:
 nemoclaw onboard --agent langchain-deepagents-code --dcode-auto-approval thread-opt-in
 ```
 
-This option supports only managed Deep Agents Code images. It grants the capability without activating auto-approval.
-Use `--dcode-auto-approval disabled` to select the default posture explicitly.
+`thread-opt-in` supports only managed Deep Agents Code images. It grants the capability without activating auto-approval.
+Use `--dcode-auto-approval disabled` to select the default posture or clear a recorded capability when switching agents.
+Before sandbox registration, resume preserves the explicit choice saved in the onboarding session.
 Omitting the flag preserves the registered capability during resume or recreation, including a prior revocation.
 
 For an existing sandbox, change the capability through a transactional rebuild because NemoClaw bakes it into the managed image:

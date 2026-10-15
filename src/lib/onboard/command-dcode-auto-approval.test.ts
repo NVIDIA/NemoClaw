@@ -66,6 +66,11 @@ describe("onboard DCode auto-approval input", () => {
   });
 
   it.each([
+    [undefined, undefined, "thread-opt-in", "thread-opt-in"],
+    [undefined, undefined, "disabled", "thread-opt-in", false],
+    [undefined, undefined, "disabled", "disabled"],
+    [undefined, "disabled", "disabled", "thread-opt-in"],
+    ["disabled", undefined, "disabled", "thread-opt-in"],
     [undefined, undefined, "disabled"],
     ["disabled", undefined, "disabled"],
     ["thread-opt-in", undefined, "thread-opt-in"],
@@ -74,8 +79,18 @@ describe("onboard DCode auto-approval input", () => {
     ["disabled", "thread-opt-in", "disabled"],
   ] as const)(
     "creates with requested %s and recorded %s as %s",
-    async (requested, recorded, expected) => {
-      const session = createSession({ sandboxName: "saved" });
+    async (
+      requested,
+      recorded,
+      expected,
+      pending: "disabled" | "thread-opt-in" | undefined = undefined,
+      reservation: boolean = true,
+    ) => {
+      const session = createSession({
+        sandboxName: "saved",
+        dcodeAutoApprovalMode: pending,
+        dcodeAutoApprovalRequestedExplicitly: pending !== undefined,
+      });
       const { deps, calls } = createDeps(
         {
           getSandboxRegistryEntry: () => ({
@@ -85,7 +100,7 @@ describe("onboard DCode auto-approval input", () => {
             dcodeAutoApprovalMode: recorded,
             provider: "provider",
             model: "model",
-            pendingRouteReservation: true,
+            pendingRouteReservation: reservation ? true : undefined,
             reservationSessionId: session.sessionId,
           }),
           error: (message) => {
@@ -106,7 +121,7 @@ describe("onboard DCode auto-approval input", () => {
             ...applyOnboardRuntimeControlRequests(options),
             agent: { name: "langchain-deepagents-code" },
             sandboxName: "saved",
-            resume: recorded !== undefined,
+            resume: recorded !== undefined || pending !== undefined,
           });
         },
       });
