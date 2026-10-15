@@ -25,6 +25,7 @@ const SETUP_ACTION = path.resolve(".github/actions/setup-native-podman-e2e/actio
 const FIXED_RESTORE_ROOT = "/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore";
 const COMMAND_OUTPUT_LIMIT = 64 * 1024;
 const OUTPUT_TRUNCATION_MARKER = "\n[output truncated]\n";
+const OPENSHELL_COMPONENTS = ["openshell", "openshell-gateway", "openshell-sandbox"];
 
 type WorkflowStep = {
   env?: Record<string, unknown>;
@@ -48,6 +49,20 @@ function e2eWorkflowJobs(): Record<string, WorkflowJob> {
     jobs: Record<string, WorkflowJob>;
   };
   return workflow.jobs;
+}
+
+function privilegedOpenShellInstallLog(sourceRoot: string): string {
+  return `${OPENSHELL_COMPONENTS.map(
+    (component) =>
+      `install -o root -g root -m 0755 ${sourceRoot}/${component} /usr/bin/${component}`,
+  ).join("\n")}\n`;
+}
+
+function requirePrivilegedOpenShellInstallLog(log: string, sourceRoot: string): void {
+  requireFixture(
+    log === privilegedOpenShellInstallLog(sourceRoot),
+    "Portable Hermes must install every OpenShell component as root:root with mode 0755",
+  );
 }
 
 vi.setConfig({ maxConcurrency: 5 });
@@ -692,7 +707,7 @@ done
 destination="$SUDO_INSTALL_ROOT/$(basename "$last")"
 cp "$previous" "$destination"
 chmod 0755 "$destination"
-printf '%s -> %s\\n' "$previous" "$last" >>"$SUDO_LOG"
+printf '%s\\n' "$*" >>"$SUDO_LOG"
 exit 0
 `,
     );
@@ -712,16 +727,7 @@ exit 0
       });
 
       requireFixture(result.status === 0, result.stderr);
-      const expectedSudoLog = [
-        `${xdgBinHome}/openshell -> /usr/bin/openshell`,
-        `${xdgBinHome}/openshell-gateway -> /usr/bin/openshell-gateway`,
-        `${xdgBinHome}/openshell-sandbox -> /usr/bin/openshell-sandbox`,
-        "",
-      ].join("\n");
-      requireFixture(
-        fs.readFileSync(sudoLog, "utf8") === expectedSudoLog,
-        "Portable Hermes copied OpenShell from the wrong install root",
-      );
+      requirePrivilegedOpenShellInstallLog(fs.readFileSync(sudoLog, "utf8"), xdgBinHome);
       const openshellSource = path.join(xdgBinHome, "openshell");
       const openshellDestination = path.join(installedRoot, "openshell");
       requireFixture(
@@ -808,7 +814,7 @@ done
 destination="$SUDO_INSTALL_ROOT/$(basename "$last")"
 cp "$previous" "$destination"
 chmod 0755 "$destination"
-printf '%s -> %s\\n' "$previous" "$last" >>"$SUDO_LOG"
+printf '%s\\n' "$*" >>"$SUDO_LOG"
 exit 0
 `,
     );
@@ -832,16 +838,7 @@ exit 0
         !fs.existsSync(xdgBinHome),
         "A compatible preinstalled OpenShell unexpectedly triggered a fresh install",
       );
-      const expectedSudoLog = [
-        `${preinstalledRoot}/openshell -> /usr/bin/openshell`,
-        `${preinstalledRoot}/openshell-gateway -> /usr/bin/openshell-gateway`,
-        `${preinstalledRoot}/openshell-sandbox -> /usr/bin/openshell-sandbox`,
-        "",
-      ].join("\n");
-      requireFixture(
-        fs.readFileSync(sudoLog, "utf8") === expectedSudoLog,
-        "Portable Hermes did not preserve the compatible preinstalled root",
-      );
+      requirePrivilegedOpenShellInstallLog(fs.readFileSync(sudoLog, "utf8"), preinstalledRoot);
       const openshellSource = path.join(preinstalledRoot, "openshell");
       const openshellDestination = path.join(installedRoot, "openshell");
       requireFixture(
@@ -879,6 +876,15 @@ exit 0
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
+  });
+
+  it("rejects a Portable Hermes handoff without root ownership arguments", () => {
+    const sourceRoot = "/trusted/openshell";
+    const mutation = privilegedOpenShellInstallLog(sourceRoot).replace(" -o root", "");
+
+    expect(() => requirePrivilegedOpenShellInstallLog(mutation, sourceRoot)).toThrow(
+      /root:root with mode 0755/,
+    );
   });
 
   // source-shape-contract: security -- The explicit selector must retain the reviewed GPU, runtime, candidate, and cleanup boundaries
