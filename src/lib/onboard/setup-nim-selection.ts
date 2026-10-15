@@ -122,8 +122,20 @@ export function applyCloudFallbackSelection(
   delete state.endpointTrustedPrivateCapability;
 }
 
-export function clearNimContainerBeforeRetry(state: SetupNimSelectionState): void {
+export function clearNimContainerBeforeRetry(
+  state: SetupNimSelectionState,
+  removeOwnedContainer: (name: string) => void,
+): void {
+  if (!state.nimContainer) {
+    throw new Error("Cannot retry Local NIM selection without its owned container identity");
+  }
+  assertSelectionMutationAuthority(
+    state,
+    "remove the local NIM runtime before retrying provider selection",
+  );
+  removeOwnedContainer(state.nimContainer);
   state.nimContainer = null;
+  delete state.localNimSelected;
 }
 
 type CompatibleEndpointKind = "openai" | "anthropic";

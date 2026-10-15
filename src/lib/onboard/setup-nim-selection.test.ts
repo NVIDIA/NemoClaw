@@ -58,14 +58,36 @@ describe("setupNim selection state helpers", () => {
     });
   });
 
-  it("clears stale NIM containers before retrying provider selection", () => {
+  it("removes the owned NIM container before clearing its route marker", () => {
     const state = makeState();
+    state.localNimSelected = true;
+    const remove = vi.fn((name: string) => {
+      expect(name).toBe("nemoclaw-nim-test");
+      expect(state.nimContainer).toBe(name);
+      expect(state.localNimSelected).toBe(true);
+    });
 
-    clearNimContainerBeforeRetry(state);
+    clearNimContainerBeforeRetry(state, remove);
 
+    expect(remove).toHaveBeenCalledOnce();
     assert.equal(state.nimContainer, null);
+    expect(state.localNimSelected).toBeUndefined();
     assert.equal(state.model, "nvidia/local-nim");
     assert.equal(state.provider, "vllm-local");
+  });
+
+  it("keeps the NIM marker when owned-container removal fails", () => {
+    const state = makeState();
+    state.localNimSelected = true;
+
+    expect(() =>
+      clearNimContainerBeforeRetry(state, () => {
+        throw new Error("remove failed");
+      }),
+    ).toThrow("remove failed");
+
+    expect(state.nimContainer).toBe("nemoclaw-nim-test");
+    expect(state.localNimSelected).toBe(true);
   });
 });
 

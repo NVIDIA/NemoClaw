@@ -1792,11 +1792,11 @@ async function handleNimLocalSelection(
     null,
   );
   if (validation.retry === "selection" || validation.retry === "model") {
-    clearNimContainerBeforeRetry(state);
+    clearNimContainerBeforeRetry(state, nim.stopNimContainerByNameOrThrow);
     return "retry-selection";
   }
   if (!validation.ok) {
-    clearNimContainerBeforeRetry(state);
+    clearNimContainerBeforeRetry(state, nim.stopNimContainerByNameOrThrow);
     return "retry-selection";
   }
   if (validation.api !== "openai-completions") {
