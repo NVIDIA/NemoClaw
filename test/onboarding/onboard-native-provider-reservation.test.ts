@@ -1,9 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { createRequire } from "node:module";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { handleProviderInferenceState } from "../../src/lib/onboard/machine/handlers/provider-inference";
+import {
+  baseOptions,
+  baseSelection,
+  createDeps,
+} from "../../src/lib/onboard/machine/handlers/provider-inference.test-support";
 import { nativeLocalSetupReceipt } from "../support/native-local-setup-harness";
 import { createDirectSetupInferenceHarness } from "../helpers/onboard-split-context";
+
+// Abandoned-reservation recovery has its own state tests. Keep this harness from
+// reading the developer's registry through the CommonJS onboarding boundary.
+const require = createRequire(import.meta.url);
+beforeEach(() => {
+  vi.spyOn(
+    require("../../src/lib/onboard/sandbox-lifecycle.ts"),
+    "releaseAbandonedRouteReservation",
+  ).mockReturnValue(false);
+});
+afterEach(() => vi.restoreAllMocks());
 
 describe("native provider ownership before route reservation", () => {
   it("selects the recorded agent route only while holding the sandbox mutation lock (#13197)", async () => {
@@ -134,4 +152,85 @@ describe("native provider cleanup uncertainty", () => {
     expect(harness.native.providers.size).toBe(1);
     expect(harness.native.authorities.size).toBe(1);
   });
+});
+
+function legacyRecreationHarness(previousProvider = "vllm-local") {
+  const row = {
+    name: "legacy-dcode",
+    agent: "langchain-deepagents-code",
+    provider: previousProvider,
+    model: previousProvider === "ollama-local" ? "old-model" : "meta-llama",
+    endpointUrl:
+      previousProvider === "ollama-local" ? null : "http://host.openshell.internal:8000/v1",
+    gatewayName: "nemoclaw",
+  };
+  const before = structuredClone(row);
+  const unloadOllamaModels = vi.fn(() => undefined);
+  const harness = createDirectSetupInferenceHarness({
+    overrides: {
+      unloadOllamaModels,
+      listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
+      getSandbox: () => row,
+      isNonInteractive: () => true,
+      applyLocalInferenceRoute: undefined,
+    },
+  });
+  const { deps } = createDeps({
+    setupNim: vi.fn(async () => ({
+      ...baseSelection,
+      provider: "vllm-local",
+      model: "meta-llama",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+    })),
+    setupInference: harness.setupInference,
+    getSandboxRegistryEntry: () => row,
+    hasSandboxLifecycleAuthority: () => true,
+  });
+  const run = (recreateSandbox: boolean) =>
+    handleProviderInferenceState({
+      ...baseOptions(deps),
+      fresh: true,
+      recreateSandbox,
+      sandboxName: row.name,
+      agent: { name: row.agent, inference: { provider_type: "openai_compatible" } },
+    });
+  return { row, before, harness, unloadOllamaModels, run };
+}
+
+describe("legacy native-local recreation", () => {
+  it("rejects legacy DCode setup without explicit recreation (#13197)", async () => {
+    const { row, before, harness, run } = legacyRecreationHarness();
+    await expect(run(false)).rejects.toThrow(
+      "Recreate this beta sandbox before using native local inference.",
+    );
+    expect(harness.native.adapter.createProvider).not.toHaveBeenCalled();
+    expect(harness.updateSandbox).not.toHaveBeenCalled();
+    expect(row).toEqual(before);
+  });
+
+  it.each(["vllm-local", "ollama-local"])(
+    "stages legacy %s without changing its published source (#13197)",
+    async (previousProvider) => {
+      const { row, before, harness, unloadOllamaModels, run } =
+        legacyRecreationHarness(previousProvider);
+      const result = await run(true);
+      expect(result.stagedNativeLocalRecreation).toEqual({
+        source: before,
+        attachment: expect.objectContaining({
+          sandboxName: row.name,
+          gatewayName: "nemoclaw",
+          provider: "vllm-local",
+        }),
+      });
+      expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+      expect(harness.updateSandbox).not.toHaveBeenCalled();
+      expect(row).toEqual(before);
+      expect(unloadOllamaModels).not.toHaveBeenCalled();
+      expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(
+        false,
+      );
+    },
+  );
 });

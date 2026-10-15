@@ -59,6 +59,7 @@ export function createCoreOnboardFlowPhases<
   return {
     providerInference: createProviderInferenceOnboardFlowPhase<Context, Host>({
       ...input.providerInference,
+      recreateSandbox: input.sandbox.recreateSandbox,
       deps: { ...input.providerInference.deps, ...resumeProvider },
     }),
     sandbox: createSandboxOnboardFlowPhase<Context, MessagingChannelConfig, ResourceProfile>({

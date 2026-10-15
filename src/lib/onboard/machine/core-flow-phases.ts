@@ -53,6 +53,7 @@ export interface ProviderInferenceOnboardFlowPhaseOptions<
 > {
   gatewayName: string;
   forceProviderSelection: boolean;
+  recreateSandbox?: (requested?: boolean) => boolean;
   forceInferenceSetup?: boolean;
   apfInterceptorRequested?: boolean;
   authoritativeResumeConfig?: boolean;
@@ -249,6 +250,7 @@ export function createProviderInferenceOnboardFlowPhase<
       gatewayName: options.gatewayName,
       resume: context.resume,
       fresh: context.fresh,
+      recreateSandbox: options.recreateSandbox?.(false) ?? false,
       session: context.session,
       gpu: context.gpu,
       gpuPassthrough: context.gpuPassthrough,
@@ -308,6 +310,7 @@ export function createProviderInferenceOnboardFlowPhase<
         hostLocalInferenceSandboxProofAuthority:
           providerInferenceResult.hostLocalInferenceSandboxProofAuthority,
         deferredInferenceRoute: providerInferenceResult.deferredInferenceRoute,
+        stagedNativeLocalRecreation: providerInferenceResult.stagedNativeLocalRecreation,
       }),
       result: providerInferenceResult.stateResults,
     };
@@ -370,6 +373,7 @@ export function createSandboxOnboardFlowPhase<
       hermesAuthMethod: context.hermesAuthMethod,
       hostLocalInferenceRouteOnly: context.hostLocalInferenceRouteOnly === true,
       deferredInferenceRoute: context.deferredInferenceRoute,
+      stagedNativeLocalRecreation: context.stagedNativeLocalRecreation,
       controlUiPort: options.controlUiPort,
       rootDir: options.rootDir,
       env: options.env,

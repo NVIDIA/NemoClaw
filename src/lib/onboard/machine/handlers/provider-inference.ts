@@ -115,6 +115,8 @@ export interface ProviderInferenceSetupOptions {
   reservationSessionId?: string;
   /** Keep a published source row intact until the sandbox create phase passes backup. */
   deferPublishedRouteReservation?: boolean;
+  /** Explicit fresh recreation, with publication owned by the sandbox backup transaction. */
+  recreatePublishedSandbox?: boolean;
   /** Recheck recorded-route ownership after acquiring route mutation locks. */
   isRecordedProviderRecoveryAuthorized?: () => boolean;
   /** Recheck live OpenShell sandbox identity at each inference mutation edge. */
@@ -177,6 +179,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   gatewayName: string;
   resume: boolean;
   fresh: boolean;
+  recreateSandbox?: boolean;
   session: Session | null;
   gpu: Gpu;
   /** Accepted sandbox GPU-passthrough choice for this flow, including resume. */
@@ -369,6 +372,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
 }
 
 export interface ProviderInferenceStateResult {
+  stagedNativeLocalRecreation?: import("../../inference-providers/types").StagedNativeLocalRecreation;
   deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
   sandboxName: string | null;
   model: string;
@@ -1296,6 +1300,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gatewayName,
   resume,
   fresh,
+  recreateSandbox = false,
   session,
   gpu,
   gpuPassthrough,
@@ -1368,6 +1373,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   const effectiveResume = resume && !fresh;
   let hostLocalInferenceRouteOnly = false;
   let hostLocalInferenceProofAuthority: HostLocalInferenceSandboxProofAuthority | null = null;
+  let stagedNativeLocalRecreation:
+    | import("../../inference-providers/types").StagedNativeLocalRecreation
+    | undefined;
   let deferredInferenceRoute: ((reserve: () => void) => Promise<void>) | undefined;
   const hostLocalInferenceResolutionCache = new Map<
     string,
@@ -1929,6 +1937,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           forceProviderSelection = true;
           continue;
         }
+        stagedNativeLocalRecreation = inferenceResult.stagedNativeLocalRecreation;
         deferredInferenceRoute = inferenceResult.deferredInferenceRoute;
         ({ endpointUrl, credentialEnv } = selectedNativeInference(
           inferenceResult?.nativeInference,
@@ -2216,6 +2225,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
         ...(freshManagedOllama ? { reservationSessionId: session?.sessionId } : {}),
+        ...(fresh && !effectiveResume && recreateSandbox
+          ? { recreatePublishedSandbox: true, reservationSessionId: session?.sessionId }
+          : {}),
         ...preBackupRouteReservationOptions(
           effectiveResume,
           session?.steps?.sandbox?.status === "complete",
@@ -2257,6 +2269,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       forceProviderSelection = true;
       continue;
     }
+    stagedNativeLocalRecreation = inferenceResult.stagedNativeLocalRecreation;
     deferredInferenceRoute = inferenceResult.deferredInferenceRoute;
     ({ endpointUrl, credentialEnv } = selectedNativeInference(
       inferenceResult?.nativeInference,
@@ -2343,6 +2356,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     hostLocalInferenceRouteOnly,
     hostLocalInferenceSandboxProofAuthority: hostLocalInferenceProofAuthority,
     deferredInferenceRoute,
+    stagedNativeLocalRecreation,
     session,
     stateResult,
     stateResults,
