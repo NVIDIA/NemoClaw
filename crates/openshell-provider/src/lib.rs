@@ -10,7 +10,6 @@ pub mod agent;
 mod client;
 mod composite;
 mod connected;
-#[cfg(feature = "installation")]
 mod gateway_source;
 mod network;
 mod profile;
