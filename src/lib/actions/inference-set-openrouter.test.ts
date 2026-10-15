@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { OPENROUTER_PROVIDER_NAME } from "../inference/openrouter";
+import { buildOpenClawNativeConfigBatchInvocation } from "../sandbox/openclaw-native-config";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps } from "../../../test/helpers/inference-set";
 import {
@@ -90,6 +91,27 @@ describe("OpenRouter model switch verification", () => {
         { dotpath: "agents.defaults.model.primary", value: `inference/${SUPER}` },
       ]),
       "nemoclaw-18085",
+    );
+
+    const updates = deps.calls.setOpenClawConfigValues.mock.calls[0]?.[1];
+    expect(updates).toBeDefined();
+    const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", updates);
+    expect(invocation.nativeHandleUpdate).toBe(true);
+    expect(JSON.parse(invocation.input)).toEqual(
+      expect.arrayContaining([
+        {
+          path: "agents.defaults.model.primary",
+          value: `inference/${SUPER}`,
+        },
+        {
+          path: "models.providers.inference",
+          value: expect.objectContaining({
+            baseUrl: "https://openrouter.ai/api/v1",
+            apiKey: "openshell:resolve:env:OPENROUTER_API_KEY",
+            headers: expect.objectContaining({ "X-NemoClaw-Upstream-Provider": "openrouter-api" }),
+          }),
+        },
+      ]),
     );
   });
 

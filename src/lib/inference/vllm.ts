@@ -962,6 +962,7 @@ export function resolveVllmModelRuntime(
       fixedServeCommand: runtime.fixedServeCommand,
       managedBearerAuth: runtime.managedBearerAuth,
       trustRemoteCode: runtime.trustRemoteCode,
+      reviewedCode: runtime.reviewedCode,
       runtime,
     },
   };
@@ -2069,6 +2070,16 @@ export async function installVllm(
   }
 }
 
+function resolveVllmInstallRuntime(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  catalogSelection: MaterializedHostLocalVllmSelection | undefined,
+): { profile: VllmProfile; model: VllmModelDef } {
+  // Catalog selection already owns model arguments and authentication; apply only its container runtime.
+  if (catalogSelection) return { profile: resolveVllmRuntimeProfile(profile, model), model };
+  return resolveVllmModelRuntime(profile, model);
+}
+
 async function runVllmInstall(
   profile: VllmProfile,
   opts: InstallVllmOptions,
@@ -2290,14 +2301,11 @@ async function runVllmInstall(
     return { ok: false };
   }
   let runtimeProfile: VllmProfile;
-  if (
-    hostLocalSelection ||
-    (profile.platform === "station" && configuredPeer.length > 0 && usesStationPair)
-  ) {
+  if (profile.platform === "station" && configuredPeer.length > 0 && usesStationPair) {
     runtimeProfile = profile;
   } else {
     try {
-      const runtime = resolveVllmModelRuntime(profile, model);
+      const runtime = resolveVllmInstallRuntime(profile, model, hostLocalSelection);
       runtimeProfile = runtime.profile;
       model = runtime.model;
     } catch (err) {

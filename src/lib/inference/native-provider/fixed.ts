@@ -27,6 +27,21 @@ export function fixedNativeProvider(
     : hostedNativeProvider(provider);
 }
 
+/** OpenClaw provider key for a native provider and its selected API. */
+export function nativeOpenClawProviderKey(
+  provider: string | null | undefined,
+  inferenceApi?: string | null,
+): "openai" | "anthropic" | "inference" | undefined {
+  if (provider === "compatible-endpoint") return "inference";
+  if (provider === "compatible-anthropic-endpoint")
+    return inferenceApi && inferenceApi !== "openai-completions" ? "anthropic" : "inference";
+  const definition = fixedNativeProvider(provider);
+  if (!definition) return undefined;
+  if (definition.logicalProvider === "openai-api") return "openai";
+  if (definition.logicalProvider === "anthropic-prod") return "anthropic";
+  return "inference";
+}
+
 export function fixedNativeProviderForAttachment(
   receipt: NativeProviderAttachment,
 ): NativeProviderDefinition {

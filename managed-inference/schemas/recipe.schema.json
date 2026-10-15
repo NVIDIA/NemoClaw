@@ -86,6 +86,9 @@
             "installFastSafetensors": {
               "type": "boolean"
             },
+            "reviewedCode": {
+              "$ref": "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/model.schema.json#/properties/spec/properties/reviewedCode"
+            },
             "preparation": {
               "$ref": "#/$defs/modelPreparation"
             },
@@ -482,8 +485,37 @@
                     "pattern": "^--[a-z0-9][a-z0-9._-]*$",
                     "maxLength": 128
                   },
-                  "value": {
-                    "$ref": "#/$defs/scalar"
+                  "value": {}
+                },
+                "if": {
+                  "properties": {
+                    "name": {
+                      "const": "--chat-template"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "value": {
+                      "oneOf": [
+                        {
+                          "$ref": "#/$defs/scalar"
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 1025,
+                          "maxLength": 16384,
+                          "pattern": "\\{[%{]"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "value": {
+                      "$ref": "#/$defs/scalar"
+                    }
                   }
                 },
                 "additionalProperties": false

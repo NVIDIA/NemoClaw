@@ -65,6 +65,26 @@ describe("native provider protocol details", () => {
     "HTTP-Referer": "https://www.nvidia.com/nemoclaw/",
     "X-OpenRouter-Title": "NVIDIA NemoClaw",
   };
+  it.each(["nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nemotron-3-super-120b-a12b"])(
+    "keeps the OpenRouter credential handle for %s",
+    (model) => {
+      const config = buildConfig({
+        ...baseOpenClawGenerationEnv(),
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_PRIMARY_MODEL_REF: `test-provider/${model}`,
+        NEMOCLAW_UPSTREAM_PROVIDER: "openrouter-api",
+        NEMOCLAW_INFERENCE_BASE_URL: "https://openrouter.ai/api/v1",
+        NEMOCLAW_INFERENCE_API: "openai-completions",
+      });
+      expect(config.agents.defaults.model.primary).toBe(`test-provider/${model}`);
+      expect(config.models.providers["test-provider"].models).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: model })]),
+      );
+      expect(config.models.providers["test-provider"].apiKey).toBe(
+        "openshell:resolve:env:OPENROUTER_API_KEY",
+      );
+    },
+  );
   it("preserves OpenRouter attribution headers in OpenClaw", () => {
     const config = buildConfig({
       ...baseOpenClawGenerationEnv(),

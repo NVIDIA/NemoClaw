@@ -17,8 +17,16 @@ const {
   NVIDIA_INFERENCE_PLACEHOLDER,
 }: typeof import("../inference-credential") = require("../inference-credential");
 const {
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
 }: typeof import("../inference/native-nvidia/contract") = require("../inference/native-nvidia/contract");
+const {
+  nativeHostedAgentConfig,
+}: typeof import("../inference/native-provider/agent-config") = require("../inference/native-provider/agent-config");
+const {
+  fixedNativeProvider,
+  nativeOpenClawProviderKey,
+}: typeof import("../inference/native-provider/fixed") = require("../inference/native-provider/fixed");
 const {
   isConfigObject,
 }: typeof import("../security/credential-filter") = require("../security/credential-filter");
@@ -85,34 +93,26 @@ export interface OpenClawConfigUpdate {
 // the actual credential remains outside the sandbox and endpoint-bound.
 const materializeNativeProviderHandle = [
   "import json, os, re, sys",
+  "credential_env, endpoint, placeholder, provider_path = sys.argv[2:6]",
+  'handle = os.environ.get(credential_env, "")',
+  "if not handle:",
+  '    sys.stderr.write("NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING\\n")',
+  "    raise SystemExit(75)",
+  'if not re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + re.escape(credential_env), handle):',
+  '    raise SystemExit("Native provider handle is unavailable or invalid")',
   'with open(sys.argv[1], "r+", encoding="utf-8") as stream:',
   "    updates = json.load(stream)",
   "    if not isinstance(updates, list):",
   '        raise SystemExit("Invalid OpenClaw config batch")',
   "    matched = 0",
   "    for update in updates:",
-  '        if not isinstance(update, dict) or update.get("path") not in (',
-  '            "models.providers.inference", "models.providers.openai", "models.providers.anthropic"',
-  "        ):",
+  '        if not isinstance(update, dict) or update.get("path") != provider_path:',
   "            continue",
   '        provider = update.get("value")',
-  "        if not isinstance(provider, dict):",
+  '        if not isinstance(provider, dict) or provider.get("apiKey") != placeholder:',
   "            continue",
-  '        api_key = provider.get("apiKey", "")',
-  "        if api_key == sys.argv[3]:",
-  '            api_key = "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY"',
-  '        key = re.fullmatch(r"openshell:resolve:env:([A-Z][A-Z0-9_]*)", str(api_key))',
-  "        if not key:",
-  "            continue",
-  "        key = key.group(1)",
-  '        if key == "NVIDIA_INFERENCE_API_KEY" and provider.get("baseUrl") != sys.argv[2]:',
-  '            raise SystemExit("Native NVIDIA provider endpoint does not match")',
-  '        handle = os.environ.get(key, "")',
-  "        if not handle:",
-  '            sys.stderr.write("NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING\\n")',
-  "            raise SystemExit(75)",
-  '        if not re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + re.escape(key), handle):',
-  '            raise SystemExit("Native provider handle is unavailable or invalid")',
+  '        if provider.get("baseUrl") != endpoint:',
+  '            raise SystemExit("Native provider endpoint does not match")',
   '        provider["apiKey"] = handle',
   "        matched += 1",
   "    if matched != 1:",
@@ -121,28 +121,94 @@ const materializeNativeProviderHandle = [
   '    json.dump(updates, stream, separators=(",", ":"))',
   "    stream.truncate()",
 ].join("\n");
+
+function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
+  const matching = updates.filter(({ dotpath, value }) => {
+    if (!dotpath.startsWith("models.providers.") || !isConfigObject(value)) return false;
+    if (value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER) return true;
+    if (
+      typeof value.apiKey !== "string" ||
+      !/^openshell:resolve:env:[A-Z][A-Z0-9_]*$/u.test(value.apiKey)
+    )
+      return false;
+    const headers = isConfigObject(value.headers) ? value.headers : {};
+    const provider = headers["X-NemoClaw-Upstream-Provider"];
+    return (
+      typeof provider === "string" &&
+      (Boolean(fixedNativeProvider(provider)) ||
+        (typeof value.baseUrl === "string" &&
+          Boolean(nativeHostedAgentConfig(provider, value.baseUrl))))
+    );
+  });
+  if (matching.length === 0) return undefined;
+  if (matching.length !== 1) throw new Error("Expected one native provider config update");
+  const value = matching[0]!.value;
+  if (!isConfigObject(value)) throw new Error("Invalid native provider config update");
+  const headers = isConfigObject(value.headers) ? value.headers : {};
+  const provider = headers["X-NemoClaw-Upstream-Provider"];
+  const native =
+    value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER
+      ? {
+          credentialEnv: NVIDIA_HOSTED_CREDENTIAL_ENV,
+          apiKey: NVIDIA_INFERENCE_PLACEHOLDER,
+        }
+      : typeof provider === "string" && typeof value.baseUrl === "string"
+        ? nativeHostedAgentConfig(provider, value.baseUrl)
+        : undefined;
+  if (!native) {
+    throw new Error("Native provider identity does not match its credential placeholder");
+  }
+  if (value.apiKey !== native.apiKey || typeof value.baseUrl !== "string") {
+    throw new Error("Native provider credential placeholder or endpoint does not match");
+  }
+  if (
+    value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER &&
+    value.baseUrl !== NVIDIA_HOSTED_NATIVE_ENDPOINT
+  ) {
+    throw new Error("Native provider endpoint does not match");
+  }
+  if (
+    value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER &&
+    provider !== undefined &&
+    provider !== "nvidia-prod"
+  ) {
+    throw new Error("Native NVIDIA provider identity does not match its credential placeholder");
+  }
+  const logicalProvider =
+    value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER
+      ? "nvidia-prod"
+      : typeof provider === "string"
+        ? provider
+        : null;
+  const providerKey = nativeOpenClawProviderKey(
+    logicalProvider,
+    typeof value.api === "string" ? value.api : null,
+  );
+  if (!providerKey)
+    throw new Error("Native provider identity does not match its credential placeholder");
+  const expectedPath = `models.providers.${providerKey}`;
+  if (matching[0]!.dotpath !== expectedPath) {
+    throw new Error("Native provider config path does not match its identity");
+  }
+  return {
+    credentialEnv: native.credentialEnv,
+    endpoint: value.baseUrl,
+    placeholder: native.apiKey,
+    providerPath: expectedPath,
+  };
+}
+
 export function buildOpenClawNativeConfigBatchInvocation(
   sandboxName: string,
   updates: readonly OpenClawConfigUpdate[],
   gateway?: string | OpenShellRuntimeSelection,
 ) {
-  const nativeProviderUpdate = updates.some(
-    ({ dotpath, value }) =>
-      [
-        "models.providers.inference",
-        "models.providers.openai",
-        "models.providers.anthropic",
-      ].includes(dotpath) &&
-      isConfigObject(value) &&
-      typeof value.apiKey === "string" &&
-      (value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER ||
-        /^openshell:resolve:env:[A-Z][A-Z0-9_]*$/.test(value.apiKey)),
-  );
-  const materializeCommand = nativeProviderUpdate
-    ? `python3 -c ${shellQuote(materializeNativeProviderHandle)} "$file" ${shellQuote(NVIDIA_HOSTED_NATIVE_ENDPOINT)} ${shellQuote(NVIDIA_INFERENCE_PLACEHOLDER)} || exit $?; `
+  const nativeHandleUpdate = nativeProviderHandleUpdate(updates);
+  const materializeCommand = nativeHandleUpdate
+    ? `python3 -c ${shellQuote(materializeNativeProviderHandle)} "$file" ${shellQuote(nativeHandleUpdate.credentialEnv)} ${shellQuote(nativeHandleUpdate.endpoint)} ${shellQuote(nativeHandleUpdate.placeholder)} ${shellQuote(nativeHandleUpdate.providerPath)} || exit $?; `
     : "";
   return {
-    nativeProviderUpdate,
+    nativeHandleUpdate: Boolean(nativeHandleUpdate),
     ...(!gateway || typeof gateway === "string"
       ? {}
       : {
@@ -200,7 +266,7 @@ export function executeOpenClawNativeConfigBatch(
   gateway?: string | OpenShellRuntimeSelection,
 ): void {
   const invocation = buildOpenClawNativeConfigBatchInvocation(sandboxName, updates, gateway);
-  runOpenClawNativeConfigBatchUntilHandleReady(invocation.nativeProviderUpdate, () =>
+  runOpenClawNativeConfigBatchUntilHandleReady(invocation.nativeHandleUpdate, () =>
     runOpenshellCommand(binary, invocation.args, {
       env: invocation.env,
       replaceEnv: invocation.replaceEnv,
@@ -219,7 +285,7 @@ type NativeConfigBatchResult = Pick<
 >;
 
 export function runOpenClawNativeConfigBatchUntilHandleReady(
-  nativeProviderUpdate: boolean,
+  nativeHandleUpdate: boolean,
   run: () => NativeConfigBatchResult,
   wait: (ms: number) => void = (ms) =>
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
@@ -228,7 +294,7 @@ export function runOpenClawNativeConfigBatchUntilHandleReady(
   // OpenShell 0.0.116 attach can confirm desired state before a fresh process
   // receives the new environment. This retry is owned by native inference and
   // applies only when the materializer exited before OpenClaw changed config.
-  const maxAttempts = nativeProviderUpdate ? 10 : 1;
+  const maxAttempts = nativeHandleUpdate ? 10 : 1;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const result = run();
     if (!result.error && !result.signal && result.status === 0) return;

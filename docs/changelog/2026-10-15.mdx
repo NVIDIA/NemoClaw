@@ -1,0 +1,54 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.135
+
+NemoClaw v0.0.135 strengthens credential handling, sandbox recovery, and failure diagnostics.
+It also updates managed inference and OpenClaw behavior for qualified local models.
+
+- Hermes managed-tool gateways now use a dedicated OpenShell provider profile and an opaque broker token.
+  NemoClaw verifies the profile and provider binding before creation or reuse.
+  Related change: [PR #13102](https://github.com/NVIDIA/NemoClaw/pull/13102).
+- Native NVIDIA Build routes reject noncanonical URLs that resolve to the NVIDIA endpoint.
+  Deep Agents Code uses the scoped OpenRouter credential handle for native OpenRouter requests.
+  Related changes: [PR #12925](https://github.com/NVIDIA/NemoClaw/pull/12925) and [PR #13055](https://github.com/NVIDIA/NemoClaw/pull/13055).
+- OpenClaw stores the attached provider's scoped credential reference in native configuration when switching NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, or Hermes Provider routes.
+  The reference does not expose the raw provider credential.
+  Related change: [PR #13064](https://github.com/NVIDIA/NemoClaw/pull/13064).
+- Fresh OpenClaw sandboxes using the accepted N1x Qwen managed-vLLM preview default to progressive tool disclosure.
+  Explicit and recorded choices still take precedence.
+  Related change: [PR #13173](https://github.com/NVIDIA/NemoClaw/pull/13173).
+- Serving profiles list a disabled NVIDIA Nemotron 3.5 Super VL candidate for a single DGX Station.
+  The profile cannot be selected and does not change the Station default.
+  Related change: [PR #13279](https://github.com/NVIDIA/NemoClaw/pull/13279).
+- Direct sandbox creation warns when an attached NemoClaw-owned provider profile cannot be confirmed unchanged.
+  After Docker GPU reconnect, onboarding also requires OpenShell to report the sandbox as `Ready` or `Running`.
+  Related changes: [PR #13189](https://github.com/NVIDIA/NemoClaw/pull/13189) and [PR #13123](https://github.com/NVIDIA/NemoClaw/pull/13123).
+- Deep Agents Code backup scans database sidecars for credentials before publication.
+  A detected credential or incomplete scan stops the backup.
+  Related change: [PR #13190](https://github.com/NVIDIA/NemoClaw/pull/13190).
+- On Linux, launch-readiness evidence accepts a current-user home with group-write permission.
+  NemoClaw still keeps its state directories private and rejects a home writable by other users.
+  Related change: [PR #13133](https://github.com/NVIDIA/NemoClaw/pull/13133).
+- OpenClaw guidance treats a proxy `CONNECT` 403 as a refusal that may involve OpenShell policy.
+  Operators can match the destination and time with sandbox logs before changing policy.
+  Related change: [PR #13192](https://github.com/NVIDIA/NemoClaw/pull/13192).
+- Closing a llama.cpp forwarding client's input closes its guarded upstream connection.
+  The one-request forwarder exits without leaving generation active until its deadline.
+  Related change: [PR #13204](https://github.com/NVIDIA/NemoClaw/pull/13204).
+- Managed image builds use a curl package revision compatible with the current Debian security libraries on AMD64 and ARM64.
+  Related change: [PR #13158](https://github.com/NVIDIA/NemoClaw/pull/13158).
+- If a pre-delete backup fails during OpenClaw recreation, the original sandbox remains registered, connectable, and selected.
+  Backups also accept the exact generated NVIDIA inference credential reference without copying a raw key.
+  Related change: [PR #13051](https://github.com/NVIDIA/NemoClaw/pull/13051).
+- Sandbox log and failed exec policy checks announce when NemoClaw attempts to enable OpenShell OCSF audit logging.
+  Set `NEMOCLAW_NO_AUTO_AUDIT_LOGS=1` to leave the setting unchanged.
+  Related change: [PR #13199](https://github.com/NVIDIA/NemoClaw/pull/13199).
+- Onboarding can print redacted output from a failed Docker sandbox container and save it as `sandbox-container.log` in the reported diagnostics directory.
+  This requires NemoClaw to identify and inspect the container.
+  Related change: [PR #13202](https://github.com/NVIDIA/NemoClaw/pull/13202).
+- On native Linux with default Docker, an identity-free failed create can release its local name reservation after confirmed absence, even after a gateway restart.
+  Eligible legacy records with lost authority require explicit `destroy --force` to discard local tracking; this does not prove cleanup on the original runtime.
+  Related change: [PR #13170](https://github.com/NVIDIA/NemoClaw/pull/13170).
