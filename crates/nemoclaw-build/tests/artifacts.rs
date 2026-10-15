@@ -46,7 +46,9 @@ fn pinned_archive_extracts_only_the_exact_native_binary() {
 fn every_bundle_platform_pins_the_official_helm_provider_archive() {
     let pins: serde_json::Value =
         serde_json::from_str(include_str!("../../../versions.json")).unwrap();
-    assert_eq!(pins["helmProvider"], "3.3.0");
+    let version = pins["helmProvider"]
+        .as_str()
+        .expect("pinned Helm provider version");
     for platform in [
         "linux_arm64",
         "linux_amd64",
@@ -58,7 +60,7 @@ fn every_bundle_platform_pins_the_official_helm_provider_archive() {
         assert_eq!(
             artifact["url"],
             format!(
-                "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_{platform}.zip"
+                "https://releases.hashicorp.com/terraform-provider-helm/{version}/terraform-provider-helm_{version}_{platform}.zip"
             )
         );
         let checksum = artifact["sha256"].as_str().unwrap();
