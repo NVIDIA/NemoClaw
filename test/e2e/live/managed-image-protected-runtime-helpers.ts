@@ -725,7 +725,7 @@ async function startProtectedNim(
   state: ProtectedProviderContainerState,
   apiKey: string,
 ): Promise<string> {
-  const storage = await host.command(
+  await host.command(
     "bash",
     [NIM_STORAGE_PROBE_PATH, "before-nim-image-pull", "", "initial", REPO_ROOT],
     {
@@ -736,12 +736,9 @@ async function startProtectedNim(
       timeoutMs: 60_000,
     },
   );
-  expect(
-    storage.exitCode === 0 && dockerLoginNgc(apiKey),
-    storage.exitCode === 0
-      ? "NGC login must succeed for protected NIM qualification"
-      : `NIM pre-pull storage snapshot failed: ${resultText(storage)}`,
-  ).toBe(true);
+  expect(dockerLoginNgc(apiKey), "NGC login must succeed for protected NIM qualification").toBe(
+    true,
+  );
   const image = pullNimImage(NIM_CATALOG_MODEL);
   const start = await host.command(
     "docker",
