@@ -125,6 +125,15 @@ exit "${CARGO_RESULT:-0}"
                 "docker",
                 r#"#!/bin/sh
 printf '%s\n' "$*" >> docker.log
+if [ -n "$DOCKER_FAIL_IMAGE" ]; then
+    case "$1 $2" in
+        'buildx bake') [ "$3" = "$DOCKER_FAIL_IMAGE" ] && exit 1 ;;
+        'buildx build')
+            for argument; do
+                [ "$argument" = "nc-live-images:$DOCKER_FAIL_IMAGE" ] && exit 1
+            done ;;
+    esac
+fi
 case "$1 $2" in
     'info --format') printf '%s\n' '{"Address":"/test/containerd.sock","Namespaces":{"Containers":"test-images"}}' ;;
     'version '*) printf '29.0.0\n' ;;
@@ -457,6 +466,69 @@ fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compr
             == "exported docker.io/library/nc-live-images:pi docker.io/library/nc-live-images:dummy docker.io/library/nc-live-images:proxy-a docker.io/library/nc-live-images:proxy-b",
         "{archive}"
     );
+}
+
+#[test]
+fn live_images_report_each_build_duration() {
+    let fixture = Fixture::new();
+    fixture.fake_container_tools();
+    let output = fixture.run(&["live-images"]);
+    let report = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{report}");
+    for image in ["pi", "dummy", "proxy-a", "proxy-b"] {
+        let tag = format!("nc-live-images:{image}");
+        let start = report
+            .find(&format!("Building live image {tag}\n"))
+            .unwrap_or_else(|| panic!("missing build start for {tag}: {report}"));
+        let completion = format!("Built live image {tag} in ");
+        let end = report
+            .find(&completion)
+            .unwrap_or_else(|| panic!("missing build duration for {tag}: {report}"));
+        assert!(start < end, "{report}");
+        let seconds: f64 = report[end + completion.len()..]
+            .lines()
+            .next()
+            .unwrap()
+            .strip_suffix('s')
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(seconds.is_finite() && seconds >= 0.0, "{report}");
+    }
+}
+
+#[test]
+fn live_images_report_failed_build_duration_and_stop() {
+    let images = ["pi", "dummy", "proxy-a", "proxy-b"];
+    for (index, image) in images.iter().enumerate() {
+        let fixture = Fixture::new();
+        fixture.fake_container_tools();
+        let output = fixture
+            .command(&["live-images"])
+            .env("DOCKER_FAIL_IMAGE", image)
+            .output()
+            .unwrap();
+        let report = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{report}");
+        let failure = format!("Failed to build live image nc-live-images:{image} after ");
+        let duration = report
+            .lines()
+            .find_map(|line| line.strip_prefix(&failure))
+            .unwrap_or_else(|| panic!("missing failed duration: {report}"));
+        let seconds: f64 = duration.strip_suffix('s').unwrap().parse().unwrap();
+        assert!(seconds.is_finite() && seconds >= 0.0, "{report}");
+        assert!(
+            !report.contains(&format!("Built live image nc-live-images:{image} in ")),
+            "{report}"
+        );
+        for later in &images[index + 1..] {
+            assert!(
+                !report.contains(&format!("Building live image nc-live-images:{later}")),
+                "{report}"
+            );
+        }
+        assert!(!fixture.0.path().join("containerd.log").exists());
+    }
 }
 
 #[test]

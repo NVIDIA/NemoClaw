@@ -54,26 +54,44 @@ pub(super) fn build_dummy(platform: &str, prefix: &str) -> Result<()> {
 }
 
 fn build_image(platform: &str, prefix: &str, target: &str) -> Result<()> {
-    let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
-    let status = Command::new(std::env::current_exe()?)
-        .args(["images", "build", "--platform", &docker_platform, target])
-        .env("IMAGE_PREFIX", prefix)
-        .stdin(Stdio::null())
-        .status()?;
-    if !status.success() {
-        return Err(format!("cannot build the {target} agent image").into());
+    timed_build(&format!("{prefix}:{target}"), || {
+        let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
+        let status = Command::new(std::env::current_exe()?)
+            .args(["images", "build", "--platform", &docker_platform, target])
+            .env("IMAGE_PREFIX", prefix)
+            .stdin(Stdio::null())
+            .status()?;
+        if !status.success() {
+            return Err(format!("cannot build the {target} agent image").into());
+        }
+        Ok(())
+    })
+}
+
+fn timed_build(tag: &str, build: impl FnOnce() -> Result<()>) -> Result<()> {
+    eprintln!("Building live image {tag}");
+    let start = Instant::now();
+    let result = build();
+    let seconds = start.elapsed().as_secs_f64();
+    if result.is_ok() {
+        eprintln!("Built live image {tag} in {seconds:.1}s");
+    } else {
+        eprintln!("Failed to build live image {tag} after {seconds:.1}s");
     }
-    Ok(())
+    result
 }
 
 /// Two proxy images with distinct digests, for the image-change check.
 pub(super) fn build_proxies(prefix: &str) -> Result<()> {
     for variant in ["a", "b"] {
-        run(docker()
-            .args(["buildx", "build", "--load", "--quiet"])
-            .args(["-f", "image/ollama-proxy/Dockerfile", "--target", "runtime"])
-            .args(["--label", &format!("org.nemoclaw.test=proxy-{variant}")])
-            .args(["--tag", &format!("{prefix}:proxy-{variant}"), "."]))?;
+        let tag = format!("{prefix}:proxy-{variant}");
+        timed_build(&tag, || {
+            run(docker()
+                .args(["buildx", "build", "--load", "--progress", "plain"])
+                .args(["-f", "image/ollama-proxy/Dockerfile", "--target", "runtime"])
+                .args(["--label", &format!("org.nemoclaw.test=proxy-{variant}")])
+                .args(["--tag", &tag, "."]))
+        })?;
     }
     Ok(())
 }
