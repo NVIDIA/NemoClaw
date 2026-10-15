@@ -34,7 +34,8 @@ jobs:
     name: Validate attestation inputs
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    permissions: {}
+    permissions:
+      pull-requests: read
     outputs:
       candidate_tag: ${{ steps.validate.outputs.candidate_tag }}
       digest: ${{ steps.validate.outputs.digest }}
@@ -47,6 +48,7 @@ jobs:
         shell: bash
         env:
           CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          GH_TOKEN: ${{ github.token }}
           INPUT_CANDIDATE_TAG: ${{ inputs.candidate_tag }}
           INPUT_DIGEST: ${{ inputs.digest }}
           INPUT_IMAGE: ${{ inputs.image }}
@@ -56,10 +58,22 @@ jobs:
           set -euo pipefail
           if [ "$GITHUB_REPOSITORY" != "NVIDIA/NemoClaw" ] \
             || [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] \
-            || [ "$GITHUB_REF" != "refs/heads/main" ] \
-            || [ "$CALLER_WORKFLOW_REF" != "NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@refs/heads/main" ]; then
-            echo "ERROR: attestation caller does not match the trusted main workflow." >&2
+            || [ "$CALLER_WORKFLOW_REF" != "NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@$GITHUB_REF" ]; then
+            echo "ERROR: attestation caller does not match the trusted publication workflow." >&2
             exit 1
+          fi
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/fix/issue-12285-wsl-transport" ] \
+              || [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "ERROR: attestation ref is not approved." >&2
+              exit 1
+            fi
+            gh api repos/NVIDIA/NemoClaw/pulls/12664 | jq -e --arg sha "$GITHUB_SHA" '
+              .state == "open" and .head.sha == $sha
+              and .head.ref == "fix/issue-12285-wsl-transport"
+              and .head.repo.full_name == "NVIDIA/NemoClaw"
+              and .base.ref == "main" and .base.repo.full_name == "NVIDIA/NemoClaw"
+            ' >/dev/null
           fi
           expected_candidate_tag="llama-cpp-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           if [ "$INPUT_CANDIDATE_TAG" != "$expected_candidate_tag" ]; then

@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish the declaratively enabled run-unique candidate from main
+        description: Publish a run-unique candidate from main or the approved PR 12664 branch
         required: true
         default: false
         type: boolean
@@ -312,9 +312,14 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.publish == true
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    permissions: {}
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
     outputs:
       candidate_tag: ${{ steps.gate.outputs.candidate_tag }}
+      publication_ref: ${{ steps.gate.outputs.publication_ref }}
+      signature_identity: ${{ steps.gate.outputs.signature_identity }}
     steps:
       - name: Enforce declarative publication boundary
         id: gate
@@ -323,6 +328,7 @@ jobs:
           ALLOWED_REF: ${{ needs.config.outputs.publication_allowed_ref }}
           ANONYMOUS_EXACT_DIGEST_PULL: ${{ needs.config.outputs.publication_anonymous_exact_digest_pull }}
           CANDIDATE_TAG_TEMPLATE: ${{ needs.config.outputs.publication_candidate_tag_template }}
+          GH_TOKEN: ${{ github.token }}
           IMAGE: ${{ needs.config.outputs.image }}
           PLATFORMS: ${{ needs.config.outputs.publication_platforms }}
           PUBLICATION_ENABLED: ${{ needs.config.outputs.publication_enabled }}
@@ -332,6 +338,7 @@ jobs:
           RECEIPT_SCHEMA_VERSION: ${{ needs.config.outputs.publication_receipt_schema_version }}
           SBOM_FORMAT: ${{ needs.config.outputs.publication_sbom_format }}
           SIGNATURE_MODE: ${{ needs.config.outputs.publication_signature_mode }}
+          SIGNATURE_IDENTITY: ${{ needs.config.outputs.publication_signature_identity }}
           SIGNATURE_TRANSPARENCY_LOG: ${{ needs.config.outputs.publication_signature_transparency_log }}
           SLSA_PREDICATE_TYPE: ${{ needs.config.outputs.publication_provenance_predicate_type }}
           VULNERABILITY_ONLY_FIXED: ${{ needs.config.outputs.publication_vulnerability_only_fixed }}
@@ -340,7 +347,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$GITHUB_REPOSITORY" != "NVIDIA/NemoClaw" ] \
-            || [ "$GITHUB_REF" != "$ALLOWED_REF" ] \
+            || [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] \
             || [ "$PUBLICATION_TRIGGER" != "workflow_dispatch" ] \
             || [ "$PUBLICATION_ENABLED" != "true" ] \
             || [ "$PUBLICATION_REPOSITORY" != "$IMAGE" ] \
@@ -356,6 +363,38 @@ jobs:
             || [ "$RECEIPT_SCHEMA_VERSION" != "1" ]; then
             echo "ERROR: repository, ref, trigger, enablement, image, or publication policy does not match the trusted contract." >&2
             exit 1
+          fi
+          # This maintainer-approved branch exception expires when PR 12664 closes.
+          # Match main's required checks and signatures before granting write jobs.
+          if [ "$GITHUB_REF" != "$ALLOWED_REF" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/fix/issue-12285-wsl-transport" ] \
+              || [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "ERROR: publication ref is not approved." >&2
+              exit 1
+            fi
+            gh api repos/NVIDIA/NemoClaw/pulls/12664 | jq -e --arg sha "$GITHUB_SHA" '
+              .state == "open" and .head.sha == $sha
+              and .head.ref == "fix/issue-12285-wsl-transport"
+              and .head.repo.full_name == "NVIDIA/NemoClaw"
+              and .base.ref == "main" and .base.repo.full_name == "NVIDIA/NemoClaw"
+            ' >/dev/null
+            if [ "$(gh api "repos/NVIDIA/NemoClaw/commits/$GITHUB_SHA" --jq '.commit.verification.verified')" != "true" ]; then
+              echo "ERROR: branch publication requires a verified signed commit." >&2
+              exit 1
+            fi
+            # PR description edits add a skipped changes check. Every required
+            # check still needs an actual success on this exact commit.
+            gh api --paginate --slurp "repos/NVIDIA/NemoClaw/commits/$GITHUB_SHA/check-runs?per_page=100&filter=latest" \
+              | jq -e --arg sha "$GITHUB_SHA" '
+                [.[] | .check_runs[] | select(.app.id == 15368 and .head_sha == $sha)] as $runs
+                | ["checks", "commit-lint", "dco-check", "check-hash", "changes",
+                   "Build native llama.cpp server (amd64)", "Build native llama.cpp server (arm64)"]
+                | all(.[]; . as $name
+                    | [$runs[] | select(.name == $name)]
+                    | any(.[]; .conclusion == "success")
+                      and all(.[]; .status == "completed" and
+                        (.conclusion == "success" or ($name == "changes" and .conclusion == "skipped"))))
+              ' >/dev/null
           fi
           if ! jq -e '
             (keys | sort) == ["environment", "execution", "gpu", "model", "platform", "probeBounds", "probes", "profile", "recipeRef", "required", "runner"]
@@ -380,7 +419,11 @@ jobs:
             echo "ERROR: generated candidate tag is invalid." >&2
             exit 1
           fi
-          printf 'candidate_tag=%s\n' "$candidate_tag" >> "$GITHUB_OUTPUT"
+          {
+            printf 'candidate_tag=%s\n' "$candidate_tag"
+            printf 'publication_ref=%s\n' "$GITHUB_REF"
+            printf 'signature_identity=%s@%s\n' "${SIGNATURE_IDENTITY%@*}" "$GITHUB_REF"
+          } >> "$GITHUB_OUTPUT"
 
   publish-platform:
     name: Publish native llama.cpp digest (${{ matrix.arch }})
@@ -751,6 +794,7 @@ jobs:
       contents: read
       id-token: write
       packages: write
+      pull-requests: read
     uses: ./.github/workflows/llama-cpp-image-attest.yaml
     with:
       candidate_tag: ${{ needs.assemble-candidate.outputs.candidate_tag }}
@@ -819,9 +863,9 @@ jobs:
       - name: Verify cryptographic evidence
         shell: bash
         env:
-          CERTIFICATE_IDENTITY: ${{ needs.config.outputs.publication_signature_identity }}
+          CERTIFICATE_IDENTITY: ${{ needs.publication-gate.outputs.signature_identity }}
           CERTIFICATE_OIDC_ISSUER: ${{ needs.config.outputs.publication_signature_issuer }}
-          EXPECTED_REF: ${{ needs.config.outputs.publication_allowed_ref }}
+          EXPECTED_REF: ${{ needs.publication-gate.outputs.publication_ref }}
           EXPECTED_REVISION: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
           PROVENANCE_PREDICATE_TYPE: ${{ needs.config.outputs.publication_provenance_predicate_type }}
@@ -859,7 +903,7 @@ jobs:
       - name: Verify publication evidence and create receipt
         shell: bash
         env:
-          CERTIFICATE_IDENTITY: ${{ needs.config.outputs.publication_signature_identity }}
+          CERTIFICATE_IDENTITY: ${{ needs.publication-gate.outputs.signature_identity }}
           CERTIFICATE_OIDC_ISSUER: ${{ needs.config.outputs.publication_signature_issuer }}
           CUDA_DEVELOPMENT_BASE: ${{ needs.config.outputs.cuda_dev_image }}
           CUDA_RUNTIME_BASE: ${{ needs.config.outputs.cuda_runtime_image }}

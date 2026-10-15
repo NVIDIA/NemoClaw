@@ -824,6 +824,7 @@ function createLlamaCppPrivateBridgeRequestHandler(
     "targetHost" | "targetPort" | "containerId" | "dockerAuthorityId"
   > & { readonly transactionId?: string },
   apiKey: string,
+  onFailure?: (error: Error) => void,
 ) {
   if (
     !SHA256.test(apiKey) ||
@@ -853,6 +854,7 @@ function createLlamaCppPrivateBridgeRequestHandler(
     );
   let occupied = false;
   let failed = false;
+  let failedCleanupDeadline: number | undefined;
   let closing = false;
   const aborts = new Set<AbortController>();
   const jobs = new Set<Promise<void>>();
@@ -1083,6 +1085,7 @@ function createLlamaCppPrivateBridgeRequestHandler(
           else writeUpstreamUnavailable(response);
         }
       } finally {
+        const cleanupDeadline = Date.now() + REMOTE_CLEANUP_MS;
         try {
           if (docker && clientId)
             finishNativeClient(
@@ -1091,7 +1094,7 @@ function createLlamaCppPrivateBridgeRequestHandler(
               authority.transactionId!,
               apiKey,
               targetPort,
-              Date.now() + REMOTE_CLEANUP_MS,
+              cleanupDeadline,
               chat,
             );
           else if (docker && creatingClient) {
@@ -1103,6 +1106,7 @@ function createLlamaCppPrivateBridgeRequestHandler(
               authority.transactionId!,
               apiKey,
               targetPort,
+              cleanupDeadline,
             );
           }
         } catch {
@@ -1114,6 +1118,14 @@ function createLlamaCppPrivateBridgeRequestHandler(
           clearTimeout(deadline);
           if (!failed) occupied = false;
           if (completedResponse && !response.destroyed && !response.writableEnded) response.end();
+          if (failed) {
+            failedCleanupDeadline = cleanupDeadline;
+            onFailure?.(
+              new Error(
+                `Native request cleanup could not be verified for transaction ${authority.transactionId}, request ${clientId ?? "create-in-progress"}. Restart through managed onboarding after correcting the Docker or ownership failure.`,
+              ),
+            );
+          }
         }
       }
     })();
@@ -1123,6 +1135,12 @@ function createLlamaCppPrivateBridgeRequestHandler(
   return {
     handle,
     close: async () => {
+      // Reconciliation shares the failed request's budget; shutdown must not
+      // grant another full cleanup window after that budget has expired.
+      const cleanupDeadline = Math.min(
+        failedCleanupDeadline ?? Infinity,
+        Date.now() + REMOTE_CLEANUP_MS,
+      );
       closing = true;
       for (const abort of aborts) abort.abort();
       await Promise.all([...jobs]);
@@ -1132,6 +1150,7 @@ function createLlamaCppPrivateBridgeRequestHandler(
           authority.transactionId!,
           apiKey,
           targetPort,
+          cleanupDeadline,
         );
     },
   };
@@ -1162,8 +1181,8 @@ export async function runLlamaCppPrivateBridge(
   apiKey: string,
   onReady?: () => void,
 ): Promise<void> {
-  const handler = createLlamaCppPrivateBridgeRequestHandler(authority, apiKey);
-  const servers = authority.bindAddresses.map(() => privateBridgeServer(handler));
+  const servers: http.Server[] = [];
+  let failure: Error | undefined;
   let stop: () => void = () => undefined;
   const stopped = new Promise<void>((resolve) => {
     stop = resolve;
@@ -1176,6 +1195,11 @@ export async function runLlamaCppPrivateBridge(
     }
     stop();
   };
+  const handler = createLlamaCppPrivateBridgeRequestHandler(authority, apiKey, (error) => {
+    failure = error;
+    close();
+  });
+  servers.push(...authority.bindAddresses.map(() => privateBridgeServer(handler)));
   process.once("SIGINT", close);
   process.once("SIGTERM", close);
 
@@ -1203,11 +1227,16 @@ export async function runLlamaCppPrivateBridge(
         for (const server of servers) server.once("error", reject);
       }),
     ]);
+    if (failure) throw failure;
   } finally {
     process.removeListener("SIGINT", close);
     process.removeListener("SIGTERM", close);
     close();
-    await handler.close();
+    try {
+      await handler.close();
+    } catch (error) {
+      throw failure ?? error;
+    }
   }
 }
 

@@ -135,6 +135,14 @@ digest_pattern='sha256:[0-9a-f]{64}'
 owned_image='ghcr.io/nvidia/nemoclaw/llama-cpp-server'
 image="${reference%@*}"
 reference_digest="${reference##*@}"
+case "$certificate_identity" in
+  https://github.com/NVIDIA/NemoClaw/.github/workflows/llama-cpp-image-attest.yaml@refs/heads/main | \
+    https://github.com/NVIDIA/NemoClaw/.github/workflows/llama-cpp-image-attest.yaml@refs/heads/fix/issue-12285-wsl-transport) ;;
+  *)
+    echo "ERROR: llama.cpp publication signer is not approved." >&2
+    exit 1
+    ;;
+esac
 if [[ ! "$reference" =~ ^ghcr\.io/nvidia/nemoclaw/llama-cpp-server@${digest_pattern}$ ]] \
   || [ "$image" != "$owned_image" ] \
   || [ "$repository" != "NVIDIA/NemoClaw" ] \
@@ -145,7 +153,6 @@ if [[ ! "$reference" =~ ^ghcr\.io/nvidia/nemoclaw/llama-cpp-server@${digest_patt
   || [[ ! "$cuda_runtime_base" =~ ^docker\.io/nvidia/cuda@${digest_pattern}$ ]] \
   || [[ ! "$run_id" =~ ^[1-9][0-9]{0,19}$ ]] \
   || [[ ! "$run_attempt" =~ ^[1-9][0-9]{0,9}$ ]] \
-  || [ "$certificate_identity" != "https://github.com/NVIDIA/NemoClaw/.github/workflows/llama-cpp-image-attest.yaml@refs/heads/main" ] \
   || [ "$certificate_oidc_issuer" != "https://token.actions.githubusercontent.com" ] \
   || [ -z "$output" ]; then
   echo "ERROR: llama.cpp publication identity is invalid." >&2

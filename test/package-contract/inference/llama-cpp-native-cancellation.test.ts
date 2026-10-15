@@ -1,9 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, type ChildProcess } from "node:child_process";
-import fs from "node:fs";
-import http from "node:http";
+import type { ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -20,7 +18,9 @@ import {
   closeNativeFixture,
   captureNativeRequestDeadline,
   advanceNativeRequestDeadline,
-  refuseNativeRequestStops,
+  spawnNativeBridge,
+  nativeBridgeClientPid,
+  nativeProcessIsAlive,
 } from "./llama-cpp-native-cancellation.test-support";
 const dockerOperations = requireCompiled(
   path.resolve("dist/lib/onboard/runtime-provider/docker-operation-authority.js"),
@@ -147,43 +147,11 @@ describe
           },
           evidencePath,
         );
-        const reservation = http.createServer();
-        await new Promise<void>((resolve) => reservation.listen(0, "127.0.0.1", resolve));
-        const port = (reservation.address() as { port: number }).port;
-        await new Promise<void>((resolve) => reservation.close(() => resolve()));
-        const descriptor = fs.openSync(fixture.keyPath, "r");
-        try {
-          processBridge = spawn(
-            process.execPath,
-            [
-              path.resolve(
-                "dist/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge-process.js",
-              ),
-              "--transaction",
-              fixture.transactionId,
-              "--auth-mode",
-              "api-key-fd3",
-              "--target-host",
-              "127.0.0.1",
-              "--target-port",
-              "8081",
-              "--listen-port",
-              String(port),
-              "--container-id",
-              fixture.server,
-              "--docker-authority",
-              fixture.authority.engine.authorityId,
-              "--bind-address",
-              "127.0.0.1",
-            ],
-            { stdio: ["ignore", "ignore", "pipe", descriptor, "pipe"] },
-          );
-        } finally {
-          fs.closeSync(descriptor);
-        }
+        const bridge = await spawnNativeBridge(fixture);
+        processBridge = bridge.child;
         await waitForNativeBridgeReady(processBridge, fixture.record);
-        url = `http://127.0.0.1:${port}`;
-        await complete();
+        url = bridge.url;
+        fixture.record.bridgeInitialCompletionMilliseconds = await complete();
         const baseline = [await complete(), await complete(), await complete()].sort(
           (a, b) => a - b,
         );
@@ -310,50 +278,61 @@ describe
       }
     }, 30_000);
 
-    it("keeps admission closed when local Docker exit does not prove remote cleanup", async () => {
+    it("exits after unverified cleanup and reconciles remote work before recovery", async () => {
       await stopNativeBridge(processBridge);
-      const refusal = refuseNativeRequestStops(dockerOperations, fixture);
-      const bridge = createLlamaCppPrivateBridgeServer(target(), fixture.key);
-      await new Promise<void>((resolve) => bridge.listen(0, "127.0.0.1", resolve));
-      const endpoint = `http://127.0.0.1:${(bridge.address() as { port: number }).port}`;
+      const failedBridge = await spawnNativeBridge(fixture);
+      processBridge = failedBridge.child;
+      await waitForNativeBridgeReady(processBridge, fixture.record);
+      const active = await stream(failedBridge.url);
+      const localClientPid = nativeBridgeClientPid(processBridge);
       try {
-        const active = await stream(endpoint);
+        // Tightening this owned client limit makes its configuration fail the
+        // exact cleanup proof without weakening any isolation or replacing Docker.
+        fixture.capture(["update", "--pids-limit", "16", active.id]);
         active.abort.abort();
         await active.reader.cancel().catch(() => undefined);
-        await expect.poll(() => refusal.refusedStops, { timeout: 5_000 }).toBe(1);
+        expect(await waitForNativeBridgeExit(processBridge)).toBe(1);
         await expect
-          .poll(
-            () =>
-              refusal.client !== undefined &&
-              (refusal.client.exitCode !== null || refusal.client.signalCode !== null),
-            { timeout: 5_000 },
-          )
-          .toBe(true);
+          .poll(() => nativeProcessIsAlive(localClientPid), { timeout: 5_000 })
+          .toBe(false);
         const remote = JSON.parse(fixture.capture(["container", "inspect", active.id]).stdout)[0];
         expect(remote.State.Running).toBe(true);
+        expect(remote.HostConfig.PidsLimit).toBe(16);
         expect((await fixture.metrics())["llamacpp:requests_processing"]).toBe(1);
-        const denied = await chat(false, endpoint);
-        expect(denied.status).toBe(503);
-        await denied.text();
-        refusal.allowStops();
-        await bridge.closeOwnedWork();
+        await expect(chat(false, failedBridge.url)).rejects.toThrow();
+        expect(fixture.record.bridgeStderr).toContain(fixture.transactionId);
+        expect(fixture.record.bridgeStderr).toContain(active.id);
+        expect(fixture.record.bridgeStderr).not.toContain(fixture.key);
+        const refused = await spawnNativeBridge(fixture, Number(new URL(failedBridge.url).port));
+        processBridge = refused.child;
+        await expect(waitForNativeBridgeReady(processBridge, {})).rejects.toThrow(
+          "Bridge startup failed",
+        );
+        expect(await waitForNativeBridgeExit(processBridge)).toBe(1);
+        expect(clients()).toEqual([active.id]);
+        fixture.capture(["update", "--pids-limit", "32", active.id]);
+        const recovered = await spawnNativeBridge(fixture, Number(new URL(failedBridge.url).port));
+        processBridge = recovered.child;
+        await waitForNativeBridgeReady(processBridge, {});
+        const proof = await stopped(active.id);
+        const nextCompletionMilliseconds = await complete(recovered.url);
         fixture.record.cleanupRefusal = {
           clientId: active.id,
-          localClient: {
-            pid: refusal.client!.pid,
-            exitCode: refusal.client!.exitCode,
-            signal: refusal.client!.signalCode,
-          },
-          admissionStatus: denied.status,
-          ...(await stopped(active.id)),
+          localClientPid,
+          bridgeExitCode: 1,
+          admissionClosed: true,
+          unreconciledRestartExitCode: 1,
+          nextCompletionMilliseconds,
+          ...proof,
         };
+        expect(nextCompletionMilliseconds).toBeLessThan(normalLatencyBound);
         fixture.passed.add("cleanup-failure");
       } finally {
-        refusal.allowStops();
-        refusal.mockRestore();
-        bridge.closeAllConnections();
-        await bridge.closeOwnedWork();
-        await new Promise<void>((resolve) => bridge.close(() => resolve()));
+        active.abort.abort();
+        await active.reader.cancel().catch(() => undefined);
+        // Restore only the exact test-owned client if an assertion interrupted recovery.
+        fixture.restoreClientPidsLimit(active.id);
+        await stopNativeBridge(processBridge);
       }
-    }, 30_000);
+    }, 60_000);
   });

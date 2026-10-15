@@ -272,7 +272,9 @@ The host's stricter HTTP header limit continues to apply when present.
 The recipe's `serve.limits.requestTimeoutSeconds` configures native `llama-server` read/write timeouts.
 The bridge's fixed 900-second budget applies to the total request.
 On cancellation, deadline expiry, or bridge shutdown, NemoClaw verifies that the owned remote request has stopped before releasing admission.
-If cleanup cannot be verified, new requests remain unavailable.
+If cleanup cannot be verified, the bridge closes its listeners and exits with an error; it does not admit another request.
+Correct the reported Docker or ownership failure, then rerun the same onboarding selection.
+The new bridge reconciles the exact owned requests before opening its listeners.
 
 The Muse Glimmer profile enables text responses, reasoning, and structured tool calls.
 It does not load a multimodal projector or a DFlash draft model because multimodal projection and speculative decoding remain disabled.
@@ -345,12 +347,13 @@ sudo ufw --force delete allow from <subnet> to <gateway-ip> port 8081 proto tcp
 On native Linux, use the same subnet and gateway IP address that appeared in the original command.
 
 If resumed onboarding reports that it cannot reserve host-local inference, run `$$nemoclaw <sandbox-name> doctor`.
-Correct the reported runtime or gateway-authority condition before you rerun the same provider and recipe selection.
+If the diagnostic identifies the former WSL Qwen image, resume is unavailable. Follow the exact owned-runtime removal and fresh onboarding procedure in [Upgrade or Roll Back](#upgrade-or-roll-back) after a qualified native image is pinned.
+For other runtime or gateway-authority conditions, correct the reported condition before you rerun the same provider and recipe selection.
 NemoClaw resumes only the persisted Docker authority, image, recipe, model digest, network, and runtime identity.
 It reconciles an unfinished create journal before it starts a new runtime.
 Phases before `receipt-prepared` are rolled back and retired, while `receipt-prepared` is finalized.
 
-If `status` reports `stopped` or `preparing`, rerun the same onboarding selection to resume the runtime.
+For a current managed image, if `status` reports `stopped` or `preparing`, rerun the same onboarding selection to resume the runtime.
 If it reports `absent`, `conflict`, or `unknown`, inspect the reported identity or Docker-authority error before retrying.
 Do not remove a same-name container or network unless its labels and identifiers match the persisted ownership state.
 

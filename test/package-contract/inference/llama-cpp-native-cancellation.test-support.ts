@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import { expect, vi } from "vitest";
 import type {
@@ -336,6 +337,20 @@ export async function createNativeLlamaDockerFixture(
       record,
       normalLatencyBound,
       passed,
+      restoreClientPidsLimit(id: string) {
+        const current = capture([
+          "ps",
+          "--all",
+          "--no-trunc",
+          "--quiet",
+          "--filter",
+          `label=io.nvidia.nemoclaw.host-local-inference.request-transaction-sha256=${transactionId}`,
+          "--filter",
+          `id=${id}`,
+        ]).stdout.trim();
+        expect(["", id]).toContain(current);
+        if (current === id) capture(["update", "--pids-limit", "32", id]);
+      },
       close,
     };
   } catch (error) {
@@ -460,47 +475,62 @@ export function advanceNativeRequestDeadline(
   };
 }
 
-export function refuseNativeRequestStops(
-  dockerOperations: NativeDockerOperations,
-  fixture: NativeFixture,
-) {
-  const authority = fixture.authority;
-  let requestClient: ChildProcess | undefined;
-  let denyStop = true;
-  let refusedStops = 0;
-  const qualification = vi
-    .spyOn(dockerOperations, "createDockerOperationAuthority")
-    .mockReturnValue({
-      ...authority,
-      spawn: (args, options) => {
-        requestClient = authority.spawn(args, options);
-        return requestClient;
-      },
-      engine: {
-        ...authority.engine,
-        capture: (args, timeout, input) => {
-          if (denyStop && args[0] === "kill") {
-            refusedStops += 1;
-            return { status: 1, stdout: "", stderr: "test-only Docker stop refusal" };
-          }
-          return authority.engine.capture(args, timeout, input);
-        },
-      },
-    });
-  return {
-    get client() {
-      return requestClient;
-    },
-    get refusedStops() {
-      return refusedStops;
-    },
-    allowStops() {
-      denyStop = false;
-    },
-    mockRestore() {
-      qualification.mockRestore();
-    },
-  };
+export async function spawnNativeBridge(fixture: NativeFixture, listenPort = 0) {
+  const reservation = http.createServer();
+  await new Promise<void>((resolve) => reservation.listen(listenPort, "127.0.0.1", resolve));
+  const port = (reservation.address() as { port: number }).port;
+  await new Promise<void>((resolve) => reservation.close(() => resolve()));
+  const descriptor = fs.openSync(fixture.keyPath, "r");
+  try {
+    const child = spawn(
+      process.execPath,
+      [
+        path.resolve(
+          "dist/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge-process.js",
+        ),
+        "--transaction",
+        fixture.transactionId,
+        "--auth-mode",
+        "api-key-fd3",
+        "--target-host",
+        "127.0.0.1",
+        "--target-port",
+        "8081",
+        "--listen-port",
+        String(port),
+        "--container-id",
+        fixture.server,
+        "--docker-authority",
+        fixture.authority.engine.authorityId,
+        "--bind-address",
+        "127.0.0.1",
+      ],
+      { stdio: ["ignore", "ignore", "pipe", descriptor, "pipe"] },
+    );
+    return { child, url: `http://127.0.0.1:${port}` };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+export function nativeBridgeClientPid(bridge: ChildProcess): number {
+  const clients = execFileSync("ps", ["-eo", "pid=,ppid=,comm="], { encoding: "utf8" })
+    .trim()
+    .split("\n")
+    .map((row) => row.trim().split(/\s+/u))
+    .filter((row) => Number(row[1]) === bridge.pid && /(?:^|\/)docker$/u.test(row[2] ?? ""));
+  expect(clients).toHaveLength(1);
+  return Number(clients[0]![0]);
+}
+
+export function nativeProcessIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    return false;
+  }
 }
 
 type NativeFixture = Awaited<ReturnType<typeof createNativeLlamaDockerFixture>>;
