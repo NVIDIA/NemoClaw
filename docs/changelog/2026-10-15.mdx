@@ -14,6 +14,9 @@ It also updates managed inference and OpenClaw behavior for qualified local mode
 - Native NVIDIA Build routes reject noncanonical URLs that resolve to the NVIDIA endpoint.
   Deep Agents Code uses the scoped OpenRouter credential handle for native OpenRouter requests.
   Related changes: [PR #12925](https://github.com/NVIDIA/NemoClaw/pull/12925) and [PR #13055](https://github.com/NVIDIA/NemoClaw/pull/13055).
+- During an OpenClaw rebuild, NemoClaw refreshes restored scoped credential references for native NVIDIA and OpenRouter routes when the endpoint and credential key match the current runtime binding.
+  It leaves user-managed credentials unchanged.
+  Related change: [PR #13050](https://github.com/NVIDIA/NemoClaw/pull/13050).
 - OpenClaw stores the attached provider's scoped credential reference in native configuration when switching NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, or Hermes Provider routes.
   The reference does not expose the raw provider credential.
   Related change: [PR #13064](https://github.com/NVIDIA/NemoClaw/pull/13064).
