@@ -63,6 +63,30 @@ afterEach(() => {
 });
 
 describe("shared CI dependency installer", () => {
+  it("removes GitHub API credentials before running candidate dependency installation", () => {
+    const fixture = makeFixture();
+    writeFileSync(
+      join(fixture.root, "bin", "npm"),
+      '#!/bin/sh\n[ -z "${GITHUB_TOKEN:-}" ] && [ -z "${GH_TOKEN:-}" ] || exit 42\nprintf \'%s\\n\' "$*" >> "$NPM_TRACE"\n',
+    );
+    const result = spawnSync("bash", [installer, "none", "artifact"], {
+      cwd: fixture.root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_TOKEN: "fixture-api-token",
+        GH_TOKEN: "fixture-cli-token",
+        NPM_TRACE: fixture.trace,
+        PATH: fixture.path,
+        RUNNER_TEMP: join(fixture.root, "runner-temp"),
+      },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(fixture.trace, "utf8")).toContain(
+      "ci --allow-remote=root --ignore-scripts",
+    );
+  });
+
   it("installs from a composite-action path without lifecycle scripts", () => {
     const fixture = makeFixture();
     const result = runInstaller(fixture);
