@@ -1,7 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { vi } from "vitest";
+import { expect, vi } from "vitest";
+import type { PodmanContainerEngine } from "../../adapters/podman";
+import { createDockerRuntimeProviderBundle } from "../../onboard/runtime-provider/docker";
+import { dockerLlamaCppBindingSha256 as managedLlamaCppBindingSha256 } from "../../onboard/runtime-provider/docker-llama-cpp-operation";
+import type {
+  HostLocalInferenceOperation,
+  HostLocalLlamaCppLifecycle,
+} from "../../onboard/runtime-provider/host-local-inference";
+import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
+import * as catalogLoader from "../serving/catalog-loader";
+import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
 
 import type {
   ContainerEngine,
@@ -157,4 +167,82 @@ export function driftingDockerCapture(): ReturnType<typeof vi.fn<ContainerEngine
     }
     return { status: 0, stdout: "", stderr: "" };
   });
+}
+
+export function inertPodmanEngine(
+  operation: "host-doctor" | "sandbox-lifecycle",
+  capture: ContainerEngine["capture"],
+  captureHost: ContainerEngine["captureHost"],
+): PodmanContainerEngine {
+  return {
+    operation,
+    engineId: "podman",
+    displayName: "Podman",
+    authorityId: "test:podman-socket",
+    endpointAuthorityId: "test:podman-socket",
+    capture,
+    captureHost,
+  };
+}
+
+export function managedOperation(
+  engine: HostLocalInferenceOperation["engine"],
+  createLlamaCppLifecycle: (
+    input: Parameters<HostLocalInferenceOperation["createLlamaCppLifecycle"]>[0],
+  ) => HostLocalLlamaCppLifecycle,
+): HostLocalInferenceOperation {
+  return {
+    providerId: "docker",
+    engine,
+    bindingSha256: managedLlamaCppBindingSha256(engine),
+    assertAuthority: vi.fn(),
+    spawn: vi.fn(() => ({}) as never),
+    createLlamaCppLifecycle,
+  };
+}
+
+export function managedRuntimeProvider(
+  engine: HostLocalInferenceOperation["engine"],
+  createLlamaCppLifecycle: HostLocalInferenceOperation["createLlamaCppLifecycle"] = vi.fn(() => {
+    throw new Error("Unexpected managed llama.cpp lifecycle construction");
+  }),
+) {
+  const bundle = createDockerRuntimeProviderBundle();
+  return {
+    ...bundle,
+    hostLocalInference: {
+      providerId: "docker",
+      supported: true as const,
+      services: ["llama-cpp" as const],
+      createOperation: vi.fn(() => managedOperation(engine, createLlamaCppLifecycle)),
+    },
+  };
+}
+
+export function selection(): ResolvedLlamaCppInferenceSelection {
+  const catalog = catalogLoader.loadManagedInferenceCatalog();
+  const recipe = catalog.recipes.find(
+    ({ metadata }) => metadata.id === "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
+  );
+  const preset = catalog.presets.find(
+    ({ metadata }) => metadata.id === "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b",
+  );
+  expect(recipe, "managed llama.cpp recipe fixture is unavailable").toBeDefined();
+  expect(isLlamaCppServingRecipe(recipe!), "managed llama.cpp recipe fixture is invalid").toBe(
+    true,
+  );
+  expect(preset, "managed llama.cpp preset fixture is unavailable").toBeDefined();
+  return {
+    outcome: "selected",
+    selection: "explicit",
+    catalogDigest: catalog.catalogDigest,
+    presetDigest: catalog.sources.find(
+      ({ kind, id }) => kind === "ServingPreset" && id === preset!.metadata.id,
+    )!.digest,
+    recipeDigest: catalog.sources.find(
+      ({ kind, id }) => kind === "ServingRecipe" && id === recipe!.metadata.id,
+    )!.digest,
+    preset: preset!,
+    recipe: recipe! as ResolvedLlamaCppInferenceSelection["recipe"],
+  };
 }
