@@ -1159,6 +1159,7 @@ describe("core onboard flow phases", () => {
       {
         gatewayName: "nemoclaw",
         allowToolsIncompatible: false,
+        deferPublishedRouteReservation: true,
         endpointSource: null,
         reservationSessionId: session.sessionId,
       },
