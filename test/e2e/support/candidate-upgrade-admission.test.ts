@@ -72,6 +72,29 @@ describe("candidate upgrade admission", () => {
     expect(f.request.mock.calls.filter(([path]) => path.endsWith("/pulls/123"))).toHaveLength(2);
   });
 
+  it("accepts a bot-authored PR only with an independent human maintainer's approval", async () => {
+    const f = fixture();
+    f.pr.user.login = "nvidia-nemopatch-writer[bot]";
+    await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).resolves.toEqual({
+      sources: { [sourcePath]: f.source },
+      reviewer: "reviewer",
+      commentId: 50,
+    });
+    f.records.length = 0;
+    await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
+      /independent maintainer/,
+    );
+  });
+
+  it("rejects a malformed bot author login before reading approval comments", async () => {
+    const f = fixture();
+    f.pr.user.login = "nvidia-nemopatch-writer[bot]suffix";
+    await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
+      /open upstream PR/,
+    );
+    expect(f.request.mock.calls.some(([path]) => path.includes("/comments"))).toBe(false);
+  });
+
   it.each([{ prNumber: 0 }, { candidateSha: "main" }, { baseSha: "main" }])(
     "rejects invalid identity %j before any request",
     async (change) => {
