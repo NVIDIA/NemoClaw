@@ -12,35 +12,158 @@ import { expect, it } from "vitest";
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const resolver = path.join(repoRoot, "scripts/checks/resolve-managed-pr-base.sh");
 
-it("builds a changed PR base locally and fails closed on comparison errors", () => {
-  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-local-pr-base-"));
-  const fakeBin = path.join(temporaryRoot, "bin");
-  const output = path.join(temporaryRoot, "output");
-  const summary = path.join(temporaryRoot, "summary");
-  const dockerLog = path.join(temporaryRoot, "docker.log");
-  fs.mkdirSync(fakeBin);
-  const runGit = (...args: string[]) => {
-    const result = spawnSync("git", args, { cwd: temporaryRoot, encoding: "utf8" });
-    expect(result.status, result.stderr).toBe(0);
-    return result.stdout.trim();
-  };
-  runGit("init", "--quiet");
-  runGit("config", "user.name", "NemoClaw Test");
-  runGit("config", "user.email", "nemoclaw-test@example.invalid");
-  fs.writeFileSync(path.join(temporaryRoot, "Dockerfile.base"), "FROM scratch\n");
-  runGit("add", "Dockerfile.base");
-  runGit("commit", "--quiet", "-m", "test: add base");
-  const baseSha = runGit("rev-parse", "HEAD");
-  fs.writeFileSync(
-    path.join(temporaryRoot, "Dockerfile.base"),
-    "FROM scratch\nLABEL test=changed\n",
-  );
-  runGit("add", "Dockerfile.base");
-  runGit("commit", "--quiet", "-m", "test: change base");
-  const candidateSha = runGit("rev-parse", "HEAD");
-  fs.writeFileSync(
-    path.join(fakeBin, "docker"),
-    `#!/bin/bash
+it.each(["amd64", "arm64"])(
+  "pins one %s PR base descriptor and rejects torn index evidence",
+  (architecture) => {
+    const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-base-"));
+    const fakeBin = path.join(temporaryRoot, "bin");
+    const aliasRaw = path.join(temporaryRoot, "alias.raw");
+    const exactRaw = path.join(temporaryRoot, "exact.raw");
+    const output = path.join(temporaryRoot, "output");
+    const summary = path.join(temporaryRoot, "summary");
+    fs.mkdirSync(fakeBin);
+    const exactBody = JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      config: { digest: `sha256:${"a".repeat(64)}`, size: 1 },
+      layers: [],
+    });
+    const digest = `sha256:${createHash("sha256").update(exactBody).digest("hex")}`;
+    const descriptor = {
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      digest,
+      size: exactBody.length,
+      platform: { os: "linux", architecture },
+    };
+    const writeAlias = (manifests: unknown[]) => {
+      fs.writeFileSync(
+        aliasRaw,
+        JSON.stringify({
+          schemaVersion: 2,
+          mediaType: "application/vnd.oci.image.index.v1+json",
+          manifests,
+        }),
+      );
+    };
+    const otherPlatform = {
+      ...descriptor,
+      digest: `sha256:${"f".repeat(64)}`,
+      platform: {
+        os: "linux",
+        architecture: architecture === "amd64" ? "arm64" : "amd64",
+      },
+    };
+    writeAlias([otherPlatform, descriptor]);
+    fs.writeFileSync(exactRaw, exactBody);
+    fs.writeFileSync(
+      path.join(fakeBin, "docker"),
+      `#!/bin/bash
+set -euo pipefail
+if [ "\${1:-} \${2:-} \${3:-}" = "buildx imagetools inspect" ]; then
+if [[ "\${4:-}" == *":latest" ]]; then
+  cat "$ALIAS_RAW"
+else
+  cat "$EXACT_RAW"
+fi
+elif [ "$*" = "pull --platform $PLATFORM $EXACT_REFERENCE" ]; then
+exit 0
+elif [ "$*" = "image inspect $EXACT_REFERENCE" ]; then
+printf '[{"Config":{"Labels":{"org.opencontainers.image.revision":"%s"}}}]' "$CANDIDATE_SHA"
+else
+exit 90
+fi
+`,
+      { mode: 0o755 },
+    );
+    const runResolver = () =>
+      spawnSync(resolver, [], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          AGENT: "openclaw",
+          ALIAS_RAW: aliasRaw,
+          BASE_ALIAS: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+          BASE_DOCKERFILE: "Dockerfile.base",
+          BASE_REPOSITORY: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+          BASE_SHA: spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim(),
+          CANDIDATE_SHA: spawnSync("git", ["rev-parse", "HEAD"], {
+            encoding: "utf8",
+          }).stdout.trim(),
+          DISPLAY_NAME: "OpenClaw",
+          EXACT_RAW: exactRaw,
+          EXACT_REFERENCE: `ghcr.io/nvidia/nemoclaw/sandbox-base@${digest}`,
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/openclaw-base:test",
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          PLATFORM: `linux/${architecture}`,
+          RUNNER_TEMP: temporaryRoot,
+        },
+      });
+
+    try {
+      const accepted = runResolver();
+      expect(accepted.status, accepted.stderr).toBe(0);
+      expect(fs.readFileSync(output, "utf8")).toContain(
+        `ref=ghcr.io/nvidia/nemoclaw/sandbox-base@${digest}`,
+      );
+
+      writeAlias([descriptor, descriptor]);
+      const duplicate = runResolver();
+      expect(duplicate.status).not.toBe(0);
+      expect(duplicate.stderr).toContain(
+        `does not contain exactly one linux/${architecture} image`,
+      );
+
+      writeAlias([otherPlatform]);
+      const missing = runResolver();
+      expect(missing.status).not.toBe(0);
+      expect(missing.stderr).toContain(`does not contain exactly one linux/${architecture} image`);
+
+      writeAlias([descriptor]);
+      fs.appendFileSync(exactRaw, " ");
+      const wrongBody = runResolver();
+      expect(wrongBody.status).not.toBe(0);
+      expect(wrongBody.stderr).toContain(
+        "exact PR base bytes do not match the selected descriptor digest",
+      );
+    } finally {
+      fs.rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each(["amd64", "arm64"])(
+  "builds a changed %s PR base locally and rejects comparison errors",
+  (architecture) => {
+    const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-local-pr-base-"));
+    const fakeBin = path.join(temporaryRoot, "bin");
+    const output = path.join(temporaryRoot, "output");
+    const summary = path.join(temporaryRoot, "summary");
+    const dockerLog = path.join(temporaryRoot, "docker.log");
+    fs.mkdirSync(fakeBin);
+    const runGit = (...args: string[]) => {
+      const result = spawnSync("git", args, { cwd: temporaryRoot, encoding: "utf8" });
+      expect(result.status, result.stderr).toBe(0);
+      return result.stdout.trim();
+    };
+    runGit("init", "--quiet");
+    runGit("config", "user.name", "NemoClaw Test");
+    runGit("config", "user.email", "nemoclaw-test@example.invalid");
+    fs.writeFileSync(path.join(temporaryRoot, "Dockerfile.base"), "FROM scratch\n");
+    runGit("add", "Dockerfile.base");
+    runGit("commit", "--quiet", "-m", "test: add base");
+    const baseSha = runGit("rev-parse", "HEAD");
+    fs.writeFileSync(
+      path.join(temporaryRoot, "Dockerfile.base"),
+      "FROM scratch\nLABEL test=changed\n",
+    );
+    runGit("add", "Dockerfile.base");
+    runGit("commit", "--quiet", "-m", "test: change base");
+    const candidateSha = runGit("rev-parse", "HEAD");
+    fs.writeFileSync(
+      path.join(fakeBin, "docker"),
+      `#!/bin/bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$DOCKER_LOG"
 if [ "\${1:-} \${2:-}" = "buildx build" ]; then
@@ -66,54 +189,69 @@ if [ "\${1:-} \${2:-}" = "load --input" ]; then
 fi
 exit 90
 `,
-    { mode: 0o755 },
-  );
-  const environment = {
-    ...process.env,
-    AGENT: "openclaw",
-    BASE_ALIAS: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
-    BASE_DOCKERFILE: "Dockerfile.base",
-    BASE_REPOSITORY: "ghcr.io/nvidia/nemoclaw/sandbox-base",
-    BASE_SHA: baseSha,
-    CANDIDATE_SHA: candidateSha,
-    DISPLAY_NAME: "OpenClaw",
-    DOCKER_LOG: dockerLog,
-    GITHUB_OUTPUT: output,
-    GITHUB_STEP_SUMMARY: summary,
-    LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/openclaw-base:test",
-    PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-    RUNNER_TEMP: temporaryRoot,
-  };
+      { mode: 0o755 },
+    );
+    const environment = {
+      ...process.env,
+      AGENT: "openclaw",
+      BASE_ALIAS: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+      BASE_DOCKERFILE: "Dockerfile.base",
+      BASE_REPOSITORY: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+      BASE_SHA: baseSha,
+      CANDIDATE_SHA: candidateSha,
+      DISPLAY_NAME: "OpenClaw",
+      DOCKER_LOG: dockerLog,
+      GITHUB_OUTPUT: output,
+      GITHUB_STEP_SUMMARY: summary,
+      LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/openclaw-base:test",
+      PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      PLATFORM: `linux/${architecture}`,
+      RUNNER_TEMP: temporaryRoot,
+    };
 
-  try {
+    try {
+      const result = spawnSync(resolver, [], {
+        cwd: temporaryRoot,
+        encoding: "utf8",
+        env: environment,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(output, "utf8")).toBe(
+        `ref=nemoclaw-managed-pr/openclaw-base:test\nlocal=true\noci=${temporaryRoot}/pr-base.oci@sha256:0000000000000000000000000000000000000000000000000000000000000000\n`,
+      );
+      const dockerCommands = fs.readFileSync(dockerLog, "utf8");
+      expect(dockerCommands).toContain(`buildx build --platform linux/${architecture}`);
+      expect(dockerCommands).toContain(`load --input ${temporaryRoot}/pr-base.docker.tar`);
+      expect(dockerCommands).not.toContain("imagetools inspect");
+      expect(fs.readFileSync(summary, "utf8")).toContain(
+        `Locally built from \`Dockerfile.base\` at \`${candidateSha}\`.`,
+      );
+
+      const invalidRevision = spawnSync(resolver, [], {
+        cwd: temporaryRoot,
+        encoding: "utf8",
+        env: { ...environment, CANDIDATE_SHA: "f".repeat(40) },
+      });
+      expect(invalidRevision.status).not.toBe(0);
+      expect(invalidRevision.stderr).toContain("PR base Dockerfile comparison failed");
+    } finally {
+      fs.rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each([undefined, "", "linux/s390x", "windows/amd64"])(
+  "rejects unsupported platform %s before inspecting or building a base",
+  (platform) => {
     const result = spawnSync(resolver, [], {
-      cwd: temporaryRoot,
       encoding: "utf8",
-      env: environment,
+      env: { PATH: process.env.PATH, PLATFORM: platform },
     });
-    expect(result.status, result.stderr).toBe(0);
-    expect(fs.readFileSync(output, "utf8")).toBe(
-      `ref=nemoclaw-managed-pr/openclaw-base:test\nlocal=true\noci=${temporaryRoot}/pr-base.oci@sha256:0000000000000000000000000000000000000000000000000000000000000000\n`,
-    );
-    const dockerCommands = fs.readFileSync(dockerLog, "utf8");
-    expect(dockerCommands).toContain("buildx build");
-    expect(dockerCommands).toContain(`load --input ${temporaryRoot}/pr-base.docker.tar`);
-    expect(dockerCommands).not.toContain("imagetools inspect");
-    expect(fs.readFileSync(summary, "utf8")).toContain(
-      `Locally built from \`Dockerfile.base\` at \`${candidateSha}\`.`,
-    );
-
-    const invalidRevision = spawnSync(resolver, [], {
-      cwd: temporaryRoot,
-      encoding: "utf8",
-      env: { ...environment, CANDIDATE_SHA: "f".repeat(40) },
-    });
-    expect(invalidRevision.status).not.toBe(0);
-    expect(invalidRevision.stderr).toContain("PR base Dockerfile comparison failed");
-  } finally {
-    fs.rmSync(temporaryRoot, { recursive: true, force: true });
-  }
-});
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("supported Linux platform");
+    expect(result.stdout).toBe("");
+  },
+);
 
 const publishedBaseCases = [
   {
@@ -194,9 +332,11 @@ const publishedBaseCases = [
 it.each(
   // One synthetic COPY contract exercises every agent routed through this resolver.
   publishedBaseCases.flatMap((testCase) =>
-    ["openclaw", "hermes", "langchain-deepagents-code"].map((agent) => ({ ...testCase, agent })),
+    ["openclaw", "hermes", "langchain-deepagents-code"].flatMap((agent) =>
+      ["amd64", "arm64"].map((architecture) => ({ ...testCase, agent, architecture })),
+    ),
   ),
-)("$agent: $title", (testCase) => {
+)("$agent ($architecture): $title", (testCase) => {
   const { candidateContents, candidatePath, expectedLocal, failPublishedPull, rejectCopyParsing } =
     testCase;
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-pr-base-"));
@@ -209,7 +349,7 @@ it.each(
   const digest = `sha256:${createHash("sha256").update(exactRaw).digest("hex")}`;
   const baseRepository = "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base";
   const aliasRaw = JSON.stringify({
-    manifests: [{ digest, platform: { architecture: "amd64", os: "linux" } }],
+    manifests: [{ digest, platform: { architecture: testCase.architecture, os: "linux" } }],
     mediaType: "application/vnd.oci.image.index.v1+json",
   });
   fs.mkdirSync(fakeBin);
@@ -302,8 +442,8 @@ if [ "\${1:-} \${2:-}" = "image inspect" ]; then
   if [ "\${3:-}" = "$LOCAL_BASE_REFERENCE" ]; then
     source_revision="$CANDIDATE_SHA"
   fi
-  printf '[{"Config":{"Labels":{"org.opencontainers.image.revision":"%s"}},"Id":"sha256:%s","Os":"linux","Architecture":"amd64"}]\\n' \
-    "$source_revision" "$(printf 'b%.0s' {1..64})"
+  printf '[{"Config":{"Labels":{"org.opencontainers.image.revision":"%s"}},"Id":"sha256:%s","Os":"linux","Architecture":"%s"}]\\n' \
+    "$source_revision" "$(printf 'b%.0s' {1..64})" "\${PLATFORM#linux/}"
   exit 0
 fi
 if [ "\${1:-}" = run ]; then
@@ -332,7 +472,7 @@ exit 90
     LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/langchain-deepagents-code-base:test",
     PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     PARSER_SIDE_EFFECT: parserSideEffect,
-    PLATFORM: "linux/amd64",
+    PLATFORM: `linux/${testCase.architecture}`,
     PUBLISHED_SOURCE_SHA: publishedSourceSha,
     RUNNER_TEMP: temporaryRoot,
   };
@@ -347,7 +487,9 @@ exit 90
     const resolverOutput = fs.readFileSync(output, "utf8");
     expect(resolverOutput).toContain(`local=${String(expectedLocal)}\n`);
     const dockerCommands = fs.readFileSync(dockerLog, "utf8");
-    expect(dockerCommands.includes("buildx build")).toBe(expectedLocal);
+    expect(dockerCommands.includes(`buildx build --platform ${environment.PLATFORM}`)).toBe(
+      expectedLocal,
+    );
     expect(dockerCommands).not.toContain("validate-dcode-runtime-contract.py");
     expect(fs.existsSync(parserSideEffect)).toBe(false);
     const summaryContents = fs.readFileSync(summary, "utf8");

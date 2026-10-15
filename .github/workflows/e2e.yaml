@@ -737,6 +737,8 @@ jobs:
         env:
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
+          UPGRADE_BASE_SHA: ${{ inputs.base_sha }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node --no-warnings tools/e2e/candidate-openshell-version.mts
 
@@ -843,6 +845,7 @@ jobs:
             scripts/check-dist-sourcemaps.mts
             scripts/audit-reviewed-npm-graph.mts
             scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/reviewed-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-cache.mts

@@ -252,6 +252,14 @@ It requires every shipped agent once, one candidate revision, one release, and o
 No matching successful run, invalid or duplicated run metadata, or incomplete, duplicated, mixed, or substituted artifact evidence stops before any stock-onboarding consumer starts.
 Manual PR E2E does not fall back to local Dockerfile builds.
 
+PR image publication builds each shipped agent on native AMD64 and ARM64 runners.
+Each platform retains its own digest contract and runs the direct startup checks.
+Docker activation selects the matching platform catalog and runs the existing all-agent lifecycle test.
+Rootless Podman activation remains AMD64. The catalog reader accepts only one platform per catalog;
+it rejects missing agents, mixed platforms, revisions, releases, and cohorts.
+AMD64 artifact names remain unchanged. ARM64 artifacts use the `managed-pr-contract-arm64-` prefix.
+`MANAGED_IMAGE_PLATFORM=linux/arm64` selects them in the trusted catalog resolver and assembly command.
+
 Routine changes to existing dependency pins, lockfiles, and image digests use
 this path policy; they do not need a new dependency registry or per-version
 workflow edits. Regression cases exercise the real policy for OpenClaw, Hermes,
@@ -263,11 +271,79 @@ their own review. Historical upgrade fixtures keep their historical versions.
 Pi retains its separate candidate contract and qualification receipts below;
 selecting a shipped-agent catalog does not qualify Pi.
 
+### Candidate OpenShell release admission
+
+An upgrade PR can carry `ci/openshell-upgrade-trust.json` instead of requiring a
+separate PR to add each release record to the base verifier.
+The JSON contains `schemaVersion: 1`, a `releases` array, and
+`revokedTemplateSha256`. Each release records the version, official formula and
+checksum-manifest identities, installer and Brev pin layouts, sandbox hashes,
+supervisor digest, and operational-template hashes. It cannot replace artifact
+identities for a release already recorded on the base. Later upgrades must
+retain prior records and revocations. Revoked hashes cannot authorize execution,
+even when retained in a historical record.
+
+This manifest cannot approve itself. A different human with current repository
+`maintain` or `admin` permission must review the exact source and post one whole
+comment: `NemoClaw-Upgrade-E2E: approve <head-sha> <base-sha>`. The corresponding
+`revoke` command withdraws that decision. The latest eligible decision wins;
+edited comments, PR-author comments, stale commits, forks, and closed PRs do not
+authorize admission. The trusted reader rechecks the PR, comments, and current
+permissions before and after fetching the fixed source paths.
+
+The trusted installer checker compares local sources with the approved commit.
+It then verifies upstream checksum and formula records through the existing
+network-backed hash check. The E2E version selector uses the same admission.
+Registry data already covered by trusted history needs no additional approval.
+The trusted checkout's current revocations and template checks still apply to older candidates.
+Candidates predating the registry can use only base-trusted records. The API reader
+requires a complete directory listing to establish absence; request failures never mean absence.
+Neither reader executes candidate scripts or grants merge permission.
+Missing permission evidence fails closed.
+
+After merge, the verifier reads the registry beside its trusted checkout, never
+from the candidate working directory. Normal branch protection and independent
+review govern that transition. An open PR's temporary admission is not merge authority.
+`Security / Candidate Upgrade Admission` refreshes the `check-hash` commit status
+on upstream PR changes and approval-comment creation, editing, or deletion.
+When `check-hash` is required, both that status and the native hash check must pass.
+An approval comment refreshes only the commit status. If the native hash check
+failed before approval, rerun that job after approval.
+An interrupted refresh remains pending or fails; it cannot reuse an earlier success.
+
+For a new OpenShell TypeScript SDK version, the same approval also binds the root
+and plugin manifests, lockfiles, and SDK archive identity in `ci/reviewed-npm-audit.json`.
+The trusted producer accepts only official, integrity-pinned SDK archives. It keeps
+the base registry, npm, audit, and exception policy; candidate policy cannot relax them.
+The producer uses the base checkout, not candidate code, and disables npm scripts.
+Its package credential is available only during the package step.
+
+PR CI uses the existing `main` bundle for SDK versions already trusted by the base.
+A new version uses an artifact bound to the PR, candidate commit, base commit, and
+approval record. The locator checks the producing workflow and event. Each trusted
+installer then rechecks approval, local manifests and locks, and archive integrity.
+For merge-based PR CI, GitHub must identify the checkout as the PR's current merge
+commit, with the approved base and candidate as its two parents. The verifier reads
+that commit's manifests and locks and compares them with the local files. The merged
+dependency graph must retain the approved SDK identity and pass the trusted package
+policy. Direct candidate E2E continues to require the approved candidate's file bytes.
+If the merge uses a newer base, synchronize the PR and refresh its commit-bound
+approval before rerunning candidate SDK CI.
+The API credential is limited to trusted preparation and removed before npm runs.
+If CI starts before the approved artifact exists, wait for the admission workflow's
+SDK job, then rerun CI. Changed or revoked approval cannot reuse the older artifact.
+
+This does not yet extend the protected runtime's source projection, permit a new
+SDK graph on protected E2E hosts, qualify Pi, or pass candidate catalogs to the Jetson operator. A data-admission
+comment is not permission to execute arbitrary candidate code on a protected
+host. Those boundaries require their own supported implementation and validation;
+passing the hash check is not full E2E qualification.
+
 Unchanged runs pass the selected base revision and complete cohort receipt to every stock-onboarding consumer.
 Changed-input runs pass the authenticated candidate catalog separately to those consumers.
 The candidate CLI artifact cannot contain the catalog.
 The GitHub token remains available only to the trusted planner and is not included in the candidate CLI artifact.
-The candidate catalog qualifies `linux/amd64` only, so a changed-input manual PR run does not dispatch the Jetson target.
+The manual E2E planner still selects the AMD64 candidate catalog and does not dispatch changed-input PR runs to Jetson.
 The trusted publication job reports this exclusion before the Jetson job is skipped.
 
 The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the
@@ -372,6 +448,24 @@ Keep a Pi upgrade in one PR with two publication steps:
    Local hooks permit this source-only step and report qualification as pending.
 2. After both candidate images publish, add their receipts and matching authority in the same PR.
    Keep image inputs unchanged between the source and receipt commits.
+
+Use `tools/managed-images/collect-pi-qualification.mts` from a reviewed tooling checkout to prepare
+the receipt commit. Run it with the upgrade checkout as the working directory. Supply a GitHub API
+token through `GITHUB_TOKEN`; do not put credentials in the command or patch. The collector reads
+Git objects without passing that token to Git and does not execute the upgrade checkout's code.
+
+```bash
+node /path/to/reviewed-checkout/tools/managed-images/collect-pi-qualification.mts PR_NUMBER RUN_ID > /path/to/pi-refresh.patch
+git apply --check /path/to/pi-refresh.patch
+git apply /path/to/pi-refresh.patch
+```
+
+The selected managed-images run must have succeeded for the current open upstream PR commit.
+The collector verifies both artifact archive digests, platforms, source revision, release and
+publication attempt. It rechecks the PR and run before printing a three-file patch: both receipts
+and their authority hashes. It does not apply the patch, publish changes or certify full lifecycle
+qualification. Review the patch and run the existing receipt refresh check before committing it.
+Do not apply a partial patch after a collection error.
 
 CI does not permit the source-only exception. It requires refreshed receipts before the PR can pass.
 A partial receipt or authority change remains an error in local hooks and CI.
@@ -2074,6 +2168,8 @@ After a failure, inspect the workflow artifacts and remove resources that target
 For `managed-image-protected-runtime`, the workflow supplies the long-lived `NVIDIA_API_KEY` repository secret only to the trusted qualification step. Trusted host code uses it for NGC login and passes it as `NGC_API_KEY` and `NIM_NGC_API_KEY` to the temporary, cohort-owned NIM container. Managed candidate sandboxes receive generated local route tokens instead of this key. Before starting NIM or vLLM, the live fixture rejects a pre-existing cohort container name. It records the full container ID, requested image, immutable image ID, cohort owner, and provider label, then removes only the container with that exact full container ID after revalidating every field. Missing, ambiguous, name-reused, drifted, or indeterminate cleanup evidence fails the test, as does any retained ID or name. A fail-closed refusal can leave the secret-bearing NIM container alive until runner teardown; inspect the redacted artifacts and remove only the verified container. The final workflow step removes the job's isolated Docker credential directory and fails if that removal does not complete. The workflow does not revoke the NVIDIA API key. Revoke it, or rotate it and disable the old value, in the issuing NVIDIA service. Verify that the exposed key is no longer valid.
 
 Before the NIM image pull, the trusted fixture attempts to record root, workspace, and Docker-root capacity plus aggregate Docker usage. During readiness and on failure, `wait-nim` also attempts to record the `/opt/nim/.cache` mount and size. Probe command failures do not gate NIM qualification, but artifact write failures can still fail the fixture. `wait-nim` writes its captured output when the command finishes, so a full runner disk can prevent its samples from reaching the uploaded artifact. The probe does not inspect the container environment, which holds the NGC key. Manual PR E2E uses trusted `main`, so this probe runs only after merge.
+
+When `docker run` reports that it could not find the digest-pinned vLLM image locally, this run pulled the image. After the vLLM container is removed, the fixture removes that image. When the Docker image store and the NIM model cache share a filesystem, this frees space for the NIM model download. The `nim-storage-*` probe output shows the filesystems that a run used. The `remove-run-pulled-vllm-image` artifact records the removal result. A removal failure does not fail the test by itself; NIM readiness remains the gate. The fixture leaves a pre-existing vLLM image in place.
 
 Before you dispatch `native-runtime-qualification-producer`, review the `NVIDIA_API_KEY` boundary below.
 The host-side preparation step receives the long-lived repository secret and uses it to create runner-local registry authentication and pull pinned GPU images.

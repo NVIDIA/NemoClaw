@@ -7,6 +7,9 @@ import { fileURLToPath } from "node:url";
 
 import { parse as parseYaml } from "yaml";
 
+import { resolveOpenShellTrustRegistry } from "./extract-installer-pins.mts";
+import { parseOpenShellTrustRegistry } from "./openshell-trust-data.mts";
+
 type OpenShellPins = Readonly<{
   maxVersion: string;
   minVersion: string;
@@ -31,11 +34,6 @@ type DependencyPins = Readonly<{
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OPENCLAW_VERSION_ARG_SUFFIX_RE = /[.-]/g;
 const NUMERIC_VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
-const OPENSHELL_RELEASE_MANIFESTS = [
-  "openshell-checksums-sha256.txt",
-  "openshell-gateway-checksums-sha256.txt",
-  "openshell-sandbox-checksums-sha256.txt",
-] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -276,38 +274,15 @@ function requireOpenShellReleaseTrustRecord(
   expectedVersion: string,
   failures: string[],
 ): string {
-  const marker = "const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [";
-  const start = source.indexOf(marker);
-  const end = source.indexOf("\n] as const;", start + marker.length);
-  const records =
-    start === -1 || end === -1
-      ? []
-      : [...source.slice(start + marker.length, end).matchAll(/^  \{\n([\s\S]*?)^  \},$/gm)].map(
-          (match) => match[1] ?? "",
-        );
-  const matchingRecords = records.filter((record) => {
-    const versions = [...record.matchAll(/^    version: "([0-9]+\.[0-9]+\.[0-9]+)",$/gm)];
-    return versions.length === 1 && versions[0]?.[1] === expectedVersion;
-  });
-  const entries = [...(matchingRecords[0] ?? "").matchAll(/^        asset: "([^"]+)",$/gm)]
-    .map((match) => match[1])
-    .filter((manifest): manifest is string => manifest !== undefined);
-  const complete =
-    matchingRecords.length === 1 &&
-    entries.length === OPENSHELL_RELEASE_MANIFESTS.length &&
-    OPENSHELL_RELEASE_MANIFESTS.every(
-      (manifest) => entries.filter((entry) => entry === manifest).length === 1,
-    );
-  if (!complete) {
+  try {
+    const releases = resolveOpenShellTrustRegistry(parseOpenShellTrustRegistry(source));
+    const release = releases.find((entry) => entry.version === expectedVersion);
+    if (release) return release.formula.sha256;
     failures.push(`OpenShell release trust: expected one complete record for ${expectedVersion}`);
-    return "";
+  } catch (error) {
+    failures.push(`OpenShell release trust: ${(error as Error).message}`);
   }
-  return extractSingle(
-    matchingRecords[0] ?? "",
-    /^      sha256: "([a-f0-9]{64})",\s*$/gm,
-    "OpenShell release trust formula SHA-256",
-    failures,
-  );
+  return "";
 }
 
 function verifyOpenShellPins(
@@ -320,7 +295,7 @@ function verifyOpenShellPins(
     hermesDockerfile: string;
     hermesMcpConfigTransaction: string;
     installer: string;
-    installerPinExtractor: string;
+    openshellTrustRegistry: string;
     mcpBridgeValidation: string;
     openshellFeatureGate: string;
     openshellInstall: string;
@@ -358,7 +333,7 @@ function verifyOpenShellPins(
     failures,
   );
   const formulaSha256 = requireOpenShellReleaseTrustRecord(
-    sources.installerPinExtractor,
+    sources.openshellTrustRegistry,
     pins.maxVersion,
     failures,
   );
@@ -571,11 +546,7 @@ export function verifyDependencyPins(rootDir: string = REPO_ROOT): string[] {
 
   const brevLaunchable = readText(rootDir, "scripts/brev-launchable-ci-cpu.sh", failures);
   const installer = readText(rootDir, "scripts/install-openshell.sh", failures);
-  const installerPinExtractor = readText(
-    rootDir,
-    "scripts/checks/extract-installer-pins.mts",
-    failures,
-  );
+  const openshellTrustRegistry = readText(rootDir, "ci/openshell-upgrade-trust.json", failures);
   const e2eWorkflowSource = readText(rootDir, ".github/workflows/e2e.yaml", failures);
   const gatewayService = readText(
     rootDir,
@@ -655,7 +626,7 @@ export function verifyDependencyPins(rootDir: string = REPO_ROOT): string[] {
       hermesDockerfile,
       hermesMcpConfigTransaction,
       installer,
-      installerPinExtractor,
+      openshellTrustRegistry,
       mcpBridgeValidation,
       openshellFeatureGate,
       openshellInstall,

@@ -239,6 +239,12 @@ export function protectedProviderContainerCleanupCommand(
   };
 }
 
+export function protectedProviderImagePulledByStart(image: string, stderr: string): boolean {
+  return stderr
+    .split("\n")
+    .some((line) => line.trim() === `Unable to find image '${image}' locally`);
+}
+
 function imageContracts(): ProtectedManagedImageContract[] {
   const contractPath = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT;
   if (!contractPath || !path.isAbsolute(contractPath)) {
@@ -574,7 +580,7 @@ async function removeProtectedProviderContainer(
 async function startProtectedVllm(
   host: HostCliClient,
   state: ProtectedProviderContainerState,
-): Promise<void> {
+): Promise<boolean> {
   const start = await host.command(
     "docker",
     [
@@ -638,6 +644,7 @@ async function startProtectedVllm(
     },
   );
   expect(cuda.exitCode, resultText(cuda)).toBe(0);
+  return protectedProviderImagePulledByStart(VLLM_IMAGE, start.stderr);
 }
 
 export function protectedVllmReadinessCommand(
@@ -985,11 +992,21 @@ export async function qualifyProtectedManagedImageRuntime(
 
     activePhase = "qualify all managed agents with GPU-backed vLLM";
     progress.phase("qualify all managed agents with GPU-backed vLLM");
-    await startProtectedVllm(host, vllmState);
+    const vllmImagePulledByRun = await startProtectedVllm(host, vllmState);
     await qualifyEveryAgent(host, contracts, "vllm", VLLM_MODEL, {
       NEMOCLAW_VLLM_LOCAL_TOKEN: randomBytes(24).toString("hex"),
     });
     await removeProtectedProviderContainer(host, vllmState, "stop-vllm-before-nim");
+    if (vllmImagePulledByRun) {
+      // Free the vLLM image this run pulled before NIM downloads its model. This
+      // frees space when the image store and NIM cache share a filesystem (#13135).
+      // The artifact records the result; NIM readiness gates.
+      await host.command("docker", ["image", "rm", VLLM_IMAGE], {
+        artifactName: "remove-run-pulled-vllm-image",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      });
+    }
 
     activePhase = "qualify all managed agents with GPU-backed NVIDIA NIM";
     progress.phase("qualify all managed agents with GPU-backed NVIDIA NIM");

@@ -43,6 +43,7 @@ runs:
       shell: bash
       env:
         NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && github.token || '' }}
+        GITHUB_TOKEN: ${{ github.event_name == 'pull_request' && github.token || '' }}
       run: bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"
 
     - name: Compile CLI and plugin
