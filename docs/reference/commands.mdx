@@ -3592,7 +3592,7 @@ $$nemoclaw inference get --json
 
 A valid native NVIDIA, hosted, or Deep Agents Code native local attachment adds its native endpoint to the recorded provider-and-model output.
 Other managed providers keep the provider-and-model output.
-Compatible providers add the endpoint only when published same-gateway metadata matches the live route and is safe to display; otherwise the command keeps the live provider and model and returns credential-free recovery information.
+Compatible providers on the shared route add the endpoint only when published same-gateway metadata matches the live route and is safe to display; otherwise the command keeps the live provider and model and returns credential-free recovery information.
 Refer to [View the Selected Inference Path](../inference/manage-inference/view-active-inference-route) for the exact text and JSON fields, omission states, safety rules, and recovery procedures.
 
 For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.

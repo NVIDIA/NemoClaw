@@ -2284,6 +2284,21 @@ test, and makes `full-e2e` the source of truth for the hard cold-path contract.
 
 The explicit `dgx-station-express` target runs the local Station Express installer with cached Ultra weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
 
+## DCode Native Local Inference
+
+The credential-free `inference-routing` job owns the real OpenShell boundary for
+DCode local inference in `live/inference-routing.test.ts`.
+TC-INF-15 rebuilds and restarts the authenticated owner, then runs DCode against
+the recorded endpoint. It checks a bounded credential scan and denies an
+unattached sibling access to that endpoint. TC-INF-16 runs DCode against a
+credentialless endpoint and checks that upstream requests omit authorization.
+Both cases use synthetic credentials and register cleanup before onboarding.
+OpenShell commands use the fixture's explicit gateway environment because the
+child environment does not inherit the active gateway selection.
+Source tests own receipt validation, endpoint selection, configuration, and
+lifecycle handoffs. The live cases own consumer execution, credential
+substitution, and sandbox isolation.
+
 ## Fixed hosted provider qualification
 
 `live/inference-routing-provider-smoke.test.ts` owns credential-backed native inference smoke tests.
