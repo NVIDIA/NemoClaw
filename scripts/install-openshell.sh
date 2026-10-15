@@ -852,9 +852,7 @@ if command -v openshell >/dev/null 2>&1; then
   if printf '%s\n' "$INSTALLED_VERSION_OUTPUT" | grep -qi 'dev'; then
     warn "OpenShell development builds are unsupported — reinstalling exact stable OpenShell ${PIN_VERSION}..."
   elif version_gte "$INSTALLED_VERSION" "$MIN_VERSION"; then
-    if [ "$FORCE_INSTALL" = "1" ]; then
-      warn "Forced OpenShell reinstall requested — reinstalling pinned OpenShell ${PIN_VERSION}..."
-    elif ! version_gte "$MAX_VERSION" "$INSTALLED_VERSION"; then
+    if ! version_gte "$MAX_VERSION" "$INSTALLED_VERSION"; then
       warn "openshell $INSTALLED_VERSION is above the maximum ($MAX_VERSION) supported by this NemoClaw release — reinstalling pinned OpenShell ${PIN_VERSION}..."
     elif ! required_driver_bins_present "$ACTIVE_OPENSHELL_BIN"; then
       warn "openshell $INSTALLED_VERSION is missing Docker-driver binaries — reinstalling pinned OpenShell ${PIN_VERSION}..."

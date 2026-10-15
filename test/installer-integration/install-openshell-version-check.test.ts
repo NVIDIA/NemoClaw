@@ -286,18 +286,6 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     expect(result.stdout).toContain(`already installed: ${REQUIRED_OPENSHELL_VERSION}`);
   });
 
-  it("reinstalls the pinned release when force install is requested", () => {
-    const result = runWithInstalledVersion(REQUIRED_OPENSHELL_VERSION, {
-      NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1",
-    });
-    expect(result.status).not.toBe(0);
-    expect(result.stdout).toContain("Forced OpenShell reinstall requested");
-    expect(result.stdout).toContain(
-      `Installing OpenShell from release 'v${REQUIRED_OPENSHELL_VERSION}'`,
-    );
-    expect(result.stdout).not.toContain(`already installed: ${REQUIRED_OPENSHELL_VERSION}`);
-  });
-
   it("accepts MCP L7 support from the installed gateway sidecar", () => {
     const result = runWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,

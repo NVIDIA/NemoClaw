@@ -5737,14 +5737,24 @@ jobs:
 
       - name: Install pinned OpenShell
         env:
-          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
           XDG_BIN_HOME: ${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin.${{ github.run_id }}.${{ github.run_attempt }}
         run: |
           set -euo pipefail
           install_root="${XDG_BIN_HOME:?}"
           [[ "$install_root" == "$RUNNER_TEMP"/nemoclaw-portable-hermes-openshell-bin.* ]]
           rm -rf -- "$install_root"
-          env -u GH_TOKEN -u GITHUB_TOKEN NEMOCLAW_NON_INTERACTIVE=1 bash scripts/install-openshell.sh
+          install -d -m 0700 "$install_root"
+          installer_sentinel="nemoclaw-openshell-install-sentinel:${install_root}"
+          cat >"$install_root/openshell" <<'EOF'
+          #!/bin/sh
+          printf '%s\n' 'openshell 0.0.0-dev'
+          EOF
+          printf '# %s\n' "$installer_sentinel" >>"$install_root/openshell"
+          chmod 0700 "$install_root/openshell"
+          env -u GH_TOKEN -u GITHUB_TOKEN \
+            PATH="$install_root:$PATH" \
+            NEMOCLAW_NON_INTERACTIVE=1 \
+            bash scripts/install-openshell.sh
           openshell_install_root_is_complete() {
             local root="$1" component
             for component in openshell openshell-gateway openshell-sandbox; do
@@ -5754,6 +5764,10 @@ jobs:
           }
           if ! openshell_install_root_is_complete "$install_root"; then
             echo "::error::The pinned OpenShell installer did not populate the isolated install root." >&2
+            exit 1
+          fi
+          if grep -Fq "$installer_sentinel" "$install_root/openshell"; then
+            echo "::error::The pinned OpenShell installer did not replace its trusted reinstall sentinel." >&2
             exit 1
           fi
           for component in openshell openshell-gateway openshell-sandbox; do

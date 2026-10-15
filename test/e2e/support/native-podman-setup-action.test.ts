@@ -487,9 +487,6 @@ exit 0
         RUNNER_TEMP: root,
         SUDO_INSTALL_ROOT: privilegedRoot,
         SUDO_LOG: sudoLog,
-        NEMOCLAW_OPENSHELL_FORCE_INSTALL: String(
-          install?.env?.NEMOCLAW_OPENSHELL_FORCE_INSTALL ?? "",
-        ),
         XDG_BIN_HOME: xdgBinHome,
       },
     });
@@ -848,8 +845,7 @@ exec /bin/bash "$@"
           `#!/bin/sh
 set -eu
 if [ "\${1:-}" = scripts/install-openshell.sh ]; then
-  [ "\${NEMOCLAW_OPENSHELL_FORCE_INSTALL:-}" = 1 ]
-  mkdir -p "$XDG_BIN_HOME"
+  [ "$(command -v openshell)" = "$XDG_BIN_HOME/openshell" ]
   for component in openshell openshell-gateway openshell-sandbox; do
     printf '#!/bin/sh\\nexit 7\\n' >"$XDG_BIN_HOME/$component"
     chmod 0755 "$XDG_BIN_HOME/$component"
@@ -888,8 +884,8 @@ exec /bin/bash "$@"
           `#!/bin/sh
 set -eu
 if [ "\${1:-}" = scripts/install-openshell.sh ]; then
-  [ "\${NEMOCLAW_OPENSHELL_FORCE_INSTALL:-}" = 1 ]
-  mkdir -p "$XDG_BIN_HOME"
+  [ "$(command -v openshell)" = "$XDG_BIN_HOME/openshell" ]
+  rm -f "$XDG_BIN_HOME/openshell"
   for component in openshell openshell-gateway openshell-sandbox; do
     ln "$SUDO_INSTALL_ROOT/$component" "$XDG_BIN_HOME/$component"
   done
@@ -1004,7 +1000,6 @@ exec /bin/bash "$@"
     expect(fixtureInstall?.run).toContain("--owner=root --group=root --mode=0555");
     expect(openshellInstall?.run).toContain("bash scripts/install-openshell.sh");
     expect(openshellInstall?.env).toEqual({
-      NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1",
       XDG_BIN_HOME:
         "${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin.${{ github.run_id }}.${{ github.run_attempt }}",
     });
