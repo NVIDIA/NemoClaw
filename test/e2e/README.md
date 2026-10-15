@@ -2169,6 +2169,8 @@ For `managed-image-protected-runtime`, the workflow supplies the long-lived `NVI
 
 Before the NIM image pull, the trusted fixture attempts to record root, workspace, and Docker-root capacity plus aggregate Docker usage. During readiness and on failure, `wait-nim` also attempts to record the `/opt/nim/.cache` mount and size. Probe command failures do not gate NIM qualification, but artifact write failures can still fail the fixture. `wait-nim` writes its captured output when the command finishes, so a full runner disk can prevent its samples from reaching the uploaded artifact. The probe does not inspect the container environment, which holds the NGC key. Manual PR E2E uses trusted `main`, so this probe runs only after merge.
 
+When `docker run` reports that it could not find the digest-pinned vLLM image locally, this run pulled the image. After the vLLM container is removed, the fixture removes that image. When the Docker image store and the NIM model cache share a filesystem, this frees space for the NIM model download. The `nim-storage-*` probe output shows the filesystems that a run used. The `remove-run-pulled-vllm-image` artifact records the removal result. A removal failure does not fail the test by itself; NIM readiness remains the gate. The fixture leaves a pre-existing vLLM image in place.
+
 Before you dispatch `native-runtime-qualification-producer`, review the `NVIDIA_API_KEY` boundary below.
 The host-side preparation step receives the long-lived repository secret and uses it to create runner-local registry authentication and pull pinned GPU images.
 The step deletes the registry authentication file and unsets the variable before candidate execution.
