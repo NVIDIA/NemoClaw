@@ -14,9 +14,15 @@ It also updates managed inference and OpenClaw behavior for qualified local mode
 - Native NVIDIA Build routes reject noncanonical URLs that resolve to the NVIDIA endpoint.
   Deep Agents Code uses the scoped OpenRouter credential handle for native OpenRouter requests.
   Related changes: [PR #12925](https://github.com/NVIDIA/NemoClaw/pull/12925) and [PR #13055](https://github.com/NVIDIA/NemoClaw/pull/13055).
+- OpenClaw stores the attached provider's scoped credential reference in native configuration when switching NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, or Hermes Provider routes.
+  The reference does not expose the raw provider credential.
+  Related change: [PR #13064](https://github.com/NVIDIA/NemoClaw/pull/13064).
 - Fresh OpenClaw sandboxes using the accepted N1x Qwen managed-vLLM preview default to progressive tool disclosure.
   Explicit and recorded choices still take precedence.
   Related change: [PR #13173](https://github.com/NVIDIA/NemoClaw/pull/13173).
+- Serving profiles list a disabled NVIDIA Nemotron 3.5 Super VL candidate for a single DGX Station.
+  The profile cannot be selected and does not change the Station default.
+  Related change: [PR #13279](https://github.com/NVIDIA/NemoClaw/pull/13279).
 - Direct sandbox creation warns when an attached NemoClaw-owned provider profile cannot be confirmed unchanged.
   After Docker GPU reconnect, onboarding also requires OpenShell to report the sandbox as `Ready` or `Running`.
   Related changes: [PR #13189](https://github.com/NVIDIA/NemoClaw/pull/13189) and [PR #13123](https://github.com/NVIDIA/NemoClaw/pull/13123).
