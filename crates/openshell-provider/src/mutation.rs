@@ -186,7 +186,11 @@ impl Backend for OpenShell {
         if !matches!(
             openshell_lifecycle(kind),
             Some(OpenShellLifecycle::Reconstructible)
-        ) && !(destroying && openshell_lifecycle(kind) == Some(OpenShellLifecycle::Stateful))
+        ) && !(destroying
+            && matches!(
+                openshell_lifecycle(kind),
+                Some(OpenShellLifecycle::Stateful | OpenShellLifecycle::Retained)
+            ))
         {
             return Err(ObservationError::Query);
         }

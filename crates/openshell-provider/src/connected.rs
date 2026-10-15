@@ -329,6 +329,16 @@ impl ConnectedOpenShellGateway {
                 }))
                 .await
                 .map(|_| ()),
+            "workspace" => self
+                .client
+                .raw_grpc()
+                .delete_workspace(self.request(proto::DeleteWorkspaceRequest {
+                    allow_missing: false,
+                    name: name.into(),
+                    ..Default::default()
+                }))
+                .await
+                .map(|_| ()),
             "provider" => self
                 .client
                 .raw_grpc()

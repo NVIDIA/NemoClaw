@@ -84,7 +84,7 @@ None of them exposes ephemeral resources or provider functions.
 | `openshell_gateway` data source | [Gateway version and compute drivers](#gateway-capabilities) |
 | `openshell_external_inference_server` data source | [An inference server NemoClaw doesn't run](#external-inference-servers) |
 
-The `openshell` provider takes only `destroy`, which permits deleting sandboxes during explicit teardown.
+The `openshell` provider takes only `destroy`, which permits deleting sandboxes and workspaces during explicit teardown.
 Each object names the gateway that holds it with `gateway`, the `ref` of `data.openshell_gateway`.
 That data source takes the gateway `endpoint`, the `credential_env` variable holding its bearer credential, and the `tls_ca_env`, `tls_certificate_env`, and `tls_key_env` variables naming mutual TLS files; its `ref` carries those names, never their values.
 A literal object of the same shape, with `type = "openshell_gateway"`, also works where no data source is read, such as an SDK teardown graph.
@@ -388,7 +388,7 @@ For reconstructible resources, OpenTofu and the provider own confirmed absence, 
 | Inference and web search | Create the profile and then the registration; recreate a missing profile and rotate an inference credential reference in place; replace on any other input change or a missing registration | The same checks for both objects; a failure between them records the identity, so the next apply replaces the resource |
 | Fabric runtime configuration | Apply the public Fabric document and reconcile its resource lifecycle | Verify the parent sandbox identity; a changed configuration can restart its runtime and lose native session state |
 | Sandbox | Create and observe the declared sandbox | During apply, refuse deletion, replacement, or recreation of a missing binding because deletion loses agent files and history |
-| Workspace | Create, observe, and retain | Refuse replacement, deletion, or automatic recreation of a missing binding |
+| Workspace | Create and observe; delete only during explicit teardown | Refuse replacement and automatic recreation of a missing binding; `lifecycle { prevent_destroy = true }` retains it, as generated graphs do |
 
 OpenShell refuses deletion of profiles referenced by registrations and registrations attached to sandboxes.
 Inference and web search resources therefore recreate a missing profile in place, and remove the registration before its profile.
@@ -397,7 +397,7 @@ Standalone HCL can remove or replace an inference resource, while removing a las
 Replacing a registration still attached to a protected sandbox is not a supported shortcut around sandbox lifecycle rules.
 Endpoint and policy changes that also change a sandbox's launch specification remain protected; see [change paths](usage.md#choose-the-change-path).
 
-The provider's `destroy` setting authorizes explicit sandbox teardown; reconstructible registrations and configuration do not require it.
+The provider's `destroy` setting authorizes explicit teardown of sandboxes and workspaces; reconstructible registrations and configuration do not require it.
 It never authorizes deleting the workspace or bypassing identity checks.
 Removing Fabric configuration releases its resource binding without deleting or stopping the sandbox-owned runtime.
 The SDK's destroy operation still retains durable storage and the workspace.
@@ -855,4 +855,4 @@ Writing one by hand:
 - Place model servers with any platform from `vllm_runtime` or `ollama_runtime`'s [`launch` and `requirements`](#vllm-runtime-contract), confirm them with [endpoint readiness](#runtime-capacity-and-readiness), and register them with [`openshell_inference`](#inference-providers), passing the readiness read's `ref` as `server`.
 - Inference registrations currently accept plain HTTP only to a literal loopback or private IP address; [#13232](https://github.com/NVIDIA/NemoClaw/issues/13232) leaves destination checks to OpenShell, which also accepts its gateway-host alias `host.openshell.internal`.
 - Register web search with [`openshell_web_search`](#web-search), which owns its profile.
-- Workspaces are retained, so `tofu destroy` cannot tear such a configuration down yet ([#13230](https://github.com/NVIDIA/NemoClaw/issues/13230)).
+- Tear the configuration down with `tofu destroy` and the provider's `destroy = true`. To keep a workspace instead, add `lifecycle { prevent_destroy = true }` to it; OpenTofu then refuses to destroy it.

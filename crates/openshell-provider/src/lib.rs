@@ -508,9 +508,12 @@ fn lifecycle_rules(definition: nemoclaw_tofu::Definition) -> nemoclaw_tofu::Defi
     use nemoclaw_openshell::{OpenShellLifecycle, openshell_lifecycle};
     use nemoclaw_tofu::Protection;
     match openshell_lifecycle(definition.kind) {
-        Some(OpenShellLifecycle::Retained) => {
-            definition.protect(Protection::Always).refuse_replacement()
-        }
+        // OpenTofu's prevent_destroy retains a workspace; generated graphs set
+        // it. Without it, explicit teardown may delete the workspace, as it may
+        // a sandbox.
+        Some(OpenShellLifecycle::Retained) => definition
+            .protect(Protection::UnlessDestroying)
+            .refuse_replacement(),
         Some(OpenShellLifecycle::Stateful) => definition
             .protect(Protection::UnlessDestroying)
             .refuse_replacement(),

@@ -158,8 +158,8 @@ locals {
   model_url   = regex("^https?://(?P<host>[^:/]+):(?P<port>[0-9]+)", data.ollama_readiness.nemotron.ref.endpoint)
 }
 
-# Workspaces are retained, so tofu destroy cannot tear this configuration
-# down yet (#13230).
+# Tear the configuration down with tofu destroy -var destroy=true. To keep the
+# workspace instead, add lifecycle { prevent_destroy = true } to it.
 resource "openshell_workspace" "travel" {
   gateway = local.gateway
   name    = "travel"

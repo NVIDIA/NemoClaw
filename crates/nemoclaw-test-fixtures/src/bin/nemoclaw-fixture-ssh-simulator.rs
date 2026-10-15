@@ -447,6 +447,25 @@ fn answer(
                 (200, Body::Json(json!({"StatusCode": code, "Error": null})))
             }
         }
+        ("DELETE", p) if p.starts_with("/volumes/") => {
+            let name = p
+                .trim_start_matches("/volumes/")
+                .split('?')
+                .next()
+                .unwrap_or("");
+            let key = if name.ends_with("-auth") {
+                "auth_volume"
+            } else {
+                "volume"
+            };
+            if state.get(key).is_some_and(|volume| !volume.is_null()) {
+                state[key] = Value::Null;
+                increment(&mut state, "effects");
+                (204, Body::Raw(Vec::new()))
+            } else {
+                (404, Body::Json(json!({"message": "no such volume"})))
+            }
+        }
         ("DELETE", p) if p.starts_with("/networks/") => {
             state["network"] = Value::Null;
             increment(&mut state, "effects");

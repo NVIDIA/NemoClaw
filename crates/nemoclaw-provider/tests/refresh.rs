@@ -239,8 +239,9 @@ async fn confirmed_absence_reconciles_registrations_but_preserves_stateful_bindi
             let result = resource
                 .read(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
                 .await;
+            // Explicit teardown accepts a confirmed-absent sandbox or workspace.
             if matches!(kind, "inference" | "web_search" | "agent")
-                || (destroying && kind == "sandbox")
+                || (destroying && matches!(kind, "sandbox" | "workspace"))
             {
                 assert!(result.is_none());
                 assert!(diagnostics.errors.is_empty());
@@ -405,7 +406,9 @@ async fn reconstructible_resources_plan_replacement_and_deletion_without_teardow
             let result = resource
                 .plan_destroy(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
                 .await;
-            let allowed = reconstructible || (destroying && kind == "sandbox");
+            // Explicit teardown may delete sandboxes and workspaces.
+            let allowed =
+                reconstructible || (destroying && matches!(kind, "sandbox" | "workspace"));
             assert_eq!(result.is_some(), allowed, "{kind}, destroy={destroying}");
             assert_eq!(
                 diagnostics.errors.is_empty(),
