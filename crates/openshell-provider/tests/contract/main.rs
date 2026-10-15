@@ -52,7 +52,6 @@ pub fn workspace() -> TofuWorkspace {
     TofuWorkspace::with_providers(
         bundle.tofu(),
         &[
-            ("nemoclaw", &bundle.provider("nemoclaw")),
             ("openshell", &provider()),
             ("fabric", &bundle.provider("fabric")),
         ],

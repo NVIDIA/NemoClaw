@@ -19,7 +19,7 @@ mod ollama_model;
 mod provider;
 mod readiness;
 mod runtime_contract;
-pub use provider::{GatewayInstallation, HostProvider, NemoClawProvider, ServiceProvider};
+pub use provider::{GatewayInstallation, HostProvider, ServiceProvider};
 
 /// The definition this crate implements for a resource kind, whichever
 /// provider serves it.

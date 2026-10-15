@@ -27,7 +27,7 @@ There is no per-sandbox engine selection.
 
 ```mermaid
 flowchart TD
-    Client[NemoClaw provider] -->|SSH Docker API| Engine[Inference Docker daemon]
+    Client[NVIDIA providers] -->|SSH Docker API| Engine[Inference Docker daemon]
     Client -->|OpenShell API| Gateway[OpenShell gateway]
     Gateway -->|native driver| Sandbox[Sandbox and Fabric agent]
     Engine -->|owns| Model[Inference container and retained volume]
@@ -105,7 +105,7 @@ Managed Podman gateway bindings combine the retained network UUID with container
 | SDK `managed/spec.rs` gateway launch | Host networking, socket binds, supervisor paths, signing files, and relay paths must exist in the gateway and sandbox daemon’s shared host namespace. Remote inference does not move this gateway topology. |
 | SDK `managed/spec.rs`; provider `managed/mutation.rs` and `managed/observation.rs` | Bridge identity and published bind addresses belong to the engine host. A local bridge address is not a general cross-host inference address. |
 | Provider `managed/gateway_storage.rs` and `managed/observation.rs` | Volume verification uses the selected daemon’s `DockerRootDir`, including non-default roots. It rejects paths outside that root and retains label, creation-time, network, and image checks. |
-| Docker provider; NemoClaw provider `docker/mod.rs` | The provider acquires Docker gateway and service images on the selected daemon. Application-status and credential archive reads use that same daemon. Model downloads belong to the runtime. Failed reads are not absence. |
+| Docker provider; `nemoclaw-provider` crate `docker/mod.rs` | The provider acquires Docker gateway and service images on the selected daemon. Application-status and credential archive reads use that same daemon. Model downloads belong to the runtime. Failed reads are not absence. |
 | SDK `config/` and `compile.rs`; provider `openshell/transport.rs` | Local managed inference uses bridge publication; SSH services declare a private publication URL. Explicit inference verification sends requests from the sandbox through OpenShell to the configured endpoint. |
 | Build crate and `runtimes/` | Build-engine selection is separate from runtime placement. A locally loaded image must be transferred before another daemon can use it. |
 

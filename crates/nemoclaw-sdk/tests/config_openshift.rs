@@ -128,7 +128,6 @@ fn openshift_compiles_platform_identity_and_wire_driver_without_docker() {
             let platform = compile_runtime(&document, &generations, "0.1.0").unwrap();
             // The platform stage installs the gateway: openshell serves the Kubernetes
             // gateway types; fabric needs a running gateway, so the stage omits it.
-            assert_eq!(platform["provider"]["nemoclaw"], json!({}));
             assert_eq!(platform["provider"]["openshell"], json!({}));
             assert!(platform["provider"].get("fabric").is_none());
             assert!(

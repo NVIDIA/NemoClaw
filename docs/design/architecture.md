@@ -18,7 +18,8 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 | Helm provider | The pinned OpenShell chart release on the authored Kubernetes cluster |
 | OpenShell provider | OpenShell workspaces, provider registrations and profiles, sandboxes, and gateway capability reads; Podman gateway processes, gateway storage, and Kubernetes gateway installation |
 | Fabric provider | Fabric runtime configuration and readiness in agent sandboxes |
-| NemoClaw provider | Inference service storage contracts and readiness observations |
+| vLLM and Ollama providers | Inference service storage contracts and readiness observations |
+| Host provider | Engine and image observations |
 | Hosted runtime | Model preparation, startup, application health, and protective shutdown |
 | Fabric | Adapter and target discovery, native schemas, native configuration validation and mapping, and agent execution |
 
@@ -42,11 +43,11 @@ The native bundle includes the pinned Helm provider; no Helm CLI is required.
 |---|---|
 | SDK | Compile the graph, validate saved plans against deployment intent and retained bindings, and coordinate runtime and OpenShell stages |
 | OpenTofu | Execute dependencies and retain each provider's resource state |
-| NemoClaw provider | Create and retain the namespace and encryption key; prepare and remove the development issuer; verify object identities and gateway readiness |
+| OpenShell provider | Create and retain the namespace and encryption key; prepare and remove the development issuer; verify object identities and gateway readiness |
 | Helm provider | Install, upgrade, and remove the pinned OpenShell chart release, using the prepared namespace and credentials |
 | Platform operator | Install and maintain Agent Sandbox, the default StorageClass, and OpenShift security prerequisites |
 
-The NemoClaw provider does not install or remove the chart, and the Helm release cannot create or adopt the namespace or take ownership of existing resources.
+The OpenShell provider does not install or remove the chart, and the Helm release cannot create or adopt the namespace or take ownership of existing resources.
 Before Helm can change the release, NemoClaw verifies retained Kubernetes identities; after installation, it records the StatefulSet identity and observes readiness.
 For OpenShift, authentication preparation reads the owned namespace's UID and group ranges and supplies non-secret chart overrides through a computed resource output.
 Helm waits for that output, and subsequent refresh rejects a changed namespace identity.

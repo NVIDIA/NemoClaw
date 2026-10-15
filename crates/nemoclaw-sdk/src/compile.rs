@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/nemoclaw";
 /// Registry address of the provider that reconciles OpenShell objects.
 pub const OPENSHELL_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/openshell";
 /// Registry address of the provider that configures Fabric agents in sandboxes.
@@ -20,8 +19,8 @@ pub const OLLAMA_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/ollama";
 /// Registry address of the provider that observes container engines; it has
 /// no settings, so it is not one of [`NEMOCLAW_PROVIDERS`].
 pub const HOST_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/host";
-/// This repository's providers; each takes `destroy`.
-pub const NEMOCLAW_PROVIDERS: [&str; 5] = ["nemoclaw", "openshell", "fabric", "vllm", "ollama"];
+/// This repository's providers that take `destroy`.
+pub const NEMOCLAW_PROVIDERS: [&str; 4] = ["openshell", "fabric", "vllm", "ollama"];
 
 /// The OpenTofu resource type that reconciles a resource kind.
 pub fn resource_type(kind: &str) -> String {
@@ -446,7 +445,6 @@ fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> 
     let drivers = [document.spec.gateway.runtime().provider.openshell_driver()];
     let mut graph = json!({
         "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{
-            "nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")},
             "openshell":{"source":OPENSHELL_PROVIDER_ADDRESS,"version":format!("= {version}")},
             "fabric":{"source":FABRIC_PROVIDER_ADDRESS,"version":format!("= {version}")},
             "vllm":{"source":VLLM_PROVIDER_ADDRESS,"version":format!("= {version}")},
@@ -454,8 +452,8 @@ fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> 
             "host":{"source":HOST_PROVIDER_ADDRESS,"version":format!("= {version}")}
         }},
         // Each provider reaches the engines, clusters, and gateways named on
-        // its resources; providers take only `destroy`.
-        "provider":{"nemoclaw":{},"openshell":{},"fabric":{},"vllm":{},"ollama":{},"host":{}}, "resource":{},
+        // its resources; providers take at most `destroy`.
+        "provider":{"openshell":{},"fabric":{},"vllm":{},"ollama":{},"host":{}}, "resource":{},
         "data":{"openshell_gateway":{"current":gateway_data(&connection, json!(drivers))}}
     });
     crate::discovery_graph::populate(&mut graph, document)?;

@@ -39,7 +39,7 @@ impl Experiment {
     }
     fn new(provider: impl AsRef<Path>) -> Self {
         let this = Self {
-            dir: TofuWorkspace::new(&nemoclaw_test_fixtures::Bundle::from_env(), provider),
+            dir: TofuWorkspace::with_fixture(&nemoclaw_test_fixtures::Bundle::from_env(), provider),
         };
         this.config("https://initial.example/v1");
         this.mode("normal");

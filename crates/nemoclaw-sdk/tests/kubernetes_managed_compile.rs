@@ -158,7 +158,6 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
     );
     // The platform stage installs the gateway: openshell serves the Kubernetes
     // gateway types; fabric needs a running gateway, so the stage omits it.
-    assert_eq!(platform["provider"]["nemoclaw"], json!({}));
     assert_eq!(platform["provider"]["openshell"], json!({}));
     assert!(platform["provider"].get("fabric").is_none());
     assert!(
@@ -221,7 +220,7 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
             "{field}"
         );
     }
-    for provider in ["nemoclaw", "openshell", "fabric"] {
+    for provider in ["openshell", "fabric"] {
         assert_eq!(agents["provider"][provider], json!({}), "{provider}");
     }
     assert!(

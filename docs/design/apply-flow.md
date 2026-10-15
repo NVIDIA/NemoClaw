@@ -26,7 +26,7 @@ flowchart TB
     YAML["Deployment YAML"] --> SDK["1–2. nemoclaw apply deployment.yaml<br/>CLI + SDK validate configuration and credentials<br/>Compile runtime graph"]
 
     subgraph INFRA["OpenTofu — runtime stage: plan → SDK checks → apply"]
-        RUNTIME["3. Docker, OpenShell, and NemoClaw providers<br/>Prepare gateway, inference services and storage<br/>Check readiness"]
+        RUNTIME["3. Docker, OpenShell, vLLM, Ollama, and host providers<br/>Prepare gateway, inference services and storage<br/>Check readiness"]
     end
 
     SDK --> RUNTIME

@@ -79,14 +79,12 @@ resource "docker_container" "qwen" {{
             format!(
                 r#"terraform {{
   required_providers {{
-    nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw", version = "= {version}" }}
     vllm     = {{ source = "registry.opentofu.org/nvidia/vllm", version = "= {version}" }}
     ollama   = {{ source = "registry.opentofu.org/nvidia/ollama", version = "= {version}" }}
     docker   = {{ source = "registry.opentofu.org/kreuzwerker/docker", version = "= 4.6.0" }}
   }}
 }}
 
-provider "nemoclaw" {{}}
 provider "vllm" {{}}
 provider "ollama" {{}}
 

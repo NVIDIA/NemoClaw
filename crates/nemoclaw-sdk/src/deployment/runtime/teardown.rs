@@ -456,7 +456,6 @@ mod tests {
             BTreeSet::from([KUBERNETES_STORAGE.into()])
         );
         let graph = compiled.graph;
-        assert_eq!(graph["provider"]["nemoclaw"], json!({"destroy": true}));
         assert_eq!(graph["provider"]["openshell"], json!({"destroy": true}));
         assert!(graph["provider"].get("fabric").is_none());
         assert_eq!(graph["resource"].as_object().unwrap().len(), 1);
@@ -756,7 +755,7 @@ mod tests {
         .unwrap();
         let graph = compiled.graph;
         assert!(graph.get("data").is_none());
-        assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
+        assert_eq!(graph["provider"]["openshell"]["destroy"], true);
         assert_eq!(graph["resource"].as_object().unwrap().len(), 3);
         for address in [GATEWAY_STORAGE, retained_storage.as_str()] {
             let (kind, name) = address.split_once('.').unwrap();

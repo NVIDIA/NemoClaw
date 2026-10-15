@@ -9,7 +9,7 @@ use std::fs;
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindings() {
     let bundle = nemoclaw_test_fixtures::Bundle::from_env();
-    let directory = TofuWorkspace::new(&bundle, bundle.provider("nemoclaw"));
+    let directory = TofuWorkspace::new(&bundle);
     let root = directory.path();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
@@ -180,7 +180,7 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
     }
     graph.as_object_mut().unwrap().remove("data");
     graph.as_object_mut().unwrap().remove("output");
-    for provider in ["nemoclaw", "openshell", "fabric"] {
+    for provider in ["openshell", "fabric"] {
         graph["provider"][provider]["destroy"] = json!(true);
     }
     let mut workspace = graph["resource"]["openshell_workspace"].clone();

@@ -197,9 +197,10 @@ mod tests {
                 graph.get("output").is_none(),
                 "teardown must not retain discovery references"
             );
-            for provider in ["nemoclaw", "openshell", "fabric"] {
+            for provider in ["openshell", "fabric"] {
                 assert_eq!(graph["provider"][provider]["destroy"], true, "{provider}");
             }
+            assert!(graph["provider"].get("nemoclaw").is_none());
             assert_eq!(graph["provider"]["docker"], full["provider"]["docker"]);
             for address in &established {
                 let (kind, name) = address.split_once('.').unwrap();
@@ -254,13 +255,10 @@ mod tests {
             assert_eq!(addresses(&compiled.graph), expected);
             // The platform stage installs the gateway: openshell serves the
             // Kubernetes gateway types; fabric needs a running gateway.
-            for provider in ["nemoclaw", "openshell"] {
-                assert_eq!(
-                    compiled.graph["provider"][provider],
-                    json!({"destroy": true}),
-                    "{provider}"
-                );
-            }
+            assert_eq!(
+                compiled.graph["provider"]["openshell"],
+                json!({"destroy": true})
+            );
             assert!(compiled.graph["provider"].get("fabric").is_none());
             assert!(compiled.graph.get("data").is_none());
             assert!(compiled.graph.get("output").is_none());

@@ -358,8 +358,6 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
     let root = temporary.path();
     fs::create_dir_all(root.join("bin"))?;
     fs::create_dir_all(root.join("libexec"))?;
-    let provider = format!("providers/registry.opentofu.org/nvidia/nemoclaw/{version}/{platform}");
-    fs::create_dir_all(root.join(&provider))?;
     let openshell =
         format!("providers/registry.opentofu.org/nvidia/openshell/{version}/{platform}");
     fs::create_dir_all(root.join(&openshell))?;
@@ -389,10 +387,6 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
         (
             format!("nemoclaw{extension}"),
             format!("bin/nemoclaw{extension}"),
-        ),
-        (
-            format!("terraform-provider-nemoclaw{extension}"),
-            format!("{provider}/terraform-provider-nemoclaw_v{version}{extension}"),
         ),
         (
             format!("terraform-provider-openshell{extension}"),

@@ -63,11 +63,11 @@ The bundle pins these providers:
 
 | Provider | Source address | Version |
 |---|---|---|
-| NemoClaw | `registry.opentofu.org/nvidia/nemoclaw` | Source-derived |
-| OpenShell | `registry.opentofu.org/nvidia/openshell` | Source-derived, matching NemoClaw |
-| Fabric | `registry.opentofu.org/nvidia/fabric` | Source-derived, matching NemoClaw |
-| vLLM | `registry.opentofu.org/nvidia/vllm` | Source-derived, matching NemoClaw |
-| Ollama | `registry.opentofu.org/nvidia/ollama` | Source-derived, matching NemoClaw |
+| OpenShell | `registry.opentofu.org/nvidia/openshell` | Source-derived, matching the bundle |
+| Fabric | `registry.opentofu.org/nvidia/fabric` | Source-derived, matching the bundle |
+| vLLM | `registry.opentofu.org/nvidia/vllm` | Source-derived, matching the bundle |
+| Ollama | `registry.opentofu.org/nvidia/ollama` | Source-derived, matching the bundle |
+| Host | `registry.opentofu.org/nvidia/host` | Source-derived, matching the bundle |
 | Docker | `registry.opentofu.org/kreuzwerker/docker` | 4.6.0 |
 | Helm | `registry.opentofu.org/hashicorp/helm` | 3.3.0 |
 
@@ -281,10 +281,6 @@ The `host` provider observes container engines and changes nothing; it has no se
 |---|---|
 | `host_engine` | [Engine version, platform, CPUs, memory](#engine-and-fabric-discovery), and [advertised hardware](#target-hardware) |
 | `host_image` | [An image's platform and labels](#runtime-image-compatibility) |
-
-### NemoClaw Provider
-
-The `nemoclaw` provider no longer serves any type; generated graphs still declare it until it is removed.
 
 ### Docker and Helm Types
 

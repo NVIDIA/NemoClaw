@@ -199,7 +199,6 @@ fi
             "dist/linux_arm64/libexec/tofu",
             ".tools/protoc-36.1/bin/protoc",
             ".tools/nextest-0.9.144/cargo-nextest",
-            "target/debug/terraform-provider-nemoclaw",
             "target/debug/terraform-provider-openshell",
             "target/debug/terraform-provider-fabric",
             "target/debug/terraform-provider-vllm",

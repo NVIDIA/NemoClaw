@@ -46,7 +46,7 @@ On failure, read the OpenTofu diagnostic in the test output and check that the b
 Each production provider's `contract` binary, under `tests/contract`, applies its types through OpenTofu against fakes.
 Its coverage test is not ignored and runs with the unit tests; the remaining tests are ignored and run in the `lifecycle` step.
 
-### NemoClaw Provider Contract
+### vLLM, Ollama, and Host Provider Contract
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
@@ -159,7 +159,7 @@ Each test that makes destroy fail or stop ends by removing the cause, if any, an
 
 ### Standalone Sandbox Completion
 
-On Unix, run `cargo test -p nemoclaw-e2e --test integration sandbox_readiness:: -- --ignored` with the bundle set as above; the test runs the bundle's `nemoclaw` provider.
+On Unix, run `cargo test -p nemoclaw-e2e --test integration sandbox_readiness:: -- --ignored` with the bundle set as above; the test runs the bundle's providers.
 It runs the sandbox completion data source through OpenTofu against the local gRPC fixture, without SDK orchestration.
 It checks deferred health reads, failed postconditions with retained observations and bindings, unchanged-apply rechecks, prompt configuration-admission rejection with safe sandbox context, and teardown without readiness.
 

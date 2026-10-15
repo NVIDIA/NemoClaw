@@ -31,20 +31,13 @@ mod vllm_runtime;
 
 pub use nemoclaw_test_fixtures::{openshell, tofu};
 
-/// The nemoclaw provider Cargo built from this checkout, the one under test.
-pub fn provider() -> std::path::PathBuf {
-    nemoclaw_test_fixtures::package_executable!("terraform-provider-nemoclaw")
-}
-
-/// A workspace with this package's providers under test (nemoclaw, vllm,
-/// and ollama), and OpenTofu and the openshell and fabric providers from the
-/// bundle.
+/// A workspace with this package's providers under test (vllm, ollama, and
+/// host), and OpenTofu and the openshell and fabric providers from the bundle.
 pub fn workspace() -> tofu::TofuWorkspace {
     let bundle = nemoclaw_test_fixtures::Bundle::from_env();
     tofu::TofuWorkspace::with_providers(
         bundle.tofu(),
         &[
-            ("nemoclaw", &provider()),
             (
                 "vllm",
                 &nemoclaw_test_fixtures::package_executable!("terraform-provider-vllm"),
@@ -104,9 +97,8 @@ fn every_type_has_a_contract_test() {
             .collect()
     }
     // Every type this package's providers serve, by full type name.
-    let types: Vec<String> = served("nemoclaw", nemoclaw_provider::NemoClawProvider::default())
+    let types: Vec<String> = served("vllm", nemoclaw_provider::ServiceProvider::vllm())
         .into_iter()
-        .chain(served("vllm", nemoclaw_provider::ServiceProvider::vllm()))
         .chain(served(
             "ollama",
             nemoclaw_provider::ServiceProvider::ollama(),
