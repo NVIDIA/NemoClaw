@@ -73,7 +73,7 @@ The bundle pins these providers:
 
 None of them exposes ephemeral resources or provider functions.
 
-### OpenShell Resources and Data Source
+### OpenShell Resources and Data Sources
 
 | Type | Manages or observes |
 |---|---|
@@ -82,6 +82,7 @@ None of them exposes ephemeral resources or provider functions.
 | `openshell_provider_profile` | Provider profile |
 | `openshell_sandbox` | Sandbox |
 | `openshell_gateway` data source | [Gateway version and compute drivers](#gateway-capabilities) |
+| `openshell_external_inference_server` data source | [An inference server NemoClaw doesn't run](#external-inference-servers) |
 
 The `openshell` provider takes only `destroy`, which permits deleting sandboxes during explicit teardown.
 Each object names the gateway that holds it with `gateway`, the `ref` of `data.openshell_gateway`.
@@ -91,6 +92,26 @@ Objects keep their gateway connection in state, so refresh and removal reach the
 Credential and TLS references update in place; a different endpoint is a different gateway, so it replaces reconstructible objects and retained or stateful objects refuse it.
 These schemas are version 1; state from an earlier provider is rejected rather than upgraded.
 When a registration names a managed vLLM or Ollama proxy credential, the provider reads the key from the owning container during apply, so the key never enters OpenTofu state.
+
+#### External Inference Servers
+
+`openshell_external_inference_server` checks an inference server NemoClaw doesn't run, such as a hosted API or an IT-run LiteLLM proxy, and exports the `inference_server` ref that registrations will take ([#13228](https://github.com/NVIDIA/NemoClaw/issues/13228)).
+It requires `endpoint`, the URL the machine running OpenTofu checks, and `api`: `openai-completions`, `openai-responses`, or `anthropic-messages`.
+Optional `sandbox_endpoint` is the URL gateways and sandboxes use, defaulting to `endpoint`; optional `model` is a model the server must list; and optional `credential_env` names the variable holding a key for listing models.
+The read lists the server's models without following redirects, within five seconds, and blocks: it fails when the server can't be reached or returns no model list, requires a key that isn't set, refuses the key, or doesn't list `model`.
+Errors never echo the key or the server's own error text.
+It checks only each URL's shape (an http or https URL with a host and no credentials, query, or fragment); which destinations sandboxes may reach is OpenShell's to decide.
+It exports `ref = { type = "inference_server", endpoint, model, credential_env, credential_source }`, with `sandbox_endpoint` as `endpoint`, the variable's name but never its value, and an empty `credential_source`.
+Set `read_trigger` to a value known only during apply, such as `timestamp() != ""`, to check at apply instead of while planning.
+
+```hcl
+data "openshell_external_inference_server" "litellm" {
+  endpoint       = "https://litellm.corp.example.com/v1"
+  api            = "openai-completions"
+  model          = "nemotron-super"
+  credential_env = "LITELLM_API_KEY"
+}
+```
 
 Each OpenShell resource exports a computed `ref` object identifying it: its `type`, `name`, `owner`, `generation`, and `id`, plus `workspace` for objects inside a workspace.
 Objects name each other by `ref`, never by separate name strings:
