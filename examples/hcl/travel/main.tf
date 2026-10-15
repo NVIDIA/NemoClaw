@@ -56,7 +56,7 @@ variable "model_endpoint" {
   default     = "http://127.0.0.1:11434/v1"
 }
 variable "sandbox_model_endpoint" {
-  description = "Ollama's OpenAI-compatible URL from the gateway and sandboxes, ending in /v1; over HTTP its host must be a literal loopback or private IP address. Defaults to model_endpoint."
+  description = "Ollama's OpenAI-compatible URL from the gateway and sandboxes, ending in /v1; over HTTP its host must currently be a literal loopback or private IP address (#13232). Defaults to model_endpoint."
   type        = string
   default     = null
 }

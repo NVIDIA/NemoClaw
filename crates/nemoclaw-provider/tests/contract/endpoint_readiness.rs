@@ -113,8 +113,8 @@ async fn endpoint_readiness_waits_for_the_served_model_and_exports_the_server_re
     let stderr = String::from_utf8_lossy(&planned.stderr);
     assert!(stderr.contains("qwen"), "{stderr}");
 
-    // The ref's endpoint is what registrations accept: plain HTTP only to a
-    // literal loopback or private address.
+    // Readiness leaves destination checks to OpenShell, which owns them: the
+    // gateway-host alias is a valid address for sandboxes.
     write(
         "",
         &format!(
@@ -123,11 +123,10 @@ async fn endpoint_readiness_waits_for_the_served_model_and_exports_the_server_re
         ),
     );
     let named = run(&["validate", "-no-color"]);
-    assert!(!named.status.success());
-    let stderr = String::from_utf8_lossy(&named.stderr);
     assert!(
-        stderr.contains("sandbox_endpoint must be an address inference registrations accept"),
-        "{stderr}"
+        named.status.success(),
+        "{}",
+        String::from_utf8_lossy(&named.stderr)
     );
 
     // Endpoint and container inputs are separate modes.

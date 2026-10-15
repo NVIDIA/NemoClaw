@@ -102,19 +102,6 @@ fn validate_endpoint_mode(
             base_url(url, name)?;
         }
     }
-    // The ref's endpoint is what inference registrations accept: plain HTTP
-    // only to a literal loopback or private address.
-    let (registered, name) = match &config.sandbox_endpoint {
-        Value::Null => (&config.endpoint, "endpoint"),
-        sandbox => (sandbox, "sandbox_endpoint"),
-    };
-    if let Value::Value(url) = registered {
-        nemoclaw_backend::validate_endpoint(url, false).map_err(|error| {
-            Error::Configuration(nemoclaw_sdk::config::ConfigError(format!(
-                "{name} must be an address inference registrations accept: {error}"
-            )))
-        })?;
-    }
     match &config.contract {
         Value::Value(contract) => {
             runtime.check(contract)?;
