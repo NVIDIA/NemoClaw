@@ -108,6 +108,11 @@ describe("onboard final-handoff timeout contract", () => {
     expect(DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
       serialCommands + testHeadroomMs,
     );
+    expect(catalogueTarget("inference-routing").timeoutMinutes * MINUTE_MS).toBeGreaterThanOrEqual(
+      75 * MINUTE_MS +
+        DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS +
+        ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    );
   });
 
   it("pins the reviewed command, test, and target timeout values", () => {
@@ -136,7 +141,7 @@ describe("onboard final-handoff timeout contract", () => {
       singleFinalHandoffTestMinutes: 50,
       singleFinalHandoffTargetMinutes: 75,
       dcodeNativeLocalTestMinutes: 117.5,
-      inferenceRoutingTargetMinutes: 143,
+      inferenceRoutingTargetMinutes: 243,
       noRecreateCommandMinutes: 15,
       configExportCommandMinutes: 2,
       configExportPinnedV1ConsumerMinutes: 10,

@@ -511,20 +511,17 @@ describe("P0-E cloud-experimental parity guardrails", () => {
         '#!/bin/sh\nprintf "tool event: %s\\n" "$COMPATIBLE_API_KEY"\nexit 1\n',
         { mode: 0o755 },
       );
-      const result = spawnSync(
-        "bash",
-        ["-c", 'source "$1"; capture_autorun_diagnostics', "test", dcodeApprovalCheck],
-        {
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            PATH: `${tempDir}:${DEFAULT_TEST_PATH}`,
-            REPO: process.cwd(),
-            SANDBOX_NAME: "e2e-dcode",
-            COMPATIBLE_API_KEY: secret,
-          },
+      const result = spawnSync("bash", ["-s", "--", dcodeApprovalCheck], {
+        encoding: "utf8",
+        input: 'source "$1"\ncapture_autorun_diagnostics\n',
+        env: {
+          ...process.env,
+          PATH: `${tempDir}:${DEFAULT_TEST_PATH}`,
+          REPO: process.cwd(),
+          SANDBOX_NAME: "e2e-dcode",
+          COMPATIBLE_API_KEY: secret,
         },
-      );
+      });
       expect({
         status: result.status,
         output: result.stdout.trim(),

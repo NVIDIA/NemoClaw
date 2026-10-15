@@ -79,6 +79,8 @@ export const PRE_CANDIDATE_STEP_ENV: Readonly<Record<string, Readonly<Record<str
   "Resolve reviewed candidate OpenShell version": {
     CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository || github.repository }}",
     CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
+    UPGRADE_PR_NUMBER: "${{ inputs.pr_number }}",
+    UPGRADE_BASE_SHA: "${{ inputs.base_sha }}",
     GITHUB_TOKEN: "${{ github.token }}",
   },
 };

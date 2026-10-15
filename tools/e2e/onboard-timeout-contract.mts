@@ -40,12 +40,13 @@ export const DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS =
   (20 + 2 + 2 + 2 + 1 + 0.5) * MINUTE_MS +
   ONBOARD_TEST_HEADROOM_MS;
 
-// Retain the routing job's existing allowance for its other scenarios and
-// finalization while replacing the single-onboard scenario's deadline.
+// Retain the existing routing suite's 75-minute job allowance, including its
+// finalization, and add both new serial DCode scenarios. The inherited suite
+// keeps its overall cost limit rather than summing its individual failure guards.
 export const INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES =
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES +
   Math.ceil(
-    (DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS - ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS) / MINUTE_MS,
+    (DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS + ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS) / MINUTE_MS,
   );
 
 // The typed DCode target runs onboarding, its invalid-credential lifecycle,

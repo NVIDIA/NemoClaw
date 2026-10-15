@@ -61,6 +61,7 @@ interface ResolveGatewayCleanupRuntimeProviderDeps extends Pick<
   configuredRuntimeProviderId?: string | null;
   requireOwnedRuntime?: boolean;
   recoveryRecordedAt?: string;
+  requireDefaultDockerDaemon?: boolean;
 }
 
 // Compute the Docker-driver gateway state directory that belongs to
@@ -101,6 +102,7 @@ export function resolveGatewayCleanupRuntimeProviderId(
       ...(deps.recoveryRecordedAt !== undefined
         ? { recoveryRecordedAt: deps.recoveryRecordedAt }
         : {}),
+      ...(deps.requireDefaultDockerDaemon ? { requireDefaultDockerDaemon: true } : {}),
     },
   );
   if (deps.requireOwnedRuntime && !recorded) return null;

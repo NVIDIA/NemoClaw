@@ -1,0 +1,264 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { parseAuditConfig } from "../audit-reviewed-npm-graph.mts";
+import {
+  readReviewedNpmArchiveFile,
+  verifyReviewedNpmLockPackages,
+} from "./reviewed-npm-archive.mts";
+
+import { stageReviewedArchiveWithNpm, type NpmCacheStager } from "./reviewed-npm-cache.mts";
+
+const TRUSTED_REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const MAXIMUM_ARCHIVE_BYTES = 32 * 1024 * 1024;
+
+export type PreparationRequest = Readonly<{
+  artifactDirectory?: string;
+  cacheDirectory: string;
+  mode: "artifact" | "registry";
+  targetRoot: string;
+}>;
+
+type AuditConfig = ReturnType<typeof parseAuditConfig>;
+
+export type ReviewedSourceRegistryPackage = Readonly<{
+  artifactName: string;
+  integrity: string;
+  label: string;
+  packageSpec: string;
+  tarballUrl: string;
+}>;
+
+export type ReviewedSourceRegistryArtifactRequest = Readonly<{
+  allowedNestedShrinkwrapPackages: readonly string[];
+  artifactDirectory: string;
+  cacheDirectory: string;
+  lockfilePath: string;
+  otherReviewedPackages?: readonly ReviewedSourceRegistryPackage[];
+  reviewed: ReviewedSourceRegistryPackage;
+  reviewedPackagesWithoutIntegrity: readonly Readonly<{
+    label: string;
+    packageSpec: string;
+    tarballUrl: string;
+  }>[];
+  registryOrigin: string;
+}>;
+
+export async function seedReviewedSourceRegistryArtifact(
+  request: ReviewedSourceRegistryArtifactRequest,
+  stage: NpmCacheStager = stageReviewedArchiveWithNpm,
+): Promise<void> {
+  if (!isAbsolute(request.artifactDirectory)) {
+    throw new Error("reviewed OpenShell SDK artifact directory must be absolute");
+  }
+  const artifactDirectory = resolve(request.artifactDirectory);
+  if (!existsSync(artifactDirectory)) {
+    throw new Error("reviewed OpenShell SDK artifact is required");
+  }
+  const directoryEntry = lstatSync(artifactDirectory);
+  if (!directoryEntry.isDirectory() || directoryEntry.isSymbolicLink()) {
+    throw new Error("reviewed OpenShell SDK artifact path must be a non-symlink directory");
+  }
+  const entries = readdirSync(artifactDirectory);
+  const otherReviewedPackages = request.otherReviewedPackages ?? [];
+  const allowedNames = new Set([
+    request.reviewed.artifactName,
+    ...otherReviewedPackages.map(({ artifactName }) => artifactName),
+  ]);
+  if (
+    !entries.includes(request.reviewed.artifactName) ||
+    entries.some((entry) => !allowedNames.has(entry))
+  ) {
+    throw new Error("reviewed OpenShell SDK artifact directory has unexpected contents");
+  }
+  const archivePath = resolve(join(artifactDirectory, request.reviewed.artifactName));
+  const reviewedRegistryPackage = {
+    expectedIntegrity: request.reviewed.integrity,
+    label: request.reviewed.label,
+    packageSpec: request.reviewed.packageSpec,
+    tarballUrl: request.reviewed.tarballUrl,
+  };
+  const lockedPackages = verifyReviewedNpmLockPackages({
+    allowedNestedShrinkwrapPackages: request.allowedNestedShrinkwrapPackages,
+    allowNestedShrinkwrap: false,
+    lockfilePath: request.lockfilePath,
+    registryOrigin: request.registryOrigin,
+    reviewedPackagesWithoutIntegrity: request.reviewedPackagesWithoutIntegrity,
+    reviewedRegistryPackages: [reviewedRegistryPackage],
+  });
+  if (!lockedPackages.includes(request.reviewed.packageSpec)) {
+    throw new Error("reviewed OpenShell SDK artifact is not used by the selected lockfile");
+  }
+  const cacheDirectory = resolve(request.cacheDirectory);
+  if (
+    !isAbsolute(request.cacheDirectory) ||
+    !existsSync(cacheDirectory) ||
+    !lstatSync(cacheDirectory).isDirectory()
+  ) {
+    throw new Error("reviewed OpenShell SDK cache must be an existing absolute directory");
+  }
+  const archive = readReviewedNpmArchiveFile({
+    archivePath,
+    expectedIntegrity: request.reviewed.integrity,
+    label: request.reviewed.label,
+    maximumBytes: MAXIMUM_ARCHIVE_BYTES,
+  });
+  // Verify every supplied reviewed archive before staging only the lock-selected SDK.
+  for (const other of otherReviewedPackages) {
+    if (!entries.includes(other.artifactName)) continue;
+    readReviewedNpmArchiveFile({
+      archivePath: resolve(join(artifactDirectory, other.artifactName)),
+      expectedIntegrity: other.integrity,
+      label: other.label,
+      maximumBytes: MAXIMUM_ARCHIVE_BYTES,
+    });
+  }
+  stage({ archive, artifactName: request.reviewed.artifactName, cacheDirectory });
+}
+
+function readTrustedAuditConfig(): AuditConfig {
+  return parseAuditConfig(
+    readFileSync(join(TRUSTED_REPOSITORY_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
+  );
+}
+
+function reviewedSourceRegistryPackages(
+  config: AuditConfig,
+): readonly ReviewedSourceRegistryPackage[] {
+  return config.sourceRegistryPackageReplacement
+    ? [config.sourceRegistryPackage, config.sourceRegistryPackageReplacement]
+    : [config.sourceRegistryPackage];
+}
+
+function inspectReviewedLocks(targetRoot: string, config: AuditConfig) {
+  const reviewedPackages = reviewedSourceRegistryPackages(config);
+  const reviewedRegistryPackages = reviewedPackages.map((reviewed) => ({
+    expectedIntegrity: reviewed.integrity,
+    label: reviewed.label,
+    packageSpec: reviewed.packageSpec,
+    tarballUrl: reviewed.tarballUrl,
+  }));
+  const lockfiles = ["package-lock.json", "nemoclaw/package-lock.json"].map((relativePath) => {
+    const lockfilePath = join(targetRoot, relativePath);
+    const packages = verifyReviewedNpmLockPackages({
+      allowedNestedShrinkwrapPackages: config.sourceNestedShrinkwrapPackages,
+      lockfilePath,
+      registryOrigin: config.registryOrigin,
+      reviewedPackagesWithoutIntegrity: config.sourceRegistryPackagesWithoutIntegrity,
+      reviewedRegistryPackages,
+    });
+    return { lockfilePath, packages };
+  });
+  const lockedReviewedSpecs = new Set(
+    lockfiles.flatMap(({ packages }) =>
+      reviewedPackages
+        .map(({ packageSpec }) => packageSpec)
+        .filter((packageSpec) => packages.includes(packageSpec)),
+    ),
+  );
+  if (lockedReviewedSpecs.size > 1) {
+    throw new Error("reviewed npm locks use conflicting OpenShell SDK identities");
+  }
+  const selectedSpec = [...lockedReviewedSpecs][0];
+  const reviewed =
+    reviewedPackages.find(({ packageSpec }) => packageSpec === selectedSpec) ??
+    config.sourceRegistryPackage;
+  return {
+    config,
+    reviewed,
+    reviewedLockfilePath: lockfiles.find(({ packages }) => packages.includes(reviewed.packageSpec))
+      ?.lockfilePath,
+  };
+}
+
+export function inspectCiNpmInstall(targetRoot: string) {
+  const inspected = inspectReviewedLocks(resolve(targetRoot), readTrustedAuditConfig());
+  return {
+    artifactName: inspected.reviewed.artifactName,
+    required: inspected.reviewedLockfilePath !== undefined,
+  } as const;
+}
+
+/** Only a new SDK version can enter admission; other lock failures remain ordinary denials. */
+export function requiresCandidateSdkAdmission(
+  lockSources: readonly string[],
+  configSource: string,
+): boolean {
+  const config = parseAuditConfig(configSource);
+  const known = new Set(
+    reviewedSourceRegistryPackages(config).map(({ packageSpec }) => packageSpec),
+  );
+  return lockSources.some((source) => {
+    const entry = JSON.parse(source).packages?.["node_modules/@nvidia/openshell-sdk"];
+    if (entry === undefined) return false;
+    if (
+      typeof entry?.version !== "string" ||
+      !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u.test(entry.version)
+    ) {
+      throw new Error("Candidate SDK lock must use an exact version");
+    }
+    return !known.has(`@nvidia/openshell-sdk@${entry.version}`);
+  });
+}
+
+async function prepareCiNpmInstallWithConfig(
+  request: PreparationRequest,
+  config: AuditConfig,
+  stage?: NpmCacheStager,
+): Promise<void> {
+  const targetRoot = resolve(request.targetRoot);
+  const cacheDirectory = resolve(request.cacheDirectory);
+  const { reviewed, reviewedLockfilePath } = inspectReviewedLocks(targetRoot, config);
+  const sdkIsLocked = reviewedLockfilePath !== undefined;
+
+  if (request.mode === "registry") return;
+  if (!request.artifactDirectory) {
+    if (sdkIsLocked) throw new Error("reviewed OpenShell SDK artifact is required");
+    return;
+  }
+  if (!isAbsolute(request.artifactDirectory)) {
+    throw new Error("reviewed OpenShell SDK artifact directory must be absolute");
+  }
+  const artifactDirectory = resolve(request.artifactDirectory);
+  if (!existsSync(artifactDirectory)) {
+    if (sdkIsLocked) throw new Error("reviewed OpenShell SDK artifact is required");
+    return;
+  }
+  if (!reviewedLockfilePath) {
+    throw new Error("reviewed OpenShell SDK artifact is not used by either lockfile");
+  }
+  await seedReviewedSourceRegistryArtifact(
+    {
+      allowedNestedShrinkwrapPackages: config.sourceNestedShrinkwrapPackages,
+      artifactDirectory,
+      cacheDirectory,
+      lockfilePath: reviewedLockfilePath,
+      otherReviewedPackages: reviewedSourceRegistryPackages(config).filter(
+        ({ packageSpec }) => packageSpec !== reviewed.packageSpec,
+      ),
+      registryOrigin: config.registryOrigin,
+      reviewed,
+      reviewedPackagesWithoutIntegrity: config.sourceRegistryPackagesWithoutIntegrity,
+    },
+    stage,
+  );
+}
+
+export async function prepareCiNpmInstallWithReviewedConfig(
+  request: PreparationRequest,
+  reviewedConfigSource: string,
+  stage?: NpmCacheStager,
+): Promise<void> {
+  return prepareCiNpmInstallWithConfig(request, parseAuditConfig(reviewedConfigSource), stage);
+}
+
+export async function prepareCiNpmInstall(
+  request: PreparationRequest,
+  stage?: NpmCacheStager,
+): Promise<void> {
+  return prepareCiNpmInstallWithConfig(request, readTrustedAuditConfig(), stage);
+}

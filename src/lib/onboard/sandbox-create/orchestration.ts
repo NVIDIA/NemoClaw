@@ -81,6 +81,7 @@ import type {
 } from "../types";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
 import {
+  captureNativeDockerRecoveryAuthority,
   pendingSandboxCreateIdentityForBoundary,
   resolveLegacyCompatibilityFinalHandoffRuntime,
   sandboxCreateBoundaryFromPendingIdentity,
@@ -3267,6 +3268,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         requirePendingCreateIdentity(),
       );
     };
+    const createAuthorities = new Map<
+      string,
+      ReturnType<typeof captureNativeDockerRecoveryAuthority>
+    >();
     const retainedSandboxRecoveryContext = (
       boundary: VerifiedSandboxCreateBoundary | null,
       createAttemptNonceOverride: string | null = null,
@@ -3280,6 +3285,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         gatewayPort: GATEWAY_PORT,
         lifecycleGeneration: createdSandboxLifecycle.generation,
         createAttemptNonce,
+        ...(createAuthorities.get(createAttemptNonce)
+          ? { createAuthority: createAuthorities.get(createAttemptNonce)! }
+          : {}),
       };
     };
     const recordPostCreateRecovery = (
@@ -3507,6 +3515,17 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     requirePolicylessCreate: true as const,
                   }
                 : {}),
+              beforeCreateAttempt: (nonce) => {
+                const reservation = requireCreateReservation();
+                createAuthorities.set(
+                  nonce,
+                  captureNativeDockerRecoveryAuthority(
+                    GATEWAY_NAME,
+                    GATEWAY_PORT,
+                    reservation.authority.sessionId,
+                  ),
+                );
+              },
               persistRetainedSandboxRecovery: (
                 message,
                 sandboxIdentityFingerprint,
