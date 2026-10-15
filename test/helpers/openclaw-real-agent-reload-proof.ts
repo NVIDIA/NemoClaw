@@ -116,6 +116,11 @@ export async function runRealOpenClawAgentReloadProof(options: {
       while (gateway.exitCode === null && Date.now() < exitDeadline) await delay(250);
       assert.notEqual(gateway.exitCode, null, `failed restart left the gateway alive: ${logs}`);
       assert.notEqual(gateway.exitCode, 0, `failed restart reported success: ${logs}`);
+      assert.match(
+        logs,
+        /gateway bind=custom requested 192\.0\.2\.1 but resolved .*; refusing fallback/,
+        `restart failed for a reason other than the requested invalid bind: ${logs}`,
+      );
     }
   } finally {
     if (gateway.exitCode === null) {
