@@ -76,19 +76,45 @@ fn bundle_requires_all_native_binaries_and_checks_every_digest() {
 }
 #[test]
 fn incomplete_manifests_and_escaping_paths_are_rejected() {
-    let dir = tempfile::tempdir().unwrap();
-    let manifest = Manifest {
-        version: "../../outside".into(),
-        rust: "1.98.1".into(),
-        opentofu: "1.12.6".into(),
-        files: Default::default(),
+    let rejection = |change: &dyn Fn(&mut Manifest)| {
+        let directory = tempfile::tempdir().unwrap();
+        fixture_bundle(directory.path());
+        let path = directory.path().join("manifest.json");
+        let mut manifest: Manifest = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        change(&mut manifest);
+        fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        match Bundle::open(directory.path()) {
+            Err(Error::Bundle(message)) => message,
+            other => panic!("expected a bundle error, got {other:?}"),
+        }
     };
-    std::fs::write(
-        dir.path().join("manifest.json"),
-        serde_json::to_vec(&manifest).unwrap(),
-    )
-    .unwrap();
-    assert!(Bundle::open(dir.path()).is_err());
+    // Each change is the only fault in an otherwise complete fixture bundle.
+    assert_eq!(
+        rejection(&|manifest| manifest.version = "../../outside".into()),
+        "invalid provider version"
+    );
+    let required = required_files("0.1.0").unwrap();
+    assert_eq!(
+        rejection(&|manifest| {
+            manifest.files.remove(&required[0]);
+        }),
+        "bundle is incomplete"
+    );
+    for name in [
+        "",
+        "../outside",
+        "/absolute",
+        "nested/../escape",
+        "nested\\file",
+    ] {
+        assert_eq!(
+            rejection(&|manifest| {
+                manifest.files.insert(name.into(), "0".repeat(64));
+            }),
+            "invalid bundle path",
+            "{name:?}"
+        );
+    }
 }
 
 #[test]

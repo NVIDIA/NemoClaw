@@ -213,10 +213,12 @@ fn model_specific_backend_names_are_rejected() {
             .unwrap(),
     )
     .unwrap();
-    let service = &mut document["spec"]["services"]["qwen"];
-    service.as_object_mut().unwrap().remove("recipe");
-    service["kind"] = "vllm-qwen38-spark-v1".into();
-    assert!(Document::parse(serde_json::to_vec(&document).unwrap().as_slice()).is_err());
+    // The example parses with the generic backend and its recipe; change only the kind.
+    document["spec"]["services"]["qwen"]["kind"] = "vllm-qwen38-spark-v1".into();
+    let error = Document::parse(serde_json::to_vec(&document).unwrap().as_slice())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("spec.services.qwen"), "{error}");
 }
 
 #[tokio::test]
