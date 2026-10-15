@@ -90,7 +90,7 @@ reportChildScenario(async () => {
     }
   });
 
-  it("removes the NIM container before selecting cloud inference after a health failure", () => {
+  it("removes the NIM container and stops onboarding after a health failure", () => {
     const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-nim-health-fallback-");
     const script = String.raw`
 ${onboardChildRuntimeSource}
@@ -100,7 +100,7 @@ const nimMod = require(${nimPath});
 let stoppedContainer = null;
 nimMod.pullNimImage = () => {};
 nimMod.containerName = () => "nemoclaw-nim-test";
-nimMod.startNimContainerByName = () => "container-123";
+nimMod.startNimContainerByName = () => "nemoclaw-nim-test";
 nimMod.waitForNimHealth = () => false;
 nimMod.stopNimContainerByNameOrThrow = (name) => { stoppedContainer = name; };
 nimMod.isNgcLoggedIn = () => true;
@@ -109,8 +109,13 @@ credentials.ensureApiKey = async () => {};
 runner.runCapture = () => "";
 const { setupNim } = require(${onboardPath});
 reportChildScenario(async () => {
-  const result = await setupNim(${unifiedGpu});
-  return { result, stoppedContainer };
+  let failure = null;
+  try {
+    await setupNim(${unifiedGpu});
+  } catch (error) {
+    failure = String(error);
+  }
+  return { failure, stoppedContainer };
 });
 `;
 
@@ -123,8 +128,7 @@ reportChildScenario(async () => {
       assert.equal(result.status, 0, result.stderr);
       const payload = JSON.parse(result.stdout.trim());
       assert.equal(payload.stoppedContainer, "nemoclaw-nim-test");
-      assert.notEqual(payload.result.provider, "vllm-local");
-      assert.equal(payload.result.nimContainer, null);
+      assert.match(payload.failure, /Local NVIDIA NIM failed to become healthy/);
     } finally {
       workspace.remove();
     }
