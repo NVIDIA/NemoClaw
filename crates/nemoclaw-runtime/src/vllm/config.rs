@@ -12,7 +12,7 @@ pub struct Service {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServiceHardware")]
     pub hardware: Option<ServiceHardware>,
-    /// Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving.
+    /// Optional native bearer authentication. The runtime uses a key supplied in NEMOCLAW_INFERENCE_KEY, or generates and retains one in its credential storage; omission preserves unauthenticated serving.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServiceAuthentication")]
     pub authentication: Option<ServiceAuthentication>,
@@ -33,7 +33,7 @@ pub struct Service {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
-/// Generated bearer authentication for a managed inference service.
+/// Bearer authentication for a managed inference service.
 pub enum ServiceAuthentication {
     Bearer,
 }

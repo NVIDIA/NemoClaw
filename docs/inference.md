@@ -317,6 +317,29 @@ Retire model data and credentials separately; removing the model volume does not
 To retire both with the deployment, see [Remove Retained Resources](usage.md#remove-retained-resources).
 Changing an existing service to enable authentication follows the normal runtime replacement rules; YAML does not reconfigure a running server in place.
 
+### Supply the Key on Other Platforms
+
+The generated key lives in a Docker volume, so NemoClaw generates keys only for services it places on Docker.
+On another platform, such as Kubernetes or Podman, supply the key yourself and keep it in the platform's secret store.
+With `authentication` set, `vllm_runtime`'s `launch.key_env` names the variable to set, `NEMOCLAW_INFERENCE_KEY`.
+When it is set, the runtime uses that key instead of generating one, needs no credential volume, and passes the key to vLLM only as `VLLM_API_KEY`.
+The key must be 16 to 4096 printable characters without whitespace.
+A supplied key without `authentication` stops startup, so the server never runs unauthenticated by mistake.
+
+On Kubernetes, for example, store the key in a Secret and set the variable from it:
+
+```yaml
+env:
+  - name: NEMOCLAW_INFERENCE_KEY
+    valueFrom:
+      secretKeyRef:
+        name: vllm-inference-key
+        key: key
+```
+
+Register the server with OpenShell using the same key: give `openshell_inference` a `server` object whose `credential_env` names a variable holding the key where OpenTofu runs.
+Readiness on those platforms is the platform's job; point its readiness probe at `GET /health`, which needs no key.
+
 ## Use External Ollama through a Managed Proxy
 
 Run the proxy on the same Linux Docker host as the existing Ollama daemon and installed model.

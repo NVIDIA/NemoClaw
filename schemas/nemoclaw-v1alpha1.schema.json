@@ -2306,7 +2306,7 @@
       "type": "string"
     },
     "ServiceAuthentication": {
-      "description": "Generated bearer authentication for a managed inference service.",
+      "description": "Bearer authentication for a managed inference service.",
       "enum": [
         "bearer"
       ],
@@ -2729,7 +2729,7 @@
           "properties": {
             "authentication": {
               "$ref": "#/$defs/ServiceAuthentication",
-              "description": "Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving."
+              "description": "Optional native bearer authentication. The runtime uses a key supplied in NEMOCLAW_INFERENCE_KEY, or generates and retains one in its credential storage; omission preserves unauthenticated serving."
             },
             "container": {
               "$ref": "#/$defs/ServiceContainer",
