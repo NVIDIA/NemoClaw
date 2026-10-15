@@ -11,15 +11,10 @@ export interface RotateTokenOpts {
 
 type RotateTokenFailure = (lines: string | readonly string[], exitCode?: number) => never;
 
-type RotateTokenSession = Pick<Session, "credentialEnv" | "provider" | "sandboxName"> & {
-  readonly endpointUrl?: string | null;
-  readonly providerType?: string;
-};
+type RotateTokenSession = Pick<Session, "credentialEnv" | "provider" | "sandboxName">;
 
 interface RotateTokenSandboxRoute {
   credentialEnv?: string | null;
-  endpointUrl?: string | null;
-  preferredInferenceApi?: string | null;
   provider?: string | null;
 }
 
@@ -61,8 +56,6 @@ export async function rotateSandboxToken(
 
   let credentialEnv: string;
   let providerName: string;
-  let providerType: string;
-  let providerEndpointUrl: string | null = null;
   if (registeredRoute) {
     if (!registeredProvider) {
       deps.fail([
@@ -79,11 +72,6 @@ export async function rotateSandboxToken(
     }
     credentialEnv = registeredCredentialEnv;
     providerName = registeredProvider;
-    providerType = resolveSandboxCredentialProviderType(
-      registeredProvider,
-      registeredRoute?.preferredInferenceApi ?? null,
-    );
-    providerEndpointUrl = nonEmptyString(registeredRoute?.endpointUrl);
   } else {
     if (!session || !session.credentialEnv) {
       deps.fail([
@@ -102,13 +90,6 @@ export async function rotateSandboxToken(
     }
     credentialEnv = session.credentialEnv;
     providerName = session.provider || "inference";
-    providerType = session.providerType || "generic";
-    providerEndpointUrl = nonEmptyString(session.endpointUrl);
-    if (providerEndpointUrl && providerType === "generic") {
-      deps.fail(
-        `  Cannot recreate provider '${providerName}' with incomplete provider metadata. Re-run onboarding.`,
-      );
-    }
   }
 
   const target = deps.resolveAgentConfig(sandboxName);
@@ -167,39 +148,10 @@ export async function rotateSandboxToken(
   );
 
   if (result.status !== 0) {
-    const createArgs = [
-      "provider",
-      "create",
-      "--name",
-      providerName,
-      "--type",
-      providerType,
-      "--credential",
-      credentialEnv,
-    ];
-    if (providerType === "openai" || providerType === "anthropic") {
-      const endpointUrl = resolveSandboxCredentialProviderEndpoint(
-        providerName,
-        providerEndpointUrl,
-      );
-      if (!endpointUrl) {
-        deps.fail(
-          `  Cannot recreate provider '${providerName}' without its endpoint. Re-run onboarding.`,
-        );
-      }
-      createArgs.push(
-        "--config",
-        `${providerType === "anthropic" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL"}=${endpointUrl}`,
-      );
-    }
-    const createResult = deps.runOpenshellCommand(binary, createArgs, {
-      env: { [credentialEnv]: newToken },
-      ignoreError: true,
-      errorLine: console.error,
-      exit: (code: number) => process.exit(code),
-    });
-    if (createResult.status !== 0)
-      deps.fail("  Failed to update provider. You may need to re-onboard.");
+    deps.fail([
+      `  Could not confirm the token update for provider '${providerName}'.`,
+      "  Inspect the OpenShell provider before retrying. If it is missing, re-run onboarding.",
+    ]);
   }
 
   deps.saveCredential(credentialEnv, newToken);
@@ -221,25 +173,6 @@ function nonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
-}
-
-function resolveSandboxCredentialProviderType(
-  providerName: string,
-  preferredInferenceApi: string | null,
-): string {
-  const { resolveInferenceProviderType } = require("../onboard/providers") as {
-    resolveInferenceProviderType: (provider: string, preferredApi?: string | null) => string;
-  };
-  return resolveInferenceProviderType(providerName, preferredInferenceApi);
-}
-
-function resolveSandboxCredentialProviderEndpoint(
-  providerName: string,
-  endpointUrl: string | null,
-): string | null {
-  const { gatewayReachableCompatibleEndpointUrl } =
-    require("../onboard/inference-providers/compatible-endpoint-gateway-route") as typeof import("../onboard/inference-providers/compatible-endpoint-gateway-route");
-  return gatewayReachableCompatibleEndpointUrl(providerName, endpointUrl) ?? null;
 }
 
 function getOpenshellBinary(): string {

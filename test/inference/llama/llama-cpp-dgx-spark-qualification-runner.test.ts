@@ -20,6 +20,7 @@ import {
   hashModelFile,
   resolveRequestGuardAddress,
   startQualificationLoopbackRelay,
+  parseQualificationBridgeGateway,
   parseNvidiaSmi,
   parseQualificationInvocation,
   type QualificationInvocation,
@@ -33,6 +34,8 @@ import {
   validateQualificationPlan,
   validateRuntimeLogRedaction,
   validateStartupLog,
+  runQualification,
+  QualificationFailureError,
 } from "../../../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
 import {
   consumeDockerLoopbackPublishAuthority,
@@ -106,6 +109,206 @@ function parsedInvocation(): QualificationInvocation {
   return invocation as QualificationInvocation;
 }
 
+it("retains a phase-specific failure without leaking exception data", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-diagnostic-"));
+  const privateValue = "private-key-and-model-prompt-must-not-be-retained";
+  const spawn = vi.spyOn(childProcess, "spawnSync").mockImplementationOnce(() => {
+    throw new Error(privateValue);
+  });
+  try {
+    const invocation = { ...parsedInvocation(), output: path.join(root, "receipt.json") };
+    await expect(
+      runQualification(invocation, trustedEnvironment({ RUNNER_TEMP: root })),
+    ).rejects.toMatchObject({
+      name: "Error",
+      diagnostic: {
+        phase: "prerequisites",
+        status: "failed",
+        owner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
+      },
+    });
+    const source = fs.readFileSync(path.join(root, "failure.json"), "utf8");
+    expect(source).not.toContain(privateValue);
+    const failure = JSON.parse(source);
+    expect(new QualificationFailureError(failure).message).toContain("prerequisites");
+    expect(fs.existsSync(path.join(root, "receipt.json"))).toBe(false);
+  } finally {
+    spawn.mockRestore();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const readableInterruptionDiagnostic = {
+  label: "retained",
+  prepare: (_file: string) => undefined,
+  assert: (file: string, owner: string) => {
+    const source = fs.readFileSync(file, "utf8");
+    expect(source).not.toContain("private-test-key");
+    expect(JSON.parse(source)).toMatchObject({
+      phase: "interrupted",
+      status: "failed",
+      owner,
+      cleanupComplete: true,
+    });
+  },
+};
+const unavailableInterruptionDiagnostic = {
+  label: "unavailable",
+  prepare: (file: string) => fs.mkdirSync(file),
+  assert: (file: string) => expect(fs.statSync(file).isDirectory()).toBe(true),
+};
+
+it.runIf(process.platform === "linux" && process.arch === "arm64").each([
+  ["SIGINT", readableInterruptionDiagnostic],
+  ["SIGTERM", readableInterruptionDiagnostic],
+  ["SIGINT", unavailableInterruptionDiagnostic],
+  ["SIGTERM", unavailableInterruptionDiagnostic],
+] as const)(
+  "interrupts a real worker with %s (diagnostic: %s) without claiming success",
+  async (signal, diagnostic) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-signal-process-"));
+    const owner = expectedRegistryOwner(RUN_ID, RUN_ATTEMPT);
+    const stateFile = path.join(root, "resources.json");
+    const marker = path.join(root, "blocked.json");
+    const tempRoot = path.join(root, owner);
+    const resources = {
+      [`nemoclaw-llama-cpp-server-${RUN_ID}-${RUN_ATTEMPT}`]: owner,
+      [`nemoclaw-llama-cpp-network-${RUN_ID}-${RUN_ATTEMPT}`]: owner,
+      [expectedRegistryName(RUN_ID, RUN_ATTEMPT)]: owner,
+      "foreign-container": "foreign-owner",
+    };
+    fs.writeFileSync(stateFile, JSON.stringify(resources));
+    fs.mkdirSync(tempRoot);
+    diagnostic.prepare(path.join(root, "failure.json"));
+    fs.writeFileSync(path.join(tempRoot, "api-key"), "private-test-key", { mode: 0o600 });
+    const docker = path.join(root, "docker");
+    fs.writeFileSync(
+      docker,
+      `#!${process.execPath}
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stateFile = ${JSON.stringify(stateFile)};
+if (args[0] === "--version") {
+  const listener = require("node:net").createServer();
+  listener.listen(0, "127.0.0.1", () => {
+    fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid: process.pid, port: listener.address().port}));
+    require("node:child_process").spawnSync(process.execPath, ["-e", "setInterval(() => {}, 1000)"]);
+    process.exit(0);
+  });
+} else {
+const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+const name = args.at(-1);
+if (args.includes("inspect")) {
+  if (state[name]) process.stdout.write(state[name]);
+  else { process.stderr.write("Error: No such object: " + name); process.exitCode = 1; }
+} else if (args.includes("rm") && state[name] === ${JSON.stringify(owner)}) {
+  delete state[name];
+  fs.writeFileSync(stateFile, JSON.stringify(state));
+} else process.exitCode = 1;
+}
+`,
+      { mode: 0o700 },
+    );
+    const args = invocationArguments();
+    args[args.indexOf("--output") + 1] = path.join(root, "receipt.json");
+    const launcher = childProcess.spawn(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--import",
+        "tsx",
+        path.join(repoRoot, "scripts/checks/run-llama-cpp-dgx-spark-qualification.cts"),
+        ...args,
+      ],
+      {
+        cwd: repoRoot,
+        stdio: "ignore",
+        env: { ...trustedEnvironment(), RUNNER_TEMP: root, PATH: root, HOME: root },
+      },
+    );
+    const closed = new Promise<number | null>((resolve, reject) => {
+      launcher.once("error", reject);
+      launcher.once("close", resolve);
+    });
+    try {
+      await vi.waitFor(() => expect(fs.existsSync(marker)).toBe(true), {
+        timeout: 10000,
+        interval: 25,
+      });
+      launcher.kill(signal);
+      expect(await closed).toBe(signal === "SIGINT" ? 130 : 143);
+      expect(JSON.parse(fs.readFileSync(stateFile, "utf8"))).toEqual({
+        "foreign-container": "foreign-owner",
+      });
+      expect(fs.existsSync(tempRoot)).toBe(false);
+      expect(fs.existsSync(path.join(root, "receipt.json"))).toBe(false);
+      diagnostic.assert(path.join(root, "failure.json"), owner);
+      const blockedPid = JSON.parse(fs.readFileSync(marker, "utf8")).pid;
+      expect(() => process.kill(blockedPid, 0)).toThrow();
+      const port = JSON.parse(fs.readFileSync(marker, "utf8")).port;
+      await expect(
+        new Promise<void>((resolve, reject) => {
+          const socket = net.createConnection({ host: "127.0.0.1", port });
+          socket.once("connect", () => {
+            socket.destroy();
+            reject(new Error("interrupted listener remains open"));
+          });
+          socket.once("error", () => {
+            socket.destroy();
+            resolve();
+          });
+          socket.setTimeout(1000, () => {
+            socket.destroy();
+            reject(new Error("listener check timed out"));
+          });
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      launcher.kill("SIGTERM");
+      await closed;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+  20000,
+);
+
+it("boots the actual trusted CLI and records a failed prerequisite without running Docker", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-cli-"));
+  try {
+    const args = invocationArguments();
+    args[args.indexOf("--output") + 1] = path.join(root, "receipt.json");
+    const result = childProcess.spawnSync(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--import",
+        "tsx",
+        path.join(repoRoot, "scripts/checks/run-llama-cpp-dgx-spark-qualification.cts"),
+        ...args,
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: { ...trustedEnvironment(), RUNNER_TEMP: root, PATH: "", HOME: root },
+        timeout: 20000,
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `failed at prerequisites for ${expectedRegistryOwner(RUN_ID, RUN_ATTEMPT)}`,
+    );
+    expect(JSON.parse(fs.readFileSync(path.join(root, "failure.json"), "utf8"))).toMatchObject({
+      phase: "prerequisites",
+      status: "failed",
+      cleanupComplete: false,
+    });
+    expect(fs.existsSync(path.join(root, "receipt.json"))).toBe(false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function mutatedPlan(mutate: (value: Record<string, any>) => void): [string, string] {
   const value = JSON.parse(planSource) as Record<string, any>;
   mutate(value);
@@ -113,9 +316,107 @@ function mutatedPlan(mutate: (value: Record<string, any>) => void): [string, str
   return [source, sha256Text(source)];
 }
 
+it.each([
+  ["Cannot connect to the Docker daemon", "qualification command failed"],
+  ["permission denied for registry credentials", "qualification command failed"],
+  ["Error: No such object: unrelated-container", "qualification command failed"],
+  ["Error: No such object: owned-container", "owned container and network"],
+])("does not infer resource absence from ambiguous inspection: %s", (stderr, expected) => {
+  const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValueOnce({
+    status: 1,
+    error: undefined,
+    stdout: "",
+    stderr,
+    output: [],
+    pid: 1,
+    signal: null,
+  } as any);
+  try {
+    expect(() =>
+      resolveRequestGuardAddress({
+        containerName: "owned-container",
+        networkName: "owned-network",
+        registryOwner: "owned-run",
+      }),
+    ).toThrow(expected);
+  } finally {
+    spawn.mockRestore();
+  }
+});
+
+it("rejects cleanup when Docker inspection is unavailable and identifies the owned run", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-cleanup-cli-"));
+  try {
+    const result = childProcess.spawnSync(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--import",
+        "tsx",
+        path.join(repoRoot, "scripts/checks/run-llama-cpp-dgx-spark-qualification.cts"),
+        "--cleanup-only",
+        "--registry-name",
+        expectedRegistryName(RUN_ID, RUN_ATTEMPT),
+        "--run-id",
+        RUN_ID,
+        "--run-attempt",
+        RUN_ATTEMPT,
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: 20000,
+        env: {
+          ...trustedEnvironment(),
+          BASE_SHA,
+          CHECKOUT_SHA: HEAD_SHA,
+          WORKFLOW_SHA,
+          PLAN_SHA256: planDigest,
+          RUNNER_TEMP: root,
+          PATH: "",
+          HOME: root,
+        },
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `failed at cleanup for ${expectedRegistryOwner(RUN_ID, RUN_ATTEMPT)}: command-failed`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function valuesAfter(argv: string[], option: string): string[] {
   return argv.flatMap((value, index) => (argv[index - 1] === option ? [value] : []));
 }
+
+it("loads the deferred OpenClaw consumer dependency with the actual CLI loader", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-agent-loader-"));
+  try {
+    const source = `const {resolveManagedImageOnboardModule} = require('./scripts/checks/run-managed-image-openshell-e2e.ts');
+      import('./src/lib/onboard.ts').then(value => {
+        const onboard = resolveManagedImageOnboardModule(value);
+        process.stdout.write(JSON.stringify({ready: typeof onboard.startGatewayForRecovery === 'function'}));
+      });`;
+    const result = childProcess.spawnSync(
+      process.execPath,
+      ["--no-warnings", "--import", "tsx", "-e", source],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: 20000,
+        env: { HOME: root, PATH: process.env.PATH },
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ ready: true });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function qualificationPlanForModel(content: Buffer): QualificationPlan {
   return {
@@ -180,6 +481,18 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         },
         (value: Record<string, any>) => {
           value.imageBuild.cuda.runtimeBase = "docker.io/nvidia/cuda:latest";
+        },
+        (value: Record<string, any>) => {
+          delete value.imageBuild.requestGuardToolchain;
+        },
+        (value: Record<string, any>) => {
+          value.imageBuild.requestGuardToolchain.version = "1.26.8";
+        },
+        (value: Record<string, any>) => {
+          value.imageBuild.requestGuardToolchain.archiveSha256 = `sha256:${"0".repeat(64)}`;
+        },
+        (value: Record<string, any>) => {
+          value.imageBuild.requestGuardToolchain.untrusted = true;
         },
         (value: Record<string, any>) => {
           value.recipe.runtime.gpu.cpuFallback = "allow";
@@ -315,6 +628,21 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         `LLAMA_CPP_REVISION=${plan.imageBuild.source.revision}`,
         `NEMOCLAW_REVISION=${HEAD_SHA}`,
         "TARGETPLATFORM=linux/arm64",
+      ]),
+    );
+  });
+
+  it("passes the pinned Go toolchain to the candidate image build (#13026)", () => {
+    const argv = buildCandidateImageArgv(plan, parsedInvocation(), "/work/tmp/metadata.json");
+    const matrix = JSON.parse(config.matrix) as {
+      include: { platform: string; request_guard_go_archive_sha256: string }[];
+    };
+    const arm64 = matrix.include.find(({ platform }) => platform === "linux/arm64");
+    expect(arm64).toBeDefined();
+    expect(valuesAfter(argv, "--build-arg")).toEqual(
+      expect.arrayContaining([
+        `REQUEST_GUARD_GO_VERSION=${config.request_guard_go_version}`,
+        `REQUEST_GUARD_GO_ARCHIVE_SHA256=${arm64!.request_guard_go_archive_sha256}`,
       ]),
     );
   });
@@ -542,19 +870,19 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     });
 
     it.each([
-      "foreign container owner",
-      "foreign network owner",
-      "failed container inspection",
-      "failed network inspection",
-      "stopped container",
-      "external network",
-      "additional network",
-      "missing network endpoint",
-      "mismatched network ID",
-      "empty address",
-      "hostname address",
-      "IPv6 address",
-    ])("rejects %s before returning a relay target (#8231)", (scenario) => {
+      ["foreign container owner", /qualification relay requires/u],
+      ["foreign network owner", /qualification relay requires/u],
+      ["failed container inspection", /qualification command failed/u],
+      ["failed network inspection", /qualification command failed/u],
+      ["stopped container", /qualification relay requires/u],
+      ["external network", /qualification relay requires/u],
+      ["additional network", /qualification relay requires/u],
+      ["missing network endpoint", /qualification relay requires/u],
+      ["mismatched network ID", /qualification relay requires/u],
+      ["empty address", /qualification relay requires/u],
+      ["hostname address", /qualification relay requires/u],
+      ["IPv6 address", /qualification relay requires/u],
+    ])("rejects %s before returning a relay target (#8231)", (scenario, expectedError) => {
       const fixture = dockerInspection();
       const endpoints = fixture.container.NetworkSettings.Networks;
       const endpoint = endpoints[names.networkName]!;
@@ -598,7 +926,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         default:
           throw new Error("unknown inspection scenario");
       }
-      expect(() => resolveRequestGuardAddress(names)).toThrow(/qualification relay requires/u);
+      expect(() => resolveRequestGuardAddress(names)).toThrow(expectedError);
     });
   });
 
@@ -676,6 +1004,36 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     await expect(startQualificationLoopbackRelay("example.com", 8081, 10)).rejects.toThrow(/IPv4/u);
     await expect(startQualificationLoopbackRelay("127.0.0.1", 0, 10)).rejects.toThrow(/port/u);
     await expect(startQualificationLoopbackRelay("127.0.0.1", 8081, 0)).rejects.toThrow(/timeout/u);
+    await expect(
+      startQualificationLoopbackRelay("127.0.0.1", 8081, 10, 0, "0.0.0.0"),
+    ).rejects.toThrow(/private or loopback/u);
+  });
+
+  it("accepts only the selected private Docker bridge gateway", () => {
+    const network = {
+      Name: "nemoclaw-managed-run-1",
+      Driver: "bridge",
+      Internal: false,
+      IPAM: { Config: [{ Gateway: "172.20.0.1", Subnet: "172.20.0.0/16" }] },
+    };
+    expect(parseQualificationBridgeGateway(JSON.stringify(network), network.Name)).toBe(
+      "172.20.0.1",
+    );
+    expect(() => parseQualificationBridgeGateway(JSON.stringify(network), "another-run")).toThrow(
+      /exact private IPv4 gateway/u,
+    );
+    expect(() =>
+      parseQualificationBridgeGateway(
+        JSON.stringify({ ...network, IPAM: { Config: [{ Gateway: "8.8.8.8" }] } }),
+        network.Name,
+      ),
+    ).toThrow(/exact private IPv4 gateway/u);
+    expect(() =>
+      parseQualificationBridgeGateway(
+        JSON.stringify({ ...network, Driver: "macvlan" }),
+        network.Name,
+      ),
+    ).toThrow(/exact private IPv4 gateway/u);
   });
 
   it("accepts only the exact NVIDIA OpenClaw ARM64 managed-image labels", () => {
@@ -767,6 +1125,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     "NVIDIA GB10, 580.65.05",
     "NVIDIA H100 80GB HBM3, 580.65.06",
     "NVIDIA GB10, 580.65.06\nNVIDIA GB10, 580.65.06",
+    "NVIDIA GB10, 580.1599.03",
   ])(
     "accepts only one NVIDIA GB10 at or above the declarative driver floor [%s] (#8260)",
     (output) => {
@@ -779,6 +1138,14 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       expect(() => parseNvidiaSmi(output, "580.65.06")).toThrow();
     },
   );
+
+  it("accepts the GB10 driver with a three-digit minor version", () => {
+    expect(parseNvidiaSmi("NVIDIA GB10, 580.159.03\n", "580.65.06")).toEqual({
+      count: 1,
+      driverVersion: "580.159.03",
+      name: "NVIDIA GB10",
+    });
+  });
 
   it("validates exact served-model and authenticated completion response shapes (#8260)", () => {
     expect(() =>

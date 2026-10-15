@@ -88,8 +88,12 @@ import {
 } from "./identity-boundary";
 import {
   publishAttachedProvidersBeforeDockerSandboxCreation,
+  resolveProviderAdapter,
   usesNativeNvidiaProvider,
   usesNativeHostedProvider,
+  validateAttachedNativeProfileBeforeSandboxCreation,
+  validateAttachedOwnedProfilesBeforeSandboxCreation,
+  validateAttachedHermesToolGatewayProfileBeforeSandboxCreation,
   verifyNativeHostedAttachmentAfterCreate,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
   verifyNativeNvidiaAttachmentAfterCreate,
@@ -1432,6 +1436,7 @@ type ProviderEffectBoundary = {
 
 export function createProviderEffectBoundary(input: {
   readonly deferred: boolean;
+  readonly resumingVerifiedCreate?: boolean;
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly expectedNativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
@@ -1444,16 +1449,53 @@ export function createProviderEffectBoundary(input: {
     | null;
   readonly revalidateSandboxIdentityBeforeCreate: () => void;
 }): ProviderEffectBoundary {
-  const validate = async () =>
-    validateAttachedMessagingProvidersBeforeSandboxCreation(
-      input.preparationInput,
-      input.preparationDeps,
-    );
+  const adapter = resolveProviderAdapter(input.preparationDeps);
+  const deps = { ...input.preparationDeps, providerAdapter: adapter };
+  let verifiedOwnedProfileIds: readonly string[] = [];
+  let verifiedHermesToolGatewayProfileId: string | null = null;
+  const validate = async () => {
+    await validateAttachedMessagingProvidersBeforeSandboxCreation(input.preparationInput, deps);
+    if (!input.deferred && !input.resumingVerifiedCreate) {
+      verifiedOwnedProfileIds = await validateAttachedOwnedProfilesBeforeSandboxCreation(
+        input.preparationInput,
+        deps,
+      );
+      await validateAttachedNativeProfileBeforeSandboxCreation(
+        input.preparationInput,
+        deps,
+        input.expectedNativeNvidiaProviderAttachment,
+        input.expectedNativeHostedProviderAttachment,
+      );
+      verifiedHermesToolGatewayProfileId =
+        await validateAttachedHermesToolGatewayProfileBeforeSandboxCreation(
+          input.preparationInput,
+          deps,
+        );
+    }
+  };
   const publish = async () =>
-    publishAttachedProvidersBeforeDockerSandboxCreation(
-      input.preparationInput,
-      input.preparationDeps,
-    );
+    publishAttachedProvidersBeforeDockerSandboxCreation(input.preparationInput, deps);
+  const verifiedDirectCreateProfileIds = () => {
+    const attachedNames = new Set([
+      ...(input.preparationInput.directCreateProviderNames ?? [
+        input.preparationInput.inferenceProvider,
+        ...input.preparationInput.messagingProviders,
+        ...input.preparationInput.extraProviders,
+      ]),
+    ]);
+    return [
+      ...verifiedOwnedProfileIds,
+      ...(input.expectedNativeNvidiaProviderAttachment &&
+      attachedNames.has(input.expectedNativeNvidiaProviderAttachment.providerName)
+        ? [input.expectedNativeNvidiaProviderAttachment.profileId]
+        : []),
+      ...(input.expectedNativeHostedProviderAttachment &&
+      attachedNames.has(input.expectedNativeHostedProviderAttachment.providerName)
+        ? [input.expectedNativeHostedProviderAttachment.profileId]
+        : []),
+      ...(verifiedHermesToolGatewayProfileId ? [verifiedHermesToolGatewayProfileId] : []),
+    ];
+  };
   const attachAndVerifyNativeInferenceProvider = async (
     context: VerifiedSandboxCreateEffectsContext,
   ) => {
@@ -1470,14 +1512,14 @@ export function createProviderEffectBoundary(input: {
       gatewayName: input.gatewayName,
       inferenceProvider: input.preparationInput.inferenceProvider,
       expected: input.expectedNativeNvidiaProviderAttachment,
-      deps: input.preparationDeps,
+      deps,
     });
     await verifyNativeHostedAttachmentAfterCreate({
       sandboxName: input.sandboxName,
       gatewayName: input.gatewayName,
       inferenceProvider: input.preparationInput.inferenceProvider,
       expected: input.expectedNativeHostedProviderAttachment,
-      deps: input.preparationDeps,
+      deps,
     });
   };
   if (!input.deferred) {
@@ -1487,11 +1529,16 @@ export function createProviderEffectBoundary(input: {
         input.revalidateSandboxIdentityBeforeCreate();
         await publish();
       },
-      runAfterVerifiedCreate:
-        usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) ||
-        usesNativeHostedProvider(input.preparationInput.inferenceProvider)
-          ? attachAndVerifyNativeInferenceProvider
-          : undefined,
+      runAfterVerifiedCreate: async (context) => {
+        await attachAndVerifyNativeInferenceProvider(context);
+        const profileIds = verifiedDirectCreateProfileIds();
+        if (!input.resumingVerifiedCreate && profileIds.length > 0) {
+          adapter.warnIfVerifiedProfilesChangedAfterSandboxCreate?.(
+            { target: { kind: "named", gatewayName: input.gatewayName } },
+            profileIds,
+          );
+        }
+      },
     };
   }
   return {
@@ -1714,6 +1761,29 @@ async function deleteJournaledRecreateSource(input: {
   ) {
     throw new Error(result.error.message);
   }
+}
+
+function directCreateHermesToolGatewayProfile(input: {
+  readonly enabled: boolean;
+  readonly sandboxName: string;
+  readonly providerNames: readonly string[];
+  readonly getBroker: () => {
+    getHermesToolGatewayProviderName(sandboxName: string): string;
+    HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE: string;
+    HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV: string;
+  };
+}): { readonly hermesToolGateway?: ProviderPreparationInput["hermesToolGateway"] } {
+  if (!input.enabled) return {};
+  const broker = input.getBroker();
+  const providerName = broker.getHermesToolGatewayProviderName(input.sandboxName);
+  if (!input.providerNames.includes(providerName)) return {};
+  return {
+    hermesToolGateway: {
+      providerName,
+      profileType: broker.HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE,
+      credentialEnv: broker.HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
+    },
+  };
 }
 
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
@@ -2243,6 +2313,52 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       getSandbox: registry.getSandbox,
       note,
     });
+    const backupSourceObservation = () => getSandboxRecreateObservation(sandboxName, GATEWAY_NAME);
+    const abortFailedRecreateBackup = (
+      expectedEntry: SandboxEntry | null,
+      source: ReturnType<typeof backupSourceObservation>,
+    ): never => {
+      let sourceUnchanged = false;
+      try {
+        const current = backupSourceObservation();
+        sourceUnchanged =
+          expectedEntry !== null &&
+          expectedEntry.pendingRouteReservation !== true &&
+          isDeepStrictEqual(registry.getSandbox(sandboxName), expectedEntry) &&
+          source.state === "ready" &&
+          current.state === "ready" &&
+          Boolean(source.liveIdentityFingerprint) &&
+          current.liveIdentityFingerprint === source.liveIdentityFingerprint;
+        if (sourceUnchanged) {
+          if ("abandon" in recreateRuntime) recreateRuntime.abandon();
+          else if (createIntent?.recreateTransaction) {
+            onboardSession.updateSession((session) => {
+              sandboxRecreateTransaction.abandonSandboxRecreateTransaction(
+                session,
+                createIntent.recreateTransaction!.id,
+              );
+              return session;
+            });
+          }
+        }
+      } catch {
+        sourceUnchanged = false;
+      }
+      if (sourceUnchanged) {
+        console.error(`  Existing sandbox '${sandboxName}' remains registered and available.`);
+        console.error(
+          `  If the failure names a credential-bearing file, run '${cliName()} ${sandboxName} connect' to remove or relocate its sensitive content, then retry onboarding.`,
+        );
+      } else {
+        console.error(
+          `  Sandbox '${sandboxName}' changed during backup failure; its recreate journal needs recovery before another onboarding attempt.`,
+        );
+      }
+      console.error(
+        "  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 only if losing workspace state is acceptable.",
+      );
+      process.exit(1);
+    };
     let reconcileOpenClawInference = false;
     const openRecreateJournal = (): OwnedSandboxRecreateRuntime =>
       recreateJournal.openOnboardRecreateJournal({
@@ -2514,12 +2630,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         console.log(`  Messaging credential(s) rotated: ${rotatedNames}`);
         console.log("  Rebuilding sandbox to propagate new credentials to the L7 proxy...");
         if (!shouldSkipPreRecreateBackup(process.env)) {
+          const expectedEntry = registry.getSandbox(sandboxName);
+          const source = backupSourceObservation();
           const result = recreateProtection.backup();
           if (!result.ok) {
-            console.error(
-              "  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 to recreate without preserving state.",
-            );
-            process.exit(1);
+            abortFailedRecreateBackup(expectedEntry, source);
           }
           pendingStateRestore = result.backup;
         }
@@ -2575,12 +2690,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         !shouldSkipPreRecreateBackup(process.env)
       ) {
         note("  Backing up workspace state before recreating sandbox...");
+        const expectedEntry = registry.getSandbox(sandboxName);
+        const source = backupSourceObservation();
         const result = recreateProtection.backup();
         if (!result.ok) {
-          console.error(
-            "  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 to recreate without preserving state.",
-          );
-          process.exit(1);
+          abortFailedRecreateBackup(expectedEntry, source);
         }
         pendingStateRestore = result.backup;
       }
@@ -2624,6 +2738,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           );
       }
       recreateRuntime.confirmDeleted();
+      // Keep the source route published through every pre-delete check. A failure
+      // before confirmed deletion must leave the live source route untouched.
+      await createIntent?.reservePublishedRouteAfterBackup?.();
       finalizeRecreatedSourceHermesVolume(
         true,
         previousEntry,
@@ -2651,6 +2768,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           (root) => root.mountTarget === MANAGED_HERMES_STATE_ROOT,
         ),
       );
+    }
+    if (!liveExists && existingEntry) {
+      await createIntent?.reservePublishedRouteAfterBackup?.();
     }
     runForNewSandboxCreate(resumingVerifiedCreate, () => {
       revalidateSandboxIdentity(false, `creating sandbox '${sandboxName}'`);
@@ -3593,6 +3713,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         },
       });
 
+    const directCreateProviderNames = createRequestPlan?.providers ?? [];
     const providerPreparationInput = {
       openshellDriver: sandboxRuntimeFields.openshellDriver,
       inferenceProvider: resolvedCreateIntent.inferenceProvider,
@@ -3603,7 +3724,14 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       messagingProviders,
       messagingProviderRequests: resolvedCreateIntent.messagingProviderRequests,
       extraProviders: resolvedCreateIntent.extraProviders,
+      directCreateProviderNames,
       gatewayName: GATEWAY_NAME,
+      ...directCreateHermesToolGatewayProfile({
+        enabled: resolvedCreateIntent.hermesToolGateways.length > 0,
+        sandboxName,
+        providerNames: directCreateProviderNames,
+        getBroker: getHermesToolGatewayBroker,
+      }),
     };
     const providerPreparationDeps = {
       runOpenshell,
@@ -3611,6 +3739,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     };
     const providerEffectBoundary = createProviderEffectBoundary({
       deferred: createIntent?.deferSandboxEffectsUntilIdentityVerification === true,
+      resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
       sandboxName,
       gatewayName: GATEWAY_NAME,
       expectedNativeNvidiaProviderAttachment: resolvedCreateIntent.nativeNvidiaProviderAttachment,

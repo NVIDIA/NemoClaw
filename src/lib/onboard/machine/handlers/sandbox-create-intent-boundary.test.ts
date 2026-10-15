@@ -174,6 +174,8 @@ describe("sandbox create intent machine boundary", () => {
       });
       const createIntent = calls.createSandbox.mock.calls[0]?.at(-2) as unknown as {
         resolved: unknown;
+        reservePublishedRouteAfterBackup?: () => void;
+        recreateJournalTargetIntentFingerprint?: string;
       };
       expect(createIntent).toMatchObject({
         resolved: {
@@ -204,8 +206,15 @@ describe("sandbox create intent machine boundary", () => {
         observabilityEnabled: false,
         extraProviders: [],
       });
-      const serializedIntent = JSON.stringify(createIntent);
-      expect(JSON.parse(serializedIntent)).toEqual(createIntent);
+      const {
+        reservePublishedRouteAfterBackup,
+        recreateJournalTargetIntentFingerprint,
+        ...durableIntent
+      } = createIntent;
+      expect(typeof reservePublishedRouteAfterBackup).toMatch(/^(undefined|function)$/u);
+      expect(recreateJournalTargetIntentFingerprint).toBeUndefined();
+      const serializedIntent = JSON.stringify(durableIntent);
+      expect(JSON.parse(serializedIntent)).toEqual(durableIntent);
       expect(serializedIntent).not.toMatch(/stored-|resolved-|secret-value|token-value/iu);
       resolvedIntents.push(createIntent.resolved);
       expect(calls.startStep).toHaveBeenCalledWith("sandbox", {

@@ -52,42 +52,56 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  int client = accept(listener, NULL, NULL);
-  if (client < 0) {
-    perror("accept");
-    close(listener);
-    return 1;
-  }
-  char request[4096];
-  size_t length = 0;
-  while (length + 1 < sizeof(request)) {
-    ssize_t received = recv(client, request + length, sizeof(request) - length - 1, 0);
-    if (received <= 0) {
-      break;
-    }
-    length += (size_t)received;
-    request[length] = '\0';
-    if (strstr(request, "\r\n\r\n") != NULL) {
-      break;
-    }
-  }
-  const char response[] =
-      "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nOK";
-  size_t sent = 0;
-  while (sent < sizeof(response) - 1) {
-    ssize_t count = send(client, response + sent, sizeof(response) - 1 - sent, 0);
-    if (count <= 0) {
-      perror("send");
-      close(client);
+  for (int attempt = 0; attempt < 2; attempt++) {
+    int client = accept(listener, NULL, NULL);
+    if (client < 0) {
+      perror("accept");
       close(listener);
       return 1;
     }
-    sent += (size_t)count;
+    char request[4096];
+    size_t length = 0;
+    while (length + 1 < sizeof(request)) {
+      ssize_t received = recv(client, request + length, sizeof(request) - length - 1, 0);
+      if (received <= 0) {
+        break;
+      }
+      length += (size_t)received;
+      request[length] = '\0';
+      if (strstr(request, "\r\n\r\n") != NULL) {
+        break;
+      }
+    }
+    const char *response = attempt == 0
+        ? "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nOK\r\n"
+        : "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nOK";
+    size_t sent = 0;
+    while (sent < strlen(response)) {
+      ssize_t count = send(client, response + sent, strlen(response) - sent, 0);
+      if (count <= 0) {
+        perror("send");
+        close(client);
+        close(listener);
+        return 1;
+      }
+      sent += (size_t)count;
+    }
+    if (attempt == 0) {
+      // A subsequent request can complete only after cancellation closes this
+      // unfinished stream through both the forwarder and the request guard.
+      char trailing;
+      if (recv(client, &trailing, 1, 0) != 0) {
+        fputs("stream cancellation did not close the upstream connection\n", stderr);
+        close(client);
+        close(listener);
+        return 1;
+      }
+    } else {
+      // A complete response must finish forwarding without waiting for peer EOF.
+      sleep(10);
+    }
+    close(client);
   }
-  // Keep the upstream connection open: stdio forwarding must finish at the
-  // complete HTTP response rather than waiting for peer EOF.
-  sleep(10);
-  close(client);
   close(listener);
   return 0;
 }

@@ -138,6 +138,28 @@ describe("shared credential filter", () => {
     expect(isSafeCredentialPlaceholder(value), value).toBe(true);
   });
 
+  it("does not trust the NVIDIA inference environment reference outside its generated route (#13018)", () => {
+    expect(isSafeCredentialPlaceholder("${NVIDIA_INFERENCE_API_KEY}")).toBe(false);
+    expect(stripCredentials({ apiKey: "${NVIDIA_INFERENCE_API_KEY}" })).toEqual({
+      apiKey: CREDENTIAL_PLACEHOLDER,
+    });
+    expect(stripCredentials({ other: "${NVIDIA_INFERENCE_API_KEY}" })).toEqual({
+      other: CREDENTIAL_PLACEHOLDER,
+    });
+  });
+
+  it.each([
+    "${NVIDIA_INFERENCE_API_KEY}-extra",
+    "${OTHER_API_KEY}",
+    "Bearer ${NVIDIA_INFERENCE_API_KEY}",
+    "nvapi-real-key-material",
+  ])("strips a noncanonical NVIDIA inference reference %s (#13018)", (value) => {
+    expect(isSafeCredentialPlaceholder(value)).toBe(false);
+    expect(stripCredentials({ apiKey: value })).toEqual({
+      apiKey: CREDENTIAL_PLACEHOLDER,
+    });
+  });
+
   it("preserves a value that has no secret shape (#8291)", () => {
     expect(valueLooksLikeSecret("keep-me")).toBe(false);
     expect(stripCredentials({ model: "unused" })).toEqual({ model: "unused" });

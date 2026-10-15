@@ -282,6 +282,17 @@ describe("protected managed-image runtime contract", () => {
     }
   });
 
+  it("binds OpenClaw local inference output to the guarded server limit", () => {
+    const route = resolveManagedImageLocalInferenceRoute("llama-cpp");
+    const openclaw = managedStartupE2eProfile("openclaw", false, true, true);
+    const bounded = withManagedImageLocalInferenceProfile(openclaw, route, "nano", 4096);
+    expect(validateManagedStartupProfile(bounded).tuning.maxTokens).toBe(4096);
+    expect(openclaw.tuning.maxTokens).toBe(8192);
+    expect(() => withManagedImageLocalInferenceProfile(openclaw, route, "nano", 0)).toThrow(
+      /output token limit/u,
+    );
+  });
+
   it.each([
     { separateLogs: false, intervals: [120000, 1800000] },
     { separateLogs: false, intervals: [1800000, 120000] },
@@ -494,6 +505,22 @@ describe("protected managed-image runtime contract", () => {
       removeManagedImageGatewayStateIfSafe(stateDir, { failed: [], ownershipFailures: [] }, 0),
     ).toBe(true);
     expect(fs.existsSync(stateDir)).toBe(false);
+  });
+
+  it("retains scoped recovery state when another resource cleanup failed", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-state-retain-"));
+    const marker = path.join(stateDir, "qualification-owner.json");
+    fs.writeFileSync(marker, "owned");
+    try {
+      expect(
+        removeManagedImageGatewayStateIfSafe(stateDir, { failed: [], ownershipFailures: [] }, 0, [
+          "volume removal failed",
+        ]),
+      ).toBe(false);
+      expect(fs.readFileSync(marker, "utf8")).toBe("owned");
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 
   it("accepts an exact retained OpenShell sandbox name", () => {

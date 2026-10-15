@@ -6,6 +6,7 @@
 
 import json
 from pathlib import Path
+import selectors
 import signal
 import subprocess
 import sys
@@ -107,6 +108,45 @@ def require_response(status: int, output: bytes, error: bytes, expected: bytes) 
         )
 
 
+def cancel_forward(container: str) -> None:
+    process = subprocess.Popen(
+        ("docker", "exec", "-i", container, GUARD, "--stdio-forward", "--listen-port",
+         str(LISTEN_PORT), "--forward-timeout-seconds", "60"),
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    try:
+        assert process.stdin is not None and process.stdout is not None
+        process.stdin.write((
+            "GET /v1/models HTTP/1.1\r\nHost: guard\r\n"
+            f"Authorization: Bearer {TEST_KEY}\r\n\r\n"
+        ).encode("ascii"))
+        process.stdin.flush()
+        output = b""
+        deadline = time.monotonic() + 5
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while not output.endswith(b"2\r\nOK\r\n"):
+                if not selector.select(max(0, deadline - time.monotonic())):
+                    raise RuntimeError("guard stream did not start before cancellation")
+                chunk = process.stdout.read1(4096)
+                if not chunk or len(output) + len(chunk) > 8192:
+                    raise RuntimeError("guard stream ended or exceeded its fixture bound")
+                output += chunk
+        if not output.startswith(b"HTTP/1.1 200 "):
+            raise RuntimeError("guard did not authorize the cancellation probe")
+        process.stdin.close()
+        # EOF must terminate the remote command before either serving deadline.
+        if process.wait(timeout=3) != 0:
+            raise RuntimeError("remote forwarder did not confirm cancellation")
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
+
+
 def prove(image: str, directory: Path) -> None:
     global _cancelled_signal, _cleanup_in_progress
     upstream = directory / "llama-server"
@@ -134,7 +174,7 @@ def prove(image: str, directory: Path) -> None:
             "--listen-host", "0.0.0.0", "--listen-port", str(LISTEN_PORT),
             "--upstream-host", "127.0.0.1", "--upstream-port", str(UPSTREAM_PORT),
             "--max-request-body-bytes", "1024", "--max-request-header-bytes", "8192",
-            "--max-output-tokens", "16", "--request-timeout-seconds", "5",
+            "--max-output-tokens", "16", "--request-timeout-seconds", "30",
             "--shutdown-timeout-seconds", "5", "--",
             "/usr/local/bin/llama-server", "--host", "127.0.0.1", "--port", str(UPSTREAM_PORT),
             "--api-key-file", "/run/secrets/llama-cpp-api-key", "--n-predict", "16",
@@ -159,11 +199,12 @@ def prove(image: str, directory: Path) -> None:
             print(f"guard listener unavailable on startup attempt {attempt}", flush=True)
             time.sleep(0.1)
 
+        cancel_forward(container)
         status, output, error = forward(container, TEST_KEY)
         require_response(status, output, error, b"200")
         if not output.endswith(b"\r\n\r\nOK"):
             raise RuntimeError(f"guard did not forward the complete upstream body: {output[-100:]!r}")
-        print(f"Image {image!r}: internal-only Docker exec, bearer 401/200, open-stdin exit passed")
+        print(f"Image {image!r}: internal-only Docker exec, bearer 401/200, cancellation, recovery, open-stdin exit passed")
     except Exception:
         try:
             print(docker("logs", container)[-1200:], file=sys.stderr)
