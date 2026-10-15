@@ -115,6 +115,23 @@ pub(super) fn runtime_bindings(
     }
     Ok(expected)
 }
+/// The saved bindings that belong to the runtime: everything but OpenShell and
+/// Fabric objects, which share the deployment's state.
+pub(super) fn runtime_saved(
+    record: &Record,
+    bindings: &BTreeMap<String, StateBinding>,
+) -> Result<BTreeMap<String, StateBinding>, Error> {
+    let objects: BTreeSet<String> = compile::targets(&record.document, &record.generations)?
+        .into_iter()
+        .map(|target| target.address)
+        .collect();
+    Ok(bindings
+        .iter()
+        .filter(|(address, _)| !objects.contains(*address) && !plan::reconstructible(address))
+        .map(|(address, binding)| (address.clone(), binding.clone()))
+        .collect())
+}
+
 pub(super) fn preserve_docker_models(document: &Document, plan: &Plan) -> Result<(), Error> {
     use crate::services::ServiceUpdatePolicy;
 

@@ -453,3 +453,25 @@ fn before(binding: &StateBinding) -> Value {
     before["running"] = json!("true");
     before
 }
+
+#[test]
+fn runtime_checks_ignore_object_bindings_in_the_shared_state() {
+    let (document, _) = kubernetes_context();
+    let record = Record::new(document).unwrap();
+    let targets = compile::runtime_targets(&record.document, &record.generations).unwrap();
+    let mut bindings = kubernetes_bindings(&targets);
+    bindings.insert(
+        "openshell_workspace.deployment".into(),
+        StateBinding {
+            id: "workspace".into(),
+            ..Default::default()
+        },
+    );
+    assert!(
+        runtime_bindings(&targets, &bindings).is_err(),
+        "an object binding is not part of the runtime"
+    );
+    let runtime = runtime_saved(&record, &bindings).unwrap();
+    assert!(!runtime.contains_key("openshell_workspace.deployment"));
+    runtime_bindings(&targets, &runtime).unwrap();
+}
