@@ -13,8 +13,9 @@ Existing running installations are not automatically migrated.
 The preceding inactive Cobalt work is recorded in issue #12492.
 The [October 15 scope decision](https://github.com/NVIDIA/NemoClaw/issues/12492#issuecomment-6197737817)
 accepts publication of this activation candidate, with qualification and independent activation review still required.
-The subsequent maintainer request authorizes preparing the single-Station default change, owned by Prekshi Vyas.
-That request does not establish passing qualification or independent merge approval.
+The [single-Station default Accept decision](https://github.com/NVIDIA/NemoClaw/issues/12492#issuecomment-6204669353)
+authorizes this default change, owned by Prekshi Vyas, while retaining Ultra as an option and for paired Stations.
+That decision does not establish passing qualification or independent merge approval.
 
 The public, ungated HF artifact is pinned to launch revision `82d93699acd3be9e4617c53360fe5b3f5dbeb1b3`.
 Its manifest lists 114 files (75,063,319,581 bytes). All 88 weight hashes and all model code, tokenizer, and configuration files
