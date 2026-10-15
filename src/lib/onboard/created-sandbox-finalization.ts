@@ -620,6 +620,7 @@ type OnboardCreateIntent = {
   readonly observabilityEnabled?: boolean;
 } | null;
 type OnboardResolvedCreateIntent = {
+  readonly nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   readonly nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
   readonly nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   readonly policy: {
@@ -774,8 +775,9 @@ export function createOnboardCreatedSandboxCompletion(
         provider,
         model,
         preferredInferenceApi,
-        endpointUrl,
+        endpointUrl: resolvedCreateIntent.nativeLocalProviderAttachment?.endpointUrl ?? endpointUrl,
         nativeProvider: Boolean(
+          resolvedCreateIntent.nativeLocalProviderAttachment ||
           resolvedCreateIntent.nativeHostedProviderAttachment ||
           resolvedCreateIntent.nativeNvidiaProviderAttachment,
         ),
