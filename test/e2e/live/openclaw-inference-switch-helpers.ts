@@ -213,23 +213,25 @@ export async function readOpenClawConfig(
     timeoutMs: number;
     artifactName: string;
     nativeNvidia?: boolean;
+    nativeAnthropic?: boolean;
   },
 ): Promise<ShellProbeResult> {
   return sandbox.exec(
     sandboxName,
-    options.nativeNvidia
+    options.nativeNvidia || options.nativeAnthropic
       ? [
           "node",
           "-e",
           [
             'const fs = require("node:fs");',
             'const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));',
-            "const provider = config.models?.providers?.inference;",
+            `const provider = config.models?.providers?.${options.nativeAnthropic ? "anthropic" : "inference"};`,
             // A fresh exec receives the newly attached provider handle. Keep
             // both values inside the sandbox because ShellProbe redacts the
             // credential-shaped config field before returning stdout.
-            "const handle = process.env.NVIDIA_INFERENCE_API_KEY;",
-            'require("node:assert/strict").ok(/^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY$/.test(handle ?? "") && provider?.apiKey === handle, "native credential reference mismatch");',
+            `const credentialEnv = ${JSON.stringify(options.nativeAnthropic ? "COMPATIBLE_ANTHROPIC_API_KEY" : "NVIDIA_INFERENCE_API_KEY")};`,
+            "const handle = process.env[credentialEnv];",
+            'require("node:assert/strict").ok(new RegExp("^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + credentialEnv + "$").test(handle ?? "") && provider?.apiKey === handle, "native credential reference mismatch");',
             "delete provider.apiKey;",
             "process.stdout.write(JSON.stringify(config));",
           ].join(" "),

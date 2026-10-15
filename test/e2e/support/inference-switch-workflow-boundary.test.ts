@@ -48,6 +48,19 @@ describe("inference-switch catalogue boundary", () => {
     },
   );
 
+  it("selects native Anthropic through the existing trusted selector (#13195)", () => {
+    expect(catalogueTarget("openclaw-compatible-anthropic-inference-switch")).toMatchObject({
+      targetId: "openclaw-inference-switch",
+      profile: "standard",
+      testFile: "test/e2e/live/openclaw-inference-switch.test.ts",
+      shard: "anthropic",
+      environment: {
+        NEMOCLAW_SWITCH_NATIVE_CUSTOM: "1",
+        NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
+      },
+    });
+  });
+
   it("keeps canonical compatible Anthropic switch targets for both agents", () => {
     expect(catalogueTarget("openclaw-compatible-anthropic-inference-switch")).toMatchObject({
       targetId: "openclaw-inference-switch",

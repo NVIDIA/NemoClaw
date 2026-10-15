@@ -9,9 +9,15 @@ export async function startQualificationLoopbackRelay(
   targetPort: number,
   timeoutSeconds: number,
   hostPort = 0,
+  listenAddress = "127.0.0.1",
 ): Promise<{ port: number; close: () => Promise<void> }> {
   if (net.isIP(address) !== 4)
     throw new Error("qualification relay requires a container IPv4 address");
+  if (
+    net.isIP(listenAddress) !== 4 ||
+    !/^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/u.test(listenAddress)
+  )
+    throw new Error("qualification relay requires a private or loopback listener IPv4 address");
   const bounds: [string, number, number, number][] = [
     ["request guard port", targetPort, 1, 65535],
     ["relay timeout", timeoutSeconds, 1, 86400],
@@ -21,7 +27,7 @@ export async function startQualificationLoopbackRelay(
     if (!Number.isInteger(value) || value < min || value > max) throw new Error(`invalid ${name}`);
   }
   const worker = new Worker(new URL(import.meta.url), {
-    workerData: { address, targetPort, hostPort, timeoutMs: timeoutSeconds * 1000 },
+    workerData: { address, targetPort, hostPort, listenAddress, timeoutMs: timeoutSeconds * 1000 },
   });
   try {
     const port = await new Promise<number>((resolve, reject) => {
@@ -70,7 +76,7 @@ if (!isMainThread) {
     parent.postMessage({ error: "qualification loopback relay could not listen" });
     server.close();
   });
-  server.listen({ host: "127.0.0.1", port: workerData.hostPort }, () => {
+  server.listen({ host: workerData.listenAddress, port: workerData.hostPort }, () => {
     const address = server.address();
     if (!address || typeof address === "string")
       throw new Error("qualification relay did not bind TCP");

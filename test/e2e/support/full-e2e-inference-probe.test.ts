@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { buildSandboxInferenceChatCommand } from "../fixtures/inference-adapter.ts";
 import os from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
@@ -13,7 +14,6 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 
 import {
   buildFullE2eInferenceRequest,
-  buildFullE2eSandboxInferenceCommand,
   readFullE2eInferenceRoute,
   FULL_E2E_INFERENCE_EVIDENCE_LIMIT_BYTES,
   type FullE2eInferenceAttemptInput,
@@ -159,7 +159,7 @@ describe("full E2E sandbox inference probe", () => {
           mode: 0o700,
         });
         const body = JSON.stringify({ prompt: 'literal $(exit 99) "quote"' });
-        const [command, ...args] = buildFullE2eSandboxInferenceCommand(body, provider, endpointUrl);
+        const [command, ...args] = buildSandboxInferenceChatCommand(body, provider, endpointUrl);
         const handle = `openshell:resolve:env:v3_${credentialEnv}`;
         const env = { PATH: `${directory}:/usr/bin:/bin`, [credentialEnv]: handle };
         const result = execFileSync(command, args, { env, encoding: "utf8" });
@@ -195,7 +195,7 @@ describe("full E2E sandbox inference probe", () => {
             mode: 0o700,
           },
         );
-        const [, ...args] = buildFullE2eSandboxInferenceCommand("{}", "nvidia-prod");
+        const [, ...args] = buildSandboxInferenceChatCommand("{}", "nvidia-prod");
         const denied = spawnSync("/bin/bash", args, {
           env: {
             PATH: `${directory}:/usr/bin:/bin`,
@@ -215,7 +215,7 @@ describe("full E2E sandbox inference probe", () => {
   );
 
   it("retains the credential-free local probe for a compatible provider", () => {
-    expect(buildFullE2eSandboxInferenceCommand("{}", "compatible-endpoint")).toEqual([
+    expect(buildSandboxInferenceChatCommand("{}", "compatible-endpoint")).toEqual([
       "curl",
       "-fsS",
       "--max-time",

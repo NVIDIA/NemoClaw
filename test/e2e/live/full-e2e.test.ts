@@ -3,6 +3,7 @@
 
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
+import { buildSandboxInferenceChatCommand } from "../fixtures/inference-adapter.ts";
 import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
@@ -47,7 +48,6 @@ import {
 } from "../fixtures/openclaw-agent-output.ts";
 import { buildOpenClawFirstTurnLatencyEvidence } from "./agent-turn-latency-helpers.ts";
 import {
-  buildFullE2eSandboxInferenceCommand,
   readFullE2eInferenceRoute,
   FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
   fullE2eInferenceProbeEvidence,
@@ -676,6 +676,7 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
   ).toBe(true);
 
   await runOpenClawLaunchReadinessLeaseTurns({
+    qualifyGroupWritableHome: process.env.GITHUB_ACTIONS === "true" && !USE_PREINSTALLED_LAUNCHABLE,
     artifactName: "phase-4-openclaw-launch-turn",
     cliCommand: USE_PREINSTALLED_LAUNCHABLE ? "nemoclaw" : process.execPath,
     ...(!USE_PREINSTALLED_LAUNCHABLE ? { cliEntrypoint: CLI_ENTRYPOINT } : {}),
@@ -1254,7 +1255,7 @@ test(
         run: (availabilityAttempt) =>
           sandbox.exec(
             SANDBOX_NAME,
-            buildFullE2eSandboxInferenceCommand(
+            buildSandboxInferenceChatCommand(
               attempt.requestBody,
               hosted.providerName,
               nativeEndpointUrl,
@@ -1396,7 +1397,7 @@ test(
               run: (availabilityAttempt) =>
                 sandbox.exec(
                   SANDBOX_NAME,
-                  buildFullE2eSandboxInferenceCommand(
+                  buildSandboxInferenceChatCommand(
                     attempt.requestBody,
                     hosted.providerName,
                     nativeEndpointUrl,

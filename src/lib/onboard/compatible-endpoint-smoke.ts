@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { StdioOptions } from "node:child_process";
+import type { SandboxEntry } from "../state/registry";
+import { recordedNativeProviderAttachment } from "../inference/native-provider/recorded-selection";
+import { fixedNativeProviderForAttachment } from "../inference/native-provider/fixed";
+import { nativeHostedAgentConfig } from "../inference/native-provider/agent-config";
+import { nativeProviderLifecycle } from "../inference/native-provider";
+import { probeSandboxInferenceInvocation } from "../actions/sandbox/inference-invocation-probe";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { shellQuote } from "../core/shell-quote";
@@ -110,6 +116,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
   endpointUrl?: string | null;
   credentialEnv?: string | null;
   messagingChannels?: string[] | null;
+  registeredSelection?: SandboxEntry | null;
   agent?: CompatibleEndpointSmokeAgent;
   /** Force the provider-neutral inference.local proof for any supported agent. */
   forceCanonicalRoute?: boolean;
@@ -151,6 +158,73 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
       };
     },
   });
+  const selection = options.registeredSelection;
+  const native =
+    selection && !options.forceCanonicalRoute
+      ? recordedNativeProviderAttachment({
+          ...selection,
+          provider: options.provider,
+          endpointUrl: options.endpointUrl ?? selection.endpointUrl,
+          credentialEnv: options.credentialEnv ?? selection.credentialEnv,
+        })
+      : undefined;
+  if (native && selection) {
+    if (selection.model !== options.model) {
+      throw new Error("Compatible endpoint verification does not match the registered model.");
+    }
+    const nativeTarget = selection.gatewayName
+      ? { kind: "named" as const, gatewayName: selection.gatewayName }
+      : target;
+    await nativeProviderLifecycle(
+      fixedNativeProviderForAttachment(native),
+    ).verifyNativeProviderAttachment({
+      adapter,
+      target: nativeTarget,
+      sandboxName: options.sandboxName,
+      expected: native,
+    });
+    const configCheck = buildCompatibleEndpointConfigSmokeScript(options.model, {
+      baseUrl: native.endpointUrl!,
+      credentialEnv: nativeHostedAgentConfig(options.provider, native.endpointUrl!)!.credentialEnv,
+      api: native.custom?.api,
+    });
+    const result = await probeSandboxInferenceInvocation(
+      {
+        sandboxName: options.sandboxName,
+        provider: options.provider,
+        model: options.model,
+        preferredInferenceApi: native.custom?.api ?? selection.preferredInferenceApi ?? null,
+        nativeProvider: true,
+        nativeEndpointUrl: native.endpointUrl,
+      },
+      {
+        execute: async (_name, command, timeout) => {
+          const completed = await options.sandboxCommandExecutor.runBuffered({
+            sandboxName: options.sandboxName,
+            target: nativeTarget,
+            command: ["sh", "-c", `set -eu\n{\n${configCheck}\n} >/dev/null\n${command}`],
+            timeoutMilliseconds: timeout,
+          });
+          return completed.outcome.kind === "completed"
+            ? {
+                status: completed.outcome.exitCode,
+                stdout: completed.stdout,
+                stderr: completed.stderr,
+              }
+            : null;
+        },
+      },
+    );
+    if (!result.ok) {
+      console.error(`  Compatible endpoint sandbox smoke check failed: ${result.detail}.`);
+      fail(1);
+    }
+    options.beforeSuccess?.();
+    console.log(
+      "  ✓ Compatible endpoint responds through its attached native provider inside the sandbox",
+    );
+    return;
+  }
   const providerResult = await adapter.getProvider({
     target,
     providerName: options.provider,
@@ -224,6 +298,7 @@ export function createCompatibleEndpointSmoke(
   ) => ReturnType<CompatibleEndpointSmokeRun>,
   sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
   redact: (value: string) => string,
+  getSandbox: (name: string) => SandboxEntry | null | undefined,
 ) {
   type SmokeOptions = Parameters<typeof verifyCompatibleEndpointSandboxSmoke>[0];
   return {
@@ -233,6 +308,7 @@ export function createCompatibleEndpointSmoke(
     ): Promise<void> {
       return verifyCompatibleEndpointSandboxSmoke({
         ...options,
+        registeredSelection: getSandbox(options.sandboxName),
         runOpenshell: run,
         sandboxCommandExecutor,
         redact,
@@ -250,6 +326,7 @@ export function createCompatibleEndpointSmoke(
       const { environment, gatewayName, ...selection } = options;
       return verifyCompatibleEndpointSandboxSmoke({
         ...selection,
+        registeredSelection: getSandbox(selection.sandboxName),
         onFailure: (exitCode) => {
           throw new Error(`Compatible endpoint verification failed (exit ${exitCode}).`);
         },
@@ -266,6 +343,63 @@ export function createCompatibleEndpointSmoke(
       });
     },
   };
+}
+
+/** Check the agent configuration before sending a request through the selected route. */
+export function buildCompatibleEndpointConfigSmokeScript(
+  model: string,
+  options: { configPath?: string; baseUrl?: string; credentialEnv?: string; api?: string } = {},
+): string {
+  return `python3 - ${shellQuote(options.configPath ?? "/sandbox/.openclaw/openclaw.json")} ${shellQuote(model)} ${shellQuote(options.baseUrl ?? INFERENCE_ROUTE_URL)} ${shellQuote(options.credentialEnv ?? "")} ${shellQuote(options.api ?? "")} <<'PYCFG'
+import json
+import sys
+
+path = sys.argv[1]
+model = sys.argv[2]
+base_url = sys.argv[3]
+credential_env = sys.argv[4]
+api_key = "unused"
+if credential_env:
+    import os
+    import re
+    api_key = os.environ.get(credential_env, "")
+    if not re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + re.escape(credential_env), api_key):
+        print("native inference credential reference is missing or invalid", file=sys.stderr)
+        sys.exit(1)
+
+def die(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+except Exception as exc:
+    die("could not read openclaw.json: %s" % exc)
+
+providers = cfg.get("models", {}).get("providers", {})
+if not isinstance(providers, dict):
+    die("openclaw.json models.providers is not an object")
+if "deepinfra" in providers:
+    die("openclaw.json contains a direct deepinfra provider; expected managed inference provider")
+
+provider = providers.get("${MANAGED_PROVIDER_ID}")
+if not isinstance(provider, dict):
+    die("openclaw.json missing models.providers.${MANAGED_PROVIDER_ID}")
+if provider.get("baseUrl") != base_url:
+    die("models.providers.${MANAGED_PROVIDER_ID}.baseUrl does not match the selected route")
+if sys.argv[5] and provider.get("api") != sys.argv[5]:
+    die("models.providers.${MANAGED_PROVIDER_ID}.api does not match the selected route")
+if provider.get("apiKey") != api_key:
+    die("models.providers.${MANAGED_PROVIDER_ID}.apiKey must match the selected non-secret placeholder")
+
+primary = cfg.get("agents", {}).get("defaults", {}).get("model", {}).get("primary")
+expected_primary = "${MANAGED_PROVIDER_ID}/" + model
+if primary != expected_primary:
+    die("agents.defaults.model.primary is %r; expected %r" % (primary, expected_primary))
+
+print("OPENCLAW_CONFIG_OK")
+PYCFG`;
 }
 
 /**
@@ -306,44 +440,7 @@ SMOKE_ATTEMPTS=${attempts}
 SMOKE_REQUEST_TIMEOUT_SECONDS=${COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS}
 SMOKE_RETRY_DELAY_SECONDS=${retryDelaySeconds}
 
-python3 - "$CONFIG" "$MODEL" <<'PYCFG'
-import json
-import sys
-
-path = sys.argv[1]
-model = sys.argv[2]
-
-def die(message):
-    print(message, file=sys.stderr)
-    sys.exit(1)
-
-try:
-    with open(path, "r", encoding="utf-8") as f:
-        cfg = json.load(f)
-except Exception as exc:
-    die("could not read openclaw.json: %s" % exc)
-
-providers = cfg.get("models", {}).get("providers", {})
-if not isinstance(providers, dict):
-    die("openclaw.json models.providers is not an object")
-if "deepinfra" in providers:
-    die("openclaw.json contains a direct deepinfra provider; expected managed inference provider")
-
-provider = providers.get("${MANAGED_PROVIDER_ID}")
-if not isinstance(provider, dict):
-    die("openclaw.json missing models.providers.${MANAGED_PROVIDER_ID}")
-if provider.get("baseUrl") != "${INFERENCE_ROUTE_URL}":
-    die("models.providers.${MANAGED_PROVIDER_ID}.baseUrl is %r; expected ${INFERENCE_ROUTE_URL}" % provider.get("baseUrl"))
-if provider.get("apiKey") != "unused":
-    die("models.providers.${MANAGED_PROVIDER_ID}.apiKey must remain the non-secret placeholder 'unused'")
-
-primary = cfg.get("agents", {}).get("defaults", {}).get("model", {}).get("primary")
-expected_primary = "${MANAGED_PROVIDER_ID}/" + model
-if primary != expected_primary:
-    die("agents.defaults.model.primary is %r; expected %r" % (primary, expected_primary))
-
-print("OPENCLAW_CONFIG_OK")
-PYCFG
+${buildCompatibleEndpointConfigSmokeScript(model, { configPath })}
 
 payload_file="$(mktemp)"
 response_file="$(mktemp)"

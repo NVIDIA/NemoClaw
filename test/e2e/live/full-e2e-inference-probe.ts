@@ -13,13 +13,7 @@ import {
 
 import { runBoundedRetry, type RetryEvidence } from "../../../tools/e2e/retry-evidence.mts";
 
-import { nativeHostedAuthHeaderScript } from "../../../src/lib/actions/sandbox/inference-invocation-probe.ts";
 import { resolveMaxTokensField } from "../../../src/lib/inference/max-tokens-field.ts";
-import {
-  NATIVE_NVIDIA_AUTH_HEADER_SCRIPT,
-  NVIDIA_HOSTED_LOGICAL_PROVIDER,
-  NVIDIA_HOSTED_NATIVE_ENDPOINT,
-} from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { containsAnswer, containsToolCallStructure } from "../../helpers/e2e-answer-assertions.ts";
 
 const ARITHMETIC_PROMPT = "What is 6 multiplied by 7? Reply with only the integer, no extra words.";
@@ -34,40 +28,6 @@ const EVIDENCE_MODEL_LIMIT_BYTES = 512;
 const EVIDENCE_FINISH_REASON_LIMIT_BYTES = 128;
 const TRUNCATION_SUFFIX = "...[truncated]";
 
-export function buildFullE2eSandboxInferenceCommand(
-  requestBody: string,
-  logicalProvider: string,
-  endpointUrl?: string,
-): [string, ...string[]] {
-  const nativeCustom = logicalProvider === "compatible-endpoint" && endpointUrl;
-  if (logicalProvider === NVIDIA_HOSTED_LOGICAL_PROVIDER || nativeCustom) {
-    const auth = nativeCustom
-      ? nativeHostedAuthHeaderScript({
-          credentialEnv: "COMPATIBLE_API_KEY",
-          api: "openai-completions",
-        })
-      : NATIVE_NVIDIA_AUTH_HEADER_SCRIPT;
-    return [
-      "bash",
-      "-c",
-      `${auth}; exec curl -fsS --max-time 90 "$1" -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-raw "$2"`,
-      "full-e2e-native-inference",
-      `${(nativeCustom ? endpointUrl : NVIDIA_HOSTED_NATIVE_ENDPOINT).replace(/\/+$/u, "")}/chat/completions`,
-      requestBody,
-    ];
-  }
-  return [
-    "curl",
-    "-fsS",
-    "--max-time",
-    "90",
-    "https://inference.local/v1/chat/completions",
-    "-H",
-    "Content-Type: application/json",
-    "--data-raw",
-    requestBody,
-  ];
-}
 const USAGE_TOTAL_FIELDS = ["prompt_tokens", "completion_tokens", "total_tokens"] as const;
 const USAGE_DETAIL_FIELDS = [
   "audio_tokens",

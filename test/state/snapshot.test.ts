@@ -673,7 +673,20 @@ describe("complete native home persistence", () => {
         ["unknown.txt", "undeclared"],
         ["workspace/project.txt", "workspace"],
         ["work/user-data.txt", "credential-rotation-workspace"],
-        [".openclaw/openclaw.json", '{"native":true}'],
+        [
+          ".openclaw/openclaw.json",
+          JSON.stringify({
+            native: true,
+            models: {
+              providers: {
+                inference: {
+                  baseUrl: "https://integrate.api.nvidia.com/v1",
+                  apiKey: "${NVIDIA_INFERENCE_API_KEY}",
+                },
+              },
+            },
+          }),
+        ],
         [".local/share/packages/tool.txt", "package"],
         [".openclaw/plugins/custom/index.js", "plugin"],
         [".openclaw/hooks/preflight.sh", "hook"],

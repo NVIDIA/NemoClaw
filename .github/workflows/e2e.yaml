@@ -52,6 +52,11 @@ on:
         required: false
         default: false
         type: boolean
+      allow_dgx_spark_runner_queue:
+        description: "Allow an explicit llama-cpp-dgx-spark-qualification dispatch to queue the protected DGX Spark runner and approval environment."
+        required: false
+        default: false
+        type: boolean
       pr_number:
         description: Optional current PR number for manual exact-revision E2E.
         required: false
@@ -99,8 +104,8 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
-  cancel-in-progress: ${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
+  group: e2e-${{ github.ref }}-${{ inputs.jobs == 'llama-cpp-dgx-spark-qualification' && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
+  cancel-in-progress: ${{ inputs.checkout_sha != '' && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
 
 env:
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
@@ -483,6 +488,7 @@ jobs:
         env:
           ACTOR: ${{ github.actor }}
           ALLOW_JETSON_DISPATCH: ${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}
+          ALLOW_DGX_SPARK_RUNNER_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
           ALLOW_JETSON_RUNNER_QUEUE: "false"
           BASE_SHA: ${{ inputs.checkout_sha != '' && inputs.base_sha || github.sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
@@ -516,6 +522,7 @@ jobs:
             --arg workflowRunId "$RUN_ID" \
             --arg workflowSha "$WORKFLOW_SHA" \
             --argjson allowJetsonDispatch "$ALLOW_JETSON_DISPATCH" \
+            --argjson allowDgxSparkRunnerQueue "$ALLOW_DGX_SPARK_RUNNER_QUEUE" \
             --argjson allowJetsonRunnerQueue "$ALLOW_JETSON_RUNNER_QUEUE" \
             --argjson includeStagingBrevLaunchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
             --argjson workflowRunAttempt "$RUN_ATTEMPT" \
@@ -533,7 +540,7 @@ jobs:
               eventName: $eventName,
               jobs: $jobs,
               targets: $targets,
-              allowDgxSparkRunnerQueue: false,
+              allowDgxSparkRunnerQueue: $allowDgxSparkRunnerQueue,
               allowJetsonDispatch: $allowJetsonDispatch,
               allowJetsonRunnerQueue: $allowJetsonRunnerQueue,
               includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
@@ -674,6 +681,26 @@ jobs:
           NEMOCLAW_E2E_CREDENTIALS_ALLOWED: ${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}
         run: |
           set -euo pipefail
+          if [[ "${JOBS:-}" == "llama-cpp-dgx-spark-qualification" && -z "${TARGETS:-}" ]]; then
+            {
+              echo 'matrix=[]'
+              echo 'test_matrix=[]'
+              echo 'catalogue_standard_matrix=[]'
+              echo 'catalogue_nvidia_api_matrix=[]'
+              echo 'catalogue_nvidia_inference_matrix=[]'
+              echo 'catalogue_hosted_inference_matrix=[]'
+              echo 'catalogue_github_read_matrix=[]'
+              echo 'gateway_runtimes=["docker"]'
+              echo 'runtime_providers_by_job={"llama-cpp-dgx-spark-qualification":["docker"]}'
+              echo 'selected_jobs=["llama-cpp-dgx-spark-qualification"]'
+              echo 'selected_workflow_jobs=["llama-cpp-dgx-spark-qualification"]'
+              echo 'hermes_selected=false'
+              echo 'explicit_only_jobs=llama-cpp-dgx-spark-qualification'
+              echo 'release_required_jobs=[]'
+              echo 'managed_image_required=false'
+            } >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ "${JOBS:-}" == "native-runtime-qualification-producer" && -z "${TARGETS:-}" ]]; then
             {
               echo 'matrix=[]'
@@ -723,7 +750,7 @@ jobs:
 
       - name: Check out E2E candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
+        if: ${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
@@ -731,7 +758,7 @@ jobs:
           persist-credentials: false
 
       - name: Validate manual PR checkout
-        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        if: ${{ inputs.checkout_sha != '' && ((inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '') }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
@@ -774,7 +801,7 @@ jobs:
 
       - id: e2e_credentials
         name: Authorize E2E credentials
-        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        if: ${{ inputs.checkout_sha != '' && ((inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '') }}
         env:
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
@@ -802,7 +829,7 @@ jobs:
           printf 'allowed=%s\n' "$credentials_allowed" >> "$GITHUB_OUTPUT"
 
       - name: Check out trusted compiled artifact action
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
+        if: ${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ github.repository }}
@@ -825,12 +852,12 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Prepare E2E workspace
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
+        if: ${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}
         uses: ./.trusted-ci-actions/.github/actions/ci-compile-artifacts
 
       - id: package_cli_artifact
         name: Package exact-commit CLI
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
+        if: ${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}
         env:
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
@@ -842,7 +869,7 @@ jobs:
 
       - id: upload_cli_artifact
         name: Publish content-addressed CLI artifact
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
+        if: ${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.package_cli_artifact.outputs.artifact_name }}
@@ -853,7 +880,7 @@ jobs:
 
       - id: record_cli_artifact
         name: Record CLI artifact provenance
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
+        if: ${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}
         env:
           ARTIFACT_DIGEST: ${{ steps.upload_cli_artifact.outputs.artifact-digest }}
           ARTIFACT_ID: ${{ steps.upload_cli_artifact.outputs.artifact-id }}
@@ -902,6 +929,169 @@ jobs:
             echo "- GitHub archive digest: \`${ARTIFACT_DIGEST}\`"
             echo "- Payload digest: \`${PAYLOAD_SHA256}\`"
           } >>"$GITHUB_STEP_SUMMARY"
+
+  llama-cpp-dgx-spark-plan:
+    name: Authenticate and compile the DGX Spark qualification plan
+    needs: generate-matrix
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.jobs == 'llama-cpp-dgx-spark-qualification' && inputs.targets == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      runner: ${{ steps.plan.outputs.runner }}
+      environment: ${{ steps.plan.outputs.environment }}
+      plan: ${{ steps.plan.outputs.plan }}
+      plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
+      model_host_path: ${{ steps.plan.outputs.model_host_path }}
+    steps:
+      - name: Check out trusted Spark plan compiler
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Check out inert Spark candidate data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.checkout_sha }}
+          path: .candidate-source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Authenticate Spark qualification dispatch
+        env:
+          ALLOW_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$ALLOW_QUEUE" == true && "$CHECKOUT_REPOSITORY" == NVIDIA/NemoClaw ]]
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ && "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" && "$CHECKOUT_SHA" != "$BASE_SHA" ]]
+          [[ "$(git -C .candidate-source rev-parse HEAD)" == "$CHECKOUT_SHA" ]]
+          git -C .candidate-source merge-base --is-ancestor "$BASE_SHA" "$CHECKOUT_SHA"
+          pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          jq -e --arg head "$CHECKOUT_SHA" --arg base "$BASE_SHA" '
+            .state == "open" and .head.repo.full_name == "NVIDIA/NemoClaw" and
+            .head.sha == $head and .base.repo.full_name == "NVIDIA/NemoClaw" and
+            .base.ref == "main" and .base.sha == $base
+          ' <<< "$pull" >/dev/null
+          # Candidate executable build inputs must match the trusted image source.
+          git -C .candidate-source diff --exit-code "$WORKFLOW_SHA" "$CHECKOUT_SHA" -- \
+            managed-inference/images/llama-cpp ':!managed-inference/images/llama-cpp/image.yaml'
+      - name: Set up Node for Spark plan compilation
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.1"
+      - name: Install trusted Spark compiler dependencies
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+      - name: Install trusted Spark plan dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - id: plan
+        name: Export the digest-bound Spark plan
+        run: node --no-warnings scripts/checks/export-llama-cpp-dgx-spark-qualification-plan.mts --source-root "$GITHUB_WORKSPACE/.candidate-source"
+
+  llama-cpp-dgx-spark-qualification:
+    name: Protected llama.cpp DGX Spark qualification
+    needs: llama-cpp-dgx-spark-plan
+    if: ${{ needs.llama-cpp-dgx-spark-plan.result == 'success' }}
+    runs-on: ${{ needs.llama-cpp-dgx-spark-plan.outputs.runner }}
+    environment: ${{ needs.llama-cpp-dgx-spark-plan.outputs.environment }}
+    timeout-minutes: 180
+    concurrency:
+      group: llama-cpp-dgx-spark-protected-runner
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      BASE_SHA: ${{ inputs.base_sha }}
+      CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+      WORKFLOW_SHA: ${{ github.workflow_sha }}
+      QUALIFICATION_PLAN: ${{ needs.llama-cpp-dgx-spark-plan.outputs.plan }}
+      PLAN_SHA256: ${{ needs.llama-cpp-dgx-spark-plan.outputs.plan_sha256 }}
+      MODEL_HOST_PATH: ${{ needs.llama-cpp-dgx-spark-plan.outputs.model_host_path }}
+      E2E_TARGET_ID: llama-cpp-dgx-spark-qualification
+      E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_GATEWAY_RUNTIMES: docker
+      E2E_AGENT_RUNTIME: openclaw
+      E2E_OBSERVABLE_OUTCOME: "Exact candidate plan produces GPU protocol agent and cleanup evidence"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Protected physical DGX Spark GB10; verified local GGUF"
+    steps:
+      - name: Check out trusted Spark qualification harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Check out inert Spark candidate data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.checkout_sha }}
+          path: .candidate-source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+      - name: Set up the isolated Spark registry builder
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver-opts: network=host
+          buildkitd-config-inline: |
+            [registry."localhost:5000"]
+              http = true
+      - id: qualification
+        name: Run the trusted Spark qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$GITHUB_WORKSPACE/e2e-artifacts/live/llama-cpp-dgx-spark-qualification"
+          install -d -m 0700 "$artifact_dir"
+          printf '%s' "$QUALIFICATION_PLAN" > "$artifact_dir/plan.json"
+          printf '%s\n' "$PLAN_SHA256" > "$artifact_dir/plan-sha256"
+          node --no-warnings --import tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.cts \
+            --base-sha "$BASE_SHA" --head-sha "$CHECKOUT_SHA" --workflow-sha "$WORKFLOW_SHA" \
+            --candidate-root "$GITHUB_WORKSPACE/.candidate-source" \
+            --model-host-path "$MODEL_HOST_PATH" \
+            --plan "$artifact_dir/plan.json" --plan-sha256 "$PLAN_SHA256" \
+            --output "$artifact_dir/receipt.json" \
+            --registry-name "nemoclaw-llama-cpp-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+      - id: cleanup
+        name: Remove owned Spark qualification resources
+        if: ${{ always() && steps.qualification.outcome != 'skipped' }}
+        shell: bash
+        run: |
+          node --no-warnings --import tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.cts \
+            --cleanup-only --registry-name "nemoclaw-llama-cpp-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+      - id: evidence
+        name: Validate the revision-bound Spark receipt
+        if: ${{ always() && steps.qualification.outcome != 'skipped' }}
+        env:
+          EXECUTION_OUTCOME: ${{ steps.qualification.outcome }}
+          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
+        shell: bash
+        run: |
+          artifact_dir="$GITHUB_WORKSPACE/e2e-artifacts/live/llama-cpp-dgx-spark-qualification"
+          node --no-warnings scripts/checks/validate-llama-cpp-dgx-spark-receipt.mts \
+            --publish "$artifact_dir" "$EXECUTION_OUTCOME" "$CLEANUP_OUTCOME" "$PLAN_SHA256"
+      - name: Upload validated Spark qualification evidence
+        if: ${{ always() && steps.evidence.outcome == 'success' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-llama-cpp-dgx-spark-qualification
+          path: e2e-artifacts/live/llama-cpp-dgx-spark-qualification/published/
 
   native-runtime-qualification-producer-plan:
     needs: generate-matrix
@@ -6338,6 +6528,8 @@ jobs:
       &e2e-result-jobs [
         base-image-publication,
         generate-matrix,
+        llama-cpp-dgx-spark-plan,
+        llama-cpp-dgx-spark-qualification,
         staging-brev-launchable,
         staging-brev-launchable-identity,
         live,
@@ -6365,7 +6557,7 @@ jobs:
         native-runtime-qualification-producer,
         native-runtime-qualification-producer-aggregate,
       ]
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference'))) }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && (contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference') || contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'llama-cpp-dgx-spark-qualification')))) }}
     permissions:
       actions: read
       contents: read

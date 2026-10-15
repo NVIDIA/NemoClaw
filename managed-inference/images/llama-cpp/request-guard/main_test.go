@@ -27,6 +27,15 @@ import (
 	"time"
 )
 
+// Keep the input open while the caller waits for a response, as Docker exec does.
+func openForwardInput(t *testing.T, request string) io.Reader {
+	t.Helper()
+	input, writer := io.Pipe()
+	t.Cleanup(func() { _ = input.Close(); _ = writer.Close() })
+	go func() { _, _ = io.WriteString(writer, request) }()
+	return input
+}
+
 func TestForwardStdioBoundsStalledGuardResponse(t *testing.T) {
 	for name, request := range map[string]string{
 		"guard response": "GET /v1/models HTTP/1.1\r\nHost: guard\r\n\r\n",
@@ -136,7 +145,7 @@ func TestForwardStdioPreservesGuardAuthentication(t *testing.T) {
 			}
 			request += "\r\n"
 			var output bytes.Buffer
-			if err := forwardStdio(strings.NewReader(request), &output, address, 5*time.Second); err != nil {
+			if err := forwardStdio(openForwardInput(t, request), &output, address, 5*time.Second); err != nil {
 				t.Fatalf("forward request: %v", err)
 			}
 			response, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(output.Bytes())), nil)
@@ -196,7 +205,7 @@ func TestForwardStdioFinishesKeepAliveResponse(t *testing.T) {
 	result := make(chan error, 1)
 	var output bytes.Buffer
 	go func() {
-		result <- forwardStdio(strings.NewReader(request), &output, guard.Listener.Addr().String(), 5*time.Second)
+		result <- forwardStdio(openForwardInput(t, request), &output, guard.Listener.Addr().String(), 5*time.Second)
 	}()
 	select {
 	case err := <-result:
@@ -273,7 +282,7 @@ func TestForwardStdioForwardsOnlyOneRequest(t *testing.T) {
 			}()
 			second := "POST /v1/chat/completions HTTP/1.1\r\nHost: guard\r\nContent-Length: 0\r\n\r\n"
 			var output bytes.Buffer
-			if err := forwardStdio(strings.NewReader(scenario.first+second), &output, listener.Addr().String(), 5*time.Second); err != nil {
+			if err := forwardStdio(openForwardInput(t, scenario.first+second), &output, listener.Addr().String(), 5*time.Second); err != nil {
 				t.Fatalf("forward request: %v", err)
 			}
 			if err := <-serverDone; err != nil {
@@ -361,7 +370,7 @@ func TestForwardStdioPreservesInterimContinue(t *testing.T) {
 		serverDone <- writeError
 	}()
 	var output bytes.Buffer
-	if err := forwardStdio(strings.NewReader(request), &output, listener.Addr().String(), 5*time.Second); err != nil {
+	if err := forwardStdio(openForwardInput(t, request), &output, listener.Addr().String(), 5*time.Second); err != nil {
 		t.Fatalf("forward request: %v", err)
 	}
 	if err := <-serverDone; err != nil {
@@ -1206,5 +1215,62 @@ func TestGuardAuthenticatesPublishedUpstream(t *testing.T) {
 				t.Fatalf("status/calls = %d/%d, want %d/%d", response.StatusCode, calls.Load(), scenario.status, scenario.calls)
 			}
 		})
+	}
+}
+
+func TestForwardStdioCancelsUpstreamWhenInputCloses(t *testing.T) {
+	started, cancelled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	guard, _ := guardedServer(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		_, _ = io.Copy(io.Discard, request.Body)
+		close(started)
+		select {
+		case <-request.Context().Done():
+			close(cancelled)
+		case <-release:
+		}
+	}))
+	defer close(release)
+	input, writer := io.Pipe()
+	defer input.Close()
+	defer writer.Close()
+	result := make(chan error, 1)
+	go func() { result <- forwardStdio(input, io.Discard, guard.Listener.Addr().String(), 5*time.Second) }()
+	body := `{"model":"test","max_tokens":8}`
+	go func() {
+		_, _ = fmt.Fprintf(writer, "POST /v1/chat/completions HTTP/1.1\r\nHost: guard\r\nAuthorization: Bearer opaque-test-value\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream request did not start")
+	}
+	_ = writer.Close()
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("upstream request continued after forwarding input closed")
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("cancelled forwarder did not confirm completion: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("forwarder did not exit after cancellation")
+	}
+}
+
+func TestForwardStdioCancelsIncompleteRequest(t *testing.T) {
+	for _, request := range []string{
+		"POST /v1/chat/completions HTTP/1.1\r\nHost: guard\r\n",
+		"POST /v1/chat/completions HTTP/1.1\r\nHost: guard\r\nAuthorization: Bearer opaque-test-value\r\nContent-Length: 10\r\n\r\n{",
+	} {
+		guard, calls := guardedServer(t, http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
+		if err := forwardStdio(strings.NewReader(request), io.Discard, guard.Listener.Addr().String(), time.Second); err != nil {
+			t.Fatalf("incomplete input did not cancel cleanly: %v", err)
+		}
+		if calls.Load() != 0 {
+			t.Fatal("incomplete input reached the upstream")
+		}
 	}
 }

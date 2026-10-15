@@ -16,6 +16,8 @@ import {
   HERMES_MANAGED_POLICY_SCHEMA_VERSION,
 } from "../../../agents/hermes/config/managed-policy.ts";
 
+import { BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } from "../../../src/lib/inference/bedrock-runtime";
+
 import { HOSTED_NATIVE_PROVIDERS } from "../../../src/lib/inference/native-provider/hosted";
 
 const READER_PATH = path.join(
@@ -101,6 +103,38 @@ describe("Hermes managed policy", () => {
     },
   );
 
+  it.each([
+    ["compatible-endpoint", "https://hosted.example:8443/inference/v1", "COMPATIBLE_API_KEY"],
+    ["compatible-endpoint", "https://integrate.api.nvidia.com/v1", "COMPATIBLE_API_KEY"],
+    ["compatible-endpoint", "http://10.20.30.40:8080/v1", "COMPATIBLE_API_KEY"],
+    [
+      "compatible-anthropic-endpoint",
+      "https://anthropic.example/v1",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+    ],
+    [
+      "compatible-anthropic-endpoint",
+      BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+    ],
+  ])(
+    "loads a generated custom policy for %s at %s (#13195)",
+    (provider, baseUrl, credentialEnv) => {
+      const policy = buildHermesManagedPolicy(
+        { ...SETTINGS, baseUrl, upstreamProvider: provider },
+        {},
+      );
+      expect(policy.config.model?.api_key).toBe(`\${${credentialEnv}}`);
+      const result = loadWithPython(policy);
+      expect(result.status, result.stderr).toBe(0);
+
+      policy.config.model!.api_key = "synthetic-raw-credential";
+      const rejected = loadWithPython(policy);
+      expect(rejected.status).toBe(1);
+      expect(rejected.stderr).not.toContain("synthetic-raw-credential");
+    },
+  );
+
   it("accepts the Hermes credential reference at an authenticated endpoint", () => {
     const policy = buildHermesManagedPolicy(
       {
@@ -121,6 +155,15 @@ describe("Hermes managed policy", () => {
     ["openai-api", "https://api.openai.com:8443/v1", "${OPENAI_API_KEY}"],
     ["openai-api", "https://api.openai.com.example/v1", "${OPENAI_API_KEY}"],
     ["custom", "https://api.openai.com/v1", "${OPENAI_API_KEY}"],
+    ["compatible-endpoint", "https://hosted.example/v1", "${COMPATIBLE_ANTHROPIC_API_KEY}"],
+    ["compatible-anthropic-endpoint", "https://hosted.example/v1", "${COMPATIBLE_API_KEY}"],
+    ["compatible-endpoint", "https://inference.local/v1", "${COMPATIBLE_API_KEY}"],
+    ["compatible-endpoint", "http://localhost/v1", "${COMPATIBLE_API_KEY}"],
+    ["compatible-endpoint", "http://127.0.0.1/v1", "${COMPATIBLE_API_KEY}"],
+    ["compatible-endpoint", "http://[::1]/v1", "${COMPATIBLE_API_KEY}"],
+    ["compatible-endpoint", "https://do-not-echo@hosted.example/v1", "${COMPATIBLE_API_KEY}"],
+    ["compatible-endpoint", "https://hosted.example/v1?do-not-echo", "${COMPATIBLE_API_KEY}"],
+    ["compatible-endpoint", "https://hosted.example/v1#do-not-echo", "${COMPATIBLE_API_KEY}"],
     ["hermes-provider", "https://authenticated-hermes.example/v1", "${GEMINI_API_KEY}"],
     ["hermes-provider", "https://inference.local/v1", "${OPENAI_API_KEY}"],
     ["hermes-provider", "https://localhost/v1", "${OPENAI_API_KEY}"],
