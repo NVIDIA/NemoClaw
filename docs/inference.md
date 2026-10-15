@@ -153,7 +153,7 @@ Before writing its provider declaration, obtain the base URL, API, exact model I
 Confirm that the selected image's Fabric descriptor accepts that API.
 Catalog metadata and `/models` responses do not establish successful inference.
 For a credentialed endpoint, declare an HTTPS URL and an environment reference; [credential ownership](security.md#credentials-and-authentication) describes where the resolved key persists.
-Uncredentialed HTTP inference endpoints must use literal private or loopback addresses.
+OpenShell decides which inference destinations a sandbox can reach.
 
 The endpoint must be reachable from the sandbox's OpenShell proxy, not just from your client terminal.
 A loopback URL refers to the network namespace making the request.
@@ -163,6 +163,17 @@ Use the route's `overrides.model` for the upstream model ID.
 Native agents send the configured model ID to the native endpoint using an OpenShell placeholder credential; they do not need the real upstream key in their YAML or sandbox environment.
 Confirm a native agent reply after apply using [verification levels](#verify-the-result).
 Guides for named hosted providers are tracked in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038).
+
+### Trust a Custom Certificate Authority
+
+An endpoint whose certificate comes from an internal certificate authority, such as an organization's LiteLLM proxy, needs that CA trusted in two places:
+
+- **The machine running NemoClaw** reads the endpoint's model catalog using its system trust store.
+  Add the CA there, or set `SSL_CERT_FILE` to a PEM bundle that includes it in the environment that runs `nemoclaw` or OpenTofu.
+- **The OpenShell gateway and sandboxes** carry the inference traffic, so their images must trust the CA too.
+  NemoClaw does not configure that trust; OpenShell uses its images' own trust stores.
+
+If the machine running NemoClaw does not trust the certificate, catalog checks report that the server's certificate is not trusted rather than that the endpoint is unreachable.
 
 ## Use an Image Built from This Revision
 

@@ -122,7 +122,7 @@ Destroy removes the owned provider registration, but retained gateway storage re
 
 Caller-supplied inference credentials require HTTPS.
 The managed Ollama proxy uses its private HTTP endpoint and a deployment-generated bearer key.
-Uncredentialed inference HTTP endpoints must be literal private or loopback addresses; plaintext gateway addresses must be loopback.
+OpenShell decides which inference destinations a sandbox can reach; plaintext gateway addresses must be loopback.
 The isolated policy permits inference routing without general egress and uses `best_effort` Landlock; unavailable kernel restrictions are not enforced.
 See [sandbox policy configuration](sandbox-network.md) for changes and [security](security.md) for qualification limits.
 
