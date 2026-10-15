@@ -69,7 +69,7 @@ export function reviewedModelCodeError(
 
 /** Freeze verified metadata before imports; only safetensors remain linked to the read-only cache. */
 export const REVIEWED_MODEL_CODE_BOOTSTRAP = String.raw`
-import hashlib, json, os, pathlib, re, shutil, sys, tempfile
+import hashlib, json, os, pathlib, re, shutil, signal, subprocess, sys, tempfile
 
 model_id, revision, encoded = sys.argv[1:4]
 manifest = json.loads(encoded)
@@ -103,7 +103,20 @@ if metadata != set(expected):
 temporary = pathlib.Path(tempfile.mkdtemp(prefix='nemoclaw-reviewed-model-'))
 snapshot = temporary / 'model'
 snapshot.mkdir(mode=0o700)
+child = None
+starting = False
+pending_signal = None
+def forward_signal(signum, frame):
+    global pending_signal
+    if child is not None:
+        child.send_signal(signum)
+    elif starting:
+        pending_signal = signum
+    else:
+        sys.exit(128 + signum)
 try:
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, forward_signal)
     for path in entries:
         target = path.resolve(strict=True)
         if not target.is_relative_to(root) or not target.is_file():
@@ -126,12 +139,16 @@ try:
     environment = dict(os.environ)
     environment.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1',
                        HF_MODULES_CACHE=str(temporary / 'modules'))
-    os.execve('/usr/local/bin/vllm', ['vllm', 'serve', str(snapshot),
-              '--trust-remote-code', '--code-revision', revision, *sys.argv[4:]], environment)
-except BaseException:
+    starting = True
+    child = subprocess.Popen(['/usr/local/bin/vllm', 'serve', str(snapshot),
+              '--trust-remote-code', '--code-revision', revision, *sys.argv[4:]], env=environment)
+    if pending_signal is not None:
+        child.send_signal(pending_signal)
+    status = child.wait()
+    sys.exit(status if status >= 0 else 128 - status)
+finally:
     snapshot.chmod(0o700)
     shutil.rmtree(temporary)
-    raise
 `.trim();
 
 export function buildReviewedModelCodeCommand(

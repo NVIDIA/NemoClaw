@@ -35,6 +35,7 @@ The host-local launcher verifies every metadata file before importing model code
 It rejects changed or extra metadata, escaping symlinks, and configuration references to unlisted code.
 Only this guarded path enables `--trust-remote-code`; recipes cannot supply that flag directly.
 The loader uses offline mode and a fresh Python module cache. Weight files remain linked to the read-only model cache.
+The launcher waits for the server, forwards termination signals, and removes its temporary snapshot after server exit or startup failure.
 This verifies code identity, not code safety: maintainers must review the Python files and their runtime dependencies before changing the manifest.
 The exception supports fixed, authenticated host-local serving only. It rejects recipe environment overrides and alternate model-loading arguments.
 An offline Station probe passed guarded configuration, tokenizer, processor loading, and image preprocessing on the pinned nightly
@@ -68,6 +69,8 @@ The six-case media extension still failed one assertion: local-file access was d
 The eight-image limit, video denial, remote-domain denial, and four/eight-image ordering checks passed.
 This is not an all-green qualification. These direct endpoint tests do not qualify a new OpenClaw run or full CLI onboarding.
 The exact npm archive, model manifest, image, template, command, dependency inventory, and test scripts are bound in the private evidence ledger.
+These Station results predate the launcher cleanup repair. Local process tests cover server exit, signal forwarding, and snapshot removal;
+repeat native Station startup and restart qualification with the repaired launcher before activation.
 
 The recipe adds no agent configuration, workspace instructions, or harness-specific setup.
 Tool and reasoning parsers are model-server settings; they do not select or configure an agent harness.

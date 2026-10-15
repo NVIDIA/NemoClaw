@@ -59,18 +59,51 @@ function fixture(run: (root: string, snapshot: string) => void, config = "{}") {
   }
 }
 
-function probe(root: string, manifest = policy(), failExec = false) {
+function probe(
+  root: string,
+  manifest = policy(),
+  outcome:
+    | number
+    | "spawn-error"
+    | "SIGTERM"
+    | "SIGINT"
+    | "SIGHUP"
+    | "terminated"
+    | "start-signal"
+    | "verify-signal" = 0,
+) {
+  const server = `
+import os, signal, sys
+outcome = ${JSON.stringify(outcome)}
+if isinstance(outcome, int):
+    sys.exit(outcome)
+if outcome == 'start-signal':
+    signal.pause()
+elif outcome == 'terminated':
+    os.kill(os.getpid(), signal.SIGTERM)
+else:
+    signum = getattr(signal, outcome)
+    signal.signal(signum, lambda received, frame: sys.exit(23))
+    os.kill(os.getppid(), signum)
+    signal.pause()
+`;
   const interception = `
-def inspect_exec(binary, args, environment):
-    if ${failExec ? "True" : "False"}:
-        raise OSError('fixture exec failure')
+import subprocess, sys, signal, hashlib
+start_process = subprocess.Popen
+if ${outcome === "verify-signal" ? "True" : "False"}:
+    hashlib.sha256 = lambda data: os.kill(os.getpid(), signal.SIGTERM)
+def inspect_start(args, *, env):
+    if ${outcome === "spawn-error" ? "True" : "False"}:
+        raise OSError('fixture spawn failure')
+    if ${outcome === "start-signal" ? "True" : "False"}:
+        os.kill(os.getpid(), signal.SIGTERM)
     target = pathlib.Path(args[2])
     source.joinpath('config.json').write_text('changed after verification')
-    print(json.dumps({'binary': binary, 'args': args, 'config': target.joinpath('config.json').read_text(),
-        'weight': target.joinpath('weights.safetensors').read_text(), 'offline': environment['HF_HUB_OFFLINE'],
-        'transformersOffline': environment['TRANSFORMERS_OFFLINE'], 'modules': environment['HF_MODULES_CACHE']}))
-    target.chmod(0o700)
-os.execve = inspect_exec
+    print(json.dumps({'binary': args[0], 'args': args, 'config': target.joinpath('config.json').read_text(),
+        'weight': target.joinpath('weights.safetensors').read_text(), 'offline': env['HF_HUB_OFFLINE'],
+        'transformersOffline': env['TRANSFORMERS_OFFLINE'], 'modules': env['HF_MODULES_CACHE']}), flush=True)
+    return start_process([sys.executable, '-c', ${JSON.stringify(server)}], env=env)
+subprocess.Popen = inspect_start
 `;
   return spawnSync(
     "python3",
@@ -108,6 +141,9 @@ describe("reviewed model code", () => {
         "test-model",
       ]);
       expect(output.modules).toContain("nemoclaw-reviewed-model-");
+      expect(
+        readdirSync(root).filter((name) => name.startsWith("nemoclaw-reviewed-model-")),
+      ).toEqual([]);
     });
   });
 
@@ -182,9 +218,33 @@ describe("reviewed model code", () => {
 
   it("removes the verified temporary snapshot when server execution fails", () => {
     fixture((root) => {
-      const result = probe(root, policy(), true);
+      const result = probe(root, policy(), "spawn-error");
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("fixture exec failure");
+      expect(result.stderr).toContain("fixture spawn failure");
+      expect(
+        readdirSync(root).filter((name) => name.startsWith("nemoclaw-reviewed-model-")),
+      ).toEqual([]);
+    });
+  });
+
+  it.each([
+    7,
+    "SIGTERM",
+    "SIGINT",
+    "SIGHUP",
+    "terminated",
+    "start-signal",
+    "verify-signal",
+  ] as const)("cleans the snapshot and preserves server status after %s", (outcome) => {
+    fixture((root) => {
+      const result = probe(root, policy(), outcome);
+      expect(result.status, result.stderr).toBe(
+        typeof outcome === "number"
+          ? outcome
+          : ["terminated", "start-signal", "verify-signal"].includes(outcome)
+            ? 143
+            : 23,
+      );
       expect(
         readdirSync(root).filter((name) => name.startsWith("nemoclaw-reviewed-model-")),
       ).toEqual([]);
