@@ -90,7 +90,7 @@ async function setup(port = 19260, dockerHost?: string, captureAuthority = false
     stdout: args.includes("info") ? daemonId : "",
   }));
   const { captureNativeDockerRecoveryAuthority } =
-    await import("../../../onboard/sandbox-create/identity-boundary");
+    await import("../../../onboard/gateway/state-ownership");
   const createAuthority = captureAuthority
     ? captureNativeDockerRecoveryAuthority(gatewayName, port, route.reservationSessionId)
     : undefined;

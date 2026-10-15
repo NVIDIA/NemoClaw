@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
-import { captureNativeDockerRecoveryAuthority } from "../../../onboard/sandbox-create/identity-boundary";
+import { captureNativeDockerRecoveryAuthority } from "../../../onboard/gateway/state-ownership";
 
 import { dockerRun } from "../../../adapters/docker/run";
 import { dockerContextIsDefaultFromBuild } from "../../../adapters/docker/client-isolation";

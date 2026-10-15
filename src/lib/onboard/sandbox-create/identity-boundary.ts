@@ -2,16 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
-import os from "node:os";
-import { dockerContextIsDefaultFromBuild } from "../../adapters/docker/client-isolation";
-import { dockerRun } from "../../adapters/docker/run";
-import {
-  parseRetainedSandboxCreateAuthority,
-  type RetainedSandboxCreateAuthority,
-} from "../../state/onboard-session/retained-sandbox-recovery";
-import { resolveGatewayStateDirForPort } from "../gateway/state-dir";
-import { resolveOwnedHostGatewayRuntimeProviderId } from "../host-gateway-process";
-
 import type { DockerSandboxIdentityObservation } from "../../adapters/docker/inspect";
 import { normalizePendingSandboxCreateIdentity } from "../../state/registry-normalization";
 import type { PendingSandboxCreateIdentity } from "../../state/registry/types";
@@ -22,6 +12,8 @@ import {
 } from "../openshell-docker-sandbox-containers";
 import { fingerprintSandboxRecreateValue } from "../sandbox-recreate-transaction";
 import type { VerifiedSandboxCreateBoundary } from "../types";
+
+export { captureNativeDockerRecoveryAuthority } from "../gateway/state-ownership";
 
 /** Recover one exact Docker runtime from immutable legacy identity evidence. */
 export function resolveLegacyCompatibilityFinalHandoffRuntime(input: {
@@ -121,52 +113,4 @@ export function sandboxCreateBoundaryFromPendingIdentity(
       : {}),
     route: identity.route,
   };
-}
-
-/** Bind recovery to the daemon used by the owned native gateway before sending create. */
-export function captureNativeDockerRecoveryAuthority(
-  gatewayName: string,
-  gatewayPort: number,
-  reservationSessionId: string,
-): RetainedSandboxCreateAuthority | undefined {
-  if (process.platform !== "linux") return undefined;
-  if (
-    process.env.DOCKER_HOST?.trim() !== "unix:///var/run/docker.sock" &&
-    !dockerContextIsDefaultFromBuild(process.env)
-  )
-    return undefined;
-  const gatewayStateDir = resolveGatewayStateDirForPort({
-    configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
-    home: os.homedir(),
-    port: gatewayPort,
-  });
-  const ownedRuntime = () =>
-    resolveOwnedHostGatewayRuntimeProviderId({
-      gatewayName,
-      gatewayPort,
-      stateDir: gatewayStateDir,
-      requireDefaultDockerDaemon: true,
-    });
-  if (ownedRuntime() !== "docker") return undefined;
-  const result = dockerRun(["--context", "default", "info", "--format", "{{.ID}}"], {
-    ignoreError: true,
-    suppressOutput: true,
-    timeout: 5_000,
-  });
-  const authority = parseRetainedSandboxCreateAuthority({
-    schemaVersion: 1,
-    runtime: "native-linux-default-docker",
-    reservationSessionId,
-    gatewayStateDir,
-    daemonId: String(result.stdout ?? "").trim(),
-  });
-  if (
-    result.status !== 0 ||
-    String(result.stderr ?? "").trim() ||
-    !authority ||
-    ownedRuntime() !== "docker"
-  ) {
-    throw new Error("Cannot establish the owned Docker daemon for retained create recovery.");
-  }
-  return authority;
 }
