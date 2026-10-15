@@ -30,6 +30,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   check-hash:
@@ -69,6 +70,11 @@ jobs:
             .github/actions/ci-installer-hash-check
             scripts/check-installer-hash.sh
             scripts/checks/extract-installer-pins.mts
+            scripts/checks/openshell-trust-data.mts
+            ci/openshell-upgrade-trust.json
+            tools/e2e/candidate-openshell-trust.mts
+            tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/base-image-publication.mts
           sparse-checkout-cone-mode: false
 
       - name: Set up trusted installer hash parser runtime
@@ -87,6 +93,11 @@ jobs:
       - name: Verify pull request installer hashes from reviewed code
         if: github.event_name == 'pull_request'
         uses: ./.trusted-installer-hash/.github/actions/ci-installer-hash-check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPGRADE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          UPGRADE_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          UPGRADE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         with:
           repo-root: ${{ github.workspace }}
 

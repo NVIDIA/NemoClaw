@@ -575,10 +575,12 @@ Keep the recovery record and retry `destroy` only after resolving the identity d
 
 If OpenShell did not return a durable identity fingerprint, `destroy` cannot authorize deletion of a live sandbox.
 
-For an unpublished reservation without lifecycle identity, `destroy` can clear local recovery metadata on native Linux with the default Docker daemon.
+For normal recovery, `destroy` can clear local recovery metadata on native Linux with default Docker when no lifecycle identity was published.
 It requires exactly one matching retained record, a recorded Docker ownership marker, and sandbox absence confirmed by the owning gateway.
 Docker must report no matching containers or managed state volumes.
-Any reservation must match its recovery-only onboarding session; conflicting state, recorded sandbox-scoped providers, or additional resource ownership block recovery.
+When the record includes ownership captured before creation, recovery rechecks the original Docker daemon, gateway binding, and any remaining reservation owner.
+Otherwise, it requires a Docker ownership marker predating the recovery record and, while a reservation remains, its matching recovery-only session.
+Sandbox-scoped providers or additional resource ownership block recovery.
 
 Use the failed onboarding attempt's gateway port to select its state root, for example:
 
@@ -2167,6 +2169,11 @@ If you want to upgrade the sandbox while preserving state, use `$$nemoclaw <name
 </Warning>
 
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds. Pass `--yes`, `-y`, or `--force`, or set `NEMOCLAW_NON_INTERACTIVE=1`, to authorize deletion without prompting in scripted workflows. These controls do not suppress the active-session warning. The warning lists the detected process IDs, and destroy still terminates those sessions with a `Broken pipe` error.
+
+For eligible recovery without a sandbox identity on native Linux with default Docker, `--force` archives and removes local tracking after the owning gateway and current Docker daemon confirm absence.
+It preserves runtime resources and shared providers; cleanup on the original runtime remains unverified.
+A conflicting active session for the same name, sandbox-scoped providers, or additional resource ownership still blocks this operation.
+The command prints the private archive path and keeps the archive after recovery.
 
 Before changing a Docker-backed sandbox, NemoClaw inspects every container with the requested `openshell.ai/sandbox-name` label. The command continues when Docker returns no matching containers. For one matching container, the command continues only when all these labels have the required values:
 

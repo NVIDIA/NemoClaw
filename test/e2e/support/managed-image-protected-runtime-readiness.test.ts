@@ -21,6 +21,7 @@ import {
   protectedProviderContainerName,
   protectedProviderContainerPreflightCommand,
   protectedProviderFinalInventoryCommand,
+  protectedProviderImagePulledByStart,
   protectedProviderReportedContainerId,
   protectedVllmReadinessCommand,
 } from "../live/managed-image-protected-runtime-helpers.ts";
@@ -641,6 +642,63 @@ exit 42`,
     expect(Buffer.byteLength(stderrArtifact)).toBeLessThanOrEqual(command.captureLimitBytes + 256);
   });
 
+  it.each([
+    { outcome: "ready", healthStatus: "0", exitCode: 0, samples: [["readiness-1", "1"]] },
+    {
+      outcome: "stopped",
+      healthStatus: "1",
+      exitCode: 1,
+      samples: [
+        ["readiness-1", "1"],
+        ["readiness-final", "final"],
+      ],
+    },
+  ])(
+    "preserves the $outcome NIM result when storage probes fail (#13135)",
+    async ({ healthStatus, exitCode, samples }) => {
+      const fixture = createReadinessFixture();
+      const nimName = protectedProviderContainerName("nim", PROVIDER_COHORT);
+      const command = protectedNimReadinessCommand(nimName);
+      const storageProbePath = path.join(process.cwd(), "scripts/checks/capture-nim-storage.sh");
+      const storageCallsPath = path.join(fixture.root, "nim-storage-calls");
+      writeCommand(
+        fixture.binDir,
+        "bash",
+        `if [ "\${1:-}" = "$FAKE_NIM_STORAGE_PROBE" ]; then
+  printf '%s|%s|%s|%s\\n' "$2" "$3" "$4" "$5" >>"$FAKE_NIM_STORAGE_CALLS"
+  exit 42
+fi
+exec /bin/bash "$@"`,
+      );
+      writeCommand(fixture.binDir, "curl", 'exit "$FAKE_NIM_HEALTH_STATUS"');
+      writeCommand(
+        fixture.binDir,
+        "docker",
+        `if [ "$1" = container ]; then
+  printf 'false\\n'
+fi`,
+      );
+
+      const result = await fixture.host.command(command.command, command.args, {
+        artifactName: "nim-readiness-failed-storage-probe",
+        captureLimitBytes: command.captureLimitBytes,
+        env: {
+          ...fixture.env,
+          FAKE_NIM_HEALTH_STATUS: healthStatus,
+          FAKE_NIM_STORAGE_CALLS: storageCallsPath,
+          FAKE_NIM_STORAGE_PROBE: storageProbePath,
+        },
+        timeoutMs: 5_000,
+      });
+
+      expect(result.exitCode).toBe(exitCode);
+      expect(result.timedOut).toBe(false);
+      expect(fs.readFileSync(storageCallsPath, "utf8").trim().split("\n")).toEqual(
+        samples.map(([phase, sample]) => [phase, nimName, sample, process.cwd()].join("|")),
+      );
+    },
+  );
+
   it("redacts provider-native NIM failure evidence in memory and artifacts", async () => {
     const fixture = createReadinessFixture();
     const sensitiveValue = "protected-nim-readiness-sensitive-value";
@@ -799,5 +857,29 @@ printf 'nim-stalled-probe-diagnostic key=%s\\n' "$FAKE_NIM_API_KEY"`,
     expect(result.stderr).not.toContain(sensitiveValue);
     expect(fs.readFileSync(result.artifacts.stderr, "utf8")).not.toContain(sensitiveValue);
     expect(fs.readFileSync(result.artifacts.result, "utf8")).not.toContain(sensitiveValue);
+  });
+});
+
+describe("protected provider image ownership", () => {
+  it("treats a provider image as run-owned only when docker run pulled that exact reference", () => {
+    const pulled = [
+      `Unable to find image '${PROVIDER_IMAGE}' locally`,
+      `${PROVIDER_IMAGE}: Pulling from vllm`,
+      "Status: Downloaded newer image",
+    ].join("\n");
+    expect(protectedProviderImagePulledByStart(PROVIDER_IMAGE, pulled)).toBe(true);
+    expect(protectedProviderImagePulledByStart(PROVIDER_IMAGE, "")).toBe(false);
+    expect(
+      protectedProviderImagePulledByStart(
+        PROVIDER_IMAGE,
+        `Unable to find image 'registry.example/other@sha256:${"c".repeat(64)}' locally`,
+      ),
+    ).toBe(false);
+    expect(
+      protectedProviderImagePulledByStart(
+        PROVIDER_IMAGE,
+        `provider log: Unable to find image '${PROVIDER_IMAGE}' locally (replayed)`,
+      ),
+    ).toBe(false);
   });
 });
