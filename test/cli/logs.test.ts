@@ -38,6 +38,32 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
   });
 
+  it("reads logs without changing audit settings when automatic enablement is disabled", ({
+    resources,
+  }) => {
+    const setup = createLogsTestSetup(resources, "nemoclaw-cli-logs-audit-opt-out-");
+    const result = setup.runLogs("alpha logs", { NEMOCLAW_NO_AUTO_AUDIT_LOGS: "1" });
+
+    expect(result.code).toBe(0);
+    expect(setup.readCalls().filter((call) => call.startsWith("settings set"))).toEqual([]);
+    expect(result.out).toContain(FAKE_OPENSHELL_LOG_LINE);
+  });
+
+  it("preserves a failed exec result without enabling audit settings when opted out", ({
+    resources,
+  }) => {
+    const setup = createLogsTestSetup(resources, "nemoclaw-cli-exec-audit-opt-out-", [
+      'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+      "  exit 56",
+      "fi",
+    ]);
+    const result = setup.runLogs("alpha exec -- false", { NEMOCLAW_NO_AUTO_AUDIT_LOGS: "1" });
+
+    expect(result.code).toBe(56);
+    expect(setup.readCalls()).toContain("logs -g nemoclaw alpha -n 200 --source all");
+    expect(setup.readCalls().filter((call) => call.startsWith("settings set"))).toEqual([]);
+  });
+
   it("shows logs help without calling OpenShell", ({ resources }) => {
     const setup = createLogsTestSetup(resources, "nemoclaw-cli-logs-help-");
     const r = setup.runLogs("alpha logs --help");
@@ -68,7 +94,7 @@ describe("CLI dispatch", () => {
       "fi",
     ]);
 
-    const r = setup.runLogs("alpha logs 2>&1", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "50" });
+    const r = setup.runLogs("alpha logs 2>&1", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "500" });
 
     expect(r.code).toBe(0);
     expect(r.out).toContain("OpenClaw log source unavailable");
