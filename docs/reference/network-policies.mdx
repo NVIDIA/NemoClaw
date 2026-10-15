@@ -237,6 +237,8 @@ For a credentialless upstream, the protected local proxy removes the sentinel au
 
 Nonqualifying custom endpoints and Local NVIDIA NIM retain the shared `inference.local` route.
 Existing DCode local sandboxes without native authority require explicit recreation; NemoClaw does not migrate them automatically.
+Before recreation, download the state you need to an independently managed location and verify that the download is complete.
+Follow [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually) before deleting the existing sandbox.
 Refer to [How Inference Routing Works](../inference/about-inference-routing) for the qualification boundary.
 
 </AgentOnly>
