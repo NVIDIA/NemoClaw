@@ -27,6 +27,7 @@ import {
 import {
   collectSandboxStatusSnapshot,
   getSandboxStatusReport as getLegacySandboxStatusReport,
+  isUnlockedSandboxStatusRead,
   normalizeSandboxStatusHostMounts,
   resolveSandboxStatusAgent,
   type SandboxStatusReport,
@@ -63,6 +64,15 @@ export {
   type SandboxStatusSnapshot,
   type ServingProcessHealth,
 } from "./status-snapshot";
+
+function withStatusLifecycleLock<T>(
+  sandboxName: string,
+  operation: () => Promise<T> | T,
+): Promise<T> | T {
+  return isUnlockedSandboxStatusRead()
+    ? operation()
+    : withSandboxLifecycleLock(sandboxName, operation);
+}
 
 function inspectHermesPortableStatus(
   sandboxName: string,
@@ -128,21 +138,23 @@ export async function getSandboxStatusReport(
   sandboxName: string,
   deps: Parameters<typeof getLegacySandboxStatusReport>[1] = {},
 ): Promise<SandboxStatusReport> {
-  return withSandboxLifecycleLock(sandboxName, async () => {
+  const read = async (): Promise<SandboxStatusReport> => {
     const hermesPortable = inspectHermesPortableStatus(sandboxName);
-    if (hermesPortable) {
-      return await hermesPortableStatusReport(
-        sandboxName,
-        hermesPortable,
-        deps.getGatewayPresets ?? getGatewayPresets,
-      );
-    }
-    return getLegacySandboxStatusReport(sandboxName, { getGatewayPresets, ...deps });
-  });
+    const report = hermesPortable
+      ? await hermesPortableStatusReport(
+          sandboxName,
+          hermesPortable,
+          deps.getGatewayPresets ?? getGatewayPresets,
+        )
+      : await getLegacySandboxStatusReport(sandboxName, { getGatewayPresets, ...deps });
+    return isUnlockedSandboxStatusRead() ? { ...report, inferenceProbeSuppressed: true } : report;
+  };
+  return await withStatusLifecycleLock(sandboxName, read);
 }
 
 function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): void {
   if (
+    isUnlockedSandboxStatusRead() ||
     !sb ||
     sb.agent !== "hermes" ||
     !Array.isArray(sb.hermesToolGateways) ||
@@ -158,10 +170,23 @@ function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): v
   }
 }
 
+function getManagedLlamaCppStatusForDisplay(
+  sandboxName: string,
+  sandboxEntry: registry.SandboxEntry | null,
+  unlockedStatusRead: boolean,
+) {
+  if (unlockedStatusRead) return null;
+  return inspectManagedLlamaCppStatus(sandboxName, {
+    ...(typeof sandboxEntry?.gatewayPort === "number"
+      ? { gatewayPort: sandboxEntry.gatewayPort }
+      : {}),
+  });
+}
+
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
   let deferredExitCode: number | null = null;
   try {
-    await withSandboxLifecycleLock(sandboxName, async () => {
+    const read = async () => {
       const hermesPortable = inspectHermesPortableStatus(sandboxName);
       if (hermesPortable) {
         console.log(`  Sandbox: ${sandboxName}`);
@@ -171,7 +196,8 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
         return;
       }
       await showLegacySandboxStatus(sandboxName);
-    });
+    };
+    await withStatusLifecycleLock(sandboxName, read);
   } catch (error) {
     if (!isSandboxLifecycleDeferredExit(error)) throw error;
     deferredExitCode = error.exitCode;
@@ -230,8 +256,11 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
     });
     deferSandboxLifecycleExit(1);
   }
+  const unlockedStatusRead = isUnlockedSandboxStatusRead();
   const textContext: SandboxStatusTextContext = {
     sandboxName,
+    unlockedStatusRead,
+    inferenceProbeSuppressed: unlockedStatusRead,
     sb,
     lookup,
     currentModel,
@@ -267,9 +296,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
 
   printDockerHealth(dockerRuntime);
   printNimStatus(sandboxName, sb);
-  const managedLlamaCpp = inspectManagedLlamaCppStatus(sandboxName, {
-    ...(typeof sb?.gatewayPort === "number" ? { gatewayPort: sb.gatewayPort } : {}),
-  });
+  const managedLlamaCpp = getManagedLlamaCppStatusForDisplay(sandboxName, sb, unlockedStatusRead);
   if (managedLlamaCpp) {
     console.log(`    Managed llama.cpp: ${managedLlamaCpp.state}`);
     console.log(`      Recipe: ${managedLlamaCpp.recipeId}`);

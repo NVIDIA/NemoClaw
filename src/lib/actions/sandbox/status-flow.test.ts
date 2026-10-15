@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import {
+  createRealMcpLifecycleLock,
   createStatusFlowHarness,
   resetStatusFlowModuleCache,
 } from "../../../../test/support/status-flow-test-harness";
@@ -76,6 +77,131 @@ describe("showSandboxStatus flow", () => {
       expect(harness.withMcpLifecycleLockSpy).toHaveBeenCalledTimes(2);
     },
   );
+
+  it("skips lifecycle locking and Hermes broker setup for unlocked status (#11903)", async () => {
+    const withMcpLifecycleLock = vi.fn(async () => {
+      throw new Error("unlocked status unexpectedly requested the lifecycle lock");
+    });
+    const harness = createStatusFlowHarness({
+      mockHermesToolGatewayBroker: true,
+      portableDisposition: { kind: "openclaw" },
+      sandboxEntry: { agent: "hermes", agentVersion: null, hermesToolGateways: [{}] } as never,
+      withMcpLifecycleLock,
+    });
+
+    await harness.withUnlockedSandboxStatusRead(() => harness.showSandboxStatus("alpha"));
+
+    expect(harness.withMcpLifecycleLockSpy).not.toHaveBeenCalled();
+    expect(harness.checkAgentVersionSpy).toHaveBeenCalledWith("alpha", {
+      forceProbe: false,
+      skipProbe: true,
+    });
+    expect(harness.ensureHermesToolGatewayBrokerSpy).not.toBeNull();
+    expect(harness.ensureHermesToolGatewayBrokerSpy).not.toHaveBeenCalled();
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Inference: not probed (another lifecycle operation is in progress)");
+    expect(output).not.toContain("Inference: healthy");
+    expect(output).not.toContain("ollama backend");
+  });
+
+  it("skips managed llama.cpp readiness probes for unlocked status (#11903)", async () => {
+    const harness = createStatusFlowHarness({ portableDisposition: { kind: "openclaw" } });
+    harness.inspectManagedLlamaCppStatusSpy.mockReturnValue({
+      recipeId: "nemotron-mini",
+      modelDigest: "sha256:fixture",
+      imageReference: "nvcr.io/nvidia/llama-cpp:fixture",
+      endpoint: "https://inference.local/v1",
+      state: "running",
+      detail: "exact managed container is running and ready",
+    });
+
+    await harness.withUnlockedSandboxStatusRead(() => harness.showSandboxStatus("alpha"));
+    expect(harness.inspectManagedLlamaCppStatusSpy).not.toHaveBeenCalled();
+
+    await harness.showSandboxStatus("alpha");
+    expect(harness.inspectManagedLlamaCppStatusSpy).toHaveBeenCalledOnce();
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain("Managed llama.cpp: running");
+  });
+
+  it("reports unverified inference state for unlocked reads when gateway state is unknown (#11903)", async () => {
+    const harness = createStatusFlowHarness({
+      inferenceHealth: null,
+      lookup: {
+        state: "gateway_unreachable_after_restart",
+        output: "Gateway: nemoclaw\nclient error (Connect): Connection refused",
+      },
+    });
+
+    await expect(
+      harness.withUnlockedSandboxStatusRead(() => harness.showSandboxStatus("alpha")),
+    ).rejects.toThrow("process.exit(1)");
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Inference: not verified (gateway/sandbox state not verified)");
+    expect(output).not.toContain(
+      "Inference: not probed (another lifecycle operation is in progress)",
+    );
+  });
+
+  it("does not wait on a held MCP lifecycle lock for unlocked text or JSON status (#11903)", async () => {
+    const withMcpLifecycleLock = createRealMcpLifecycleLock({
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+    });
+    const harness = createStatusFlowHarness({ withMcpLifecycleLock });
+    let releaseLock!: () => void;
+    let markLockHeld!: () => void;
+    const lockHeld = new Promise<void>((resolve) => {
+      markLockHeld = resolve;
+    });
+    const hold = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const heldLock = withMcpLifecycleLock("alpha", async () => {
+      markLockHeld();
+      await hold;
+    });
+
+    await lockHeld;
+    try {
+      const report = await harness.withUnlockedSandboxStatusRead(async () => {
+        const json = await harness.getSandboxStatusReport("alpha");
+        await harness.showSandboxStatus("alpha");
+        return json;
+      });
+
+      expect(report).toMatchObject({
+        schemaVersion: 1,
+        name: "alpha",
+        inferenceProbeSuppressed: true,
+      });
+      expect(harness.withMcpLifecycleLockSpy).not.toHaveBeenCalled();
+    } finally {
+      releaseLock();
+      await heldLock;
+    }
+  });
+
+  it("skips lifecycle locking for unlocked JSON status reports (#11903)", async () => {
+    const withMcpLifecycleLock = vi.fn(async () => {
+      throw new Error("unlocked JSON status unexpectedly requested the lifecycle lock");
+    });
+    const harness = createStatusFlowHarness({
+      portableDisposition: { kind: "openclaw" },
+      withMcpLifecycleLock,
+    });
+
+    const report = await harness.withUnlockedSandboxStatusRead(() =>
+      harness.getSandboxStatusReport("alpha"),
+    );
+
+    expect(report).toMatchObject({
+      schemaVersion: 1,
+      name: "alpha",
+      inferenceProbeSuppressed: true,
+    });
+    expect(harness.withMcpLifecycleLockSpy).not.toHaveBeenCalled();
+  });
 
   it("rejects malformed portable receipt authority before status probes (#9203)", async () => {
     const harness = createStatusFlowHarness({

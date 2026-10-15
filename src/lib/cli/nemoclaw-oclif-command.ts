@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Command, Flags, type Interfaces } from "@oclif/core";
+import os from "node:os";
+import path from "node:path";
 import {
   assertHermesPortableCommandSupported,
   assertHermesPortableCommandUnavailable,
@@ -9,13 +11,24 @@ import {
   HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE,
   HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE,
 } from "../onboard/experimental/portable-agent-lifecycle";
-import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
+import { HERMES_PORTABLE_RECEIPT_DIRECTORY } from "../onboard/experimental/hermes-portable-receipt";
+import {
+  defaultPortableDemoStateDir,
+  portableDemoReceiptDirectory,
+} from "../onboard/experimental/portable-runtime-receipt-readiness";
 import { redactForLog } from "../security/redact";
 import {
   assertNoHermesPortableHostAuthority,
+  PORTABLE_HOST_FENCE_BUSY_MESSAGE,
+  readPortableAuthorityDirectory,
+  samePortableAuthorityDirectory,
+  type PortableAuthorityDirectorySnapshot,
   withCurrentPortableHostFence,
+  withCurrentPortableHostFenceTry,
 } from "../state/portable-uninstall-retirement";
 import { withSandboxLifecycleLock } from "../actions/sandbox/lifecycle/lock";
+import { withUnlockedSandboxStatusRead } from "../actions/sandbox/status-snapshot";
+import { listInferenceRouteOwnersAcrossGatewayRoots } from "../state/registry/cross-port";
 import {
   enforceRemovedImmutabilityMigrationBoundary,
   reportRemovedImmutabilityUpgrade,
@@ -78,6 +91,62 @@ const REMOVED_IMMUTABILITY_REMEDIATION_COMMANDS = new Set([
   "sandbox:status",
   "sandbox:stop",
 ]);
+
+function hasPortableRegistryAuthorityOnHost(): boolean {
+  return listInferenceRouteOwnersAcrossGatewayRoots(process.env.HOME || os.homedir()).some(
+    (entry) =>
+      entry.portableLifecycleProfile !== undefined ||
+      (entry.agent === "hermes" &&
+        entry.openshellDriver === "docker" &&
+        typeof entry.lifecycleGeneration === "string"),
+  );
+}
+
+type PortableAuthorityDirectories = {
+  readonly hermes: PortableAuthorityDirectorySnapshot;
+  readonly openclaw: PortableAuthorityDirectorySnapshot;
+};
+
+function readPortableAuthorityDirectories(stateDir: string): PortableAuthorityDirectories {
+  return {
+    hermes: readPortableAuthorityDirectory(
+      path.join(stateDir, HERMES_PORTABLE_RECEIPT_DIRECTORY),
+      false,
+    ),
+    openclaw: readPortableAuthorityDirectory(portableDemoReceiptDirectory(stateDir), false),
+  };
+}
+
+function hasPortableReceiptAuthority(directories: PortableAuthorityDirectories): boolean {
+  return directories.hermes.entries.length > 0 || directories.openclaw.entries.length > 0;
+}
+
+function samePortableAuthorityDirectories(
+  left: PortableAuthorityDirectories,
+  right: PortableAuthorityDirectories,
+): boolean {
+  return (
+    samePortableAuthorityDirectory(left.hermes, right.hermes) &&
+    samePortableAuthorityDirectory(left.openclaw, right.openclaw)
+  );
+}
+
+function canUseUnlockedSandboxStatusRead(): boolean {
+  const stateDir = defaultPortableDemoStateDir(process.env);
+  try {
+    const before = readPortableAuthorityDirectories(stateDir);
+    if (hasPortableReceiptAuthority(before) || hasPortableRegistryAuthorityOnHost()) return false;
+
+    const after = readPortableAuthorityDirectories(stateDir);
+    return (
+      !hasPortableReceiptAuthority(after) &&
+      samePortableAuthorityDirectories(before, after) &&
+      !hasPortableRegistryAuthorityOnHost()
+    );
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Shared oclif base for NemoClaw commands.
@@ -183,6 +252,39 @@ export abstract class NemoClawCommand extends Command {
       }
       return super._run<T>();
     };
+    if (commandId === "sandbox:status") {
+      let fencedOperationStarted = false;
+      try {
+        return await withCurrentPortableHostFenceTry(() => {
+          fencedOperationStarted = true;
+          return withSandboxLifecycleLock(sandboxName, runLocked);
+        });
+      } catch (error) {
+        if (
+          fencedOperationStarted ||
+          !(error instanceof Error) ||
+          error.message !== PORTABLE_HOST_FENCE_BUSY_MESSAGE
+        ) {
+          throw error;
+        }
+        if (!canUseUnlockedSandboxStatusRead()) {
+          throw new Error(
+            "Another NemoClaw lifecycle operation is in progress on this host. Wait for it to finish, then retry status.",
+            { cause: error },
+          );
+        }
+        return await withUnlockedSandboxStatusRead(async () => {
+          const result = await runLocked();
+          if (!canUseUnlockedSandboxStatusRead()) {
+            throw new Error(
+              "Another NemoClaw lifecycle operation is in progress on this host. Wait for it to finish, then retry status.",
+              { cause: error },
+            );
+          }
+          return result;
+        });
+      }
+    }
     return await withSandboxLifecycleLock(sandboxName, runLocked);
   }
 

@@ -10,7 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { launchSandbox } from "../actions/sandbox/launch";
 import * as portableAgentLifecycle from "../onboard/experimental/portable-agent-lifecycle";
 import * as receiptAuthority from "../onboard/experimental/hermes-portable-receipt";
+import { portableDemoReceiptPath } from "../onboard/experimental/portable-runtime-receipt-readiness";
 import * as portableHostAuthority from "../state/portable-uninstall-retirement";
+import * as registryCrossPort from "../state/registry/cross-port";
+import { isUnlockedSandboxStatusRead } from "../actions/sandbox/status-snapshot";
+import { acquireProcessBoundLockAt, releaseProcessBoundLock } from "../state/registry/lock";
 import {
   isMcpLifecycleLockHeld,
   withMcpLifecycleLock,
@@ -86,6 +90,16 @@ class ParsedUnsupportedSandboxCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     await this.parse(ParsedUnsupportedSandboxCommand);
     ParsedUnsupportedSandboxCommand.ran = true;
+  }
+}
+
+class GlobalStatusReadCommand extends NemoClawCommand {
+  static id = "status";
+  static flags = {};
+  static operation: () => Promise<void> = async () => undefined;
+
+  public async run(): Promise<void> {
+    await GlobalStatusReadCommand.operation();
   }
 }
 
@@ -217,6 +231,35 @@ function useHermesPortableAuthority(): void {
   });
 }
 
+function writeOpenClawPortableReceipt(stateDir: string, sandboxName: string): void {
+  const uid = process.getuid?.() ?? 1001;
+  const homeDir = process.env.HOME || os.homedir();
+  const receiptPath = portableDemoReceiptPath(sandboxName, stateDir);
+  fs.mkdirSync(path.dirname(receiptPath), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(
+    receiptPath,
+    `${JSON.stringify({
+      schemaVersion: 4,
+      sandboxName,
+      sandboxId: `sandbox-${sandboxName}`,
+      containerId: "a".repeat(64),
+      dashboardPort: 18789,
+      registryGeneration: `generation-${sandboxName}`,
+      runtimeAuthority: {
+        schemaVersion: 1,
+        kind: "podman",
+        ownership: "current-user",
+        uid,
+        homeDir,
+        configHome: path.join(homeDir, ".config"),
+        runtimeDir: `/run/user/${String(uid)}`,
+        socketPath: `/run/user/${String(uid)}/podman/podman.sock`,
+      },
+    })}\n`,
+    { mode: 0o600 },
+  );
+}
+
 function makeCommand(): TestCommand {
   return Object.create(TestCommand.prototype) as TestCommand;
 }
@@ -241,6 +284,7 @@ describe("NemoClawCommand", () => {
     RawSandboxDoctorCommand.ran = false;
     ParsedUnsupportedSandboxCommand.ran = false;
     ParsedSupportedSandboxCommand.operation = async () => undefined;
+    GlobalStatusReadCommand.operation = async () => undefined;
     GlobalUnsupportedMutationCommand.ran = false;
     GlobalUseMutationCommand.ran = false;
     ProbeOnlyConnectCommand.operation = async () => undefined;
@@ -248,6 +292,189 @@ describe("NemoClawCommand", () => {
     PortableLaunchCommand.observed = { host: false, lifecycle: false, portableLifecycle: false };
     PortableLaunchCommand.operation = async () => undefined;
     PortableStopCommand.observed = { host: false, lifecycle: false, portableLifecycle: false };
+  });
+
+  it("runs sandbox status without either lifecycle fence during ordinary-host contention (#11903)", async () => {
+    const fence = acquireProcessBoundLockAt(portableHostAuthority.portableHostFencePath(stateDir));
+    const operation = vi.fn(async () => {
+      expect(fs.existsSync(portableHostAuthority.portableHostFencePath(stateDir))).toBe(true);
+      expect(isMcpLifecycleLockHeld("alpha")).toBe(false);
+      expect(isUnlockedSandboxStatusRead()).toBe(true);
+    });
+    ParsedSupportedSandboxCommand.operation = operation;
+    try {
+      await expect(
+        ParsedSupportedSandboxCommand.run(["alpha"], process.cwd()),
+      ).resolves.toBeUndefined();
+      expect(operation).toHaveBeenCalledOnce();
+    } finally {
+      releaseProcessBoundLock(fence);
+    }
+  });
+
+  it("rejects an unlocked status read if portable authority appears before it completes (#11903)", async () => {
+    const fence = acquireProcessBoundLockAt(portableHostAuthority.portableHostFencePath(stateDir));
+    const authorityDirectory = path.join(stateDir, "hermes-portable-lifecycle");
+    const operation = vi.fn(async () => {
+      fs.mkdirSync(authorityDirectory, { mode: 0o700 });
+      fs.writeFileSync(path.join(authorityDirectory, "receipt.json"), "authority\n");
+    });
+    ParsedSupportedSandboxCommand.operation = operation;
+    try {
+      await expect(ParsedSupportedSandboxCommand.run(["alpha"], process.cwd())).rejects.toThrow(
+        "Another NemoClaw lifecycle operation is in progress on this host.",
+      );
+      expect(operation).toHaveBeenCalledOnce();
+    } finally {
+      releaseProcessBoundLock(fence);
+    }
+  });
+
+  it("rejects a read if OpenClaw Portable authority for another sandbox appears during it (#11903)", async () => {
+    const fence = acquireProcessBoundLockAt(portableHostAuthority.portableHostFencePath(stateDir));
+    const operation = vi.fn(async () => {
+      writeOpenClawPortableReceipt(
+        portableHostAuthority.defaultPortableStateDir(process.env),
+        "beta",
+      );
+    });
+    ParsedSupportedSandboxCommand.operation = operation;
+    try {
+      await expect(ParsedSupportedSandboxCommand.run(["alpha"], process.cwd())).rejects.toThrow(
+        "Another NemoClaw lifecycle operation is in progress on this host.",
+      );
+      expect(operation).toHaveBeenCalledOnce();
+    } finally {
+      releaseProcessBoundLock(fence);
+    }
+  });
+
+  it("fails fast rather than bypassing portable authority during status contention (#11903)", async () => {
+    const authorityDirectory = path.join(stateDir, "hermes-portable-lifecycle");
+    fs.mkdirSync(authorityDirectory, { mode: 0o700 });
+    fs.writeFileSync(path.join(authorityDirectory, "receipt.json"), "authority\n");
+    vi.spyOn(portableHostAuthority, "withCurrentPortableHostFenceTry").mockRejectedValue(
+      new Error(portableHostAuthority.PORTABLE_HOST_FENCE_BUSY_MESSAGE),
+    );
+    const operation = vi.fn(async () => undefined);
+    ParsedSupportedSandboxCommand.operation = operation;
+
+    await expect(ParsedSupportedSandboxCommand.run(["alpha"], process.cwd())).rejects.toThrow(
+      "Another NemoClaw lifecycle operation is in progress on this host.",
+    );
+    expect(operation).not.toHaveBeenCalled();
+    expect(portableHostAuthority.withCurrentPortableHostFenceTry).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed on registry-only Hermes Portable authority for another sandbox (#11903)", async () => {
+    vi.spyOn(portableHostAuthority, "withCurrentPortableHostFenceTry").mockRejectedValue(
+      new Error(portableHostAuthority.PORTABLE_HOST_FENCE_BUSY_MESSAGE),
+    );
+    vi.spyOn(registryCrossPort, "listInferenceRouteOwnersAcrossGatewayRoots").mockReturnValue([
+      {
+        name: "beta",
+        agent: "hermes",
+        openshellDriver: "docker",
+        lifecycleGeneration: "generation-1",
+      } as never,
+    ]);
+    const operation = vi.fn(async () => undefined);
+    ParsedSupportedSandboxCommand.operation = operation;
+
+    await expect(ParsedSupportedSandboxCommand.run(["alpha"], process.cwd())).rejects.toThrow(
+      "Another NemoClaw lifecycle operation is in progress on this host.",
+    );
+    expect(operation).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unlocked status read when Hermes Portable registry authority appears during it (#11903)", async () => {
+    const fence = acquireProcessBoundLockAt(portableHostAuthority.portableHostFencePath(stateDir));
+    let registryReads = 0;
+    vi.spyOn(registryCrossPort, "listInferenceRouteOwnersAcrossGatewayRoots").mockImplementation(
+      () => {
+        registryReads += 1;
+        return registryReads < 3
+          ? []
+          : [
+              {
+                name: "beta",
+                agent: "hermes",
+                openshellDriver: "docker",
+                lifecycleGeneration: "generation-1",
+              } as never,
+            ];
+      },
+    );
+    const operation = vi.fn(async () => undefined);
+    ParsedSupportedSandboxCommand.operation = operation;
+    try {
+      await expect(ParsedSupportedSandboxCommand.run(["alpha"], process.cwd())).rejects.toThrow(
+        "Another NemoClaw lifecycle operation is in progress on this host.",
+      );
+      expect(operation).toHaveBeenCalledOnce();
+      expect(registryReads).toBe(3);
+    } finally {
+      releaseProcessBoundLock(fence);
+    }
+  });
+
+  it("fails closed on Portable registry authority for another sandbox (#11903)", async () => {
+    vi.spyOn(portableHostAuthority, "withCurrentPortableHostFenceTry").mockRejectedValue(
+      new Error(portableHostAuthority.PORTABLE_HOST_FENCE_BUSY_MESSAGE),
+    );
+    vi.spyOn(registryCrossPort, "listInferenceRouteOwnersAcrossGatewayRoots").mockReturnValue([
+      { name: "beta", portableLifecycleProfile: "openclaw" } as never,
+    ]);
+    const operation = vi.fn(async () => undefined);
+    ParsedSupportedSandboxCommand.operation = operation;
+
+    await expect(ParsedSupportedSandboxCommand.run(["alpha"], process.cwd())).rejects.toThrow(
+      "Another NemoClaw lifecycle operation is in progress on this host.",
+    );
+    expect(operation).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on an OpenClaw Portable receipt for another sandbox (#11903)", async () => {
+    writeOpenClawPortableReceipt(
+      portableHostAuthority.defaultPortableStateDir(process.env),
+      "beta",
+    );
+    vi.spyOn(portableHostAuthority, "withCurrentPortableHostFenceTry").mockRejectedValue(
+      new Error(portableHostAuthority.PORTABLE_HOST_FENCE_BUSY_MESSAGE),
+    );
+    const operation = vi.fn(async () => undefined);
+    ParsedSupportedSandboxCommand.operation = operation;
+
+    await expect(ParsedSupportedSandboxCommand.run(["alpha"], process.cwd())).rejects.toThrow(
+      "Another NemoClaw lifecycle operation is in progress on this host.",
+    );
+    expect(operation).not.toHaveBeenCalled();
+  });
+
+  it("waits for the host fence before running global status", async () => {
+    let releaseFence!: () => void;
+    const fenceReady = new Promise<void>((resolve) => {
+      releaseFence = resolve;
+    });
+    const withFence = vi
+      .spyOn(portableHostAuthority, "withCurrentPortableHostFence")
+      .mockImplementation(async (operation) => {
+        await fenceReady;
+        return await operation();
+      });
+    const operation = vi.fn(async () => undefined);
+    GlobalStatusReadCommand.operation = operation;
+
+    const status = GlobalStatusReadCommand.run([], process.cwd());
+    try {
+      await vi.waitFor(() => expect(withFence).toHaveBeenCalledOnce());
+      expect(operation).not.toHaveBeenCalled();
+      releaseFence();
+      await expect(status).resolves.toBeUndefined();
+      expect(operation).toHaveBeenCalledOnce();
+    } finally {
+      releaseFence();
+    }
   });
 
   it("records status-like command results without throwing", () => {
