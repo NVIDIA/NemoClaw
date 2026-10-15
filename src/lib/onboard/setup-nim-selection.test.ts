@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { requireValue } from "../core/require-value";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import {
-  applyCloudFallbackSelection,
+  abortFailedNimStartup,
   clearNimContainerBeforeRetry,
   createRemoteModelValidator,
   resolveCompatibleEndpointSelection,
@@ -31,33 +31,6 @@ function makeState(): SetupNimSelectionState {
 }
 
 describe("setupNim selection state helpers", () => {
-  it("applies a complete cloud fallback and clears stale local-provider state", () => {
-    const state = makeState();
-    state.allowToolsIncompatible = true;
-    state.localNimSelected = true;
-
-    applyCloudFallbackSelection(state, {
-      providerName: "nvidia-prod",
-      endpointUrl: "https://integrate.api.nvidia.com/v1",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      defaultModel: "meta/llama-3.3-70b-instruct",
-    });
-
-    assert.deepEqual(state, {
-      model: "meta/llama-3.3-70b-instruct",
-      provider: "nvidia-prod",
-      endpointUrl: "https://integrate.api.nvidia.com/v1",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      hermesAuthMethod: null,
-      hermesToolGateways: [],
-      preferredInferenceApi: null,
-      nimContainer: null,
-      allowToolsIncompatible: false,
-      skipHostInferenceSmoke: false,
-      reuseGatewayCredentialWithoutLocalKey: false,
-    });
-  });
-
   it("removes the owned NIM container before clearing its route marker", () => {
     const state = makeState();
     state.localNimSelected = true;
@@ -88,6 +61,26 @@ describe("setupNim selection state helpers", () => {
 
     expect(state.nimContainer).toBe("nemoclaw-nim-test");
     expect(state.localNimSelected).toBe(true);
+  });
+
+  it("stops onboarding after unhealthy NIM cleanup without selecting cloud inference", () => {
+    const state = makeState();
+    state.localNimSelected = true;
+    const remove = vi.fn((name: string) => {
+      expect(name).toBe("nemoclaw-nim-test");
+      expect(state.localNimSelected).toBe(true);
+    });
+
+    expect(() => abortFailedNimStartup(state, remove)).toThrow(
+      "Local NVIDIA NIM failed to become healthy. Onboarding stopped.",
+    );
+
+    expect(remove).toHaveBeenCalledOnce();
+    expect(state.nimContainer).toBeNull();
+    expect(state.localNimSelected).toBeUndefined();
+    expect(state.model).toBe("nvidia/local-nim");
+    expect(state.provider).toBe("vllm-local");
+    expect(state.credentialEnv).toBeNull();
   });
 });
 

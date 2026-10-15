@@ -92,36 +92,6 @@ export function withCredentialMutationGuard<T extends object>(
   return guard ? { ...options, revalidateSandboxIdentity: guard } : options;
 }
 
-export type CloudFallbackConfig = {
-  providerName: string;
-  endpointUrl: string | null;
-  credentialEnv: string | null;
-  defaultModel: string;
-};
-
-export function applyCloudFallbackSelection(
-  state: SetupNimSelectionState,
-  cloudConfig: CloudFallbackConfig,
-): void {
-  // Source boundary: fallback may run after a local Ollama/NIM/vLLM branch
-  // accepted provider-specific tool constraints. Cloud fallback is a fresh
-  // provider selection, so clear local-only compatibility state here.
-  state.provider = cloudConfig.providerName;
-  state.endpointUrl = cloudConfig.endpointUrl;
-  state.credentialEnv = cloudConfig.credentialEnv;
-  state.model = cloudConfig.defaultModel;
-  state.onModelSelected?.(cloudConfig.defaultModel, "product_catalog");
-  state.preferredInferenceApi = null;
-  state.nimContainer = null;
-  delete state.localNimSelected;
-  state.allowToolsIncompatible = false;
-  state.skipHostInferenceSmoke = false;
-  state.reuseGatewayCredentialWithoutLocalKey = false;
-  delete state.vllmModelIdentity;
-  delete state.endpointPinnedAddresses;
-  delete state.endpointTrustedPrivateCapability;
-}
-
 export function clearNimContainerBeforeRetry(
   state: SetupNimSelectionState,
   removeOwnedContainer: (name: string) => void,
@@ -136,6 +106,15 @@ export function clearNimContainerBeforeRetry(
   removeOwnedContainer(state.nimContainer);
   state.nimContainer = null;
   delete state.localNimSelected;
+}
+
+/** Stop onboarding after failed Local NIM startup without changing its selected route. */
+export function abortFailedNimStartup(
+  state: SetupNimSelectionState,
+  removeOwnedContainer: (name: string) => void,
+): never {
+  clearNimContainerBeforeRetry(state, removeOwnedContainer);
+  throw new Error("Local NVIDIA NIM failed to become healthy. Onboarding stopped.");
 }
 
 type CompatibleEndpointKind = "openai" | "anthropic";

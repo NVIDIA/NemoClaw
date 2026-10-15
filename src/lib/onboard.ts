@@ -22,7 +22,7 @@ const {
   createInferenceSelectionValidationHelpers,
 }: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
 const {
-  applyCloudFallbackSelection,
+  abortFailedNimStartup,
   clearNimContainerBeforeRetry,
   createNvidiaFeaturedModelSession,
   createRemoteModelValidator,
@@ -1671,10 +1671,7 @@ async function handleNimLocalSelection(
   const localGpu = requireValue(gpu, "GPU details are required for local NIM model selection");
   const { models, usableMemoryMB } = nim.getNimModelOptions(localGpu);
   if (models.length === 0) {
-    console.log(`  No NIM model fits ${usableMemoryMB} MB. Falling back to cloud API.`);
-    applyCloudFallbackSelection(state, REMOTE_PROVIDER_CONFIG.build);
-    state.assertRouteCompatible?.();
-    return "selected";
+    throw new Error(`No Local NVIDIA NIM model fits ${usableMemoryMB} MB of usable GPU memory.`);
   }
 
   let sel;
@@ -1775,11 +1772,7 @@ async function handleNimLocalSelection(
 
   console.log("  Waiting for NIM to become healthy...");
   if (!nim.waitForNimHealth(undefined, undefined, { container: nimContainerNameLocal })) {
-    nim.stopNimContainerByNameOrThrow(nimContainerNameLocal);
-    console.error("  NIM failed to start. Falling back to cloud API.");
-    applyCloudFallbackSelection(state, REMOTE_PROVIDER_CONFIG.build);
-    state.assertRouteCompatible?.();
-    return "selected";
+    abortFailedNimStartup(state, nim.stopNimContainerByNameOrThrow);
   }
 
   state.model = nim.adoptServedModelId(catalogModel);
