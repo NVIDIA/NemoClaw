@@ -9,7 +9,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-pub use crate::inference_catalog::observe_endpoint;
+pub use crate::inference_catalog::{observe_endpoint, observe_server};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EndpointRequest {
@@ -43,8 +43,28 @@ impl EndpointRequest {
             credential_env: credential.map(|credential| credential.env.clone()),
         }))
     }
-    pub fn validate(&self) -> Result<(), Error> {
-        crate::config::validate_endpoint(&self.endpoint, false)?;
+    /// Check only the request's shape: an http or https URL with a host and
+    /// no credentials, query, or fragment, and a valid credential name. Unlike
+    /// [`Self::validate`], it leaves which destinations are allowed to OpenShell.
+    pub fn validate_shape(&self) -> Result<(), Error> {
+        let invalid = || {
+            Error::Configuration(crate::config::ConfigError::new(
+                "inference server endpoint must be an http or https URL with a host, without credentials, query, or fragment",
+            ))
+        };
+        let url = url::Url::parse(&self.endpoint).map_err(|_| invalid())?;
+        if !matches!(url.scheme(), "http" | "https")
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(invalid());
+        }
+        self.validate_credential()
+    }
+    fn validate_credential(&self) -> Result<(), Error> {
         if let Some(reference) = &self.credential_env {
             crate::config::schema::validate_definition(
                 "Credential",
@@ -54,6 +74,10 @@ impl EndpointRequest {
             )?;
         }
         Ok(())
+    }
+    pub fn validate(&self) -> Result<(), Error> {
+        crate::config::validate_endpoint(&self.endpoint, false)?;
+        self.validate_credential()
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
