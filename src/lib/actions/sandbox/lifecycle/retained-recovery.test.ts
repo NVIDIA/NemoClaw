@@ -513,7 +513,14 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
 
   it("preserves attached native local provider ownership during forced recovery (#13197)", async () => {
     const h = await setupNativeLocalRecovery();
-    h.registry.updateSandbox("alpha", { nativeLocalProviderAttachment: h.receipt });
+    expect(
+      h.registry.updateSandbox("alpha", {
+        provider: h.receipt.provider,
+        endpointUrl: h.receipt.endpointUrl,
+        credentialEnv: h.receipt.credentialEnv,
+        nativeLocalProviderAttachment: h.receipt,
+      }),
+    ).toBe(true);
     const before = h.snapshot();
 
     expect(() => h.run(true)).toThrow(/native local provider cleanup authority/u);
