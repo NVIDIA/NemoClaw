@@ -187,6 +187,33 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
     expect(output).not.toContain(opaqueSecret);
   });
 
+  it("starts no Docker call after the shared capture deadline before rollback", () => {
+    let clock = 1_000;
+    const dockerRun = vi.fn((_args: readonly string[], options?: { timeout?: number }) => {
+      clock += options?.timeout ?? 0;
+      return dockerResult(`${CONTAINER_ID}\n`);
+    });
+    const dockerCapture = vi.fn((_args: readonly string[], options?: { timeout?: number }) => {
+      clock += options?.timeout ?? 0;
+      return "";
+    });
+    const dockerLogs = vi.fn();
+
+    expect(
+      captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+        dockerRun,
+        dockerCapture,
+        dockerLogs,
+        now: () => clock,
+      }),
+    ).toBeNull();
+    expect(dockerRun.mock.calls[0][1]).toMatchObject({ timeout: 2_000 });
+    expect(dockerCapture).toHaveBeenCalledOnce();
+    expect(dockerCapture.mock.calls[0][1]).toMatchObject({ timeout: 2_000 });
+    expect(dockerLogs).not.toHaveBeenCalled();
+    expect(clock - 1_000).toBeLessThanOrEqual(4_000);
+  });
+
   it("reads the exact failed replacement without a label lookup", () => {
     const dockerRun = vi.fn();
     const dockerLogs = vi.fn(() => STARTUP_FAILURE);

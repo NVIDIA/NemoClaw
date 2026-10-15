@@ -79,13 +79,16 @@ export function findOpenShellDockerSandboxContainerIds(
     .filter(Boolean);
 }
 
-/** Matches the failure-evidence call bound so diagnostics never delay rollback. */
-const SANDBOX_FAILURE_OUTPUT_QUERY_TIMEOUT_MS = 2_000;
+/**
+ * One deadline for discovery, inspection, and log reads, so diagnostics delay
+ * rollback by at most this long even when Docker stalls.
+ */
+const SANDBOX_FAILURE_OUTPUT_BUDGET_MS = 4_000;
 
 type SandboxFailureOutputDeps = Pick<
   DockerGpuPatchDeps,
   "dockerCapture" | "dockerLogs" | "dockerRun"
->;
+> & { readonly now?: () => number };
 
 /**
  * Capture redacted recent output from one sandbox container before rollback
@@ -110,20 +113,26 @@ export function captureOpenShellDockerSandboxFailureOutput(
   deps: SandboxFailureOutputDeps = {},
 ): string | null {
   try {
+    const now = deps.now ?? Date.now;
+    const deadlineMs = now() + SANDBOX_FAILURE_OUTPUT_BUDGET_MS;
     let containerId = expectedContainerId;
     if (!containerId) {
       const containers = queryOpenShellDockerSandboxContainers(
         sandboxName,
         { dockerRun: deps.dockerRun ?? dockerRun },
-        SANDBOX_FAILURE_OUTPUT_QUERY_TIMEOUT_MS,
+        Math.min(2_000, deadlineMs - now()),
       );
       if (!containers.ok || containers.ids.length !== 1) return null;
       containerId = containers.ids[0];
     }
-    const evidence = captureDockerContainerFailureEvidence(containerId, {
-      dockerCapture: deps.dockerCapture ?? dockerCapture,
-      dockerLogs: deps.dockerLogs ?? dockerLogs,
-    });
+    const evidence = captureDockerContainerFailureEvidence(
+      containerId,
+      {
+        dockerCapture: deps.dockerCapture ?? dockerCapture,
+        dockerLogs: deps.dockerLogs ?? dockerLogs,
+      },
+      { deadlineMs, now },
+    );
     // Opaque credentials are redacted only after inspect identifies them;
     // without that, pattern redaction alone could print an opaque value.
     if (!evidence.inspectRedactionApplied) return null;
