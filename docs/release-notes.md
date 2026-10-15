@@ -19,6 +19,11 @@ See [migration](migration.md) for where each earlier task lives now, and [state]
 Recent development changes that affect existing deployments:
 
 - Docker-managed vLLM and Ollama services default to [`updatePolicy: Preserve`](inference.md#set-container-limits-and-update-policy), which refuses an image, model, serving, or container-limit change that would replace a running container; set `spec.services.<name>.updatePolicy: Recreate` to permit the replacement and its downtime.
+- `spec.gateway.image` is removed: the SDK pins the managed gateway image, and defaulted and exported documents no longer name it.
+  - Remove the field from documents; the parser rejects it as an unknown field.
+  - Deployment state that an earlier NemoClaw wrote for a managed Docker or Podman gateway records the field.
+    This NemoClaw refuses that state with `deployment intent record is corrupt; retain it for recovery` and leaves it unchanged; keep operating those deployments with their original bundle, or create a separate deployment.
+  - In the Rust SDK, `ManagedGateway` has no `image` field, and `managed::Spec.gateway` and `kubernetes::Spec.settings` are `managed::GatewaySettings`.
 
 ## Qualification and Known Issues
 

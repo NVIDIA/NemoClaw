@@ -13,7 +13,6 @@ spec:
       provider: docker
     endpoint: http://127.0.0.1:17671
     engine: unix:///var/run/docker.sock
-    image: ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6
     networkCIDR: 172.20.0.0/24
   services:
     ollama-server:

@@ -140,13 +140,6 @@ fn managed_defaults_and_safety_bounds_match_the_qualified_recipe() {
         .unwrap()
         .engine
         .clear();
-    defaulted
-        .spec
-        .gateway
-        .as_managed_mut()
-        .unwrap()
-        .image
-        .clear();
     let ServiceDefinition::Vllm(service) = defaulted.spec.services.get_mut("qwen").unwrap() else {
         panic!("expected vLLM service");
     };
@@ -429,17 +422,11 @@ fn harness_selection_does_not_determine_service_ownership() {
 
 #[test]
 fn external_gateways_reject_installation_fields_even_when_empty() {
-    let base = include_str!("fixtures/config/local.yaml");
-    for field in ["image", "networkCIDR"] {
-        let input = base.replace(
-            "management: external",
-            &format!("management: external\n    {field}: \"\""),
-        );
-        assert!(
-            Document::parse(input.as_bytes()).is_err(),
-            "external gateway accepted {field}"
-        );
-    }
+    let input = include_str!("fixtures/config/local.yaml").replace(
+        "management: external",
+        "management: external\n    networkCIDR: \"\"",
+    );
+    assert!(Document::parse(input.as_bytes()).is_err());
 }
 
 #[test]

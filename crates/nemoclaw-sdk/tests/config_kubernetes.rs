@@ -82,7 +82,6 @@ fn a_managed_gateway_schema_still_states_its_local_defaults() {
         managed["properties"]["endpoint"]["default"],
         "http://127.0.0.1:17681"
     );
-    assert!(managed["properties"]["image"]["default"].is_string());
 }
 
 /// A kubeconfig's exec plugin, such as a cloud CLI, may need the caller's
@@ -244,7 +243,6 @@ fn managed_kubernetes_rejects_other_transports_targets_and_implicit_authenticati
         ("engine", json!("unix:///var/run/docker.sock")),
         ("engine", json!("")),
         ("networkCIDR", json!("172.30.1.0/24")),
-        ("image", json!(nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE)),
         ("imagePullPolicy", json!("Never")),
         ("credential", json!({"env":"GATEWAY_TOKEN"})),
         (

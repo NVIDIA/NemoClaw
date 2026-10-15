@@ -453,7 +453,7 @@
               }
             }
           ],
-          "description": "A gateway installed and managed by this deployment.\nManaged Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.",
+          "description": "A gateway installed and managed by this deployment. The SDK pins its image.\nManaged Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.",
           "else": {
             "properties": {
               "endpoint": {
@@ -477,13 +477,6 @@
                   }
                 ],
                 "default": "unix:///var/run/docker.sock"
-              },
-              "image": {
-                "default": "ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6",
-                "enum": [
-                  "",
-                  "ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6"
-                ]
               },
               "networkCIDR": {
                 "anyOf": [
@@ -517,19 +510,13 @@
               "type": "string",
               "x-nemoclaw-default-rule": "With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes."
             },
-            "image": {
-              "default": "ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6",
-              "description": "Managed local gateway image pinned by the SDK. Excluded by kubernetes, whose component images are also SDK-pinned.",
-              "type": "string",
-              "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the SDK default. Excluded by kubernetes."
-            },
             "imagePullPolicy": {
               "$ref": "#/$defs/ImagePullPolicy",
               "description": "Image acquisition before local container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. Excluded by kubernetes."
             },
             "kubernetes": {
               "$ref": "#/$defs/ManagedKubernetes",
-              "description": "Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services."
+              "description": "Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services."
             },
             "management": {
               "const": "managed",
@@ -557,11 +544,6 @@
                     {
                       "required": [
                         "engine"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "image"
                       ]
                     },
                     {

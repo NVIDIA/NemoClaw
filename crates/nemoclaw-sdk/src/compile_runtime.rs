@@ -56,7 +56,7 @@ fn runtime_targets_with_plans(
                     },
                 )?
                 .into(),
-                settings: settings.clone(),
+                settings: settings.runtime_settings(),
             };
             Ok(Target {
                 kind: kind.into(),

@@ -10,9 +10,6 @@
     "/spec/gateway/engine": {
       "title": "Gateway engine socket"
     },
-    "/spec/gateway/image": {
-      "title": "Gateway image"
-    },
     "/spec/gateway/management": {
       "title": "How should NemoClaw reach its gateway?"
     },

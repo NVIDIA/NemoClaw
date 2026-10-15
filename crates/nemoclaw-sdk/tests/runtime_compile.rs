@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
     compile::{Generations, compile_runtime, runtime_targets},
-    config::Document,
+    config::{DEFAULT_GATEWAY_IMAGE, Document},
+    managed,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -580,6 +581,75 @@ fn gateway_readiness_observes_the_exact_docker_provider_container() {
             .get("openshell_docker_gateway_readiness")
             .is_none()
     );
+}
+
+/// Deployment state binds a local gateway's resource attributes, and the
+/// specifications labelling its containers embed its settings, so both keep
+/// this layout with the SDK's gateway image pin.
+#[test]
+fn local_gateway_settings_keep_their_bound_layout_and_pinned_image() {
+    let document =
+        Document::parse(include_bytes!("fixtures/config/spark.yaml").as_slice()).unwrap();
+    let generations = ["managed_gateway", "inference_service"]
+        .map(|kind| (kind.into(), "b".repeat(32)))
+        .into();
+    let targets = runtime_targets(&document, &generations).unwrap();
+    let values = |kind: &str| {
+        &targets
+            .iter()
+            .find(|target| target.kind == kind)
+            .unwrap()
+            .values
+    };
+    let mut gateway: nemoclaw_sdk::backend::Row = [
+        ("name", "nc-68d203b0c7e6083f-gateway"),
+        ("owner", "302ff5e1-088d-42ce-959f-4ff4c3570c13"),
+        ("generation", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        ("compute_driver", "docker"),
+        ("engine", "unix:///var/run/docker.sock"),
+        ("endpoint", "http://127.0.0.1:17681"),
+        ("image", DEFAULT_GATEWAY_IMAGE),
+        ("network_cidr", "172.30.110.0/24"),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.into(), value.into()))
+    .collect();
+    assert_eq!(values(managed::GATEWAY_KIND), &gateway);
+    let settings = format!(
+        r#""gateway":{{"runtime":{{"provider":"docker"}},"endpoint":"http://127.0.0.1:17681","engine":"unix:///var/run/docker.sock","image":"{DEFAULT_GATEWAY_IMAGE}","networkCIDR":"172.30.110.0/24"}}"#
+    );
+    let spec = managed::Spec::from_gateway_row(managed::GATEWAY_KIND, &gateway).unwrap();
+    assert_eq!(
+        spec.json().unwrap(),
+        format!(
+            r#"{{"layout":2,"kind":"managed_gateway","name":"nc-68d203b0c7e6083f-gateway","owner":"302ff5e1-088d-42ce-959f-4ff4c3570c13","generation":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",{settings}}}"#
+        )
+    );
+    // Docker gateway data does not depend on the listen endpoint.
+    gateway.remove("endpoint");
+    assert_eq!(values(managed::GATEWAY_STORAGE_KIND), &gateway);
+    // A service placed on the gateway's engine embeds the same settings.
+    assert!(values("inference_service")["spec"].contains(&settings));
+}
+
+#[test]
+fn local_gateways_compile_the_sdk_image_pin_their_documents_do_not_name() {
+    let generations = ["managed_gateway", "inference_service"]
+        .map(|kind| (kind.into(), "b".repeat(32)))
+        .into();
+    for source in [
+        include_str!("fixtures/config/spark.yaml"),
+        include_str!("../../../examples/managed-podman.yaml"),
+    ] {
+        let document = Document::parse(source.as_bytes()).unwrap();
+        let intent = serde_json::to_value(&document).unwrap();
+        assert!(intent["spec"]["gateway"].get("image").is_none());
+        let targets = runtime_targets(&document, &generations).unwrap();
+        for kind in [managed::GATEWAY_KIND, managed::GATEWAY_STORAGE_KIND] {
+            let target = targets.iter().find(|target| target.kind == kind).unwrap();
+            assert_eq!(target.values["image"], DEFAULT_GATEWAY_IMAGE, "{kind}");
+        }
+    }
 }
 
 #[test]

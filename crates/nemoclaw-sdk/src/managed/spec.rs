@@ -5,7 +5,8 @@ use crate::config::ComputeDriver;
 #[path = "spec_tests.rs"]
 mod tests;
 
-use crate::{Error, config::ManagedGateway};
+use super::GatewaySettings;
+use crate::Error;
 use bollard_stubs::models::ContainerCreateBody;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -28,7 +29,7 @@ pub struct Spec {
     pub name: String,
     pub owner: String,
     pub generation: String,
-    pub gateway: ManagedGateway,
+    pub gateway: GatewaySettings,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<Process>,
 }
@@ -299,7 +300,7 @@ impl Spec {
             name: get("name")?,
             owner: get("owner")?,
             generation: get("generation")?,
-            gateway: ManagedGateway {
+            gateway: GatewaySettings {
                 runtime: crate::config::Runtime {
                     provider: compute_driver,
                 },

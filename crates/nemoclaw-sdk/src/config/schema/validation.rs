@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Shared structural contract for authored input and normalized SDK values.
-use crate::config::{API_VERSION, DEFAULT_AGENT_IMAGE, DEFAULT_GATEWAY_IMAGE, constraints as c};
+use crate::config::{API_VERSION, DEFAULT_AGENT_IMAGE, constraints as c};
 use serde_json::{Value, json};
 
 pub(crate) use nemoclaw_runtime::schema::{at, forbid, property};
@@ -264,10 +264,6 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                     json!({"anyOf": [{"const":""},{"pattern":"^unix:///"}], "default": c::GATEWAY_ENGINE}),
                 ),
                 (
-                    "image",
-                    json!({"enum": ["", DEFAULT_GATEWAY_IMAGE], "default": DEFAULT_GATEWAY_IMAGE}),
-                ),
-                (
                     "networkCIDR",
                     json!({"anyOf": [{"const": ""}, {"pattern": "/24$"}], "x-nemoclaw-default-rule": "Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid)."}),
                 ),
@@ -277,9 +273,6 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                     local["required"].as_array_mut().unwrap().push(json!(field));
                     if let Some(choices) = rule.get_mut("anyOf").and_then(Value::as_array_mut) {
                         choices.retain(|choice| choice.get("const") != Some(&json!("")));
-                    }
-                    if field == "image" {
-                        rule["enum"] = json!([DEFAULT_GATEWAY_IMAGE]);
                     }
                 }
                 // A default only annotates; the Kubernetes branch still
@@ -296,10 +289,8 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                         "Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS loopback endpoint and port."
                     } else if field == "networkCIDR" {
                         "Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes."
-                    } else if field == "engine" {
-                        "With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes."
                     } else {
-                        "Without kubernetes, omitted or empty selects the SDK default. Excluded by kubernetes."
+                        "With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes."
                     }}),
                 );
             }
@@ -307,7 +298,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             gateway["then"] = json!({
                 "required": ["endpoint"],
                 "properties": {"endpoint": {"pattern": c::KUBERNETES_GATEWAY_ENDPOINT}},
-                "allOf": [forbid(&["engine", "image", "imagePullPolicy", "networkCIDR"])],
+                "allOf": [forbid(&["engine", "imagePullPolicy", "networkCIDR"])],
                 "x-nemoclaw-error": "managed Kubernetes requires an explicit HTTPS 127.0.0.1 endpoint with a nonzero port and excludes local engine settings"
             });
             gateway["else"] = local;

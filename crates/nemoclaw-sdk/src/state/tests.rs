@@ -105,6 +105,34 @@ fn removed_ownership_annotations_preserve_intent_and_resource_bindings_for_recov
     assert_eq!(std::fs::read(state).unwrap(), binding);
 }
 
+/// Earlier SDKs recorded their gateway image pin in a managed gateway's
+/// retained intent. Reading fails before the intent digest is checked, so such
+/// state is refused whatever its digest, and stays unchanged for the original
+/// bundle.
+#[test]
+fn retained_intent_naming_a_gateway_image_is_preserved_for_recovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let document = crate::config::Document::parse(
+        include_str!("../../tests/fixtures/config/spark.yaml").as_bytes(),
+    )
+    .unwrap();
+    let record = Record::new(document).unwrap();
+    let mut old = serde_json::to_value(&record).unwrap();
+    old["document"]["spec"]["gateway"]["image"] =
+        serde_json::json!(crate::config::DEFAULT_GATEWAY_IMAGE);
+    let bytes = serde_json::to_vec(&old).unwrap();
+    let intent = dir.path().join("intent.json");
+    std::fs::write(&intent, &bytes).unwrap();
+    assert!(matches!(
+        store.load(),
+        Err(Error::State(
+            "deployment intent record is corrupt; retain it for recovery"
+        ))
+    ));
+    assert_eq!(std::fs::read(intent).unwrap(), bytes);
+}
+
 fn object(address: &str, id: &str) -> serde_json::Value {
     serde_json::json!({"address":address, "mode":"managed", "values":{"id":id}})
 }

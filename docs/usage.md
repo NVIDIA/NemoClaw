@@ -128,7 +128,7 @@ See [sandbox policy configuration](sandbox-network.md) for changes and [security
 
 ## Control Container Image Downloads
 
-Set `imagePullPolicy` beside `image` under `spec.gateway` or `spec.services.<name>`.
+Set `imagePullPolicy` under `spec.gateway`, or beside `image` under `spec.services.<name>`.
 The service setting applies to `kind: vllm`, `ollama`, and `ollamaProxy`.
 The setting controls image acquisition on that container's engine, including an SSH Docker engine selected by the service's `placement.engine`.
 Images still require immutable SHA-256 references.
@@ -150,6 +150,8 @@ imagePullPolicy: Never
 
 Docker-managed gateways use the same `IfNotPresent` and `Never` modes as services; `Always` is rejected.
 Podman gateways retain their existing image policy: omission means `IfNotPresent`, and `Always` contacts the registry before creation or restart, including its credential initializer.
+The SDK pins the gateway image, so documents and exports do not name it.
+A Docker or Podman deployment keeps the gateway image pin of the bundle that created it; see the [change path](#choose-the-change-path).
 Service acquisition does not promise a registry request on every restart or complete layer progress.
 Export preserves the declared setting.
 Downloaded service images remain on the selected engine after destroy, although their disposable provider resource bindings are removed.
@@ -228,6 +230,7 @@ Use separate deployments when you need independent teardown.
 | Managed vLLM or Ollama image, container limits, or serving specification | Replaces the Docker container. Service-level `updatePolicy: Preserve` blocks replacement of a running Docker container; set `Recreate` only when accepting sequential replacement and downtime. Review the plan, [container limits and update policy](inference.md#set-container-limits-and-update-policy), and [model constraints](models.md) |
 | Ollama proxy image or serving specification | Docker-provider reconciliation may replace the proxy container while retaining its independently bound credential storage |
 | Deployment UID, established gateway endpoint, or bound credential/gateway engine | Cannot retarget the existing state; create a separate deployment |
+| A bundle with a different gateway image pin than the bundle that created a Docker or Podman deployment | Plan, apply, export, and destroy refuse, because deployment state binds the gateway to its original image pin. Keep operating the deployment with its original bundle, or create a separate deployment |
 | Remove an unused inference provider definition | Changes the desired document only; the SDK creates registrations for selected definitions, so unused definitions have no resources to delete |
 | Remove a sandbox, retained storage, or a protected gateway binding | Apply refuses removal; assess a separate deployment and explicit retirement of the original |
 | Change a credential value behind the same environment reference | Unchanged apply does not detect rotation; see [credential lifecycle](security.md#credentials-and-authentication) |

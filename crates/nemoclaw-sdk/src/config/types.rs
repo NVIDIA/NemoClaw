@@ -103,7 +103,7 @@ pub struct TLS {
 #[serde(tag = "management", rename_all = "lowercase")]
 /// Install a local or explicitly configured Kubernetes gateway, or connect to an existing gateway.
 pub enum Gateway {
-    /// A gateway installed and managed by this deployment.
+    /// A gateway installed and managed by this deployment. The SDK pins its image.
     /// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
     #[schemars(title = "Managed gateway")]
     Managed(ManagedGateway),
@@ -135,10 +135,6 @@ pub struct ManagedGateway {
     #[schemars(default)]
     /// Managed local gateway Unix engine socket; Podman requires its API service socket. Excluded by kubernetes.
     pub engine: String,
-    #[serde(rename = "image", skip_serializing_if = "String::is_empty")]
-    #[schemars(default)]
-    /// Managed local gateway image pinned by the SDK. Excluded by kubernetes, whose component images are also SDK-pinned.
-    pub image: String,
     #[serde(
         rename = "imagePullPolicy",
         default,
@@ -153,7 +149,7 @@ pub struct ManagedGateway {
     pub network_cidr: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::ManagedKubernetes")]
-    /// Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services.
+    /// Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services.
     pub kubernetes: Option<super::ManagedKubernetes>,
 }
 

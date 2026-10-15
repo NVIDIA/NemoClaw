@@ -239,6 +239,7 @@ These types name the engine or cluster they use instead of taking a gateway `ref
 
 - `name` is `nc-`, 16 lowercase hexadecimal characters, a hyphen, and a lowercase name.
 - `engine` is a local Unix engine socket; Podman requires its API service socket.
+- `image` must be the bundle's gateway image pin, which generated graphs supply; documents do not name it.
 - `network_cidr` is a private IPv4 `/24`.
 
 `openshell_podman_gateway` also requires the gateway `endpoint`, an HTTP origin with an unprivileged loopback port.

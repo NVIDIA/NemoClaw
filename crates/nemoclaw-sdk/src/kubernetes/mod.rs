@@ -16,7 +16,7 @@ pub mod operations;
 pub mod receipt;
 pub mod storage;
 
-use crate::{Error, ObservationError, config::ManagedGateway};
+use crate::{Error, ObservationError, managed::GatewaySettings};
 use kube::config::{KubeConfigOptions, Kubeconfig};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -44,7 +44,7 @@ pub struct Spec {
     pub name: String,
     pub owner: String,
     pub generation: String,
-    pub settings: ManagedGateway,
+    pub settings: GatewaySettings,
 }
 
 impl Spec {
@@ -164,7 +164,7 @@ impl Spec {
             name: get("name")?,
             owner: get("owner")?,
             generation: get("generation")?,
-            settings: ManagedGateway {
+            settings: GatewaySettings {
                 runtime: crate::config::Runtime { provider },
                 endpoint: get("endpoint")?,
                 kubernetes: Some(crate::config::ManagedKubernetes {
@@ -294,7 +294,7 @@ pub fn gateway_spec(
             .get(GATEWAY_KIND)
             .ok_or(ObservationError::Incomplete)?
             .clone(),
-        settings: settings.clone(),
+        settings: settings.runtime_settings(),
     };
     spec.validate()?;
     Ok(Some(spec))
