@@ -655,9 +655,11 @@ describe("native Podman E2E setup boundary", () => {
     const home = path.join(root, "home");
     const fakeBin = path.join(root, "bin");
     const githubPath = path.join(root, "github-path");
+    const installedRoot = path.join(root, "installed");
     const sudoLog = path.join(root, "sudo.log");
     fs.mkdirSync(home);
     fs.mkdirSync(fakeBin);
+    fs.mkdirSync(installedRoot);
     writeExecutable(
       path.join(fakeBin, "bash"),
       `#!/bin/sh
@@ -685,6 +687,9 @@ for argument in "$@"; do
   last="$argument"
 done
 [ -x "$previous" ]
+destination="$SUDO_INSTALL_ROOT/$(basename "$last")"
+cp "$previous" "$destination"
+chmod 0755 "$destination"
 printf '%s -> %s\\n' "$previous" "$last" >>"$SUDO_LOG"
 exit 0
 `,
@@ -698,7 +703,9 @@ exit 0
           GITHUB_PATH: githubPath,
           HOME: home,
           PATH: `${fakeBin}:/usr/bin:/bin`,
+          SUDO_INSTALL_ROOT: installedRoot,
           SUDO_LOG: sudoLog,
+          XDG_BIN_HOME: "",
         },
       });
 
@@ -711,6 +718,106 @@ exit 0
           "",
         ].join("\n"),
       );
+      const openshellSource = path.join(home, ".local", "bin", "openshell");
+      const openshellDestination = path.join(installedRoot, "openshell");
+      expect(fs.readFileSync(openshellDestination)).toEqual(fs.readFileSync(openshellSource));
+      expect(fs.statSync(openshellDestination).mode & 0o777).toBe(0o755);
+      const gatewaySource = path.join(home, ".local", "bin", "openshell-gateway");
+      const gatewayDestination = path.join(installedRoot, "openshell-gateway");
+      expect(fs.readFileSync(gatewayDestination)).toEqual(fs.readFileSync(gatewaySource));
+      expect(fs.statSync(gatewayDestination).mode & 0o777).toBe(0o755);
+      const sandboxSource = path.join(home, ".local", "bin", "openshell-sandbox");
+      const sandboxDestination = path.join(installedRoot, "openshell-sandbox");
+      expect(fs.readFileSync(sandboxDestination)).toEqual(fs.readFileSync(sandboxSource));
+      expect(fs.statSync(sandboxDestination).mode & 0o777).toBe(0o755);
+      expect(fs.readFileSync(githubPath, "utf8")).toBe("/usr/bin\n");
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("copies Portable Hermes OpenShell components from a compatible preinstalled root", () => {
+    const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
+    const install = job.steps?.find((step) => step.name === "Install pinned OpenShell");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-preinstalled-"));
+    const home = path.join(root, "home");
+    const fakeBin = path.join(root, "bin");
+    const preinstalledRoot = path.join(root, "preinstalled");
+    const installedRoot = path.join(root, "installed");
+    const githubPath = path.join(root, "github-path");
+    const sudoLog = path.join(root, "sudo.log");
+    fs.mkdirSync(home);
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(preinstalledRoot);
+    fs.mkdirSync(installedRoot);
+    writeExecutable(
+      path.join(fakeBin, "bash"),
+      `#!/bin/sh
+set -eu
+if [ "\${1:-}" = scripts/install-openshell.sh ]; then
+  exit 0
+fi
+exec /bin/bash "$@"
+`,
+    );
+    writeExecutable(path.join(preinstalledRoot, "openshell"), "#!/bin/sh\nexit 0\n");
+    writeExecutable(path.join(preinstalledRoot, "openshell-gateway"), "#!/bin/sh\nexit 0\n");
+    writeExecutable(path.join(preinstalledRoot, "openshell-sandbox"), "#!/bin/sh\nexit 0\n");
+    writeExecutable(
+      path.join(fakeBin, "sudo"),
+      `#!/bin/sh
+set -eu
+previous=
+last=
+for argument in "$@"; do
+  previous="$last"
+  last="$argument"
+done
+[ -x "$previous" ]
+destination="$SUDO_INSTALL_ROOT/$(basename "$last")"
+cp "$previous" "$destination"
+chmod 0755 "$destination"
+printf '%s -> %s\\n' "$previous" "$last" >>"$SUDO_LOG"
+exit 0
+`,
+    );
+
+    try {
+      const result = spawnSync("/bin/bash", ["-c", install?.run ?? ""], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GITHUB_PATH: githubPath,
+          HOME: home,
+          PATH: `${fakeBin}:${preinstalledRoot}:/usr/bin:/bin`,
+          SUDO_INSTALL_ROOT: installedRoot,
+          SUDO_LOG: sudoLog,
+          XDG_BIN_HOME: "",
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(path.join(home, ".local", "bin"))).toBe(false);
+      expect(fs.readFileSync(sudoLog, "utf8")).toBe(
+        [
+          `${preinstalledRoot}/openshell -> /usr/bin/openshell`,
+          `${preinstalledRoot}/openshell-gateway -> /usr/bin/openshell-gateway`,
+          `${preinstalledRoot}/openshell-sandbox -> /usr/bin/openshell-sandbox`,
+          "",
+        ].join("\n"),
+      );
+      const openshellSource = path.join(preinstalledRoot, "openshell");
+      const openshellDestination = path.join(installedRoot, "openshell");
+      expect(fs.readFileSync(openshellDestination)).toEqual(fs.readFileSync(openshellSource));
+      expect(fs.statSync(openshellDestination).mode & 0o777).toBe(0o755);
+      const gatewaySource = path.join(preinstalledRoot, "openshell-gateway");
+      const gatewayDestination = path.join(installedRoot, "openshell-gateway");
+      expect(fs.readFileSync(gatewayDestination)).toEqual(fs.readFileSync(gatewaySource));
+      expect(fs.statSync(gatewayDestination).mode & 0o777).toBe(0o755);
+      const sandboxSource = path.join(preinstalledRoot, "openshell-sandbox");
+      const sandboxDestination = path.join(installedRoot, "openshell-sandbox");
+      expect(fs.readFileSync(sandboxDestination)).toEqual(fs.readFileSync(sandboxSource));
+      expect(fs.statSync(sandboxDestination).mode & 0o777).toBe(0o755);
       expect(fs.readFileSync(githubPath, "utf8")).toBe("/usr/bin\n");
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
