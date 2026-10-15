@@ -998,9 +998,9 @@ export async function qualifyProtectedManagedImageRuntime(
     });
     await removeProtectedProviderContainer(host, vllmState, "stop-vllm-before-nim");
     if (vllmImagePulledByRun) {
-      // The protected GPU runner keeps Docker images and the NIM model cache on one
-      // root filesystem. Free the vLLM image this run pulled before NIM downloads
-      // its model (#13135). The artifact records the result; NIM readiness gates.
+      // Free the vLLM image this run pulled before NIM downloads its model. This
+      // frees space when the image store and NIM cache share a filesystem (#13135).
+      // The artifact records the result; NIM readiness gates.
       await host.command("docker", ["image", "rm", VLLM_IMAGE], {
         artifactName: "remove-run-pulled-vllm-image",
         env: buildAvailabilityProbeEnv(),
