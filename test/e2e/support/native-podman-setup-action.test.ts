@@ -904,6 +904,7 @@ exit 0
     const fixtureInstall = job.steps?.find(
       (step) => step.name === "Install immutable native Podman cleanup fixture",
     );
+    const openshellInstall = job.steps?.find((step) => step.name === "Install pinned OpenShell");
     const candidateCheckout = job.steps?.find(
       (step) => step.name === "Check out the exact candidate",
     );
@@ -915,6 +916,7 @@ exit 0
       (step) => step.name === "Remove immutable native Podman cleanup fixture",
     );
     const trustedCheckoutIndex = job.steps?.indexOf(trustedCheckout!) ?? -1;
+    const openshellInstallIndex = job.steps?.indexOf(openshellInstall!) ?? -1;
     const candidateCheckoutIndex = job.steps?.indexOf(candidateCheckout!) ?? -1;
     const setupIndex = job.steps?.indexOf(setup!) ?? -1;
     const uploadIndex =
@@ -963,6 +965,10 @@ exit 0
     );
     expect(fixtureInstall?.run).toContain("sha256sum --check --strict");
     expect(fixtureInstall?.run).toContain("--owner=root --group=root --mode=0555");
+    expect(openshellInstall?.run).toContain("bash scripts/install-openshell.sh");
+    expect(openshellInstall?.env).toEqual({
+      XDG_BIN_HOME: "${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin",
+    });
     expect(setup?.with).toEqual({
       "cleanup-fixture":
         "/usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}",
@@ -998,6 +1004,8 @@ exit 0
       /live-vitest-invocation\.mts run \\\n\s+--test-path test\/e2e\/live\/portable-profile-rootless-linux\.test\.ts/u,
     );
     expect(trustedCheckoutIndex).toBeGreaterThanOrEqual(0);
+    expect(openshellInstallIndex).toBeGreaterThan(trustedCheckoutIndex);
+    expect(candidateCheckoutIndex).toBeGreaterThan(openshellInstallIndex);
     expect(candidateCheckoutIndex).toBeGreaterThan(trustedCheckoutIndex);
     expect(setupIndex).toBeGreaterThanOrEqual(0);
     expect(uploadIndex).toBeGreaterThan(setupIndex);

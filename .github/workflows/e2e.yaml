@@ -5732,6 +5732,31 @@ jobs:
           [[ "$(sudo stat -c '%u:%g:%a' "$CLEANUP_FIXTURE")" == "0:0:555" ]]
           sudo cmp -s "$extracted_fixture" "$CLEANUP_FIXTURE"
 
+      - name: Install pinned OpenShell
+        env:
+          XDG_BIN_HOME: ${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin
+        run: |
+          set -euo pipefail
+          env -u GH_TOKEN -u GITHUB_TOKEN NEMOCLAW_NON_INTERACTIVE=1 bash scripts/install-openshell.sh
+          install_root="${XDG_BIN_HOME:-$HOME/.local/bin}"
+          openshell_install_root_is_complete() {
+            local root="$1" component
+            for component in openshell openshell-gateway openshell-sandbox; do
+              [[ -f "$root/$component" && ! -L "$root/$component" && -x "$root/$component" ]] \
+                || return 1
+            done
+          }
+          if ! openshell_install_root_is_complete "$install_root"; then
+            openshell_path="$(command -v openshell)"
+            install_root="$(dirname "$openshell_path")"
+          fi
+          for component in openshell openshell-gateway openshell-sandbox; do
+            source="$install_root/$component"
+            [[ -f "$source" && ! -L "$source" && -x "$source" ]]
+            sudo install -o root -g root -m 0755 "$source" "/usr/bin/$component"
+          done
+          echo /usr/bin >>"$GITHUB_PATH"
+
       - name: Check out the exact candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -5757,31 +5782,6 @@ jobs:
           set -euo pipefail
           npm run catalog:compile
           npm run build:policy-boundary
-
-      - name: Install pinned OpenShell
-        env:
-          XDG_BIN_HOME: ${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin
-        run: |
-          set -euo pipefail
-          env -u GH_TOKEN -u GITHUB_TOKEN NEMOCLAW_NON_INTERACTIVE=1 bash scripts/install-openshell.sh
-          install_root="${XDG_BIN_HOME:-$HOME/.local/bin}"
-          openshell_install_root_is_complete() {
-            local root="$1" component
-            for component in openshell openshell-gateway openshell-sandbox; do
-              [[ -f "$root/$component" && ! -L "$root/$component" && -x "$root/$component" ]] \
-                || return 1
-            done
-          }
-          if ! openshell_install_root_is_complete "$install_root"; then
-            openshell_path="$(command -v openshell)"
-            install_root="$(dirname "$openshell_path")"
-          fi
-          for component in openshell openshell-gateway openshell-sandbox; do
-            source="$install_root/$component"
-            [[ -f "$source" && ! -L "$source" && -x "$source" ]]
-            sudo install -o root -g root -m 0755 "$source" "/usr/bin/$component"
-          done
-          echo /usr/bin >>"$GITHUB_PATH"
 
       - name: Recover stale Docker isolation before Portable Podman E2E
         uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8
