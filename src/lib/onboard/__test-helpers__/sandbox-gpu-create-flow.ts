@@ -113,6 +113,7 @@ export function createGpuFlowDeps(
         : { status: 0, stdout: "", stderr: "" };
     }),
     runCaptureOpenshell,
+    captureSandboxContainerOutput: vi.fn(() => null),
     sandboxObserver: createCliOpenShellSandboxObserver({
       capture: (args, options) => {
         const stdout = runCaptureOpenshell(args, {

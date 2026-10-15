@@ -207,6 +207,7 @@ describe("fresh sandbox executable readiness", () => {
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
+      sandboxContainerOutput: null,
     });
     expect(deps.commandExecutor.runBuffered).toHaveBeenCalledTimes(1);
   });
@@ -235,6 +236,7 @@ describe("fresh sandbox executable readiness", () => {
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
+      sandboxContainerOutput: null,
     });
   });
 
@@ -290,6 +292,7 @@ describe("fresh sandbox executable readiness", () => {
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
+      sandboxContainerOutput: null,
     });
   });
 });
