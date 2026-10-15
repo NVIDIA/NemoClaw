@@ -5754,7 +5754,7 @@ jobs:
             source="$install_root/$component"
             [[ -f "$source" && ! -L "$source" && -x "$source" ]]
             destination="/usr/bin/$component"
-            if [[ "$source" != "$destination" ]]; then
+            if [[ ! "$source" -ef "$destination" ]]; then
               sudo install -o root -g root -m 0755 "$source" "$destination"
             fi
           done

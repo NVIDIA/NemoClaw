@@ -866,6 +866,49 @@ exec /bin/bash "$@"
     );
   });
 
+  it("accepts OpenShell components aliased to the privileged root", () => {
+    runOpenShellHandoffFixture(
+      "nemoclaw-openshell-privileged-alias-",
+      ({ fakeBin, privilegedRoot, root }) => {
+        const preinstalledRoot = path.join(root, "preinstalled");
+        fs.mkdirSync(preinstalledRoot);
+        writeExecutable(
+          path.join(fakeBin, "bash"),
+          `#!/bin/sh
+set -eu
+if [ "\${1:-}" = scripts/install-openshell.sh ]; then
+  exit 0
+fi
+exec /bin/bash "$@"
+`,
+        );
+        writeOpenShellComponents(privilegedRoot);
+        fs.linkSync(
+          path.join(privilegedRoot, "openshell"),
+          path.join(preinstalledRoot, "openshell"),
+        );
+        fs.linkSync(
+          path.join(privilegedRoot, "openshell-gateway"),
+          path.join(preinstalledRoot, "openshell-gateway"),
+        );
+        fs.linkSync(
+          path.join(privilegedRoot, "openshell-sandbox"),
+          path.join(preinstalledRoot, "openshell-sandbox"),
+        );
+        return {
+          pathValue: `${fakeBin}:${preinstalledRoot}:/usr/bin:/bin`,
+          requireInstallLog: (log) =>
+            requireFixture(
+              log === "",
+              "Portable Hermes recopied OpenShell components aliased to the privileged root",
+            ),
+          rewritePrivilegedRoot: true,
+          sourceRoot: preinstalledRoot,
+        };
+      },
+    );
+  });
+
   it("rejects a Portable Hermes handoff without root ownership arguments", () => {
     const sourceRoot = "/trusted/openshell";
     const mutation = privilegedOpenShellInstallLog(sourceRoot).replace(" -o root", "");
