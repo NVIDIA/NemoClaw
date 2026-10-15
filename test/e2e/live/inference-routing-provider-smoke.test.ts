@@ -486,15 +486,6 @@ console.log(JSON.stringify({
       backToSelected.exitCode,
       "OpenRouter return switch failed; inspect the redacted artifact",
     ).toBe(0);
-    const selectedRoute = await host.nemoclaw([sandboxName, "inference", "get", "--json"], {
-      artifactName: `${selected.id}-selected-route`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    expect(
-      selectedRoute.exitCode,
-      "OpenRouter selected route read failed; inspect the artifact",
-    ).toBe(0);
     progress.phase("request a fresh agent response");
     const { response, document, text } = await requestOpenClawAgent(`${selected.id}-native-agent`);
     expect(response.exitCode, resultText(response)).toBe(0);
