@@ -951,11 +951,12 @@ class SandboxStateFlow<
       this.options.agent,
       !this.options.fromDockerfile,
     );
+    const selection = this.sandboxCreateSelection();
     return [
       typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
       ...apfCreateFingerprintFields(this.options.apfInterceptorRequested === true),
-      this.options.provider,
-      this.options.model,
+      selection.provider,
+      selection.model,
       this.options.preferredInferenceApi ?? "default",
       ...Object.values(
         compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
@@ -1229,6 +1230,7 @@ class SandboxStateFlow<
         `  Error: sandbox '${sandboxName}' changed OpenShell gateways while onboarding was in progress. Retry onboarding.`,
       );
     }
+    const selection = this.sandboxCreateSelection();
     const compatibility = this.deps.checkGatewayRouteCompatibility({
       gatewayName: this.options.gatewayName,
       // A deferred route still belongs to the published source until backup
@@ -1239,8 +1241,8 @@ class SandboxStateFlow<
         excludePublishedRecreateSource,
       ),
       route: {
-        provider: this.options.provider,
-        model: this.options.model,
+        provider: selection.provider,
+        model: selection.model,
         endpointUrl: this.options.endpointUrl,
         preferredInferenceApi: this.options.preferredInferenceApi,
         credentialEnv: this.options.credentialEnv,
@@ -1268,13 +1270,32 @@ class SandboxStateFlow<
     throw new Error("exitProcess returned while aborting an incompatible gateway route");
   }
 
-  private reserveCreateRouteForSession(sandboxName: string): void {
+  private isProviderlessApfCreate(): boolean {
+    return (
+      this.options.apfInterceptorRequested === true &&
+      this.options.provider.trim().length === 0 &&
+      this.options.model.trim().length === 0
+    );
+  }
+
+  // A resumed run can reach sandbox creation with the selection recorded only
+  // in the onboarding session (#12864). Route checks, the create intent, the
+  // create call, and its receipt must all use this one selection.
+  private sandboxCreateSelection(): { model: string; provider: string } {
+    const session = this.isProviderlessApfCreate() ? null : this.options.session;
+    return {
+      model: this.options.model || session?.model || "",
+      provider: this.options.provider || session?.provider || "",
+    };
+  }
+
+  private reserveCreateRouteForSession(sandboxName: string, model: string, provider: string): void {
     reserveSandboxResumeRoute(
       sandboxName,
       this.deps.getSandboxRegistryEntry(sandboxName),
       {
-        provider: this.options.provider,
-        model: this.options.model,
+        provider,
+        model,
         endpointUrl: this.options.endpointUrl,
         endpointSource: this.options.endpointSource ?? null,
         credentialEnv: this.options.credentialEnv,
@@ -1290,6 +1311,8 @@ class SandboxStateFlow<
   private prepareCreateRouteReservation(
     sandboxName: string,
     createIntent: CompleteSandboxCreateIntent,
+    model: string,
+    provider: string,
   ): CompleteSandboxCreateIntent {
     const currentEntry = this.deps.getSandboxRegistryEntry(sandboxName);
     if (
@@ -1301,7 +1324,7 @@ class SandboxStateFlow<
       );
     }
     if (currentEntry === null || currentEntry.pendingRouteReservation === true) {
-      this.reserveCreateRouteForSession(sandboxName);
+      this.reserveCreateRouteForSession(sandboxName, model, provider);
       return createIntent;
     }
     return {
@@ -1309,10 +1332,10 @@ class SandboxStateFlow<
       reservePublishedRouteAfterBackup: async () => {
         if (this.options.deferredInferenceRoute) {
           await this.options.deferredInferenceRoute(() =>
-            this.reserveCreateRouteForSession(sandboxName),
+            this.reserveCreateRouteForSession(sandboxName, model, provider),
           );
         } else {
-          this.reserveCreateRouteForSession(sandboxName);
+          this.reserveCreateRouteForSession(sandboxName, model, provider);
         }
       },
     };
@@ -1321,12 +1344,14 @@ class SandboxStateFlow<
   private finalizeInferenceRouteReservation(
     state: SandboxStepState<WebSearchConfig>,
     sandboxName: string,
+    reserveModel: string,
+    reserveProvider: string,
   ): void {
     const entry = this.deps.getSandboxRegistryEntry(sandboxName);
     if (entry?.pendingRouteReservation !== true) return;
     const sessionId = state.session?.sessionId;
     if (sessionId && entry.reservationSessionId !== sessionId) {
-      this.reserveCreateRouteForSession(sandboxName);
+      this.reserveCreateRouteForSession(sandboxName, reserveModel, reserveProvider);
     }
     if (sessionId && this.deps.finalizeSandboxRouteReservation(sandboxName, sessionId)) return;
     this.deps.error(
@@ -1393,7 +1418,14 @@ class SandboxStateFlow<
         skippedSession,
         state.sandboxName,
       );
-      if (state.sandboxName) this.finalizeInferenceRouteReservation(state, state.sandboxName);
+      if (state.sandboxName) {
+        this.finalizeInferenceRouteReservation(
+          state,
+          state.sandboxName,
+          this.options.model || state.session?.model || "",
+          this.options.provider || state.session?.provider || "",
+        );
+      }
       return {
         ...state,
         session: recordedSession,
@@ -1917,9 +1949,10 @@ class SandboxStateFlow<
   ): Promise<CompleteSandboxCreateIntent> {
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
     const registeredEntry = this.deps.getSandboxRegistryEntry(sandboxName);
+    const selection = this.sandboxCreateSelection();
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
-      ...nativeInferenceCreateIntentFields(this.options.provider, registeredEntry),
+      ...nativeInferenceCreateIntentFields(selection.provider, registeredEntry),
       hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
       enabledChannels: state.selectedMessagingChannels,
       webSearchConfig: state.webSearchConfig,
@@ -1945,8 +1978,8 @@ class SandboxStateFlow<
             !recreate &&
             !this.options.fromDockerfile,
           agentName: (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
-          provider: this.options.provider,
-          model: this.options.model,
+          provider: selection.provider,
+          model: selection.model,
           deferredN1xManagedVllmPreviewIntent: this.options.deferredN1xManagedVllmPreviewIntent,
           entry: registeredEntry,
           sessionId: state.session?.sessionId,
@@ -2344,10 +2377,8 @@ class SandboxStateFlow<
         deferSandboxEffectsUntilIdentityVerification,
       );
       this.assertProviderlessApfCreatePlan(createIntent);
-      const providerlessApf =
-        this.options.apfInterceptorRequested === true &&
-        this.options.provider.trim().length === 0 &&
-        this.options.model.trim().length === 0;
+      const providerlessApf = this.isProviderlessApfCreate();
+      const { model: createModel, provider: createProvider } = this.sandboxCreateSelection();
       // Fresh, non-forced selection drift resolves recreation inside createSandbox.
       // The staged route already proves this source must remain published until backup.
       this.assertGatewayRouteCompatible(
@@ -2362,7 +2393,7 @@ class SandboxStateFlow<
       );
       await this.deps.startRecordedStep("sandbox", {
         sandboxName: requestedSandboxName,
-        ...(providerlessApf ? {} : { provider: this.options.provider, model: this.options.model }),
+        ...(providerlessApf ? {} : { provider: createProvider, model: createModel }),
       });
       this.deps.updateSession((current) => {
         current.messagingPlan = messagingPlan;
@@ -2384,17 +2415,19 @@ class SandboxStateFlow<
         const createIntentWithReservation = this.prepareCreateRouteReservation(
           requestedSandboxName,
           effectiveCreateIntent,
+          createModel,
+          createProvider,
         );
         sandboxName = await withSandboxPhaseTrace(
           requestedSandboxName,
-          this.options.provider,
-          this.options.model,
+          createProvider,
+          createModel,
           (this.options.agent as { name?: string } | null)?.name,
           () =>
             this.deps.createSandbox(
               this.options.gpu,
-              this.options.model,
-              this.options.provider,
+              createModel,
+              createProvider,
               this.options.preferredInferenceApi,
               requestedSandboxName,
               state.webSearchConfig,
@@ -2410,8 +2443,8 @@ class SandboxStateFlow<
                 ? {
                     sessionId: this.options.session.sessionId,
                     selection: sandboxCreateInferenceSelection({
-                      provider: this.options.provider,
-                      model: this.options.model,
+                      provider: createProvider,
+                      model: createModel,
                       modelSelectionProvenance: this.options.session.modelSelectionProvenance,
                       endpointUrl: this.options.endpointUrl,
                       endpointSource: this.options.endpointSource,
@@ -2462,8 +2495,8 @@ class SandboxStateFlow<
         ...(providerlessApf
           ? {}
           : {
-              model: this.options.model,
-              provider: this.options.provider,
+              model: createModel,
+              provider: createProvider,
               endpointUrl: this.options.endpointUrl,
               endpointSource: createIntent.endpointSource ?? null,
               credentialEnv: this.options.credentialEnv,
@@ -2478,9 +2511,7 @@ class SandboxStateFlow<
         "sandbox",
         this.deps.toSessionUpdates({
           sandboxName,
-          ...(providerlessApf
-            ? {}
-            : { provider: this.options.provider, model: this.options.model }),
+          ...(providerlessApf ? {} : { provider: createProvider, model: createModel }),
           nimContainer: this.options.nimContainer,
           webSearchConfig: state.webSearchConfig,
           messagingPlan,
@@ -2492,7 +2523,7 @@ class SandboxStateFlow<
         sandboxName,
         createIntent,
       );
-      this.finalizeInferenceRouteReservation(state, sandboxName);
+      this.finalizeInferenceRouteReservation(state, sandboxName, createModel, createProvider);
       return { ...state, sandboxName, session: recordedSession };
     };
     return withSandboxImageRegistrationFence(async () => {

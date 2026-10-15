@@ -270,6 +270,7 @@ describe("inventory commands", () => {
       step: "inference",
       interrupted: true,
       resumable: true,
+      routeReserved: true,
     });
     expect(inventory.sandboxes).toEqual([]);
 
@@ -283,6 +284,96 @@ describe("inventory commands", () => {
     expect(lines).toContain("      Resume with `nemoclaw onboard --resume`.");
     expect(lines).not.toContain("  Sandboxes:");
   });
+
+  it("reports a resumable onboarding session without a route reservation (#12864)", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          {
+            name: "sandbox-e",
+            provider: "ollama-local",
+            model: "qwen3.5:9b",
+            createdAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+        defaultSandbox: null,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => ({
+        sessionId: "session-e",
+        resumable: true,
+        status: "failed",
+        sandboxName: "sandbox-e",
+        lastStepStarted: "agent_setup",
+        lastCompletedStep: "sandbox",
+        failure: { step: "agent_setup", interrupted: true },
+        steps: { sandbox: { status: "complete" } },
+      }),
+    });
+
+    expect(inventory.incompleteOnboarding).toEqual({
+      name: "sandbox-e",
+      status: "failed",
+      step: "agent_setup",
+      interrupted: true,
+      resumable: true,
+      routeReserved: false,
+    });
+    expect(inventory.sandboxes.map((sandbox) => sandbox.name)).toEqual(["sandbox-e"]);
+
+    const lines: string[] = [];
+    renderSandboxInventoryText(inventory, (message = "") => lines.push(message));
+    expect(lines).toContain("  Incomplete onboarding:");
+    expect(lines).toContain("    sandbox-e  interrupted at agent_setup");
+    expect(lines).toContain("      NemoClaw did not finish onboarding this sandbox.");
+    expect(lines).toContain("      Resume with `nemoclaw onboard --resume`.");
+    expect(lines).not.toContain(
+      "      NemoClaw reserved the inference route but did not register the sandbox.",
+    );
+  });
+
+  it.each([
+    {
+      label: "non-resumable",
+      session: {
+        sandboxName: "sandbox-f",
+        sessionId: "session-f",
+        resumable: false,
+        status: "failed",
+      },
+    },
+    {
+      label: "completed",
+      session: {
+        sandboxName: "sandbox-f",
+        sessionId: "session-f",
+        resumable: true,
+        status: "completed",
+      },
+    },
+    {
+      label: "session-id-less",
+      session: { sandboxName: "sandbox-f", sessionId: null, resumable: true, status: "failed" },
+    },
+    {
+      label: "sandbox-less",
+      session: { sessionId: "session-f", resumable: true, status: "failed" },
+    },
+  ])(
+    "keeps $label onboarding sessions out of incomplete onboarding (#12864)",
+    async ({ session }) => {
+      const inventory = await getSandboxInventory({
+        recoverRegistryEntries: async () => ({ sandboxes: [], defaultSandbox: null }),
+        getLiveInference: () => null,
+        loadLastSession: () => ({
+          lastStepStarted: "sandbox",
+          failure: { step: "sandbox", interrupted: true },
+          ...session,
+        }),
+      });
+      expect(inventory.incompleteOnboarding).toBeNull();
+    },
+  );
 
   it("keeps an inference-route reservation owned by another session hidden (#10097)", async () => {
     const inventory = await getSandboxInventory({
@@ -414,6 +505,7 @@ describe("inventory commands", () => {
       step: "inference",
       interrupted: true,
       resumable: true,
+      routeReserved: true,
     });
     expect(report.sandboxes).toEqual([]);
     expect(getLiveInference).not.toHaveBeenCalled();
