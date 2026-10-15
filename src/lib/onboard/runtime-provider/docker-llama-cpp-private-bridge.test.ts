@@ -142,9 +142,12 @@ function privateCredentialFile(
 }
 
 describe("Docker llama.cpp private bridge controller", () => {
-  it.each([0, 1])(
+  it.each([
+    [0, undefined],
+    [1, expect.objectContaining({ message: expect.stringContaining("could not prove") })],
+  ] as const)(
     "requires successful remote discovery before declaring an idle bridge stopped [Docker exit %s]",
-    (status) => {
+    (status, expectedFailure) => {
       const openApiKeyDescriptor = vi.fn(() => {
         throw new Error("credential is already removed");
       });
@@ -169,8 +172,13 @@ describe("Docker llama.cpp private bridge controller", () => {
           targetPort: 8081,
         },
       });
-      if (status) expect(() => controller.stopTransaction(TRANSACTION)).toThrow("could not prove");
-      else expect(() => controller.stopTransaction(TRANSACTION)).not.toThrow();
+      let failure: unknown;
+      try {
+        controller.stopTransaction(TRANSACTION);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toEqual(expectedFailure);
       expect(capture).toHaveBeenCalledOnce();
       expect(openApiKeyDescriptor).not.toHaveBeenCalled();
     },

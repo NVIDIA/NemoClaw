@@ -11,7 +11,17 @@ const requireCompiled = createRequire(import.meta.url);
 const { cleanupLlamaCppPrivateBridgeRequests, createLlamaCppPrivateBridgeServer } = requireCompiled(
   path.resolve("dist/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge-process.js"),
 ) as typeof import("../../../src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge-process");
-import { createNativeLlamaDockerFixture } from "./llama-cpp-native-cancellation.test-support";
+import {
+  createNativeLlamaDockerFixture,
+  waitForNativeBridgeExit,
+  waitForNativeBridgeReady,
+  stopNativeBridge,
+  recordNativeSetupFailure,
+  closeNativeFixture,
+  captureNativeRequestDeadline,
+  advanceNativeRequestDeadline,
+  refuseNativeRequestStops,
+} from "./llama-cpp-native-cancellation.test-support";
 const dockerOperations = requireCompiled(
   path.resolve("dist/lib/onboard/runtime-provider/docker-operation-authority.js"),
 ) as typeof import("../../../src/lib/onboard/runtime-provider/docker-operation-authority");
@@ -126,21 +136,6 @@ describe
       );
       return { idle, stable, events };
     };
-    const exited = (child: ChildProcess) =>
-      new Promise<number | null>((resolve, reject) => {
-        if (child.exitCode !== null || child.signalCode !== null) {
-          resolve(child.exitCode);
-          return;
-        }
-        const timeout = setTimeout(
-          () => reject(new Error("Bridge shutdown exceeded 25 seconds")),
-          25_000,
-        );
-        child.once("exit", (code) => {
-          clearTimeout(timeout);
-          resolve(code);
-        });
-      });
     beforeAll(async () => {
       try {
         fixture = await createNativeLlamaDockerFixture(
@@ -186,27 +181,7 @@ describe
         } finally {
           fs.closeSync(descriptor);
         }
-        await new Promise<void>((resolve, reject) => {
-          let errors = "";
-          const timeout = setTimeout(
-            () => reject(new Error(`Bridge startup timed out: ${errors}`)),
-            10_000,
-          );
-          processBridge.stderr!.on("data", (value: Buffer) => {
-            errors = (errors + value.toString()).slice(-4096);
-            fixture.record.bridgeStderr = errors;
-          });
-          processBridge.once("error", reject);
-          processBridge.once("exit", () => {
-            clearTimeout(timeout);
-            reject(new Error(`Bridge startup failed: ${errors}`));
-          });
-          processBridge.stdio[4]!.once("data", (value: Buffer) => {
-            clearTimeout(timeout);
-            if (value.toString() === "READY") resolve();
-            else reject(new Error(`Bridge startup failed: ${errors}`));
-          });
-        });
+        await waitForNativeBridgeReady(processBridge, fixture.record);
         url = `http://127.0.0.1:${port}`;
         await complete();
         const baseline = [await complete(), await complete(), await complete()].sort(
@@ -215,26 +190,14 @@ describe
         normalLatencyBound = Math.max(3_000, baseline[1]! * 3);
         fixture.record.bridgeBaselineMilliseconds = baseline;
       } catch (error) {
-        if (fixture)
-          fixture.record.setupFailure = error instanceof Error ? error.stack : String(error);
+        recordNativeSetupFailure(fixture, error);
         throw error;
       }
     }, 90_000);
     afterAll(async () => {
       vi.restoreAllMocks();
-      if (processBridge && processBridge.exitCode === null) {
-        processBridge.kill("SIGTERM");
-        await exited(processBridge);
-      }
-      if (fixture) {
-        cleanupLlamaCppPrivateBridgeRequests(
-          fixture.authority.engine,
-          fixture.transactionId,
-          fixture.key,
-          8081,
-        );
-        fixture.close();
-      }
+      await stopNativeBridge(processBridge);
+      closeNativeFixture(fixture, cleanupLlamaCppPrivateBridgeRequests);
     }, 60_000);
     it("rejects a completion without bearer authentication before creating a client", async () => {
       const response = await chat(false, url, false);
@@ -251,14 +214,12 @@ describe
         expect(denied.status).toBe(503);
         expect(denied.headers.get("retry-after")).toBe("1");
         await denied.text();
-        if (iteration === 1) {
-          const metrics = await fetch(`${url}/metrics`, {
-            headers: { Authorization: `Bearer ${fixture.key}` },
-          });
-          expect(metrics.status).toBe(503);
-          expect(metrics.headers.get("retry-after")).toBe("1");
-          await metrics.text();
-        }
+        const metrics = await fetch(`${url}/metrics`, {
+          headers: { Authorization: `Bearer ${fixture.key}` },
+        });
+        expect(metrics.status).toBe(503);
+        expect(metrics.headers.get("retry-after")).toBe("1");
+        await metrics.text();
         const start = performance.now();
         active.abort.abort();
         await active.reader.cancel().catch(() => undefined);
@@ -281,7 +242,7 @@ describe
     it("cleans remote work when the real bridge process receives SIGTERM", async () => {
       const active = await stream();
       const start = performance.now();
-      const exit = exited(processBridge);
+      const exit = waitForNativeBridgeExit(processBridge);
       processBridge.kill("SIGTERM");
       expect(await exit).toBe(0);
       const proof = await stopped(active.id);
@@ -291,28 +252,15 @@ describe
       fixture.passed.add("shutdown");
     }, 30_000);
     it("runs the request deadline cleanup against real Docker and recovers normal latency", async () => {
-      if (processBridge.exitCode === null && processBridge.signalCode === null) {
-        const exit = exited(processBridge);
-        processBridge.kill("SIGTERM");
-        await exit;
-      }
-      let expire: (() => void) | undefined;
-      const originalTimeout = globalThis.setTimeout;
-      const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
-        callback: (...args: unknown[]) => void,
-        milliseconds?: number,
-        ...args: unknown[]
-      ) => {
-        if (milliseconds === 900_000) expire = () => callback(...args);
-        return originalTimeout(callback, milliseconds, ...args);
-      }) as typeof setTimeout);
+      await stopNativeBridge(processBridge);
+      const timer = captureNativeRequestDeadline();
       const bridge = createLlamaCppPrivateBridgeServer(target(), fixture.key);
       await new Promise<void>((resolve) => bridge.listen(0, "127.0.0.1", resolve));
       const endpoint = `http://127.0.0.1:${(bridge.address() as { port: number }).port}`;
       try {
         const active = await stream(endpoint);
-        expect(expire).toBeTypeOf("function");
-        expire!();
+        expect(timer.expire).toBeTypeOf("function");
+        timer.expire!();
         const proof = await stopped(active.id);
         active.abort.abort();
         await active.reader.cancel().catch(() => undefined);
@@ -332,73 +280,30 @@ describe
       }
     }, 30_000);
     it("enforces the remaining request budget in native curl without the host timer firing", async () => {
-      if (processBridge.exitCode === null && processBridge.signalCode === null) {
-        const exit = exited(processBridge);
-        processBridge.kill("SIGTERM");
-        await exit;
-      }
-      const now = performance.now.bind(performance);
-      const timeout = globalThis.setTimeout;
-      let offset = 0;
-      let requestDeadline: number | undefined;
-      let advanced = false;
-      let timerCalls = 0;
-      const clock = vi.spyOn(performance, "now").mockImplementation(() => now() + offset);
-      const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
-        callback: (...args: unknown[]) => void,
-        milliseconds?: number,
-        ...args: unknown[]
-      ) => {
-        if (milliseconds === 900_000 && !advanced) {
-          requestDeadline = performance.now() + milliseconds;
-          return timeout(() => {
-            timerCalls += 1;
-            callback(...args);
-          }, milliseconds);
-        }
-        return timeout(callback, milliseconds, ...args);
-      }) as typeof setTimeout);
-      const qualification = vi
-        .spyOn(dockerOperations, "createDockerOperationAuthority")
-        .mockReturnValue({
-          ...fixture.authority,
-          spawn: (args, options) => {
-            const child = fixture.authority.spawn(args, options);
-            if (!advanced) {
-              if (requestDeadline === undefined)
-                throw new Error("request deadline was not installed");
-              offset = requestDeadline - now() - 5_000;
-              advanced = true;
-            }
-            return child;
-          },
-        });
+      await stopNativeBridge(processBridge);
+      const budget = advanceNativeRequestDeadline(dockerOperations, fixture);
       const bridge = createLlamaCppPrivateBridgeServer(target(), fixture.key);
       await new Promise<void>((resolve) => bridge.listen(0, "127.0.0.1", resolve));
       const endpoint = `http://127.0.0.1:${(bridge.address() as { port: number }).port}`;
       try {
         const active = await stream(endpoint);
         const proof = await stopped(active.id, 28);
-        expect(timerCalls).toBe(0);
+        expect(budget.timerCalls).toBe(0);
         active.abort.abort();
         await active.reader.cancel().catch(() => undefined);
-        clock.mockRestore();
-        timer.mockRestore();
-        qualification.mockRestore();
+        budget.restore();
         const nextCompletionMilliseconds = await complete(endpoint);
         expect(nextCompletionMilliseconds).toBeLessThan(normalLatencyBound);
         fixture.record.nativeDeadline = {
-          simulatedElapsedMilliseconds: offset,
-          hostTimerCalls: timerCalls,
+          simulatedElapsedMilliseconds: budget.offset,
+          hostTimerCalls: budget.timerCalls,
           curlExitCode: 28,
           nextCompletionMilliseconds,
           ...proof,
         };
         fixture.passed.add("native-deadline");
       } finally {
-        clock.mockRestore();
-        timer.mockRestore();
-        qualification.mockRestore();
+        budget.restore();
         bridge.closeAllConnections();
         await bridge.closeOwnedWork();
         await new Promise<void>((resolve) => bridge.close(() => resolve()));
@@ -406,34 +311,8 @@ describe
     }, 30_000);
 
     it("keeps admission closed when local Docker exit does not prove remote cleanup", async () => {
-      if (processBridge.exitCode === null && processBridge.signalCode === null) {
-        const exit = exited(processBridge);
-        processBridge.kill("SIGTERM");
-        await exit;
-      }
-      const authority = fixture.authority;
-      let requestClient: ChildProcess | undefined;
-      let denyStop = true;
-      let refusedStops = 0;
-      const qualification = vi
-        .spyOn(dockerOperations, "createDockerOperationAuthority")
-        .mockReturnValue({
-          ...authority,
-          spawn: (args, options) => {
-            requestClient = authority.spawn(args, options);
-            return requestClient;
-          },
-          engine: {
-            ...authority.engine,
-            capture: (args, timeout, input) => {
-              if (denyStop && args[0] === "kill") {
-                refusedStops += 1;
-                return { status: 1, stdout: "", stderr: "test-only Docker stop refusal" };
-              }
-              return authority.engine.capture(args, timeout, input);
-            },
-          },
-        });
+      await stopNativeBridge(processBridge);
+      const refusal = refuseNativeRequestStops(dockerOperations, fixture);
       const bridge = createLlamaCppPrivateBridgeServer(target(), fixture.key);
       await new Promise<void>((resolve) => bridge.listen(0, "127.0.0.1", resolve));
       const endpoint = `http://127.0.0.1:${(bridge.address() as { port: number }).port}`;
@@ -441,12 +320,12 @@ describe
         const active = await stream(endpoint);
         active.abort.abort();
         await active.reader.cancel().catch(() => undefined);
-        await expect.poll(() => refusedStops, { timeout: 5_000 }).toBe(1);
+        await expect.poll(() => refusal.refusedStops, { timeout: 5_000 }).toBe(1);
         await expect
           .poll(
             () =>
-              requestClient !== undefined &&
-              (requestClient.exitCode !== null || requestClient.signalCode !== null),
+              refusal.client !== undefined &&
+              (refusal.client.exitCode !== null || refusal.client.signalCode !== null),
             { timeout: 5_000 },
           )
           .toBe(true);
@@ -456,22 +335,22 @@ describe
         const denied = await chat(false, endpoint);
         expect(denied.status).toBe(503);
         await denied.text();
-        denyStop = false;
+        refusal.allowStops();
         await bridge.closeOwnedWork();
         fixture.record.cleanupRefusal = {
           clientId: active.id,
           localClient: {
-            pid: requestClient!.pid,
-            exitCode: requestClient!.exitCode,
-            signal: requestClient!.signalCode,
+            pid: refusal.client!.pid,
+            exitCode: refusal.client!.exitCode,
+            signal: refusal.client!.signalCode,
           },
           admissionStatus: denied.status,
           ...(await stopped(active.id)),
         };
         fixture.passed.add("cleanup-failure");
       } finally {
-        denyStop = false;
-        qualification.mockRestore();
+        refusal.allowStops();
+        refusal.mockRestore();
         bridge.closeAllConnections();
         await bridge.closeOwnedWork();
         await new Promise<void>((resolve) => bridge.close(() => resolve()));

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -336,5 +337,190 @@ export async function createNativeLlamaDockerFixture(
   } catch (error) {
     close();
     throw error;
+  }
+}
+
+export const waitForNativeBridgeExit = (child: ChildProcess) =>
+  new Promise<number | null>((resolve, reject) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve(child.exitCode);
+      return;
+    }
+    const timeout = setTimeout(
+      () => reject(new Error("Bridge shutdown exceeded 25 seconds")),
+      25_000,
+    );
+    child.once("exit", (code) => {
+      clearTimeout(timeout);
+      resolve(code);
+    });
+  });
+
+export function waitForNativeBridgeReady(
+  processBridge: ChildProcess,
+  record: Record<string, unknown>,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let errors = "";
+    const timeout = setTimeout(
+      () => reject(new Error(`Bridge startup timed out: ${errors}`)),
+      10_000,
+    );
+    processBridge.stderr!.on("data", (value: Buffer) => {
+      errors = (errors + value.toString()).slice(-4096);
+      record.bridgeStderr = errors;
+    });
+    processBridge.once("error", reject);
+    processBridge.once("exit", () => {
+      clearTimeout(timeout);
+      reject(new Error(`Bridge startup failed: ${errors}`));
+    });
+    processBridge.stdio[4]!.once("data", (value: Buffer) => {
+      clearTimeout(timeout);
+      if (value.toString() === "READY") resolve();
+      else reject(new Error(`Bridge startup failed: ${errors}`));
+    });
+  });
+}
+
+export function captureNativeRequestDeadline() {
+  let expire: (() => void) | undefined;
+  const originalTimeout = globalThis.setTimeout;
+  const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+    callback: (...args: unknown[]) => void,
+    milliseconds?: number,
+    ...args: unknown[]
+  ) => {
+    if (milliseconds === 900_000) expire = () => callback(...args);
+    return originalTimeout(callback, milliseconds, ...args);
+  }) as typeof setTimeout);
+  return {
+    get expire() {
+      return expire;
+    },
+    mockRestore: () => timer.mockRestore(),
+  };
+}
+
+export function advanceNativeRequestDeadline(
+  dockerOperations: NativeDockerOperations,
+  fixture: NativeFixture,
+) {
+  const now = performance.now.bind(performance);
+  const timeout = globalThis.setTimeout;
+  let offset = 0;
+  let requestDeadline: number | undefined;
+  let advanced = false;
+  let timerCalls = 0;
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => now() + offset);
+  const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+    callback: (...args: unknown[]) => void,
+    milliseconds?: number,
+    ...args: unknown[]
+  ) => {
+    if (milliseconds === 900_000 && !advanced) {
+      requestDeadline = performance.now() + milliseconds;
+      return timeout(() => {
+        timerCalls += 1;
+        callback(...args);
+      }, milliseconds);
+    }
+    return timeout(callback, milliseconds, ...args);
+  }) as typeof setTimeout);
+  const qualification = vi
+    .spyOn(dockerOperations, "createDockerOperationAuthority")
+    .mockReturnValue({
+      ...fixture.authority,
+      spawn: (args, options) => {
+        const child = fixture.authority.spawn(args, options);
+        if (!advanced) {
+          if (requestDeadline === undefined) throw new Error("request deadline was not installed");
+          offset = requestDeadline - now() - 5_000;
+          advanced = true;
+        }
+        return child;
+      },
+    });
+  return {
+    get offset() {
+      return offset;
+    },
+    get timerCalls() {
+      return timerCalls;
+    },
+    restore() {
+      clock.mockRestore();
+      timer.mockRestore();
+      qualification.mockRestore();
+    },
+  };
+}
+
+export function refuseNativeRequestStops(
+  dockerOperations: NativeDockerOperations,
+  fixture: NativeFixture,
+) {
+  const authority = fixture.authority;
+  let requestClient: ChildProcess | undefined;
+  let denyStop = true;
+  let refusedStops = 0;
+  const qualification = vi
+    .spyOn(dockerOperations, "createDockerOperationAuthority")
+    .mockReturnValue({
+      ...authority,
+      spawn: (args, options) => {
+        requestClient = authority.spawn(args, options);
+        return requestClient;
+      },
+      engine: {
+        ...authority.engine,
+        capture: (args, timeout, input) => {
+          if (denyStop && args[0] === "kill") {
+            refusedStops += 1;
+            return { status: 1, stdout: "", stderr: "test-only Docker stop refusal" };
+          }
+          return authority.engine.capture(args, timeout, input);
+        },
+      },
+    });
+  return {
+    get client() {
+      return requestClient;
+    },
+    get refusedStops() {
+      return refusedStops;
+    },
+    allowStops() {
+      denyStop = false;
+    },
+    mockRestore() {
+      qualification.mockRestore();
+    },
+  };
+}
+
+type NativeFixture = Awaited<ReturnType<typeof createNativeLlamaDockerFixture>>;
+type NativeDockerOperations =
+  typeof import("../../../src/lib/onboard/runtime-provider/docker-operation-authority");
+
+export async function stopNativeBridge(child?: ChildProcess): Promise<void> {
+  if (child && child.exitCode === null && child.signalCode === null) {
+    const exit = waitForNativeBridgeExit(child);
+    child.kill("SIGTERM");
+    await exit;
+  }
+}
+
+export function recordNativeSetupFailure(fixture: NativeFixture | undefined, error: unknown): void {
+  if (fixture) fixture.record.setupFailure = error instanceof Error ? error.stack : String(error);
+}
+
+export function closeNativeFixture(
+  fixture: NativeFixture | undefined,
+  cleanup: typeof import("../../../src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge-process").cleanupLlamaCppPrivateBridgeRequests,
+): void {
+  if (fixture) {
+    cleanup(fixture.authority.engine, fixture.transactionId, fixture.key, 8081);
+    fixture.close();
   }
 }
