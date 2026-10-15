@@ -14,9 +14,20 @@ const SOURCE_REQUIRE_HOOK = path.join(
 );
 
 describe("Hermes host config transaction wiring", () => {
-  it.each(["model", "native-local"])(
-    "passes the read digest and %s update to the sanitized write transaction",
-    (update) => {
+  const handle = "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+  it.each([
+    { update: "model", expected: { model: { default: "trusted-model-v2" } } },
+    {
+      update: "native-local",
+      expected: {
+        model: { default: "trusted-model-v2", api_key: handle },
+        providers: { "vllm-local": { api_key: handle } },
+        custom_providers: [{ api_key: handle }],
+      },
+    },
+  ])(
+    "passes the read digest and $update update to the sanitized write transaction",
+    ({ update, expected }) => {
       const rawConfig = "model:\n  default: trusted-model\n";
       const expectedDigest = createHash("sha256").update(rawConfig).digest("hex");
       const script = String.raw`
@@ -116,16 +127,8 @@ process.stdout.write(JSON.stringify({ ...captured, privilegedExec: capturedPrivi
       expect(digestFlag).toBeGreaterThanOrEqual(0);
       expect(captured.argv[digestFlag + 1]).toBe(expectedDigest);
       expect(captured.options.input).toContain("default: trusted-model-v2");
-      if (update === "native-local") {
-        const handle = "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
-        const candidate = yaml.load(captured.options.input);
-        expect(candidate).toMatchObject({
-          model: { api_key: handle },
-          providers: { "vllm-local": { api_key: handle } },
-          custom_providers: [{ api_key: handle }],
-        });
-        expect(captured.argv.join(" ")).not.toContain(handle);
-      }
+      expect(yaml.load(captured.options.input)).toMatchObject(expected);
+      expect(captured.argv.join(" ")).not.toContain(handle);
       expect(captured.options.timeout).toBe(150000);
       expect(captured.options.sanitizeEnvironment).toBe(true);
       expect(captured.privilegedExec.sanitizeEnvironment).toBe(true);
