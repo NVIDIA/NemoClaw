@@ -33,20 +33,6 @@ pub async fn observe_endpoint(
         Err(_) => EndpointObservation::unknown("inference catalog observation timed out"),
     }
 }
-/// Read a server's model list after checking only the request's shape;
-/// unlike [`observe_endpoint`], it leaves destination checks to OpenShell.
-pub async fn observe_server(
-    request: &EndpointRequest,
-    secrets: &dyn Secrets,
-) -> EndpointObservation {
-    if request.validate_shape().is_err() {
-        return EndpointObservation::unknown("invalid inference server request");
-    }
-    match tokio::time::timeout(Duration::from_secs(5), read_catalog(request, secrets)).await {
-        Ok(observed) => observed,
-        Err(_) => EndpointObservation::unknown("inference catalog observation timed out"),
-    }
-}
 fn models_url(request: &EndpointRequest) -> Result<url::Url, ()> {
     let mut url = url::Url::parse(&request.endpoint).map_err(|_| ())?;
     let base = url.path().trim_end_matches('/');
@@ -295,7 +281,7 @@ mod tests {
             api: InferenceApi::OpenaiCompletions,
             credential_env: None,
         };
-        let observed = observe_server(&request, &crate::EnvironmentSecrets).await;
+        let observed = observe_endpoint(&request, &crate::EnvironmentSecrets).await;
         assert_eq!(observed.status, ObservationStatus::Unknown);
         let reason = observed.reason.unwrap();
         assert!(reason.contains("certificate is not trusted"), "{reason}");

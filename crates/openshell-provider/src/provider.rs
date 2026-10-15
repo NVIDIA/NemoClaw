@@ -112,14 +112,7 @@ impl Provider for OpenShellProvider {
             Box::new(GatewayDataSource(self.client.clone())) as Box<dyn DynamicDataSource>,
         )]);
         #[cfg(feature = "installation")]
-        {
-            sources.extend(self.installation.data_sources());
-            sources.insert(
-                "external_inference_server".into(),
-                Box::new(crate::external_inference::ExternalInferenceServer)
-                    as Box<dyn DynamicDataSource>,
-            );
-        }
+        sources.extend(self.installation.data_sources());
         Some(sources)
     }
 }

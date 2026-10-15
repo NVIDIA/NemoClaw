@@ -72,11 +72,12 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
     let result: serde_json::Value = serde_json::from_slice(&planned.stdout).unwrap();
     assert_eq!(result["complete"], true);
     assert!(result.get("deferred").is_none());
-    assert!(!result["unverified"].as_array().unwrap().is_empty());
+    // Plans read no inference catalogs; OpenShell carries inference traffic.
+    assert!(result.get("unverified").is_none());
     let planned = invoke("plan", "text");
     let preview = String::from_utf8(planned.stdout).unwrap();
     assert!(preview.contains("No resource changes planned."));
-    assert!(preview.contains("Unverified checks:"));
+    assert!(!preview.contains("Unverified checks:"));
     assert!(
         !result["discovery"]["targets"]
             .as_object()

@@ -82,7 +82,6 @@ None of them exposes ephemeral resources or provider functions.
 | `openshell_web_search` | [A web search provider and its profile](#web-search) |
 | `openshell_sandbox` | Sandbox |
 | `openshell_gateway` data source | [Gateway version and compute drivers](#gateway-capabilities) |
-| `openshell_external_inference_server` data source | [An inference server NemoClaw doesn't run](#external-inference-servers) |
 
 The `openshell` provider takes only `destroy`, which permits deleting sandboxes and workspaces during explicit teardown.
 Each object names the gateway that holds it with `gateway`, the `ref` of `data.openshell_gateway`.
@@ -94,26 +93,6 @@ Objects keep their gateway connection in state, so refresh and removal reach the
 Credential and TLS references update in place; a different endpoint is a different gateway, so it replaces reconstructible objects and retained or stateful objects refuse it.
 These schemas are version 1; state from an earlier provider is rejected rather than upgraded.
 When a registration names a managed vLLM or Ollama proxy credential, the provider reads the key from the owning container during apply, so the key never enters OpenTofu state.
-
-#### External Inference Servers
-
-`openshell_external_inference_server` checks an inference server NemoClaw doesn't run, such as a hosted API or an IT-run LiteLLM proxy, and exports the `inference_server` ref that registrations will take ([#13228](https://github.com/NVIDIA/NemoClaw/issues/13228)).
-It requires `endpoint`, the URL the machine running OpenTofu checks, and `api`: `openai-completions`, `openai-responses`, or `anthropic-messages`.
-Optional `sandbox_endpoint` is the URL gateways and sandboxes use, defaulting to `endpoint`; optional `model` is a model the server must list; and optional `credential_env` names the variable holding a key for listing models.
-The read lists the server's models without following redirects, within five seconds, and blocks: it fails when the server can't be reached or returns no model list, requires a key that isn't set, refuses the key, or doesn't list `model`.
-Errors never echo the key or the server's own error text.
-It checks only each URL's shape (an http or https URL with a host and no credentials, query, or fragment); which destinations sandboxes may reach is OpenShell's to decide.
-It exports `ref = { type = "inference_server", endpoint, model, credential_env, credential_source }`, with `sandbox_endpoint` as `endpoint`, the variable's name but never its value, and an empty `credential_source`.
-Set `read_trigger` to a value known only during apply, such as `timestamp() != ""`, to check at apply instead of while planning.
-
-```hcl
-data "openshell_external_inference_server" "litellm" {
-  endpoint       = "https://litellm.corp.example.com/v1"
-  api            = "openai-completions"
-  model          = "nemotron-super"
-  credential_env = "LITELLM_API_KEY"
-}
-```
 
 Each OpenShell resource exports a computed `ref` object identifying it: its `type`, `name`, `owner`, `generation`, and `id`, plus `workspace` for objects inside a workspace.
 Objects name each other by `ref`, never by separate name strings:
@@ -170,7 +149,7 @@ It takes:
 
 - `workspace`, a workspace `ref`. The objects belong to the workspace's owner, so the resource takes no `owner`.
 - `name`, the registration's name. The profile is named `nemoclaw-inference-<name>`.
-- `server`, the `ref` of a readiness read: `vllm_readiness`, `ollama_readiness`, `ollama_proxy_readiness`, or `openshell_external_inference_server`. It supplies the endpoint and the variable or source of the credential. The provider reads a key during apply, so the key never enters OpenTofu state.
+- `server`, an `inference_server` object: the `ref` of a readiness read (`vllm_readiness`, `ollama_readiness`, or `ollama_proxy_readiness`), or, for a server NemoClaw doesn't run, a literal object with the same fields. It supplies the endpoint and the variable or source of the credential. The provider reads a key during apply, so the key never enters OpenTofu state.
 - `api`: `openai-completions`, `openai-responses`, or `anthropic-messages`.
 - `binaries`, the executables allowed to call the server.
 - Optional `cluster_source`, which the profile uses to resolve the server's cluster addresses.
@@ -428,7 +407,7 @@ An observation describes the selected target at the time of its read; it is not 
 | GPU memory, driver, compute capability, and disk measurements | Provider `observe_host_hardware` with a selected `HostObserver` | Explicit direct calls or existing configured service-capacity checks; the new passive hardware source does not run collectors |
 | Packaged adapters, APIs, settings, and runtime requirements | `fabric_harnesses`; selected image metadata containing Fabric discovery results | Onboarding image changes and deployment planning |
 | Required labels and platform of managed images | `host_image`; selected engine image inspection | Plan for present images; after image acquisition before runtime mutations |
-| Advertised models and catalog authentication | Direct SDK `observe_endpoints`; HTTP model-list endpoint from the control host | Onboarding endpoint changes and planning for selected inference routes |
+| Advertised models and catalog authentication | Direct SDK `observe_endpoint`; HTTP model-list endpoint from the control host | Onboarding endpoint changes |
 | Credential-reference availability | Direct SDK `observe_credentials`; application's secret resolver | Onboarding, SDK calls, and plan-result discovery; values and local availability do not enter provider state |
 | Gateway version and compute drivers | Existing `openshell_gateway`; authenticated OpenShell API | Onboarding review and required deployment lifecycle checks |
 | Existing resources, ownership, drift, and retained storage | Existing OpenTofu resource refresh and SDK retained bindings | Deployment planning; no separate scan adopts unowned resources |
@@ -516,17 +495,14 @@ Existing configured service-capacity checks retain their daemon-bound `HostObser
 
 ## Inference Endpoint Metadata
 
-The SDK reads each selected external endpoint's model catalog itself, outside the OpenTofu graph, with `inference_discovery::observe_endpoints`; no provider type reads catalogs.
+Onboarding reads an external endpoint's model catalog to suggest models, with `inference_discovery::observe_endpoint`; plans and providers don't read catalogs, because OpenShell carries inference traffic from its own network.
 Each read takes the endpoint, its `api`, and an optional `credential_env` credential reference, which the SDK resolves in memory and never reports.
-Plans name the reads `endpoint_0`, `endpoint_1`, and so on, and run them together.
 It issues bounded GET requests to the OpenAI-compatible or Anthropic model-list API, with no generation request and no redirects.
 Reads have a five-second total bound and limits on response size, models, and pagination.
 
 The observation identifies control-host reachability, catalog authentication, and advertised model identifiers.
 It does not establish sandbox reachability or generation, streaming, tool-calling, or model-loading behavior; `api_verified` remains false.
 Authentication denial is distinguished from a missing or unsupported model-list endpoint.
-Shared endpoint/API/credential-reference requests are deduplicated.
-The SDK reports unavailable or unverified catalogs under the plan result's `unverified` list, preserving their typed status without treating catalog availability as a resource-planning prerequisite.
 Onboarding adds observed identifiers to model suggestions while preserving manual model entry and accepted choices.
 
 Credentials remain a direct SDK concern: `observe_credentials` reports whether each selected reference resolves, separately from remote authentication.
@@ -712,7 +688,7 @@ It reads readiness in one of two modes:
 - **Container mode:** `engine`, `name`, and `container_id` name a Docker container; the read follows the container's status as described above. Given `sandbox_endpoint`, the base URL gateways and sandboxes use, a successful read also exports the server's `ref`. For a server that requires its generated key (vLLM with `authentication`, and every Ollama proxy), the ref's `credential_source` names where that key lives: the container, the credential volume it mounts, and that volume's NemoClaw identity, read from the engine and checked as registrations check it. Without `sandbox_endpoint`, container mode exports no `ref`.
 - **Endpoint mode:** `endpoint` is the server's OpenAI-compatible base URL, ending in `/v1`, that the provider can reach. The read polls `<endpoint>/models`, without following redirects, until the response lists the contract's served model; it needs no engine and works for a server on any platform. It serves unauthenticated contracts only and reports neither startup phase nor failure reason. Optional `sandbox_endpoint` is the base URL gateways and sandboxes use, defaulting to `endpoint`, and a successful read exports the server's `ref`. `ollama_proxy_readiness` supports container mode only.
 
-The `ref` is `{ type = "inference_server", endpoint, model, credential_env, credential_source }`, the same shape `openshell_external_inference_server` exports: `endpoint` is the sandbox endpoint, `model` the contract's served model, `credential_env` empty, and `credential_source` set only for a server that requires its generated key. It names the key's location and never holds the key.
+The `ref` is `{ type = "inference_server", endpoint, model, credential_env, credential_source }`: `endpoint` is the sandbox endpoint, `model` the contract's served model, `credential_env` empty, and `credential_source` set only for a server that requires its generated key. It names the key's location and never holds the key.
 
 Setting both modes' inputs fails validation, as does endpoint mode with an authenticated contract.
 Until inference registrations take the `ref`, pass its endpoint: `endpoint = data.vllm_readiness.NAME.ref.endpoint`.

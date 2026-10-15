@@ -354,15 +354,6 @@ data openshell_docker_gateway_runtime (version 0)
   name: string, required
     > Gateway name: nc-, 16 lowercase hexadecimal characters, a hyphen, and a lowercase name.
 
-data openshell_external_inference_server (version 0)
-  api: string, required
-  credential_env: string, optional
-  endpoint: string, required
-  model: string, optional
-  read_trigger: bool, optional
-  ref: object({ credential_env = string, credential_source = string, endpoint = string, model = string, type = string }), computed
-  sandbox_endpoint: string, optional
-
 data openshell_gateway (version 0)
   compatible: bool, computed
   compute_driver_count: number, computed

@@ -296,11 +296,6 @@ impl Deployment {
             };
             append_credential_deferrals(&mut result.deferred, &discovery.credentials);
             discovery.gateway_target(&document);
-            // Catalog reads only inform `unverified`; `deferred` above ignores them.
-            discovery.endpoints(
-                crate::inference_discovery::observe_endpoints(&document, self.secrets.as_ref())
-                    .await?,
-            );
             result.unverified = discovery.unverified();
             result.unverified.sort();
             result.unverified.dedup();

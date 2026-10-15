@@ -168,12 +168,12 @@ Guides for named hosted providers are tracked in [#12038](https://github.com/NVI
 
 An endpoint whose certificate comes from an internal certificate authority, such as an organization's LiteLLM proxy, needs that CA trusted in two places:
 
-- **The machine running NemoClaw** reads the endpoint's model catalog using its system trust store.
-  Add the CA there, or set `SSL_CERT_FILE` to a PEM bundle that includes it in the environment that runs `nemoclaw` or OpenTofu.
+- **The machine running NemoClaw** reads the endpoint's model catalog during onboarding, using its system trust store.
+  Add the CA there, or set `SSL_CERT_FILE` to a PEM bundle that includes it in the environment that runs `nemoclaw`.
 - **The OpenShell gateway and sandboxes** carry the inference traffic, so their images must trust the CA too.
   NemoClaw does not configure that trust; OpenShell uses its images' own trust stores.
 
-If the machine running NemoClaw does not trust the certificate, catalog checks report that the server's certificate is not trusted rather than that the endpoint is unreachable.
+If the machine running NemoClaw does not trust the certificate, onboarding reports that the server's certificate is not trusted rather than that the endpoint is unreachable.
 
 ## Use an Image Built from This Revision
 

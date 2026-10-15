@@ -11,7 +11,6 @@ mod client;
 mod composite;
 mod connected;
 #[cfg(feature = "installation")]
-mod external_inference;
 mod gateway_source;
 mod network;
 mod profile;
