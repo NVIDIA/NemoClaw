@@ -18,8 +18,7 @@ They are implementation details for identifying retained state, not a manual edi
 | `deployment.lock` | Excludes concurrent NemoClaw operations on this state directory |
 | `terraform.tfstate` | OpenTofu resource state and durable bindings |
 | `main.tf.json`, `providers.tfrc` | SDK-generated graph and provider configuration |
-| `runtime/` | Separate managed-runtime stage and its retained state, when applicable |
-| `runtime/helm-recovery.json` | Private checkpoint for a bound Helm release during destroy; keep it with the runtime state until recovery or removal completes |
+| `helm-recovery.json` | Private checkpoint for a bound Helm release during destroy; keep it with the OpenTofu state until recovery or removal completes |
 | `kubernetes/` | Managed Kubernetes ownership receipt, development issuer key material, and gateway client credentials |
 
 The [state store](../crates/nemoclaw-sdk/src/state/mod.rs), [deployment lifecycle](../crates/nemoclaw-sdk/src/deployment/mod.rs), and [OpenTofu configuration](../crates/nemoclaw-sdk/src/deployment/opentofu.rs) define these files.

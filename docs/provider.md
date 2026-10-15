@@ -13,8 +13,8 @@ Use [the SDK](sdk.md) or [CLI](reference/cli.md) for the documented deployment w
 ## Resource and State Ownership
 
 OpenTofu owns graph execution and resource state.
-The SDK retains desired intent, validates plans, coordinates runtime stages, and reports provider observations.
-The NemoClaw, OpenShell, and Fabric providers verify durable data and credential identity; the Docker and Helm providers reconcile their native resource state.
+The SDK retains desired intent, validates plans, and reports provider observations.
+The OpenShell, Fabric, vLLM, and Ollama providers verify durable data and credential identity; the Docker and Helm providers reconcile their native resource state.
 The SDK refuses state that an earlier release wrote with the NemoClaw provider's OpenShell or Fabric types, before reading or changing it; keep that state directory and use the release that wrote it.
 
 Before planning, the SDK checks configuration, locks state, and validates retained intent and local bindings.
@@ -25,7 +25,7 @@ Podman gateways retain their stronger process identity checks.
 OpenTofu selects their replacement without an SDK requirement that the desired process specification changed.
 The compiled graph orders the gateway after protected storage; the SDK requires its independent storage binding, and the provider rechecks storage and process identity before replacement.
 Docker gateway storage independently binds signing and encryption keys; its verified mountpoint supplies the process mount through OpenTofu.
-The refreshed gateway running state determines whether the OpenShell stage can be planned or must wait for gateway creation or recovery.
+Planning a new OpenShell object reaches no gateway, so the gateway and the objects it serves are planned together; refreshing an existing object needs its gateway running.
 
 The generated graphs manage these objects and observations:
 
@@ -545,7 +545,7 @@ Each API read is bounded to 30 seconds.
 
 The optional `wait_timeout_seconds` accepts zero to 300 seconds; omission or zero means one bounded API read.
 A positive timeout retries only transport failures, not authentication failures, incomplete metadata, or incompatibility.
-For a managed gateway, the runtime stage sets this timeout to 90 seconds and reads capabilities after gateway reconciliation.
+For a managed gateway, the generated graph sets this timeout to 90 seconds and reads capabilities after gateway reconciliation.
 The capability postcondition must succeed before OpenShell resource refresh proceeds.
 
 For managed Docker gateways, the runtime graph first reads `data.openshell_docker_gateway_readiness.current` and orders the capability read after it.

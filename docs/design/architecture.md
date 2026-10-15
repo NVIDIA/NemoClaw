@@ -12,7 +12,7 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 |---|---|
 | CLI | Arguments, prompts, credential acquisition, and output |
 | Authoring library | Sparse desired-state values, question guidance, answer resolution, and validation results |
-| SDK | Configuration validation, graph compilation, deployment locking, plan policy, and recovery across stages |
+| SDK | Configuration validation, graph compilation, deployment locking, plan policy, and recovery |
 | OpenTofu | Dependency ordering, concurrent resource reconciliation, and resource state |
 | Docker provider | Docker containers, images, model-cache volumes, and service networks |
 | Helm provider | The pinned OpenShell chart release on the authored Kubernetes cluster |
@@ -41,7 +41,7 @@ The native bundle includes the pinned Helm provider; no Helm CLI is required.
 
 | Owner | Managed Kubernetes responsibility |
 |---|---|
-| SDK | Compile the graph, validate saved plans against deployment intent and retained bindings, and coordinate runtime and OpenShell stages |
+| SDK | Compile the graph, validate saved plans against deployment intent and retained bindings, and order runtime and OpenShell work within one graph |
 | OpenTofu | Execute dependencies and retain each provider's resource state |
 | OpenShell provider | Create and retain the namespace and encryption key; prepare and remove the development issuer; verify object identities and gateway readiness |
 | Helm provider | Install, upgrade, and remove the pinned OpenShell chart release, using the prepared namespace and credentials |
@@ -171,31 +171,37 @@ The former chooses questions and reopens dependent answers; the latter schedules
 
 The native [bundle](../build.md#build-a-native-bundle) ships the matching CLI, schema, OpenTofu, and providers; source-derived provider versions prevent stale installations from being reused.
 
-## Why Managed Apply Has Two Stages
+## Why Each Deployment Is One OpenTofu Root
 
-OpenShell needs a reachable gateway to refresh resources and plan changes.
-A managed deployment therefore establishes its runtime infrastructure before planning OpenShell resources.
-A gateway ref whose connection is unknown until apply defers planning during fresh bootstrap, but an unavailable gateway still blocks refresh of existing OpenShell bindings before a combined graph can restore it.
-The runtime stage preserves that recovery path.
-The SDK coordinates two graphs:
+A deployment's runtime and the OpenShell and Fabric objects it serves form one OpenTofu configuration with one state.
+Dependencies order the work inside it:
 
 ```mermaid
 flowchart LR
-    Validate[Validate and lock deployment] --> Runtime[Plan and apply runtime graph]
-    Runtime -->|Gateway and service readiness| Shell[Plan and apply OpenShell graph]
+    Validate[Validate and lock deployment] --> Plan[Plan and check the deployment graph]
+    Plan --> Runtime[Apply gateway, inference services, and storage]
+    Runtime -->|Gateway and service readiness| Shell[Apply registrations, sandboxes, and agents]
     Shell -->|Sandbox completion| Done[Record success]
 ```
 
-Each stage produces a saved plan that the SDK checks before applying.
-The runtime graph manages the gateway and inference services; the OpenShell graph manages registrations, sandboxes, and their configuration, including supporting proxies.
-Dependencies place required readiness observations after creation and before dependent work.
+The SDK checks one saved plan before applying it.
+Every OpenShell and Fabric object waits on an apply-time gateway read, which waits on the gateway, the inference services, and their readiness reads.
+The runtime therefore settles before any object changes.
 
-Public plan observes resources without mutating them and can defer the OpenShell stage until the managed gateway is established.
+Planning a new OpenShell object reaches no gateway, so a fresh deployment plans the gateway and the objects it will serve together.
+The plan-time gateway read waits for the gateway the deployment manages; on a fresh install or a pending gateway change, it runs during apply instead.
+Providers open their own connections to managed Kubernetes gateways.
+
+Refreshing an existing object needs its gateway.
+A stopped gateway is an ordinary failure: Docker restarts managed gateways after the gateway or host restarts, and Kubernetes restarts failed gateway pods.
+Otherwise, start the gateway and run the operation again.
+
+Public plan observes resources without mutating them.
 It can write local intent and plan files.
-Apply obtains and checks new plans; a previous preview is not an approval artifact.
+Apply obtains and checks a new plan; a previous preview is not an approval artifact.
 
-Destroy reverses the stage order so workloads are removed while their gateway is still available.
-The SDK checks both teardown plans before deleting anything and records completed stages so an interrupted destroy can resume.
+Destroy follows the same dependencies in reverse, so workloads are removed while their gateway is still available.
+The SDK checks the teardown plan before deleting anything.
 The compiler builds teardown configuration from retained intent and the established resource inventory, keeping storage and workspace declarations while removing workload and readiness declarations.
 It returns the retained addresses with that graph; plan validation and destroy reporting use the same result.
 Storage that was never established is omitted, so partial teardown does not finish creating it.
@@ -220,15 +226,14 @@ Ownership checks run during observation and again before mutation because an obj
 A mutation can return an established binding together with an error; the caller must preserve both.
 Automatic rollback could destroy useful data or repeat an operation whose response was lost.
 
-Before an OpenShell apply, the SDK records targets that may be created or replaced.
+Before an apply, the SDK records the OpenShell and Fabric targets it may create or replace; OpenTofu saves every other resource's ID.
 A lost creation response can leave an object outside OpenTofu state, so retries must retain those targets' original configuration until reconciliation succeeds.
 Unrelated settings can change, and retries preserve earlier pending targets.
-Older pending records without per-target evidence require the entire original configuration.
+When an apply fails, the SDK forgets the targets it added that OpenTofu never started, because a failure stops OpenTofu before the resources that depend on it.
 
 Failures involving only observations, established updates or deletions, or disposable compute permit revised intent or teardown using recorded bindings.
 They cannot clear earlier unresolved OpenShell creations; those must be reconciled before teardown.
-An OpenShell-stage apply without non-disposable resource creations does not start a pending-creation guard; export can verify its established bindings through OpenTofu even after that apply fails.
-Managed-runtime failures retain their separate stage recovery evidence.
+An apply without non-disposable OpenShell creations does not start a pending-creation guard; export can verify its established bindings through OpenTofu even after that apply fails.
 Teardown recovery validates current bindings and fresh plans; the failed apply's saved plan file and hash do not authorize the next operation.
 The [recovery guide](../usage.md#recover-an-interrupted-operation) describes the caller's next steps.
 

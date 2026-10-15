@@ -305,21 +305,21 @@ The same applies when an OpenShell-graph apply only observes resources, updates 
 Runtime recovery does not clear pending OpenShell creations.
 An OpenShell create rejection without a saved resource identity still leaves the pending-creation guard in place; automatic cleanup after a definitive rejection is not implemented.
 Preserve that record and its original bundle rather than deleting state or attempting adoption from another state directory.
-Export remains unavailable during pending creation recovery, unfinished managed-runtime apply, or unfinished teardown.
-If an OpenShell-stage apply planned no non-disposable resource creations, a later export can verify its established bindings without another successful apply; incomplete or inconsistent observations still fail export.
+Export remains unavailable during pending creation recovery or unfinished teardown.
+If an apply planned no non-disposable OpenShell creations, a later export can verify its established bindings without another successful apply; incomplete or inconsistent observations still fail export.
 If readiness fails after resource creation, provider state and persistent data remain recorded.
 A later explicit apply may replace or recreate disposable service compute.
 Authentication, transport, and incomplete observations remain failures; missing or changed bound credentials and gateway storage never authorize their automatic recreation.
 A missing model-cache volume may be recreated during apply, followed by model download and preparation; its separate credential volume must still match.
 
 To retire instead of recover after an interrupted apply, first run `nemoclaw plan --destroy` with the same state directory.
-A failed first OpenShell apply can be destroyed when every pending creation has a matching saved binding, including agent configuration accounted for by its parent sandbox.
+A failed first apply can be destroyed when every pending creation has a matching saved binding, including agent configuration accounted for by its parent sandbox.
 The preview leaves retained intent and resource state unchanged; unavailable or foreign observations still stop teardown.
-After unfinished managed-runtime apply, this path requires nonempty validated runtime bindings and fresh teardown plans; it does not require the failed apply's plan file.
-An OpenShell-stage apply that planned no non-disposable resource creations leaves reconciliation of its established bindings to OpenTofu; it does not add a pending-creation guard.
-OpenShell bindings established before a failed runtime stage may remain; every recorded binding must belong to the current intent, each saved storage specification must match, and a recorded managed process also requires its independent storage binding.
-Empty applicable state during managed-runtime recovery, undeclared or drifted bindings, a process without its storage binding, and ambiguous unfinished creations still require recovery before destroy.
-Destroy changes the operation to resumable teardown only after both resource graphs are planned, so a planning failure leaves the unfinished-apply recovery state in place.
+Teardown uses current bindings and a fresh plan; it does not require the failed apply's plan file.
+An apply tracks pending creations only for OpenShell and Fabric objects, and after a failure keeps only those OpenTofu started; an apply that planned none leaves reconciliation of its established bindings to OpenTofu.
+Every recorded binding must belong to the current intent, each saved storage specification must match, and a recorded managed process also requires its independent storage binding.
+Undeclared or drifted bindings, a process without its storage binding, and ambiguous unfinished creations still require recovery before destroy.
+Destroy changes the operation to resumable teardown only after its plan is checked, so a planning failure leaves the unfinished-apply recovery state in place.
 
 Export requires complete observations and agent configuration checks, but does not invoke inference.
 It preserves references and desired settings, not model weights, histories, native settings, or agent files.
@@ -375,7 +375,7 @@ Check the recreated runtime before using the [exact OpenClaw request](agents.md#
 This procedure applies to managed Kubernetes and OpenShift deployments.
 
 During destroy, the pinned Helm provider can lose a release binding when its release lookup fails, even though the release remains in the cluster.
-Before removing a bound release, NemoClaw saves a private checkpoint at `runtime/helm-recovery.json` under the deployment state directory.
+Before removing a bound release, NemoClaw saves a private checkpoint at `helm-recovery.json` in the deployment state directory.
 If removal fails or is interrupted, recovery can restore only that missing binding while preserving the current authentication and storage bindings and any completed removals.
 Restoring the binding does not reinstall the release or undo cluster changes.
 If authentication cleanup already confirmed that the release and gateway are absent, recovery does not restore the deleted binding.
