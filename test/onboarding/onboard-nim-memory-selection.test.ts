@@ -15,6 +15,9 @@ const credentialsPath = JSON.stringify(
   path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
 );
 const nimPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "nim.ts"));
+const onboardProbesPath = JSON.stringify(
+  path.join(repoRoot, "src", "lib", "inference", "onboard-probes.ts"),
+);
 const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
 const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 const unifiedGpu = JSON.stringify({
@@ -90,19 +93,27 @@ reportChildScenario(async () => {
     }
   });
 
-  it("removes the NIM container and stops onboarding after a health failure", () => {
+  it("stops the production Local NIM handler before model adoption after a health failure", () => {
     const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-nim-health-fallback-");
     const script = String.raw`
 ${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const nimMod = require(${nimPath});
+const onboardProbes = require(${onboardProbesPath});
 let stoppedContainer = null;
+let adoptedModel = false;
+let validationProbes = 0;
+onboardProbes.probeOpenAiLikeEndpointOptimized = async () => {
+  validationProbes++;
+  throw new Error("unexpected provider validation after failed NIM health check");
+};
 nimMod.pullNimImage = () => {};
 nimMod.containerName = () => "nemoclaw-nim-test";
-nimMod.startNimContainerByName = () => "nemoclaw-nim-test";
+nimMod.startNimContainerByName = () => "container-returned-by-start";
 nimMod.waitForNimHealth = () => false;
 nimMod.stopNimContainerByNameOrThrow = (name) => { stoppedContainer = name; };
+nimMod.adoptServedModelId = () => { adoptedModel = true; return "unexpected-model"; };
 nimMod.isNgcLoggedIn = () => true;
 installPromptQueue(credentials, ["8", "1", "ngc-test"]);
 credentials.ensureApiKey = async () => {};
@@ -115,7 +126,7 @@ reportChildScenario(async () => {
   } catch (error) {
     failure = String(error);
   }
-  return { failure, stoppedContainer };
+  return { failure, stoppedContainer, adoptedModel, validationProbes };
 });
 `;
 
@@ -127,8 +138,10 @@ reportChildScenario(async () => {
       });
       assert.equal(result.status, 0, result.stderr);
       const payload = JSON.parse(result.stdout.trim());
-      assert.equal(payload.stoppedContainer, "nemoclaw-nim-test");
+      assert.equal(payload.stoppedContainer, "container-returned-by-start");
       assert.match(payload.failure, /Local NVIDIA NIM failed to become healthy/);
+      assert.equal(payload.adoptedModel, false);
+      assert.equal(payload.validationProbes, 0);
     } finally {
       workspace.remove();
     }
