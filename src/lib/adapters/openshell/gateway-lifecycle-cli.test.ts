@@ -185,21 +185,29 @@ describe("gateway lifecycle CLI", () => {
     expect(capture).not.toHaveBeenCalled();
   });
 
-  it.each([null, {}, [{ name: "../foreign" }], [{ name: "a" }, { name: "a" }]])(
-    "rejects malformed registry %j",
-    async (registry) => {
-      const capture = vi.fn().mockResolvedValue({ status: 0, output: JSON.stringify(registry) });
-      expect(
-        await createCliOpenShellGatewayLifecycle(capture).listGateways({ target }),
-      ).toMatchObject({ ok: false, error: { kind: "schema" } });
-    },
-  );
+  it.each([
+    null,
+    {},
+    [{ name: "../foreign", active: false }],
+    [
+      { name: "a", active: false },
+      { name: "a", active: false },
+    ],
+  ])("rejects malformed registry %j", async (registry) => {
+    const capture = vi.fn().mockResolvedValue({ status: 0, output: JSON.stringify(registry) });
+    expect(
+      await createCliOpenShellGatewayLifecycle(capture).listGateways({ target }),
+    ).toMatchObject({ ok: false, error: { kind: "schema" } });
+  });
 
-  it("returns validated registry identities", async () => {
-    const capture = vi
-      .fn()
-      .mockResolvedValue({ status: 0, output: '[{"name":"nemoclaw"},{"name":"nemoclaw-8091"}]' });
-    expect(await createCliOpenShellGatewayLifecycle(capture).listGateways({ target })).toEqual({
+  it("returns validated gateway names without parsing active selection", async () => {
+    const capture = vi.fn().mockResolvedValue({
+      status: 0,
+      output: '[{"name":"nemoclaw","active":false},{"name":"nemoclaw-8091","active":"untrusted"}]',
+    });
+    await expect(
+      createCliOpenShellGatewayLifecycle(capture).listGateways({ target }),
+    ).resolves.toEqual({
       ok: true,
       names: ["nemoclaw", "nemoclaw-8091"],
     });

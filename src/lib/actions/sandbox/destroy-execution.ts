@@ -56,7 +56,11 @@ import {
   type SandboxNameLabeledContainer,
 } from "./destroy-presence";
 import { removeExactOpenShellDockerSandboxContainers } from "../../onboard/openshell-docker-sandbox-containers";
-import { type DestroyRunOpenshell, SANDBOX_DESTROY_TIMEOUT_MS } from "./destroy-gateway";
+import {
+  type DestroyRunOpenshell,
+  SANDBOX_DESTROY_TIMEOUT_MS,
+  scopeSandboxDestroyOpenShellArgs,
+} from "./destroy-gateway";
 import {
   finalizeMcpBridgesAfterSandboxDelete,
   McpBridgeError,
@@ -467,6 +471,24 @@ async function finalizeMcpDestroy(
   });
 }
 
+function createGatewayScopedDestroyRunner(
+  runOpenshell: DestroyRunOpenshell,
+  gatewayName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): DestroyRunOpenshell {
+  const scopeCommand = (args: string[]): string[] =>
+    scopeSandboxDestroyOpenShellArgs(args, gatewayName);
+  if (runtimeSelection) {
+    return (args, options = {}) =>
+      runOpenshell(scopeCommand(args), {
+        ...options,
+        env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
+        replaceEnv: true,
+      });
+  }
+  return (args, options = {}) => runOpenshell(scopeCommand(args), options);
+}
+
 export async function executeSandboxDestroy({
   force,
   getSandbox,
@@ -505,6 +527,10 @@ export async function executeSandboxDestroy({
       runtimeProviders,
     );
     const pendingCreateIdentity = sandbox?.pendingCreateIdentity;
+    const resolveEffectiveDeleteGatewayName = () =>
+      pendingCreateIdentity?.gatewayName ??
+      destroyRuntimeSelection?.gatewayName ??
+      deleteGatewayName;
     const expectedSandboxIdentityFingerprint =
       pendingCreateIdentity?.sandboxIdentityFingerprint ?? expectedContainerIdentityFingerprint;
     const expectedContainerProof: DestroyContainerIdentityProof = expectedRuntimeProviderIdentity
@@ -559,7 +585,7 @@ export async function executeSandboxDestroy({
           inspectOpenShellSandboxIdentityFingerprint;
         const liveFingerprint = inspectIdentity({
           sandboxName,
-          gatewayName: pendingCreateIdentity?.gatewayName ?? deleteGatewayName,
+          gatewayName: resolveEffectiveDeleteGatewayName(),
           ...(destroyRuntimeSelection ? { runtimeSelection: destroyRuntimeSelection } : {}),
         });
         if (
@@ -744,14 +770,12 @@ export async function executeSandboxDestroy({
       };
     }
     destroyRuntimeSelection = mcpPreparation.runtimeSelection;
-    const selectedRunOpenshell: DestroyRunOpenshell = destroyRuntimeSelection
-      ? (args, options = {}) =>
-          runOpenshell(args, {
-            ...options,
-            env: buildSelectedOpenShellSubprocessEnv(destroyRuntimeSelection!),
-            replaceEnv: true,
-          })
-      : runOpenshell;
+    const effectiveDeleteGatewayName = resolveEffectiveDeleteGatewayName();
+    const selectedRunOpenshell = createGatewayScopedDestroyRunner(
+      runOpenshell,
+      effectiveDeleteGatewayName,
+      destroyRuntimeSelection,
+    );
     // Prepared-only/incomplete adds have no external resources and are safely
     // discarded during preparation. Remaining entries are the durable exact
     // provider ownership manifest and must survive an unconfirmed delete.
@@ -946,10 +970,6 @@ export async function executeSandboxDestroy({
         mcpRecoveryFailure,
       };
     }
-    const effectiveDeleteGatewayName =
-      pendingCreateIdentity?.gatewayName ??
-      destroyRuntimeSelection?.gatewayName ??
-      deleteGatewayName;
     // A successful preflight absence is already the required OpenShell
     // lifecycle proof. Do not issue a later mutable-name delete that could
     // target a same-name replacement created after that observation.

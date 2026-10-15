@@ -102,7 +102,11 @@ async function failDockerCleanupOnce(
                 selectedFailure ??
                 (unknownGatewayInventory
                   ? { status: 1, stdout: "", stderr: "gateway inventory unavailable" }
-                  : ok(JSON.stringify(gatewayRegistered ? [{ name: "nemoclaw" }] : [])))
+                  : ok(
+                      JSON.stringify(
+                        gatewayRegistered ? [{ name: "nemoclaw", active: false }] : [],
+                      ),
+                    ))
               );
             }
             case "openshell gateway remove nemoclaw":

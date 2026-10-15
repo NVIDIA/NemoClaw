@@ -25,7 +25,11 @@ function harness(): GatewayCleanupRuntime {
       registerGateway: vi.fn(),
       removeGateway: vi.fn().mockResolvedValue({ ok: true, state: "completed" }),
       destroyGateway: vi.fn(),
-      listGateways: vi.fn().mockResolvedValue({ ok: true, names: ["owned", "sibling"] }),
+      listGateways: vi.fn().mockResolvedValue({
+        ok: true,
+        names: ["owned", "sibling"],
+        activeGateway: "owned",
+      }),
     },
     gatewayReuseObserver: {
       observeGatewayReuse: vi.fn().mockResolvedValue({

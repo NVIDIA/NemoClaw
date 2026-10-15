@@ -1,11 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { fingerprintOpenShellSandboxId } from "../../src/lib/adapters/openshell/sandbox-identity";
+import { createDockerRuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/docker";
+import { createRuntimeProviderBundleRegistry } from "../../src/lib/onboard/runtime-provider/registry";
+import { startSandbox } from "../../src/lib/actions/sandbox/start";
 import { runWithEnv, testTimeoutOptions } from "./helpers";
 
 const LIVE_DOCKER_IDENTITY = `#!/bin/sh
@@ -32,6 +37,10 @@ exit 0
 
 function confirmSandboxMissingAfterDelete(markerPath: string, logPath: string): string[] {
   return [
+    'if [ "$1" = "gateway" ] && [ "$2" = "list" ]; then',
+    '  printf \'[{"name":"nemoclaw","active":true},{"name":"nemoclaw-8081","active":false}]\\n\'',
+    "  exit 0",
+    "fi",
     `deleted_marker=${JSON.stringify(markerPath)}`,
     `delete_log_file=${JSON.stringify(logPath)}`,
     'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
@@ -657,7 +666,205 @@ describe("CLI dispatch", () => {
     }
   });
 
-  it("selects the sandbox persisted gateway before provider cleanup and delete", () => {
+  it.each([
+    ["--cleanup-gateway", true, false, false, 0],
+    ["--no-cleanup-gateway", false, false, false, 0],
+    ["--no-cleanup-gateway", false, true, false, 42],
+    ["--no-cleanup-gateway", false, false, true, 0],
+  ] as const)(
+    "keeps destroy gateway-scoped %s (cleanup: %s, delete failure: %s, concurrent selection: %s) (#11897)",
+    async (cleanupFlag, cleanupGateway, failDelete, concurrentSelection, expectedExitCode) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-gateway-scoped-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const openshellLog = path.join(home, "openshell.log");
+      const activeGateway = path.join(home, "active-gateway");
+      const removedGateway = path.join(home, "gateway-removed");
+      const deletedSandbox = path.join(home, "sandbox-deleted");
+      const failDeleteMarker = path.join(home, "fail-delete");
+      const enableConcurrentSelectionMarker = path.join(home, "enable-concurrent-selection");
+      const survivorStarted = path.join(home, "survivor-started");
+      const survivorForwarded = path.join(home, "survivor-forwarded");
+      fs.writeFileSync(failDeleteMarker, failDelete ? "fail" : "");
+      fs.writeFileSync(enableConcurrentSelectionMarker, concurrentSelection ? "yes" : "");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(activeGateway, "nemoclaw-9090\n");
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              agent: "langchain-deepagents-code",
+              gatewayName: "nemoclaw-8081",
+              gatewayPort: 8081,
+            },
+            ...(!cleanupGateway
+              ? {
+                  beta: {
+                    name: "beta",
+                    model: "",
+                    provider: "",
+                    gpuEnabled: false,
+                    agent: "langchain-deepagents-code",
+                    gatewayName: "nemoclaw-9090",
+                    gatewayPort: 9090,
+                    lifecycleLiveIdentityFingerprint: fingerprintOpenShellSandboxId("sandbox-beta"),
+                  },
+                }
+              : {}),
+          },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(openshellLog)}`,
+          `active_gateway=${JSON.stringify(activeGateway)}`,
+          `removed_gateway=${JSON.stringify(removedGateway)}`,
+          `deleted_sandbox=${JSON.stringify(deletedSandbox)}`,
+          `fail_delete=${JSON.stringify(failDeleteMarker)}`,
+          `enable_concurrent_selection=${JSON.stringify(enableConcurrentSelectionMarker)}`,
+          `survivor_started=${JSON.stringify(survivorStarted)}`,
+          `survivor_forwarded=${JSON.stringify(survivorForwarded)}`,
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          'if [ "$1" = "gateway" ] && [ "$2" = "remove" ] && [ "$3" = "nemoclaw-8081" ]; then',
+          '  : > "$removed_gateway"',
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "start" ] && [ "$3" = "beta" ]; then',
+          '  if [ "$5" != "nemoclaw-9090" ]; then echo "wrong scoped gateway: $5" >&2; exit 45; fi',
+          '  : > "$survivor_started"',
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "forward" ] && [ "$2" = "service" ] && [ "$3" = "beta" ]; then',
+          '  if [ "$5" != "nemoclaw-9090" ] || [ ! -e "$survivor_started" ]; then echo "survivor forward refused" >&2; exit 46; fi',
+          '  : > "$survivor_forwarded"',
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
+          '  if [ -s "$fail_delete" ]; then echo "delete failed" >&2; exit 42; fi',
+          '  if [ -s "$enable_concurrent_selection" ]; then printf "new-gateway\\n" > "$active_gateway"; fi',
+          '  : > "$deleted_sandbox"',
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ -e "$deleted_sandbox" ]; then',
+          '  echo "Error: code: \'Some requested entity was not found\', message: \\"sandbox not found\\"" >&2',
+          "  exit 1",
+          "fi",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          '  printf "NAME STATUS\\n"',
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(localBin, "docker"), LIVE_DOCKER_IDENTITY, {
+        mode: 0o755,
+      });
+      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", {
+        mode: 0o755,
+      });
+      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", {
+        mode: 0o755,
+      });
+
+      const r = runWithEnv(`alpha destroy --yes ${cleanupFlag}`, {
+        HOME: home,
+        OPENSHELL_GATEWAY: "nemoclaw-8081",
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      const lines = fs.readFileSync(openshellLog, "utf8").trim().split("\n");
+      expect(r.code, r.out).toBe(expectedExitCode);
+      expect(lines).toContain("sandbox delete -g nemoclaw-8081 alpha");
+      expect(lines.filter((line) => line.startsWith("gateway select "))).toEqual([]);
+      expect(lines.includes("gateway remove nemoclaw-8081")).toBe(cleanupGateway && !failDelete);
+      expect(fs.readFileSync(activeGateway, "utf8").trim()).toBe(
+        concurrentSelection ? "new-gateway" : "nemoclaw-9090",
+      );
+      expect(r.out.includes("delete failed")).toBe(failDelete);
+      expect(fs.existsSync(removedGateway)).toBe(cleanupGateway && !failDelete);
+
+      await (!cleanupGateway
+        ? (async () => {
+            const state = JSON.parse(
+              fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"),
+            );
+            const survivor = state.sandboxes.beta;
+            expect(survivor.gatewayName).toBe("nemoclaw-9090");
+            const runtimeProviders = createRuntimeProviderBundleRegistry([
+              ["docker", createDockerRuntimeProviderBundle()],
+            ]);
+            const startResult = await startSandbox("beta", {
+              environment: { HOME: home },
+              getSandbox: () => survivor,
+              updateSandbox: () => true,
+              runtimeProviders,
+              withLifecycleLock: async (_name, operation) => operation(),
+              openShellLifecycle: {
+                startSandbox: async (request) => {
+                  expect(request.target.gatewayName).toBe(survivor.gatewayName);
+                  const result = spawnSync(
+                    path.join(localBin, "openshell"),
+                    [
+                      "sandbox",
+                      "start",
+                      request.sandboxName,
+                      "--gateway",
+                      request.target.gatewayName,
+                    ],
+                    { encoding: "utf8", env: { ...process.env, HOME: home } },
+                  );
+                  return result.status === 0
+                    ? { kind: "accepted" as const }
+                    : {
+                        kind: "failed" as const,
+                        error: {
+                          kind: "command" as const,
+                          reason: "failed" as const,
+                          message: result.stderr,
+                        },
+                      };
+                },
+                stopSandbox: async () => ({ kind: "accepted" }),
+              },
+              observer: {
+                listSandboxes: async () => ({
+                  ok: true,
+                  value: { sandboxes: [{ name: "beta", phase: "Ready", readiness: "ready" }] },
+                }),
+              },
+              // This DI seam records a simulated forward after start succeeds; it
+              // does not exercise connectSandbox's production forward construction.
+              verifyGateway: async () => {
+                const result = spawnSync(
+                  path.join(localBin, "openshell"),
+                  ["forward", "service", "beta", "--gateway", survivor.gatewayName],
+                  { encoding: "utf8", env: { ...process.env, HOME: home } },
+                );
+                expect(result.status, result.stderr).toBe(0);
+              },
+              log: () => undefined,
+            });
+
+            expect(startResult.exitCode, startResult.message).toBe(0);
+            expect(fs.existsSync(survivorStarted)).toBe(true);
+            expect(fs.existsSync(survivorForwarded)).toBe(true);
+          })()
+        : Promise.resolve());
+    },
+  );
+
+  it("scopes the sandbox persisted gateway before provider cleanup and delete", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-select-gateway-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -692,22 +899,16 @@ describe("CLI dispatch", () => {
         `log_file=${JSON.stringify(openshellLog)}`,
         `active_gateway=${JSON.stringify(activeGateway)}`,
         'printf \'%s\\n\' "$*" >> "$log_file"',
-        'if [ "$1" = "gateway" ] && [ "$2" = "select" ]; then',
-        '  printf "%s\\n" "$3" > "$active_gateway"',
-        "  exit 0",
-        "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
-        '  active="$(cat "$active_gateway")"',
-        '  if [ "$active" != "nemoclaw-8081" ]; then',
-        '    printf "wrong gateway: %s\\n" "$active" >&2',
+        '  if [ "$4" != "nemoclaw-8081" ]; then',
+        '    printf "wrong scoped gateway: %s\\n" "$4" >&2',
         "    exit 42",
         "  fi",
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-        '  active="$(cat "$active_gateway")"',
-        '  if [ "$active" != "nemoclaw-8081" ]; then',
-        '    printf "wrong list gateway: %s\\n" "$active" >&2',
+        '  if [ "$4" != "nemoclaw-8081" ]; then',
+        '    printf "wrong list gateway: %s\\n" "$4" >&2',
         "    exit 43",
         "  fi",
         '  printf "NAME STATUS\\n"',
@@ -729,19 +930,19 @@ describe("CLI dispatch", () => {
 
     expect(r.code, r.out).toBe(0);
     const lines = fs.readFileSync(openshellLog, "utf8").trim().split("\n");
-    const selectIndex = lines.indexOf("gateway select nemoclaw-8081");
     const wipeIndex = lines.findIndex(isPersistentStateWipeExec);
     const deleteIndex = lines.indexOf("sandbox delete -g nemoclaw-8081 alpha");
-    expect(selectIndex).toBeGreaterThanOrEqual(0);
-    expect(wipeIndex).toBeGreaterThan(selectIndex);
+    expect(lines).not.toContain("gateway select nemoclaw-8081");
+    expect(wipeIndex).toBeGreaterThanOrEqual(0);
     expect(deleteIndex).toBeGreaterThan(wipeIndex);
     expect(lines.slice(deleteIndex + 1)).toContain("sandbox get -g nemoclaw-8081 alpha");
+    expect(fs.readFileSync(activeGateway, "utf8").trim()).toBe("other-gateway");
   });
 
   // NemoClaw clears the native home before OpenShell deletes storage. Gateway
   // teardown still follows the completed delete.
   it(
-    "destroys with --cleanup-gateway and runs gateway-select -> delete -> gateway-destroy in order",
+    "destroys with --cleanup-gateway and runs scoped delete -> gateway removal in order",
     testTimeoutOptions(30_000),
     () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-cleanup-order-"));
@@ -800,7 +1001,6 @@ describe("CLI dispatch", () => {
 
       expect(r.code, r.out).toBe(0);
       const lines = fs.readFileSync(openshellLog, "utf8").trim().split("\n");
-      const selectIndex = lines.indexOf("gateway select nemoclaw-8081");
       const wipeIndex = lines.findIndex(isPersistentStateWipeExec);
       const deleteIndex = lines.indexOf("sandbox delete -g nemoclaw-8081 alpha");
       const gatewayDestroyIndex = lines.findIndex(
@@ -808,8 +1008,8 @@ describe("CLI dispatch", () => {
           line === "gateway remove nemoclaw-8081" || line === "gateway destroy -g nemoclaw-8081",
       );
 
-      expect(selectIndex, "gateway select did not run").toBeGreaterThanOrEqual(0);
-      expect(wipeIndex, "native-home cleanup did not run").toBeGreaterThan(selectIndex);
+      expect(lines).not.toContain("gateway select nemoclaw-8081");
+      expect(wipeIndex, "native-home cleanup did not run").toBeGreaterThanOrEqual(0);
       expect(deleteIndex, "sandbox delete did not run").toBeGreaterThan(wipeIndex);
       expect(gatewayDestroyIndex, "gateway teardown did not run").toBeGreaterThan(deleteIndex);
     },
@@ -842,6 +1042,10 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/bin/sh",
+        'if [ "$1" = "gateway" ] && [ "$2" = "list" ]; then',
+        '  printf \'[{"name":"nemoclaw","active":true}]\\n\'',
+        "  exit 0",
+        "fi",
         `log_file=${JSON.stringify(openshellLog)}`,
         'printf \'%s\\n\' "$*" >> "$log_file"',
         'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
@@ -911,6 +1115,10 @@ describe("CLI dispatch", () => {
         path.join(localBin, "openshell"),
         [
           "#!/bin/sh",
+          'if [ "$1" = "gateway" ] && [ "$2" = "list" ]; then',
+          '  printf \'[{"name":"nemoclaw","active":true}]\\n\'',
+          "  exit 0",
+          "fi",
           `log_file=${JSON.stringify(openshellLog)}`,
           'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
           '  printf \'%s\\n\' "$*" >> "$log_file"',
@@ -1021,9 +1229,9 @@ describe("CLI dispatch", () => {
 
     expect(r.code, r.out).toBe(0);
     const log = fs.readFileSync(openshellLog, "utf8");
-    expect(log).toContain("provider delete alpha-telegram-bridge");
-    expect(log).toContain("provider delete alpha-discord-bridge");
-    expect(log).toContain("provider delete alpha-slack-bridge");
-    expect(log).toContain("provider delete alpha-slack-app");
+    expect(log).toContain("provider delete -g nemoclaw alpha-telegram-bridge");
+    expect(log).toContain("provider delete -g nemoclaw alpha-discord-bridge");
+    expect(log).toContain("provider delete -g nemoclaw alpha-slack-bridge");
+    expect(log).toContain("provider delete -g nemoclaw alpha-slack-app");
   });
 });

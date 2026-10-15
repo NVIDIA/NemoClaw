@@ -92,7 +92,7 @@ async function runManagedHermesVolumeUninstall(
     switch (`${command} ${args.join(" ")}`) {
       case "openshell gateway list":
       case "openshell gateway list -o json":
-        return ok(JSON.stringify(gatewayRegistered ? [{ name: "nemoclaw" }] : []));
+        return ok(JSON.stringify(gatewayRegistered ? [{ name: "nemoclaw", active: false }] : []));
       case "openshell gateway remove nemoclaw":
         gatewayRegistered = false;
         return ok();

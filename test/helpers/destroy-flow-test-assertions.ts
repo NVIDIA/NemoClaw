@@ -46,15 +46,12 @@ export function expectStrictSandboxPresenceClassification(): void {
 }
 
 export function expectSuccessfulLiveDestroy(harness: DestroyHarness, exitSpy: MockInstance): void {
-  expect(harness.selectGatewaySpy).toHaveBeenCalledWith(
-    "alpha",
-    "nemoclaw-19080",
-    expect.objectContaining({ selectGateway: expect.any(Function) }),
-    undefined,
+  expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+    ["gateway", "select", "nemoclaw-19080"],
+    expect.anything(),
   );
-  expect(harness.gatewayPinsAtSandboxList).toEqual(["nemoclaw-19080"]);
   expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-    ["sandbox", "list", "-o", "json"],
+    ["sandbox", "list", "-g", "nemoclaw-19080", "-o", "json"],
     expect.objectContaining({ ignoreError: true }),
   );
   expect(harness.stopNimByNameSpy).toHaveBeenCalledWith("alpha-nim");
@@ -65,7 +62,7 @@ export function expectSuccessfulLiveDestroy(harness: DestroyHarness, exitSpy: Mo
   );
   expect(harness.unloadOllamaModelsSpy).toHaveBeenCalledTimes(1);
   expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-  expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw-19080", harness.runOpenshellSpy);
+  expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw-19080", expect.any(Function));
   expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
     "Sandbox 'alpha' destroyed",
   );
@@ -96,7 +93,6 @@ export function expectMcpFinalizeAfterDelete(harness: DestroyHarness): void {
       sandbox: expect.objectContaining({ name: "alpha" }),
     }),
   );
-  expect(harness.gatewayPinsAtMcpPrepare).toEqual(["nemoclaw-19080"]);
   const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
     (call) =>
       Array.isArray(call[0]) &&
@@ -185,7 +181,6 @@ export function expectAbsentSandboxMcpFinalize(harness: DestroyHarness): void {
   expect(harness.prepareMcpBridgesForAbsentSandboxDestroySpy).toHaveBeenCalledWith("alpha", {
     force: false,
   });
-  expect(harness.gatewayPinsAtMcpPrepare).toEqual(["nemoclaw-19080"]);
   expect(harness.restoreMcpBridgesAfterDestroyAbortSpy).not.toHaveBeenCalled();
   expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).toHaveBeenCalledWith(
     "alpha",

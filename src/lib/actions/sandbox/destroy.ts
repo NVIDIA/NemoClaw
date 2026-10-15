@@ -116,6 +116,19 @@ type RemoveSandboxRegistryEntryWithReceiptDeps = {
   removeSandboxWithReceipt?: typeof registry.removeSandboxWithReceipt;
 };
 
+function hasOnlyIdentityFreeRecovery(
+  sandboxName: string,
+  sandbox: registry.SandboxEntry | null,
+  records: readonly onboardSession.RetainedSandboxRecoveryRecord[],
+): boolean {
+  const candidates = records.filter((record) => record.sandboxName === sandboxName);
+  return (
+    !sandbox?.pendingCreateIdentity &&
+    candidates.length > 0 &&
+    candidates.every((record) => record.sandboxIdentityFingerprint === null)
+  );
+}
+
 function selectRetainedSandboxRecoveryAuthority(
   sandboxName: string,
   sandbox: registry.SandboxEntry | null,
@@ -689,30 +702,61 @@ export async function destroySandbox(
     finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
   } = {},
 ): Promise<void> {
-  const telemetryTarget: { gatewayName?: string; mutationStarted?: boolean } = {};
+  const telemetryTarget: {
+    gatewayName?: string;
+    mutationStarted?: boolean;
+    completionRecorded?: boolean;
+  } = {};
   try {
-    return await withSandboxLifecycleLock(sandboxName, () => {
+    return await withSandboxLifecycleLock(sandboxName, async () => {
       const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
         sandboxName,
         { allowStateRecord: true },
       );
       assertSandboxDestroyCommandAvailable(sandboxName);
-      return destroySandboxUnlocked(
+      const sandbox = resolveSandboxDestroyRegistryAuthority(sandboxName).entry;
+      const session = onboardSession.loadSession();
+      const retainedRecoveryRecords = onboardSession.listRetainedSandboxRecoveryRecords();
+      const identityFreeRecovery = hasOnlyIdentityFreeRecovery(
+        sandboxName,
+        sandbox,
+        retainedRecoveryRecords,
+      );
+      const retainedRecoveryAuthority = selectRetainedSandboxRecoveryAuthority(
+        sandboxName,
+        sandbox,
+        retainedRecoveryRecords,
+        session,
+      );
+      const gatewayName = resolveSandboxDestroyGatewayName(
+        sandboxName,
+        sandbox,
+        retainedRecoveryAuthority?.gatewayName,
+      );
+      telemetryTarget.gatewayName = gatewayName;
+      await destroySandboxUnlocked(
         sandboxName,
         options,
         removedImmutabilityMigration.stateRecord !== null,
         deps,
         telemetryTarget,
+        identityFreeRecovery,
       );
+      if (!telemetryTarget.completionRecorded) {
+        await recordDestroyCompletion(sandboxName, "completed", undefined, gatewayName);
+        telemetryTarget.completionRecorded = true;
+      }
     });
   } catch (error) {
-    await recordDestroyCompletion(
-      sandboxName,
-      "failed",
-      error instanceof SandboxDestroyExitRequest ? error.exitCode : undefined,
-      telemetryTarget.gatewayName,
-      telemetryTarget.mutationStarted === true,
-    );
+    if (!telemetryTarget.completionRecorded) {
+      await recordDestroyCompletion(
+        sandboxName,
+        "failed",
+        error instanceof SandboxDestroyExitRequest ? error.exitCode : undefined,
+        telemetryTarget.gatewayName,
+        telemetryTarget.mutationStarted === true,
+      );
+    }
     if (error instanceof SandboxDestroyExitRequest) {
       process.exit(error.exitCode);
     }
@@ -727,7 +771,12 @@ async function destroySandboxUnlocked(
   deps: {
     finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
   },
-  telemetryTarget: { gatewayName?: string; mutationStarted?: boolean },
+  telemetryTarget: {
+    gatewayName?: string;
+    mutationStarted?: boolean;
+    completionRecorded?: boolean;
+  },
+  identityFreeRecovery: boolean,
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
   const registryAuthority = resolveSandboxDestroyRegistryAuthority(sandboxName);
@@ -747,6 +796,7 @@ async function destroySandboxUnlocked(
   const operationRuntimeSelection = resolveSandboxDestroyRuntimeSelection(registeredSandbox);
   if (!(await confirmSandboxDestroy(sandboxName, normalized, operationRuntimeSelection))) {
     await recordDestroyCompletion(sandboxName, "cancelled", undefined, telemetryTarget.gatewayName);
+    telemetryTarget.completionRecorded = true;
     return;
   }
   if (registeredSandbox) {
@@ -788,6 +838,14 @@ async function destroySandboxUnlocked(
     retainedRecoveryRecords,
     destroySession,
   );
+  if (
+    identityFreeRecovery &&
+    !hasOnlyIdentityFreeRecovery(sandboxName, registeredSandbox, retainedRecoveryRecords)
+  ) {
+    throw new Error(
+      `Refusing to destroy sandbox '${sandboxName}': retained recovery authority changed before the gateway-scoped operation. No sandbox resources were removed.`,
+    );
+  }
   if (
     !retainedRecoveryAuthority &&
     retainedRecoveryRecords.some((record) => record.sandboxName === sandboxName)
@@ -932,6 +990,7 @@ async function destroySandboxUnlocked(
       getSandbox: getRegisteredSandbox,
       retainedRecoveryGatewayName: retainedRecoveryAuthority?.gatewayName,
       operationRuntimeSelection,
+      identityFreeRecovery,
     });
   } catch (error) {
     preparedManagedLlamaCppCleanup?.abort();
@@ -1478,5 +1537,4 @@ async function destroySandboxUnlocked(
     console.warn(`  ${YW}⚠${R}${m}`),
   );
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
-  await recordDestroyCompletion(sandboxName, "completed", undefined, destroyGatewayName);
 }

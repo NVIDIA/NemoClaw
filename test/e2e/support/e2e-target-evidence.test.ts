@@ -115,6 +115,39 @@ describe("target evidence", () => {
     }
   });
 
+  it("declares and publishes both concurrent-gateway destroy outcomes", () => {
+    const source = fs.readFileSync(
+      path.resolve(import.meta.dirname, "..", "live", "concurrent-gateway-ports.test.ts"),
+      "utf8",
+    );
+    const declaration =
+      source.match(/await artifacts\.target\.declare\(\{([\s\S]*?)\n\s*\}\);/u)?.[1] ?? "";
+    const result =
+      source.match(/await artifacts\.target\.complete\(\{([\s\S]*?)\n\s*\}\);/u)?.[1] ?? "";
+    const contracts = [
+      "destroy with gateway cleanup removes gateway B, preserves selected gateway A, and keeps A restartable and dashboard-reachable",
+      "destroy without gateway cleanup removes only B's sandbox, preserves gateway B and selected gateway A, and keeps A restartable and dashboard-reachable",
+    ];
+    const assertions = [
+      "gatewayASelectedBeforeCleanupDestroy",
+      "gatewayBDestroyedWithCleanup",
+      "gatewayAProcessPreservedWithCleanup",
+      "sandboxARestartedWithCleanup",
+      "gatewayADashboardAvailableAfterCleanupRestart",
+      "gatewayASelectedBeforeRetainedDestroy",
+      "sandboxBDestroyedWithoutGatewayCleanup",
+      "gatewayBRetainedWithoutCleanup",
+      "gatewayAProcessPreservedWithoutCleanup",
+      "sandboxARestartedWithoutCleanup",
+      "gatewayADashboardAvailableAfterRetainedRestart",
+    ];
+
+    expect({
+      missingContracts: contracts.filter((contract) => !declaration.includes(contract)),
+      missingAssertions: assertions.filter((assertion) => !result.includes(`${assertion}:`)),
+    }).toEqual({ missingContracts: [], missingAssertions: [] });
+  });
+
   it("keeps live target evidence behind the typed API", () => {
     // This static guard intentionally catches literal legacy target filenames;
     // dynamic target filename construction should not be introduced in live tests.

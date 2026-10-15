@@ -91,7 +91,7 @@ async function uninstallOutputFor(
         fs.writeFileSync(path.join(stateDir, "sandboxes.json"), String(registry), "utf-8"),
     } as const;
     writeRegistry[registry === null ? "absent" : "present"]();
-    const gatewayList = JSON.stringify(liveGatewayNames.map((name) => ({ name })));
+    const gatewayList = JSON.stringify(liveGatewayNames.map((name) => ({ name, active: false })));
 
     await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },

@@ -125,7 +125,7 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
       const warnings: string[] = [];
       const logs: string[] = [];
       const calls: string[][] = [];
-      const gatewayLists = [ok(JSON.stringify([{ name: "nemoclaw" }])), ok("[]")];
+      const gatewayLists = [ok(JSON.stringify([{ name: "nemoclaw", active: false }])), ok("[]")];
       const returnedGatewayLists: string[] = [];
       const nextGatewayList = () => {
         const response = gatewayLists.shift() ?? ok("[]");

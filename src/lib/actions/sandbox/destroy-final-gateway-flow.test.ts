@@ -61,10 +61,7 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
 
     expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(2);
     expect(harness.finalGatewaySleepSpy).toHaveBeenCalledOnce();
-    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
-      "nemoclaw-19080",
-      harness.runOpenshellSpy,
-    );
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw-19080", expect.any(Function));
     expect(warnOutput(harness)).not.toContain("gateway left running");
   });
 

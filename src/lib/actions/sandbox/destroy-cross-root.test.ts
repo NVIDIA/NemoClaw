@@ -62,11 +62,9 @@ describe("destroySandbox cross-root registry authority", () => {
       defaultSelectionRevision: 2,
       sandboxes: {},
     });
-    expect(harness.selectGatewaySpy).toHaveBeenCalledWith(
-      "alpha",
-      "nemoclaw-8245",
-      expect.anything(),
-      undefined,
+    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw-8245", "-o", "json"],
+      expect.objectContaining({ ignoreError: true }),
     );
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
   });
