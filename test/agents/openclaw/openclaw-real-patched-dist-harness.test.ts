@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 
 import { patchOpenClawContainerRestart } from "../../../scripts/lib/patch-openclaw-container-restart.mts";
 import { buildManagedInferenceSafeguardCompaction } from "../../../scripts/generate-openclaw-config.mts";
+import { runRealOpenClawAgentReloadProof } from "../../helpers/openclaw-real-agent-reload-proof";
 import { runRealOpenClawCompactionRetryProof } from "../../helpers/openclaw-real-compaction-retry-proof";
 import { runRealOpenClawDeviceSelfApprovalProof } from "../../helpers/openclaw-real-device-self-approval-proof";
 import { runRealOpenClawInstallPathProof } from "../../helpers/openclaw-real-install-path-proof";
@@ -924,6 +925,11 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
             4096,
           ),
           timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+        });
+
+        await runRealOpenClawAgentReloadProof({
+          dist,
+          nodeExecutable: nodeRuntime.executable,
         });
 
         runRealOpenClawInstallPathProof({
