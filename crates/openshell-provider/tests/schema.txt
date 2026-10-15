@@ -93,35 +93,6 @@ resource openshell_podman_gateway (version 0)
   owner: string, optional, computed
   running: string, computed
 
-resource openshell_provider_profile (version 2)
-  authenticated: string, optional, computed
-  binaries: list(string), required
-  cluster_source: string, optional, computed
-  endpoint: string, optional, computed
-  gateway: object({ credential_env = string, endpoint = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
-  generation: string, optional, computed
-  id: string, computed
-  name: string, required
-  owner: string, optional, computed
-  provider_type: string, optional, computed
-  ref: object({ generation = string, id = string, name = string, owner = string, type = string, workspace = string }), computed
-  workspace: object({ name = string, type = string }), required
-
-resource openshell_provider_registration (version 2)
-  credential_env: string, optional, computed
-  credential_source: string, optional, computed
-  endpoint: string, required
-  gateway: object({ credential_env = string, endpoint = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
-  generation: string, optional, computed
-  id: string, computed
-  name: string, required
-  owner: string, optional, computed
-  profile: object({ name = string, type = string }), optional
-  provider_type: string, optional, computed
-  ref: object({ generation = string, id = string, name = string, owner = string, registration = string, type = string, workspace = string }), computed
-  registration: string, computed
-  workspace: object({ name = string, type = string }), required
-
 resource openshell_sandbox (version 2)
   gateway: object({ credential_env = string, endpoint = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   generation: string, optional, computed

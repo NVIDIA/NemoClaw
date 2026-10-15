@@ -510,7 +510,7 @@ mod tests {
                 },
             ),
             (
-                "openshell_provider_registration.removed".into(),
+                "openshell_inference.removed".into(),
                 StateBinding {
                     id: "provider".into(),
                     ..Default::default()
@@ -522,7 +522,7 @@ mod tests {
         assert!(
             teardown_expected(&record, &bindings, false)
                 .unwrap()
-                .contains_key("openshell_provider_registration.removed")
+                .contains_key("openshell_inference.removed")
         );
     }
 

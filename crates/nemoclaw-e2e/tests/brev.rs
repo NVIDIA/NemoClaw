@@ -410,8 +410,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
             "docker_container.managed_gateway_runtime",
             image_resource.as_str(),
             "openshell_gateway_storage.runtime",
-            "openshell_provider_registration.inference_hosted-nvidia-prod",
-            "openshell_provider_profile.inference_hosted-nvidia-prod",
+            "openshell_inference.inference_hosted-nvidia-prod",
             "openshell_sandbox.assistant",
             "openshell_workspace.deployment",
         ],
@@ -483,8 +482,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     let removed = [
         "docker_container.managed_gateway_runtime",
         image_resource.as_str(),
-        "openshell_provider_registration.inference_hosted-nvidia-prod",
-        "openshell_provider_profile.inference_hosted-nvidia-prod",
+        "openshell_inference.inference_hosted-nvidia-prod",
         "openshell_sandbox.assistant",
     ];
     let retained = vec![

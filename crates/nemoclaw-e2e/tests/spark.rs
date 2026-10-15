@@ -104,8 +104,7 @@ async fn spark_yaml_plans_and_applies_expected_resources() {
 
     let mut expected_apply = expected_runtime;
     expected_apply.extend(creates(&[
-        "openshell_provider_registration.inference_qwen",
-        "openshell_provider_profile.inference_qwen",
+        "openshell_inference.inference_qwen",
         "openshell_sandbox.assistant",
         "openshell_workspace.deployment",
     ]));

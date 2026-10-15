@@ -262,8 +262,7 @@ mod live {
             deferred: vec!["OpenShell registration and sandbox require the managed gateway".into()],
             deferred_resources: vec![
                 "fabric_agent.assistant".into(),
-                "openshell_provider_registration.inference_hosted-nvidia-prod".into(),
-                "openshell_provider_profile.inference_hosted-nvidia-prod".into(),
+                "openshell_inference.inference_hosted-nvidia-prod".into(),
                 "openshell_sandbox.assistant".into(),
                 "openshell_workspace.deployment".into(),
             ],
@@ -279,8 +278,7 @@ mod live {
         let mut removed = changes(
             &[
                 "fabric_agent.assistant",
-                "openshell_provider_registration.inference_hosted-nvidia-prod",
-                "openshell_provider_profile.inference_hosted-nvidia-prod",
+                "openshell_inference.inference_hosted-nvidia-prod",
                 "openshell_sandbox.assistant",
             ],
             "delete",
@@ -332,8 +330,7 @@ mod live {
         expected.extend(changes(
             &[
                 "fabric_agent.assistant",
-                "openshell_provider_registration.inference_hosted-nvidia-prod",
-                "openshell_provider_profile.inference_hosted-nvidia-prod",
+                "openshell_inference.inference_hosted-nvidia-prod",
                 "openshell_sandbox.assistant",
                 "openshell_workspace.deployment",
             ],
@@ -439,8 +436,7 @@ mod live {
         expected.extend(
             [
                 "fabric_agent.assistant",
-                "openshell_provider_registration.inference_hosted-nvidia-prod",
-                "openshell_provider_profile.inference_hosted-nvidia-prod",
+                "openshell_inference.inference_hosted-nvidia-prod",
                 "openshell_sandbox.assistant",
                 "openshell_workspace.deployment",
             ]

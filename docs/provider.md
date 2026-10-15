@@ -78,8 +78,6 @@ None of them exposes ephemeral resources or provider functions.
 | Type | Manages or observes |
 |---|---|
 | `openshell_workspace` | Workspace |
-| `openshell_provider_registration` | Provider registration |
-| `openshell_provider_profile` | Provider profile |
 | `openshell_inference` | [An inference server's provider and its profile](#inference-providers) |
 | `openshell_web_search` | [A web search provider and its profile](#web-search) |
 | `openshell_sandbox` | Sandbox |
@@ -118,8 +116,7 @@ data "openshell_external_inference_server" "litellm" {
 Each OpenShell resource exports a computed `ref` object identifying it: its `type`, `name`, `owner`, `generation`, and `id`, plus `workspace` for objects inside a workspace.
 Objects name each other by `ref`, never by separate name strings:
 
-- Profiles, registrations, and sandboxes take `workspace = openshell_workspace.<label>.ref`.
-- A registration may take `profile = openshell_provider_profile.<label>.ref` for a scoped profile.
+- Inference and web search resources and sandboxes take `workspace = openshell_workspace.<label>.ref`.
 - A sandbox takes `providers`, a list of registration refs.
 
 A consumer checks the ref's `type` and rejects a ref of another type.
@@ -132,8 +129,7 @@ Other inputs are typed too:
 - `openshell_sandbox` takes a `policy` block.
   The block's attributes and blocks follow the sandbox policy model with snake_case names: optional `explicit` policy and `managed` deployment grants, whose named network rules are labeled blocks.
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
-- `openshell_provider_profile` takes a `binaries` list.
-- `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_provider_registration`, `openshell_inference`, or `openshell_web_search`. Each ref names the OpenShell registration it attaches in `registration`.
+- `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference` or `openshell_web_search`. Each ref names the OpenShell registration it attaches in `registration`.
 - `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables managed endpoint grants allow.
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox; it does not depend on the agent runtime that produced the launch.
   `fabric_harnesses` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
@@ -175,13 +171,13 @@ It takes:
 - `server`, the `ref` of a readiness read: `vllm_readiness`, `ollama_readiness`, `ollama_proxy_readiness`, or `openshell_external_inference_server`. It supplies the endpoint and the variable or source of the credential. The provider reads a key during apply, so the key never enters OpenTofu state.
 - `api`: `openai-completions`, `openai-responses`, or `anthropic-messages`.
 - `binaries`, the executables allowed to call the server.
-- Optional `cluster_source`, passed to the profile as `openshell_provider_profile` takes it.
+- Optional `cluster_source`, which the profile uses to resolve the server's cluster addresses.
 
 Plans reject a missing `server` or `binaries`; the schema lists them as optional for the same reason as web search's inputs.
-Any change to an input replaces the resource, including a changed endpoint or credential in the server's `ref`, and removal deletes both objects.
+A rotated credential reference updates the registration in place. Adding or removing authentication, or any other change, replaces the resource, and removal deletes both objects.
 A sandbox that attaches it also needs a policy that allows traffic to the server's endpoint.
 Its `ref` has type `openshell_provider`, so sandboxes take it in `providers`.
-Generated graphs register each selected inference provider this way. Until they read servers ([#13228](https://github.com/NVIDIA/NemoClaw/issues/13228)), they pass a literal `inference_server` object built from the provider definition.
+Generated graphs register each selected inference provider this way, passing a literal `inference_server` object built from the provider definition. Reading servers instead depends on one OpenTofu root ([#13254](https://github.com/NVIDIA/NemoClaw/issues/13254)) and on checking external servers ([#13256](https://github.com/NVIDIA/NemoClaw/issues/13256)).
 
 ```hcl
 resource "openshell_inference" "nemotron" {
@@ -389,19 +385,15 @@ For reconstructible resources, OpenTofu and the provider own confirmed absence, 
 
 | Resource | Reconciliation | Protection |
 |---|---|---|
-| Provider profile and registration | Update supported fields, replace immutable configuration, remove unused declarations, and recreate after confirmed absence | Verify ownership and established identity before mutation; preserve bindings on failed observation |
-| Inference and web search | Create the profile and then the registration; replace on any input change or when either object is missing | The same checks for both objects; a failure between them records the identity, so the next apply replaces the resource |
+| Inference and web search | Create the profile and then the registration; recreate a missing profile and rotate an inference credential reference in place; replace on any other input change or a missing registration | The same checks for both objects; a failure between them records the identity, so the next apply replaces the resource |
 | Fabric runtime configuration | Apply the public Fabric document and reconcile its resource lifecycle | Verify the parent sandbox identity; a changed configuration can restart its runtime and lose native session state |
 | Sandbox | Create and observe the declared sandbox | During apply, refuse deletion, replacement, or recreation of a missing binding because deletion loses agent files and history |
 | Workspace | Create, observe, and retain | Refuse replacement, deletion, or automatic recreation of a missing binding |
 
 OpenShell refuses deletion of profiles referenced by registrations and registrations attached to sandboxes.
-The registration's endpoint, provider type, and authentication mode require replacement, matching its profile's configuration contract.
-The graph orders registration deletion before profile deletion when both change.
-Standalone HCL must declare the matching configuration and dependency on its profile.
-Recreating an absent profile with unchanged configuration does not itself replace its registration.
+Inference and web search resources therefore recreate a missing profile in place, and remove the registration before its profile.
 Generated graphs create an `openshell_inference` only for definitions selected by sandboxes; unused YAML definitions have no resource lifecycle.
-The standalone provider supports registration removal and replacement, while removing a last selection in SDK YAML also changes the protected sandbox specification.
+Standalone HCL can remove or replace an inference resource, while removing a last selection in SDK YAML also changes the protected sandbox specification.
 Replacing a registration still attached to a protected sandbox is not a supported shortcut around sandbox lifecycle rules.
 Endpoint and policy changes that also change a sandbox's launch specification remain protected; see [change paths](usage.md#choose-the-change-path).
 

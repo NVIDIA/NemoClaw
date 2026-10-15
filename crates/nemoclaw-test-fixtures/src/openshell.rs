@@ -1005,14 +1005,7 @@ pub fn contract_rows(
     // Inference and web search resources expand to the profile and
     // registration they own; registrations follow every profile.
     let mut registrations = Vec::new();
-    for kind in [
-        "workspace",
-        "provider_profile",
-        "provider",
-        "inference",
-        "web_search",
-        "sandbox",
-    ] {
+    for kind in ["workspace", "inference", "web_search", "sandbox"] {
         if kind == "sandbox" {
             rows.append(&mut registrations);
         }

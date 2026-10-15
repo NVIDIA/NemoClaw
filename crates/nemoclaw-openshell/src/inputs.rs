@@ -27,7 +27,7 @@ pub fn structured_inputs(kind: &str) -> Vec<Structured> {
         shape,
     };
     match kind {
-        "provider_profile" | "web_search" | "inference" => {
+        "web_search" | "inference" => {
             vec![input("binaries", "binaries_json", strings())]
         }
         "sandbox" => vec![input("policy", "policy_json", policy_input())],
@@ -40,7 +40,7 @@ pub fn export(kind: &str) -> Option<Export> {
     let fields: &[&'static str] = match kind {
         "workspace" => &["name", "owner", "generation", "id"],
         // Registrations name what sandboxes attach: `registration`.
-        "provider" | "web_search" | "inference" => &[
+        "web_search" | "inference" => &[
             "workspace",
             "name",
             "registration",
@@ -48,7 +48,7 @@ pub fn export(kind: &str) -> Option<Export> {
             "generation",
             "id",
         ],
-        "provider_profile" | "sandbox" => &["workspace", "name", "owner", "generation", "id"],
+        "sandbox" => &["workspace", "name", "owner", "generation", "id"],
         _ => return None,
     };
     Some(Export {
@@ -113,7 +113,6 @@ fn object_references(kind: &str) -> Vec<Reference> {
         list: false,
     };
     match kind {
-        "provider_profile" => vec![workspace],
         // A web search registration belongs to its workspace's owner.
         "web_search" => vec![Reference {
             attribute: "workspace",
@@ -138,15 +137,6 @@ fn object_references(kind: &str) -> Vec<Reference> {
                     ("credential_env", "credential_env"),
                     ("credential_source", "credential_source"),
                 ],
-                list: false,
-            },
-        ],
-        "provider" => vec![
-            workspace,
-            Reference {
-                attribute: "profile",
-                kind: "openshell_provider_profile",
-                fields: vec![("name", "profile_name")],
                 list: false,
             },
         ],

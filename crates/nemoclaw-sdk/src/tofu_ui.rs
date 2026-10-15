@@ -66,8 +66,6 @@ impl Ui {
             Some("openshell_workspace") => "workspace",
             Some("openshell_sandbox") => "sandbox",
             Some("fabric_agent_readiness") => "sandbox readiness",
-            Some("openshell_provider_registration") => "provider",
-            Some("openshell_provider_profile") => "provider profile",
             Some("openshell_web_search") => "web search",
             Some("openshell_inference") => "inference provider",
             Some("openshell_podman_gateway") => "gateway",
@@ -209,33 +207,33 @@ mod tests {
         for (kind, address, timestamp) in [
             (
                 "apply_start",
-                "openshell_provider_registration.fast",
+                "openshell_inference.fast",
                 "2026-09-17T00:00:00.000Z",
             ),
             (
                 "apply_start",
-                "openshell_provider_registration.smart",
+                "openshell_inference.smart",
                 "2026-09-17T00:00:00.100Z",
             ),
             (
                 "apply_complete",
-                "openshell_provider_registration.fast",
+                "openshell_inference.fast",
                 "2026-09-17T00:00:00.125Z",
             ),
             (
                 "apply_complete",
-                "openshell_provider_registration.smart",
+                "openshell_inference.smart",
                 "2026-09-17T00:00:00.350Z",
             ),
         ] {
-            let mut line = serde_json::json!({"type":kind, "@timestamp":timestamp, "hook":{"resource":{"resource_type":"openshell_provider_registration", "addr":address}, "action":"create", "elapsed_seconds":0}}).to_string();
+            let mut line = serde_json::json!({"type":kind, "@timestamp":timestamp, "hook":{"resource":{"resource_type":"openshell_inference", "addr":address}, "action":"create", "elapsed_seconds":0}}).to_string();
             line.push('\n');
             ui.feed(line.as_bytes());
         }
         ui.finish().unwrap();
         let events = received.lock().unwrap();
-        assert!(format!("{:?}", events[0]).contains("openshell_provider_registration.fast"));
-        assert!(format!("{:?}", events[1]).contains("openshell_provider_registration.smart"));
+        assert!(format!("{:?}", events[0]).contains("openshell_inference.fast"));
+        assert!(format!("{:?}", events[1]).contains("openshell_inference.smart"));
         assert!(
             matches!(events[2], Progress::Resource { elapsed, .. } if elapsed == std::time::Duration::from_millis(125))
         );
