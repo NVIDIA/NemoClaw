@@ -34,7 +34,7 @@ export function nativeOpenClawProviderKey(
 ): "openai" | "anthropic" | "inference" | undefined {
   if (provider === "compatible-endpoint") return "inference";
   if (provider === "compatible-anthropic-endpoint")
-    return inferenceApi && inferenceApi !== "openai-completions" ? "anthropic" : "inference";
+    return inferenceApi === "anthropic-messages" ? "anthropic" : "inference";
   const definition = fixedNativeProvider(provider);
   if (!definition) return undefined;
   if (definition.logicalProvider === "openai-api") return "openai";

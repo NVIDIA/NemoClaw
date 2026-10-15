@@ -9,6 +9,19 @@ export function isCustomHostedProvider(provider: string | null | undefined): boo
   return provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint";
 }
 
+/** Resolve the native binding and agent configuration from the same API selection. */
+export function resolveCustomNativeApi(
+  provider: string | null | undefined,
+  preferredApi: string | null | undefined,
+  nativeProvider: boolean,
+): string | null {
+  if (!nativeProvider || !isCustomHostedProvider(provider)) return preferredApi ?? null;
+  return (
+    preferredApi ||
+    (provider === "compatible-anthropic-endpoint" ? "anthropic-messages" : "openai-completions")
+  );
+}
+
 export function customNativeCredentialEnv(provider: string): string {
   if (provider === "compatible-endpoint") return "COMPATIBLE_API_KEY";
   if (provider === "compatible-anthropic-endpoint") return "COMPATIBLE_ANTHROPIC_API_KEY";

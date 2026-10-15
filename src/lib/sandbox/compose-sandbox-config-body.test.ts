@@ -252,6 +252,13 @@ describe("composeSandboxConfigBody", () => {
     ],
     [
       "compatible-anthropic-endpoint",
+      "inference",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      "https://fixture.example/openai/v1",
+      "openai-responses",
+    ],
+    [
+      "compatible-anthropic-endpoint",
       "anthropic",
       "COMPATIBLE_ANTHROPIC_API_KEY",
       "https://fixture.example",

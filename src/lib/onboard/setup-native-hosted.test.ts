@@ -22,6 +22,7 @@ const providers: HostedProviderDefinition[] = [
     ["compatible-endpoint", "openai-responses", "https://custom.example/v1"],
     ["compatible-anthropic-endpoint", "anthropic-messages", "https://custom.example"],
     ["compatible-anthropic-endpoint", "openai-completions", "https://custom.example"],
+    ["compatible-anthropic-endpoint", "openai-responses", "https://custom.example"],
   ].map(([provider, api, endpointUrl]) =>
     customNativeProvider({
       provider,
@@ -35,7 +36,16 @@ const providers: HostedProviderDefinition[] = [
 
 describe.each(providers)("native $label onboarding", (provider) => {
   const endpointModes = provider.custom
-    ? ["explicit", "previous-provider"]
+    ? [
+        "explicit",
+        "previous-provider",
+        ...(provider.api ===
+        (provider.logicalProvider === "compatible-anthropic-endpoint"
+          ? "anthropic-messages"
+          : "openai-completions")
+          ? ["default-api"]
+          : []),
+      ]
     : ["explicit", "omitted"];
   it.each(endpointModes)("uses %s native endpoint (#12589)", async (endpointMode) => {
     const receipt = {
@@ -165,7 +175,10 @@ describe.each(providers)("native $label onboarding", (provider) => {
         provider.custom?.credentialEnv ?? provider.credentialEnv,
         null,
         [],
-        { revalidateSandboxIdentity: () => undefined, preferredInferenceApi: provider.api },
+        {
+          revalidateSandboxIdentity: () => undefined,
+          preferredInferenceApi: endpointMode === "default-api" ? null : provider.api,
+        },
       ),
     ).resolves.toMatchObject({ ok: true });
     expect(createProvider).toHaveBeenCalledExactlyOnceWith(
@@ -193,6 +206,7 @@ describe.each(providers)("native $label onboarding", (provider) => {
       expect.objectContaining({
         nativeHostedProviderAttachment: receipt,
         provider: provider.logicalProvider,
+        preferredInferenceApi: provider.api,
       }),
     );
     expect(verifyOnboardInferenceSmoke.mock.calls).toEqual(

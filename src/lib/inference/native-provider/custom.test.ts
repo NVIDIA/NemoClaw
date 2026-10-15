@@ -116,6 +116,7 @@ describe("custom native endpoint ownership", () => {
     ["compatible-endpoint", "openai-responses", "/team/v1/responses"],
     ["compatible-anthropic-endpoint", "anthropic-messages", "/team/v1/messages"],
     ["compatible-anthropic-endpoint", "openai-completions", "/team/v1/chat/completions"],
+    ["compatible-anthropic-endpoint", "openai-responses", "/team/v1/responses"],
   ])(
     "binds %s %s to the same agent, profile and health destination",
     (provider, api, requestPath) => {
@@ -145,9 +146,28 @@ describe("custom native endpoint ownership", () => {
       const config = getSandboxInferenceConfig("selected-model", provider, api, true, endpointUrl);
       expect(config.inferenceBaseUrl).toBe(definition.endpointUrl);
       expect(config.inferenceApi).toBe(api);
+      expect(config.primaryModelRef).toBe(
+        `${api === "anthropic-messages" ? "anthropic" : "inference"}/selected-model`,
+      );
       expect(nativeHostedAgentConfig(provider, config.inferenceBaseUrl)?.apiKey).toBe(
         `openshell:resolve:env:${definition.credentialEnv}`,
       );
+    },
+  );
+
+  it.each([
+    ["compatible-endpoint", "openai-completions", "https://custom.example/team/v1"],
+    ["compatible-anthropic-endpoint", "anthropic-messages", "https://custom.example/team"],
+  ])(
+    "uses the native %s default API when selection is omitted (#13195)",
+    (provider, api, endpointUrl) => {
+      const definition = customNativeProvider({ ...binding, provider, api, endpointUrl });
+      const config = getSandboxInferenceConfig("selected-model", provider, null, true, endpointUrl);
+      expect(config).toMatchObject({
+        inferenceApi: definition.api,
+        inferenceBaseUrl: definition.endpointUrl,
+        primaryModelRef: `${api === "anthropic-messages" ? "anthropic" : "inference"}/selected-model`,
+      });
     },
   );
 

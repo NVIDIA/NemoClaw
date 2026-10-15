@@ -5,6 +5,7 @@ import {
   hostedNativeProvider,
   usesNativeHermesEndpoint,
   customNativeCredentialEnv,
+  resolveCustomNativeApi,
 } from "../inference/native-provider/hosted";
 import { requireHostedProviderAttachment } from "../inference/native-provider/hosted-attachment";
 import {
@@ -907,6 +908,11 @@ export function createSetupInference(
           sandboxName,
           recordedSandbox,
         );
+        const selectedInferenceApi = resolveCustomNativeApi(
+          provider,
+          options.preferredInferenceApi,
+          nativeCustomSelection,
+        );
         const nativeHostedSelection =
           nativeCustomSelection ||
           (hostedNativeProvider(provider) &&
@@ -930,7 +936,7 @@ export function createSetupInference(
               model,
               endpointUrl,
               credentialEnv,
-              preferredInferenceApi: options.preferredInferenceApi ?? null,
+              preferredInferenceApi: selectedInferenceApi,
             },
           });
           if (!compatibility.ok) {
@@ -1051,7 +1057,7 @@ export function createSetupInference(
             endpointUrl: nativeHostedEndpoint ?? hostLocalRoute?.applicationBaseUrl ?? endpointUrl,
             endpointSource: hostLocalRoute ? "inference-set" : endpointSource,
             credentialEnv: nativeHostedCredentialEnv ?? credentialEnv,
-            preferredInferenceApi: options.preferredInferenceApi ?? null,
+            preferredInferenceApi: selectedInferenceApi,
             gatewayName,
             reservationSessionId: options.reservationSessionId,
             hostLocalInferenceReceipt,
@@ -1216,11 +1222,7 @@ export function createSetupInference(
               gatewayName,
               provider,
               endpointUrl: endpointUrl!,
-              api:
-                options.preferredInferenceApi ||
-                (provider === "compatible-anthropic-endpoint"
-                  ? "anthropic-messages"
-                  : "openai-completions"),
+              api: selectedInferenceApi!,
               credentialEnv: selectedCredentialEnv,
               credentialValue,
               adapter: deps.providerAdapter,
@@ -1391,7 +1393,7 @@ export function createSetupInference(
                 allowLegacyRecordedNoAuthEndpoint:
                   options.allowLegacyRecordedNoAuthEndpoint === true,
                 skipHostInferenceSmoke: options.skipHostInferenceSmoke === true,
-                preferredInferenceApi: options.preferredInferenceApi ?? null,
+                preferredInferenceApi: selectedInferenceApi,
                 pinnedAddresses: endpointPinnedAddresses,
                 trustedPrivateCapability: endpointTrustedPrivateCapability,
                 capabilityCache: options.inferenceCapabilityCache,
