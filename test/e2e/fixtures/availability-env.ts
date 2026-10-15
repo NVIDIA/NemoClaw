@@ -5,7 +5,7 @@ import { GATEWAY_HOST_RUNTIME_ENV_KEYS } from "../../../src/lib/onboard/runtime-
 
 import { buildChildEnv } from "./redaction.ts";
 
-const AVAILABILITY_PROBE_EXTRA_ENV_KEYS = [
+export const AVAILABILITY_PROBE_EXTRA_ENV_KEYS = [
   ...GATEWAY_HOST_RUNTIME_ENV_KEYS,
   "DOCKER_CONFIG",
   "DOCKER_CONTEXT",

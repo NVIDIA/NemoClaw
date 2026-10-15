@@ -14,6 +14,7 @@ import {
   LLAMA_CPP_PROVIDER_NAME,
 } from "./llama-cpp/contract";
 import { hostedNativeProvider, usesNativeHermesEndpoint } from "./native-provider/hosted";
+import { nativeOpenClawProviderKey } from "./native-provider/fixed";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
 import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
 import { DEFAULT_OLLAMA_MODEL_TAG as DEFAULT_OLLAMA_MODEL } from "./ollama-model-registry";
@@ -325,7 +326,7 @@ export function getSandboxInferenceConfig(
   nativeProvider?: boolean,
   nativeEndpointUrl?: string | null,
 ): SandboxInferenceConfig {
-  let providerKey: string;
+  let providerKey: string = nativeOpenClawProviderKey(provider) ?? MANAGED_PROVIDER_ID;
   let primaryModelRef: string;
   const useNativeProvider =
     nativeProvider ??
@@ -348,7 +349,6 @@ export function getSandboxInferenceConfig(
 
   switch (provider) {
     case "openai-api":
-      providerKey = "openai";
       primaryModelRef = `openai/${model}`;
       break;
     case "anthropic-prod":
@@ -361,7 +361,7 @@ export function getSandboxInferenceConfig(
         };
         break;
       }
-      providerKey = "anthropic";
+      if (provider === "compatible-anthropic-endpoint") providerKey = "anthropic";
       primaryModelRef = `anthropic/${model}`;
       inferenceBaseUrl = hostedNative?.endpoint ?? "https://inference.local";
       inferenceApi = "anthropic-messages";
@@ -369,7 +369,6 @@ export function getSandboxInferenceConfig(
     case "gemini-api":
     case OPENROUTER_PROVIDER_NAME:
     case "hermes-provider":
-      providerKey = MANAGED_PROVIDER_ID;
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
       inferenceCompat = {
         supportsStore: false,
@@ -402,7 +401,6 @@ export function getSandboxInferenceConfig(
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
       break;
     case "nvidia-prod":
-      providerKey = MANAGED_PROVIDER_ID;
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
       inferenceBaseUrl = NVIDIA_HOSTED_NATIVE_ENDPOINT;
       inferenceApi = "openai-completions";
