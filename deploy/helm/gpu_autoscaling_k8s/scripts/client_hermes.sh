@@ -15,8 +15,10 @@
 #
 # Laptop HTTP: UI http://dgx-ip:18789/  CLI user i → http://dgx-ip:8642+i/v1
 #   E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 INFLIGHT=1 MAX_TOKENS=1024 ./scripts/client_hermes.sh
-# Pass INFLIGHT and MAX_TOKENS on this client. GPU util demo: INFLIGHT=1 MAX_TOKENS=1024.
-# Latency demo: INFLIGHT=1 MAX_TOKENS=64.
+# Pass INFLIGHT and MAX_TOKENS on this client. Laptop and DGX use the same flags.
+# GPU util demo: INFLIGHT=1 MAX_TOKENS=1024. Latency demo: INFLIGHT=3 MAX_TOKENS=64.
+# Clients do not stop or restart Hermes. Sandboxes stay up after stop;
+# ./scripts/uninstall-e2e.sh removes them.
 
 set -euo pipefail
 
@@ -46,8 +48,8 @@ export DURATION_SEC="${DURATION_SEC:-900}"
 export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-180}"
 agent_common_export_client_tokens hermes
 agent_common_export_client_inflight
-# Stop new chats after ~60s at 8 GPUs.
-export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-60}"
+# Stop new chats after a short sit at 8 GPUs.
+export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/hermes}"
 E2E_CLIENT_HOST="${E2E_CLIENT_HOST:-}"
@@ -69,7 +71,6 @@ host, users, duration, timeout, max_tokens, target = (
     sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6])
 )
 sys.path.insert(0, sys.argv[7])
-import e2e_latency_load_ramp as ramp
 import e2e_timeline as timeline
 discovery = int(os.environ.get("E2E_DISCOVERY_PORT", "18788"))
 deadline = time.monotonic() + duration
@@ -110,31 +111,29 @@ def user_token(uid):
     if specific:
         return specific
     return (os.environ.get("E2E_HERMES_API_KEY") or os.environ.get("API_SERVER_KEY") or "").strip()
-current, desired, metric = hpa_status()
-use_ramp = os.environ.get("E2E_LATENCY_RAMP") != "0"
-last = "unset"
-if use_ramp:
-    start_load = ramp.scale_load(metric, 1, target=target)
-    max_tokens = ramp.load_tokens(start_load) or ramp.token_bands()[0]
-    print(
-        f"[load] max_tokens={max_tokens}; stop after hold at {target} GPUs",
-        flush=True,
-    )
-    last = max_tokens
-prompts = ramp.prompt_for_tokens(max_tokens, "hermes") if use_ramp else (
+try:
+    inflight = max(1, int(os.environ.get("INFLIGHT") or os.environ.get("E2E_INFLIGHT_PER_USER") or "1"))
+except ValueError:
+    inflight = 1
+print(
+    f"[load] max_tokens={max_tokens} inflight={inflight}; stop after hold at {max(1, target - 1)} GPUs",
+    flush=True,
+)
+prompts = (
     ["In one sentence, what is Kubernetes HPA?"] if max_tokens <= 128
     else ["Explain Kubernetes HPA and GPU autoscaling in detail with examples."]
 )
 
 ok = err = 0
-turn = 0
 ok_by = [0] * users
 err_by = [0] * users
 tok_by = [0] * users
+counts = threading.Lock()
 client_log = Path(os.environ.get("E2E_OUTPUT_DIR") or ".") / "client-timeline.jsonl"
 client_log.parent.mkdir(parents=True, exist_ok=True)
 client_log.write_text("")
 stop_tl = threading.Event()
+stop_load = threading.Event()
 
 def write_ticks():
     while not stop_tl.is_set():
@@ -144,7 +143,7 @@ def write_ticks():
             timeline.write_client(
                 client_log,
                 max_tokens=max_tokens,
-                inflight=1,
+                inflight=inflight,
                 users=[
                     {"user": i, "ok": ok_by[i], "err": err_by[i], "tokens": tok_by[i]}
                     for i in range(users)
@@ -153,74 +152,86 @@ def write_ticks():
         except Exception:
             continue
 
+def one_chat(uid):
+    global ok, err
+    headers = {"Content-Type": "application/json"}
+    token = user_token(uid)
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(
+        f"http://{host}:{8642 + uid}/v1/chat/completions",
+        data=json.dumps({
+            "messages": [{"role": "user", "content": prompts[0]}],
+            "max_tokens": max_tokens,
+            "stream": False,
+        }).encode(),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode())
+        ntok = 0
+        usage = body.get("usage") if isinstance(body, dict) else None
+        if isinstance(usage, dict):
+            try:
+                ntok = int(usage.get("completion_tokens") or usage.get("total_tokens") or 0)
+            except (TypeError, ValueError):
+                ntok = 0
+        with counts:
+            ok += 1
+            ok_by[uid] += 1
+            tok_by[uid] += ntok
+            print(f"[user {uid}] ok={ok} err={err}", flush=True)
+    except Exception as exc:
+        with counts:
+            err += 1
+            err_by[uid] += 1
+            print(f"[user {uid}] {exc}", flush=True)
+
+def worker(uid):
+    while not stop_load.is_set() and time.monotonic() < deadline:
+        one_chat(uid)
+
 try:
-    hold_sec = float(os.environ.get("MAX_REPLICAS_HOLD_SEC") or "60")
+    hold_sec = float(os.environ.get("MAX_REPLICAS_HOLD_SEC") or "0")
 except ValueError:
-    hold_sec = 60.0
+    hold_sec = 15.0
 at_max_since = None
 hold_announced = False
 tick_thread = threading.Thread(target=write_ticks, daemon=True)
 tick_thread.start()
+workers = [
+    threading.Thread(target=worker, args=(i,), daemon=True)
+    for i in range(users) for _ in range(inflight)
+]
+for thread in workers:
+    thread.start()
 try:
-    while time.monotonic() < deadline:
-        current, desired, metric = hpa_status()
-        if use_ramp:
-            load = ramp.scale_load(
-                metric, ramp.effective_replicas(current, desired), target=target
-            )
-            tokens = ramp.load_tokens(load)
-            stop_now, at_max_since = ramp.should_stop_after_hold(
-                bool(load.get("stop")), hold_sec, at_max_since, time.monotonic()
-            )
-            if stop_now:
+    while time.monotonic() < deadline and not stop_load.is_set():
+        current, desired, _metric = hpa_status()
+        stop_at = max(1, target - 1)
+        at_target = max(current, desired) >= stop_at
+        if at_target:
+            now = time.monotonic()
+            if at_max_since is None:
+                at_max_since = now
+                if not hold_announced:
+                    hold_announced = True
+                    print(
+                        f"[load] {stop_at} GPUs — stop new chats; already-sent chats keep running",
+                        flush=True,
+                    )
+            if (now - at_max_since) >= hold_sec:
                 break
-            if tokens is not None and tokens != last:
-                last = tokens
-                max_tokens = tokens
-                prompts = ramp.prompt_for_tokens(max_tokens, "hermes")
-                print(f"[load] max_tokens={tokens}", flush=True)
-            elif bool(load.get("stop")) and not hold_announced:
-                hold_announced = True
-                print(f"[load] {target} GPUs — hold {hold_sec:.0f}s then stop", flush=True)
-        for i in range(users):
-            if time.monotonic() >= deadline:
-                break
-            prompt = prompts[turn % len(prompts)]
-            turn += 1
-            headers = {"Content-Type": "application/json"}
-            token = user_token(i)
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-            req = urllib.request.Request(
-                f"http://{host}:{8642 + i}/v1/chat/completions",
-                data=json.dumps({
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": max_tokens,
-                    "stream": False,
-                }).encode(),
-                headers=headers,
-                method="POST",
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
-                    body = json.loads(resp.read().decode())
-                ntok = 0
-                usage = body.get("usage") if isinstance(body, dict) else None
-                if isinstance(usage, dict):
-                    try:
-                        ntok = int(usage.get("completion_tokens") or usage.get("total_tokens") or 0)
-                    except (TypeError, ValueError):
-                        ntok = 0
-                ok += 1
-                ok_by[i] += 1
-                tok_by[i] += ntok
-                print(f"[user {i}] ok={ok} err={err}", flush=True)
-            except Exception as exc:
-                err += 1
-                err_by[i] += 1
-                print(f"[user {i}] {exc}", flush=True)
+        else:
+            at_max_since = None
+        time.sleep(1)
 finally:
+    stop_load.set()
     stop_tl.set()
+    for thread in workers:
+        thread.join(timeout=2)
 print(f"[load] done ok={ok} err={err}", flush=True)
 raise SystemExit(0 if ok else 1)
 PY

@@ -24,11 +24,12 @@ agent_common_print_laptop_client_usage() {
   echo "simpler option — from the same DGX in another terminal: E2E_USERS=${E2E_USERS:-5} ./scripts/${script_name}"
 }
 
-# Same client for both HPA metrics. MAX_TOKENS and INFLIGHT are client
-# flags (not metrics-proxy or HPA settings). If MAX_TOKENS is unset,
-# latency falls back to 64 and GPU util falls back per agent so provision
-# can pin a gateway. If INFLIGHT is unset, the client uses 1. The client
-# holds ~60s at 8 GPUs, then stops.
+# Same client.sh for both HPA metrics. GPU util: INFLIGHT=2 MAX_TOKENS=2048.
+# Latency: INFLIGHT=2 MAX_TOKENS=64. INFLIGHT and MAX_TOKENS on the command
+# override these defaults. The client sends until 7 GPUs, then stops new
+# chats so leftover load can reach 8 and drain. The DGX path pins
+# MAX_TOKENS. OpenClaw stays up after stop; uninstall-e2e.sh removes it
+# when the pairing is done.
 agent_common_hpa_metric() {
   local metric="${HPA_METRIC:-}"
   if [[ -z "${metric}" ]] && command -v kubectl >/dev/null 2>&1; then
@@ -65,9 +66,9 @@ agent_common_resolve_max_tokens() {
         ;;
       *)
         case "${agent}" in
-          openclaw) raw="${E2E_GPUUTIL_TOKEN_START:-2048}" ;;
-          deepagents) raw="${E2E_GPUUTIL_TOKEN_START:-2048}" ;;
-          *) raw="${E2E_GPUUTIL_TOKEN_START:-1024}" ;;
+          openclaw) raw=2048 ;;
+          deepagents) raw=2048 ;;
+          *) raw=1024 ;;
         esac
         ;;
     esac
@@ -90,6 +91,15 @@ agent_common_export_client_tokens() {
   export E2E_GPUUTIL_TOKEN_START="${MAX_TOKENS}"
 }
 
+# Demo default when INFLIGHT is omitted. INFLIGHT on the command wins
+# over a leftover E2E_INFLIGHT_PER_USER from an earlier run in this shell.
+agent_common_export_demo_workload() {
+  if [[ -z "${INFLIGHT:-}" ]]; then
+    INFLIGHT=2
+  fi
+  export INFLIGHT
+}
+
 # Concurrent chats per user on the one agent in that sandbox. INFLIGHT is
 # the client flag. It is not selected from the live HPA metric.
 agent_common_export_client_inflight() {
@@ -110,7 +120,8 @@ agent_common_export_client_inflight() {
 agent_common_print_load_banner() {
   local duration="${1:?}"
   local hold="${2:?}"
-  echo "Sends chats for ${duration}s. MAX_TOKENS=${MAX_TOKENS} INFLIGHT=${INFLIGHT:-${E2E_INFLIGHT_PER_USER:-1}}. Holds ${hold}s at 8 GPUs, then stops."
+  echo "Applied flags: INFLIGHT=${INFLIGHT} MAX_TOKENS=${MAX_TOKENS} (command values override leftovers and defaults)."
+  echo "Sends chats for ${duration}s. MAX_TOKENS=${MAX_TOKENS} INFLIGHT=${INFLIGHT:-${E2E_INFLIGHT_PER_USER:-2}}. Stops new chats at 7 GPUs (hold ${hold}s). Prints the chat table after HPA is back to 1 GPU."
 }
 
 agent_common_fail_openshell_for_client() {
@@ -637,7 +648,6 @@ for name in (
         snap.write_text(text)
     except OSError:
         pass  # Snapshot is optional; the live openclaw.json is already written.
-print("NEMOCLAW_OPENCLAW_MAX_TOKENS_OK")
 batch = pathlib.Path("/tmp/nemoclaw-openclaw-max-tokens-set.json")
 batch.write_text(json.dumps([{"path": "models.providers.inference", "value": provider}]) + "\n")
 try:
@@ -651,12 +661,13 @@ try:
 except subprocess.TimeoutExpired:
     pass  # File pin already landed; SIGHUP reload still applies it.
 ' >/dev/null
-  # File watch is off (gateway.reload=off). Hermes applies max_tokens live via
-  # `hermes config set`. SIGHUP is not enough for OpenClaw: client.sh stops
-  # and starts the gateway after every pin so the new max_tokens is live.
+  # OpenClaw gateway.reload=off (OpenClaw's process name, not OpenShell).
+  # Hermes applies max_tokens live via `hermes config set`. The OpenClaw
+  # agent stays running; the pin is for the next start.
   agent_common_reload_openclaw_gateway "${sandbox_name}"
 }
 
+# SIGHUP the OpenClaw agent (`openclaw gateway run`). That is not OpenShell.
 agent_common_reload_openclaw_gateway() {
   local sandbox_name="${1:?sandbox}"
   openshell sandbox exec -n "${sandbox_name}" --no-tty -- \

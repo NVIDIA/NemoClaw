@@ -46,7 +46,6 @@ from pathlib import Path
 _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
-import e2e_latency_load_ramp as latency_ramp
 import e2e_timeline as timeline
 
 FALLBACK_RE = re.compile(
@@ -123,52 +122,18 @@ def endpoint_for_user(users: list[dict[str, object]], user_id: int) -> dict[str,
 
 
 def load_prompt() -> str:
-    if os.environ.get("E2E_LATENCY_RAMP") == "1":
-        return latency_ramp.prompt_for_tokens(latency_ramp.token_bands()[0], "openclaw")[0]
     try:
-        max_tokens = int(os.environ.get("MAX_TOKENS") or "2048")
+        max_tokens = int(os.environ.get("MAX_TOKENS") or "64")
     except ValueError:
         max_tokens = 1024
     if max_tokens <= 128:
         return "Do not use tools. In one sentence, what is Kubernetes HPA?"
+    if max_tokens <= 1024:
+        return "Do not use tools. In about 200 words, explain Kubernetes HPA and GPU autoscaling."
     return (
         "Do not use tools. Write a detailed 2000-word explanation of Kubernetes HPA and GPU autoscaling, "
         "with formulas, examples, and a step-by-step walkthrough. Keep writing until the answer is long."
     )
-
-
-SANDBOX_RAMP_FILE = "/tmp/e2e-latency-ramp.json"
-
-
-def clear_ramp_from_sandboxes(prefix: str, users: int) -> None:
-    """Drop leftover latency stop files so GPU-util chats keep running."""
-    kubectl = shutil.which("kubectl")
-    if not kubectl or users < 1:
-        return
-    for user_id in range(users):
-        name = sandbox_name(prefix, user_id)
-        try:
-            subprocess.run(
-                [
-                    kubectl,
-                    "exec",
-                    "-n",
-                    SANDBOX_NS,
-                    name,
-                    "-c",
-                    "agent",
-                    "--",
-                    "rm",
-                    "-f",
-                    SANDBOX_RAMP_FILE,
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=20,
-                check=False,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            continue
 
 
 def read_hpa(namespace: str, name: str) -> tuple[int, int]:
@@ -206,9 +171,49 @@ def _hpa_int(value: object) -> int:
     return 0
 
 
+def hpa_effective_replicas(current: int, desired: int) -> int:
+    """0/0 is a failed poll, not 8 GPUs."""
+    return max(current, desired)
+
+
+def hpa_stop_new_chats_at(target: int) -> int:
+    """Stop new chats at 7 on an 8-GPU demo so leftover load can finish 8→1."""
+    return max(1, int(target) - 1)
+
+
 def hpa_replicas_reached_target(current: int, desired: int, target: int) -> bool:
     """True when HPA current or desired replicas reached the demo target. 0/0 is a failed poll."""
-    return max(current, desired) >= target
+    return hpa_effective_replicas(current, desired) >= target
+
+
+def hpa_should_stop_new_chats(current: int, desired: int, target: int) -> bool:
+    """True at 7 current or desired on an 8-GPU demo. 0/0 does not stop."""
+    n = hpa_effective_replicas(current, desired)
+    if n < 1:
+        return False
+    return n >= hpa_stop_new_chats_at(target)
+
+
+def hpa_replicas_back_to_one(current: int, desired: int) -> bool:
+    """True when HPA is idle at 1 GPU. 0/0 is a failed poll, not scale-down."""
+    n = hpa_effective_replicas(current, desired)
+    if n < 1:
+        return False
+    return n <= 1
+
+
+def should_stop_after_hold(
+    at_target: bool,
+    hold_sec: float,
+    at_max_since: float | None,
+    now: float,
+) -> tuple[bool, float | None]:
+    """After HPA hits 8, wait hold_sec before ending chats."""
+    if not at_target:
+        return False, None
+    since = now if at_max_since is None else at_max_since
+    wait = hold_sec if hold_sec > 0 else 0.0
+    return (now - since) >= wait, since
 
 
 def read_hpa_http_status(host: str, port: int) -> tuple[int, int, str]:
@@ -231,6 +236,20 @@ def read_hpa_http_status(host: str, port: int) -> tuple[int, int, str]:
 def read_hpa_http(host: str, port: int) -> tuple[int, int]:
     current, desired, _metric = read_hpa_http_status(host, port)
     return current, desired
+
+
+def read_hpa_for_client(
+    host: str | None,
+    discovery_port: int,
+    namespace: str,
+    name: str,
+) -> tuple[int, int]:
+    """HTTP /hpa when it reports replicas. kubectl if that poll is 0/0."""
+    if host:
+        current, desired = read_hpa_http(host, discovery_port)
+        if hpa_effective_replicas(current, desired) > 0:
+            return current, desired
+    return read_hpa(namespace, name)
 
 
 # Kill OpenClaw exec children (gateway-spawned bash/cat/sleep). Do not
@@ -322,16 +341,6 @@ done
     + KILL_LEFTOVER_OPENCLAW_EXEC
 )
 
-# Hermes stops leftover chats with `pkill hermes -z`. OpenClaw chat.send is
-# inside the gateway (stream=false), so closing the client WS does not abort
-# Ollama. SIGTERM `openclaw gateway run` drops that HTTP. client.sh then
-# relaunches an idle gateway so :18789 comes back. Do not pkill nemoclaw-start
-# here; setup start owns the relaunch.
-INTERRUPT_OPENCLAW_INFLIGHT = r"""
-pkill -TERM -f '[o]penclaw gateway run' || true
-""" + KILL_LEFTOVER_OPENCLAW_EXEC
-
-
 def _exec_sandbox_helper_signal(prefix: str, users: int, script: str, note: str) -> None:
     kubectl = shutil.which("kubectl")
     if not kubectl or users < 1:
@@ -369,13 +378,6 @@ def kill_sandbox_load_helpers(prefix: str, users: int) -> None:
     )
 
 
-def interrupt_openclaw_inflight(prefix: str, users: int) -> None:
-    """Drop in-flight OpenClaw→Ollama calls so GPUs go idle after the client stops."""
-    _exec_sandbox_helper_signal(
-        prefix, users, INTERRUPT_OPENCLAW_INFLIGHT, "dropping in-flight OpenClaw completions"
-    )
-
-
 def stop_new_sandbox_chats(prefix: str, users: int) -> None:
     """SIGTERM in-sandbox helpers so they start no new chats."""
     _exec_sandbox_helper_signal(
@@ -387,9 +389,8 @@ def stop_new_sandbox_chats(prefix: str, users: int) -> None:
 
 
 def stop_sandbox_chats(prefix: str, users: int) -> None:
-    """Kill leftover in-sandbox helpers and abort in-flight OpenClaw completions."""
+    """Kill leftover in-sandbox helpers. Leave the OpenClaw agent running."""
     kill_sandbox_load_helpers(prefix, users)
-    interrupt_openclaw_inflight(prefix, users)
 
 
 def parse_load_counts(log_path: Path) -> tuple[int, int, int]:
@@ -476,11 +477,10 @@ def print_chat_table(
         sandbox = str(item.get("sandbox") or sandbox_name("openclaw-ollama-e2e-", user_id))
         code = listener_http_code(sandbox) if check_listeners else "skip"
         rows.append((user_id, chats_ok, chats_err, tokens, code))
-    all_err_zero = all(err == 0 for _, _, err, _tok, _ in rows)
-    err_note = "every sandbox returned replies with err=0" if all_err_zero else "per-user chat counts"
     print(
-        f"Over {duration_sec}s ({inflight_start}→{inflight_per_user} inflight per user), {err_note}."
+        f"After HPA scaled up and back to 1 ({inflight_start}→{inflight_per_user} inflight per user)."
     )
+    print("Successful chats = chats that got a reply. err = chats that were sent and got no reply.")
     print("est. tokens ≈ reply length / 4 (OpenClaw chat.send does not report usage).")
     print("")
     print(f"{'User':<8} {'Sandbox':<12} {'Successful chats':>16} {'err':>6} {'est. tokens':>12}")
@@ -513,26 +513,44 @@ def print_chat_table(
         print(f"Listeners not 200 after load: {', '.join(down) if down else 'unknown'}")
 
 
-async def terminate_proc(proc: asyncio.subprocess.Process) -> None:
+def resume_hpa_scale_down_for_demo(namespace: str, hpa_name: str) -> None:
+    """Let 8→1 start after already-sent chats finish. Laptop without kubectl is a no-op."""
+    script = Path(__file__).resolve().parent / "hpa-common.sh"
+    if not script.is_file() or shutil.which("kubectl") is None:
+        return
+    subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1" && hpa_common_resume_hpa_scale_down "$2" "$3" || true && '
+            "hpa_common_set_dcgm_peak_window 15 || true",
+            "resume-hpa",
+            str(script),
+            namespace,
+            hpa_name,
+        ],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+async def terminate_proc(proc: asyncio.subprocess.Process, wait_sec: float = 2) -> None:
     if proc.returncode is not None:
         return
     proc.terminate()
     try:
-        await asyncio.wait_for(proc.wait(), timeout=2)
+        await asyncio.wait_for(proc.wait(), timeout=max(2.0, wait_sec))
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
 
 
 async def stagger_user_start(user_id: int, stop_event: asyncio.Event) -> None:
-    """Do not start all 5 users at t=0; that queues ~14s chats on 1 GPU."""
-    try:
-        max_tokens = int(os.environ.get("MAX_TOKENS") or "2048")
-    except ValueError:
-        max_tokens = 1024
+    """Optional per-user delay. Default 0 so 1→8 starts as soon as chats begin."""
     raw = os.environ.get("E2E_USER_STAGGER_SEC")
     if raw is None or raw == "":
-        per_user = 0.0 if os.environ.get("E2E_LATENCY_RAMP") == "1" else (2.0 if max_tokens <= 128 else 0.0)
+        per_user = 0.0
     else:
         try:
             per_user = max(0.0, float(raw))
@@ -583,10 +601,7 @@ async def simulate_user_http(
     env["E2E_ESCALATE_INTERVAL_SEC"] = "15"
     env["E2E_ESCALATE_FACTOR"] = "0.35"
     env["E2E_DRAIN_SEC"] = str(os.environ.get("E2E_DRAIN_SEC") or "0")
-    env["MAX_TOKENS"] = str(os.environ.get("MAX_TOKENS") or "2048")
-    env["E2E_LATENCY_RAMP"] = os.environ.get("E2E_LATENCY_RAMP") or "0"
-    if env["E2E_LATENCY_RAMP"] == "1" and os.environ.get("E2E_LATENCY_RAMP_FILE"):
-        env["E2E_LATENCY_RAMP_FILE"] = os.environ["E2E_LATENCY_RAMP_FILE"]
+    env["MAX_TOKENS"] = str(os.environ.get("MAX_TOKENS") or "64")
     if os.environ.get("E2E_CHAT_PAUSE_SEC"):
         env["E2E_CHAT_PAUSE_SEC"] = os.environ["E2E_CHAT_PAUSE_SEC"]
     proc = await asyncio.create_subprocess_exec(
@@ -619,7 +634,7 @@ async def simulate_user_http(
             except asyncio.TimeoutError:
                 continue
         if stop_event.is_set() and proc.returncode is None:
-            await terminate_proc(proc)
+            await terminate_proc(proc, wait_sec=float(timeout_sec) + 5.0)
         else:
             await proc.wait()
     finally:
@@ -679,10 +694,8 @@ async def run_test(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    # Kill leftover in-sandbox helpers only. Do not restart the gateway here;
-    # client.sh already reloaded it after the max_tokens pin.
+    # Kill leftover in-sandbox helpers only. Do not restart OpenClaw.
     kill_sandbox_load_helpers(args.prefix, args.users)
-    clear_ramp_from_sandboxes(args.prefix, args.users)
 
     print("=" * 70)
     print(f"  {args.users} end users → {args.users} OpenClaw agents (1:1)")
@@ -697,59 +710,28 @@ async def run_test(args: argparse.Namespace) -> int:
     print("=" * 70)
 
     skip_hpa = bool(args.chat_only and not args.host)
-    metric = ""
-    if args.host:
-        _current, _desired, metric = read_hpa_http_status(args.host, args.discovery_port)
-    elif not skip_hpa:
-        try:
-            metric = subprocess.check_output(
-                [
-                    "kubectl",
-                    "get",
-                    "hpa",
-                    args.hpa_name,
-                    "-n",
-                    args.hpa_namespace,
-                    "-o",
-                    "jsonpath={.spec.metrics[0].pods.metric.name}",
-                ],
-                text=True,
-                timeout=10,
-                stderr=subprocess.DEVNULL,
-            ).strip()
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            metric = os.environ.get("HPA_METRIC", "")
-    ramp_enabled = os.environ.get("E2E_LATENCY_RAMP") != "0"
-    ramp_path = Path(os.environ.get("E2E_LATENCY_RAMP_FILE") or str(output_dir / "latency-ramp.json"))
-    last_ramp_tokens: object = "unset"
-    last_ramp_inflight: object = "unset"
-    if ramp_enabled:
-        os.environ["E2E_LATENCY_RAMP"] = "1"
-        os.environ["E2E_LATENCY_RAMP_FILE"] = str(ramp_path)
-        start_load = latency_ramp.scale_load(metric, 1, target=args.target_pods)
-        start_tokens = latency_ramp.load_tokens(start_load) or latency_ramp.token_bands()[0]
-        os.environ["MAX_TOKENS"] = str(start_tokens)
-        os.environ["E2E_CHAT_PAUSE_SEC"] = os.environ.get("E2E_CHAT_PAUSE_SEC") or "0"
-        os.environ["E2E_USER_STAGGER_SEC"] = os.environ.get("E2E_USER_STAGGER_SEC") or "0"
-        latency_ramp.write_scale_load(start_load, ramp_path)
-        last_ramp_tokens = start_tokens
-        last_ramp_inflight = int(start_load.get("inflight") or 1)
-        print(
-            f"[load] max_tokens={start_tokens} inflight={last_ramp_inflight}; stop after hold at {args.target_pods} GPUs",
-            flush=True,
-        )
+    try:
+        pinned_tokens = int(os.environ.get("MAX_TOKENS") or "64")
+    except ValueError:
+        pinned_tokens = 64
+    print(
+        f"[load] max_tokens={pinned_tokens} inflight={args.inflight_per_user}; "
+        f"stop after hold at {hpa_stop_new_chats_at(args.target_pods)} GPUs",
+        flush=True,
+    )
 
     async def poll_hpa() -> None:
-        nonlocal max_replicas, reached_target, last_ramp_tokens, last_ramp_inflight
+        nonlocal max_replicas, reached_target
         at_max_since: float | None = None
         hold_announced = False
         while not stop_load.is_set():
-            if args.host:
-                current, desired = await asyncio.to_thread(
-                    read_hpa_http, args.host, args.discovery_port
-                )
-            else:
-                current, desired = await asyncio.to_thread(read_hpa, args.hpa_namespace, args.hpa_name)
+            current, desired = await asyncio.to_thread(
+                read_hpa_for_client,
+                args.host,
+                args.discovery_port,
+                args.hpa_namespace,
+                args.hpa_name,
+            )
             max_replicas = max(max_replicas, current, desired)
             hpa_rows.append(
                 {
@@ -760,38 +742,19 @@ async def run_test(args: argparse.Namespace) -> int:
             )
             if hpa_replicas_reached_target(current, desired, args.target_pods):
                 reached_target = True
-            if ramp_enabled:
-                load = latency_ramp.scale_load(
-                    metric,
-                    latency_ramp.effective_replicas(current, desired),
-                    target=args.target_pods,
+            at_stop = hpa_should_stop_new_chats(current, desired, args.target_pods)
+            stop_now, at_max_since = should_stop_after_hold(
+                at_stop, args.hold_sec, at_max_since, time.monotonic()
+            )
+            if stop_now:
+                stop_load.set()
+            elif at_stop and not hold_announced:
+                hold_announced = True
+                print(
+                    f"[load] {hpa_stop_new_chats_at(args.target_pods)} GPUs — "
+                    "stop new chats; wait for replies, then for HPA back to 1",
+                    flush=True,
                 )
-                tokens = latency_ramp.load_tokens(load)
-                stop_now, at_max_since = latency_ramp.should_stop_after_hold(
-                    bool(load.get("stop")), args.hold_sec, at_max_since, time.monotonic()
-                )
-                live_inflight = int(load.get("inflight") or 1)
-                if stop_now:
-                    last_ramp_tokens = tokens
-                    last_ramp_inflight = live_inflight
-                    latency_ramp.write_scale_load(load, ramp_path)
-                    stop_load.set()
-                elif tokens is not None and (
-                    tokens != last_ramp_tokens or live_inflight != last_ramp_inflight
-                ):
-                    last_ramp_tokens = tokens
-                    last_ramp_inflight = live_inflight
-                    latency_ramp.write_scale_load(load, ramp_path)
-                    print(
-                        f"[load] max_tokens={tokens} inflight={live_inflight}",
-                        flush=True,
-                    )
-                elif bool(load.get("stop")) and not hold_announced:
-                    hold_announced = True
-                    print(
-                        f"[load] {args.target_pods} GPUs — hold {args.hold_sec:.0f}s then stop",
-                        flush=True,
-                    )
             try:
                 await asyncio.wait_for(stop_load.wait(), timeout=args.hpa_poll_sec)
             except asyncio.TimeoutError:
@@ -807,15 +770,9 @@ async def run_test(args: argparse.Namespace) -> int:
             log = logs_dir / f"{sandbox_name(args.prefix, i)}.log"
             ok, err, tok = parse_load_counts(log) if log.is_file() else (0, 0, 0)
             rows.append({"user": i, "ok": ok, "err": err, "tokens": tok})
-        pinned = last_ramp_tokens if isinstance(last_ramp_tokens, int) else None
-        if pinned is None:
-            try:
-                pinned = int(os.environ.get("MAX_TOKENS") or 0)
-            except ValueError:
-                pinned = 0
         timeline.write_client(
             client_log,
-            max_tokens=pinned,
+            max_tokens=pinned_tokens,
             inflight=args.inflight_per_user,
             users=rows,
         )
@@ -853,7 +810,6 @@ async def run_test(args: argparse.Namespace) -> int:
     finally:
         stop_load.set()
         kill_sandbox_load_helpers(args.prefix, args.users)
-        interrupt_openclaw_inflight(args.prefix, args.users)
     normalized: list[dict[str, object]] = []
     for item in results:
         if isinstance(item, dict):
@@ -866,21 +822,39 @@ async def run_test(args: argparse.Namespace) -> int:
     await timeline_task
 
     scale_down_ok = False
-    if skip_hpa:
-        args.scale_down_wait_loops = 0
-    for _ in range(args.scale_down_wait_loops):
-        current, desired = await asyncio.to_thread(read_hpa, args.hpa_namespace, args.hpa_name)
-        hpa_rows.append(
-            {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "current_replicas": current,
-                "desired_replicas": desired,
-            }
+    if args.scale_down_wait_loops > 0:
+        resume_hpa_scale_down_for_demo(args.hpa_namespace, args.hpa_name)
+        print(
+            "[load] already-sent chats finished; waiting until HPA is back to 1 GPU",
+            flush=True,
         )
-        if current <= 1:
-            scale_down_ok = True
-            break
-        await asyncio.sleep(15)
+        deadline_down = time.monotonic() + (args.scale_down_wait_loops * 15)
+        while time.monotonic() < deadline_down:
+            current, desired = await asyncio.to_thread(
+                read_hpa_for_client,
+                args.host,
+                args.discovery_port,
+                args.hpa_namespace,
+                args.hpa_name,
+            )
+            hpa_rows.append(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "current_replicas": current,
+                    "desired_replicas": desired,
+                }
+            )
+            if hpa_replicas_back_to_one(current, desired):
+                scale_down_ok = True
+                print("[load] HPA is back to 1 GPU", flush=True)
+                break
+            await asyncio.sleep(2)
+        if not scale_down_ok:
+            print(
+                "[load] HPA was not back to 1 GPU before the wait limit; "
+                "printing chats that already got a reply",
+                flush=True,
+            )
 
     csv_path = output_dir / f"hpa_{args.users}users.csv"
     with csv_path.open("w", newline="") as handle:
@@ -956,7 +930,7 @@ def main() -> int:
         help="Bootstrap concurrent chats per user before ramping",
     )
     parser.add_argument("--target-pods", type=int, default=int(os.environ.get("TARGET_PODS", "8")))
-    parser.add_argument("--hold-sec", type=float, default=float(os.environ.get("MAX_REPLICAS_HOLD_SEC", "60")))
+    parser.add_argument("--hold-sec", type=float, default=float(os.environ.get("MAX_REPLICAS_HOLD_SEC", "0")))
     parser.add_argument("--hpa-namespace", default=os.environ.get("NAMESPACE", "nemoclaw-gpu"))
     parser.add_argument("--hpa-name", default=os.environ.get("HPA_NAME", "nemoclaw-gpu-metrics-proxy"))
     parser.add_argument("--hpa-poll-sec", type=float, default=float(os.environ.get("SCALE_UP_POLL_SEC", "2")))

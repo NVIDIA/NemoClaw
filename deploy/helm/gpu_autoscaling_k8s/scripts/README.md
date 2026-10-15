@@ -19,7 +19,7 @@ what each script in this directory does — it has no instructions of its own.
 | `hpa-load-test-brev-4xl40s.sh` | HPA load test for **4× L40S** on AWS (Brev). Same GPU-util default / latency env vars. |
 | `agentscaling_gpuutil.sh` | Sandbox provision + GPU-util HPA. Keeps current GPUs at 1 (`maxReplicas=8`) until `client.sh`. |
 | `agentscaling_latency.sh` | Same sandboxes, LLM-latency HPA. Keeps current GPUs at 1 (`maxReplicas=8`) until `client.sh`. |
-| `client.sh` | End users: 1:1 HTTP to `http://dgx-ip:18789+i`. Laptop: `E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client.sh`. |
+| `client.sh` | End users: 1:1 HTTP to `http://dgx-ip:18789+i`. One client for both metrics. Stops new chats at 7 GPUs, then prints the table after HPA is back to 1. Laptop: `E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client.sh`. |
 | `agentscaling-common.sh` | Shared HPA apply + sandbox steps. Do not run it directly. |
 | `setup-openclaw-ollama-e2e-sandboxes.sh` | Sandbox create/start/stop used by the agentscaling scripts |
 | `e2e-openclaw-ollama-load-test.py` | Implementation used by `client.sh` |
@@ -43,7 +43,6 @@ what each script in this directory does — it has no instructions of its own.
 | `test-inference-auth-contract.ts` | Local contract: metrics-proxy requires the inference API key and rejects non-object chat bodies |
 | `test-metrics-proxy-metrics-contract.ts` | Local contract: rolling `latency_avg` uses a 30s sample window and idle-expires so HPA can scale down |
 | `test-metrics-proxy-newest-sample-window.ts` | Local contract: the 30s window ages from the newest sample so a 45s gap stays until 60s idle expire |
-| `test-e2e-load-stop.py` | Local contract: HPA helper reports 8 GPUs; OpenClaw client requires `--host`, does not copy helpers into sandboxes, and on stop drops in-flight OpenClaw completions |
-| `test-e2e-latency-load-ramp.py` | Local contract: MAX_TOKENS and INFLIGHT are client flags for both metrics; stop after hold at 8 |
+| `test-e2e-load-stop.py` | Local contract: HPA helper reports 8 GPUs; OpenClaw client requires `--host`, does not copy helpers into sandboxes, and on stop leaves OpenClaw running |
 | `test-e2e-timeline.py` | Local contract: client and HPA JSONL rows share even-second UTC timestamps |
 | `test-hpa-idle-replicas-contract.sh` | Local contract: idle latency HPA `1/0` is a ready baseline; leftover `5/6` is not |

@@ -16,7 +16,8 @@
 # Deep Agents has no HTTP dashboard. Run after agentscaling_deepagents_*.
 #   INFLIGHT=1 MAX_TOKENS=2048 E2E_USERS=5 ./scripts/client_deepagents.sh
 # Pass INFLIGHT and MAX_TOKENS on this client. GPU util demo: INFLIGHT=1 MAX_TOKENS=2048.
-# Latency demo: INFLIGHT=1 MAX_TOKENS=64.
+# Latency demo: INFLIGHT=3 MAX_TOKENS=64. Clients do not stop or restart
+# Deep Agents. Sandboxes stay up after stop; ./scripts/uninstall-e2e.sh removes them.
 
 set -euo pipefail
 
@@ -47,8 +48,8 @@ export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-300}"
 # One agent per sandbox. Longer completions keep NIM busy (Hermes-style 7→8 climb).
 agent_common_export_client_tokens deepagents
 agent_common_export_client_inflight
-# Stop new chats after ~60s at 8 GPUs.
-export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-60}"
+# Stop new chats after a short sit at 8 GPUs.
+export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/deepagents}"
 

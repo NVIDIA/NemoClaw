@@ -5,7 +5,7 @@
 
 MAX_TOKENS and INFLIGHT are client flags for both metrics. They are not
 HPA or metrics-proxy settings. GPU util keeps MAX_TOKENS until 7 GPUs,
-then drops to 64-token chats so new 0% GPUs get work. At 8 the client
+then uses 64-token chats so new 0% GPUs get work. At 8 the client
 holds and stops. A failed HPA poll (0/0) is treated as 1 GPU, never as 8.
 """
 
@@ -19,8 +19,7 @@ DEFAULT_START = 64
 SHORT_PROMPT_AT = 128
 DEFAULT_TARGET = 8
 DEFAULT_HOLD_SEC = 60.0
-# Drop GPU-util tokens once HPA is at 7 so leftover long chats do not
-# occupy inflight slots while GPU 8 stays 0%.
+# GPU util always drops to 64-token chats at 7 GPUs. Not a client flag.
 GPUUTIL_NEAR_MAX_AT = 7
 RAMP_FILE = Path(os.environ.get("E2E_LATENCY_RAMP_FILE") or "/tmp/e2e-latency-ramp.json")
 
@@ -77,9 +76,7 @@ def gpuutil_token_cap() -> int:
 
 
 def gpuutil_token_near_max() -> int:
-    """Shorter pin at 7–8 GPUs. MAX_TOKENS_AT_7 overrides; default 64."""
-    if os.environ.get("MAX_TOKENS_AT_7"):
-        return max(8, env_int("MAX_TOKENS_AT_7", DEFAULT_START))
+    """Built-in 64-token pin at 7 GPUs. Not a client flag."""
     return DEFAULT_START
 
 
@@ -113,7 +110,7 @@ def gpuutil_tokens_for_replicas(
     *,
     target: int = DEFAULT_TARGET,
 ) -> int | None:
-    """MAX_TOKENS until 7 GPUs, then a shorter pin, or None at the target."""
+    """MAX_TOKENS until 7 GPUs, then 64-token chats, or None at the target."""
     if replicas >= target:
         return None
     cap = gpuutil_token_cap()

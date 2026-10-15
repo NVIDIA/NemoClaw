@@ -26,6 +26,7 @@ os.environ.pop("E2E_INFLIGHT_PER_USER", None)
 os.environ.pop("E2E_GPUUTIL_TOKEN_START", None)
 os.environ.pop("E2E_LATENCY_TOKEN_START", None)
 os.environ.pop("E2E_GPUUTIL_INFLIGHT_MAX", None)
+os.environ.pop("MAX_TOKENS_AT_7", None)  # removed flag; 64-at-7 is built in
 assert latency_tokens_for_replicas(1) == 64
 assert latency_tokens_for_replicas(5) == 64
 assert latency_tokens_for_replicas(8) is None

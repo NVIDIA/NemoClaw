@@ -99,29 +99,20 @@ def _gateway_token() -> str:
     return os.environ.get("OPENCLAW_GATEWAY_TOKEN", "")
 
 
+def _max_tokens() -> int:
+    """MAX_TOKENS is the client flag. It selects the prompt; chat.send has no maxTokens."""
+    try:
+        raw = int(os.environ.get("MAX_TOKENS") or "64")
+    except ValueError:
+        raw = 64
+    return max(8, raw)
+
+
 def estimate_tokens(text: str) -> int:
     """Reply-length estimate (~4 chars/token). OpenClaw chat.send has no usage field."""
     if not text or not str(text).strip():
         return 0
     return max(1, len(str(text)) // 4)
-
-
-def _read_latency_ramp() -> dict[str, object] | None:
-    """Optional JSON from the latency client: {"max_tokens": 2048, "stop": false, "short": false}.
-
-    GPU-util must ignore a leftover stop file from the previous latency run.
-    """
-    if os.environ.get("E2E_LATENCY_RAMP") != "1":
-        return None
-    path = os.environ.get("E2E_LATENCY_RAMP_FILE") or ""
-    if not path:
-        return None
-    try:
-        with open(path, encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return None
-    return data if isinstance(data, dict) else None
 
 
 def send_one(
@@ -136,6 +127,9 @@ def send_one(
     host = os.environ.get("OPENCLAW_GATEWAY_HOST", "127.0.0.1")
     origin = f"http://{host}:{port}"
     deadline = time.monotonic() + timeout
+    checker = getattr(stop_event, "is_set", None)
+    if callable(checker) and checker():
+        return 2, 0
     sock = socket.create_connection((host, port), timeout=timeout)
     sock.settimeout(5)
     try:
@@ -206,26 +200,29 @@ def send_one(
         )
         send_id = None
         delete_id = None
+        chat_sent = False
 
         def _stop_requested() -> bool:
             checker = getattr(stop_event, "is_set", None)
             return bool(callable(checker) and checker())
 
         def _send_chat() -> str:
-            return send_req(
-                "chat.send",
-                {
-                    "sessionKey": session,
-                    "message": prompt,
-                    "deliver": False,
-                    "timeoutMs": int(timeout * 1000),
-                    "idempotencyKey": str(uuid.uuid4()),
-                },
-            )
+            nonlocal chat_sent
+            chat_sent = True
+            send_params = {
+                "sessionKey": session,
+                "message": prompt,
+                "deliver": False,
+                "timeoutMs": int(timeout * 1000),
+                "idempotencyKey": str(uuid.uuid4()),
+            }
+            return send_req("chat.send", send_params)
 
         while time.monotonic() < deadline:
-            if _stop_requested():
-                return 1, 0
+            # Stop new chats does not abort a chat.send that already went out.
+            # That turn still waits for a final reply (ok) or timeout (err).
+            if _stop_requested() and not chat_sent:
+                return 2, 0
             try:
                 chunk = sock.recv(65536)
             except TimeoutError:
@@ -252,6 +249,8 @@ def send_one(
                     # does not queue hundreds of stalled embedded_run sessions.
                     if rid == delete_id and send_id is None:
                         pending.pop(rid, None)
+                        if _stop_requested() and not chat_sent:
+                            return 2, 0
                         send_id = _send_chat()
                         continue
                     if frame.get("ok") is False or frame.get("error"):
@@ -274,21 +273,15 @@ def send_one(
                     text = _text(event_payload.get("message"))
                     if text.strip():
                         answer = text.strip()
-                    if event_payload.get("state") == "final" and answer:
-                        if not quiet:
-                            print(answer)
-                        return 0, estimate_tokens(answer)
-            if answer and send_id and send_id not in pending:
-                if not quiet:
-                    print(answer)
-                return 0, estimate_tokens(answer)
-        if answer:
-            if not quiet:
-                print(answer)
-            return 0, estimate_tokens(answer)
+                    if event_payload.get("state") == "final":
+                        if answer:
+                            if not quiet:
+                                print(answer)
+                            return 0, estimate_tokens(answer)
+                        return 1, 0
         if not quiet:
             print("no reply from running OpenClaw agent", file=sys.stderr)
-        return 1, 0
+        return (1, 0) if chat_sent else (2, 0)
     finally:
         try:
             sock.close()
@@ -315,10 +308,7 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
     interval = float(os.environ.get("E2E_ESCALATE_INTERVAL_SEC", "15"))
     factor = float(os.environ.get("E2E_ESCALATE_FACTOR", "0.35"))
     session_base = os.environ.get("E2E_SESSION_KEY", "agent:main:e2e")
-    try:
-        env_max_tokens = int(os.environ.get("MAX_TOKENS") or "2048")
-    except ValueError:
-        env_max_tokens = 1024
+    env_max_tokens = _max_tokens()
     pause_raw = os.environ.get("E2E_CHAT_PAUSE_SEC")
     # Every prompt must say not to use tools. Tool calls (write/exec) occupy
     # inflight slots while GPUs sit at 0% and 1→8 stalls.
@@ -333,16 +323,16 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
         "Do not use tools. In one sentence, what is GPU utilization?",
         "Do not use tools. In one sentence, what is Ollama?",
     ]
+    medium_prompts = [
+        prompt
+        or "Do not use tools. In about 200 words, explain Kubernetes HPA and GPU autoscaling.",
+        "Do not use tools. In about 200 words, explain GPU utilization for LLM inference.",
+        "Do not use tools. In about 200 words, explain how Ollama serves chat requests.",
+    ]
 
     def current_prompts_and_pause() -> tuple[list[str], float]:
-        ramp = _read_latency_ramp()
-        if ramp is not None:
-            if ramp.get("stop"):
-                return short_prompts, 0.0
-            short = bool(ramp.get("short"))
-            return (short_prompts if short else long_prompts), 0.0
         if pause_raw is None or pause_raw == "":
-            pause = 3.0 if env_max_tokens <= 128 else 0.0
+            pause = 0.0
         else:
             try:
                 pause = max(0.0, float(pause_raw))
@@ -350,6 +340,8 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
                 pause = 0.0
         if env_max_tokens <= 128:
             return short_prompts, pause
+        if env_max_tokens <= 1024:
+            return medium_prompts, pause
         return long_prompts, pause
     stop = threading.Event()
     ok = 0
@@ -360,16 +352,19 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
 
     def send_or_retry(text: str, session: str) -> tuple[int, int]:
         # One retry covers Envoy/Ollama blips while HPA adds or removes pods.
-        # Do not start a retry after SIGTERM / duration stop.
+        # Do not start a send after SIGTERM / duration stop. A chat already
+        # sent still waits for a final reply.
+        if stop.is_set():
+            return 2, 0
         for attempt in (0, 1):
-            if stop.is_set() and attempt > 0:
-                return 1, 0
             try:
                 rc, ntok = send_one(text, session, timeout, token, quiet=True, stop_event=stop)
             except (TimeoutError, OSError, ConnectionError):
                 rc, ntok = 1, 0
             if rc == 0:
                 return 0, ntok
+            if rc == 2:
+                return 2, 0
             if attempt == 0 and not stop.is_set():
                 time.sleep(2)
         return 1, 0
@@ -378,10 +373,6 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
         nonlocal ok, err, tokens
         turn = 0
         while not stop.is_set():
-            ramp = _read_latency_ramp()
-            if ramp is not None and ramp.get("stop"):
-                stop.set()
-                break
             prompts, pause = current_prompts_and_pause()
             text = prompts[(wid + turn) % len(prompts)]
             session = f"{session_base}:w{wid}"
@@ -390,8 +381,8 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
                 if rc == 0:
                     ok += 1
                     tokens += ntok
-                elif stop.is_set():
-                    # SIGTERM / duration: in-flight turn was cancelled, not a failed chat.
+                elif rc == 2:
+                    # Never sent: stop-new-chats, not a failed chat.
                     pass
                 else:
                     err += 1
@@ -416,35 +407,21 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
     signal.signal(signal.SIGINT, request_stop)
 
     spawn_upto(start_n)
-    print(f"[load] start inflight={start_n} max={max_n} duration={duration}s", flush=True)
+    print(
+        f"[load] start inflight={start_n} max={max_n} MAX_TOKENS={env_max_tokens} duration={duration}s",
+        flush=True,
+    )
     deadline = time.monotonic() + duration
     last = time.monotonic()
     last_log = last
     current = start_n
 
-    def ramp_inflight() -> int:
-        ramp = _read_latency_ramp()
-        if ramp is None or ramp.get("stop"):
-            return 0
-        raw = ramp.get("inflight")
-        try:
-            n = int(raw)
-        except (TypeError, ValueError):
-            return 0
-        return n if n >= 1 else 0
-
     while time.monotonic() < deadline and not stop.is_set():
         now = time.monotonic()
-        want = current
-        ramp_n = ramp_inflight()
-        if ramp_n > want:
-            want = ramp_n
-        elif now - last >= interval and current < max_n:
+        if now - last >= interval and current < max_n:
             add = max(1, int(current * factor))
-            want = min(max_n, current + add)
+            current = min(max_n, current + add)
             last = now
-        if want > current:
-            current = want
             spawn_upto(current)
             print(f"[load] escalate inflight={current} ok={ok} err={err} tokens={tokens}", flush=True)
         if now - last_log >= 15:
@@ -452,10 +429,10 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
             last_log = now
         time.sleep(0.5)
     stop.set()
-    # Do not finish in-flight chat.send after SIGTERM. That leftover OpenClaw
-    # → Ollama generation scaled GPUs after the client stopped.
+    # Wait for already-sent chats to get a final reply (or timeout). Those
+    # counts are ok (got a reply) or err (sent, no reply).
     drain = float(os.environ.get("E2E_DRAIN_SEC", "0"))
-    join_deadline = time.monotonic() + max(0.0, drain)
+    join_deadline = time.monotonic() + max(timeout, drain)
     for worker_thread in workers:
         remaining = join_deadline - time.monotonic()
         if remaining <= 0:
