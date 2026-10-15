@@ -283,7 +283,8 @@ identities for a release already recorded on the base. Later upgrades must
 retain prior records and revocations. Revoked hashes cannot authorize execution,
 even when retained in a historical record.
 
-This manifest cannot approve itself. A different human with current repository
+The PR author may be a GitHub App bot on this repository. This manifest cannot
+approve itself. A different human with current repository
 `maintain` or `admin` permission must review the exact source and post one whole
 comment: `NemoClaw-Upgrade-E2E: approve <head-sha> <base-sha>`. The corresponding
 `revoke` command withdraws that decision. The latest eligible decision wins;
