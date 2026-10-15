@@ -190,7 +190,7 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
     expect(
       captureOpenShellDockerSandboxFailureOutput("my-assistant", CONTAINER_ID, {
         dockerRun,
-        dockerCapture: () => "",
+        dockerCapture: () => inspectWithEnv([]),
         dockerLogs,
       }),
     ).toBe(STARTUP_FAILURE);
@@ -225,6 +225,28 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
       }),
     ).toBeNull();
   });
+
+  it.each([
+    [
+      "fails",
+      () => {
+        throw new Error("inspect failed");
+      },
+    ],
+    ["returns malformed output", () => "not json"],
+  ])(
+    "captures nothing when container inspect %s, so opaque values cannot leak",
+    (_scenario, inspect) => {
+      const opaqueSecret = "opaque-value-9f8e7d6c5b4a";
+
+      expect(
+        captureOpenShellDockerSandboxFailureOutput("my-assistant", CONTAINER_ID, {
+          dockerCapture: inspect,
+          dockerLogs: () => `provider said ${opaqueSecret}\n${STARTUP_FAILURE}`,
+        }),
+      ).toBeNull();
+    },
+  );
 });
 
 describe("queryOpenShellDockerSandboxRuntimeSnapshot", () => {

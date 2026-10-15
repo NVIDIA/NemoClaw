@@ -121,6 +121,9 @@ export function captureOpenShellDockerSandboxFailureOutput(
       dockerCapture: deps.dockerCapture ?? dockerCapture,
       dockerLogs: deps.dockerLogs ?? dockerLogs,
     });
+    // Opaque credentials are redacted only after inspect identifies them;
+    // without that, pattern redaction alone could print an opaque value.
+    if (!evidence.inspectRedactionApplied) return null;
     return evidence.redactedLogTail || null;
   } catch {
     return null;

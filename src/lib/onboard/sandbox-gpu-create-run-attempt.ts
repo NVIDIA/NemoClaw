@@ -421,9 +421,9 @@ export function createSandboxGpuCreateAttemptRunner(
    * Capture failed-container output before rollback can remove or replace the
    * container that holds the startup error (#13178).
    */
-  const captureSandboxContainerOutput = (runtimePatch: SandboxCreateRuntimePatch) =>
+  const captureSandboxContainerOutput = (runtimePatch: SandboxCreateRuntimePatch): string | null =>
     portableLifecycle || input.hermesPortableLifecycle
-      ? undefined
+      ? null
       : (deps.captureSandboxContainerOutput ?? captureOpenShellDockerSandboxFailureOutput)(
           input.sandboxName,
           runtimePatch.replacementRuntimeId?.() ?? null,

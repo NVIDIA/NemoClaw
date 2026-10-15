@@ -21,6 +21,8 @@ type DockerContainerFailureEvidenceDeps = Required<
 export type DockerContainerFailureEvidence = {
   readonly state: DockerContainerState | null;
   readonly redactedLogTail: string;
+  /** True only when inspect data taught the redactor the container's opaque environment values. */
+  readonly inspectRedactionApplied: boolean;
   readonly managedStartupCommandMissing: boolean;
 };
 
@@ -116,6 +118,7 @@ export function captureDockerContainerFailureEvidence(
   return {
     state: redactor.redactValue(state) as DockerContainerState | null,
     redactedLogTail: redactor.redactText(logTail).trim().slice(-FAILURE_EVIDENCE_LOG_CHARS),
+    inspectRedactionApplied: inspect !== null,
     managedStartupCommandMissing: MISSING_MANAGED_STARTUP_COMMAND_LOG.test(logTail),
   };
 }
