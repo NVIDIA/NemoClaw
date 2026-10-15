@@ -2392,16 +2392,30 @@ OpenRouter agent cases; `all` runs all six cases.
 Use an approved disposable environment and credentials from its approved source.
 These tests are outside the credential-free `inference-routing` PR lane.
 A skipped provider is missing qualification evidence.
+TC-INF-05 uses the same probe for NVIDIA credential isolation.
+Its separate environment, process, filesystem, and canary checks are replaced by the probe results;
+support tests cover leak detection and control cleanup.
 
 OpenAI, Anthropic, Gemini, and OpenRouter onboard OpenClaw and start a fresh agent process.
 Hermes Provider onboards Hermes and submits a fresh request to its managed API.
 The `hosted-inference-openrouter` target also onboards Deep Agents Code with the same
 OpenRouter key and model. Its six-assertion case checks onboarding, credential isolation,
 the native TOML route, and one fresh `dcode -n --json` response.
-The five existing cases check the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer.
-Before each of those requests, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
-for a salted fingerprint of the selected credential. Only the fingerprint enters the probe; reports contain
-booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
+The five OpenClaw and Hermes cases check the native endpoint, credential placeholder,
+selected adapter, response model, and nonempty answer.
+The OpenRouter case switches the running sandbox to a second model and back.
+It requires a fresh agent response with that model after each switch and checks that the return route is readable.
+Each `nemoclaw inference set` switch also verifies its selected model with a sandbox-side inference request.
+An unavailable or rate-limited intermediate model fails the first switch.
+The alternate route read and return-route model assertion were removed from this live case:
+agent responses prove the effective model after each restart, while the recorded-model behavior
+belongs to the `inference get` source tests. Both switch exit checks and the return route read remain.
+After onboarding, each hosted-provider case runs one sandbox probe before its first native agent request.
+The OpenRouter model-switch requests and follow-up agent responses do not repeat that scan.
+The probe checks the raw environment and a bounded file sample for a salted fingerprint of the selected credential.
+The probe tries `ps aux`, then `ps -ef`, to check process arguments.
+If neither command returns process output, the case fails. Only the fingerprint enters the probe;
+reports contain booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
 The sample inspects up to 200 files smaller than 1 MiB, taking the first 64 KiB of each readable file.
 This is not an exhaustive filesystem scan. The scan checks only sandbox environment variables, process arguments, and sampled files.
 It does not prove credential isolation in host processes or upstream requests.
