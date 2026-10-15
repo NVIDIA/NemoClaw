@@ -846,6 +846,8 @@ import os
 import re
 import subprocess
 import sys
+import stat
+import tempfile
 
 config_file = sys.argv[1]
 prefix = "openshell:resolve:env:"
@@ -886,7 +888,12 @@ parsed = subprocess.run(
         "/usr/local/bin/node",
         "-e",
         'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5");'
-        'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
+        'const {hostedNativeProvider,NVIDIA_HOSTED_NATIVE_ENDPOINT,NVIDIA_HOSTED_CREDENTIAL_ENV}='
+        'require("/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs");'
+        'process.stdout.write(JSON.stringify({'
+        'config:JSON5.parse(require("node:fs").readFileSync(0,"utf8")),'
+        'openrouter:hostedNativeProvider("openrouter-api"),'
+        'nvidia:{endpoint:NVIDIA_HOSTED_NATIVE_ENDPOINT,credentialEnv:NVIDIA_HOSTED_CREDENTIAL_ENV}}));',
     ],
     input=source,
     text=True,
@@ -894,7 +901,10 @@ parsed = subprocess.run(
     stderr=subprocess.DEVNULL,
     check=True,
 )
-config = json.loads(parsed.stdout)
+inputs = json.loads(parsed.stdout)
+config = inputs["config"]
+openrouter = inputs["openrouter"]
+nvidia = inputs["nvidia"]
 
 refreshed = set()
 native_refreshed = False
@@ -904,6 +914,10 @@ native_refreshed = False
 # unrelated fields must not cross this boundary.
 models = config.get("models") if isinstance(config, dict) else None
 providers = models.get("providers") if isinstance(models, dict) else None
+fixed_native_endpoints = {
+    nvidia["credentialEnv"]: nvidia["endpoint"],
+    openrouter["credentialEnv"]: openrouter["endpoint"],
+}
 for provider_key in ("inference", "openai", "anthropic"):
     native = providers.get(provider_key) if isinstance(providers, dict) else None
     if not isinstance(native, dict):
@@ -916,8 +930,15 @@ for provider_key in ("inference", "openai", "anthropic"):
     if not scoped:
         continue
     key = scoped.group(1)
-    if key == "NVIDIA_INFERENCE_API_KEY" and native.get("baseUrl") != "https://integrate.api.nvidia.com/v1":
-        continue
+    expected_endpoint = fixed_native_endpoints.get(key)
+    if expected_endpoint:
+        endpoint = native.get("baseUrl")
+        if (
+            provider_key != "inference"
+            or not isinstance(endpoint, str)
+            or endpoint.rstrip("/") != expected_endpoint
+        ):
+            continue
     state = runtime_state(key)
     current = state.get("value", "")
     if (
@@ -1058,9 +1079,32 @@ def walk_for_warnings(value, path):
 walk_for_warnings(updated, [])
 
 if updated != config or native_refreshed:
-    with open(config_file, "w", encoding="utf-8") as f:
-        json.dump(updated, f, indent=2)
-        f.write("\n")
+    # Publish the complete replacement, then persist its directory entry.
+    original = os.stat(config_file)
+    mode = stat.S_IMODE(original.st_mode)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=os.path.dirname(config_file),
+            prefix=".provider-refresh-", delete=False,
+        ) as f:
+            temporary = f.name
+            os.fchown(f.fileno(), -1, original.st_gid)
+            os.fchmod(f.fileno(), mode)
+            json.dump(updated, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, config_file)
+        temporary = None
+        directory = os.open(os.path.dirname(config_file), os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if temporary is not None and os.path.exists(temporary):
+            os.unlink(temporary)
 
 if refreshed:
     print("refreshed=" + ",".join(sorted(refreshed)))

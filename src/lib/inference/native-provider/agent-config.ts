@@ -7,6 +7,8 @@ import {
   isCustomHostedProvider,
 } from "./hosted.ts";
 
+export { hostedNativeProvider };
+
 /** Public configuration only. Never read the host's provider credential here. */
 export function nativeHostedAgentConfig(provider: string | null | undefined, baseUrl: string) {
   if (isCustomHostedProvider(provider) && new URL(baseUrl).hostname !== "inference.local") {
