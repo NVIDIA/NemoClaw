@@ -48,6 +48,17 @@ export function exportLlamaCppDgxSparkQualificationPlan(sourceRoot: string) {
   ) {
     throw new Error("protected llama.cpp DGX Spark qualification is not enabled");
   }
+  const trustedRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const trustedQualification = parseLlamaCppDgxSparkQualificationPlan(
+    JSON.parse(loadLlamaCppImageConfigFromRoot(trustedRoot).publication_qualification),
+  );
+  if (
+    qualification.runner !== trustedQualification.runner ||
+    qualification.environment !== trustedQualification.environment ||
+    qualification.model.hostPath !== trustedQualification.model.hostPath
+  ) {
+    throw new Error("candidate qualification infrastructure must match trusted main");
+  }
   const executionPlan = parseLlamaCppDgxSparkExecutionPlan(
     JSON.parse(config.publication_qualification_plan) as unknown,
     config.publication_qualification_plan_sha256,

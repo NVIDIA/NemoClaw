@@ -222,6 +222,7 @@ export interface SandboxStateOptions<
   model: string;
   provider: string;
   hostLocalInferenceRouteOnly?: boolean;
+  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
   endpointUrl: string | null;
   compatibleEndpointReasoning: string | null;
   credentialEnv: string | null;
@@ -1188,7 +1189,10 @@ class SandboxStateFlow<
     return { ...state, session };
   }
 
-  private assertGatewayRouteCompatible(sandboxName: string | null): asserts sandboxName is string {
+  private assertGatewayRouteCompatible(
+    sandboxName: string | null,
+    excludePublishedRecreateSource = false,
+  ): asserts sandboxName is string {
     const targetEntry = sandboxName ? this.deps.getSandboxRegistryEntry(sandboxName) : null;
     if (!sandboxName || !targetEntry) {
       this.failGatewayRouteCheck(
@@ -1230,7 +1234,13 @@ class SandboxStateFlow<
     if (this.acceptsNativeLocalReservation(targetEntry, sandboxName)) return;
     const compatibility = this.deps.checkGatewayRouteCompatibility({
       gatewayName: this.options.gatewayName,
-      sandboxName: null,
+      // A deferred route still belongs to the published source until backup
+      // succeeds. Exclude only that source while checking the replacement.
+      sandboxName: this.publishedRecreateSourceForRouteCheck(
+        sandboxName,
+        targetEntry,
+        excludePublishedRecreateSource,
+      ),
       route: {
         provider: this.options.provider,
         model: this.options.model,
@@ -1268,6 +1278,16 @@ class SandboxStateFlow<
     return nativeLocalReservation === "exact";
   }
 
+  private publishedRecreateSourceForRouteCheck(
+    sandboxName: string,
+    targetEntry: SandboxEntry,
+    excludePublishedRecreateSource: boolean,
+  ): string | null {
+    return excludePublishedRecreateSource && targetEntry.pendingRouteReservation !== true
+      ? sandboxName
+      : null;
+  }
+
   private failGatewayRouteCheck(message: string): never {
     this.deps.error(message);
     this.deps.exitProcess(1);
@@ -1291,6 +1311,37 @@ class SandboxStateFlow<
       this.deps.reserveSandboxInferenceRoute,
       this.deps.cliName(),
     );
+  }
+
+  private prepareCreateRouteReservation(
+    sandboxName: string,
+    createIntent: CompleteSandboxCreateIntent,
+  ): CompleteSandboxCreateIntent {
+    const currentEntry = this.deps.getSandboxRegistryEntry(sandboxName);
+    if (
+      this.options.deferredInferenceRoute &&
+      (currentEntry === null || currentEntry.pendingRouteReservation === true)
+    ) {
+      throw new Error(
+        `Sandbox '${sandboxName}' route ownership changed before its backed-up inference route could be applied. Retry onboarding.`,
+      );
+    }
+    if (currentEntry === null || currentEntry.pendingRouteReservation === true) {
+      this.reserveCreateRouteForSession(sandboxName);
+      return createIntent;
+    }
+    return {
+      ...createIntent,
+      reservePublishedRouteAfterBackup: async () => {
+        if (this.options.deferredInferenceRoute) {
+          await this.options.deferredInferenceRoute(() =>
+            this.reserveCreateRouteForSession(sandboxName),
+          );
+        } else {
+          this.reserveCreateRouteForSession(sandboxName);
+        }
+      },
+    };
   }
 
   private finalizeInferenceRouteReservation(
@@ -2325,7 +2376,12 @@ class SandboxStateFlow<
         this.options.apfInterceptorRequested === true &&
         this.options.provider.trim().length === 0 &&
         this.options.model.trim().length === 0;
-      this.assertGatewayRouteCompatible(requestedSandboxName);
+      // Fresh, non-forced selection drift resolves recreation inside createSandbox.
+      // The staged route already proves this source must remain published until backup.
+      this.assertGatewayRouteCompatible(
+        requestedSandboxName,
+        Boolean(this.options.deferredInferenceRoute),
+      );
       await this.assertCheckpointBindingsStillLive(state);
       this.assertCheckpointCreateInputsStillMatch(
         state,
@@ -2353,7 +2409,10 @@ class SandboxStateFlow<
 
       let sandboxName: string;
       try {
-        this.reserveCreateRouteForSession(requestedSandboxName);
+        const createIntentWithReservation = this.prepareCreateRouteReservation(
+          requestedSandboxName,
+          effectiveCreateIntent,
+        );
         sandboxName = await withSandboxPhaseTrace(
           requestedSandboxName,
           this.options.provider,
@@ -2392,7 +2451,7 @@ class SandboxStateFlow<
                     }),
                   }
                 : null,
-              effectiveCreateIntent,
+              createIntentWithReservation,
               activateVerifiedCredentialProviders
                 ? async (
                     verifiedContext: import("../../types").VerifiedSandboxCreateEffectsContext,

@@ -105,6 +105,9 @@ function hasNativeLocalExportCredential(
   return (
     receiptCredential === NATIVE_LOCAL_CREDENTIAL_ENV &&
     (entry.credentialEnv == null ||
+      (entry.provider === "compatible-endpoint" &&
+        (entry.credentialEnv === "COMPATIBLE_API_KEY" ||
+          entry.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV)) ||
       (entry.provider === "ollama-local" && entry.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV))
   );
 }
@@ -114,7 +117,7 @@ export function exportNativeInferenceReceipt(entry: ObservedExportRegistry) {
     const receipt = normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
     if (
       !receipt ||
-      !["ollama-local", "vllm-local"].includes(receipt.provider) ||
+      !["ollama-local", "vllm-local", "compatible-endpoint"].includes(receipt.provider) ||
       receipt.provider !== entry.provider ||
       receipt.sandboxName !== entry.name ||
       receipt.gatewayName !== entry.gatewayName ||

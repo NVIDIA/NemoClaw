@@ -28,6 +28,7 @@ export type SetupInferenceResult =
       ok: true;
       retry?: undefined;
       nativeInference?: { endpointUrl: string; credentialEnv: string };
+      deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
     }
   | { retry: "selection" };
 

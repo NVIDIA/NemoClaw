@@ -251,9 +251,15 @@ describe("rebuild legacy local route preflight", () => {
     },
     { agent: "langchain-deepagents-code", provider: "ollama-local", createdAt: undefined },
     { agent: "langchain-deepagents-code", provider: "vllm-local", createdAt: undefined },
+    {
+      agent: "langchain-deepagents-code",
+      provider: "ollama-local",
+      createdAt: "2026-09-01T00:00:00Z",
+      pendingRouteReservation: true,
+    },
   ])(
     "blocks legacy $provider rebuild with createdAt=$createdAt",
-    ({ agent, provider, createdAt }) => {
+    ({ agent, provider, createdAt, ...state }) => {
       const error = vi.spyOn(console, "error").mockImplementation(() => {});
       const bail = vi.fn((message: string): never => {
         throw new Error(message);
@@ -264,6 +270,7 @@ describe("rebuild legacy local route preflight", () => {
         agent,
         provider,
         model: "local-model",
+        ...state,
       } as RebuildSandboxEntry;
 
       expect(() => blockRebuildOnLegacySharedLocalRoute("alpha", entry, bail)).toThrow(
@@ -274,7 +281,7 @@ describe("rebuild legacy local route preflight", () => {
     },
   );
 
-  it("leaves attached and unpublished selections on their existing preflight path", () => {
+  it("leaves attached selections on their existing preflight path", () => {
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
     });
@@ -290,7 +297,7 @@ describe("rebuild legacy local route preflight", () => {
     expect(
       blockRebuildOnLegacySharedLocalRoute(
         "alpha",
-        { ...entry, pendingRouteReservation: true, nativeLocalProviderAttachment: undefined },
+        { ...entry, pendingRouteReservation: true },
         bail,
       ),
     ).toBe(false);

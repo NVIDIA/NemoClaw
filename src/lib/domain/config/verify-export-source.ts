@@ -878,7 +878,7 @@ function nativeLocalEndpointEvidenceMatches(snapshot: QualifiedExportSnapshot): 
   return (
     receipt != null &&
     "endpointUrl" in receipt &&
-    (receipt.provider === "ollama-local" || receipt.provider === "vllm-local") &&
+    ["ollama-local", "vllm-local", "compatible-endpoint"].includes(receipt.provider) &&
     isDeepStrictEqual(
       [
         evidence.source.profileId,

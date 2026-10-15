@@ -1097,26 +1097,12 @@ test(
 // reach the endpoint. Source tests own selection, receipt validation, failure
 // containment and config serialization; this existing routing lane owns the
 // OpenShell credential boundary and the actual consumer request.
-const DCODE_NATIVE_LOCAL_OPTIONS = {
-  timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "confirm live inference prerequisites",
-      "onboard native DCode owner",
-      "request inference through DCode",
-      "check credential isolation",
-      "onboard shared-route sibling",
-      "verify sibling denial",
-    ],
-  },
-};
-
 type NativeDcodeContext = Pick<
   E2ETargetFixtures,
   "artifacts" | "cleanup" | "host" | "progress" | "runtimeProvider" | "sandbox"
 >;
 
-async function onboardNativeDcodeAndRequest(
+async function onboardNativeDcode(
   authenticated: boolean,
   { artifacts, cleanup, host, progress, runtimeProvider, sandbox }: NativeDcodeContext,
 ) {
@@ -1178,6 +1164,13 @@ async function onboardNativeDcodeAndRequest(
     ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   );
   const attachment = getSandbox(owner)?.nativeLocalProviderAttachment;
+  return { owner, sibling, model, apiKey, fake, onboard, attachment };
+}
+
+async function requestNativeDcode(
+  { owner, apiKey, fake }: Awaited<ReturnType<typeof onboardNativeDcode>>,
+  { progress, sandbox }: NativeDcodeContext,
+) {
   progress.phase("request inference through DCode");
   const requestOffset = fake.requests().length;
   const turn = await sandbox.exec(
@@ -1189,18 +1182,39 @@ async function onboardNativeDcodeAndRequest(
       redactionValues: [apiKey],
     },
   );
-  return { owner, sibling, model, apiKey, fake, onboard, attachment, requestOffset, turn };
+  return { requestOffset, turn };
 }
 
 test(
-  "TC-INF-15 DCode uses an authenticated native local provider with sibling and credential isolation (#13197)",
-  DCODE_NATIVE_LOCAL_OPTIONS,
+  "TC-INF-15 DCode uses its authenticated native local provider after rebuild with sibling and credential isolation (#13197)",
+  {
+    timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm live inference prerequisites",
+        "onboard native DCode owner",
+        "rebuild native DCode owner",
+        "request inference through DCode",
+        "check credential isolation",
+        "onboard shared-route sibling",
+        "verify sibling denial",
+      ],
+    },
+  },
   async (context) => {
     const { artifacts, cleanup, host, progress, sandbox } = context;
-    const { owner, sibling, model, apiKey, fake, onboard, attachment, requestOffset, turn } =
-      await onboardNativeDcodeAndRequest(true, context);
+    const selected = await onboardNativeDcode(true, context);
+    const { owner, sibling, model, apiKey, fake, onboard, attachment } = selected;
     expectOnboardSuccess(onboard, `${owner} onboard`);
-    expect(attachment).toBeDefined();
+    progress.phase("rebuild native DCode owner");
+    const rebuild = await host.nemoclaw([owner, "rebuild", "--yes", "--verbose"], {
+      artifactName: `${owner}-rebuild`,
+      env: { ...buildAvailabilityProbeEnv(), COMPATIBLE_API_KEY: apiKey },
+      redactionValues: [apiKey],
+      timeoutMs: 20 * 60_000,
+    });
+    expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
+    const { requestOffset, turn } = await requestNativeDcode(selected, context);
     expect(turn.exitCode).toBe(0);
     expect(JSON.parse(turn.stdout).data.response).toBe("PONG");
     expect(
@@ -1271,12 +1285,22 @@ test(
 
 test(
   "TC-INF-16 DCode uses a credentialless native local provider (#13197)",
-  DCODE_NATIVE_LOCAL_OPTIONS,
+  {
+    timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm live inference prerequisites",
+        "onboard native DCode owner",
+        "request inference through DCode",
+      ],
+    },
+  },
   async (context) => {
-    const { owner, model, fake, onboard, attachment, requestOffset, turn } =
-      await onboardNativeDcodeAndRequest(false, context);
+    const selected = await onboardNativeDcode(false, context);
+    const { owner, model, fake, onboard, attachment } = selected;
     expectOnboardSuccess(onboard, `${owner} onboard`);
     expect(attachment).toBeDefined();
+    const { requestOffset, turn } = await requestNativeDcode(selected, context);
     expect(turn.exitCode).toBe(0);
     expect(JSON.parse(turn.stdout).data.response).toBe("PONG");
     expect(

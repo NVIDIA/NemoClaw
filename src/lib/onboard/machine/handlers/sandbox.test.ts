@@ -92,14 +92,14 @@ describe("handleSandboxState", () => {
       [],
       null,
       expect.objectContaining({ sessionId: expect.any(String), selection: expect.any(Object) }),
-      {
+      expect.objectContaining({
         resolved: expect.any(Object),
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
         endpointSource: null,
         extraProviders: [],
-      },
+      }),
       undefined,
     );
     expect(calls.finalizeRouteReservation).not.toHaveBeenCalled();
@@ -563,14 +563,14 @@ describe("handleSandboxState", () => {
       ["nous-audio"],
       null,
       expect.objectContaining({ sessionId: expect.any(String), selection: expect.any(Object) }),
-      {
+      expect.objectContaining({
         resolved: expect.any(Object),
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
         endpointSource: null,
         extraProviders: [],
-      },
+      }),
       undefined,
     );
     expect(result.hermesToolGateways).toEqual(["nous-audio"]);
@@ -852,14 +852,15 @@ describe("handleSandboxState", () => {
       [],
       null,
       expect.objectContaining({ sessionId: session.sessionId, selection: expect.any(Object) }),
-      {
+      expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,
+        reservePublishedRouteAfterBackup: expect.any(Function),
         toolDisclosure: "progressive",
         observabilityEnabled: false,
         endpointSource: null,
         extraProviders: [],
-      },
+      }),
       undefined,
     );
   });
