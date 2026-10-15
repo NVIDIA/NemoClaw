@@ -272,8 +272,8 @@ describe("declarative llama.cpp server image", () => {
           execution: "enabled",
           image: {
             reference:
-              "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:3648441718cdd6c2bc4c8fe39fa0d04d3931656b2063af34215cc51841cd0d5e",
-            sourceRevision: "eb1d2f5700393892f227ac9fd56f485fc6718bce",
+              "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:473643565f557517f4139b0cf6ac552160f555cfd8f6241ef221144c25e9ed4d",
+            sourceRevision: "95d6505265ba1f2cb05355f83786353e654de096",
           },
           probes: [
             "synchronous-chat",

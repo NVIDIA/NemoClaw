@@ -279,12 +279,15 @@ if [ -n "$diagnostics_dir" ] && [ -d "$diagnostics_dir" ]; then
     file="$diagnostics_dir/$name"
     if [ -f "$file" ]; then
       printf '%s\n' "available: $name"
+      printf '%s\n' "== redacted $name =="
+      tail -c 8000 "$file" || true
+      printf '\n'
     fi
   done
 else
   printf '%s\n' "pre-rollback diagnostics directory unavailable: $diagnostics_dir"
 fi
-ids="$("${"${runtime_command[@]}"}" container ps --all --quiet --filter "$sandbox_filter")"
+ids="$("${"${runtime_command[@]}"}" container ps --all --quiet --no-trunc --filter "$sandbox_filter")"
 if [ -z "$ids" ]; then
   printf '%s\n' "no runtime container found for $sandbox_filter"
   exit 0

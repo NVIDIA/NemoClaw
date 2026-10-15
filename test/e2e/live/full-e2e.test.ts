@@ -674,6 +674,7 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
   ).toBe(true);
 
   await runOpenClawLaunchReadinessLeaseTurns({
+    qualifyGroupWritableHome: process.env.GITHUB_ACTIONS === "true" && !USE_PREINSTALLED_LAUNCHABLE,
     artifactName: "phase-4-openclaw-launch-turn",
     cliCommand: USE_PREINSTALLED_LAUNCHABLE ? "nemoclaw" : process.execPath,
     ...(!USE_PREINSTALLED_LAUNCHABLE ? { cliEntrypoint: CLI_ENTRYPOINT } : {}),

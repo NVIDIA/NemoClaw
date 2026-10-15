@@ -280,7 +280,7 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
           return jsonResponse({ data: [{ id: MODEL }], object: "list" });
         case "http://127.0.0.1:18081/props":
           return init?.method === "POST"
-            ? jsonResponse({ error: {} }, 501)
+            ? jsonResponse({ error: {} }, 404)
             : jsonResponse(properties(plan.recipe.serve.contextSize));
         case "http://127.0.0.1:18081/metrics":
           return new Headers(init?.headers).get("authorization") === AUTHORIZATION
@@ -290,10 +290,10 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
         case "http://127.0.0.1:18081/models/load":
           return jsonResponse({ error: {} }, 404);
         case "http://127.0.0.1:18081/slots":
-          return jsonResponse({ error: {} }, 501);
+          return jsonResponse({ error: {} }, 404);
         case "http://127.0.0.1:18081/cors-proxy":
         case "http://127.0.0.1:18081/tools":
-          return jsonResponse({ error: {} }, 403);
+          return jsonResponse({ error: {} }, 404);
         default:
           expect(url).toBe("http://127.0.0.1:18081/v1/chat/completions");
       }
@@ -321,6 +321,11 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
 
       const request = JSON.parse(body) as JsonObject;
       const maxTokens = Number(request.max_tokens);
+      expect(request.chat_template_kwargs).toEqual(
+        [1, plan.qualification.probeBounds.cancellationMaxTokens].includes(maxTokens)
+          ? undefined
+          : { enable_thinking: false },
+      );
       requestedMaxTokens.push(maxTokens);
       switch (true) {
         case maxTokens === plan.qualification.probeBounds.cancellationMaxTokens:
@@ -403,11 +408,12 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
       cancellation: { aborted: true, ok: true, recovered: true },
       contextWindow: { contextSize: plan.recipe.serve.contextSize, slots: 1 },
       disabledSurfaces: {
-        corsProxyHttpStatus: 403,
+        corsProxyHttpStatus: 404,
         multimodal: false,
         routerHttpStatus: 404,
-        slotsHttpStatus: 501,
-        toolsHttpStatus: 403,
+        propertiesMutationHttpStatus: 404,
+        slotsHttpStatus: 404,
+        toolsHttpStatus: 404,
         uiHttpStatus: 404,
       },
       malformedRequest: { httpStatus: 400, ok: true },

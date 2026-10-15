@@ -35,8 +35,8 @@ const INFERENCE_ROUTE_CA_FROM_ENV = 'CA_BUNDLE="${CURL_CA_BUNDLE:-${SSL_CERT_FIL
 const INFERENCE_ROUTE_CA_VALIDATION =
   '[ -n "$CA_BUNDLE" ] && [ -f "$CA_BUNDLE" ] && [ -r "$CA_BUNDLE" ] || { printf \'UNAVAILABLE OpenShell CA bundle missing or unreadable\'; exit 1; }';
 const INFERENCE_ROUTE_PROBE_CORE_SCRIPT = [
-  "HTTP_CODE=$(/usr/bin/curl -q -s -o /dev/null -w '%{http_code}' --cacert \"$CA_BUNDLE\" --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null) || HTTP_CODE=000",
-  'case "$HTTP_CODE" in [2-4][0-9][0-9]) printf \'OK %s\' "$HTTP_CODE" ;; *) printf \'BROKEN %s\' "$HTTP_CODE" ;; esac',
+  "HTTP_CODE=$(/usr/bin/curl -q -s -o /dev/null -w '%{http_code}' --cacert \"$CA_BUNDLE\" --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null); CURL_EXIT=$?",
+  'if [ "$CURL_EXIT" -ne 0 ]; then printf \'BROKEN 000 curl_exit=%s\' "$CURL_EXIT"; else case "$HTTP_CODE" in [2-4][0-9][0-9]) printf \'OK %s\' "$HTTP_CODE" ;; *) printf \'BROKEN %s\' "$HTTP_CODE" ;; esac; fi',
 ].join("; ");
 export const INFERENCE_ROUTE_PROBE_SCRIPT = [
   INFERENCE_ROUTE_CA_FROM_ENV,

@@ -759,6 +759,10 @@ export function loadLlamaCppImageConfig(
         platform: arm64.platform,
       },
       repository: publicationRepository,
+      requestGuardToolchain: {
+        archiveSha256: requestGuardGoArchives.arm64,
+        version: requestGuardGoVersion,
+      },
       runtime: {
         gid: spec?.runtime?.gid,
         port: spec?.runtime?.port,
