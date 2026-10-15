@@ -58,6 +58,8 @@ If sandbox verification fails, NemoClaw tries to restore the previous inference 
 
 For OpenClaw, NemoClaw updates the provider namespace and selected model in the running configuration.
 It adds or updates the requested model entry without removing other model entries in that provider.
+For NVIDIA Endpoints and native hosted providers, it writes the attached provider's current scoped OpenShell credential reference into the native configuration.
+This reference is not a raw provider credential.
 After any changed configuration sync, NemoClaw restarts only the OpenClaw gateway and verifies its health.
 The sandbox remains running, but agent requests are briefly interrupted.
 After every changed synchronized route, NemoClaw verifies that the local CLI device has the managed gateway's required pairing scopes before it reports success.
@@ -77,9 +79,10 @@ A live switch to NVIDIA Build writes the newly attached provider's scoped OpenSh
 These values do not expose the raw provider credential.
 The gateway, CLI, TUI, and Web Dashboard all read that shared configuration.
 Changes between shared routes do not rebuild or restart Hermes.
-A switch to or from a native hosted provider restarts the Hermes gateway after configuration sync, including a live NVIDIA Build switch.
+If the current or selected route uses a native hosted provider, NemoClaw restarts the Hermes gateway after configuration sync.
 Active agent requests can be interrupted during the restart.
-If the restart fails, the route and configuration remain committed. Run `$$nemoclaw <name> gateway restart` to apply the switch.
+If the restart fails, the route and configuration remain committed.
+Run `$$nemoclaw <name> gateway restart` to apply the switch.
 
 </AgentOnly>
 

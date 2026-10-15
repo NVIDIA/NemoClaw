@@ -3,38 +3,40 @@
 
 import crypto from "node:crypto";
 import { describe } from "vitest";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
 import { parse as parseToml } from "smol-toml";
 import YAML from "yaml";
 import { hermesApiCommand } from "../fixtures/hermes-api-command.ts";
 import {
-  HOSTED_PROVIDER_SMOKE_CASES,
+  HOSTED_PROVIDER_SMOKE_CASES as hostedCases,
   hostedProviderSmokeEnvironment,
 } from "../../../tools/e2e/hosted-provider-smoke.mts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import { isObjectRecord } from "../../../src/lib/core/json-types.ts";
 import {
   parseOpenClawJsonDocuments,
   openClawAgentResponseRecord,
 } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 
-import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import {
+  AVAILABILITY_PROBE_EXTRA_ENV_KEYS,
+  buildAvailabilityProbeEnv,
+} from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { buildChildEnv } from "../fixtures/redaction.ts";
 import {
   cleanupSandbox,
   expectOnboardSuccess,
   inferenceSandboxName,
   onboardSandbox,
-  rawOpenShellEnv,
   redactedResultText,
   requireLivePrerequisites,
   requireProviderSmokeSelected,
-  runOpenShell,
   skipLive,
   verifyCredentialPlaceholder,
-  verifyProcessListCredentialIsolation,
 } from "./inference-routing-helpers.ts";
 
 // These credential-backed smokes are intentionally outside the PR-required
@@ -50,8 +52,7 @@ test(
         "confirm NVIDIA credential prerequisites",
         "recreate the credential-isolation sandbox",
         "onboard with the real NVIDIA credential",
-        "inspect sandbox environment and processes",
-        "scan the sandbox filesystem for the credential",
+        "verify sandbox credential isolation",
         "confirm placeholder credential injection",
       ],
     },
@@ -93,121 +94,30 @@ test(
       cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
     );
 
-    progress.phase("inspect sandbox environment and processes");
-    const sandboxEnv = await runOpenShell(["sandbox", "exec", "-n", sandboxName, "--", "env"], {
-      artifactName: "tc-inf-05-sandbox-env",
-      artifacts,
+    progress.phase("verify sandbox credential isolation");
+    const isolation = await sandbox.exec(sandboxName, hostedCredentialScanCommand(apiKey), {
+      artifactName: "tc-inf-05-credential-isolation",
       env: buildAvailabilityProbeEnv(),
-      progress,
       redactionValues: [apiKey],
-      timeoutMs: 60_000,
+      timeoutMs: 90_000,
     });
-    expect(sandboxEnv.exitCode, redactedResultText(sandboxEnv)).toBe(0);
-    expect(sandboxEnv.stdout.includes(apiKey), redactedResultText(sandboxEnv)).toBe(false);
-
-    const processList = await runOpenShell(
-      [
-        "sandbox",
-        "exec",
-        "-n",
-        sandboxName,
-        "--",
-        "sh",
-        "-lc",
-        "ps aux 2>/dev/null || ps -ef 2>/dev/null",
-      ],
-      {
-        artifactName: "tc-inf-05-sandbox-process-list",
-        artifacts,
-        env: buildAvailabilityProbeEnv(),
-        progress,
-        redactionValues: [apiKey],
-        timeoutMs: 60_000,
-      },
+    expect(isolation.exitCode, "credential isolation scan failed; inspect the artifact").toBe(0);
+    const isolationEvidence = JSON.parse(isolation.stdout);
+    expect(
+      isolationEvidence.environmentClean,
+      "real credential absent from sandbox environment",
+    ).toBe(true);
+    expect(
+      isolationEvidence.processesClean,
+      "sandbox process arguments are available and credential-free",
+    ).toBe(true);
+    expect(
+      isolationEvidence.sampledFilesClean,
+      "real credential absent from sampled sandbox files",
+    ).toBe(true);
+    expect(isolationEvidence.canaryDetected, "filesystem scanner detects a planted control").toBe(
+      true,
     );
-    await verifyProcessListCredentialIsolation(artifacts, processList, apiKey);
-
-    progress.phase("scan the sandbox filesystem for the credential");
-    const scanScript = [
-      "const crypto=require('crypto')",
-      "const fs=require('fs')",
-      "const {execFileSync}=require('child_process')",
-      "const len=Number(process.env.KEY_LEN||'0')",
-      "const salt=process.env.SCAN_SALT||''",
-      "const target=process.env.TARGET_HASH||''",
-      "const digest=(value)=>crypto.createHash('sha256').update(salt).update(value).digest('hex')",
-      "if(!len||!salt||!target){console.log('SCAN_CONFIG_MISSING');process.exit(0)}",
-      "let out=''",
-      "try{out=execFileSync('sh',['-lc','find /tmp /sandbox /home -type f -size -1M 2>/dev/null | head -200'],{encoding:'utf8'})}catch{console.log('SCAN_ERROR');process.exit(0)}",
-      "for(const file of out.trim().split(/\\n/).filter(Boolean)){try{const content=fs.readFileSync(file,'utf8');for(let i=0;i<=content.length-len;i++){if(digest(content.slice(i,i+len))===target){console.log('FOUND:'+file);break}}}catch{}}",
-      "console.log('SCAN_DONE')",
-    ].join(";");
-    const leakCanary = `nemoclaw-fs-scan-canary-${crypto.randomUUID()}`;
-    const canaryPath = "/tmp/nemoclaw-fs-scan-canary.txt";
-    const plantCanary = await sandbox.execShell(
-      sandboxName,
-      trustedSandboxShellScript(`printf '%s' '${leakCanary}' > ${canaryPath}`),
-      {
-        artifactName: "tc-inf-05-sandbox-filesystem-canary-plant",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(plantCanary.exitCode, resultText(plantCanary)).toBe(0);
-    const canarySalt = crypto.randomUUID();
-    const canaryScan = await runOpenShell(
-      ["sandbox", "exec", "-n", sandboxName, "--", "node", "-e", scanScript],
-      {
-        artifactName: "tc-inf-05-sandbox-filesystem-canary-scan",
-        artifacts,
-        env: rawOpenShellEnv({
-          KEY_LEN: String(leakCanary.length),
-          SCAN_SALT: canarySalt,
-          TARGET_HASH: crypto
-            .createHash("sha256")
-            .update(canarySalt)
-            .update(leakCanary)
-            .digest("hex"),
-        }),
-        progress,
-        timeoutMs: 90_000,
-      },
-    );
-    expect(canaryScan.stdout, redactedResultText(canaryScan)).toContain(`FOUND:${canaryPath}`);
-
-    const removeCanary = await sandbox.execShell(
-      sandboxName,
-      trustedSandboxShellScript(`rm -f ${canaryPath}`),
-      {
-        artifactName: "tc-inf-05-sandbox-filesystem-canary-remove",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(removeCanary.exitCode, resultText(removeCanary)).toBe(0);
-
-    const secretScanSalt = crypto.randomUUID();
-    const filesystemScan = await runOpenShell(
-      ["sandbox", "exec", "-n", sandboxName, "--", "node", "-e", scanScript],
-      {
-        artifactName: "tc-inf-05-sandbox-filesystem-scan",
-        artifacts,
-        env: rawOpenShellEnv({
-          KEY_LEN: String(apiKey.length),
-          SCAN_SALT: secretScanSalt,
-          TARGET_HASH: crypto
-            .createHash("sha256")
-            .update(secretScanSalt)
-            .update(apiKey)
-            .digest("hex"),
-        }),
-        progress,
-        redactionValues: [apiKey],
-        timeoutMs: 90_000,
-      },
-    );
-    expect(filesystemScan.stdout).not.toContain("FOUND:");
-    expect(filesystemScan.stdout, redactedResultText(filesystemScan)).toContain("SCAN_DONE");
 
     progress.phase("confirm placeholder credential injection");
     const placeholder = await sandbox.execShell(
@@ -333,14 +243,13 @@ test(
 
 // Four cases use OpenClaw; the Nous API-key case uses Hermes.
 
-describe.each(HOSTED_PROVIDER_SMOKE_CASES.map((entry) => [entry.id, entry.label, entry] as const))(
+describe.each(hostedCases.map((entry) => [entry.id, entry.label, entry] as const))(
   "%s %s",
   (_id, _label, selected) => {
     test(
       "answers through its native provider",
       {
-        // OpenRouter includes both ten-minute onboard and rebuild phases.
-        timeout: (selected.selector === "openrouter" ? 35 : 15) * 60_000,
+        timeout: (selected.selector === "openrouter" ? 35 : 20) * 60_000,
         meta: {
           e2ePhases: [
             "confirm hosted provider prerequisites",
@@ -349,6 +258,7 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES.map((entry) => [entry.id, entry.label,
             "exercise the selected hosted lifecycle",
             "verify native agent configuration",
             "verify hosted credential isolation",
+            "switch OpenRouter models when selected",
             "request a fresh agent response",
           ],
         },
@@ -383,6 +293,9 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES.map((entry) => [entry.id, entry.label,
             "agent uses the native endpoint with a credential placeholder",
             "selected credential is absent from sandbox environment, process arguments, and sampled files",
             "fresh agent request answers with the selected model",
+            ...(selected.selector === "openrouter"
+              ? ["both OpenRouter model switches preserve a fresh agent response"]
+              : []),
           ],
         });
         progress.phase("onboard the hosted provider");
@@ -404,8 +317,7 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES.map((entry) => [entry.id, entry.label,
           cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
         );
         progress.phase("exercise the selected hosted lifecycle");
-        // Persistence belongs to rebuild-openclaw. Reuse this smoke's routing and
-        // isolation checks after recovering credentials without a fresh host key.
+        // Reuse routing and isolation checks after rebuild without a fresh host key.
         const rebuilt =
           selected.selector === "openrouter"
             ? await host.command(
@@ -435,14 +347,30 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES.map((entry) => [entry.id, entry.label,
             : [
                 "node",
                 "-e",
-                // config get redacts even scoped handles. Read only the binding;
-                // never emit a raw credential if the stored value is invalid.
-                "const fs=require('node:fs');" +
-                  "const c=JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json','utf8'));" +
-                  "const p=c.models.providers[process.argv[1]];" +
-                  "const safe=/^openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?[A-Z][A-Z0-9_]{0,127}$/.test(p.apiKey);" +
-                  "console.log(JSON.stringify({baseUrl:p.baseUrl,apiKey:safe?p.apiKey:null}));",
+                String.raw`
+const fs = require("node:fs");
+let config;
+try {
+  config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));
+} catch {
+  console.error("native config unreadable or invalid");
+  process.exit(1);
+}
+const provider = config.models?.providers?.[process.argv[1]];
+const handle = provider?.apiKey;
+const normalizedHandle = typeof handle === "string"
+  ? handle.replace(/^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_/u,
+    "openshell:resolve:env:")
+  : null;
+console.log(JSON.stringify({
+  endpointMatches: provider?.baseUrl === process.argv[3],
+  credentialHandleMatches: normalizedHandle ===
+    "openshell:resolve:env:" + process.argv[2],
+}));
+`,
                 selected.providerKey,
+                selected.placeholder,
+                selected.endpoint,
               ],
           {
             artifactName: `${selected.id}-native-config`,
@@ -451,19 +379,13 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES.map((entry) => [entry.id, entry.label,
             timeoutMs: 60_000,
           },
         );
-        expect(config.exitCode, resultText(config)).toBe(0);
+        expect(config.exitCode, "native provider config read failed; inspect the artifact").toBe(0);
         const providerConfig = hermes ? YAML.parse(config.stdout).model : JSON.parse(config.stdout);
-        // OpenClaw startup stamps the supervisor's current revision into the handle.
-        // Compare its credential binding independently of that runtime-generated scope.
-        providerConfig.apiKey = providerConfig.apiKey?.replace(
-          /^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_/u,
-          "openshell:resolve:env:",
-        );
         expect(providerConfig).toMatchObject({
-          [hermes ? "base_url" : "baseUrl"]: selected.endpoint,
-          [hermes ? "api_key" : "apiKey"]: hermes
+          [hermes ? "base_url" : "endpointMatches"]: hermes ? selected.endpoint : true,
+          [hermes ? "api_key" : "credentialHandleMatches"]: hermes
             ? `\${${selected.placeholder}}`
-            : `openshell:resolve:env:${selected.placeholder}`,
+            : true,
         });
         progress.phase("verify hosted credential isolation");
         const isolation = await sandbox.exec(sandboxName, hostedCredentialScanCommand(apiKey), {
@@ -472,7 +394,9 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES.map((entry) => [entry.id, entry.label,
           redactionValues: [apiKey],
           timeoutMs: 90_000,
         });
-        expect(isolation.exitCode, resultText(isolation)).toBe(0);
+        expect(isolation.exitCode, "credential isolation scan failed; inspect the artifact").toBe(
+          0,
+        );
         const isolationEvidence = JSON.parse(isolation.stdout);
         expect(
           isolationEvidence.environmentClean,
@@ -480,7 +404,7 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES.map((entry) => [entry.id, entry.label,
         ).toBe(true);
         expect(
           isolationEvidence.processesClean,
-          "real credential absent from sandbox process arguments",
+          "sandbox process arguments are available and credential-free",
         ).toBe(true);
         expect(
           isolationEvidence.sampledFilesClean,
@@ -490,6 +414,115 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES.map((entry) => [entry.id, entry.label,
           isolationEvidence.canaryDetected,
           "filesystem scanner detects a planted control",
         ).toBe(true);
+        const requestOpenClawAgent = async (artifactName: string) => {
+          const response = await sandbox.exec(
+            sandboxName,
+            [
+              "nemoclaw-start",
+              "openclaw",
+              "agent",
+              "--agent",
+              "main",
+              "--json",
+              "--thinking",
+              "off",
+              "--session-id",
+              `native-${crypto.randomUUID()}`,
+              "-m",
+              "Reply with one short greeting. Do not use tools.",
+            ],
+            {
+              artifactName,
+              env: buildAvailabilityProbeEnv(),
+              redactionValues: [apiKey],
+              timeoutMs: 180_000,
+            },
+          );
+          const document = parseOpenClawJsonDocuments(response.stdout)
+            .map(openClawAgentResponseRecord)
+            .filter((value) => value !== null)
+            .at(-1);
+          return { response, document, text: parseOpenClawAgentText(response.stdout) };
+        };
+        switch (selected.selector) {
+          case "openrouter": {
+            const alternateModel =
+              model === "nvidia/nemotron-3-super-120b-a12b"
+                ? "nvidia/nemotron-3-ultra-550b-a55b"
+                : "nvidia/nemotron-3-super-120b-a12b";
+            const switchEnv = buildChildEnv(
+              { ...process.env, OPENROUTER_API_KEY: apiKey },
+              {
+                additionalAllowedEnv: AVAILABILITY_PROBE_EXTRA_ENV_KEYS,
+                secretEnv: ["OPENROUTER_API_KEY"],
+                fixtureOverlay: {},
+              },
+            );
+            progress.phase("switch OpenRouter models when selected");
+            const toAlternate = await host.nemoclaw(
+              [
+                "inference",
+                "set",
+                "--provider",
+                "openrouter-api",
+                "--model",
+                alternateModel,
+                "--sandbox",
+                sandboxName,
+              ],
+              {
+                artifactName: `${selected.id}-switch-to-alternate`,
+                env: switchEnv,
+                redactionValues: [apiKey],
+                timeoutMs: 180_000,
+              },
+            );
+            expect(
+              toAlternate.exitCode,
+              "OpenRouter alternate switch failed; inspect the redacted artifact",
+            ).toBe(0);
+            const {
+              response: alternateResponse,
+              document: alternateDocument,
+              text: alternateText,
+            } = await requestOpenClawAgent(`${selected.id}-alternate-native-agent`);
+            expect(alternateResponse.exitCode, resultText(alternateResponse)).toBe(0);
+            const alternateMeta = alternateDocument?.meta;
+            const alternateAgentMeta = isObjectRecord(alternateMeta)
+              ? alternateMeta.agentMeta
+              : undefined;
+            expect(isObjectRecord(alternateAgentMeta) ? alternateAgentMeta.model : undefined).toBe(
+              alternateModel,
+            );
+            expect(alternateText.trim()).not.toBe("");
+
+            const backToSelected = await host.nemoclaw(
+              [
+                "inference",
+                "set",
+                "--provider",
+                "openrouter-api",
+                "--model",
+                model,
+                "--sandbox",
+                sandboxName,
+              ],
+              {
+                artifactName: `${selected.id}-switch-back`,
+                env: switchEnv,
+                redactionValues: [apiKey],
+                timeoutMs: 180_000,
+              },
+            );
+            expect(
+              backToSelected.exitCode,
+              "OpenRouter return switch failed; inspect the redacted artifact",
+            ).toBe(0);
+            break;
+          }
+          default:
+            break;
+        }
         progress.phase("request a fresh agent response");
         const responseOptions = {
           artifactName: `${selected.id}-native-agent`,
@@ -497,6 +530,9 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES.map((entry) => [entry.id, entry.label,
           redactionValues: [apiKey],
           timeoutMs: 180_000,
         };
+        const openClawResult = hermes
+          ? null
+          : await requestOpenClawAgent(`${selected.id}-native-agent`);
         const response = hermes
           ? await sandbox.execShell(
               sandboxName,
@@ -513,31 +549,9 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES.map((entry) => [entry.id, entry.label,
               ),
               responseOptions,
             )
-          : await sandbox.exec(
-              sandboxName,
-              [
-                "nemoclaw-start",
-                "openclaw",
-                "agent",
-                "--agent",
-                "main",
-                "--json",
-                "--thinking",
-                "off",
-                "--session-id",
-                `native-${crypto.randomUUID()}`,
-                "-m",
-                "Reply with one short greeting. Do not use tools.",
-              ],
-              responseOptions,
-            );
+          : openClawResult!.response;
         expect(response.exitCode, resultText(response)).toBe(0);
-        const document = hermes
-          ? JSON.parse(response.stdout)
-          : parseOpenClawJsonDocuments(response.stdout)
-              .map(openClawAgentResponseRecord)
-              .filter((value) => value !== null)
-              .at(-1);
+        const document = hermes ? JSON.parse(response.stdout) : openClawResult!.document;
         // Hermes reports the response model through its API; its selected adapter is
         // recorded in config. OpenClaw reports both in the agent response metadata.
         const agentSelection = hermes
@@ -549,7 +563,7 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES.map((entry) => [entry.id, entry.label,
         });
         const text = hermes
           ? (document.choices?.[0]?.message?.content ?? "")
-          : parseOpenClawAgentText(response.stdout);
+          : openClawResult!.text;
         expect(text.trim()).not.toBe("");
       },
     );

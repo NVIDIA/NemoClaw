@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import assert from "node:assert/strict";
 
 import type { HostLocalVllmSelectionResult } from "./serving/host-local-vllm-selection";
 import type { VllmProfile } from "./vllm";
@@ -81,6 +82,11 @@ vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
 
 import { detectVllmProfile, installVllm } from "./vllm";
 import { formatStorageBytes } from "./vllm-storage";
+import { loadManagedInferenceCatalog } from "./serving/catalog-loader";
+import { resolveManagedInferenceServing } from "./serving/resolver";
+import { isHostLocalInferenceServingRecipe } from "./serving/adapter-registry";
+import { materializeHostLocalVllmSelection } from "./serving/host-local-vllm-selection";
+import { buildVllmServeCommand } from "./vllm-models";
 import {
   applyVllmInstallProbeDefaults,
   createVllmInstallSpies,
@@ -168,6 +174,7 @@ describe("fixed catalog vLLM installs", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.runCurlProbe.mockReset();
     spies = createVllmInstallSpies();
     resetVllmInstallEnv();
     applyVllmInstallProbeDefaults(mocks);
@@ -289,6 +296,9 @@ describe("fixed catalog vLLM installs", () => {
       );
       expect(result).toEqual({ ok: true });
       expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
+      expect(mocks.dockerRunDetached.mock.calls[0]![0]).toEqual(
+        expect.arrayContaining([...selection.model.runtime!.dockerRunArgs!]),
+      );
     },
   );
 
@@ -317,6 +327,66 @@ describe("fixed catalog vLLM installs", () => {
 
     expect(result).toEqual({ ok: true });
     expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
+  });
+
+  it("carries the reviewed model guard through native installation and receipt publication", async () => {
+    process.env.HF_TOKEN = "hf_fixture_download_only";
+    mocks.getGpuIndicesByName.mockReturnValue([0]);
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+    const catalog = loadManagedInferenceCatalog();
+    const presetId = "vllm.dgx-station-gb300.single.nemotron-3.5-super-vl-120b-a12b-nvfp4";
+    const readinessReports = vllmInstallTestReadiness(profile, "nemotron-3.5-super-vl-120b");
+    // Enable only the in-memory fixture; the shipped preset remains disabled.
+    const enabled = {
+      ...catalog,
+      presets: catalog.presets.map((preset) =>
+        preset.metadata.id !== presetId
+          ? preset
+          : {
+              ...preset,
+              metadata: { ...preset.metadata, supportState: "experimental" as const },
+              spec: { ...preset.spec, selection: "explicit-only" as const },
+            },
+      ),
+    };
+    const resolved = resolveManagedInferenceServing(
+      { readinessReports, topologyQualifications: [], intent: { preset: presetId } },
+      enabled,
+    );
+    assert.ok(resolved.outcome === "selected", "Expected enabled test recipe to resolve");
+    assert.ok(isHostLocalInferenceServingRecipe(resolved.recipe));
+    const selected = materializeHostLocalVllmSelection(
+      { ...resolved, recipe: resolved.recipe },
+      profile,
+    );
+    mocks.resolveHostLocalVllmSelection.mockReturnValue({ kind: "selected", ...selected });
+    mockSuccessfulVllmInstall(mocks, selected.profile.containerName);
+    mockSuccessfulAuthenticatedReadiness(selected.model.servedModelId!);
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      readinessReports,
+      resolveManagedBridgeHost: () => "172.18.0.1",
+    });
+    expect(result, spies.errSpy.mock.calls.flat().join("\n")).toEqual({ ok: true });
+    const [args, options] = mocks.dockerRunDetached.mock.calls[0]!;
+    expect(args.at(-1)).toBe(buildVllmServeCommand(selected.model));
+    expect(args).toContainEqual(
+      expect.stringMatching(/target=\/root\/\.cache\/huggingface\/hub,readonly$/),
+    );
+    expect(args).toContain("34359738368b");
+    expect(args).toContain("device=0");
+    expect(args).not.toContainEqual(
+      expect.stringMatching(/huggingface:\/root\/\.cache\/huggingface$/),
+    );
+    expect(args.join("\n")).not.toContain("b".repeat(64));
+    expect(args.join("\n")).not.toContain("hf_fixture_download_only");
+    expect(options.env.VLLM_API_KEY).toBe("b".repeat(64));
+    expect(options.env).not.toHaveProperty("HF_TOKEN");
+    expect(mocks.persistHostLocalVllmRuntimeReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ serving: selected.profile.servingCatalog }),
+    );
   });
 
   /**
