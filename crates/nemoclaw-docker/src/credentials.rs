@@ -21,6 +21,83 @@ pub enum Source {
     },
 }
 impl Source {
+    /// The credential source of a running managed service (`proxy` false) or
+    /// Ollama proxy (`proxy` true), observed from its container: the volume
+    /// mounted where its generated key lives, and that volume's identity
+    /// labels. The source is checked as registrations check it, for
+    /// `endpoint`, the address gateways and sandboxes use.
+    #[cfg(feature = "client")]
+    pub async fn observe(
+        engine: &str,
+        container: &str,
+        proxy: bool,
+        endpoint: &str,
+    ) -> Result<Self, nemoclaw_backend::Error> {
+        use nemoclaw_backend::Error;
+        let fail = |error: ObservationError| -> Error { error.into() };
+        let api = crate::Engine::connect(engine)?;
+        let inspected = api
+            .container(container)
+            .await?
+            .ok_or_else(|| fail(ObservationError::Backend("service container is absent")))?;
+        let name = inspected
+            .name
+            .as_deref()
+            .map(|name| name.trim_start_matches('/').to_owned())
+            .ok_or_else(|| fail(ObservationError::Incomplete))?;
+        let destination = if proxy { "/data" } else { "/credentials" };
+        let volume = inspected
+            .mounts
+            .unwrap_or_default()
+            .into_iter()
+            .find(|mount| mount.destination.as_deref() == Some(destination))
+            .and_then(|mount| mount.name)
+            .ok_or_else(|| {
+                fail(ObservationError::Backend(
+                    "service container mounts no credential volume",
+                ))
+            })?;
+        let labels = api
+            .volume(&volume)
+            .await?
+            .ok_or_else(|| fail(ObservationError::Backend("credential volume is absent")))?
+            .labels;
+        let label = |key: &str| {
+            labels
+                .get(key)
+                .filter(|value| !value.is_empty())
+                .cloned()
+                .ok_or_else(|| {
+                    fail(ObservationError::Backend(
+                        "credential volume lacks NemoClaw identity labels",
+                    ))
+                })
+        };
+        let storage = Storage {
+            name: volume,
+            owner: label(crate::OWNER_LABEL)?,
+            generation: label(crate::GENERATION_LABEL)?,
+            engine: engine.to_owned(),
+        };
+        let source = if proxy {
+            Self::OllamaProxy {
+                storage,
+                container: name,
+                endpoint: endpoint.to_owned(),
+            }
+        } else {
+            Self::ManagedService {
+                storage,
+                container: name,
+                endpoint: endpoint.to_owned(),
+            }
+        };
+        let encoded = serde_json::to_string(&source)
+            .map_err(|_| Error::State("cannot encode credential source"))?;
+        Self::parse(&encoded, &source.fields().0.owner, endpoint)?;
+        Ok(source)
+    }
+
     pub fn fields(&self) -> (&Storage, &str, &str) {
         match self {
             Self::OllamaProxy {

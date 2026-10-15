@@ -31,7 +31,7 @@ data vllm_readiness (version 0)
   name: string, optional
   read_trigger: bool, optional
   ready: bool, computed
-  ref: object({ endpoint = string, model = string, type = string }), computed
+  ref: object({ credential_env = string, credential_source = string, endpoint = string, model = string, type = string }), computed
   sandbox_endpoint: string, optional
   wait_timeout_seconds: number, optional
 

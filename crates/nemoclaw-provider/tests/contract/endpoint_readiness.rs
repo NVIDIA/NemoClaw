@@ -102,7 +102,9 @@ async fn endpoint_readiness_waits_for_the_served_model_and_exports_the_server_re
         json!({
             "type": "inference_server",
             "endpoint": "http://10.0.0.8:18898/v1",
-            "model": "qwen"
+            "model": "qwen",
+            "credential_env": "",
+            "credential_source": ""
         })
     );
 

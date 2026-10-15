@@ -63,18 +63,54 @@ fn base_url(url: &str, name: &'static str) -> Result<(), Error> {
 }
 
 /// The model an unauthenticated runtime contract serves.
-fn served_model(contract: &str) -> Result<String, Error> {
-    match nemoclaw_runtime::RuntimeSpec::decode(contract)? {
-        nemoclaw_runtime::RuntimeSpec::Vllm(service) => {
-            if service.authentication.is_some() {
-                return Err(Error::Conflict(
-                    "endpoint readiness serves unauthenticated servers only; read an authenticated server's readiness through its container inputs",
-                ));
-            }
-            Ok(service.served_model().to_owned())
-        }
-        nemoclaw_runtime::RuntimeSpec::Ollama(service) => Ok(service.model.name.clone()),
+/// The model a contract serves, and whether its server requires the key the
+/// runtime generates: vLLM when the contract enables authentication, and
+/// every Ollama proxy.
+fn served(contract: &str, proxy: bool) -> Result<(String, bool), Error> {
+    if proxy {
+        let settings: serde_json::Value = serde_json::from_str(contract)
+            .map_err(|_| Error::State("proxy contract is invalid"))?;
+        let model = settings["model"]
+            .as_str()
+            .ok_or(Error::State("proxy contract names no model"))?;
+        return Ok((model.to_owned(), true));
     }
+    Ok(match nemoclaw_runtime::RuntimeSpec::decode(contract)? {
+        nemoclaw_runtime::RuntimeSpec::Vllm(service) => (
+            service.served_model().to_owned(),
+            service.authentication.is_some(),
+        ),
+        nemoclaw_runtime::RuntimeSpec::Ollama(service) => (service.model.name.clone(), false),
+    })
+}
+
+/// The model an unauthenticated runtime contract serves.
+fn served_model(contract: &str) -> Result<String, Error> {
+    let (model, authenticated) = served(contract, false)?;
+    if authenticated {
+        return Err(Error::Conflict(
+            "endpoint readiness serves unauthenticated servers only; read an authenticated server's readiness through its container inputs",
+        ));
+    }
+    Ok(model)
+}
+
+/// The `inference_server` ref for a ready server.
+fn server_ref(
+    endpoint: String,
+    model: String,
+    credential_source: String,
+) -> BTreeMap<String, Value<String>> {
+    BTreeMap::from([
+        ("type".to_owned(), Value::Value(SERVER_TYPE.to_owned())),
+        ("endpoint".to_owned(), Value::Value(endpoint)),
+        ("model".to_owned(), Value::Value(model)),
+        ("credential_env".to_owned(), Value::Value(String::new())),
+        (
+            "credential_source".to_owned(),
+            Value::Value(credential_source),
+        ),
+    ])
 }
 
 fn validate_endpoint_mode(
@@ -193,6 +229,9 @@ fn validate(config: &ReadinessState, runtime: services::ServiceRuntime) -> Resul
     if endpoint_mode(config) {
         return validate_endpoint_mode(config, runtime);
     }
+    if let Value::Value(url) = &config.sandbox_endpoint {
+        base_url(url, "sandbox_endpoint")?;
+    }
     readiness(config, runtime)?;
     if matches!(&config.container_id, Value::Null)
         || matches!(&config.container_id, Value::Value(id) if id.is_empty())
@@ -247,6 +286,8 @@ impl DataSource for ReadinessDataSource {
                             ("type".into(), String),
                             ("endpoint".into(), String),
                             ("model".into(), String),
+                            ("credential_env".into(), String),
+                            ("credential_source".into(), String),
                         ])),
                         constraint: Computed,
                         ..Default::default()
@@ -290,11 +331,7 @@ impl DataSource for ReadinessDataSource {
                     Value::Value(sandbox) => sandbox.clone(),
                     _ => endpoint.clone(),
                 };
-                Ok(BTreeMap::from([
-                    ("type".to_owned(), Value::Value(SERVER_TYPE.to_owned())),
-                    ("endpoint".to_owned(), Value::Value(sandbox)),
-                    ("model".to_owned(), Value::Value(model)),
-                ]))
+                Ok(server_ref(sandbox, model, String::new()))
             }
             .await;
             return match work {
@@ -335,13 +372,32 @@ impl DataSource for ReadinessDataSource {
                 Duration::from_secs(timeout),
                 &CancellationToken::new(),
             )
-            .await
+            .await?;
+            // Given the address sandboxes use, export the server's ref; an
+            // authenticated server's names where its generated key lives.
+            let (Value::Value(sandbox), Value::Value(engine), Value::Value(contract)) =
+                (&config.sandbox_endpoint, &config.engine, &config.contract)
+            else {
+                return Ok(None);
+            };
+            let proxy = self.1 == services::ServiceRuntime::OllamaProxy;
+            let (model, authenticated) = served(contract, proxy)?;
+            let source = if authenticated {
+                let source =
+                    nemoclaw_docker::credentials::Source::observe(engine, id, proxy, sandbox)
+                        .await?;
+                serde_json::to_string(&source)
+                    .map_err(|_| Error::State("cannot encode credential source"))?
+            } else {
+                String::new()
+            };
+            Ok(Some(server_ref(sandbox.clone(), model, source)))
         }
         .await;
         match work {
-            Ok(()) => {
+            Ok(reference) => {
                 config.ready = Value::Value(true);
-                config.reference = Value::Null;
+                config.reference = reference.map_or(Value::Null, Value::Value);
                 Some(config)
             }
             Err(error) => {
