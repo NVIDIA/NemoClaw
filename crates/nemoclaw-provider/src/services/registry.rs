@@ -20,6 +20,11 @@ impl<'a> BackendRegistry<'a> {
         kind: &str,
         row: &Row,
     ) -> Result<Option<Box<dyn Backend>>, ObservationError> {
+        if crate::cluster_services::ClusterServicesBackend::supports(kind) {
+            return Ok(Some(Box::new(
+                crate::cluster_services::ClusterServicesBackend::new(),
+            )));
+        }
         if matches!(
             kind,
             installers::vllm::STORAGE_KIND | installers::ollama::STORAGE_KIND

@@ -57,6 +57,7 @@ nemoclaw-test-fixtures = { path = "../nemoclaw-test-fixtures" }
 prost.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
+tokio-tungstenite = "0.29.0"
 
 [target.'cfg(windows)'.dev-dependencies]
 widestring = "1"

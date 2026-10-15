@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Contract tests: each nemoclaw type through pinned OpenTofu against fake
 //! Docker engines, gateways, model servers, and Kubernetes APIs.
-//! `every_type_has_a_contract_test` requires one for every type the provider
-//! serves.
+//! `every_type_has_a_contract_test` requires coverage for every type the
+//! provider serves.
 
 #[path = "../../../test-support/http.rs"]
 mod http_fixture;
@@ -26,6 +26,8 @@ mod gateway_storage;
 mod inference_capabilities;
 mod kubernetes_hcl;
 mod kubernetes_lifecycle;
+mod kubernetes_model_api;
+mod kubernetes_models;
 mod provider_protocol;
 mod references;
 mod runtime_image;
@@ -67,11 +69,7 @@ pub fn assert_same_managed_resources(actual: &[u8], expected: &[u8]) {
     assert_eq!(managed(actual), managed(expected));
 }
 
-/// Types still tested only outside this binary, and why.
-const ELSEWHERE: [(&str, &str); 0] = [];
-
-/// Every resource and data source the provider serves appears in a contract
-/// test, or in [`ELSEWHERE`] with the reason it is not here yet.
+/// Every resource and data source the provider serves appears in a contract test.
 #[test]
 fn every_type_has_a_contract_test() {
     use tf_provider::Provider;
@@ -95,6 +93,7 @@ fn every_type_has_a_contract_test() {
         include_str!("inference_capabilities.rs"),
         include_str!("kubernetes_hcl.rs"),
         include_str!("kubernetes_lifecycle.rs"),
+        include_str!("kubernetes_models.tf"),
         include_str!("provider_protocol.rs"),
         include_str!("runtime_image.rs"),
         include_str!("service_capacity.rs"),
@@ -108,15 +107,8 @@ fn every_type_has_a_contract_test() {
         .filter(|kind| {
             !sources.contains(&format!("nemoclaw_{kind}"))
                 && !sources.contains(&format!("\"{kind}\""))
-                && !ELSEWHERE.iter().any(|(elsewhere, _)| elsewhere == kind)
         })
         .collect();
-    for (kind, _) in ELSEWHERE {
-        assert!(
-            !sources.contains(&format!("nemoclaw_{kind}\"")),
-            "{kind} has a contract test; remove it from ELSEWHERE"
-        );
-    }
     assert!(
         missing.is_empty(),
         "types without a contract test: {missing:?}"

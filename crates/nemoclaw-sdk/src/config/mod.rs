@@ -173,6 +173,13 @@ impl Document {
                 }
             }
         }
+        for service in self.spec.services.values() {
+            if let Some(settings) = service.kubernetes()
+                && !settings.image_metadata.env.is_empty()
+            {
+                names.push(settings.image_metadata.env.as_str());
+            }
+        }
         for sandbox in &self.spec.sandboxes {
             if let Some(metadata) = &sandbox.image.metadata {
                 names.push(metadata.env.as_str());

@@ -27,6 +27,10 @@ mod transport;
 
 #[path = "agent_tools.rs"]
 mod agent_tools;
+#[path = "cluster_service_config.rs"]
+mod cluster_service_config;
+#[path = "cluster_services_compile.rs"]
+mod cluster_services_compile;
 #[path = "compile.rs"]
 mod compile;
 #[path = "config.rs"]

@@ -19,7 +19,7 @@ Empty or zero selects a default only where stated.
 
 - Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.
 - The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.
-- Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and development authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.
+- Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and development authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields are excluded; gateway.runtime.provider is kubernetes or openshift. Managed vLLM and Ollama services require explicit kubernetes capacity, storage, and scheduling settings; Docker placement, publication, and host IPC are excluded. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.
 - The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.
@@ -307,7 +307,7 @@ Managed Podman targets local rootless Linux; rootful, remote, and other platform
 | `engine` | string | No | `"unix:///var/run/docker.sock"` | Managed local gateway Unix engine socket; Podman requires its API service socket. Excluded by kubernetes. With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes. |
 | `image` | string | No | `"ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6"` | Managed local gateway image pinned by the SDK. Excluded by kubernetes, whose component images are also SDK-pinned. Without kubernetes, omitted or empty selects the SDK default. Excluded by kubernetes. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before local container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. Excluded by kubernetes. |
-| `kubernetes` | [ManagedKubernetes](#managedkubernetes) | No | — | Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services. |
+| `kubernetes` | [ManagedKubernetes](#managedkubernetes) | No | — | Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings. Managed vLLM and Ollama services require their own kubernetes capacity and scheduling settings. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"managed"`. |
 | `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed local gateway. Excluded by kubernetes. Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes. |
 | `runtime` | [Runtime](#runtime) | No | — | Compute driver the gateway runs every sandbox with; omission selects Docker. |
@@ -546,7 +546,7 @@ Paths:
 | `context` | string | Yes | — | Exact kubeconfig context used for every cluster operation. Constraints: pattern `^[^\x00-\x20\x7f]+$(?![\s\S])`; minimum characters 1; maximum characters 253. |
 | `environment` | array of string | No | — | Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state. Constraints: maximum items 32; items: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
 | `kubeconfig` | [Credential](#credential) | Yes | — | Environment reference whose value is the local kubeconfig file path. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved. |
-| `namespace` | string | Yes | — | Namespace for this deployment's gateway and generated development authentication resources. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\s\S])`; minimum characters 1; maximum characters 63. |
+| `namespace` | string | Yes | — | Namespace for this deployment's gateway, cluster model services, and generated development authentication resources. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\s\S])`; minimum characters 1; maximum characters 63. |
 
 ## Manifest
 
@@ -964,7 +964,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `provider` | string | No | `"docker"` | Docker, Podman, Kubernetes, or OpenShift profile. Kubernetes and OpenShift require an external gateway or an explicit managed cluster target, and external inference endpoints. OpenShift uses the upstream Kubernetes driver with namespace-assigned identities. A managed service with Podman requires explicit service placement. Constraints: `"docker"` or `"podman"` or `"kubernetes"` or `"openshift"`. |
+| `provider` | string | No | `"docker"` | Docker, Podman, Kubernetes, or OpenShift profile. Kubernetes and OpenShift require an external gateway or an explicit managed cluster target; cluster model services require a managed target and explicit service kubernetes settings. OpenShift uses the upstream Kubernetes driver with namespace-assigned identities. A managed service with Podman requires explicit service placement. Constraints: `"docker"` or `"podman"` or `"kubernetes"` or `"openshift"`. |
 
 ## Sandbox
 
@@ -1031,9 +1031,9 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `cpuLimitMillis` | integer | No | — | CPU usage limit in millicores. Omission leaves Docker CPU usage unrestricted. Changing the limit replaces the model container. Constraints: minimum 1; maximum 4294967295. |
+| `cpuLimitMillis` | integer | No | — | CPU usage limit in millicores. Omission leaves Docker CPU usage unrestricted; Kubernetes and OpenShift services require an explicit limit. Changing the limit replaces the model container or Pod. Constraints: minimum 1; maximum 4294967295. |
 | `ipc` | [ServiceIpc](#serviceipc) | No | — | IPC namespace. Omission uses private; host shares the execution host's IPC namespace. |
-| `memoryLimitGiB` | integer | No | — | Container memory limit in GiB, independent of the model's GPU budget. Omission retains Docker's 104 GiB limit. Changing the limit replaces the model container. Constraints: minimum 1; maximum 8589934591. |
+| `memoryLimitGiB` | integer | No | — | Container memory limit in GiB, independent of the model's GPU budget. Omission retains Docker's 104 GiB limit; Kubernetes and OpenShift services require an explicit limit. Changing the limit replaces the model container or Pod. Constraints: minimum 1; maximum 8589934591. |
 | `sharedMemoryGiB` | integer | No | — | Shared-memory size in GiB, from 1 through 64. Omission uses 8; host IPC uses the host's existing shared-memory mount instead. Constraints: minimum 1; maximum 64. |
 
 ## ServiceDefinition
@@ -1055,7 +1055,7 @@ Managed Ollama daemon and selected model.
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `container` | [ServiceContainer](#servicecontainer) | No | — | Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory. |
+| `container` | [ServiceContainer](#servicecontainer) | No | — | Container CPU and memory limits, IPC, and shared memory for Docker, Kubernetes, and OpenShift. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory. |
 | `hardware` | [ServiceHardware](#servicehardware) | Yes | — | Explicit supported GPU or system profile. |
 | `image` | string | Yes | — | Immutable runtime image containing Ollama and the NemoClaw supervisor. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
@@ -1066,7 +1066,7 @@ Managed Ollama daemon and selected model.
 | `placement` | [ServicePlacement](#serviceplacement) | No | — | Optional remote Docker placement. Requires publication. |
 | `publication` | [ServicePublication](#servicepublication) | No | — | Private inference address for an explicitly placed service. |
 | `serving` | [OllamaServing](#ollamaserving) | No | — | Ollama serving limits. |
-| `updatePolicy` | [ServiceUpdatePolicy](#serviceupdatepolicy) | No | `"Preserve"` | Preserve refuses replacement of a running Docker model container. Recreate permits sequential replacement and possible downtime until removed or changed. |
+| `updatePolicy` | [ServiceUpdatePolicy](#serviceupdatepolicy) | No | `"Preserve"` | Preserve refuses replacement of a running Docker model container or a cluster Pod that may be serving. Recreate permits sequential replacement and possible downtime until removed or changed. |
 
 ### Alternative 2
 
@@ -1090,7 +1090,7 @@ Managed vLLM runtime and immutable model snapshot.
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `authentication` | [ServiceAuthentication](#serviceauthentication) | No | — | Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving. |
-| `container` | [ServiceContainer](#servicecontainer) | No | — | Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory. |
+| `container` | [ServiceContainer](#servicecontainer) | No | — | Container CPU and memory limits, IPC, and shared memory for Docker, Kubernetes, and OpenShift. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory. |
 | `hardware` | [ServiceHardware](#servicehardware) | Without recipe | — | Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe. |
 | `image` | string | Yes | — | Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
@@ -1102,7 +1102,7 @@ Managed vLLM runtime and immutable model snapshot.
 | `publication` | [ServicePublication](#servicepublication) | With placement | — | Private inference address reachable by OpenShell. Required with placement. |
 | `recipe` | [InlineRecipe](#inlinerecipe) | Without hardware | — | Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware. |
 | `serving` | [Serving](#serving) | No | — | Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options. |
-| `updatePolicy` | [ServiceUpdatePolicy](#serviceupdatepolicy) | No | `"Preserve"` | Preserve refuses replacement of a running Docker model container. Recreate permits sequential replacement and possible downtime until removed or changed. |
+| `updatePolicy` | [ServiceUpdatePolicy](#serviceupdatepolicy) | No | `"Preserve"` | Preserve refuses replacement of a running Docker model container or a cluster Pod that may be serving. Recreate permits sequential replacement and possible downtime until removed or changed. |
 
 ## ServiceHardware
 

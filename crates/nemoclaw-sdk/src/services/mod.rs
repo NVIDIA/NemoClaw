@@ -8,6 +8,7 @@
 
 #[doc(hidden)]
 pub mod authentication;
+mod cluster;
 pub(crate) mod cluster_config;
 pub use cluster_config::{
     KubernetesService, ServiceToleration, TolerationEffect, TolerationOperator,

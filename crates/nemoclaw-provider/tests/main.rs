@@ -3,6 +3,7 @@
 //! Provider integration tests, linked into one binary.
 //! Each file is a module; shared helpers are declared once here.
 
+mod cluster_identity;
 mod support;
 
 #[path = "managed_gateway_live.rs"]

@@ -38,6 +38,8 @@ fn stopped_managed_process_reapplies_install_without_promising_readiness_or_repl
         "agent_configuration",
         "kubernetes_gateway",
         "kubernetes_storage",
+        "kubernetes_service",
+        "kubernetes_service_storage",
     ] {
         let definition = support::definition(kind, &["spec", "running"], &["running"]);
         for running in ["true", "false"] {

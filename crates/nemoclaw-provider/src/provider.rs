@@ -230,6 +230,7 @@ impl Provider for NemoClawProvider {
 pub(crate) fn definitions() -> Vec<Definition> {
     let mut definitions = Vec::new();
     definitions.extend(crate::kubernetes::definitions());
+    definitions.extend(crate::cluster_services::definitions());
     definitions.extend(crate::services::definitions());
     definitions.extend(crate::managed::definitions());
     definitions

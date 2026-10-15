@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../../schemas/nemoclaw-v1alpha1.schema.json
+# Test fixture: a managed cluster Ollama service on an AMD64 RTX 4090 node.
+# Sandboxes cannot route to cluster model services yet, so its provider names
+# an external endpoint instead of `serviceRef: qwen`.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: kubernetes-local-ollama
+  uid: c79bb6fa-90d3-4ff1-af9a-39cdde3fe321
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: kubernetes
+    endpoint: https://127.0.0.1:17671
+    kubernetes:
+      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+      context: replace-with-explicit-context
+      namespace: nemoclaw-local-ollama
+      authentication:
+        profile: development
+  services:
+    qwen:
+      kind: ollama
+      image: registry.example.com/nemoclaw/ollama-amd64@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      hardware:
+        profile: rtx-4090
+        architecture: amd64
+      model:
+        name: qwen3:0.6b
+        digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
+      serving:
+        contextTokens: 32768
+        maxSequences: 1
+        startupTimeoutSeconds: 1800
+      memory:
+        gpuMemoryGiB: 16
+      container:
+        cpuLimitMillis: 4000
+        memoryLimitGiB: 64
+      kubernetes:
+        imageMetadata: {env: NEMOCLAW_MODEL_IMAGE_METADATA}
+        cpuRequestMillis: 1000
+        memoryRequestGiB: 32
+        storageGiB: 20
+        # Uses the default StorageClass; set storageClass to select another.
+        # Set runtimeClassName if the GPU runtime requires it.
+        tolerations:
+          - key: nvidia.com/gpu
+            operator: Exists
+            effect: NoSchedule
+  inferenceProviders:
+    - name: qwen
+      provider: openai
+      api: openai-completions
+      endpoint: http://10.20.30.40:8000/v1
+  sandboxes:
+    - name: assistant
+      harness:
+        kind: nvidia.fabric.openclaw
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: qwen
+              overrides:
+                model: qwen3:0.6b
+                maxTokens: 2048
+                settings:
+                  model_metadata:
+                    contextWindow: 32768

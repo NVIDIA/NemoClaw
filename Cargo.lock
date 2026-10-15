@@ -2752,6 +2752,7 @@ dependencies = [
  "tf-provider",
  "time",
  "tokio",
+ "tokio-tungstenite 0.29.0",
  "tokio-util",
  "tonic",
  "url",

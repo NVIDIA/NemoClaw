@@ -108,6 +108,7 @@ Redirected streams and JSON/YAML results have no added styling; `--progress plai
 Plain output reports stage changes and throttled waiting updates without cursor movement; use `--progress plain` for a terminal transcript or accessibility.
 Use `--progress off` to suppress progress while preserving results and errors.
 Warnings remain in final text and JSON output even when progress is off or the operation fails.
+Plan and apply warn that each cluster model service, including bearer vLLM, relies on NetworkPolicy enforcement that NemoClaw cannot verify through the Kubernetes API.
 Redirected stderr uses plain progress by default, so scripts requiring a quiet stream should explicitly select `off`.
 
 Resource operations come from OpenTofu's machine-readable events.

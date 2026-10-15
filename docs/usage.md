@@ -70,6 +70,7 @@ OpenShell uses that address for sandbox-only callbacks while keeping its user AP
 Every managed gateway uses one compute driver; use separate deployments to select different drivers.
 Native managed inference on Podman remains unsupported.
 A Podman gateway can consume managed vLLM or Ollama through explicit SSH Docker placement and publication; see [remote services](remote-service.md).
+Service `kubernetes` settings apply only to managed Kubernetes and OpenShift gateways and are rejected for Docker and Podman.
 
 Podman's changing compatibility `/info.ID` is not a durable identity.
 Gateway bindings use the retained owned network UUID, volume creation identity, container ID, and persisted signing keys.
@@ -225,7 +226,7 @@ Use separate deployments when you need independent teardown.
 | External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes a selected provider's profile and registration; changes to an existing sandbox's launch specification still require a separate deployment |
 | Harness adapter, sandbox image, agent identity, or provider attachments | Changes the immutable sandbox specification; apply refuses replacement; use a separate deployment with a fresh UID and state |
 | Sandbox network policy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
-| Managed vLLM or Ollama image, container limits, or serving specification | Replaces the Docker container. Service-level `updatePolicy: Preserve` blocks replacement of a running Docker container; set `Recreate` only when accepting sequential replacement and downtime. Review the plan, [container limits and update policy](inference.md#set-container-limits-and-update-policy), and [model constraints](models.md) |
+| Managed vLLM or Ollama image, container limits, or serving specification | Replaces the Docker container or cluster Pod. Service-level `updatePolicy: Preserve` blocks replacement of a running Docker container or a cluster Pod that may be serving; set `Recreate` only when accepting sequential replacement and downtime. Review the plan, [container limits and update policy](inference.md#set-container-limits-and-update-policy), and [model constraints](models.md) |
 | Ollama proxy image or serving specification | Docker-provider reconciliation may replace the proxy container while retaining its independently bound credential storage |
 | Deployment UID, established gateway endpoint, or bound credential/gateway engine | Cannot retarget the existing state; create a separate deployment |
 | Remove an unused inference provider definition | Changes the desired document only; the SDK creates registrations for selected definitions, so unused definitions have no resources to delete |
@@ -301,6 +302,8 @@ If the error still reports an unfinished creation, preserve that resource's orig
 Reapply successfully before removing or changing that unresolved resource or requesting teardown; the server may have created it without returning its identity.
 Older unfinished records without per-resource recovery evidence still require the exact configuration from the unfinished operation.
 If managed gateway or inference runtime apply fails, revised intent or teardown can proceed using recorded bindings and the existing ownership checks.
+During an unfinished Kubernetes platform apply, revisions may change only model workloads: gateway prerequisites, retained storage, and the compiled OpenShell deployment must remain unchanged.
+This permits restoring a working model digest after a failed rollout; it does not permit renaming or replacing a sandbox, changing its policy, or moving the gateway.
 The same applies when an OpenShell-graph apply only observes resources, updates or deletes established bindings, or changes disposable compute.
 Runtime recovery does not clear pending OpenShell creations.
 An OpenShell create rejection without a saved resource identity still leaves the pending-creation guard in place; automatic cleanup after a definitive rejection is not implemented.
@@ -340,7 +343,7 @@ Its supported replacement path is whole-deployment destroy followed by reapplyin
 
 **Destroy deletes every bound sandbox's files and conversation history, including those of other agents in this deployment.**
 Preserve any native data you need before choosing removal; configuration export does not back it up and can fail while runtime observation is incomplete.
-Managed model and credential storage remain tracked; that storage does not preserve sandbox files.
+Managed model and credential storage remain tracked, including the cluster model and credential PVCs; those PVCs do not preserve sandbox files.
 Keep the original YAML, matching bundle, credential references, and entire state directory.
 Do not replace the state directory or change the deployment UID to bypass the failure.
 

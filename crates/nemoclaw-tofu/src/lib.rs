@@ -26,6 +26,9 @@ pub type ValidateAttribute =
 /// Generates a value for an omitted identity attribute when a resource is created.
 pub type Generate = fn() -> Result<String, nemoclaw_backend::Error>;
 
+/// Derive an attribute from known inputs, or return `None` while its source is unknown.
+pub type Derive = fn(&Row) -> Result<Option<String>, nemoclaw_backend::ObservationError>;
+
 /// Adds resource context to a diagnostic from the resource's known attributes.
 pub type Describe = fn(error: String, attributes: &Row) -> String;
 
@@ -60,6 +63,9 @@ pub struct Definition {
     /// Optional inputs the provider generates on create when omitted, then
     /// keeps in state.
     pub generated: Vec<(&'static str, Generate)>,
+    /// Optional inputs whose values must agree with their known source fields.
+    /// Derivation also exposes identities retained by schemas that predate these attributes.
+    pub derived: Vec<(&'static str, Derive)>,
     pub protection: Protection,
     /// Refuse replacement because it would discard retained identity or files.
     pub refuse_replacement: bool,
@@ -94,6 +100,7 @@ impl Definition {
             bound_fields: Vec::new(),
             computed: Vec::new(),
             generated: Vec::new(),
+            derived: Vec::new(),
             protection: Protection::None,
             refuse_replacement: false,
             keep_running_during_destroy: false,
@@ -126,6 +133,13 @@ impl Definition {
     }
     pub fn generated(mut self, name: &'static str, generate: Generate) -> Self {
         self.generated.push((name, generate));
+        self
+    }
+    pub fn derived(mut self, name: &'static str, derive: Derive) -> Self {
+        if !self.fields.contains(&name) {
+            self.fields.push(name);
+        }
+        self.derived.push((name, derive));
         self
     }
     pub fn protect(mut self, protection: Protection) -> Self {
@@ -232,6 +246,9 @@ impl Definition {
     }
     pub fn is_generated(&self, field: &str) -> bool {
         self.generated.iter().any(|(name, _)| *name == field)
+    }
+    pub fn is_derived(&self, field: &str) -> bool {
+        self.derived.iter().any(|(name, _)| *name == field)
     }
     pub fn is_computed(&self, field: &str) -> bool {
         self.computed.iter().any(|(name, _)| *name == field)

@@ -79,6 +79,7 @@ fn runtime_targets_with_plans(
                 ("chart".into(), crate::kubernetes::gateway::CHART.into()),
             ]),
         });
+        targets.extend(service_plans.targets().cloned());
         return Ok(targets);
     }
     let Some(settings) = document.spec.gateway.as_managed() else {
@@ -159,14 +160,23 @@ pub(crate) fn runtime_graph(
             }
             attributes["lifecycle"] = json!({"postcondition": [{
                 "condition": "${self.running == \"true\"}",
-                "error_message": "Managed Kubernetes reconciliation is incomplete; retain the same configuration and state directory, resolve prerequisites, then run apply again."
+                "error_message": if target.kind == crate::kubernetes::services::SERVICE_KIND {
+                    "Managed cluster model reconciliation is incomplete; retain state and storage, correct only the model workload, then run apply again. Gateway, storage, and sandbox intent must remain unchanged."
+                } else {
+                    "Managed Kubernetes reconciliation is incomplete; retain the same configuration and state directory, resolve prerequisites, then run apply again."
+                }
             }]});
-            if target.kind == crate::kubernetes::STORAGE_KIND {
+            if target.kind == crate::kubernetes::STORAGE_KIND
+                || crate::services::resource_behavior(&target.kind).retained_storage
+            {
                 attributes["lifecycle"]["prevent_destroy"] = json!(true);
             } else if target.kind == crate::kubernetes::AUTH_KIND {
                 attributes["depends_on"] = json!(["nemoclaw_kubernetes_storage.runtime"]);
             } else {
                 attributes["depends_on"] = json!([crate::kubernetes::gateway::ADDRESS]);
+            }
+            if let Some(dependencies) = service_plans.dependencies(&target.address) {
+                attributes["depends_on"] = json!(dependencies);
             }
             let (kind, name) = target.address.split_once('.').unwrap();
             graph["resource"][kind][name] = attributes;

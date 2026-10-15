@@ -135,6 +135,96 @@ fn docker_model_updates_preserve_running_containers_unless_recreation_is_explici
 }
 
 #[test]
+fn docker_model_preservation_refuses_docker_models_but_not_cluster_models_of_the_same_name() {
+    // A cluster model has no Docker container: the Kubernetes service
+    // reconciler applies its updatePolicy to the model Pod. A Docker change at
+    // the address the same service would have on Docker is not its update.
+    for (docker, cluster) in [
+        (
+            include_str!("../../../../../examples/station/vllm.yaml"),
+            include_str!("../../../../../crates/test-support/cluster-models/vllm.yaml"),
+        ),
+        (
+            include_str!("../../../../../examples/managed-ollama-gpu.yaml"),
+            include_str!("../../../../../crates/test-support/cluster-models/ollama.yaml"),
+        ),
+    ] {
+        let [docker, cluster] =
+            [docker, cluster].map(|source| Document::parse(source.as_bytes()).unwrap());
+        let service = &cluster.spec.services["qwen"];
+        assert!(service.kubernetes().is_some());
+        for document in [&docker, &cluster] {
+            assert_eq!(
+                document.spec.services["qwen"].update_policy(),
+                Some(crate::services::ServiceUpdatePolicy::Preserve)
+            );
+        }
+        let address = crate::docker_compute::address(&service.model_address("qwen").unwrap());
+        let observations = |document: &Document, plan: &Plan| {
+            let record = Record::new(document.clone()).unwrap();
+            let targets = compile::runtime_targets(document, &record.generations).unwrap();
+            runtime_observations(document, &targets, &BTreeMap::new(), plan)
+        };
+        let running =
+            json!({"id": "running-model", "must_run": true, "memory": 65536, "memory_swap": 65536});
+        let mut lowered = running.clone();
+        lowered["memory"] = json!(16384);
+        for (actions, after) in [
+            (json!(["delete", "create"]), Value::Null),
+            (json!(["delete"]), Value::Null),
+            (json!(["update"]), lowered),
+        ] {
+            let plan = serde_json::from_value(json!({"resource_changes": [{
+                "address": address,
+                "change": {"actions": actions, "before": running, "after": after}
+            }]}))
+            .unwrap();
+            assert!(matches!(
+                observations(&docker, &plan),
+                Err(Error::DockerModelUpdateRefused { service }) if service == "qwen"
+            ));
+            observations(&cluster, &plan).unwrap();
+        }
+    }
+}
+
+#[test]
+fn cluster_service_changes_keep_bound_storage_and_require_all_recorded_prerequisites() {
+    for source in [
+        include_str!("../../../../../crates/test-support/cluster-models/vllm.yaml"),
+        include_str!("../../../../../crates/test-support/cluster-models/ollama.yaml"),
+    ] {
+        let document = Document::parse(source.as_bytes()).unwrap();
+        let record = Record::new(document.clone()).unwrap();
+        let targets = compile::runtime_targets(&document, &record.generations).unwrap();
+        let bindings = kubernetes_bindings(&targets);
+        runtime_bindings(&targets, &bindings).unwrap();
+        for prerequisite in [
+            KUBERNETES_STORAGE,
+            "nemoclaw_kubernetes_gateway.runtime",
+            "nemoclaw_kubernetes_service_storage.qwen",
+        ] {
+            let mut missing = bindings.clone();
+            missing.remove(prerequisite);
+            assert!(runtime_bindings(&targets, &missing).is_err());
+        }
+        let mut input = serde_json::to_value(&document).unwrap();
+        input["spec"]["services"]["qwen"]["container"]["cpuLimitMillis"] = json!(8000);
+        let changed = Document::parse(input.to_string().as_bytes()).unwrap();
+        let updated = compile::runtime_targets(&changed, &record.generations).unwrap();
+        let expected = runtime_bindings(&updated, &bindings).unwrap();
+        assert_eq!(
+            expected["nemoclaw_kubernetes_service.qwen"]["spec"],
+            bindings["nemoclaw_kubernetes_service.qwen"].spec
+        );
+        input["spec"]["services"]["qwen"]["kubernetes"]["storageGiB"] = json!(200);
+        let resized = Document::parse(input.to_string().as_bytes()).unwrap();
+        let updated = compile::runtime_targets(&resized, &record.generations).unwrap();
+        assert!(runtime_bindings(&updated, &bindings).is_err());
+    }
+}
+
+#[test]
 fn kubernetes_gateway_requires_storage_and_fresh_readiness_without_replacement() {
     let (document, generations) = kubernetes_context();
     let targets = compile::runtime_targets(&document, &generations).unwrap();
@@ -175,6 +265,117 @@ fn kubernetes_gateway_requires_storage_and_fresh_readiness_without_replacement()
         }
     }
     assert!(check_runtime_plan(&plan, &checked.expected, &bindings).is_err());
+}
+
+#[test]
+fn failed_kubernetes_model_rollout_accepts_only_revised_model_workloads() {
+    let working = Document::parse(
+        include_bytes!("../../../../../crates/test-support/cluster-models/ollama.yaml").as_slice(),
+    )
+    .unwrap();
+    let mut failed = serde_json::to_value(&working).unwrap();
+    failed["spec"]["services"]["qwen"]["model"]["digest"] = json!("a".repeat(64));
+    let failed = Document::parse(failed.to_string().as_bytes()).unwrap();
+    let mut record = Record::new(failed.clone()).unwrap();
+    record.begin_runtime_apply(&failed);
+    assert!(
+        record.validate_pending_intent(&working).is_ok(),
+        "a failed model rollout must permit restoring the working model"
+    );
+    for (path, value) in [
+        ("/spec/sandboxes/0/name", json!("renamed")),
+        (
+            "/spec/gateway/kubernetes/namespace",
+            json!("another-target"),
+        ),
+        ("/spec/services/qwen/kubernetes/storageGiB", json!(200)),
+    ] {
+        let mut revised = serde_json::to_value(&working).unwrap();
+        *revised.pointer_mut(path).unwrap() = value;
+        let revised = Document::parse(revised.to_string().as_bytes()).unwrap();
+        assert!(
+            record.validate_pending_intent(&revised).is_err(),
+            "unrelated change at {path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn plan_and_apply_warn_about_cluster_network_boundaries_even_with_bearer_authentication() {
+    for (source, remove_authentication, warning_detail) in [
+        (
+            include_bytes!("../../../../../crates/test-support/cluster-models/ollama.yaml")
+                .as_slice(),
+            false,
+            Some("no bearer authentication"),
+        ),
+        (
+            include_bytes!("../../../../../crates/test-support/cluster-models/vllm.yaml")
+                .as_slice(),
+            false,
+            Some("requires an image that restricts inference to authenticated /v1 routes"),
+        ),
+        (
+            include_bytes!("../../../../../crates/test-support/cluster-models/vllm.yaml")
+                .as_slice(),
+            true,
+            Some("no bearer authentication"),
+        ),
+        (
+            include_bytes!("../../../../../examples/managed-ollama-gpu.yaml").as_slice(),
+            false,
+            None,
+        ),
+    ] {
+        let mut document = Document::parse(source).unwrap();
+        if remove_authentication {
+            let crate::services::ServiceDefinition::Vllm(service) =
+                document.spec.services.get_mut("qwen").unwrap()
+            else {
+                unreachable!()
+            };
+            service.authentication = None;
+        }
+        for apply in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let saved = events.clone();
+            let deployment = Deployment::new(
+                &directory.path().join("state"),
+                &directory.path().join("missing-bundle"),
+            )
+            .with_progress(Arc::new(move |event| saved.lock().unwrap().push(event)));
+            let result = if apply {
+                deployment.apply(&document, &CancellationToken::new()).await
+            } else {
+                deployment.plan(&document, &CancellationToken::new()).await
+            };
+            assert!(result.is_err());
+            let events = events.lock().unwrap();
+            let warnings: Vec<_> = events
+                .iter()
+                .filter_map(|event| match event {
+                    Progress::Warning { message } if message.contains("NetworkPolicy") => {
+                        Some(message)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(warnings.len(), usize::from(warning_detail.is_some()));
+            if let Some(detail) = warning_detail {
+                for required in [
+                    "qwen",
+                    detail,
+                    "NetworkPolicy enforcement",
+                    "Kubernetes API cannot verify",
+                    "supervisor-only policy",
+                ] {
+                    assert!(warnings[0].contains(required), "{}", warnings[0]);
+                }
+            }
+            assert!(!events.contains(&Progress::MutationStarted));
+        }
+    }
 }
 
 #[test]

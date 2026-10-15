@@ -38,34 +38,36 @@ fn state(row: Row) -> State {
 
 #[tokio::test]
 async fn kubernetes_storage_absence_and_destroy_preserve_its_binding() {
-    let resource = ResourceAdapter::new(
-        support::definition("kubernetes_storage", &["spec", "running"], &["running"]),
-        Arc::new(Fixture(Ok(None))),
-    );
-    let prior = state(Row::from([
-        ("id".into(), "namespace-and-storage-binding".into()),
-        ("spec".into(), "retained-spec".into()),
-        ("running".into(), "false".into()),
-    ]));
-    for destroying in [false, true] {
-        resource
-            .destroying
-            .store(destroying, std::sync::atomic::Ordering::Release);
-        let mut diagnostics = Diagnostics::default();
-        let observed = resource
-            .read(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
-            .await
-            .unwrap();
-        assert_eq!(observed.0, prior);
-        assert!(!diagnostics.errors.is_empty());
-        let mut diagnostics = Diagnostics::default();
-        assert!(
-            resource
-                .plan_destroy(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
-                .await
-                .is_none()
+    for kind in ["kubernetes_storage", "kubernetes_service_storage"] {
+        let resource = ResourceAdapter::new(
+            support::definition(kind, &["spec", "running"], &["running"]),
+            Arc::new(Fixture(Ok(None))),
         );
-        assert!(!diagnostics.errors.is_empty());
+        let prior = state(Row::from([
+            ("id".into(), "namespace-and-storage-binding".into()),
+            ("spec".into(), "retained-spec".into()),
+            ("running".into(), "false".into()),
+        ]));
+        for destroying in [false, true] {
+            resource
+                .destroying
+                .store(destroying, std::sync::atomic::Ordering::Release);
+            let mut diagnostics = Diagnostics::default();
+            let observed = resource
+                .read(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
+                .await
+                .unwrap();
+            assert_eq!(observed.0, prior);
+            assert!(!diagnostics.errors.is_empty());
+            let mut diagnostics = Diagnostics::default();
+            assert!(
+                resource
+                    .plan_destroy(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
+                    .await
+                    .is_none()
+            );
+            assert!(!diagnostics.errors.is_empty());
+        }
     }
 }
 

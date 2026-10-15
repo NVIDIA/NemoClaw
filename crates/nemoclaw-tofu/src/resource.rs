@@ -79,6 +79,36 @@ impl ResourceAdapter {
     fn optional(&self, field: &str) -> bool {
         self.definition.is_optional(field)
     }
+    fn derive(&self, state: &State) -> Result<State, ObservationError> {
+        let mut resolved = state.clone();
+        let inputs = known(state);
+        for (name, derive) in &self.definition.derived {
+            match derive(&inputs)? {
+                Some(value) => {
+                    if let Some(Value::Value(provided)) = state.get(*name)
+                        && provided != &value
+                    {
+                        return Err(ObservationError::Rejected {
+                            operation: "resource identity validation",
+                            code: "binding_mismatch",
+                            detail: format!("{name} must match the resource specification").into(),
+                        });
+                    }
+                    resolved.insert((*name).into(), Value::Value(value));
+                }
+                None if matches!(state.get(*name), None | Some(Value::Null)) => {
+                    resolved.insert((*name).into(), Value::Unknown);
+                }
+                None => {}
+            }
+        }
+        Ok(resolved)
+    }
+    fn derive_plan(&self, diags: &mut Diagnostics, state: &State) -> Option<State> {
+        self.derive(state)
+            .map_err(|error| diags.root_error_short(error.to_string()))
+            .ok()
+    }
     fn validate_config(&self, diags: &mut Diagnostics, config: &State) -> Option<()> {
         if self.definition.fields.contains(&"spec") {
             match config.get("spec") {
@@ -122,6 +152,7 @@ impl ResourceAdapter {
                 return None;
             }
         }
+        self.derive_plan(diags, config)?;
         Some(())
     }
 
@@ -179,6 +210,7 @@ impl ResourceAdapter {
         }
     }
     fn row(&self, state: &State, creating: bool) -> Result<Row, ObservationError> {
+        let state = self.derive(state)?;
         state
             .iter()
             .map(|(k, v)| match v {
@@ -205,6 +237,13 @@ impl ResourceAdapter {
     }
     fn checked(&self, prior: &Row, observed: Row) -> Result<Row, ObservationError> {
         let observed = self.carry(prior, observed);
+        let observed = self.row(
+            &observed
+                .into_iter()
+                .map(|(name, value)| (name, Value::Value(value)))
+                .collect(),
+            false,
+        )?;
         for field in &self.definition.bound_fields {
             if prior.get(*field).map(String::as_str).unwrap_or("")
                 != observed.get(*field).map(String::as_str).unwrap_or("")
@@ -262,6 +301,15 @@ impl ResourceAdapter {
         desired: &Row,
         prior: Option<State>,
     ) -> Option<State> {
+        if let Some(reason) = mutation.warning() {
+            diags.root_warning(
+                "Resource is not running",
+                self.message(
+                    observation_message(reason, desired.get("name").map(String::as_str)),
+                    desired,
+                ),
+            );
+        }
         let (state, error) = mutation.into_parts();
         if let Some(error) = error {
             diags.root_error(
@@ -306,7 +354,10 @@ impl Resource for ResourceAdapter {
                         attr_type: AttributeType::String,
                         constraint: if name == "id" || self.definition.is_computed(name) {
                             AttributeConstraint::Computed
-                        } else if self.optional(name) || self.definition.is_generated(name) {
+                        } else if self.optional(name)
+                            || self.definition.is_generated(name)
+                            || self.definition.is_derived(name)
+                        {
                             AttributeConstraint::OptionalComputed
                         } else {
                             AttributeConstraint::Required
@@ -390,6 +441,7 @@ impl Resource for ResourceAdapter {
                 proposed.insert((*name).into(), Value::Unknown);
             }
         }
+        let proposed = self.derive_plan(diags, &proposed)?;
         self.check_plan(diags, &proposed, &config, None).await?;
         Some((proposed, Value::Null))
     }
@@ -407,6 +459,19 @@ impl Resource for ResourceAdapter {
         for field in &self.definition.reset_when_omitted {
             if matches!(config.get(*field), None | Some(Value::Null)) {
                 proposed.insert((*field).into(), Value::Value(String::new()));
+            }
+        }
+        let prior = self.derive_plan(diags, &prior)?;
+        let mut proposed = self.derive_plan(diags, &proposed)?;
+        // An unresolved source does not authorize replacing an existing identity.
+        // Recheck its consistency when OpenTofu resolves the source before apply.
+        for (name, _) in &self.definition.derived {
+            if matches!(
+                proposed.get(*name),
+                None | Some(Value::Unknown | Value::Null)
+            ) && let Some(value) = prior.get(*name)
+            {
+                proposed.insert((*name).into(), value.clone());
             }
         }
         self.check_plan(diags, &proposed, &config, Some(&prior))

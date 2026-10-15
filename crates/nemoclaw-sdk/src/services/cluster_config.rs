@@ -40,6 +40,32 @@ pub struct KubernetesService {
 }
 
 impl KubernetesService {
+    pub(crate) fn resolve(
+        &self,
+        container: Option<&super::installers::vllm::ServiceContainer>,
+        update_policy: ServiceUpdatePolicy,
+    ) -> Result<KubernetesSettings, crate::config::ConfigError> {
+        let missing = || {
+            crate::config::ConfigError::new(
+                "cluster model services require container.cpuLimitMillis and container.memoryLimitGiB",
+            )
+        };
+        let container = container.ok_or_else(missing)?;
+        Ok(KubernetesSettings {
+            image_metadata: self.image_metadata.clone(),
+            cpu_request_millis: self.cpu_request_millis,
+            cpu_limit_millis: container.cpu_limit_millis.ok_or_else(missing)?,
+            memory_request_gib: self.memory_request_gib,
+            memory_limit_gib: container.memory_limit_gib.ok_or_else(missing)?,
+            storage_gib: self.storage_gib,
+            storage_class: self.storage_class.clone(),
+            node_selector: self.node_selector.clone(),
+            tolerations: self.tolerations.clone(),
+            runtime_class_name: self.runtime_class_name.clone(),
+            update_policy,
+        })
+    }
+
     pub fn validate(&self) -> Result<(), crate::config::ConfigError> {
         crate::config::schema::validate_definition("KubernetesService", self)
     }
@@ -233,4 +259,30 @@ pub(crate) fn constrain(defs: &mut serde_json::Map<String, Value>, _normalized: 
         {"if":{"required":["tolerationSeconds"]},
          "then":at("effect",json!({"const":"NoExecute"}),true)}
     ]);
+
+    for service in defs["ServiceDefinition"]["oneOf"].as_array_mut().unwrap() {
+        if !matches!(
+            service["properties"]["kind"]["const"].as_str(),
+            Some("vllm" | "ollama")
+        ) {
+            continue;
+        }
+        // Docker defaults omitted limits, but a cluster Pod needs both. Name the
+        // missing field instead of reporting only the failed keyword.
+        let limits: Vec<Value> = ["cpuLimitMillis", "memoryLimitGiB"]
+            .into_iter()
+            .map(|field| {
+                let mut rule = at(&format!("container/{field}"), json!({}), true);
+                rule["x-nemoclaw-error"] =
+                    json!(format!("cluster model services require container.{field}"));
+                rule
+            })
+            .collect();
+        let rule = json!({"if":{"required":["kubernetes"]}, "then":{"allOf":limits}});
+        if let Some(existing) = service["allOf"].as_array_mut() {
+            existing.push(rule);
+        } else {
+            service["allOf"] = json!([rule]);
+        }
+    }
 }

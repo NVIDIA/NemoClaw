@@ -227,6 +227,32 @@ impl Deployment {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
+        for (name, service) in &document.spec.services {
+            let authentication_boundary = match service {
+                crate::services::ServiceDefinition::Ollama(service)
+                    if service.kubernetes.is_some() =>
+                {
+                    Some("has no bearer authentication")
+                }
+                crate::services::ServiceDefinition::Vllm(service)
+                    if service.kubernetes.is_some() =>
+                {
+                    Some(if service.authentication.is_some() {
+                        "requires an image that restricts inference to authenticated /v1 routes"
+                    } else {
+                        "has no bearer authentication"
+                    })
+                }
+                _ => None,
+            };
+            if let Some(authentication_boundary) = authentication_boundary {
+                (self.progress)(Progress::Warning {
+                    message: format!(
+                        "Cluster service {name} {authentication_boundary}. Network isolation depends on NetworkPolicy enforcement, which the Kubernetes API cannot verify. Verify that the network plugin enforces the supervisor-only policy."
+                    ),
+                });
+            }
+        }
         for message in context_advisory::context_warnings(&document)? {
             (self.progress)(Progress::Warning { message });
         }
