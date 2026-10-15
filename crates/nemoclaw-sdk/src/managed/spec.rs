@@ -14,9 +14,6 @@ use std::collections::HashMap;
 pub const GATEWAY_KIND: &str = "managed_gateway";
 use super::GATEWAY_STORAGE_KIND;
 pub use nemoclaw_docker::{GENERATION_LABEL, OWNER_LABEL};
-pub use nemoclaw_runtime::{
-    SPEC_VERSION as RUNTIME_SPEC_VERSION, SPEC_VERSION_LABEL as RUNTIME_SPEC_VERSION_LABEL,
-};
 pub const SPEC_LABEL: &str = "nemoclaw.nvidia.com/runtime-spec";
 pub use crate::artifact_pins::SANDBOX_RUNTIME_IMAGE;
 pub use crate::artifact_pins::SUPERVISOR_IMAGE;

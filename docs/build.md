@@ -248,8 +248,7 @@ Its Dockerfile applies pinned patches and retains original and modified sources.
 Use [the inline recipe guide](recipes.md) to declare preparation and serving requirements.
 
 The builder exports an OCI archive, loads it, and verifies access by its exported digest and target platform.
-It sets `org.nemoclaw.runtime.spec=v1` from the shared runtime contract and verifies that label on the loaded image.
-The retained `supervisor.json` records the same `runtimeSpecVersion` alongside the runtime source version.
+The retained `supervisor.json` records the runtime contract version, `runtimeSpecVersion`, alongside the runtime source version.
 Use the immutable image reference printed as `Runtime image loaded: NAME@sha256:DIGEST` for `spec.services.<name>.image`.
 Do not substitute a mutable tag or a digest copied from another build.
 If deployment uses a different Docker daemon, load the archive into that daemon before apply; images are not transferred automatically.
@@ -274,14 +273,15 @@ The image contains `nemoclaw-runtime`.
 The inline recipe supplies preparation and verification tools; `kind: vllm` selects the service installer and serving behavior.
 Managed containers use `/usr/local/bin/nemoclaw-runtime` and `NEMOCLAW_RUNTIME_SPEC`.
 
-The SDK checks a managed vLLM or Ollama image's runtime-spec label, required backend/recipe/authentication labels, and platform through the provider before creating runtime resources.
+The SDK checks a managed vLLM or Ollama image's required backend/recipe/authentication labels and platform with `host_image` before creating runtime resources.
 Bearer vLLM also requires `org.nemoclaw.inference.routes=openai-v2`, which identifies a supervisor that serves the published port and forwards only authenticated inference requests and public `GET /health` to vLLM on loopback.
 Rebuild earlier bearer images that lack this label; do not add the label to an image whose supervisor was built from an earlier revision.
-An already loaded image with a missing or incompatible runtime-spec label fails plan and apply with rebuild guidance.
+An already loaded image with a missing or incompatible required label fails plan and apply, naming the label.
 When the image must be acquired, plan reports compatibility as deferred; apply may pull the image, then checks it before creating storage, networks, or containers.
-A matching label establishes the declared runtime contract, not successful model loading or inference.
+Matching labels establish the declared backend, recipe, and authentication, not successful model loading or inference.
 
-For a runtime-spec mismatch, rebuild the selected artifact from the bundle's source revision using the matching vLLM platform/recipe command above or the [managed Ollama build instructions](inference.md#run-managed-ollama).
+An image built by a different NemoClaw revision may carry the right labels yet reject the runtime contract when its runtime starts, after the deployment has created the service's storage and network.
+In either case, rebuild the selected artifact from the bundle's source revision using the matching vLLM platform/recipe command above or the [managed Ollama build instructions](inference.md#run-managed-ollama).
 Load the rebuilt image on the execution daemon and update `spec.services.<name>.image` to the newly printed digest.
 Keep the deployment state and reapply; existing model and credential storage remain subject to their retention and identity checks.
 Destroy omits image compatibility gates so a mismatched image alone does not prevent cleanup.

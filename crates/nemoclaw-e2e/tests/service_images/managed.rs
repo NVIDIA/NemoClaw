@@ -61,7 +61,7 @@ impl ManagedService {
             "files":{"/data/status.json":{"phase":"ready","detail":"","updated":"2026-09-15T00:00:00Z","pid":42}},
             "stats":{}, "image_refs":[service["image"]],
             "image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{
-                "org.nemoclaw.runtime.spec":"v1", "org.nemoclaw.recipe.protocol":"v1", "org.nemoclaw.backend":"ollama", "org.nemoclaw.model":"a".repeat(64)
+                "org.nemoclaw.recipe.protocol":"v1", "org.nemoclaw.backend":"ollama", "org.nemoclaw.model":"a".repeat(64)
             }}}
         }));
         fixture.write(

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /// Increment when the serialized runtime contract changes incompatibly.
 pub const SPEC_VERSION: &str = "v1";
-pub const SPEC_VERSION_LABEL: &str = "org.nemoclaw.runtime.spec";
 pub mod config;
 mod error;
 pub use error::Error;

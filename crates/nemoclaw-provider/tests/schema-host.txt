@@ -14,3 +14,12 @@ data host_engine (version 0)
   engine_json: string, computed
   hardware_json: string, computed
   status: string, computed
+
+data host_image (version 0)
+  allow_missing: bool, optional
+  architecture: string, required
+  engine: string, required
+  image: string, required
+  image_id: string, optional
+  labels: map(string), optional
+  observation_json: string, computed

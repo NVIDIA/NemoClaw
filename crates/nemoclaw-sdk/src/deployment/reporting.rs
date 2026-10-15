@@ -242,7 +242,7 @@ fn observation_name(address: &str) -> Option<String> {
     } else {
         [
             "data.fabric_harnesses.",
-            "data.nemoclaw_runtime_image.",
+            "data.host_image.",
             "data.host_engine.",
         ]
         .iter()
@@ -678,7 +678,7 @@ mod encoding_tests {
     fn every_observation_kind_keeps_its_report_encoding() {
         let expected = json!({"observations": {
             "engine": {"kind": "engine", "observation": serde_json::to_value(EngineObservation::unknown("unreachable")).unwrap()},
-            "runtime_image_0": {"kind": "runtime_image", "observation": {"status": "available", "source": "engine_image_inspect", "required_version": "1"}},
+            "runtime_image_0": {"kind": "runtime_image", "observation": {"status": "available", "source": "engine_image_inspect"}},
             "service_model": {"kind": "service", "observation": {"ready": null, "source": "service_readiness"}},
             "gateway": {"kind": "unresolved", "observation": {"category": "gateway"}}
         }});

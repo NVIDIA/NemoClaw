@@ -41,7 +41,7 @@ The generated graphs manage these objects and observations:
 | vLLM and Ollama provider data sources | Runtime contracts, service or proxy readiness, and the upstream model digest behind an Ollama proxy (`ollama_model`) |
 | OpenShell provider | Kubernetes namespace and encryption key (`openshell_kubernetes_storage`), development issuer (`openshell_kubernetes_auth`), and gateway readiness (`openshell_kubernetes_gateway`) |
 | Host provider data source | Engine facts and advertised hardware (`host_engine`) |
-| NemoClaw provider data source | Managed runtime-image compatibility |
+| Host provider data source | Managed vLLM and Ollama image platform and labels (`host_image`) |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 | Helm provider | The managed Kubernetes gateway's OpenShell chart release (`helm_release.gateway`) |
@@ -280,14 +280,11 @@ The `host` provider observes container engines and changes nothing; it has no se
 | Data source | Observes |
 |---|---|
 | `host_engine` | [Engine version, platform, CPUs, memory](#engine-and-fabric-discovery), and [advertised hardware](#target-hardware) |
+| `host_image` | [An image's platform and labels](#runtime-image-compatibility) |
 
-### NemoClaw Data Sources
+### NemoClaw Provider
 
-The `nemoclaw` provider serves only data sources; its `destroy` setting has no effect.
-
-| Data source | Observes |
-|---|---|
-| `nemoclaw_runtime_image` | [Managed runtime image labels](#runtime-image-compatibility) |
+The `nemoclaw` provider no longer serves any type; generated graphs still declare it until it is removed.
 
 ### Docker and Helm Types
 
@@ -358,7 +355,7 @@ An observation describes the selected target at the time of its read; it is not 
 | Engine features, CPU, memory, and advertised GPU inventory | `host_engine` (`hardware_json`); selected engine API | Onboarding and planning for selected gateway/service engines |
 | GPU memory, driver, compute capability, and disk measurements | Provider `observe_host_hardware` with a selected `HostObserver` | Explicit direct calls or existing configured service-capacity checks; the new passive hardware source does not run collectors |
 | Packaged adapters, APIs, settings, and runtime requirements | `fabric_harnesses`; selected image metadata containing Fabric discovery results | Onboarding image changes and deployment planning |
-| Managed runtime specification, required labels, and platform | `nemoclaw_runtime_image`; selected engine image inspection | Plan for present images; after image acquisition before runtime mutations |
+| Required labels and platform of managed images | `host_image`; selected engine image inspection | Plan for present images; after image acquisition before runtime mutations |
 | Advertised models and catalog authentication | Direct SDK `observe_endpoints`; HTTP model-list endpoint from the control host | Onboarding endpoint changes and planning for selected inference routes |
 | Credential-reference availability | Direct SDK `observe_credentials`; application's secret resolver | Onboarding, SDK calls, and plan-result discovery; values and local availability do not enter provider state |
 | Gateway version and compute drivers | Existing `openshell_gateway`; authenticated OpenShell API | Onboarding review and required deployment lifecycle checks |
@@ -587,12 +584,12 @@ Generated graphs also run the container as `0:0` and give it:
 
 ## Runtime Image Compatibility
 
-`nemoclaw_runtime_image` requires the service's `engine`, its `image` pinned by SHA-256 digest, and its `architecture` (`amd64` or `arm64`), and returns `observation_json` with `status`, `source`, and `required_version`.
-Optional `labels` maps each label the image must carry to its value; generated graphs require the service's backend, recipe, and authentication labels.
-The source checks the vLLM or Ollama image's `org.nemoclaw.runtime.spec` label against the shared runtime contract, plus the Linux platform, the architecture, and `labels`.
+`host_image` requires an `engine`, an `image` pinned by SHA-256 digest, and an `architecture` (`amd64` or `arm64`), and returns `observation_json` with `status` and `source`.
+Optional `labels` maps each label the image must carry to its value; generated graphs require each vLLM or Ollama service's backend, recipe, and authentication labels.
+The source checks the Linux platform, the architecture, and `labels`, and knows nothing about NemoClaw runtimes.
 It performs one engine image inspection with a 20-second bound and never pulls an image or starts a process.
-Missing or mismatched runtime-spec labels fail with [rebuild guidance](build.md#retained-sources-and-compatibility); authentication, transport, and incomplete inspection failures also stop the operation.
-Diagnostics do not echo image label values.
+A platform mismatch or a missing or mismatched label fails the read and names the label, not the image's value; authentication, transport, and incomplete inspection failures also stop the operation.
+See [retained sources and compatibility](build.md#retained-sources-and-compatibility) for rebuilding a mismatched image.
 
 Optional `allow_missing: true` permits a confirmed absent image to return `status: unknown` before acquisition; omission or false rejects absence.
 Optional `image_id` requires the inspected image to match the Docker provider's acquired image ID.

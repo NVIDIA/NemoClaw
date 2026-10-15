@@ -1133,7 +1133,7 @@ const UNDECLARED_OBSERVATIONS: [&str; 5] = [
     "data.host_engine.target_99",
     "data.host_engine.current",
     compile::GATEWAY_APPLY_CAPABILITIES_ADDRESS,
-    "data.nemoclaw_runtime_image.runtime_image_present_managed_gateway_runtime",
+    "data.host_image.runtime_image_present_managed_gateway_runtime",
 ];
 
 #[test]

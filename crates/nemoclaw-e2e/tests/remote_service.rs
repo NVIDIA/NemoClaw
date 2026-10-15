@@ -147,7 +147,7 @@ impl Scenario {
         save(
             root,
             "fixture.json",
-            &json!({"files":files,"stats":stats,"image_refs":[service["image"]],"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.runtime.spec":"v1","org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.inference.authentication":"bearer-v1","org.nemoclaw.inference.routes":"openai-v2","org.nemoclaw.backend":kind,"org.nemoclaw.model":service["model"]["revision"].as_str().or(service["model"]["digest"].as_str()).unwrap()}}}}),
+            &json!({"files":files,"stats":stats,"image_refs":[service["image"]],"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.inference.authentication":"bearer-v1","org.nemoclaw.inference.routes":"openai-v2","org.nemoclaw.backend":kind,"org.nemoclaw.model":service["model"]["revision"].as_str().or(service["model"]["digest"].as_str()).unwrap()}}}}),
         );
         save(
             root,
@@ -359,7 +359,7 @@ async fn unverified_ollama_images_are_checked_after_pull_before_storage() {
 async fn pulled_incompatible_image_fails_before_storage(s: &Scenario) {
     let root = s.root.as_path();
     let mut stale = read(root, "fixture.json");
-    stale["image"]["Config"]["Labels"]["org.nemoclaw.runtime.spec"] = json!("v0");
+    stale["image"]["Config"]["Labels"]["org.nemoclaw.backend"] = json!("other");
     save(root, "fixture.json", &stale);
     let plan: Value = serde_json::from_slice(&s.run("plan", "config.yaml", true).await).unwrap();
     assert_eq!(plan["complete"], false);
@@ -376,7 +376,7 @@ async fn pulled_incompatible_image_fails_before_storage(s: &Scenario) {
     );
     assert_eq!(read(root, "engine.json")["effects"], 0);
     let error = String::from_utf8(s.run("apply", "config.yaml", false).await).unwrap();
-    assert!(error.contains("runtime specification"), "{error}");
+    assert!(error.contains("org.nemoclaw.backend"), "{error}");
     let engine = read(root, "engine.json");
     assert_eq!(engine["pulls"], 1);
     assert_eq!(engine["effects"], 1);
@@ -399,18 +399,17 @@ async fn present_incompatible_images_fail_before_effects(s: &Scenario) {
         "engine.json",
         &json!({"effects":0,"creates":0,"image_missing":false,"pulls":0}),
     );
-    for version in [None, Some("v0"), Some("PRIVATE_IMAGE_SENTINEL")] {
+    for backend in [None, Some("other"), Some("PRIVATE_IMAGE_SENTINEL")] {
         let mut stale = original.clone();
         let labels = stale["image"]["Config"]["Labels"].as_object_mut().unwrap();
-        labels.remove("org.nemoclaw.runtime.spec");
-        if let Some(version) = version {
-            labels.insert("org.nemoclaw.runtime.spec".into(), json!(version));
+        labels.remove("org.nemoclaw.backend");
+        if let Some(backend) = backend {
+            labels.insert("org.nemoclaw.backend".into(), json!(backend));
         }
         save(root, "fixture.json", &stale);
         for command in ["plan", "apply"] {
             let error = String::from_utf8(s.run(command, "config.yaml", false).await).unwrap();
-            assert!(error.contains("runtime specification"), "{error}");
-            assert!(error.contains("rebuild"), "{error}");
+            assert!(error.contains("org.nemoclaw.backend"), "{error}");
             assert!(!error.contains("PRIVATE_IMAGE_SENTINEL"), "{error}");
             assert_eq!(read(root, "engine.json")["effects"], 0);
             assert_eq!(s.gateway.state.lock().unwrap().effects, 0);
@@ -873,7 +872,7 @@ async fn incompatible_image_blocks_changes_but_not_teardown(s: &Scenario, volume
     stale["image"]["Config"]["Labels"]
         .as_object_mut()
         .unwrap()
-        .remove("org.nemoclaw.runtime.spec");
+        .remove("org.nemoclaw.backend");
     save(root, "fixture.json", &stale);
     let before = read(root, "engine.json");
     let bindings = s.runtime_state();

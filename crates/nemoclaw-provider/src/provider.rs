@@ -96,12 +96,7 @@ impl Provider for NemoClawProvider {
         &self,
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
-        Some(HashMap::from([(
-            "runtime_image".into(),
-            Box::new(crate::runtime_image::RuntimeImageDataSource(
-                self.backend.clone(),
-            )) as Box<dyn DynamicDataSource>,
-        )]))
+        Some(HashMap::new())
     }
     fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
         Some(destroy_schema())
@@ -235,12 +230,19 @@ impl Provider for HostProvider {
         &self,
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
-        Some(HashMap::from([(
-            "engine".into(),
-            Box::new(crate::host_engine::HostEngineDataSource(
-                self.backend.clone(),
-            )) as Box<dyn DynamicDataSource>,
-        )]))
+        Some(HashMap::from([
+            (
+                "engine".into(),
+                Box::new(crate::host_engine::HostEngineDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
+            ),
+            (
+                "image".into(),
+                Box::new(crate::host_image::HostImageDataSource(self.backend.clone()))
+                    as Box<dyn DynamicDataSource>,
+            ),
+        ]))
     }
 }
 

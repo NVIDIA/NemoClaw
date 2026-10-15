@@ -8,12 +8,3 @@
 
 provider nemoclaw (version 0)
   destroy: bool, optional
-
-data nemoclaw_runtime_image (version 0)
-  allow_missing: bool, optional
-  architecture: string, required
-  engine: string, required
-  image: string, required
-  image_id: string, optional
-  labels: map(string), optional
-  observation_json: string, computed

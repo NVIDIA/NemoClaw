@@ -1,13 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Read the runtime's image contract without acquiring images or creating resources.
+//! `host_image`: whether an engine holds an image with a platform, architecture,
+//! and labels, without pulling it or starting anything.
 use crate::{Error, ObservationError, docker::Connections, provider::ConfiguredBackend};
 use async_trait::async_trait;
-use nemoclaw_sdk::{
-    discovery::{ObservationStatus, RuntimeImageObservation},
-    managed::{RUNTIME_SPEC_VERSION, RUNTIME_SPEC_VERSION_LABEL},
-};
+use nemoclaw_sdk::discovery::{ObservationStatus, RuntimeImageObservation};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tf_provider::{
@@ -16,9 +14,9 @@ use tf_provider::{
     value::{Value, ValueEmpty},
 };
 
-pub(crate) struct RuntimeImageDataSource(pub Arc<ConfiguredBackend>);
+pub(crate) struct HostImageDataSource(pub Arc<ConfiguredBackend>);
 #[derive(Default, Serialize, Deserialize)]
-pub(crate) struct RuntimeImageState {
+pub(crate) struct HostImageState {
     engine: Value<String>,
     image: Value<String>,
     architecture: Value<String>,
@@ -27,7 +25,7 @@ pub(crate) struct RuntimeImageState {
     allow_missing: Value<bool>,
     observation_json: Value<String>,
 }
-/// The image a service runtime requires on its engine.
+/// The image required on an engine.
 struct Requirements {
     engine: String,
     image: String,
@@ -36,15 +34,12 @@ struct Requirements {
 }
 impl Requirements {
     /// The requirements, or `None` while any input is unknown.
-    fn from_state(config: &RuntimeImageState) -> Result<Option<Self>, Error> {
+    fn from_state(config: &HostImageState) -> Result<Option<Self>, Error> {
         let mut known = Vec::new();
         for (value, required) in [
-            (&config.engine, "runtime image engine is required"),
-            (&config.image, "runtime image is required"),
-            (
-                &config.architecture,
-                "runtime image architecture is required",
-            ),
+            (&config.engine, "image engine is required"),
+            (&config.image, "image is required"),
+            (&config.architecture, "image architecture is required"),
         ] {
             match value {
                 Value::Value(value) => known.push(value.clone()),
@@ -60,7 +55,7 @@ impl Requirements {
                 .map(|(key, value)| match value {
                     Value::Value(value) => Ok(Some((key.clone(), value.clone()))),
                     Value::Unknown => Ok(None),
-                    Value::Null => Err(Error::State("runtime image label values are required")),
+                    Value::Null => Err(Error::State("image label values are required")),
                 })
                 .collect::<Result<Option<_>, _>>()?,
         };
@@ -74,14 +69,10 @@ impl Requirements {
             .unwrap()
             .is_match(&image)
         {
-            return Err(Error::Conflict(
-                "runtime image must be pinned by SHA-256 digest",
-            ));
+            return Err(Error::Conflict("image must be pinned by SHA-256 digest"));
         }
         if !matches!(architecture.as_str(), "amd64" | "arm64") {
-            return Err(Error::Conflict(
-                "runtime image architecture must be amd64 or arm64",
-            ));
+            return Err(Error::Conflict("image architecture must be amd64 or arm64"));
         }
         Ok(Some(Self {
             engine,
@@ -108,14 +99,13 @@ async fn observe(
     let mut observation = RuntimeImageObservation {
         status: ObservationStatus::Unknown,
         source: "engine_image".into(),
-        required_version: RUNTIME_SPEC_VERSION.into(),
     };
     let Some(image) = image else {
         if allow_missing && image_id.is_none() {
             return Ok(observation);
         }
         return Err(Error::Conflict(
-            "runtime image is absent from the selected engine; load the pinned image there or allow pulling",
+            "image is absent from the selected engine; load the pinned image there or allow pulling",
         ));
     };
     if image.id.as_ref().is_none_or(String::is_empty)
@@ -127,34 +117,30 @@ async fn observe(
         .config
         .as_ref()
         .and_then(|config| config.labels.as_ref());
-    if labels
-        .and_then(|labels| labels.get(RUNTIME_SPEC_VERSION_LABEL))
-        .map(String::as_str)
-        != Some(RUNTIME_SPEC_VERSION)
-    {
-        return Err(Error::Configuration(nemoclaw_sdk::config::ConfigError(
-            format!(
-                "runtime image does not support runtime specification {RUNTIME_SPEC_VERSION}; rebuild the runtime image with this revision's nemoclaw-build runtime command and update the image digest (docs/build.md)"
-            ),
-        )));
-    }
     if image.os.as_deref() != Some("linux")
         || image.architecture.as_deref() != Some(required.architecture.as_str())
-        || required
-            .labels
-            .iter()
-            .any(|(key, value)| labels.and_then(|labels| labels.get(key)) != Some(value))
     {
-        return Err(Error::Conflict(
-            "runtime image platform or required backend, recipe, authentication, or route-restriction (org.nemoclaw.inference.routes) labels are incompatible; rebuild the runtime image (docs/build.md) and update its digest",
-        ));
+        return Err(Error::Configuration(nemoclaw_sdk::config::ConfigError(
+            format!("image platform is not linux/{}", required.architecture),
+        )));
+    }
+    // Name the label, never the image's value.
+    if let Some(key) = required
+        .labels
+        .iter()
+        .find(|(key, value)| labels.and_then(|labels| labels.get(*key)) != Some(*value))
+        .map(|(key, _)| key)
+    {
+        return Err(Error::Configuration(nemoclaw_sdk::config::ConfigError(
+            format!("image label {key} is missing or does not match the required value"),
+        )));
     }
     observation.status = ObservationStatus::Available;
     Ok(observation)
 }
 #[async_trait]
-impl DataSource for RuntimeImageDataSource {
-    type State<'a> = RuntimeImageState;
+impl DataSource for HostImageDataSource {
+    type State<'a> = HostImageState;
     type ProviderMetaState<'a> = ValueEmpty;
     fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
         use AttributeConstraint::{Computed, Optional, Required};
@@ -187,12 +173,12 @@ impl DataSource for RuntimeImageDataSource {
             },
         })
     }
-    async fn validate<'a>(&self, diags: &mut Diagnostics, config: RuntimeImageState) -> Option<()> {
+    async fn validate<'a>(&self, diags: &mut Diagnostics, config: HostImageState) -> Option<()> {
         let result = Requirements::from_state(&config).map(|_| ());
         match result {
             Ok(()) => Some(()),
             Err(error) => {
-                diags.root_error("Invalid runtime image requirements", error.to_string());
+                diags.root_error("Invalid image requirements", error.to_string());
                 None
             }
         }
@@ -200,25 +186,23 @@ impl DataSource for RuntimeImageDataSource {
     async fn read<'a>(
         &self,
         diags: &mut Diagnostics,
-        mut config: RuntimeImageState,
+        mut config: HostImageState,
         _: ValueEmpty,
-    ) -> Option<RuntimeImageState> {
+    ) -> Option<HostImageState> {
         let work = async {
             let Some(required) = Requirements::from_state(&config)? else {
-                return Err(Error::State("runtime image requirements are not yet known"));
+                return Err(Error::State("image requirements are not yet known"));
             };
             let image_id = match &config.image_id {
                 Value::Null => None,
                 Value::Value(id) if !id.is_empty() => Some(id.as_str()),
-                _ => return Err(Error::State("runtime image identity is not yet known")),
+                _ => return Err(Error::State("image identity is not yet known")),
             };
             let allow_missing = match config.allow_missing {
                 Value::Null => false,
                 Value::Value(value) => value,
                 Value::Unknown => {
-                    return Err(Error::State(
-                        "runtime image acquisition policy is not yet known",
-                    ));
+                    return Err(Error::State("image acquisition policy is not yet known"));
                 }
             };
             observe(self.0.connections(), &required, image_id, allow_missing).await
@@ -226,16 +210,12 @@ impl DataSource for RuntimeImageDataSource {
         .await;
         match work {
             Ok(observation) => {
-                config.observation_json = Value::Value(
-                    serde_json::to_string(&observation).expect("runtime image observation"),
-                );
+                config.observation_json =
+                    Value::Value(serde_json::to_string(&observation).expect("image observation"));
                 Some(config)
             }
             Err(error) => {
-                diags.root_error(
-                    "Runtime image compatibility check failed",
-                    error.to_string(),
-                );
+                diags.root_error("Image compatibility check failed", error.to_string());
                 None
             }
         }
@@ -251,7 +231,7 @@ mod tests {
 
     #[test]
     fn requirements_validate_offline_and_defer_unknown_values() {
-        let valid = || RuntimeImageState {
+        let valid = || HostImageState {
             engine: Value::Value("unix:///var/run/docker.sock".into()),
             image: Value::Value(format!("runtime@sha256:{}", "a".repeat(64))),
             architecture: Value::Value("arm64".into()),
@@ -266,9 +246,9 @@ mod tests {
         unlabeled.labels = Value::Null;
         assert!(Requirements::from_state(&unlabeled).unwrap().is_some());
         for change in [
-            |state: &mut RuntimeImageState| state.image = Value::Unknown,
-            |state: &mut RuntimeImageState| state.labels = Value::Unknown,
-            |state: &mut RuntimeImageState| {
+            |state: &mut HostImageState| state.image = Value::Unknown,
+            |state: &mut HostImageState| state.labels = Value::Unknown,
+            |state: &mut HostImageState| {
                 state.labels =
                     Value::Value([("org.nemoclaw.backend".into(), Value::Unknown)].into())
             },
@@ -278,10 +258,10 @@ mod tests {
             assert!(Requirements::from_state(&state).unwrap().is_none());
         }
         for change in [
-            |state: &mut RuntimeImageState| state.image = Value::Null,
-            |state: &mut RuntimeImageState| state.image = Value::Value("runtime:latest".into()),
-            |state: &mut RuntimeImageState| state.architecture = Value::Value("riscv64".into()),
-            |state: &mut RuntimeImageState| state.engine = Value::Value("tcp://engine".into()),
+            |state: &mut HostImageState| state.image = Value::Null,
+            |state: &mut HostImageState| state.image = Value::Value("runtime:latest".into()),
+            |state: &mut HostImageState| state.architecture = Value::Value("riscv64".into()),
+            |state: &mut HostImageState| state.engine = Value::Value("tcp://engine".into()),
         ] {
             let mut state = valid();
             change(&mut state);
@@ -327,8 +307,6 @@ mod tests {
             };
             for variant in [
                 "valid",
-                "missing",
-                "version",
                 "backend",
                 "architecture",
                 "identity",
@@ -352,16 +330,6 @@ mod tests {
                     _ => 200,
                 };
                 match variant {
-                    "missing" => {
-                        image["Config"]["Labels"]
-                            .as_object_mut()
-                            .unwrap()
-                            .remove(RUNTIME_SPEC_VERSION_LABEL);
-                    }
-                    "version" => {
-                        image["Config"]["Labels"][RUNTIME_SPEC_VERSION_LABEL] =
-                            json!("PRIVATE_SENTINEL")
-                    }
                     "backend" => {
                         image["Config"]["Labels"]["org.nemoclaw.backend"] =
                             json!("PRIVATE_SENTINEL")
@@ -416,16 +384,14 @@ mod tests {
                     _ => {
                         let message = result.unwrap_err().to_string();
                         assert!(!message.contains("PRIVATE_SENTINEL"), "{message}");
-                        if matches!(variant, "missing" | "version") {
-                            assert!(message.contains("runtime specification v1"), "{message}");
-                            assert!(message.contains("rebuild"));
+                        if variant == "backend" {
+                            assert!(message.contains("org.nemoclaw.backend"), "{message}");
                         }
                         if variant.ends_with("bearer_routes") {
                             assert!(
                                 message.contains("org.nemoclaw.inference.routes"),
                                 "{message}"
                             );
-                            assert!(message.contains("docs/build.md"), "{message}");
                         }
                         if variant == "authentication" {
                             assert_eq!(message, "observation authentication failed");

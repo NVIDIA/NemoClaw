@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Authored runtime image checks through pinned OpenTofu.
+//! Authored image checks through pinned OpenTofu.
 
 use crate::{http_fixture::Fixture, tofu::TofuWorkspace};
-use nemoclaw_sdk::managed::{RUNTIME_SPEC_VERSION, RUNTIME_SPEC_VERSION_LABEL};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -31,13 +30,13 @@ fn workspace(engine: &str) -> TofuWorkspace {
         format!(
             r#"terraform {{
   required_providers {{
-    nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw" }}
+    host = {{ source = "registry.opentofu.org/nvidia/host" }}
   }}
 }}
 
-provider "nemoclaw" {{}}
+provider "host" {{}}
 
-data "nemoclaw_runtime_image" "vllm" {{
+data "host_image" "vllm" {{
   engine       = "{engine}"
   image        = "runtime@sha256:{digest}"
   architecture = "arm64"
@@ -47,7 +46,7 @@ data "nemoclaw_runtime_image" "vllm" {{
 }}
 
 output "observation" {{
-  value = jsondecode(data.nemoclaw_runtime_image.vllm.observation_json)
+  value = jsondecode(data.host_image.vllm.observation_json)
 }}
 "#,
             digest = "a".repeat(64),
@@ -59,13 +58,11 @@ output "observation" {{
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
-async fn authored_runtime_image_check_reads_labels_and_rejects_an_incompatible_image() {
+async fn authored_image_check_reads_labels_and_rejects_an_incompatible_image() {
     let image = Arc::new(Mutex::new(json!({
         "Id": "sha256:runtime", "Os": "linux", "Architecture": "arm64",
-        "Config": {"Labels": {
-            RUNTIME_SPEC_VERSION_LABEL: RUNTIME_SPEC_VERSION,
-            "org.nemoclaw.backend": "vllm"
-        }}
+        // Only the labels the check names matter; NemoClaw adds no others.
+        "Config": {"Labels": {"org.nemoclaw.backend": "vllm"}}
     })));
     let engine = image_engine(image.clone()).await;
     let workspace = workspace(&engine.endpoint);
@@ -85,7 +82,7 @@ async fn authored_runtime_image_check_reads_labels_and_rejects_an_incompatible_i
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Runtime image compatibility check failed"),
+        stderr.contains("Image compatibility check failed"),
         "{stderr}"
     );
 }

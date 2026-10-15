@@ -309,7 +309,7 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
         graph["resource"]["docker_container"]["managed_gateway_runtime"]["depends_on"],
         json!([
             "openshell_gateway_storage.runtime",
-            "data.nemoclaw_runtime_image.runtime_image_acquired_inference_service_inference_qwen"
+            "data.host_image.runtime_image_acquired_inference_service_inference_qwen"
         ])
     );
     let gateway = &graph["resource"]["docker_container"]["managed_gateway_runtime"];
@@ -358,7 +358,7 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
         BTreeSet::from([
             "docker_container.managed_gateway_runtime",
             "docker_volume.inference_storage_inference_qwen",
-            "data.nemoclaw_runtime_image.runtime_image_acquired_inference_service_inference_qwen"
+            "data.host_image.runtime_image_acquired_inference_service_inference_qwen"
         ])
     );
     for target in targets
@@ -416,7 +416,7 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
         BTreeSet::from([
             "docker_volume.inference_storage_inference_qwen",
             network_address.as_str(),
-            "data.nemoclaw_runtime_image.runtime_image_acquired_inference_service_inference_qwen",
+            "data.host_image.runtime_image_acquired_inference_service_inference_qwen",
         ])
     );
     assert_eq!(

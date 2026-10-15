@@ -348,5 +348,4 @@ pub use nemoclaw_fabric::FabricObservation;
 pub struct RuntimeImageObservation {
     pub status: ObservationStatus,
     pub source: String,
-    pub required_version: String,
 }

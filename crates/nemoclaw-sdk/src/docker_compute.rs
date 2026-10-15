@@ -499,8 +499,8 @@ fn runtime_image_checks(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             "allow_missing": image.kind == "docker_image",
         });
         literal(&mut config);
-        graph["data"]["nemoclaw_runtime_image"][&present] = config.clone();
-        let present_address = format!("data.nemoclaw_runtime_image.{present}");
+        graph["data"]["host_image"][&present] = config.clone();
+        let present_address = format!("data.host_image.{present}");
         let attribute = if image.kind == "docker_image_data" {
             "id"
         } else {
@@ -508,7 +508,7 @@ fn runtime_image_checks(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
         };
         config["image_id"] = json!(format!("${{{}.{attribute}}}", image.address));
         config["allow_missing"] = json!(false);
-        graph["data"]["nemoclaw_runtime_image"][&acquired] = config;
+        graph["data"]["host_image"][&acquired] = config;
         if image.kind == "docker_image" {
             let name = image.address.split_once('.').unwrap().1;
             add_dependencies(
@@ -516,7 +516,7 @@ fn runtime_image_checks(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
                 &[json!(present_address)],
             );
         }
-        gates.push(json!(format!("data.nemoclaw_runtime_image.{acquired}")));
+        gates.push(json!(format!("data.host_image.{acquired}")));
     }
     if !gates.is_empty()
         && let Some(resources) = graph["resource"].as_object_mut()
@@ -654,12 +654,10 @@ mod tests {
             gateway["depends_on"],
             json!([
                 "openshell_gateway_storage.runtime",
-                "data.nemoclaw_runtime_image.runtime_image_acquired_inference_service_inference_qwen"
+                "data.host_image.runtime_image_acquired_inference_service_inference_qwen"
             ])
         );
-        let gate = json!(
-            "data.nemoclaw_runtime_image.runtime_image_acquired_inference_service_inference_qwen"
-        );
+        let gate = json!("data.host_image.runtime_image_acquired_inference_service_inference_qwen");
         for (kind, resources) in graph["resource"].as_object().unwrap() {
             if kind != "docker_image" {
                 for resource in resources.as_object().unwrap().values() {
