@@ -151,6 +151,27 @@ export async function verifyNativeLocalProviderAttachment(input: AttachmentInput
   return checked.expected;
 }
 
+/** Verify recorded rebuild authority without repairing or changing provider state. */
+export async function verifyRecordedNativeLocalProviderAttachment(input: {
+  adapter: OpenShellProviderAdapter;
+  expected: unknown;
+  sandboxName: string;
+  gatewayName?: string;
+  agent: string | null | undefined;
+  provider: string | null | undefined;
+}) {
+  const expected = normalizeNativeLocalProviderAttachment(input.expected);
+  if (
+    !expected ||
+    input.agent !== "langchain-deepagents-code" ||
+    expected.provider !== input.provider ||
+    expected.sandboxName !== input.sandboxName ||
+    (input.gatewayName !== undefined && expected.gatewayName !== input.gatewayName)
+  )
+    throw new Error("Native local provider authority does not match the rebuild target.");
+  return verifyNativeLocalProviderAttachment({ ...input, expected });
+}
+
 export async function ensureNativeLocalProviderAttached(input: AttachmentInput) {
   const checked = await checkedAttachment(input);
   const result = await ensureNativeProviderAttached({ ...input, ...checked });

@@ -5,9 +5,12 @@ import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-
 import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider/registry";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import type { NativeLocalProviderAttachment } from "../../inference/native-local/contract";
 
 type RebuildAuthoritativePreflightOptions = RebuildRecreateOnboardOpts & {
   deferInferenceRouteUntilOnboard?: true;
+  agent?: string | null;
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   model: string;
   provider: string;
   sandboxName: string;

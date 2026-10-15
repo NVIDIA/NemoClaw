@@ -21,6 +21,17 @@ import {
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
+import * as managedProviderAdapter from "../../adapters/openshell/managed-provider-adapter";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
+import { preflightRebuildCredentials } from "./rebuild-credential-preflight";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
+import * as providerPreflight from "./rebuild-provider-preflight";
+import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+
+vi.mock("../../adapters/openshell/provider-policy", () => ({
+  requireNativeProviderPolicy: vi.fn(async () => {}),
+}));
 
 const exactGatewayProvider: GatewayProviderMetadata = {
   name: "compatible-endpoint",
@@ -63,6 +74,128 @@ function config(overrides: Partial<RebuildResumeConfig> = {}): RebuildResumeConf
 const throwingBail = (message: string): never => {
   throw new Error(message);
 };
+
+describe("native local rebuild credentials", () => {
+  function nativeFixture() {
+    const binding = {
+      provider: "compatible-endpoint" as const,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated" as const,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+    };
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "owned",
+    };
+    const adapter = {
+      inspectProviderProfile: vi.fn(async () => ({
+        ok: true,
+        value: { credentialKeys: [binding.credentialEnv] },
+      })),
+      getProvider: vi.fn(async () => ({
+        ok: true,
+        value: {
+          name: attachment.providerName,
+          type: attachment.profileId,
+          credentialKeys: [binding.credentialEnv],
+          configKeys: [],
+          revision: { id: "owned", resourceVersion: 1 },
+        },
+      })),
+      listProviderAttachments: vi.fn(async () => ({
+        ok: true,
+        value: { names: [attachment.providerName] },
+      })),
+    };
+    vi.spyOn(managedProviderAdapter, "createManagedProviderAdapter").mockReturnValue(
+      adapter as unknown as OpenShellProviderAdapter,
+    );
+    const hydrate = vi
+      .spyOn(rebuildOnboardDependencies, "hydrateCredentialEnv")
+      .mockReturnValue(null);
+    const selection = config({
+      agent: "langchain-deepagents-code",
+      endpointUrl: "http://localhost:8000/v1",
+      nativeLocalProviderAttachment: attachment,
+    });
+    const entry = {
+      ...selection,
+      name: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    } as unknown as RebuildSandboxEntry;
+    return { attachment, adapter, selection, entry, hydrate };
+  }
+
+  it("reuses the native credential without requiring a shared registration or host key (#13197)", async () => {
+    const f = nativeFixture();
+    const readShared = vi.fn();
+    await expect(preflightRebuildCredentials(f.entry, vi.fn(), throwingBail)).resolves.toBe(true);
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail("alpha", f.selection, false, vi.fn(), throwingBail, {
+        readGatewayProviderMetadata: readShared,
+        readRecordedProviderEndpoints: vi.fn(),
+      }),
+    ).resolves.toBe(true);
+    expect(f.adapter.getProvider.mock.calls).toEqual([
+      [
+        {
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          providerName: f.attachment.providerName,
+        },
+      ],
+      [
+        {
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          providerName: f.attachment.providerName,
+        },
+      ],
+    ]);
+    expect(readShared).not.toHaveBeenCalled();
+  });
+
+  it("still rejects a staged host credential that cannot recreate native access (#13197)", async () => {
+    const f = nativeFixture();
+    f.hydrate.mockReturnValue("test-only-rejected-key");
+    const validate = vi
+      .spyOn(providerPreflight, "validateRebuildHostInferenceCredential")
+      .mockResolvedValue(false);
+    await expect(preflightRebuildCredentials(f.entry, vi.fn(), throwingBail)).rejects.toThrow(
+      "Host inference credential validation failed",
+    );
+    expect(validate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        credentialEnv: "COMPATIBLE_API_KEY",
+      }),
+      "test-only-rejected-key",
+    );
+  });
+
+  it.each([false, true])(
+    "rejects detached native credentials even with host key available=%s (#13197)",
+    async (hostKey) => {
+      const f = nativeFixture();
+      f.adapter.listProviderAttachments.mockResolvedValue({ ok: true, value: { names: [] } });
+      await expect(preflightRebuildCredentials(f.entry, vi.fn(), throwingBail)).rejects.toThrow(
+        "Could not verify native local provider credentials",
+      );
+      await expect(
+        checkRebuildGatewayCredentialReuseOrBail(
+          "alpha",
+          f.selection,
+          hostKey,
+          vi.fn(),
+          throwingBail,
+        ),
+      ).rejects.toThrow("Could not verify native local provider credential reuse");
+    },
+  );
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();

@@ -20,6 +20,7 @@ import {
   ensureNativeLocalProviderAttached,
   prepareNativeLocalProfile,
   verifyNativeLocalProviderAttachment,
+  verifyRecordedNativeLocalProviderAttachment,
   retireNativeLocalProvider,
 } from "./native-local/profile";
 
@@ -121,6 +122,95 @@ function fixture(selectedBinding: NativeLocalBinding = binding) {
 }
 
 describe("native local inference", () => {
+  it.each([
+    { reason: "wrong agent", override: { agent: "openclaw" } },
+    { reason: "wrong provider", override: { provider: "compatible-endpoint" } },
+    { reason: "wrong sandbox", override: { sandboxName: "bob" } },
+    { reason: "wrong gateway", override: { gatewayName: "nemoclaw-8081" } },
+    { reason: "malformed receipt", override: { expected: {} } },
+  ])(
+    "stops a native rebuild with $reason before provider access (#13197)",
+    async ({ override }) => {
+      const f = fixture();
+      await expect(
+        verifyRecordedNativeLocalProviderAttachment({
+          adapter: f.adapter,
+          expected: receipt,
+          agent: "langchain-deepagents-code",
+          sandboxName: binding.sandboxName,
+          gatewayName: binding.gatewayName,
+          provider: binding.provider,
+          ...override,
+        }),
+      ).rejects.toThrow("does not match the rebuild target");
+      expect(f.adapter.inspectProviderProfile).not.toHaveBeenCalled();
+      expect(f.adapter.getProvider).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      state: "missing",
+      change: (f: ReturnType<typeof fixture>, _expected: NativeLocalProviderAttachment) =>
+        f.adapter.deleteProvider(),
+    },
+    {
+      state: "changed instance",
+      change: (f: ReturnType<typeof fixture>, expected: NativeLocalProviderAttachment) => {
+        f.adapter.getProvider.mockResolvedValue({
+          ok: true,
+          value: {
+            name: expected.providerName,
+            type: expected.profileId,
+            credentialKeys: [expected.credentialEnv],
+            configKeys: [],
+            revision: { id: "different-instance", resourceVersion: 2 },
+          },
+        });
+      },
+    },
+    {
+      state: "detached",
+      change: (f: ReturnType<typeof fixture>, _expected: NativeLocalProviderAttachment) =>
+        f.adapter.detachProvider(),
+    },
+    {
+      state: "profile mismatch",
+      change: (f: ReturnType<typeof fixture>, _expected: NativeLocalProviderAttachment) => {
+        f.adapter.inspectProviderProfile.mockResolvedValue({
+          ok: false,
+          error: { kind: "parse", message: "mismatched" },
+        } as never);
+      },
+    },
+    {
+      state: "unavailable",
+      change: (f: ReturnType<typeof fixture>, _expected: NativeLocalProviderAttachment) => {
+        f.adapter.getProvider.mockRejectedValue(new Error("transport unavailable"));
+      },
+    },
+  ])("stops a native rebuild when recorded access is $state (#13197)", async ({ change }) => {
+    const f = fixture();
+    const expected = await ensureNativeLocalProvider(f.input);
+    await ensureNativeLocalProviderAttached({ adapter: f.adapter, expected, sandboxName: "alice" });
+    await change(f, expected);
+    vi.clearAllMocks();
+    await expect(
+      verifyRecordedNativeLocalProviderAttachment({
+        adapter: f.adapter,
+        expected,
+        agent: "langchain-deepagents-code",
+        sandboxName: "alice",
+        gatewayName: "nemoclaw",
+        provider: binding.provider,
+      }),
+    ).rejects.toThrow();
+    expect(f.adapter.createProvider).not.toHaveBeenCalled();
+    expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+  });
+
   it.each([
     "http://host.openshell.internal:11435/v1",
     "http://host.docker.internal:11435/v1/",
