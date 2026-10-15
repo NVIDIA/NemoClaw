@@ -671,7 +671,8 @@ Generated graphs also run the container as `0:0` and give it:
 - the storage's volume mounted at `data_path`;
 - the engine socket mounted at `/var/run/docker.sock`;
 - the endpoint's port published on the endpoint's address;
-- the storage's bridge network, at the second host address of `network_cidr`.
+- the storage's bridge network, at the second host address of `network_cidr`;
+- the restart policy `unless-stopped`, so the engine starts the gateway again after the gateway or the host restarts, while a gateway stopped with `docker stop` stays stopped.
 
 ## Runtime Image Compatibility
 
