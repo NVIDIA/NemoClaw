@@ -366,6 +366,27 @@ function materializeReviewedTarball(
   return tarballPath;
 }
 
+it("bounds reload-proof diagnostics while retaining the final gateway error", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "reload-diagnostics-"));
+  try {
+    fs.writeFileSync(
+      path.join(root, "openclaw.mjs"),
+      'process.stdout.write("x".repeat(128 * 1024), () => process.stderr.write("final-gateway-error", () => process.exit(1)));',
+    );
+    const error = await runRealOpenClawAgentReloadProof({
+      dist: path.join(root, "dist"),
+      nodeExecutable: process.execPath,
+      gatewayConfig: { reload: { mode: "hybrid" } },
+    }).catch((error: Error) => error);
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain("final-gateway-error");
+    expect(message.length).toBeLessThanOrEqual(64 * 1024 + "gateway did not start: ".length);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 describe("OpenClaw real patched-dist materialization guard", () => {
   it("maps container-only patch helpers to their repository fixtures", () => {
     const command = dockerfilePatchCommand("/tmp/reviewed-openclaw-dist");

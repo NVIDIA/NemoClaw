@@ -56,12 +56,11 @@ export async function runRealOpenClawAgentReloadProof(options: {
     stdio: ["ignore", "pipe", "pipe"],
   });
   let logs = "";
-  gateway.stdout.on("data", (chunk: Buffer) => {
-    logs += chunk.toString();
-  });
-  gateway.stderr.on("data", (chunk: Buffer) => {
-    logs += chunk.toString();
-  });
+  const captureDiagnosticTail = (chunk: Buffer) => {
+    logs = (logs + chunk.toString()).slice(-64 * 1024);
+  };
+  gateway.stdout.on("data", captureDiagnosticTail);
+  gateway.stderr.on("data", captureDiagnosticTail);
   const cli = (...args: string[]): string => {
     const result = spawnSync(options.nodeExecutable, [entry, ...args], {
       env,
