@@ -10,9 +10,10 @@ import { describe, it } from "vitest";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../../src/lib/sandbox/build-context";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
-type PreparedContextScenario = "create" | "custom-dockerfile";
+type PreparedContextScenario = "create" | "custom-dockerfile" | "fallback";
 
 type PreparedContextResult = {
+  patchedDockerfile: string | null;
   buildCtx: string;
   buildId: string;
   cleanupCalls: number;
@@ -21,14 +22,17 @@ type PreparedContextResult = {
   patchCalls: number;
   patchSleepUsesSeconds: boolean | null;
   planFromRefs: string[];
-  registerCalls: Array<{ imageTag?: string | null }>;
+  registerCalls: Array<{ imageTag?: string | null; dcodeAutoApprovalMode?: string }>;
   resolvedBuildIds: string[];
   stageCalls: number;
 };
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 
-function runPreparedContextScenario(scenario: PreparedContextScenario): PreparedContextResult {
+function runPreparedContextScenario(
+  scenario: PreparedContextScenario,
+  mode: "disabled" | "thread-opt-in" = "disabled",
+): PreparedContextResult {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-prepared-context-test-"));
   const fakeBin = path.join(tmpDir, "bin");
   const scriptPath = path.join(tmpDir, "scenario.js");
@@ -86,6 +90,8 @@ const scenario = ${JSON.stringify(scenario)};
 const buildCtx = ${JSON.stringify(preparedBuildCtx)};
 const buildId = ${JSON.stringify(buildId)};
 const sandboxName = "prepared-dcode";
+const mode = ${JSON.stringify(mode)};
+let patchedDockerfile = null;
 const generatedImageRef = "nemoclaw-sandbox-local:" + sandboxName + "-" + buildId;
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName });
 createdSandbox.installRuntimeObservation();
@@ -131,11 +137,30 @@ dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = (options) => {
   };
 };
 
-buildContextStage.stageCreateSandboxBuildContext = () => {
+const stageBuildContext = buildContextStage.stageCreateSandboxBuildContext;
+const patchDockerfile = dockerfilePatchFlow.prepareSandboxDockerfilePatch;
+buildContextStage.stageCreateSandboxBuildContext = (input) => {
+  if (scenario === "fallback") {
+    stageCalls += 1;
+    return stageBuildContext({ ...input, createAgentSandbox: () => {
+      fs.copyFileSync(input.agent.dockerfilePath, buildCtx + "/Dockerfile");
+      return { buildCtx, stagedDockerfile: buildCtx + "/Dockerfile" };
+    }});
+  }
   stageCalls += 1;
   throw new Error("prepared context was unexpectedly restaged");
 };
-dockerfilePatchFlow.prepareSandboxDockerfilePatch = async () => {
+dockerfilePatchFlow.prepareSandboxDockerfilePatch = async (input) => {
+  if (scenario === "fallback") {
+    patchCalls += 1;
+    const result = await patchDockerfile({ ...input, deps: {
+      isLinuxDockerDriverGatewayEnabled: () => false,
+      enforceDockerGpuPatchPreserveNetwork: async () => false,
+      now: () => Number(buildId),
+    }});
+    patchedDockerfile = fs.readFileSync(input.stagedDockerfile, "utf8");
+    return result;
+  }
   patchCalls += 1;
   throw new Error("prepared context was unexpectedly repatched");
 };
@@ -241,6 +266,14 @@ const preparedBuildContext = {
   },
 };
 
+if (scenario === "fallback") {
+  const preparation = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/workload/preparation.ts"))});
+  const catalog = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/managed-image/catalog.ts"))});
+  const prepare = preparation.prepareSandboxWorkloadSource;
+  preparation.prepareSandboxWorkloadSource = (input) => prepare({ ...input, catalog: null, catalogPath: null }, {
+    resolveCatalog: async () => { throw new catalog.ManagedImageCatalogUnavailableError("fixture registry offline"); },
+  });
+}
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -266,9 +299,9 @@ const { createSandbox } = require(${onboardPath});
           [],
           null,
           null,
+          scenario === "fallback" ? { dcodeAutoApprovalMode: mode } : null,
           null,
-          null,
-          preparedBuildContext,
+          scenario === "fallback" ? null : preparedBuildContext,
         ],
         createFixture,
       ),
@@ -278,6 +311,7 @@ const { createSandbox } = require(${onboardPath});
   }
 
   console.log(JSON.stringify({
+    patchedDockerfile,
     buildCtx,
     buildId,
     cleanupCalls,
@@ -323,6 +357,24 @@ const { createSandbox } = require(${onboardPath});
 }
 
 describe("onboard prepared DCode build context", () => {
+  it.each(["disabled", "thread-opt-in"] as const)(
+    "patches the fallback Dockerfile and registers capability %s",
+    { timeout: 90_000 },
+    (mode) => {
+      const result = runPreparedContextScenario("fallback", mode);
+      assert.equal(result.errorMessage, null);
+      assert.equal(result.stageCalls, 1);
+      assert.equal(result.patchCalls, 1);
+      assert.ok(result.patchedDockerfile?.includes(`ARG NEMOCLAW_DCODE_AUTO_APPROVAL=${mode}`));
+      assert.equal(result.registerCalls[0]?.dcodeAutoApprovalMode, mode);
+      assert.ok(
+        result.commands.some(
+          (command) => command.includes("build") && command.includes(result.buildCtx),
+        ),
+      );
+      assert.ok(result.commands.every((command) => !/dcode (?:-y|--auto-approve)/.test(command)));
+    },
+  );
   it(
     "creates from the supplied context without restaging or repatching it (#6195)",
     {
