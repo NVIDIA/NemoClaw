@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import crypto from "node:crypto";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
 import { parse as parseToml } from "smol-toml";
 import {
@@ -238,12 +239,13 @@ test(
 test.for(hostedCases)(
   "$id $label answers through its native provider",
   {
-    timeout: 20 * 60_000,
+    timeout: 35 * 60_000,
     meta: {
       e2ePhases: [
         "confirm hosted provider prerequisites",
         "recreate the hosted sandbox",
         "onboard the hosted provider",
+        "exercise the selected hosted lifecycle",
         "verify native agent configuration",
         "verify hosted credential isolation",
         "switch OpenRouter models when selected",
@@ -274,6 +276,7 @@ test.for(hostedCases)(
       model,
       contract: [
         "hosted provider onboards",
+        "OpenRouter remains usable after rebuild without a fresh host credential",
         "agent uses the native endpoint with a credential placeholder",
         "selected credential is absent from sandbox environment, process arguments, and sampled files",
         "fresh agent request answers with the selected model",
@@ -298,6 +301,23 @@ test.for(hostedCases)(
     cleanup.add(`strict hosted inference cleanup for ${sandboxName}`, () =>
       cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
     );
+    progress.phase("exercise the selected hosted lifecycle");
+    // Reuse routing and isolation checks after rebuild without a fresh host key.
+    const rebuilt = await host.command(
+      process.execPath,
+      [CLI_ENTRYPOINT, sandboxName, "rebuild", "--yes", "--verbose"],
+      {
+        artifactName: "tc-inf-07-rebuild",
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+        redactionValues: [apiKey],
+        timeoutMs: 10 * 60_000,
+      },
+    );
+    expect(rebuilt.exitCode, resultText(rebuilt)).toBe(0);
     progress.phase("verify native agent configuration");
     const config = await sandbox.exec(
       sandboxName,

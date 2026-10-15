@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import JSON5 from "json5";
+import { canonicalPlaceholderKeys } from "../../../../src/lib/onboard/extra-placeholder-keys.ts";
 import * as ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
@@ -2244,19 +2245,7 @@ describe("Slack secrets-on-disk tripwire (#2085)", () => {
 
 describe.concurrent("provider placeholder refresh (#4251)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  const extraPlaceholderKeys = require(
-    path.join(
-      import.meta.dirname,
-      "../../../..",
-      "src",
-      "lib",
-      "onboard",
-      "extra-placeholder-keys.ts",
-    ),
-  );
-  const canonicalKeys: string[] = Array.from(
-    extraPlaceholderKeys.canonicalPlaceholderKeys(),
-  ).sort();
+  const canonicalKeys = Array.from(canonicalPlaceholderKeys()).sort();
   async function runRefresh(
     config: unknown,
     env: Record<string, string> = {},
@@ -2280,7 +2269,14 @@ describe.concurrent("provider placeholder refresh (#4251)", () => {
         .replaceAll("/sandbox/.openclaw", openclawDir)
         .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath)
         .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE)
-        .replaceAll("/usr/local/bin/node", process.execPath);
+        .replaceAll("/usr/local/bin/node", process.execPath)
+        .replaceAll(
+          "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
+          path.resolve(
+            import.meta.dirname,
+            "../../../../tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
+          ),
+        );
       fs.writeFileSync(
         scriptPath,
         [

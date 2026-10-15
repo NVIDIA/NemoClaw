@@ -206,6 +206,7 @@
         "test/e2e/live/inference-routing-credential-scan.ts"
       ],
       "fast": [
+        "test/agents/openclaw/runtime/provider-placeholder-refresh.test.ts",
         "test/generation/generate-native-hosted-config.test.ts",
         "test/e2e/support/hosted-provider-smoke-selection.test.ts",
         "test/e2e/support/hosted-credential-scan.test.ts",

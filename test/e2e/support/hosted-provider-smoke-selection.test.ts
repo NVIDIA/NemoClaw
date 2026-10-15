@@ -31,6 +31,7 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label qualification selection", (se
     const target = catalogueTarget(id);
     expect(target.agentRuntime).toBe("openclaw + langchain-deepagents-code");
     expect(target.testFile).toBe("test/e2e/live/inference-routing-provider-smoke.test.ts");
+    expect(target.timeoutMinutes).toBe(selected.selector === "openrouter" ? 90 : 30);
     expect(
       new RegExp(target.selector!).test(
         `${selected.id} ${selected.label} answers through its native provider`,
@@ -85,6 +86,12 @@ it("runs both OpenRouter agents through the existing trusted target", () => {
     ),
   ).toBe(true);
   expect(target.environment.NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE).toBe("openrouter");
+  const selectedTestMinutes = 20 + 35;
+  const cleanupMinutes = 2 * 10;
+  const setupAndArtifactMinutes = 15;
+  expect(target.timeoutMinutes).toBeGreaterThanOrEqual(
+    selectedTestMinutes + cleanupMinutes + setupAndArtifactMinutes,
+  );
 });
 
 it("does not select hosted providers for unrelated shared files or the default suite", () => {
