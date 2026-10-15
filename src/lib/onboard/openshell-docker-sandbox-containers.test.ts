@@ -234,6 +234,7 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
       },
     ],
     ["returns malformed output", () => "not json"],
+    ["omits the container environment", () => JSON.stringify([{}])],
   ])(
     "captures nothing when container inspect %s, so opaque values cannot leak",
     (_scenario, inspect) => {

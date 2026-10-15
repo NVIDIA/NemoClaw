@@ -118,7 +118,7 @@ export function captureDockerContainerFailureEvidence(
   return {
     state: redactor.redactValue(state) as DockerContainerState | null,
     redactedLogTail: redactor.redactText(logTail).trim().slice(-FAILURE_EVIDENCE_LOG_CHARS),
-    inspectRedactionApplied: inspect !== null,
+    inspectRedactionApplied: Array.isArray(inspect?.Config?.Env),
     managedStartupCommandMissing: MISSING_MANAGED_STARTUP_COMMAND_LOG.test(logTail),
   };
 }
