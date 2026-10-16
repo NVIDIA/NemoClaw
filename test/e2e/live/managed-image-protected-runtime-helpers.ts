@@ -47,7 +47,6 @@ const AGENT_QUALIFICATION_TIMEOUT_MS = 10 * 60_000;
 const ROLLBACK_QUALIFICATION_TIMEOUT_MS = 10 * 60_000;
 const PROTECTED_READINESS_CAPTURE_LIMIT_BYTES = 4 * 1024 * 1024;
 const PROTECTED_PROVIDER_CONTAINER_MAX_LENGTH = 63;
-const NIM_STORAGE_PROBE_PATH = path.join(REPO_ROOT, "scripts/checks/capture-nim-storage.sh");
 
 export const PROTECTED_PROVIDER_OWNER_LABEL = "io.nvidia.nemoclaw.e2e-owner";
 export const PROTECTED_PROVIDER_KIND_LABEL = "io.nvidia.nemoclaw.e2e-provider";
@@ -700,7 +699,6 @@ attempt=0
 deadline=$((SECONDS + 1200))
 while [ "$SECONDS" -lt "$deadline" ]; do
   attempt=$((attempt + 1))
-  bash "$1" "readiness-$attempt" "$2" "$attempt" "$3" >&2 || true
   if curl -fsS --connect-timeout 5 --max-time 5 http://127.0.0.1:8000/v1/models >/dev/null 2>&1; then
     printf 'managed-image-nim-ready attempts=%s\n' "$attempt"
     exit 0
@@ -710,14 +708,9 @@ while [ "$SECONDS" -lt "$deadline" ]; do
   fi
   sleep 5
 done
-bash "$1" "readiness-final" "$2" final "$3" >&2 || true
 docker logs --tail 200 "${containerName}" >&2 || true
 printf 'managed-image-nim-not-ready attempts=%s\n' "$attempt" >&2
 exit 1`,
-      "nim-readiness",
-      NIM_STORAGE_PROBE_PATH,
-      containerName,
-      REPO_ROOT,
     ],
   };
 }
@@ -727,17 +720,6 @@ async function startProtectedNim(
   state: ProtectedProviderContainerState,
   apiKey: string,
 ): Promise<string> {
-  await host.command(
-    "bash",
-    [NIM_STORAGE_PROBE_PATH, "before-nim-image-pull", "", "initial", REPO_ROOT],
-    {
-      artifactName: "nim-storage-before-image-pull",
-      captureLimitBytes: 64 * 1024,
-      cwd: REPO_ROOT,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    },
-  );
   expect(dockerLoginNgc(apiKey), "NGC login must succeed for protected NIM qualification").toBe(
     true,
   );
