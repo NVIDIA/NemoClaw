@@ -2016,13 +2016,6 @@ async function runInferenceSetWithoutHostLock(
       expectedGatewayName,
     );
     if (error instanceof OpenClawInferenceConfigSyncError) throw error;
-    await restorePreviousOpenClawLocal({
-      previous: localSwitch.previous,
-      detached: previousLocalDetached,
-      committed: previousLocalDetachCommitted,
-      sandboxName,
-      deps,
-    });
     // Custom endpoints share an injection environment name. Remove the failed
     // selection before restoring access so the provider composition cannot collide.
     await rollbackNativeSelection({
@@ -2032,6 +2025,13 @@ async function runInferenceSetWithoutHostLock(
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
       error,
+      deps,
+    });
+    await restorePreviousOpenClawLocal({
+      previous: localSwitch.previous,
+      detached: previousLocalDetached,
+      committed: previousLocalDetachCommitted,
+      sandboxName,
       deps,
     });
     await restorePreviousNativeAfterFailedPublish({
