@@ -235,6 +235,7 @@ function makeInstallOllamaLinuxOptions(
       .fn()
       .mockReturnValue({ stdout: "", stderr: "", exitCode: 0, timedOut: false }),
     runShellImpl: vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null }),
+    startOllamaServeImpl: vi.fn(),
     waitForHttpImpl: vi.fn().mockReturnValue(true),
     sleepSecondsImpl: vi.fn(),
     ensureManagedOllamaLoopbackSystemdOverrideImpl: vi.fn().mockReturnValue("ready"),
@@ -1404,7 +1405,12 @@ const platform = require(${platformPath});
 const wait = require(${waitPath});
 const child_process = require("child_process");
 
-child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
+const ollamaServeLaunches = [];
+let managedOllamaStarted = false;
+stubOllamaServeSpawn((launch) => {
+  ollamaServeLaunches.push(launch);
+  managedOllamaStarted = true;
+});
 const originalSpawnSync = child_process.spawnSync;
 child_process.spawnSync = (cmd, args, opts) => {
   if (cmd === "nc" && args?.includes("11435")) {
@@ -1418,7 +1424,6 @@ child_process.spawnSync = (cmd, args, opts) => {
 
 const runCommands = [];
 const shellCommands = [];
-let managedOllamaStarted = false;
 const { messages } = installPromptQueue(credentials, ["8", "1"]);
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
@@ -1437,7 +1442,6 @@ runner.run = (command) => {
 };
 runner.runShell = (command) => {
   shellCommands.push(command);
-  managedOllamaStarted ||= command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve");
   return { status: 0 };
 };
 
@@ -1451,7 +1455,7 @@ const { setupNim } = require(${onboardPath});
 
 reportChildScenario(async () => {
   const result = await setupNim(null);
-  return { result, messages, runCommands, shellCommands };
+  return { result, messages, runCommands, shellCommands, ollamaServeLaunches };
 });
 `;
     const result = workspace.runNodeSource(script, {
@@ -1472,11 +1476,10 @@ reportChildScenario(async () => {
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
-    assert.ok(
-      payload.shellCommands.some((command: string) =>
-        command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve"),
-      ),
-      "managed Ollama launch should be loopback-only",
+    assert.deepEqual(
+      payload.ollamaServeLaunches,
+      [{ file: "ollama", host: "127.0.0.1:11434", detached: true }],
+      "managed Ollama launch should be loopback-only and detached from onboarding",
     );
     assert.ok(
       !payload.shellCommands.some((command: string) =>
@@ -1920,7 +1923,7 @@ const runner = require(${runnerPath});
 const platform = require(${platformPath});
 const child_process = require("child_process");
 
-child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
+stubOllamaServeSpawn(() => events.push("manual-serve"));
 const originalSpawnSync = child_process.spawnSync;
 child_process.spawnSync = (cmd, args, opts) => {
   if (cmd === "nc" && args && args.includes("11435")) {
@@ -1994,9 +1997,7 @@ reportChildScenario(async () => {
         "already-loopback repair should emit the visible loopback-override transcript",
       );
       assert.ok(
-        !payload.shellCommands.some((command: string) =>
-          command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve"),
-        ),
+        !payload.events.includes("manual-serve"),
         "systemd restart success should not spawn a duplicate manual daemon",
       );
       const restartIndex = payload.events.indexOf("restart");
@@ -2021,6 +2022,7 @@ reportChildScenario(async () => {
 ${onboardChildRuntimeSource}
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
+stubOllamaServeSpawn(() => console.error("manual-start"));
 const wait = require(${waitPath});
 
 let tagsProbeCount = 0;
@@ -2037,7 +2039,6 @@ runner.runCapture = (command) => {
   return "";
 }; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.runShell = (command) => {
-  if (command.includes("ollama serve")) console.error("manual-start");
   return { status: 0 };
 };
 
@@ -2085,6 +2086,7 @@ const { setupNim } = require(${onboardPath});
 ${onboardChildRuntimeSource}
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
+stubOllamaServeSpawn(() => console.error("manual-start"));
 
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
@@ -2095,7 +2097,6 @@ runner.runCapture = (command) => {
   return "";
 }; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.runShell = (command) => {
-  if (command.includes("ollama serve")) console.error("manual-start");
   if (command.includes("install -D -m 0644")) return { status: 1 };
   return { status: 0 };
 };
@@ -3516,11 +3517,13 @@ reportChildScenario(async () => {
       events.push({ type: "command", value: command, stdio: options.stdio });
       return successfulRunShellResult();
     });
+    const startOllamaServeImpl = vi.fn();
     const installResult = installOllamaOnLinux(
       makeInstallOllamaLinuxOptions({
         modeOverride: "system",
         runCaptureImpl: () => "",
         runShellImpl,
+        startOllamaServeImpl,
         ensureManagedOllamaLoopbackSystemdOverrideImpl: () => "not-applicable",
         waitForHttpImpl: (_url, tries) => (tries ?? 0) > 1,
         log: (message) => events.push({ type: "log", value: message }),
@@ -3569,9 +3572,7 @@ reportChildScenario(async () => {
       assert.equal(events[installerCommandIndex]?.stdio, "inherit");
       assert.ok(commands.some((command) => command.includes("/install.sh'")));
       assert.ok(!commands.some((command) => command.includes("brew install")));
-      assert.ok(
-        commands.some((command) => command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve")),
-      );
+      expect(startOllamaServeImpl).toHaveBeenCalledWith(expect.objectContaining({ port: 11434 }));
       assert.ok(!commands.some((command) => command.includes("OLLAMA_HOST=0.0.0.0:11434")));
     } finally {
       resetOllamaHostCache();
@@ -3587,6 +3588,7 @@ ${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
+stubOllamaServeSpawn(() => console.error("manual-start"));
 const wait = require(${waitPath});
 
 const menuLines = [];
@@ -3618,7 +3620,6 @@ runner.runCapture = (command) => {
 };
 runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner();
 runner.runShell = (command) => {
-  if (command.includes("ollama serve")) console.error("manual-start");
   if (command.includes("install -D -m 0644")) return { status: 1 };
   return { status: 0 };
 };
@@ -3678,6 +3679,7 @@ const { setupNim } = require(${onboardPath});
       runShellCalls.push({ command, stdio: options.stdio });
       return successfulRunShellResult();
     });
+    const startOllamaServeImpl = vi.fn();
     const prompt = vi.fn(async () => "");
     const { handleInstallOllamaSelection } = createSetupNimOllamaHandlers(
       makeSetupNimOllamaDeps({
@@ -3689,6 +3691,7 @@ const { setupNim } = require(${onboardPath});
               isNonInteractive: () => true,
               runCaptureImpl: () => "",
               runShellImpl,
+              startOllamaServeImpl,
               ensureManagedOllamaLoopbackSystemdOverrideImpl: () => "not-applicable",
               waitForHttpImpl: (_url, tries) => (tries ?? 0) > 1,
             }),
@@ -3720,11 +3723,7 @@ const { setupNim } = require(${onboardPath});
       assert.ok(zstdPreflightIndex >= 0);
       assert.ok(installerIndex > zstdPreflightIndex);
       assert.equal(runShellCalls[installerIndex]?.stdio, "inherit");
-      assert.ok(
-        runShellCalls.some(({ command }) =>
-          command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve"),
-        ),
-      );
+      expect(startOllamaServeImpl).toHaveBeenCalledWith(expect.objectContaining({ port: 11434 }));
       assert.ok(
         !runShellCalls.some(({ command }) => command.includes("OLLAMA_HOST=0.0.0.0:11434")),
       );
@@ -3739,6 +3738,7 @@ const { setupNim } = require(${onboardPath});
       commands.push(command);
       return successfulRunShellResult();
     });
+    const startOllamaServeImpl = vi.fn();
     const installResult = installOllamaOnLinux(
       makeInstallOllamaLinuxOptions({
         isNonInteractive: () => true,
@@ -3753,6 +3753,7 @@ const { setupNim } = require(${onboardPath});
         }),
         recordUserLocalOllamaOwnershipImpl: () => {},
         runShellImpl,
+        startOllamaServeImpl,
         waitForHttpImpl: () => true,
       }),
     );
@@ -3783,10 +3784,8 @@ const { setupNim } = require(${onboardPath});
         commands.some((command) => command.includes("zstd -d") && command.includes("/.local")),
       );
       assert.ok(!commands.some((command) => command.includes("sudo")));
-      assert.ok(
-        commands.some(
-          (command) => command.includes("nohup") && command.includes("/.local/bin/ollama"),
-        ),
+      expect(startOllamaServeImpl).toHaveBeenCalledWith(
+        expect.objectContaining({ binPath: expect.stringContaining("/.local/bin/ollama") }),
       );
       assert.ok(!commands.some((command) => command.includes("OLLAMA_HOST=0.0.0.0:11434")));
     } finally {

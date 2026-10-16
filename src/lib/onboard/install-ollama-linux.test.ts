@@ -24,6 +24,7 @@ function makeOpts(overrides: Partial<InstallOllamaLinuxOptions>): InstallOllamaL
     runCaptureImpl: vi.fn().mockReturnValue(""),
     runCaptureExImpl: vi.fn().mockReturnValue({ stdout: "", exitCode: 0, timedOut: false }),
     runShellImpl: vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null }),
+    startOllamaServeImpl: vi.fn(),
     waitForHttpImpl: vi.fn().mockReturnValue(true),
     sleepSecondsImpl: vi.fn(),
     ensureManagedOllamaLoopbackSystemdOverrideImpl: vi.fn().mockReturnValue("ready"),
@@ -151,12 +152,14 @@ describe("installOllamaOnLinux (user-local)", () => {
       .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
     const runCaptureExImpl = vi.fn().mockReturnValue({ stdout: "", exitCode: 0, timedOut: false });
     const recordOwnership = vi.fn();
+    const startOllamaServeImpl = vi.fn();
     const opts = makeOpts({
       modeOverride: "user-local",
       arch: () => "arm64",
       runCaptureImpl,
       runCaptureExImpl,
       runShellImpl,
+      startOllamaServeImpl,
       recordUserLocalOllamaOwnershipImpl: recordOwnership,
     });
     const result = installOllamaOnLinux(opts);
@@ -173,31 +176,29 @@ describe("installOllamaOnLinux (user-local)", () => {
     expect(downloadCall).toContain("zstd -d");
     expect(downloadCall).toContain("tar -xf - -C '/home/test/.local'");
     expect(downloadCall).not.toContain("sudo");
-    const startCall = findRunShellCall(runShellImpl, "nohup '/home/test/.local/bin/ollama'");
-    expect(startCall).toBeDefined();
-    expect(startCall).toContain(`OLLAMA_HOST=127.0.0.1:`);
-    expect(startCall).not.toContain("OLLAMA_CONTEXT_LENGTH=");
-    expect(startCall).toContain(" serve ");
+    expect(startOllamaServeImpl).toHaveBeenCalledWith({
+      port: 11434,
+      contextWindowFloor: undefined,
+      binPath: "/home/test/.local/bin/ollama",
+    });
     expect(recordOwnership).toHaveBeenCalledWith("/home/test/.local/bin/ollama", {
       homeDir: "/home/test",
     });
   });
 
   it("starts user-local Ollama with the requested Hermes context floor", () => {
-    const runShellImpl = vi
-      .fn()
-      .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const startOllamaServeImpl = vi.fn();
     const opts = makeOpts({
       modeOverride: "user-local",
       contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
       runCaptureImpl: vi.fn().mockReturnValue("/usr/bin/zstd"),
-      runShellImpl,
+      startOllamaServeImpl,
     });
     const result = installOllamaOnLinux(opts);
     expect(result.ok).toBe(true);
-    const startCall = findRunShellCall(runShellImpl, "nohup");
-    expect(startCall).toBeDefined();
-    expect(startCall).toContain(`OLLAMA_CONTEXT_LENGTH=${MIN_HERMES_OLLAMA_CONTEXT_WINDOW}`);
+    expect(startOllamaServeImpl).toHaveBeenCalledWith(
+      expect.objectContaining({ contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW }),
+    );
   });
 
   it("uses the amd64 tarball on x64 hosts", () => {

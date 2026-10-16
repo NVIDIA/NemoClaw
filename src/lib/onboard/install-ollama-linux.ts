@@ -6,10 +6,6 @@ import os from "node:os";
 import nodePath from "node:path";
 
 import { sleepSeconds, waitForHttp } from "../core/wait";
-import {
-  MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
-  resolveOllamaContextWindowFloor,
-} from "../inference/ollama-runtime-context";
 import { MIN_OLLAMA_VERSION } from "../inference/ollama-version";
 import { cliName } from "./branding";
 import {
@@ -23,6 +19,7 @@ import {
   type InstallOllamaLinuxMode,
   type InstallOllamaLinuxModeOptions,
 } from "./install-ollama-linux-mode";
+import { startDetachedOllamaServe } from "./ollama-startup";
 import {
   ensureManagedOllamaLoopbackSystemdOverride,
   type OllamaLoopbackSystemdOverrideState,
@@ -67,6 +64,8 @@ export type InstallOllamaLinuxOptions = InstallOllamaLinuxModeOptions & {
   arch?: () => NodeJS.Architecture;
   /** Test seam: override `runShell`. */
   runShellImpl?: typeof runShell;
+  /** Test seam: override the detached `ollama serve` launch. */
+  startOllamaServeImpl?: typeof startDetachedOllamaServe;
   /** Test seam: override systemd loopback override. */
   ensureManagedOllamaLoopbackSystemdOverrideImpl?: typeof ensureManagedOllamaLoopbackSystemdOverride;
   /** Minimum daemon context length to request for the selected agent. */
@@ -339,22 +338,11 @@ function installOllamaUserLocal(opts: InstallOllamaLinuxOptions): InstallOllamaL
 /** Start the user-local Ollama daemon with the selected agent context floor. */
 function startUserLocalOllamaDaemon(binPath: string, opts: InstallOllamaLinuxOptions): boolean {
   const log = opts.log ?? ((m: string) => console.log(m));
-  const runShellImpl = opts.runShellImpl ?? runShell;
+  const startOllamaServeImpl = opts.startOllamaServeImpl ?? startDetachedOllamaServe;
   const waitForHttpImpl = opts.waitForHttpImpl ?? waitForHttp;
   log("  Starting Ollama...");
-  runShellImpl(
-    `${ollamaContextLengthEnvPrefix(opts)}OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} nohup ${shellQuote(binPath)} serve > /dev/null 2>&1 &`,
-    { ignoreError: true },
-  );
+  startOllamaServeImpl({ port: OLLAMA_PORT, contextWindowFloor: opts.contextWindowFloor, binPath });
   return waitForHttpImpl(`http://127.0.0.1:${OLLAMA_PORT}/`, 10);
-}
-
-/** Return the `OLLAMA_CONTEXT_LENGTH` prefix only when the agent needs a higher floor. */
-function ollamaContextLengthEnvPrefix(
-  opts: Pick<InstallOllamaLinuxOptions, "contextWindowFloor">,
-): string {
-  const floor = resolveOllamaContextWindowFloor(opts.contextWindowFloor);
-  return floor > MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW ? `OLLAMA_CONTEXT_LENGTH=${floor} ` : "";
 }
 
 /**
@@ -383,6 +371,7 @@ function installOllamaSystem(opts: InstallOllamaLinuxOptions): InstallOllamaLinu
   const log = opts.log ?? ((m: string) => console.log(m));
   const errorLog = opts.errorLog ?? ((m: string) => console.error(m));
   const runShellImpl = opts.runShellImpl ?? runShell;
+  const startOllamaServeImpl = opts.startOllamaServeImpl ?? startDetachedOllamaServe;
   const sleepSecondsImpl = opts.sleepSecondsImpl ?? sleepSeconds;
   const waitForHttpImpl = opts.waitForHttpImpl ?? waitForHttp;
   const ensureOverrideImpl =
@@ -426,12 +415,7 @@ function installOllamaSystem(opts: InstallOllamaLinuxOptions): InstallOllamaLinu
       !opts.isUpgrade && waitForHttpImpl(`http://127.0.0.1:${OLLAMA_PORT}/`, 1);
     if (!localDaemonReachable) {
       log("  Starting Ollama...");
-      runShellImpl(
-        `${ollamaContextLengthEnvPrefix(opts)}OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`,
-        {
-          ignoreError: true,
-        },
-      );
+      startOllamaServeImpl({ port: OLLAMA_PORT, contextWindowFloor: opts.contextWindowFloor });
       if (!waitForHttpImpl(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
         errorLog(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
         return { ok: false, mode: "system", binPath: "/usr/local/bin/ollama" };
