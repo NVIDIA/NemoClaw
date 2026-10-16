@@ -2,9 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
-import { rebuildBackupPhase } from "../../../../test/helpers/rebuild-flow-harness";
+import {
+  rebuildBackupPhase,
+  nativeLocalProfile,
+} from "../../../../test/helpers/rebuild-flow-harness";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
@@ -81,6 +85,37 @@ function createNativeProviderRebuildHarness(replaced: boolean, provider = "nvidi
   const harness = createRebuildFlowHarness(overrides);
   configureSession(harness, provider, overrides.sandboxEntry.credentialEnv);
   return { harness, reads, providerName };
+}
+
+function createNativeLocalRebuildHarness(beforeBackup: () => void = () => {}) {
+  const binding = {
+    agent: "openclaw" as const,
+    provider: "llama-cpp-local" as const,
+    endpointUrl: "http://host.openshell.internal:8081/v1",
+    credentialEnv: "LLAMA_CPP_API_KEY",
+    authMode: "authenticated" as const,
+    sandboxName: "alpha",
+    gatewayName: "nemoclaw",
+  };
+  const attachment = {
+    ...binding,
+    ...nativeLocalIdentity(binding),
+    schemaVersion: 1 as const,
+    providerId: "owned",
+  };
+  const harness = createRebuildFlowHarness({
+    sandboxEntry: { ...binding, model: MODEL, nativeLocalProviderAttachment: attachment },
+    hydrateCredentialEnv: () => null,
+    beforeBackup,
+    runOpenshell: providerRuntime([]),
+  });
+  configureSession(harness, binding.provider, binding.credentialEnv, {
+    endpointUrl: binding.endpointUrl,
+  });
+  const verify = vi
+    .spyOn(nativeLocalProfile, "verifyRecordedNativeLocalProviderAttachment")
+    .mockResolvedValue(attachment);
+  return { harness, attachment, verify };
 }
 
 function diagnostics(harness: Harness): string {
@@ -210,6 +245,44 @@ describe("rebuildSandbox flow: credential preflight", () => {
       expect(harness.onboardSpy).not.toHaveBeenCalled();
     },
   );
+
+  it("rebuilds native OpenClaw without a shared provider after checking authority", async () => {
+    const { harness, attachment, verify } = createNativeLocalRebuildHarness();
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes", "--verbose"], {
+        throwOnError: true,
+      }),
+    ).resolves.toBeUndefined();
+    expect(harness.onboardSpy).toHaveBeenCalledOnce();
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(verify).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        expected: attachment,
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        agent: "openclaw",
+        provider: "llama-cpp-local",
+      }),
+    );
+  });
+
+  it("stops before deletion when native OpenClaw authority is detached during backup", async () => {
+    const { harness } = createNativeLocalRebuildHarness(() => {
+      vi.mocked(nativeLocalProfile.verifyRecordedNativeLocalProviderAttachment).mockRejectedValue(
+        new Error("detached during backup"),
+      );
+    });
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes", "--verbose"], {
+        throwOnError: true,
+      }),
+    ).rejects.toThrow(
+      "Native local provider attachment could not be verified before sandbox deletion",
+    );
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
 
   it("aborts before backup when the target provider and credential are missing", async () => {
     const harness = createRebuildFlowHarness({

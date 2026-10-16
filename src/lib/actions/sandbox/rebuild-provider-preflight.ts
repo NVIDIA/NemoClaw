@@ -153,6 +153,25 @@ function rebuildProviderAdapter(
   );
 }
 
+/** Recheck the recorded local attachment at the last boundary before deletion. */
+export async function verifyRebuildNativeLocalProviderBeforeDelete(
+  sandboxName: string,
+  config: RebuildResumeConfig,
+  gatewayName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<void> {
+  if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName)
+    throw new Error("Native local provider runtime does not match the rebuild gateway.");
+  await verifyRecordedNativeLocalProviderAttachment({
+    adapter: rebuildProviderAdapter(runtimeSelection),
+    expected: config.nativeLocalProviderAttachment,
+    sandboxName,
+    gatewayName,
+    agent: config.agent,
+    provider: config.provider,
+  });
+}
+
 export async function inspectRebuildGatewayProviderRegistration(
   provider: string,
   log: (msg: string) => void,

@@ -18,6 +18,7 @@ import {
   checkRebuildGatewayCredentialReuseOrBail,
   checkRebuildGatewayProviderOrBail,
   inspectRebuildGatewayProviderRegistration,
+  verifyRebuildNativeLocalProviderBeforeDelete,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
@@ -76,9 +77,10 @@ const throwingBail = (message: string): never => {
 };
 
 describe("native local rebuild credentials", () => {
-  function nativeFixture() {
+  function nativeFixture(openclaw = false) {
     const binding = {
-      provider: "compatible-endpoint" as const,
+      ...(openclaw ? { agent: "openclaw" as const } : {}),
+      provider: openclaw ? ("llama-cpp-local" as const) : ("compatible-endpoint" as const),
       endpointUrl: "http://host.openshell.internal:8000/v1",
       credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
       authMode: "authenticated" as const,
@@ -118,7 +120,8 @@ describe("native local rebuild credentials", () => {
       .spyOn(rebuildOnboardDependencies, "hydrateCredentialEnv")
       .mockReturnValue(null);
     const selection = config({
-      agent: "langchain-deepagents-code",
+      agent: openclaw ? "openclaw" : "langchain-deepagents-code",
+      provider: binding.provider,
       endpointUrl: "http://localhost:8000/v1",
       nativeLocalProviderAttachment: attachment,
     });
@@ -157,6 +160,31 @@ describe("native local rebuild credentials", () => {
     ]);
     expect(readShared).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "rechecks exact native authority at deletion for OpenClaw=%s",
+    async (openclaw) => {
+      const f = nativeFixture(openclaw);
+      const runtime = { gatewayName: "nemoclaw", workspace: "/test/workspace" };
+      await expect(
+        verifyRebuildNativeLocalProviderBeforeDelete("alpha", f.selection, "nemoclaw", runtime),
+      ).resolves.toBeUndefined();
+      expect(f.adapter.getProvider).toHaveBeenCalledWith({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        providerName: f.attachment.providerName,
+      });
+      await expect(
+        verifyRebuildNativeLocalProviderBeforeDelete("alpha", f.selection, "other", {
+          ...runtime,
+          gatewayName: "other",
+        }),
+      ).rejects.toThrow("authority does not match");
+      f.adapter.listProviderAttachments.mockResolvedValue({ ok: true, value: { names: [] } });
+      await expect(
+        verifyRebuildNativeLocalProviderBeforeDelete("alpha", f.selection, "nemoclaw", runtime),
+      ).rejects.toThrow();
+    },
+  );
 
   it("still rejects a staged host credential that cannot recreate native access (#13197)", async () => {
     const f = nativeFixture();

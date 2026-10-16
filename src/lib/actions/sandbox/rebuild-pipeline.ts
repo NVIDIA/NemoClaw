@@ -76,6 +76,7 @@ import {
 } from "./rebuild-prepared-recovery";
 import {
   inspectRebuildGatewayProviderRegistration,
+  verifyRebuildNativeLocalProviderBeforeDelete,
   validateRebuildHostInferenceCredential,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
@@ -858,7 +859,22 @@ async function rebuildSandboxUnlocked(
           const nativeAttachment =
             resumeConfig.nativeNvidiaProviderAttachment ??
             resumeConfig.nativeHostedProviderAttachment;
-          if (
+          if (resumeConfig.nativeLocalProviderAttachment !== undefined) {
+            try {
+              await verifyRebuildNativeLocalProviderBeforeDelete(
+                sandboxName,
+                resumeConfig,
+                recreateOptions.targetGatewayName,
+                runtimeSelection,
+              );
+            } catch {
+              return {
+                ok: false,
+                message:
+                  "Native local provider attachment could not be verified before sandbox deletion. Restore its recorded authority, then retry rebuild.",
+              };
+            }
+          } else if (
             !recreateOptions.rebuildProviderReconfigure &&
             resumeConfig.provider &&
             (nativeAttachment || shouldVerifyRebuildGatewayProvider(resumeConfig.provider))
