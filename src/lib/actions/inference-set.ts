@@ -1709,6 +1709,7 @@ async function runInferenceSetWithoutHostLock(
             input: {
               sandboxName,
               gatewayName: preparedRoute.gatewayName,
+              agentName,
               provider,
               model,
               preferredInferenceApi: preMutationInferenceApi,

@@ -11,6 +11,10 @@ import { applyHermesManagedRoute } from "../hermes-managed-route";
 import { nativeLocalIdentity } from "../inference/native-local/contract";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
+import {
+  probeSandboxInferenceInvocation,
+  type SandboxInferenceInvocationDeps,
+} from "./sandbox/inference-invocation-probe";
 
 const issued = (scope: string) => `openshell:resolve:env:${scope}_NEMOCLAW_LOCAL_INFERENCE_TOKEN`;
 const selection = {
@@ -95,6 +99,32 @@ function preparedAttachmentFixture() {
 }
 
 describe("Hermes native local selection", () => {
+  it("verifies a model switch against the attached local endpoint before publication", async () => {
+    const { deps, receipt } = fixture();
+    const execute = vi.fn<NonNullable<SandboxInferenceInvocationDeps["execute"]>>(async () => ({
+      status: 0,
+      stdout: '200\n{"choices":[{"message":{"content":"OK"}}]}',
+      stderr: "",
+    }));
+    deps.calls.probeSandboxRoute.mockImplementation((input) =>
+      probeSandboxInferenceInvocation(input, { execute }),
+    );
+
+    await runInferenceSet(selection, deps);
+
+    expect(execute).toHaveBeenCalledOnce();
+    const command = execute.mock.calls[0][1];
+    expect(command).toContain(`'${receipt.endpointUrl}/chat/completions'`);
+    expect(command).not.toContain("inference.local");
+    expect(command).toContain(`"model":"${selection.model}"`);
+    expect(command).toContain(
+      'AUTH_HEADER="Authorization: Bearer ${NEMOCLAW_LOCAL_INFERENCE_TOKEN}"',
+    );
+    expect(execute.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.calls.updateSandbox.mock.invocationCallOrder[0],
+    );
+  });
+
   it.each(["v7", "v8", `s${"b".repeat(64)}`])(
     "refreshes all managed slots from %s before publishing and restarts Hermes",
     async (scope) => {
