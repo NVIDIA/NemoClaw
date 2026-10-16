@@ -15,6 +15,7 @@ import {
   type CredentialProviderRegistrationDeps,
   createCredentialProviderRegistration,
 } from "../../src/lib/onboard/credential-provider-registration.js";
+import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../../src/lib/messaging/provider-profile.js";
 import { handleFinalizationState } from "../../src/lib/onboard/machine/handlers/finalization.js";
 import type { MessagingTokenDef } from "../../src/lib/onboard/messaging-prep.js";
 import { createSession, normalizeSession } from "../../src/lib/state/onboard-session.js";
@@ -22,6 +23,13 @@ import type { Session } from "../../src/lib/state/onboard-session.js";
 import { withProcessEnv } from "../support/setup-inference-test-harness.js";
 
 const LEGACY_SECRET = "sk-TEST-NOT-A-REAL-STORED-KEY";
+const MESSAGING_PROFILE = {
+  id: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+  credentials: [],
+  endpoints: [],
+  binaries: [],
+  inference_capable: false,
+};
 
 type RegistrationAttempt = ReturnType<
   ReturnType<typeof createCredentialProviderRegistration>["stageSandboxCredentialProviders"]
@@ -44,7 +52,11 @@ const REGISTRATION_SCENARIOS = [
     registrationStatus: 0,
     settle: async (attempt: RegistrationAttempt) => {
       await expect(attempt).resolves.toEqual([
-        { name: "legacy-openai", type: "generic", credentialEnv: "OPENAI_API_KEY" },
+        {
+          name: "legacy-openai",
+          type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+          credentialEnv: "OPENAI_API_KEY",
+        },
       ]);
     },
     expectedMigrated: true,
@@ -169,44 +181,42 @@ describe("legacy credential reconciliation", () => {
             "--name",
             "legacy-openai",
             "--type",
-            "generic",
+            MESSAGING_CREDENTIAL_PROVIDER_TYPE,
             "--credential",
             "OPENAI_API_KEY",
           ];
           const providerMissing = { status: 1, stdout: "", stderr: "provider not found" };
-          const runOpenshell = vi
-            .fn()
-            .mockImplementationOnce((args: string[]) => {
-              expect(args).toEqual(providerGetArgs);
-              return providerMissing;
-            })
-            .mockImplementationOnce((args: string[]) => {
-              expect(args).toEqual(providerGetArgs);
-              return providerMissing;
-            })
-            .mockImplementationOnce((args: string[]) => {
-              expect(args).toEqual(providerCreateArgs);
-              return {
-                status: scenario.registrationStatus,
-                stdout: "",
-                stderr: scenario.registrationStatus === 0 ? "" : "registration failed",
-              };
-            })
-            .mockImplementationOnce((args: string[]) => {
-              expect(args).toEqual(providerGetArgs);
-              return {
-                status: 0,
-                stdout: [
-                  "Id: provider-legacy-openai",
-                  "Name: legacy-openai",
-                  "Type: generic",
-                  "Resource version: 1",
-                  "Credential keys: OPENAI_API_KEY",
-                  "Config keys: <none>",
-                ].join("\n"),
-                stderr: "",
-              };
-            });
+          let providerCreated = false;
+          const success = { status: 0, stdout: "", stderr: "" };
+          const runOpenshell = vi.fn((args: string[]) => {
+            const isCreate = args[0] === "provider" && args[1] === "create";
+            const result =
+              args.includes("profile") && args.includes("export")
+                ? { ...success, stdout: JSON.stringify(MESSAGING_PROFILE) }
+                : args.join(" ") === providerGetArgs.join(" ")
+                  ? providerCreated
+                    ? {
+                        ...success,
+                        stdout: [
+                          "Id: provider-legacy-openai",
+                          "Name: legacy-openai",
+                          `Type: ${MESSAGING_CREDENTIAL_PROVIDER_TYPE}`,
+                          "Resource version: 1",
+                          "Credential keys: OPENAI_API_KEY",
+                          "Config keys: <none>",
+                        ].join("\n"),
+                      }
+                    : providerMissing
+                  : isCreate
+                    ? {
+                        ...success,
+                        status: scenario.registrationStatus,
+                        stderr: scenario.registrationStatus === 0 ? "" : "registration failed",
+                      }
+                    : success;
+            providerCreated ||= isCreate && result.status === 0;
+            return result;
+          });
           const deps: CredentialProviderRegistrationDeps = {
             root: path.join(import.meta.dirname, "../.."),
             runOpenshell:
@@ -223,6 +233,7 @@ describe("legacy credential reconciliation", () => {
               name: "legacy-openai",
               envKey: "OPENAI_API_KEY",
               token: process.env.OPENAI_API_KEY ?? "",
+              providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
             },
           ];
 
@@ -236,7 +247,7 @@ describe("legacy credential reconciliation", () => {
                 requiredBindings: [
                   {
                     name: "legacy-openai",
-                    type: "generic",
+                    type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
                     credentialEnv: "OPENAI_API_KEY",
                   },
                 ],
@@ -253,6 +264,9 @@ describe("legacy credential reconciliation", () => {
           expect(process.env.NODE_OPTIONS).toBe("--enable-source-maps");
           expect(migratedLegacyKeys.has("OPENAI_API_KEY")).toBe(scenario.expectedMigrated);
           expect(runOpenshell.mock.calls.flatMap(([args]) => args)).not.toContain(LEGACY_SECRET);
+          expect(runOpenshell.mock.calls.find(([args]) => args[1] === "create")?.[0]).toEqual(
+            providerCreateArgs,
+          );
           expect(runOpenshell.mock.calls.find(([args]) => args[1] === "create")?.[1]).toMatchObject(
             {
               env: { OPENAI_API_KEY: LEGACY_SECRET },
@@ -319,7 +333,8 @@ describe("legacy credential reconciliation", () => {
           );
           const migratedLegacyKeys = new Set<string>();
           const session = { stagedCredentialProviders: [] } as unknown as Session;
-          const providerType = route === "messaging" ? "generic" : "nvidia";
+          const providerType =
+            route === "messaging" ? MESSAGING_CREDENTIAL_PROVIDER_TYPE : "nvidia";
           let providerExists = false;
           const metadata = {
             status: 0,
@@ -335,11 +350,13 @@ describe("legacy credential reconciliation", () => {
           };
           const runOpenshell = vi.fn((args: string[]) => {
             const result =
-              args[1] === "get"
-                ? providerExists
-                  ? metadata
-                  : { status: 1, stdout: "", stderr: "provider 'nvidia-prod' not found" }
-                : { status: 0, stdout: "", stderr: "" };
+              args.includes("profile") && args.includes("export")
+                ? { status: 0, stdout: JSON.stringify(MESSAGING_PROFILE), stderr: "" }
+                : args[1] === "get"
+                  ? providerExists
+                    ? metadata
+                    : { status: 1, stdout: "", stderr: "provider 'nvidia-prod' not found" }
+                  : { status: 0, stdout: "", stderr: "" };
             providerExists ||= args[1] === "create";
             return result;
           });
@@ -371,7 +388,7 @@ describe("legacy credential reconciliation", () => {
                   requiredBindings: [
                     {
                       name: "nvidia-prod",
-                      type: "generic",
+                      type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
                       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
                     },
                   ],
@@ -382,6 +399,7 @@ describe("legacy credential reconciliation", () => {
                       name: "nvidia-prod",
                       envKey: "NVIDIA_INFERENCE_API_KEY",
                       token: resolved ?? "",
+                      providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
                     },
                   ],
                 }),
