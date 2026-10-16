@@ -15,26 +15,26 @@
     "testFileCount": 78,
     "liveFileCount": 187,
     "direct": {
-      "expectCalls": 1292,
-      "matcherAssertions": 1271,
+      "expectCalls": 1295,
+      "matcherAssertions": 1274,
       "nodeAssertions": 104,
       "namedAssertionHelpers": 425,
       "failCalls": 0,
       "throwGuards": 50,
       "objectFieldAssertions": 188,
-      "assertionPoints": 2038,
+      "assertionPoints": 2041,
       "generatedProbeBlocks": 86,
       "generatedProbeConditions": 215
     },
     "unique": {
-      "expectCalls": 1714,
-      "matcherAssertions": 1688,
+      "expectCalls": 1717,
+      "matcherAssertions": 1691,
       "nodeAssertions": 127,
       "namedAssertionHelpers": 669,
       "failCalls": 1,
       "throwGuards": 526,
       "objectFieldAssertions": 265,
-      "assertionPoints": 3276,
+      "assertionPoints": 3279,
       "generatedProbeBlocks": 208,
       "generatedProbeConditions": 720
     },
@@ -243,10 +243,10 @@
         15
       ],
       "test/e2e/live/inference-routing-openclaw-native.test.ts": [
-        20,
-        32,
-        46,
-        76,
+        23,
+        35,
+        49,
+        79,
         2
       ],
       "test/e2e/live/issue-4434-tui-unreachable-inference.test.ts": [

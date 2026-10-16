@@ -28,7 +28,7 @@ export async function onboardNativeOpenClaw(
   const owner = inferenceSandboxName(authenticated ? "e2e-oc-auth" : "e2e-oc-none");
   const model = "nemoclaw-openclaw-native-local";
   const switchedModel = "nemoclaw-openclaw-native-local-switched";
-  const apiKey = "sk-openclaw-native-TEST-NOT-A-REAL-VALUE";
+  const apiKey = authenticated ? "sk-openclaw-native-TEST-NOT-A-REAL-VALUE" : "dummy";
   const fake = await startFakeOpenAiCompatibleServer({
     apiKey,
     model,
@@ -37,7 +37,7 @@ export async function onboardNativeOpenClaw(
     host: "0.0.0.0",
     port: authenticated ? 8081 : 8000,
     publicHost: "host.openshell.internal",
-    requireAuth: authenticated,
+    requireAuth: true,
     requireAuthModels: authenticated,
     llamaCppFingerprint: authenticated,
     progress,
