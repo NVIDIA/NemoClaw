@@ -1304,7 +1304,8 @@ function nativeLocalAgentOptions(
   endpointUrl: string | null,
   nimContainer: string | null,
 ) {
-  return usesNativeLocalInference(provider, endpointUrl)
+  return usesNativeLocalInference(provider, endpointUrl) ||
+    usesNativeLocalInferenceForAgent(agentName(agent), provider, endpointUrl)
     ? {
         agentName: agentName(agent),
         ...(provider === "vllm-local" ? { localNimSelected: Boolean(nimContainer) } : {}),

@@ -123,6 +123,19 @@ function fixture(selectedBinding: NativeLocalBinding = binding) {
 }
 
 describe("native local inference", () => {
+  it.each([
+    ["pi", "http://host.openshell.internal:12345/v1", true],
+    ["pi", "http://192.168.1.20:9001/v1", true],
+    ["pi", "https://example.com:12345/v1", false],
+    ["pi", "http://169.254.169.254:12345/v1", false],
+    ["pi", "http://host.openshell.internal:80/v1", false],
+    ["pi", "http://user:secret@host.openshell.internal:12345/v1", false],
+    ["langchain-deepagents-code", "http://host.openshell.internal:12345/v1", false],
+    ["openclaw", "http://host.openshell.internal:12345/v1", false],
+    ["hermes", "http://host.openshell.internal:12345/v1", false],
+  ] as const)("classifies %s compatible endpoint %s as native=%s", (agent, endpoint, expected) => {
+    expect(usesNativeLocalInferenceForAgent(agent, "compatible-endpoint", endpoint)).toBe(expected);
+  });
   it("verifies Pi rebuild authority and rejects a different agent before provider access", async () => {
     const f = fixture({ ...binding, agent: "pi" });
     const expected = await ensureNativeLocalProvider(f.input);

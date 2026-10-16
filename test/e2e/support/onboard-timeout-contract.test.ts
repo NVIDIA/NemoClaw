@@ -47,6 +47,7 @@ const affectedTargetIds = [
   "inference-routing-openclaw-native",
   "onboard-repair",
   "onboard-resume",
+  "pi-agent-qualification-amd64",
 ] as const;
 const timeoutContractPath = "tools/e2e/onboard-timeout-contract.mts";
 const commandDiagnosticHeadroomMs = 10 * MINUTE_MS;

@@ -352,7 +352,8 @@ export function getSandboxInferenceConfig(
   const nativeCustom =
     nativeProvider === true &&
     isCustomHostedProvider(provider) &&
-    !usesNativeLocalInference(provider, nativeEndpointUrl);
+    !usesNativeLocalInference(provider, nativeEndpointUrl) &&
+    !usesNativeLocalInferenceForAgent(agentName, provider, nativeEndpointUrl);
   const selectedApi = resolveCustomNativeApi(provider, preferredInferenceApi, nativeCustom);
   let providerKey: string = nativeOpenClawProviderKey(provider, selectedApi) ?? MANAGED_PROVIDER_ID;
   let primaryModelRef: string;

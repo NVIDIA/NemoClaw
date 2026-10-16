@@ -1375,6 +1375,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     shard: "linux-amd64",
     owningPaths: [
       ...PI_IMAGE_SOURCE_OWNING_PATHS,
+      "tools/e2e/onboard-timeout-contract.mts",
       "ci/pi-agent-qualification-v1-linux-amd64.json",
       "src/lib/agent/candidate-authority.ts",
       "src/lib/agent/candidate.ts",

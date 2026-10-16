@@ -1309,7 +1309,12 @@ export function createSetupInference(
             if (
               recorded &&
               recorded.pendingRouteReservation !== true &&
-              usesNativeLocalInference(recorded.provider, recorded.endpointUrl) &&
+              (usesNativeLocalInference(recorded.provider, recorded.endpointUrl) ||
+                usesNativeLocalInferenceForAgent(
+                  recorded.agent,
+                  recorded.provider,
+                  recorded.endpointUrl,
+                )) &&
               !normalizeNativeLocalProviderAttachment(recorded.nativeLocalProviderAttachment)
             ) {
               if (

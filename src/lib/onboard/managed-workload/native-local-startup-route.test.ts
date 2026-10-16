@@ -163,8 +163,25 @@ it("routes new OpenClaw Ollama through its sandbox attachment", () => {
 });
 
 const piBinding = { ...nativeBinding, agent: "pi" as const };
+const piCustomBinding = { ...piBinding, endpointUrl: "http://host.openshell.internal:12345/v1" };
+const piCustomAttachment = {
+  ...nativeAttachment,
+  ...piCustomBinding,
+  ...nativeLocalIdentity(piCustomBinding),
+};
 const piAttachment = { ...nativeAttachment, ...piBinding, ...nativeLocalIdentity(piBinding) };
 it.each([
+  {
+    name: "attached compatible endpoint on a nonstandard port",
+    endpointUrl: piCustomBinding.endpointUrl,
+    attachment: piCustomAttachment,
+    expected: piCustomBinding.endpointUrl,
+  },
+  {
+    name: "unattached compatible endpoint on a nonstandard port",
+    endpointUrl: piCustomBinding.endpointUrl,
+    expected: "https://inference.local/v1",
+  },
   {
     name: "attached local",
     endpointUrl: nativeBinding.endpointUrl,

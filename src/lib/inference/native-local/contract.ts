@@ -172,6 +172,13 @@ export function usesNativeLocalInferenceForAgent(
   localNimSelected = false,
 ): boolean {
   if (provider === "vllm-local" && localNimSelected) return false;
+  if (
+    agentName === "pi" &&
+    provider === "compatible-endpoint" &&
+    endpointUrl &&
+    qualifiedNativeLocalEndpointUrl(endpointUrl)
+  )
+    return true;
   return (
     ((agentName === "langchain-deepagents-code" || agentName === "pi") &&
       usesNativeLocalInference(provider, endpointUrl)) ||

@@ -50,50 +50,55 @@ describe("legacy local inference resume", () => {
     );
   });
 
-  it("resumes an unchanged published Pi local selection through its shared route", async () => {
-    const session = createSession({
-      agent: "pi",
-      sandboxName: "my-assistant",
-      provider: "ollama-local",
-      model: "qwen3:8b",
-      endpointUrl: "http://host.openshell.internal:11435/v1",
-      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
-      preferredInferenceApi: "openai-completions",
-    });
-    session.steps.provider_selection.status = "complete";
-    const recorded = {
-      name: "my-assistant",
-      agent: "pi",
-      gatewayName: "nemoclaw",
-      createdAt: "2026-09-01T00:00:00Z",
-      provider: session.provider,
-      model: session.model,
-      endpointUrl: session.endpointUrl,
-      credentialEnv: session.credentialEnv,
-      preferredInferenceApi: session.preferredInferenceApi,
-    } as SandboxEntry;
-    const { deps, calls } = createDeps({ getSandboxRegistryEntry: () => recorded });
+  it.each([
+    { provider: "ollama-local", endpointUrl: "http://host.openshell.internal:11435/v1" },
+    { provider: "compatible-endpoint", endpointUrl: "http://host.openshell.internal:12345/v1" },
+  ])(
+    "resumes an unchanged published Pi $provider selection through its shared route",
+    async (selection) => {
+      const session = createSession({
+        agent: "pi",
+        sandboxName: "my-assistant",
+        ...selection,
+        model: "qwen3:8b",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        preferredInferenceApi: "openai-completions",
+      });
+      session.steps.provider_selection.status = "complete";
+      const recorded = {
+        name: "my-assistant",
+        agent: "pi",
+        gatewayName: "nemoclaw",
+        createdAt: "2026-09-01T00:00:00Z",
+        provider: session.provider,
+        model: session.model,
+        endpointUrl: session.endpointUrl,
+        credentialEnv: session.credentialEnv,
+        preferredInferenceApi: session.preferredInferenceApi,
+      } as SandboxEntry;
+      const { deps, calls } = createDeps({ getSandboxRegistryEntry: () => recorded });
 
-    await handleProviderInferenceState({
-      ...baseOptions(deps, session),
-      resume: true,
-      agent: { name: "pi" },
-      sandboxName: "my-assistant",
-    });
+      await handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        agent: { name: "pi" },
+        sandboxName: "my-assistant",
+      });
 
-    expect(calls.setupNim).not.toHaveBeenCalled();
-    expect(calls.setupInference).toHaveBeenCalledWith(
-      "my-assistant",
-      "qwen3:8b",
-      "ollama-local",
-      session.endpointUrl,
-      session.credentialEnv,
-      null,
-      [],
-      expect.objectContaining({ preserveLegacyPiSharedLocalRoute: true }),
-    );
-    expect(calls.preflightGatewayRouteDiscovery).not.toHaveBeenCalledWith(
-      expect.objectContaining({ nativeLocalSelection: true }),
-    );
-  });
+      expect(calls.setupNim).not.toHaveBeenCalled();
+      expect(calls.setupInference).toHaveBeenCalledWith(
+        "my-assistant",
+        "qwen3:8b",
+        selection.provider,
+        session.endpointUrl,
+        session.credentialEnv,
+        null,
+        [],
+        expect.objectContaining({ preserveLegacyPiSharedLocalRoute: true }),
+      );
+      expect(calls.preflightGatewayRouteDiscovery).not.toHaveBeenCalledWith(
+        expect.objectContaining({ nativeLocalSelection: true }),
+      );
+    },
+  );
 });

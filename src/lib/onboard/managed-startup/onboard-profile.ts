@@ -136,7 +136,9 @@ export function resolveManagedStartupInferenceEndpoint(input: {
   if (input.agentName === "pi") {
     return (
       input.nativeLocalProviderAttachment?.endpointUrl ??
-      (usesNativeLocalInference(input.provider, input.endpointUrl) ? null : input.endpointUrl)
+      (usesNativeLocalInferenceForAgent(input.agentName, input.provider, input.endpointUrl)
+        ? null
+        : input.endpointUrl)
     );
   }
   if (input.agentName === "openclaw" && input.nativeLocalProviderAttachment) {

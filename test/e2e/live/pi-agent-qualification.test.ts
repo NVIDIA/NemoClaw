@@ -591,8 +591,7 @@ test(
       chatContent: "PONG",
       host: "0.0.0.0",
       model: nativeModel,
-      // Compatible local selection admits this port. The proxy port 11435 is
-      // reserved by NemoClaw, and an arbitrary port would select hosted routing.
+      // Avoid the reserved proxy port 11435.
       port: 11434,
       progress,
       publicHost: "host.openshell.internal",
