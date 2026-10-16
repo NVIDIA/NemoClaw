@@ -391,11 +391,13 @@ function classifyNewKeyGate(inputs: NewKeyGateInputs): NewKeyGate {
  * privileged docker exec path.
  */
 function composeSandboxConfigBody(config: ConfigObject, target: AgentConfigTarget): string {
-  const body = serializeConfig(config, target.format);
   if (target.agentName === "hermes" && target.format === "yaml") {
+    // Hermes/PyYAML reads YAML 1.1. Preserve strings such as tool_search's "on"
+    // when a credential-only restore writes a config sanitized as JSON.
+    const body = require("yaml").stringify(config, { compat: "yaml-1.1" });
     return `${buildHermesUpstreamHeader(config as Record<string, unknown>)}${body}`;
   }
-  return body;
+  return serializeConfig(config, target.format);
 }
 
 /**
