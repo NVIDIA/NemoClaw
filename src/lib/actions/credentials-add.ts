@@ -166,7 +166,23 @@ function bundledProviderProfile(type: string): { profileType: string; profilePat
   return fs.existsSync(profilePath) ? { profileType, profilePath } : null;
 }
 
-function bundledProviderProfileRecoveryLines(error: OpenShellProviderError): string[] {
+function providerProfileRecoveryLines(
+  error: OpenShellProviderError,
+  operation: "import" | "inspect" = "import",
+): string[] {
+  if (operation === "inspect") {
+    // Inspection emits validation only for the local endpoint override guard.
+    if (error.kind === "validation") {
+      return [
+        "  OPENSHELL_GATEWAY_ENDPOINT is set. Unset OPENSHELL_GATEWAY_ENDPOINT and retry with the recorded gateway.",
+      ];
+    }
+    if (error.kind === "schema" || error.kind === "command") {
+      return [
+        "  Ask the gateway operator to inspect or import this profile and confirm its credential names, then retry.",
+      ];
+    }
+  }
   switch (error.kind) {
     case "authentication":
       return ["  Restore OpenShell authentication for the selected gateway, then retry."];
@@ -184,6 +200,8 @@ function bundledProviderProfileRecoveryLines(error: OpenShellProviderError): str
           return [
             "  Re-select the intended OpenShell gateway and restore its recorded identity, then retry.",
           ];
+        case "connection_loss":
+          return ["  Restore the connection to the selected OpenShell gateway, then retry."];
         case "process_start":
           return ["  Repair OpenShell with scripts/install-openshell.sh, then retry."];
       }
@@ -214,7 +232,7 @@ async function ensureBundledProviderProfile(
   }
   return fail([
     `  Could not import bundled provider profile '${profile.profileType}'.`,
-    ...bundledProviderProfileRecoveryLines(result.error),
+    ...providerProfileRecoveryLines(result.error),
     `  ${result.error.message}`,
   ]);
 }
@@ -541,7 +559,7 @@ export async function runCredentialsAddAction(
     if (!inspection.ok) {
       return fail([
         `  Could not verify provider profile '${providerType}' for credential registration.`,
-        "  Ask the gateway operator to inspect or import this profile and confirm its credential names, then retry.",
+        ...providerProfileRecoveryLines(inspection.error, "inspect"),
       ]);
     }
   }

@@ -155,17 +155,22 @@ describe("credential actions use typed OpenShell provider results", () => {
 
   describe.each([false, true])("custom credentials fromExisting=%s", (fromExisting) => {
     it.each([
-      ["missing", { status: 1, stderr: "profile not found" }],
-      ["malformed", { status: 0, stdout: "not JSON" }],
-      ["wrong identity", { status: 0, stdout: '{"id":"other","credentials":[]}' }],
-      ["failed inspection", { status: 1, stderr: "host-only-value" }],
+      ["missing", { status: 1, stderr: "profile not found" }, "gateway operator"],
+      ["malformed", { status: 0, stdout: "not JSON" }, "gateway operator"],
+      [
+        "wrong identity",
+        { status: 0, stdout: '{"id":"other","credentials":[]}' },
+        "gateway operator",
+      ],
+      ["failed inspection", { status: 1, stderr: "host-only-value" }, "gateway operator"],
       [
         "timed-out inspection",
         { status: null, error: Object.assign(new Error(), { code: "ETIMEDOUT" }) },
+        "gateway is available",
       ],
     ])(
       "rejects a %s custom profile before reserving or creating (#13343)",
-      async (_case, exported) => {
+      async (_case, exported, recovery) => {
         vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
         const recordExtraProvider = vi.fn(() => true);
         const forgetExtraProvider = vi.fn(() => true);
@@ -193,7 +198,7 @@ describe("credential actions use typed OpenShell provider results", () => {
         expect(forgetExtraProvider).not.toHaveBeenCalled();
         expect(run).toHaveBeenCalledOnce();
         expect(run.mock.calls[0]?.[0]).toContain("export");
-        expect(result.failureLines.join("\n")).toContain("gateway operator");
+        expect(result.failureLines.join("\n")).toContain(recovery);
         expect(JSON.stringify(result)).not.toContain("host-only-value");
       },
     );
