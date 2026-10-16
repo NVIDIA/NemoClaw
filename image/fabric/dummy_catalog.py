@@ -38,7 +38,12 @@ def snapshot(root=ROOT):
         "bridge": capabilities(HEALTH_CHECKS),
         "adapters": adapters,
         "targets": [],
-        "runtime": read_runtime(root / "runtime.json", adapters, required=True),
+        # The dummy runs no executables beyond the image's interpreter.
+        "runtime": read_runtime(
+            root / "runtime.json",
+            {adapter["descriptor"]["adapter_id"]: [] for adapter in adapters},
+            required=True,
+        ),
     }
 
 

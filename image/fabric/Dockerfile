@@ -164,10 +164,10 @@ RUN --mount=type=cache,target=/root/.cache/uv uv tool run --from ruff==0.16.7 ru
 
 FROM common-wheels AS unit-tests
 COPY image/fabric/ /catalog/image/fabric/
-RUN uv pip install --python /opt/fabric/bin/python /wheels/nemo_fabric_runtime-*.whl /wheels/nemo_fabric_adapter_contract-*.whl /wheels/nemo_fabric_adapters_common-*.whl /src/fabric/tests/fixtures/discovery \
+RUN uv pip install --python /opt/fabric/bin/python /wheels/nemo_fabric_runtime-*.whl /wheels/nemo_fabric_adapter_contract-*.whl /wheels/nemo_fabric_adapters_common-*.whl /wheels/nemo_fabric_adapter_catalog-*.whl \
     && uv pip install --python /opt/fabric/bin/python PyYAML==6.0.3
 COPY image/fabric/ /tests/
-ENV ADAPTER_PYTHON=/opt/fabric/bin/python NEMOCLAW_FABRIC_SOURCE=/src/fabric NEMOCLAW_TEST_FABRIC_DESCRIPTOR=/src/fabric/tests/fixtures/discovery/future.fabric-adapter.json
+ENV ADAPTER_PYTHON=/opt/fabric/bin/python
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'
 
 # A small executable specification with no native agent or model dependencies.
