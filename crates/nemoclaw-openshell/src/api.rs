@@ -80,3 +80,40 @@ pub fn definition(
         ..Default::default()
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn literal_endpoint_grants_only_its_address_and_dns_grants_no_private_network() {
+        for (url, host, port, allowed_ips) in [
+            (
+                "http://10.42.0.7:8080/mcp",
+                "10.42.0.7",
+                8080,
+                vec!["10.42.0.7/32"],
+            ),
+            (
+                "https://[fd00::7]/mcp",
+                "[fd00::7]",
+                443,
+                vec!["fd00::7/128"],
+            ),
+            (
+                "https://booking.example.com/mcp",
+                "booking.example.com",
+                443,
+                vec![],
+            ),
+        ] {
+            let profile = definition("booking", url, "", "").unwrap();
+            assert_eq!(profile.endpoints.len(), 1);
+            let endpoint = &profile.endpoints[0];
+            assert_eq!(endpoint.host, host);
+            assert_eq!(endpoint.port, port);
+            assert_eq!(endpoint.path, "/mcp/**");
+            assert_eq!(endpoint.allowed_ips, allowed_ips);
+        }
+    }
+}

@@ -412,30 +412,6 @@ async fn api_credentials_support_custom_headers_and_reject_invalid_bindings_befo
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
-async fn api_credentials_grant_only_the_selected_literal_destination() {
-    let fixture = Fixture::start().await;
-    let root = workspace(&fixture.endpoint);
-    fs::write(
-        root.path().join("main.tf"),
-        CONFIG.replace(
-            "https://booking.example.com/mcp",
-            "http://10.42.0.7:8080/mcp",
-        ),
-    )
-    .unwrap();
-    run(&root, &["apply", "-auto-approve", "-input=false"]);
-    noop(&root);
-    let state = fixture.state.lock().unwrap();
-    let profile = state.profiles.values().next().unwrap();
-    assert_eq!(profile.endpoints.len(), 1);
-    let endpoint = &profile.endpoints[0];
-    assert_eq!(endpoint.host, "10.42.0.7");
-    assert_eq!(endpoint.port, 8080);
-    assert_eq!(endpoint.allowed_ips, ["10.42.0.7/32"]);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn api_credentials_recover_after_either_create_readback_is_unavailable() {
     for kind in ["provider_profile", "provider"] {
         let fixture = Fixture::start().await;
@@ -499,17 +475,29 @@ async fn api_credentials_recover_after_either_create_readback_is_unavailable() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn api_credentials_reject_foreign_or_substituted_survivors_of_a_partial_pair() {
+    let fixture = Fixture::start().await;
+    let root = workspace(&fixture.endpoint);
+    run(&root, &["apply", "-auto-approve", "-input=false"]);
+    let saved = fs::read(root.path().join("terraform.tfstate")).unwrap();
+    let (profiles, providers, effects) = {
+        let state = fixture.state.lock().unwrap();
+        (
+            state.profiles.clone(),
+            state.providers.clone(),
+            state.effects,
+        )
+    };
     for drift in [
         "foreign-profile",
         "foreign-registration",
         "substituted-registration",
     ] {
-        let fixture = Fixture::start().await;
-        let root = workspace(&fixture.endpoint);
-        run(&root, &["apply", "-auto-approve", "-input=false"]);
-        let saved = fs::read(root.path().join("terraform.tfstate")).unwrap();
-        let effects = {
+        {
             let mut state = fixture.state.lock().unwrap();
+            // Every case starts with the same pair. A previous rejection must
+            // not leave the next case failing for an unrelated reason.
+            state.profiles = profiles.clone();
+            state.providers = providers.clone();
             match drift {
                 "foreign-profile" => {
                     state.providers.clear();
@@ -547,8 +535,7 @@ async fn api_credentials_reject_foreign_or_substituted_survivors_of_a_partial_pa
                         .id = "substituted".into();
                 }
             }
-            state.effects
-        };
+        }
         let rejected = root
             .command()
             .args(["plan", "-input=false", "-no-color"])
