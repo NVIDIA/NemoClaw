@@ -354,7 +354,7 @@ if (scenario.mode === "providerless-external-component") {
 
 if (dashboardScenario) {
   const finalizationHandlerDeps = require(${finalizationDepsPath}).finalizationHandlerDeps;
-  finalizationHandlerDeps.checkAndRecoverSandboxProcesses = async () => true;
+  finalizationHandlerDeps.checkAndRecoverSandboxProcesses = async () => ({ healthy: true });
   finalizationHandlerDeps.settleOrdinaryOpenClawPairing = async () => ({ kind: "settled" });
   const onboardDashboard = require(${onboardDashboardPath});
   const createOnboardDashboardHelpers = onboardDashboard.createOnboardDashboardHelpers;

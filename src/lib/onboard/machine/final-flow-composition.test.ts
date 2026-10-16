@@ -71,7 +71,7 @@ describe("createFinalOnboardFlowPhases", () => {
     });
     const check = vi
       .spyOn(finalizationHandlerDeps, "checkAndRecoverSandboxProcesses")
-      .mockResolvedValue(true);
+      .mockResolvedValue({ healthy: true });
     createFinalOnboardFlowPhases({
       branchState: "agent_setup",
       agentSetupDeps: {},
@@ -83,7 +83,7 @@ describe("createFinalOnboardFlowPhases", () => {
     const finalization = mocks.createFinalFlowPhases.mock.calls[0]![0].finalizationDeps;
     await expect(
       finalization.checkAndRecoverSandboxProcesses("fresh-hermes", { quiet: true }),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({ healthy: true });
     expect(check).toHaveBeenLastCalledWith(
       "fresh-hermes",
       { quiet: true },
