@@ -46,6 +46,7 @@ import {
   type SandboxCommandExecutor,
 } from "./onboard/custom-openclaw-runtime-diagnosis";
 import { GATEWAY_PORT, resolveGatewayLogPathForPort } from "./onboard/gateway/state-dir";
+import { gatewayReachableCompatibleEndpointUrl } from "./onboard/inference-providers/compatible-endpoint-gateway-route";
 import { getMessagingProviderNamesForChannel } from "./onboard/messaging-reuse";
 import { HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL } from "./onboard/runtime-provider/host-local-inference-routing";
 
@@ -439,7 +440,7 @@ function matchesNativeLocalVerificationRoute(
     return true;
   const selected = normalizeNativeLocalBinding({
     ...attachment,
-    endpointUrl: context.endpointUrl,
+    endpointUrl: gatewayReachableCompatibleEndpointUrl(attachment.provider, context.endpointUrl),
   });
   return selected?.endpointUrl === attachment.endpointUrl;
 }

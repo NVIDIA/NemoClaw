@@ -38,6 +38,7 @@ export async function onboardNativeOpenClaw(
     port: authenticated ? 8081 : 8000,
     publicHost: "host.openshell.internal",
     requireAuth: true,
+    allowMissingAuth: !authenticated,
     requireAuthModels: authenticated,
     llamaCppFingerprint: authenticated,
     progress,

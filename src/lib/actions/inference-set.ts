@@ -23,7 +23,6 @@ import {
   ensureHttpsPinRuntimeAdapter,
   revokeHttpsPinRuntimeAdapterRoute,
 } from "../inference/https-pin-runtime-adapter";
-import { type ValidationResult, validateLocalProvider } from "../inference/local";
 import {
   inferenceSelectionRegistryFields,
   type ReasoningEffortRequest,
@@ -72,6 +71,13 @@ import {
   clearNativeLocalProviderAuthority,
   listNativeLocalProviderAuthorities,
   resolveOpenClawLocalSwitch,
+  resolveLocalSwitchRuntime,
+  prepareOpenClawLocalSwitch,
+  rollbackOpenClawLocalSwitch,
+  getNativeLocalProviderAuthority,
+  setNativeLocalProviderAuthority,
+  validateLocalProvider,
+  type ValidationResult,
   detachPreviousOpenClawLocal,
   restorePreviousOpenClawLocal,
   retirePreviousOpenClawLocal,
@@ -194,6 +200,9 @@ function providerCommitFailureAfterSelection(options: {
 }
 
 export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
+  resolveLocalSwitchRuntime?: typeof resolveLocalSwitchRuntime;
+  getNativeLocalProviderAuthority?: typeof getNativeLocalProviderAuthority;
+  setNativeLocalProviderAuthority?: typeof setNativeLocalProviderAuthority;
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
   listSandboxes: () => {
@@ -336,6 +345,9 @@ export const INFERENCE_SET_INSTALLER_PROVIDER_ALIASES = INSTALLER_PROVIDER_ALIAS
 
 function defaultDeps(): InferenceSetDeps {
   return {
+    resolveLocalSwitchRuntime,
+    getNativeLocalProviderAuthority,
+    setNativeLocalProviderAuthority,
     getDefaultSandbox: registry.getDefault,
     getSandbox: registry.getSandbox,
     listSandboxes: registry.listSandboxes,
@@ -1286,7 +1298,7 @@ async function runInferenceSetWithoutHostLock(
     deps,
   });
   const selectingNative =
-    Boolean(localSwitch.selected) ||
+    Boolean(localSwitch.selected || localSwitch.prepare) ||
     isNativeInferenceSelection(provider, entry, options.endpointUrl, expectedGatewayName, deps);
   const routeSandboxes = deps.listSandboxes().sandboxes;
   const preparedRoute = prepareInferenceSetRoute({
@@ -1510,6 +1522,7 @@ async function runInferenceSetWithoutHostLock(
   let previousNativeDetachCommitted = false;
   let previousLocalDetached = false;
   let previousLocalDetachCommitted = false;
+  let localRegistryCommitted = false;
   const restorePreviousInferenceSelection = async (): Promise<string | null> => {
     if (selectingNative) {
       appliedInferenceSelection = false;
@@ -1541,6 +1554,21 @@ async function runInferenceSetWithoutHostLock(
     return null;
   };
   try {
+    await prepareOpenClawLocalSwitch({
+      selection: localSwitch,
+      provider,
+      sandboxName,
+      gatewayName: preparedRoute.gatewayName,
+      deps,
+      beforeAttach: async () => {
+        previousLocalDetached ||= await detachPreviousOpenClawLocal({
+          previous: localSwitch.previous,
+          selected: localSwitch.selected,
+          sandboxName,
+          deps,
+        });
+      },
+    });
     const nativeSelection = await prepareNativeSelection({
       selectingNative,
       provider,
@@ -1729,7 +1757,7 @@ async function runInferenceSetWithoutHostLock(
     // Removing previous native access is a security gate for publishing another
     // route. Do not commit the non-native registry/config while the sandbox can
     // still use the credential-bearing attached provider.
-    previousLocalDetached = await detachPreviousOpenClawLocal({
+    previousLocalDetached ||= await detachPreviousOpenClawLocal({
       previous: localSwitch.previous,
       selected: localSwitch.selected,
       sandboxName,
@@ -1794,6 +1822,7 @@ async function runInferenceSetWithoutHostLock(
       );
     }
     nativeRegistryCommitted = Boolean(nativeProviderAttachment);
+    localRegistryCommitted = Boolean(localSwitch.selected);
     previousNativeDetachCommitted = previousNativeDetached;
     previousLocalDetachCommitted = previousLocalDetached;
 
@@ -2027,12 +2056,20 @@ async function runInferenceSetWithoutHostLock(
       error,
       deps,
     });
+    const localRollbackFailure = await rollbackOpenClawLocalSwitch({
+      selection: localSwitch,
+      committed: localRegistryCommitted,
+      sandboxName,
+      gatewayName: preparedRoute.gatewayName,
+      deps,
+      error,
+    });
     const failure = await restorePreviousOpenClawLocal({
       previous: localSwitch.previous,
       detached: previousLocalDetached,
       committed: previousLocalDetachCommitted,
       sandboxName,
-      error,
+      error: localRollbackFailure,
       deps,
     });
     await restorePreviousNativeAfterFailedPublish({

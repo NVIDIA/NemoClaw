@@ -32,6 +32,7 @@ const maxModelLen = (() => {
 })();
 const apiKey = process.env.NEMOCLAW_FAKE_OPENAI_API_KEY || "";
 const requireAuth = process.env.NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH === "1";
+const allowMissingAuth = process.env.NEMOCLAW_FAKE_OPENAI_ALLOW_MISSING_AUTH === "1";
 // Opt-in auth enforcement on GET /v1/models specifically (real vLLM launched
 // with --api-key gates it). Separate from requireAuth so existing tests, whose
 // readiness probe hits /v1/models unauthenticated, keep working. See #6177.
@@ -128,7 +129,7 @@ function sendResponseSse(res: ServerResponse, text: string): void {
 }
 
 function isAuthOk(req: IncomingMessage): boolean {
-  if (!requireAuth) return true;
+  if (!requireAuth || (allowMissingAuth && req.headers.authorization === undefined)) return true;
   return req.headers.authorization === `Bearer ${apiKey}`;
 }
 

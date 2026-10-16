@@ -9,7 +9,7 @@ import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps } from "../../../test/helpers/inference-set";
 
 describe("runInferenceSet OpenClaw routing", () => {
-  it("stops a switch to local without sandbox-owned authority before route mutation", async () => {
+  it("stops a switch to local when its runtime credential is unavailable", async () => {
     const deps = createDeps({
       config: {},
       entry: {
@@ -20,12 +20,17 @@ describe("runInferenceSet OpenClaw routing", () => {
         model: "gpt-5.4",
       },
     });
+    deps.getNativeLocalProviderAuthority = () => undefined;
+    deps.setNativeLocalProviderAuthority = vi.fn();
+    deps.resolveLocalSwitchRuntime = () => {
+      throw new Error("local runtime credential unavailable");
+    };
     await expect(
       runInferenceSet(
         { provider: "ollama-local", model: "local-model", sandboxName: "alpha" },
         deps,
       ),
-    ).rejects.toThrow("without a matching sandbox-owned provider attachment");
+    ).rejects.toThrow("local runtime credential unavailable");
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
     expect(

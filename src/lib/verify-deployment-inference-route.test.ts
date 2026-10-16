@@ -203,50 +203,57 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     expect(probe).toHaveBeenCalledWith(expect.not.objectContaining({ nativeProvider: true }));
   });
 
-  it.each([DCODE_AGENT, "pi"])(
-    "accepts a managed local provider's canonical application route for %s",
-    async (agentName) => {
-      const binding = {
-        ...localBinding,
-        provider: "llama-cpp-local" as const,
-        endpointUrl: "http://host.openshell.internal:8081/v1",
-        authMode: "authenticated" as const,
-      };
-      const attachment = {
-        ...binding,
-        ...nativeLocalIdentity(binding),
-        schemaVersion: 1 as const,
-        providerId: "provider-1",
-      };
-      const context = onboardInferenceVerificationContext(
-        "my-sandbox",
-        "my-gateway",
-        agentName,
-        {
-          provider: "llama-cpp-local",
-          model: "test-model",
-          endpointUrl: "https://inference.local/v1",
-          preferredInferenceApi: "openai-completions",
-        },
-        { nativeLocalProviderAttachment: attachment },
-      );
-      const routeProbe = vi.fn(async () => ({ ok: true }) as const);
-      const deployment = await verifyDeployment(
-        "my-sandbox",
-        buildChain(),
-        makeDeps({ probeInferenceInvocation: routeProbe }),
-        { ...NO_RETRY, inferenceRouteContext: context.route },
-      );
-      expect(deployment.verification.inferenceRouteWorking).toBe(true);
-      expect(routeProbe).toHaveBeenCalledOnce();
+  it.each([
+    [DCODE_AGENT, "https://inference.local/v1"],
+    ["openclaw", "https://inference.local/v1"],
+    ["pi", "https://inference.local/v1"],
+    [DCODE_AGENT, "http://127.0.0.1:8081/v1"],
+    ["openclaw", "http://127.0.0.1:8081/v1"],
+    ["pi", "http://127.0.0.1:8081/v1"],
+  ])("accepts the selected local route for %s at %s", async (agentName, endpointUrl) => {
+    const binding = {
+      ...localBinding,
+      ...(agentName === "openclaw" || agentName === "pi"
+        ? { agent: agentName as "openclaw" | "pi" }
+        : {}),
+      provider: "llama-cpp-local" as const,
+      endpointUrl: "http://host.openshell.internal:8081/v1",
+      authMode: "authenticated" as const,
+    };
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "provider-1",
+    };
+    const context = onboardInferenceVerificationContext(
+      "my-sandbox",
+      "my-gateway",
+      agentName,
+      {
+        provider: "llama-cpp-local",
+        model: "test-model",
+        endpointUrl,
+        preferredInferenceApi: "openai-completions",
+      },
+      { nativeLocalProviderAttachment: attachment },
+    );
+    const routeProbe = vi.fn(async () => ({ ok: true }) as const);
+    const deployment = await verifyDeployment(
+      "my-sandbox",
+      buildChain(),
+      makeDeps({ probeInferenceInvocation: routeProbe }),
+      { ...NO_RETRY, inferenceRouteContext: context.route },
+    );
+    expect(deployment.verification.inferenceRouteWorking).toBe(true);
+    expect(routeProbe).toHaveBeenCalledOnce();
 
-      const invocationProbe = vi.fn(async () => ({ ok: true }) as const);
-      expect(await probeOnboardInferenceInvocation(context.invocation, invocationProbe)).toEqual({
-        ok: true,
-      });
-      expect(invocationProbe).toHaveBeenCalledOnce();
-    },
-  );
+    const invocationProbe = vi.fn(async () => ({ ok: true }) as const);
+    expect(await probeOnboardInferenceInvocation(context.invocation, invocationProbe)).toEqual({
+      ok: true,
+    });
+    expect(invocationProbe).toHaveBeenCalledOnce();
+  });
 
   it("rejects a native local attachment for a different selected endpoint in both probes", async () => {
     const context = onboardInferenceVerificationContext(

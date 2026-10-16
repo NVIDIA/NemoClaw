@@ -12,6 +12,8 @@ import {
 export { isLocalInferenceProvider };
 export {
   resolveOpenClawLocalSwitch,
+  prepareOpenClawLocalSwitch,
+  rollbackOpenClawLocalSwitch,
   detachPreviousOpenClawLocal,
   restorePreviousOpenClawLocal,
   retirePreviousOpenClawLocal,
@@ -19,10 +21,17 @@ export {
   openClawLocalRegistryFields,
 } from "./native-local";
 export {
+  getNativeLocalProviderAuthority,
+  setNativeLocalProviderAuthority,
   clearNativeLocalProviderAuthority,
   listNativeLocalProviderAuthorities,
 } from "../../state/registry/native-local-provider-authority";
 export { reconcilePreviousOpenClawLocal } from "./native-local";
+export {
+  resolveLocalSwitchRuntime,
+  validateLocalProvider,
+  type ValidationResult,
+} from "./local-runtime";
 import { isSafeModelId } from "../../validation";
 import { InferenceSetError } from "../inference-set-error";
 import type { NativeProviderAttachment } from "../../inference/native-provider/contract";

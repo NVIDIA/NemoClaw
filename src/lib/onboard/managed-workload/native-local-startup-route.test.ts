@@ -125,18 +125,21 @@ it("rejects unattached Deep Agents Code native inference (#13197)", () => {
   ).toThrow("requires its native provider attachment");
 });
 
-it("keeps owned Local NIM on the Deep Agents Code shared route without an attachment (#13116)", () => {
-  const prepared = prepareProfile("langchain-deepagents-code", {
-    provider: "vllm-local",
-    endpointUrl: "http://127.0.0.1:8000/v1",
-    localNimSelected: true,
-    nativeProvider: false,
-  });
-  expect(prepared?.profile.inference).toMatchObject({
-    upstreamProvider: "vllm-local",
-    routedBaseUrl: "https://inference.local/v1",
-  });
-});
+it.each(["openclaw", "langchain-deepagents-code"] as const)(
+  "keeps owned Local NIM on the %s shared route without an attachment (#13116)",
+  (agentName) => {
+    const prepared = prepareProfile(agentName, {
+      provider: "vllm-local",
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      localNimSelected: true,
+      nativeProvider: false,
+    });
+    expect(prepared?.profile.inference).toMatchObject({
+      upstreamProvider: "vllm-local",
+      routedBaseUrl: "https://inference.local/v1",
+    });
+  },
+);
 
 it("routes new OpenClaw Ollama through its sandbox attachment", () => {
   const localBinding = {
