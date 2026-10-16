@@ -193,7 +193,7 @@ async function cleanupDoubleOnboardResources(
   sandbox: SandboxClient,
   forwardTargets: readonly ForwardCleanupTarget[],
   phase: "pre-cleanup" | "verify-cleanup",
-): Promise<void> {
+): Promise<Error | undefined> {
   for (const { port, sandboxName } of forwardTargets) {
     await ignoreCleanupError(() =>
       host.cleanupForward(Number(port), {
@@ -206,19 +206,17 @@ async function cleanupDoubleOnboardResources(
     );
   }
   const names = [INSTALL_SANDBOX_NAME, SANDBOX_A, SANDBOX_B].filter(Boolean);
+  let destroyError: Error | undefined;
   for (const name of names) {
-    const destroy = () =>
-      host.cleanupSandbox(name, {
+    try {
+      await host.cleanupSandbox(name, {
         artifactName: `${phase}-nemoclaw-destroy-${name}`,
         env: commandEnv(),
         timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
       });
-    if (phase === "pre-cleanup") {
-      await ignoreCleanupError(destroy);
-    } else {
-      // Report the public destroy failure before fallback deletion hides its cause.
-      // Registered teardown still attempts every resource and keeps separate artifacts.
-      await destroy();
+    } catch (error) {
+      // Keep the first failure while completing fallback cleanup and absence checks.
+      destroyError ??= error instanceof Error ? error : new Error(String(error));
     }
   }
   for (const name of names) {
@@ -230,6 +228,7 @@ async function cleanupDoubleOnboardResources(
       }),
     );
   }
+  return destroyError;
 }
 
 async function gatewayRuntimeId(gateway: GatewayClient): Promise<string> {
@@ -244,23 +243,19 @@ async function prerequisiteOrSkip(
   args: string[],
   artifactName: string,
 ): Promise<ShellProbeResult> {
-  let result: ShellProbeResult;
+  let detail: string;
   try {
-    result = await host.command(commandName, args, {
+    const result = await host.command(commandName, args, {
       artifactName,
       env: commandEnv(),
       timeoutMs: 30_000,
     });
+    if (result.exitCode === 0) return result;
+    detail = resultText(result);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    const message = `${commandName} ${args.join(" ")} is required for double-onboard live E2E: ${detail}`;
-    if (process.env.GITHUB_ACTIONS === "true") throw new Error(message);
-    skip(message);
+    detail = error instanceof Error ? error.message : String(error);
   }
-  if (result.exitCode === 0) return result;
-  const message = `${commandName} ${args.join(" ")} is required for double-onboard live E2E: ${resultText(
-    result,
-  )}`;
+  const message = `${commandName} ${args.join(" ")} is required for double-onboard live E2E: ${detail}`;
   if (process.env.GITHUB_ACTIONS === "true") throw new Error(message);
   skip(message);
 }
@@ -367,6 +362,12 @@ test(
     const forwardPorts = [...new Set(forwardTargets.map(({ port }) => port))];
     const cleanupSandboxNames = [INSTALL_SANDBOX_NAME, SANDBOX_A, SANDBOX_B].filter(Boolean);
     [...cleanupSandboxNames].reverse().forEach((name) => {
+      // Cleanup runs in reverse order: remove the remote sandbox before reconciling its registry.
+      cleanup.trackSandbox(host, name, {
+        artifactName: `cleanup-nemoclaw-destroy-${name}`,
+        env: commandEnv(),
+        timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
+      });
       cleanup.trackDisposable(`delete OpenShell sandbox ${name}`, () =>
         sandbox.cleanupSandbox(name, {
           artifactName: `cleanup-openshell-sandbox-delete-${name}`,
@@ -374,11 +375,6 @@ test(
           timeoutMs: 60_000,
         }),
       );
-      cleanup.trackSandbox(host, name, {
-        artifactName: `cleanup-nemoclaw-destroy-${name}`,
-        env: commandEnv(),
-        timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
-      });
     });
     forwardTargets.forEach(({ port, sandboxName }) => {
       cleanup.trackForward(host, Number(port), {
@@ -685,12 +681,17 @@ test(
     expect(registryHas(SANDBOX_A), "replacement did not register sandbox A").toBe(true);
 
     progress.phase("remove double-onboard resources");
-    await cleanupDoubleOnboardResources(host, sandbox, forwardTargets, "verify-cleanup");
+    const destroyError = await cleanupDoubleOnboardResources(
+      host,
+      sandbox,
+      forwardTargets,
+      "verify-cleanup",
+    );
     await waitForSandboxAbsent(sandbox, SANDBOX_A, 60_000);
     await waitForSandboxAbsent(sandbox, SANDBOX_B, 60_000);
     expect(
       registryHas(SANDBOX_A) || registryHas(SANDBOX_B),
-      "registry still contains test entries",
+      `registry still contains test entries; destroy error: ${destroyError?.message ?? "none"}`,
     ).toBe(false);
 
     const remainingListeners = await Promise.all(
@@ -700,6 +701,7 @@ test(
       expect(listener.exitCode, resultText(listener)).toBe(1);
       expect(listener.timedOut, resultText(listener)).toBe(false);
     });
+    if (destroyError) throw destroyError;
 
     await artifacts.target.complete({
       id: "double-onboard",
