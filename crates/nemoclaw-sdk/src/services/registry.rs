@@ -667,6 +667,7 @@ pub(crate) fn supported_generation_kind(kind: &str) -> bool {
         installers::ollama::SERVICE_KIND
             | installers::ollama::proxy::PROXY
             | installers::vllm::SERVICE_KIND
+            | installers::container::SERVICE_KIND
     )
 }
 

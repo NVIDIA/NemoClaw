@@ -169,10 +169,6 @@ It requires a running, identity-matched container and a ready report whose times
 It rejects malformed and stopped reports and waits within the timeout for loading or stale reports.
 Typed services keep their existing readiness and authentication checks; generic `serviceRef` currently describes an unauthenticated private /v1 endpoint.
 
-The [explicit Ollama fixture](../../crates/nemoclaw-sdk/tests/fixtures/config/explicit-ollama.yaml) and [explicit vLLM fixture](../../crates/nemoclaw-sdk/tests/fixtures/config/explicit-vllm.yaml) show complete container forms, including normalized runtime JSON, GPU access, limits, /data, private publication, and runtime-status readiness.
-They are parser/compiler fixtures, not deployment authorization or live qualification; replace the UID and pins before any separately authorized live test.
-Acceptance requires a typed-kind example and an explicit-container example for each runtime.
-Compare their effective process launch, GPU access, CPU and memory limits, mounts, runtime configuration, and readiness requirements.
 The managed image must enforce the same hardware compatibility and memory watchdog in both forms.
 No application-name detection or inspection of arbitrary environment keys may select a hidden installer.
 Raw containers intentionally do not inherit typed-model cache retention, generated authentication, image-contract admission, or updatePolicy defaults.

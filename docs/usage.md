@@ -122,7 +122,6 @@ Application data defaults to /data, or `data.mountPath` selects a directory belo
 This data is disposable: destroy removes the owned volume.
 See the [container contract](design/container-contract.md) for the explicit managed-model form and the manual VoiceClaw interface.
 The typed `ollama` and `vllm` kinds retain their current policies and use this same assembly base.
-The [basic parser fixture](../crates/nemoclaw-sdk/tests/fixtures/config/container.yaml) demonstrates these fields with invented pins and endpoints; it does not qualify an image for live use.
 
 ### Supply Credential References
 
