@@ -372,10 +372,6 @@ RUN printf '%s  %s\n' \
     /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py managed-runtime-capability
 
-# Verify that native credentials resolve through the pinned Hermes runtime.
-# hadolint ignore=DL3059
-RUN node /opt/nemoclaw-hermes-config/check-native-credentials.ts
-
 # Ensure the NemoClaw plugin for Hermes is readable.
 # hadolint ignore=DL3059
 RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
@@ -397,6 +393,10 @@ ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=8fb5b35e0e175c71f49bbc4846daffc661
 
 # hadolint ignore=DL3067
 COPY --from=hermes-runtime-payload / /
+
+# The startup guard comes from the runtime payload. Verify its credential
+# projection through the pinned Hermes consumer after installing that payload.
+RUN node /opt/nemoclaw-hermes-config/check-native-credentials.ts
 
 # Keep the root-owned managed-startup handoff in this image-only layer. The
 # following permissions block is replayed on the host by regression tests.

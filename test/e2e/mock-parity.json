@@ -684,6 +684,7 @@
       "fast": [
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/hermes-inference-switch-command-shape.test.ts",
+        "test/e2e/support/hermes-native-local-evidence.test.ts",
         "test/e2e/support/public-nvidia-switch-provider.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
