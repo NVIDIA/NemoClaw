@@ -18,6 +18,7 @@ mod kube_api;
 use http_fixture as transport;
 pub use nemoclaw_test_fixtures::{openshell, tofu};
 
+mod api;
 mod capabilities;
 mod driver_config;
 // Gateway installation: Docker gateway reads, the Podman gateway and its
@@ -196,6 +197,7 @@ fn every_type_has_a_contract_test() {
         )
         .collect();
     let mut sources = [
+        include_str!("api.rs"),
         include_str!("capabilities.rs"),
         include_str!("gateway_installation.rs"),
         include_str!("gateway_readiness.rs"),

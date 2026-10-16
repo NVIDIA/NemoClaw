@@ -80,6 +80,7 @@ None of them exposes ephemeral resources or provider functions.
 | `openshell_workspace` | Workspace |
 | `openshell_inference` | [An inference server's provider and its profile](#inference-providers) |
 | `openshell_web_search` | [A web search provider and its profile](#web-search) |
+| `openshell_api` | [Credentials for another API and its profile](#api-credentials) |
 | `openshell_sandbox` | Sandbox |
 | `openshell_gateway` data source | [Gateway version and compute drivers](#gateway-capabilities) |
 
@@ -97,7 +98,7 @@ When a registration names a managed vLLM or Ollama proxy credential, the provide
 Each OpenShell resource exports a computed `ref` object identifying it: its `type`, `name`, `owner`, `generation`, and `id`, plus `workspace` for objects inside a workspace.
 Objects name each other by `ref`, never by separate name strings:
 
-- Inference and web search resources and sandboxes take `workspace = openshell_workspace.<label>.ref`.
+- Inference, web search, API credential resources and sandboxes take `workspace = openshell_workspace.<label>.ref`.
 - A sandbox takes `providers`, a list of registration refs.
 
 A consumer checks the ref's `type` and rejects a ref of another type.
@@ -110,7 +111,7 @@ Other inputs are typed too:
 - `openshell_sandbox` takes a `policy` block.
   The block's attributes and blocks follow the sandbox policy model with snake_case names: optional `explicit` policy and `managed` deployment grants, whose named network rules are labeled blocks.
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
-- `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference` or `openshell_web_search`. Each ref names the OpenShell registration it attaches in `registration`.
+- `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference`, `openshell_web_search` or `openshell_api`. Each ref names the OpenShell registration it attaches in `registration`.
 - `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables managed endpoint grants allow.
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox; it does not depend on the agent runtime that produced the launch.
   `fabric_harnesses` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
@@ -174,6 +175,53 @@ resource "openshell_inference" "nemotron" {
   binaries  = ["/usr/local/bin/pi"]
 }
 ```
+
+#### API Credentials
+
+Use `openshell_api` when a sandbox needs to authenticate to an API other than inference or web search, such as a booking service over HTTP MCP.
+It owns an OpenShell profile and registration; attach its `ref` to the sandbox's `providers`.
+The profile binds credential injection to the endpoint's host, port and path subtree, and the named executables.
+OpenShell owns injection and destination checks when the sandbox connects.
+
+Set the credential in the environment of the process running OpenTofu, then name that variable in `credential_env`:
+
+```hcl
+resource "openshell_api" "booking" {
+  gateway        = data.openshell_gateway.example.ref
+  workspace      = openshell_workspace.example.ref
+  name           = "booking"
+  endpoint       = "https://booking.example.com/mcp"
+  credential_env = "BOOKING_API_KEY"
+  binaries       = ["/usr/bin/curl"]
+}
+
+# In openshell_sandbox.buyer:
+# providers = [openshell_api.booking.ref]
+```
+
+`auth_style` defaults to `bearer`, using `Authorization` unless `header_name` overrides it.
+For an API key sent without the Bearer prefix, set `auth_style = "header"` and `header_name = "X-API-Key"`.
+Query parameters, OAuth and refresh flows are not supported by this resource.
+Endpoints must use HTTP(S) without embedded credentials, queries, fragments or globs.
+For `/mcp`, the profile allows `/mcp` and its descendants, not sibling paths.
+A literal IP grants only that address; a DNS name receives no private-network grant.
+`binaries` must list the absolute paths of the callers allowed to use the credential.
+
+The provider resolves the host variable during apply and sends its value to OpenShell's credential store.
+OpenTofu state and the exported `ref` contain the variable name, never its value.
+OpenShell projects a credential placeholder into `NEMOCLAW_API_BOOKING_KEY` for `name = "booking"`; the agent does not receive the stored credential value.
+The registration is named `booking` and its profile `nemoclaw-api-booking`.
+
+Changing `credential_env` updates the stored credential in place on the next apply, retaining the registration and attached sandbox.
+Changing only the value of the same host variable does not create a plan change; use a new variable reference to rotate it.
+Credential propagation to an already-running client has not been qualified.
+An unchanged plan reads the binding without resolving the host secret.
+A missing profile is recreated in place; a missing registration replaces the reconstructible pair without replacing its sandbox.
+Foreign ownership or an incomplete observation stops planning.
+
+To remove the credential, first detach or explicitly remove sandboxes using its registration, then remove the API resource and apply.
+Removal deletes the registration and its owned profile; it does not unset the host variable or revoke the key at the API service.
+Endpoint, authentication and executable changes replace the pair, so detach consumers before making those changes.
 
 #### Web Search
 

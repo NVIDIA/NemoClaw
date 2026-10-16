@@ -10,6 +10,20 @@ provider openshell (version 0)
   destroy: bool, optional
     > Permit removing this provider's objects during explicit teardown.
 
+resource openshell_api (version 2)
+  auth_style: string, optional, computed
+  binaries: list(string), optional
+  credential_env: string, optional, computed
+  endpoint: string, optional, computed
+  gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
+  generation: string, optional, computed
+  header_name: string, optional, computed
+  id: string, computed
+  name: string, required
+  ref: object({ generation = string, id = string, name = string, owner = string, registration = string, type = string, workspace = string }), computed
+  registration: string, computed
+  workspace: object({ name = string, owner = string, type = string }), required
+
 resource openshell_gateway_storage (version 0)
   compute_driver: string, required
   data_path: string, computed
