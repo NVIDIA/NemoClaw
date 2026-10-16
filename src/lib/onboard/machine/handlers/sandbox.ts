@@ -1319,7 +1319,12 @@ class SandboxStateFlow<
       this.options.resume ||
       !this.options.recreateSandbox(false) ||
       !this.options.session?.sessionId ||
-      agentName !== (staged.attachment.agent ?? "langchain-deepagents-code") ||
+      (agentName !== "langchain-deepagents-code" &&
+        agentName !== "openclaw" &&
+        agentName !== "pi" &&
+        agentName !== "hermes") ||
+      staged.attachment.agent !==
+        (agentName === "langchain-deepagents-code" ? undefined : agentName) ||
       staged.attachment.sandboxName !== sandboxName ||
       staged.attachment.gatewayName !== this.options.gatewayName ||
       staged.attachment.provider !== this.options.provider ||

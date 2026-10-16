@@ -8,6 +8,7 @@ import type {
 import {
   requireNativeProviderPolicy,
   normalizeNativeLocalProviderAttachment,
+  isPersistedPiSharedLocalInferenceRoute,
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
   prepareNativeLocalSelection,
@@ -1084,6 +1085,7 @@ export function createSetupInference(
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
     let selectingNativeLocal = false;
+    let nativeLocalAgent: string | null | undefined;
     const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
     const usesBedrockRuntimeAdapter =
       provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
@@ -1307,7 +1309,12 @@ export function createSetupInference(
             if (
               recorded &&
               recorded.pendingRouteReservation !== true &&
-              usesNativeLocalInference(recorded.provider, recorded.endpointUrl) &&
+              (usesNativeLocalInference(recorded.provider, recorded.endpointUrl) ||
+                usesNativeLocalInferenceForAgent(
+                  recorded.agent,
+                  recorded.provider,
+                  recorded.endpointUrl,
+                )) &&
               !normalizeNativeLocalProviderAttachment(recorded.nativeLocalProviderAttachment)
             ) {
               if (
@@ -1316,7 +1323,8 @@ export function createSetupInference(
                 !options.reservationSessionId ||
                 (recorded.agent !== "langchain-deepagents-code" &&
                   recorded.agent !== "openclaw" &&
-                  recorded.agent !== "hermes")
+                  recorded.agent !== "hermes" &&
+                  recorded.agent !== "pi")
               ) {
                 throw new Error("Recreate this beta sandbox before using native local inference.");
               }
@@ -1328,16 +1336,14 @@ export function createSetupInference(
               gatewayReachableCompatibleEndpointUrl(name, selectedEndpoint);
             if (typeof hostReachableEndpoint !== "string")
               throw new Error("Native local inference endpoint is missing.");
-            const selectedAgent =
-              options.agentName ??
-              options.hostLocalInference?.request.application ??
-              recorded?.agent;
             nativeLocalProviderAttachment = await prepareNativeLocalSelection({
               adapter: deps.providerAdapter,
               binding: {
                 provider: name as NativeLocalProvider,
-                ...(selectedAgent === "openclaw" || selectedAgent === "hermes"
-                  ? { agent: selectedAgent }
+                ...(nativeLocalAgent === "openclaw" ||
+                nativeLocalAgent === "pi" ||
+                nativeLocalAgent === "hermes"
+                  ? { agent: nativeLocalAgent }
                   : {}),
                 endpointUrl: hostReachableEndpoint,
                 authMode:
@@ -2000,14 +2006,24 @@ export function createSetupInference(
         if (!selectedAgent && usesNativeLocalInference(provider, endpointUrl)) throw error;
         /* An unreadable registry skips GPU release; it must not fail onboarding. */
       }
+      nativeLocalAgent = selectedAgent ?? recordedAgent;
       selectingNativeLocal =
         !options.hostLocalInference?.sharedInferenceRoute &&
         usesNativeLocalInferenceForAgent(
-          selectedAgent ?? recordedAgent,
+          nativeLocalAgent,
           provider,
           endpointUrl,
           options.localNimSelected ?? (provider === "vllm-local" && Boolean(recordedNimContainer)),
         );
+      const preservingLegacyPiRoute =
+        options.preserveLegacyPiSharedLocalRoute === true &&
+        isPersistedPiSharedLocalInferenceRoute(
+          sandboxName ? deps.getSandbox?.(sandboxName) : null,
+          { provider, model, endpointUrl },
+        );
+      if (options.preserveLegacyPiSharedLocalRoute && !preservingLegacyPiRoute)
+        throw new Error("Recorded Pi shared local inference route changed before setup.");
+      selectingNativeLocal = selectingNativeLocal && !preservingLegacyPiRoute;
       if (selectingNativeLocal)
         await (deps.requireNativeProviderPolicy ?? requireNativeProviderPolicy)(gatewayName);
       const result = await mutateGatewayRoute();

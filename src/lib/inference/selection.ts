@@ -9,6 +9,7 @@ import {
 import { usesNativeLocalInferenceForAgent } from "./native-local/contract";
 
 export {
+  isPersistedPiSharedLocalInferenceRoute,
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInferenceForAgent,
 } from "./native-local/contract";

@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export { usesNativeLocalInference, usesNativeLocalInferenceForAgent } from "./eligibility";
+export {
+  usesNativeLocalInference,
+  usesNativeLocalInferenceForAgent,
+  isPersistedPiSharedLocalInferenceRoute,
+} from "./eligibility";
 import { createHash } from "node:crypto";
 import { isLocalInferenceProvider, qualifiedNativeLocalEndpointUrl } from "./agent-config";
 import { isValidName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
@@ -21,7 +25,7 @@ export type NativeLocalProvider =
 export type NativeLocalBinding = Readonly<{
   provider: NativeLocalProvider;
   /** Tagged agents retain distinct immutable profile identities. */
-  agent?: "openclaw" | "hermes";
+  agent?: "openclaw" | "pi" | "hermes";
   endpointUrl: string;
   credentialEnv: string;
   authMode: "authenticated" | "sentinel";
@@ -39,7 +43,10 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
   if (
     (!isLocalInferenceProvider(input.provider as string) &&
       input.provider !== "compatible-endpoint") ||
-    (input.agent !== undefined && input.agent !== "openclaw" && input.agent !== "hermes") ||
+    (input.agent !== undefined &&
+      input.agent !== "openclaw" &&
+      input.agent !== "pi" &&
+      input.agent !== "hermes") ||
     (input.agent === "openclaw" && !isLocalInferenceProvider(input.provider as string)) ||
     typeof input.endpointUrl !== "string" ||
     typeof input.credentialEnv !== "string" ||
@@ -57,7 +64,7 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
   if (!endpointUrl) return undefined;
   return {
     provider: input.provider as NativeLocalProvider,
-    ...(input.agent === "openclaw" ? { agent: "openclaw" as const } : {}),
+    ...(input.agent === "openclaw" || input.agent === "pi" ? { agent: input.agent } : {}),
     endpointUrl,
     credentialEnv: input.credentialEnv,
     authMode: input.authMode,
@@ -75,7 +82,7 @@ export function nativeLocalIdentity(binding: NativeLocalBinding) {
     .update(
       JSON.stringify([
         normalized.provider,
-        ...(normalized.agent === "openclaw" ? [normalized.agent] : []),
+        ...(normalized.agent === "openclaw" || normalized.agent === "pi" ? [normalized.agent] : []),
         normalized.endpointUrl,
         normalized.credentialEnv,
         normalized.authMode,

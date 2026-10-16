@@ -22,6 +22,8 @@ export const REVIEWED_MODEL_SERVE_ARGUMENTS = new Set([
   "--mamba-ssm-cache-dtype",
   "--enable-mamba-cache-stochastic-rounding",
   "--mamba-cache-philox-rounds",
+  "--enable-mamba-shared-prefix-checkpoint",
+  "--prefix-match-unit",
   "--spec-method",
   "--spec-tokens",
   "--enable-auto-tool-choice",

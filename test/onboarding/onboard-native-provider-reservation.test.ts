@@ -24,35 +24,45 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("native provider ownership before route reservation", () => {
-  it("selects the recorded agent route only while holding the sandbox mutation lock (#13197)", async () => {
-    let locked = false;
-    const harness = createDirectSetupInferenceHarness({
-      overrides: {
-        applyLocalInferenceRoute: undefined,
-        getSandbox: () => {
-          expect(locked).toBe(true);
-          return {
-            name: "test-box",
-            agent: "langchain-deepagents-code",
-            pendingRouteReservation: true,
-          };
+  it.each(["langchain-deepagents-code", "pi"])(
+    "selects the recorded %s route only while holding the sandbox mutation lock (#13197)",
+    async (agent) => {
+      let locked = false;
+      const harness = createDirectSetupInferenceHarness({
+        overrides: {
+          applyLocalInferenceRoute: undefined,
+          getSandbox: () => {
+            expect(locked).toBe(true);
+            return {
+              name: "test-box",
+              agent,
+              pendingRouteReservation: true,
+            };
+          },
+          withSandboxMutationLock: async (_name, operation) => {
+            locked = true;
+            try {
+              return await operation();
+            } finally {
+              locked = false;
+            }
+          },
         },
-        withSandboxMutationLock: async (_name, operation) => {
-          locked = true;
-          try {
-            return await operation();
-          } finally {
-            locked = false;
-          }
+      });
+      await expect(harness.setupInference("test-box", "meta-llama", "vllm-local")).resolves.toEqual(
+        {
+          ok: true,
         },
-      },
-    });
-    await expect(harness.setupInference("test-box", "meta-llama", "vllm-local")).resolves.toEqual({
-      ok: true,
-    });
-    expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
-    expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(false);
-  });
+      );
+      expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+      expect([...harness.native.authorities.values()][0]?.agent).toBe(
+        agent === "pi" ? "pi" : undefined,
+      );
+      expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(
+        false,
+      );
+    },
+  );
 
   it("retires an unreserved provider after host smoke fails (#12558)", async () => {
     const harness = createDirectSetupInferenceHarness({
@@ -159,7 +169,7 @@ function legacyRecreationHarness(
   agent = "langchain-deepagents-code",
 ) {
   const row = {
-    name: "legacy-dcode",
+    name: "legacy-native",
     agent,
     provider: previousProvider,
     model: previousProvider === "ollama-local" ? "old-model" : "meta-llama",
@@ -213,11 +223,18 @@ describe("legacy native-local recreation", () => {
     expect(row).toEqual(before);
   });
 
-  it.each(["vllm-local", "ollama-local"])(
-    "stages legacy %s without changing its published source (#13197)",
-    async (previousProvider) => {
-      const { row, before, harness, unloadOllamaModels, run } =
-        legacyRecreationHarness(previousProvider);
+  it.each([
+    ["vllm-local", "langchain-deepagents-code"],
+    ["ollama-local", "langchain-deepagents-code"],
+    ["vllm-local", "pi"],
+    ["ollama-local", "pi"],
+  ])(
+    "stages legacy %s for %s without changing its published source (#13197)",
+    async (previousProvider, agent) => {
+      const { row, before, harness, unloadOllamaModels, run } = legacyRecreationHarness(
+        previousProvider,
+        agent,
+      );
       const result = await run(true);
       expect(result.stagedNativeLocalRecreation).toEqual({
         source: before,

@@ -36,6 +36,26 @@ describe("selected E2E prerequisites", () => {
       },
     },
     {
+      name: "supervisor output",
+      mutate: (workflow: Workflow) => {
+        workflow.jobs["generate-matrix"]!.outputs!.openshell_supervisor_image = "old-image";
+      },
+    },
+    {
+      name: "runtime provenance output",
+      mutate: (workflow: Workflow) => {
+        workflow.jobs["generate-matrix"]!.outputs!.openshell_runtime_provenance = "{}";
+      },
+    },
+    {
+      name: "MCP runtime selection",
+      mutate: (workflow: Workflow) => {
+        workflow.jobs["generate-matrix"]!.steps!.find(
+          (step) => step.id === "openshell_version",
+        )!.env!.MCP_RUNTIME_REQUIRED = "false";
+      },
+    },
+    {
       name: "version command",
       mutate: (workflow: Workflow) => {
         workflow.jobs["generate-matrix"]!.steps!.find(

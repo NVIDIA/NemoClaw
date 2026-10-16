@@ -43,6 +43,7 @@ export function qualifiedNativeLocalEndpointUrl(endpointUrl: string): string | n
 export function nativeLocalCredentialReference(
   provider: string | null | undefined,
   endpointUrl: string,
+  agentName?: string | null,
 ): string | null {
   if (
     !["ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"].includes(
@@ -53,9 +54,12 @@ export function nativeLocalCredentialReference(
   const qualified = qualifiedNativeLocalEndpointUrl(endpointUrl);
   // Canonical custom-hosted selection includes private IP endpoints. Dedicated
   // local providers still use private bridge IPs; compatible local routes use
-  // the managed host aliases admitted by the existing endpoint qualifier.
+  // the managed host aliases admitted by the existing endpoint qualifier. Pi
+  // additionally owns qualified private-address compatible routes.
   return qualified &&
-    (provider !== "compatible-endpoint" || isIP(new URL(qualified).hostname) !== 4)
+    (provider !== "compatible-endpoint" ||
+      agentName === "pi" ||
+      isIP(new URL(qualified).hostname) !== 4)
     ? `openshell:resolve:env:${NATIVE_LOCAL_CREDENTIAL_ENV}`
     : null;
 }

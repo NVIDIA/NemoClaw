@@ -4,6 +4,7 @@
 import {
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInference,
+  usesNativeLocalInferenceForAgent,
 } from "../../inference/native-local/contract";
 
 import { isDeepStrictEqual } from "node:util";
@@ -407,7 +408,12 @@ export function retainedNativeLocalProviderAttachment(
 ): SandboxEntry["nativeLocalProviderAttachment"] {
   return existing &&
     !(selection.provider === "vllm-local" && existing.nimContainer) &&
-    usesNativeLocalInference(selection.provider, selection.endpointUrl) &&
+    (usesNativeLocalInference(selection.provider, selection.endpointUrl) ||
+      usesNativeLocalInferenceForAgent(
+        existing.agent,
+        selection.provider,
+        selection.endpointUrl,
+      )) &&
     selection.provider === existing.provider &&
     selection.endpointUrl === existing.endpointUrl &&
     selection.gatewayName === existing.gatewayName

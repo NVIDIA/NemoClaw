@@ -5,7 +5,7 @@ import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
 import { VLLM_PORT } from "../../core/vllm-port";
 import { LLAMA_CPP_PORT } from "../llama-cpp/contract";
 
-import { isLocalInferenceProvider } from "./agent-config";
+import { isLocalInferenceProvider, qualifiedNativeLocalEndpointUrl } from "./agent-config";
 export { isLocalInferenceProvider };
 
 /** Hosted compatible endpoints remain with their hosted migration slice. */
@@ -40,11 +40,47 @@ export function usesNativeLocalInferenceForAgent(
   endpointUrl?: string | null,
   localNimSelected = false,
 ): boolean {
+  if (provider === "vllm-local" && localNimSelected) return false;
+  if (
+    agentName === "pi" &&
+    provider === "compatible-endpoint" &&
+    endpointUrl &&
+    qualifiedNativeLocalEndpointUrl(endpointUrl)
+  )
+    return true;
   return (
-    !(provider === "vllm-local" && localNimSelected) &&
-    (((agentName === "langchain-deepagents-code" || agentName === "hermes") &&
+    ((agentName === "langchain-deepagents-code" || agentName === "pi" || agentName === "hermes") &&
       usesNativeLocalInference(provider, endpointUrl)) ||
-      (agentName === "openclaw" && isLocalInferenceProvider(provider)))
+    (agentName === "openclaw" && isLocalInferenceProvider(provider))
+  );
+}
+
+/** Preserve only a published Pi selection that still uses its recorded shared route. */
+export function isPersistedPiSharedLocalInferenceRoute(
+  recorded:
+    | {
+        agent?: string | null;
+        provider?: string | null;
+        model?: string | null;
+        endpointUrl?: string | null;
+        createdAt?: string | null;
+        pendingRouteReservation?: boolean;
+        nativeLocalProviderAttachment?: unknown;
+      }
+    | null
+    | undefined,
+  selected?: { provider?: string | null; model?: string | null; endpointUrl?: string | null },
+): boolean {
+  return Boolean(
+    recorded?.agent === "pi" &&
+    typeof recorded.createdAt === "string" &&
+    recorded.pendingRouteReservation !== true &&
+    recorded.nativeLocalProviderAttachment === undefined &&
+    usesNativeLocalInferenceForAgent("pi", recorded.provider, recorded.endpointUrl) &&
+    (!selected ||
+      (recorded.provider === selected.provider &&
+        recorded.model === selected.model &&
+        (recorded.endpointUrl ?? null) === (selected.endpointUrl ?? null))),
   );
 }
 
