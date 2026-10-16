@@ -323,7 +323,7 @@ async fn sandbox_services_change_in_place() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
-async fn sandbox_services_converge_after_drift_and_failures() {
+async fn sandbox_services_converge_after_drift_and_stop_on_foreign_or_failed_reads() {
     let fixture = Fixture::start().await;
     let tofu = Services::new(&fixture.endpoint);
     let services = json!({"research": {"target_port": 8080}});
@@ -374,6 +374,15 @@ async fn sandbox_services_converge_after_drift_and_failures() {
     tofu.run(&["apply", "-auto-approve"], &json!({}), false);
     assert!(mutations(&fixture).is_empty());
     fixture.state.lock().unwrap().services = recorded;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
+async fn sandbox_services_recover_from_failed_mutations_and_keep_teardown() {
+    let fixture = Fixture::start().await;
+    let tofu = Services::new(&fixture.endpoint);
+    tofu.apply(&json!({"research": {"target_port": 8080}}));
+    mutations(&fixture);
 
     // A failed endpoint mutation keeps the sandbox binding; the next apply
     // converges.
