@@ -6,6 +6,7 @@ import { OLLAMA_PROXY_PORT } from "../core/ollama-proxy-port";
 import { isProtectedLocalInferencePort } from "./gateway/local-endpoint-ports";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import { isLocalInferenceProvider } from "./native-local/agent-config";
 import {
   nativeLocalIdentity,
   nativeLocalCredentialReference,
@@ -260,6 +261,10 @@ describe("native local inference", () => {
     expect(
       usesNativeLocalInferenceForAgent("langchain-deepagents-code", "llama-cpp-local", null, true),
     ).toBe(true);
+  });
+
+  it("classifies llama.cpp with the shared local-provider predicate used by inference set", () => {
+    expect(isLocalInferenceProvider("llama-cpp-local")).toBe(true);
   });
 
   it("restricts the selected bridge to models and chat requests (#12558)", () => {

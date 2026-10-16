@@ -63,6 +63,7 @@ import {
   prepareNativeTransitionAuthority,
   prepareNativeSelection,
   isNativeInferenceSelection,
+  isLocalInferenceProvider,
   rollbackNativeSelection,
   detachPreviousNativeBeforePublish,
   restorePreviousNativeAfterFailedPublish,
@@ -360,8 +361,7 @@ function defaultDeps(): InferenceSetDeps {
     providerAdapter: createDefaultInferenceSetProviderAdapter(),
     appendAuditEntry,
     log: console.log,
-    isLocalInferenceProvider: (provider) =>
-      provider === "ollama-local" || provider === "vllm-local",
+    isLocalInferenceProvider,
     validateLocalProvider,
     ensureLocalProviderReachable,
     resolveContextWindowForModel,

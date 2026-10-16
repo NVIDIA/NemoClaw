@@ -359,7 +359,7 @@ Inside the sandbox:
 ## Inference Routing
 
 Agent inference follows one of two OpenShell-managed paths.
-Owned Local NVIDIA NIM, retained legacy and other custom shared routes, and local routes for agents other than Deep Agents Code use `inference.local` through the OpenShell gateway:
+Owned Local NVIDIA NIM, user-supplied compatible endpoints, Pi and Hermes local selections, and retained legacy shared local routes use `inference.local` through the OpenShell gateway:
 
 ```text
 Supported agent runtime (sandbox)  ──▶  inference.local  ──▶  OpenShell gateway  ──▶  Provider endpoint

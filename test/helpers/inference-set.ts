@@ -15,6 +15,7 @@ import type { OpenShellProviderAdapter } from "../../src/lib/adapters/openshell/
 import { createCliOpenShellProviderAdapter } from "../../src/lib/adapters/openshell/provider-adapter-cli";
 import { HOSTED_NATIVE_PROVIDERS } from "../../src/lib/inference/native-provider/hosted";
 import { fixedNativeProvider } from "../../src/lib/inference/native-provider/fixed";
+import { isLocalInferenceProvider } from "../../src/lib/inference/native-local/agent-config";
 import type { NativeProviderAttachment } from "../../src/lib/inference/native-provider/contract";
 import type { AgentConfigTarget } from "../../src/lib/sandbox/config";
 import type { ConfigObject, ConfigValue } from "../../src/lib/security/credential-filter";
@@ -507,8 +508,7 @@ export function createDeps(options: {
     providerAdapter,
     appendAuditEntry: calls.appendAuditEntry,
     log: calls.log,
-    isLocalInferenceProvider: (provider) =>
-      provider === "ollama-local" || provider === "vllm-local",
+    isLocalInferenceProvider,
     validateLocalProvider: calls.validateLocalProvider,
     ensureLocalProviderReachable: calls.ensureLocalProviderReachable,
     resolveContextWindowForModel: calls.resolveContextWindowForModel,

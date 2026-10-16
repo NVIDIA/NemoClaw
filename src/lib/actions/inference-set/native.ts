@@ -9,6 +9,7 @@ import {
   isLocalInferenceProvider,
   nativeLocalCredentialReference,
 } from "../../inference/native-local/agent-config";
+export { isLocalInferenceProvider };
 export {
   resolveOpenClawLocalSwitch,
   detachPreviousOpenClawLocal,

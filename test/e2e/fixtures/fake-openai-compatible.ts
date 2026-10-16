@@ -38,6 +38,7 @@ export interface FakeOpenAiCompatibleServer {
 }
 
 export interface FakeOpenAiCompatibleServerOptions {
+  readonly additionalModels?: readonly string[];
   readonly apiKey?: string;
   readonly chatContent?: string;
   readonly forbiddenMarkers?: readonly string[];
@@ -184,6 +185,7 @@ export async function startFakeOpenAiCompatibleServer(
           PATH: process.env.PATH ?? "",
           HOME: process.env.HOME ?? "",
           NEMOCLAW_FAKE_OPENAI_API_KEY: options.apiKey ?? "",
+          NEMOCLAW_FAKE_OPENAI_ADDITIONAL_MODELS: JSON.stringify(options.additionalModels ?? []),
           NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT: options.chatContent ?? "ok",
           NEMOCLAW_FAKE_OPENAI_ENVIRONMENT_FILE: environmentFile,
           NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS: JSON.stringify(options.forbiddenMarkers ?? []),

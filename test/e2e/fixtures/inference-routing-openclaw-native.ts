@@ -27,10 +27,12 @@ export async function onboardNativeOpenClaw(
   await requireLivePrerequisites(host, runtimeProvider);
   const owner = inferenceSandboxName(authenticated ? "e2e-oc-auth" : "e2e-oc-none");
   const model = "nemoclaw-openclaw-native-local";
+  const switchedModel = "nemoclaw-openclaw-native-local-switched";
   const apiKey = "sk-openclaw-native-TEST-NOT-A-REAL-VALUE";
   const fake = await startFakeOpenAiCompatibleServer({
     apiKey,
     model,
+    additionalModels: authenticated ? [switchedModel] : [],
     chatContent: "PONG",
     host: "0.0.0.0",
     port: authenticated ? 8081 : 8000,
@@ -62,6 +64,7 @@ export async function onboardNativeOpenClaw(
         : ["credentialless vLLM uses sentinel authentication"]),
     ],
     model,
+    switchedModel,
   });
   const onboard = await onboardSandbox(
     artifacts,
@@ -80,6 +83,7 @@ export async function onboardNativeOpenClaw(
   return {
     owner,
     model,
+    switchedModel,
     apiKey,
     fake,
     onboard,
@@ -92,6 +96,7 @@ export async function requestNativeOpenClaw(
   apiKey: string,
   fake: Awaited<ReturnType<typeof startFakeOpenAiCompatibleServer>>,
   host: NativeOpenClawContext["host"],
+  model = "nemoclaw-openclaw-native-local",
 ) {
   const requestOffset = fake.requests().length;
   const turn = await host.nemoclaw(
@@ -116,6 +121,6 @@ export async function requestNativeOpenClaw(
   const requests = fake
     .requests()
     .slice(requestOffset)
-    .filter((request) => request.model === "nemoclaw-openclaw-native-local");
+    .filter((request) => request.model === model);
   return { turn, requests };
 }

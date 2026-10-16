@@ -23,6 +23,7 @@ import {
   ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES,
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
+  OPENCLAW_NATIVE_LOCAL_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
 import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import {
@@ -1055,6 +1056,21 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: false,
     cloudflared: true,
     owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
+  }),
+  managedRuntimeTarget("inference-routing-openclaw-native", {
+    displayName: "Inference: OpenClaw native local requests and isolation",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint:
+      "Ubuntu; authenticated llama.cpp and credentialless vLLM fixtures",
+    profile: "standard",
+    timeoutMinutes: OPENCLAW_NATIVE_LOCAL_TARGET_TIMEOUT_MINUTES,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: false,
+    owningPaths: [
+      "test/e2e/fixtures/inference-routing-openclaw-native.ts",
+      "tools/e2e/onboard-timeout-contract.mts",
+    ],
   }),
   dockerOnlyTarget("llama-cpp-generic-gpu", {
     displayName: "Inference: completes an agent turn with llama.cpp on a generic NVIDIA GPU",

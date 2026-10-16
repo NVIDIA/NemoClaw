@@ -14,6 +14,16 @@ const logFile = process.env.NEMOCLAW_FAKE_OPENAI_LOG_FILE || "";
 const requestsFile = process.env.NEMOCLAW_FAKE_OPENAI_REQUESTS_FILE || "";
 const environmentFile = process.env.NEMOCLAW_FAKE_OPENAI_ENVIRONMENT_FILE || "";
 const model = process.env.NEMOCLAW_FAKE_OPENAI_MODEL || "test-model";
+const additionalModels = (() => {
+  try {
+    const value = JSON.parse(process.env.NEMOCLAW_FAKE_OPENAI_ADDITIONAL_MODELS || "[]");
+    return Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  } catch {
+    return [];
+  }
+})();
 // Optional runtime context window advertised on /v1/models, mirroring vLLM's
 // max_model_len so onboarding can probe a real endpoint's context (#6177).
 const maxModelLen = (() => {
@@ -250,7 +260,10 @@ const server = createServer(async (req, res) => {
     } else if (path === "/props") {
       sendJson(res, 200, {
         model_path: "/models/fake.gguf",
-        model_alias: model,
+        model_alias:
+          new URL(req.url || "/props", "http://fake-openai-compatible.local").searchParams.get(
+            "model",
+          ) || model,
         total_slots: 1,
         default_generation_settings: { params: {} },
       });
@@ -279,18 +292,21 @@ const server = createServer(async (req, res) => {
       sendJson(res, 401, { error: { message: "missing bearer credential" } });
       return;
     }
-    const modelEntry: JsonObject = { id: model, object: "model" };
-    if (llamaCppFingerprint) {
-      modelEntry.owned_by = "llamacpp";
-      modelEntry.meta = {
-        n_vocab: 32000,
-        n_ctx: maxModelLen ?? 8192,
-        n_ctx_train: 8192,
-        n_embd: 4096,
-      };
-    }
-    if (maxModelLen !== null) modelEntry.max_model_len = maxModelLen;
-    sendJson(res, 200, { object: "list", data: [modelEntry] });
+    const entries = [model, ...additionalModels].map((servedModel) => {
+      const modelEntry: JsonObject = { id: servedModel, object: "model" };
+      if (llamaCppFingerprint) {
+        modelEntry.owned_by = "llamacpp";
+        modelEntry.meta = {
+          n_vocab: 32000,
+          n_ctx: maxModelLen ?? 8192,
+          n_ctx_train: 8192,
+          n_embd: 4096,
+        };
+      }
+      if (maxModelLen !== null) modelEntry.max_model_len = maxModelLen;
+      return modelEntry;
+    });
+    sendJson(res, 200, { object: "list", data: entries });
     return;
   }
 
