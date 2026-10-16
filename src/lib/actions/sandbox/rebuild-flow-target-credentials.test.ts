@@ -12,6 +12,7 @@ import {
   installRebuildFlowTestHooks,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
+import { nativeLocalRebuildAttachment } from "../../../../test/helpers/rebuild-flow-test-support";
 
 describe("rebuildSandbox flow: target credentials", () => {
   installRebuildFlowTestHooks();
@@ -168,7 +169,13 @@ describe("rebuildSandbox flow: target credentials", () => {
   });
 
   it("ignores a stale matching-session credential for a resolved local target", async () => {
-    const harness = createRebuildFlowHarness();
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {
+        provider: "ollama-local",
+        nativeLocalProviderAttachment: nativeLocalRebuildAttachment("ollama-local"),
+      },
+    });
+    harness.session.provider = "ollama-local";
     harness.session.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
 
     await expect(

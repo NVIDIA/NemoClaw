@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import * as gatewayDrift from "../../adapters/openshell/gateway-drift";
 import * as resolve from "../../adapters/openshell/resolve";
+import * as providerCommand from "../../adapters/openshell/provider-command";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as agentDefs from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
@@ -110,7 +111,7 @@ describe("rebuild resume snapshot repair", () => {
 
     session = onboardSession.createSession({
       sandboxName: "alpha",
-      provider: "ollama-local",
+      provider: "nvidia-router",
       model: "nvidia/nemotron",
       lastCompletedStep: "gateway",
       status: "complete",
@@ -216,7 +217,7 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(onboardSession, "markStepFailed").mockImplementation(() => loadSession()),
       vi.spyOn(registry, "getSandbox").mockReturnValue({
         name: "alpha",
-        provider: "ollama-local",
+        provider: "nvidia-router",
         model: "nvidia/nemotron",
         agent: null,
         nimContainer: null,
@@ -225,6 +226,24 @@ describe("rebuild resume snapshot repair", () => {
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
       } as never),
+      vi.spyOn(providerCommand, "runOpenshellProviderCommand").mockImplementation((args) => {
+        const output =
+          "Name: nvidia-router\nType: openai\nCredential keys: <none>\nConfig keys: OPENAI_BASE_URL\n";
+        const responses = new Map([
+          ["provider get nvidia-router", { status: 0, stdout: output, stderr: "" }],
+        ]);
+        const response = responses.get(args.slice(0, 3).join(" ")) ?? {
+          status: 1,
+          stdout: "",
+          stderr: "provider not found",
+        };
+        return {
+          ...response,
+          pid: 0,
+          signal: null,
+          output: [null, response.stdout, response.stderr],
+        };
+      }),
       vi.spyOn(registry, "updateSandbox").mockReturnValue(true),
       vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] } as never),
       vi.spyOn(mcpBridgeProvider, "getMcpProviderInspectionRuntimeSelection").mockReturnValue({
@@ -237,7 +256,7 @@ describe("rebuild resume snapshot repair", () => {
           sandboxName: "alpha",
           gatewayName: "nemoclaw",
           route: {
-            provider: "ollama-local",
+            provider: "nvidia-router",
             model: "nvidia/nemotron",
             endpointUrl: null,
             preferredInferenceApi: null,

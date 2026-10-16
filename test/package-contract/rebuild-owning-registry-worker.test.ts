@@ -152,7 +152,7 @@ function writeSiblingRegistry(
       sandboxes: {
         alpha: {
           name: "alpha",
-          provider: "ollama-local",
+          provider: "nvidia-router",
           model: "nvidia/nemotron",
           agent: "openclaw",
           dashboardPort: 18_789,

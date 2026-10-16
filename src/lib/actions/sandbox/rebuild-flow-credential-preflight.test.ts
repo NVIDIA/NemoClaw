@@ -15,6 +15,8 @@ import {
   nativeProviderRebuildScenario,
 } from "./rebuild-flow-test-fixtures";
 
+import { nativeLocalRebuildAttachment } from "../../../../test/helpers/rebuild-flow-test-support";
+
 type Harness = ReturnType<typeof createRebuildFlowHarness>;
 
 const MODEL = "test/model";
@@ -653,7 +655,12 @@ describe("rebuildSandbox flow: credential preflight", () => {
 
   it("skips credential hydration for local inference", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: { provider: "ollama-local", model: MODEL, credentialEnv: null },
+      sandboxEntry: {
+        provider: "ollama-local",
+        model: MODEL,
+        credentialEnv: null,
+        nativeLocalProviderAttachment: nativeLocalRebuildAttachment("ollama-local"),
+      },
       hydrateCredentialEnv: () => {
         throw new Error("local inference must not hydrate a credential");
       },
@@ -668,11 +675,16 @@ describe("rebuildSandbox flow: credential preflight", () => {
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
   });
 
-  it.each(["ollama-local", "vllm-local"])(
-    "migrates a legacy %s target away from OPENAI_API_KEY (#2519)",
+  it.each(["ollama-local", "vllm-local"] as const)(
+    "migrates an attached %s target away from legacy OPENAI_API_KEY (#2519)",
     async (provider) => {
       const harness = createRebuildFlowHarness({
-        sandboxEntry: { provider, model: MODEL, credentialEnv: "OPENAI_API_KEY" },
+        sandboxEntry: {
+          provider,
+          model: MODEL,
+          credentialEnv: "OPENAI_API_KEY",
+          nativeLocalProviderAttachment: nativeLocalRebuildAttachment(provider),
+        },
       });
       configureSession(harness, provider, "OPENAI_API_KEY");
 
