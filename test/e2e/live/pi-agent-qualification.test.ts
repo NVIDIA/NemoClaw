@@ -231,7 +231,7 @@ async function persistentStateInventory(
   options: { seedNativeState?: boolean } = {},
 ) {
   const stateFixture = options.seedNativeState
-    ? `printf '%s\\n' '{"defaultProjectTrust":"always","futurePiSetting":{"enabled":true},"theme":"nvidia-dark"}' > /sandbox/.pi/agent/settings.json; printf '%s\\n' '{"nemoclawE2E":"${PI_TRUST_PRESERVATION_MARKER}"}' > /sandbox/.pi/agent/trust.json; chmod 600 /sandbox/.pi/agent/settings.json /sandbox/.pi/agent/trust.json; `
+    ? `printf '%s\\n' '${JSON.stringify({ defaultProjectTrust: "always", futurePiSetting: { enabled: true }, theme: "nvidia-dark", defaultProvider: "openshell", defaultModel: MODEL }, null, 2)}' > /sandbox/.pi/agent/settings.json; printf '%s\\n' '{"nemoclawE2E":"${PI_TRUST_PRESERVATION_MARKER}"}' > /sandbox/.pi/agent/trust.json; chmod 600 /sandbox/.pi/agent/settings.json /sandbox/.pi/agent/trust.json; `
     : "";
   const result = await execPiShell(
     sandbox,

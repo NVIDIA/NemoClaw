@@ -33,7 +33,7 @@ Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specif
 | Host platform       | Linux AMD64 or Linux ARM64               |
 | Compute runtime     | Docker                                   |
 | Managed API         | OpenAI Chat Completions                  |
-| Sandbox route       | Native endpoint for NVIDIA, fixed hosted providers, and new qualified local selections; shared route for other custom endpoints and published legacy selections |
+| Sandbox route       | Native endpoint for NVIDIA, fixed hosted providers, and new qualified local selections; shared route for Local NVIDIA NIM, other custom endpoints, and published legacy selections |
 | Qualification model | `nvidia/nemotron-3-super-120b-a12b`      |
 | Interactive command | `pi`                                     |
 | Headless command    | `pi --no-approve --print`                |
@@ -60,9 +60,9 @@ Each receipt must match the protected inputs and an image digest in the candidat
 
 Pi reads a generated `/sandbox/.pi/agent/models.json` file. The file contains the model, managed route, API family, and a non-secret route placeholder. It does not contain the upstream provider credential.
 
-The upstream credential remains in OpenShell provider state. It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. New Pi local selections use sandbox-attached providers for qualified host-local endpoints.
+The upstream credential remains in OpenShell provider state. It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. New Pi selections for Ollama, standalone vLLM, llama.cpp, and qualified host-local compatible endpoints use sandbox-attached providers.
 OpenShell supplies the issued credential at egress; Pi receives only an opaque reference.
-Hosted custom endpoints and unchanged published Pi shared-route selections retain `inference.local`.
+Local NVIDIA NIM, hosted custom endpoints, and unchanged published Pi shared-route selections retain `inference.local`.
 A failed native selection stops without falling back to the shared route. Direct unmanaged provider access is denied. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.
 
 For OpenRouter, Pi uses `https://openrouter.ai/api/v1` through its recorded native provider. Readiness requires a successful bounded inference request for the selected model.
