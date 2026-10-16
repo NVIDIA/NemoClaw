@@ -2566,6 +2566,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
   probeTiming?: ProbeTimingRecorder,
 ): Promise<PreparedConnectSession | null> {
   if (probeOnly) {
+    console.log(`  Target gateway: ${getSandboxTargetGatewayName(sandboxName)}`);
     let portableAuthorityReady = false;
     let hermesMissingFastPathEligible = false;
     let hermesReadinessAuthority: {
