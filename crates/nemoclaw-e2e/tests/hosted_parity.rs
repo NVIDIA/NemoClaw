@@ -31,7 +31,12 @@ fn authored_document(raw: &[u8], current: &[u8]) -> Document {
     };
     // v0 exposed Hermes's native API; v1 cannot until Fabric's Hermes adapter
     // serves it (NVIDIA/NemoClaw#13321), so authored intent omits it.
-    harness.remove("interfaces");
+    let interfaces = harness.remove("interfaces");
+    assert_eq!(
+        interfaces.is_some(),
+        harness["kind"] == "nvidia.fabric.hermes",
+        "only the Hermes export declares native interfaces"
+    );
     // v0 images ran agents as 1000:1000; v1 images use 10001:10001.
     if let Some(process) = sandbox
         .get_mut("network")
