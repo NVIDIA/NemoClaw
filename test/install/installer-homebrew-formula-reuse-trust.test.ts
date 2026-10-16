@@ -24,7 +24,12 @@ const boundedCurl = [
   "      --speed-limit 1024 --speed-time 60 \\",
   '      "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \\',
 ].join("\n");
-const originalInstaller = INSTALLER_SOURCE.replace(boundedCurl, originalCurl);
+// These reviewed templates predate restrictive user-local directory creation.
+const originalInstaller = INSTALLER_SOURCE.replace(
+  "  # The gateway state directory shares ~/.local; its ancestors must not be group-writable.\n" +
+    '  (umask g-w,o-w && mkdir -p "$target_dir")',
+  '  mkdir -p "$target_dir"',
+).replace(boundedCurl, originalCurl);
 const boundedInstaller = originalInstaller.replace(originalCurl, boundedCurl);
 const tempDirs: string[] = [];
 

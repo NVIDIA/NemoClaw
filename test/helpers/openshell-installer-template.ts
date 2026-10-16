@@ -105,6 +105,14 @@ const MACOS_METHOD_START = `MACOS_INSTALL_METHOD="\${_NEMOCLAW_OPENSHELL_INSTALL
 const MACOS_METHOD_END = "esac\n";
 
 export function installerReleaseTemplate(source: string, version: string): string {
+  if (version !== "0.0.116") {
+    // Preserve historical release templates when deriving them from the current installer.
+    source = source.replace(
+      "  # The gateway state directory shares ~/.local; its ancestors must not be group-writable.\n" +
+        '  (umask g-w,o-w && mkdir -p "$target_dir")',
+      '  mkdir -p "$target_dir"',
+    );
+  }
   const v012Comment =
     "  # OpenShell 0.1.2 enforces MCP policy in its supervisor image. Recognize\n" +
     "  # only its exact pinned sandbox artifacts here, not version text alone.\n" +
@@ -350,4 +358,29 @@ export function supervisorV00116Fixtures(selected: {
       'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.0.116";',
     ),
   };
+}
+
+export function replacePinFunction(
+  source: string,
+  functionName: string,
+  nextMarker: string,
+  replacement: string,
+): string {
+  const start = source.indexOf(`${functionName}() {`);
+  const next = source.indexOf(`\n${nextMarker}`, start);
+  assert.notEqual(start, -1, `${functionName} template start`);
+  assert.notEqual(next, -1, `${functionName} template end`);
+  return `${source.slice(0, start)}${replacement}${source.slice(next)}`;
+}
+
+export function removeV00116SandboxBuildTrust(source: string): string {
+  const v00116SandboxBuilds = `    # OpenShell v0.0.116 standalone sandbox binaries.
+    326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40 | \\
+      7052a87d2b46ef52ecc0f7c64b9bac008dd3010c467881b0648045334eb0ed1d)
+      printf '%s\\n' "0.0.116"
+      ;;
+`;
+  const result = source.replace(v00116SandboxBuilds, "");
+  assert.notEqual(result, source, "v0.0.116 sandbox build fixture");
+  return result;
 }
