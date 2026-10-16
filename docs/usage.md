@@ -237,9 +237,7 @@ The provider rejects that observation before reconciling agent configuration; se
 
 For OpenClaw model and native-setting updates, use an [agent image built from this revision](build.md#build-agent-images).
 Rebuilding the CLI bundle alone does not update the adapter in an existing sandbox image; changing that image requires a separate deployment with a fresh UID and state.
-The packaged adapter tracks its native configuration sections, updates them during an explicit runtime restart, and preserves unrelated native bookkeeping and files.
-Conflicting direct edits to an owned section cause startup to fail without overwriting that section.
-See the [OpenClaw modification notice](../image/fabric/OPENCLAW-NOTICE.md) for ownership and interrupted-write behavior.
+How the adapter applies native configuration is Fabric's; see its OpenClaw adapter documentation.
 
 A request to remove or replace a bound sandbox is rejected before managed-runtime reconciliation, including when the same request changes a managed service.
 The refusal names the sandbox and preserves retained intent and resource state.

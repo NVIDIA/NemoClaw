@@ -2065,9 +2065,9 @@
       ]
     }
   ],
-  "fabric_revision": "24f068c895e5cbc30286bc743498be4e5014d658",
+  "fabric_revision": "5574117feb4be948c1b03f4c36a2fe9a11af910d",
   "schema_version": 2,
-  "source_sha256": "77f78f66a24a8cd8e6f33f9cf49f3db8c5de39e12e095f5599cb63909a05865f",
+  "source_sha256": "b1a7f2759ea26fd3dcf8136be30045897fa5d7c38a7b96e81afaecdde798e523",
   "targets": [
     {
       "descriptor": {
