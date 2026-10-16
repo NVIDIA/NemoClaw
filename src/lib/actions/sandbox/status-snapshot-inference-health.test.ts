@@ -761,7 +761,10 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         gatewayName: "nemoclaw-19080",
       });
       expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledOnce();
-      expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
+      expect(snapshot.inferenceHealth).toMatchObject({
+        ok: true,
+        okLabel: "healthy (no model catalog by design; inference request served)",
+      });
     },
   );
 
