@@ -352,7 +352,9 @@ The sandbox must reach it as `host.openshell.internal:4318`.
 The export does not install or configure that collector. Verify trace delivery after applying the configuration.
 It omits settings only when the v1 target has the same effective behavior without them.
 Hermes export fails when Hermes tool gateways are enabled.
-It preserves Hermes dashboard and browser terminal UI behavior, including explicit disabled values when omission would enable them, plus nondefault interface ports.
+It preserves Hermes dashboard and in-browser TUI behavior, including explicit disabled values when omission would enable them, plus nondefault API and enabled-dashboard ports.
+For a disabled Hermes dashboard, export writes `interfaces.dashboard.enabled: false` and omits the recorded dashboard port because v1 rejects a port on a disabled dashboard.
+Export fails when the recorded dashboard port differs from the port in the retained dashboard URL.
 The default API port is omitted.
 It exports Hermes API-key authentication only when the retained authentication proof matches the managed Hermes provider, OpenAI-compatible API, endpoint, and `NOUS_API_KEY` credential reference.
 The exporter validates that source binding, then emits API-key authentication without a provider reference because v1 derives the association from the provider configuration.
