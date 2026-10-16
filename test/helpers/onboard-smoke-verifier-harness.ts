@@ -7,6 +7,7 @@ import path from "node:path";
 export type SmokeVerifierHarnessCall = [string, ...unknown[]];
 
 type VerifyOnboardSmokeInvocation = {
+  capturePayload?: boolean;
   selectedChatCapability?: boolean;
   credentialEnv?: string;
   endpointUrl?: string;
@@ -23,6 +24,7 @@ export async function runVerifyOnboardSmokeHarness(
 const Module = require("node:module");
 const originalLoad = Module._load;
 const calls = [];
+let capturePayload = false;
 
 process.env.VITEST = "false";
 
@@ -68,7 +70,12 @@ Module._load = function patchedLoad(request, _parent, _isMain) {
           const headerMatch = contents.match(/header = "([^"]+)"/);
           authConfigSummary = headerMatch ? headerMatch[1] : "config:" + contents.trim();
         }
-        calls.push(["runCurlProbe", args[args.length - 1], authConfigSummary]);
+        calls.push([
+          "runCurlProbe",
+          args[args.length - 1],
+          authConfigSummary,
+          ...(capturePayload ? [JSON.parse(args[args.indexOf("-d") + 1])] : []),
+        ]);
         return {
           ok: true,
           httpStatus: 200,
@@ -96,7 +103,8 @@ console.log = (...args) => calls.push(["log", args.join(" ")]);
 
 (async () => {
   for (const invocation of invocations) {
-    const { selectedChatCapability, ...input } = invocation;
+    const { selectedChatCapability, capturePayload: requestedPayload, ...input } = invocation;
+    capturePayload = requestedPayload === true;
     const capabilityCache = selectedChatCapability ? new OnboardInferenceCapabilityCache() : undefined;
     const effectiveInvocation = {
       endpointUrl: "https://api.example.com/v1",

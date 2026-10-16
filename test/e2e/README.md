@@ -2415,32 +2415,27 @@ substitution, and sandbox isolation.
 
 ## Fixed hosted provider qualification
 
-`live/inference-routing-provider-smoke.test.ts` owns credential-backed native inference smoke tests.
-Select `openai`, `anthropic`, `gemini`, `openrouter`, or `hermes` with
-`NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE`. Selecting `openrouter` runs both
-OpenRouter agent cases; `all` runs all six cases.
-Use an approved disposable environment and credentials from its approved source.
+`live/inference-routing-provider-smoke.test.ts` owns the credential-backed OpenRouter smoke.
+Select `openrouter` with `NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE` to run both
+OpenRouter agent cases.
+Use an approved disposable environment and OpenRouter credential from its approved source.
 These tests are outside the credential-free `inference-routing` PR lane.
-A skipped provider is missing qualification evidence.
+A skipped OpenRouter case is missing qualification evidence.
 TC-INF-05 uses the same probe for NVIDIA credential isolation.
 Its separate environment, process, filesystem, and canary checks are replaced by the probe results;
 support tests cover leak detection and control cleanup.
 
-OpenAI, Anthropic, Gemini, and OpenRouter onboard OpenClaw and start a fresh agent process.
-Hermes Provider onboards Hermes and submits a fresh request to its managed API.
+OpenRouter onboards OpenClaw and starts a fresh agent process.
 The `hosted-inference-openrouter` target also onboards Deep Agents Code with the same
 OpenRouter key and model. Its six-assertion case checks onboarding, credential isolation,
 the native TOML route, and one fresh `dcode -n --json` response.
-The five OpenClaw and Hermes cases check the native endpoint, credential placeholder,
+The OpenClaw case checks the native endpoint, credential placeholder,
 selected adapter, response model, and nonempty answer.
 The OpenRouter case switches the running sandbox to a second model and back.
-It requires a fresh agent response with that model after each switch and checks that the return route is readable.
-Each `nemoclaw inference set` switch also verifies its selected model with a sandbox-side inference request.
+After each successful switch, it requires a fresh OpenClaw response whose reported model matches the selection.
 An unavailable or rate-limited intermediate model fails the first switch.
-The alternate route read and return-route model assertion were removed from this live case:
-agent responses prove the effective model after each restart, while the recorded-model behavior
-belongs to the `inference get` source tests. Both switch exit checks and the return route read remain.
-After onboarding, each hosted-provider case runs one sandbox probe before its first native agent request.
+The case does not read either route. The `inference get` source tests cover recorded-model behavior.
+After onboarding, the OpenRouter case runs one sandbox probe before its first native agent request.
 The OpenRouter model-switch requests and follow-up agent responses do not repeat that scan.
 The probe checks the raw environment and a bounded file sample for a salted fingerprint of the selected credential.
 The probe tries `ps aux`, then `ps -ef`, to check process arguments.
@@ -2456,30 +2451,33 @@ rejection and credential binding.
 Deterministic tests own protocol/header construction, ownership collisions,
 sandbox isolation, restart, and failed-operation recovery.
 
-Each selected case requires its matching approved model variable, listed below. The smoke does not select a default model.
-The Hermes smoke uses `NOUS_API_KEY`. It does not prove interactive OAuth login or token refresh.
+The smoke requires the approved `NEMOCLAW_OPENROUTER_MODEL`; it does not select a default model.
 Credentials remain in the test host environment and OpenShell provider store; artifacts redact them.
 The cleanup helper destroys each test sandbox. The Deep Agents Code case checks sandbox absence even if onboarding fails.
-Other hosted cases check absence after successful onboarding; failed onboarding uses best-effort cleanup.
+The OpenClaw case checks absence after successful onboarding; failed onboarding uses best-effort cleanup.
 Neither path proves removal of credentials from the OpenShell provider store.
 Discard the approved disposable gateway after each run, including failed onboarding. Use a fresh gateway for a retry.
 
-Select one explicit target with `targets=hosted-inference-openai`, `hosted-inference-anthropic`,
-`hosted-inference-gemini`, `hosted-inference-openrouter`, or `hosted-inference-hermes`.
-These Docker targets reuse `inference-routing-provider-smoke.test.ts` and the trusted E2E controller.
-These targets require explicit selection. Default suites and changed-file selection do not include them,
-even when a workflow or provider source changes. The initial consumer is Slice 2 (#12589); its native
-provider behavior must exist in the candidate before running these assertions. Advisor can recommend
-an explicit hosted target. Selection does not grant dispatch or credential access.
+Select `targets=hosted-inference-openrouter` explicitly.
+This Docker target reuses `inference-routing-provider-smoke.test.ts` and the trusted E2E controller.
+It requires explicit selection. Default suites and changed-file selection do not include it,
+even when a workflow or provider source changes. Advisor can recommend the OpenRouter target.
+Selection does not grant dispatch or credential access.
 The credential-free `inference-routing` target remains separate.
 
-Before dispatch, obtain an approved disposable environment and credential source for the selected provider.
+OpenAI, Anthropic, Gemini, and Hermes Provider use deterministic source contracts for fixed
+endpoint and method selection, request headers and body, native agent configuration,
+provider-bound credentials, and rejection of crossed routes. OpenAI, Anthropic, and Gemini
+also have response-parsing contracts. Hermes malformed HTTP 2xx body parsing is deferred
+to #13290. Their four former credentialed selectors are unavailable. These contracts do not
+demonstrate live upstream authentication, model availability, or a fresh remote answer.
+That evidence is deferred for issues #12589 and #12955; neither issue waits on those E2Es.
+
+Before dispatch, obtain an approved disposable environment and OpenRouter credential source.
 Credential-bearing hosted runs require the canonical `e2e.yaml` workflow from `main`.
 Branch-dispatched workflows receive no hosted-provider or registry credentials, even for an approved candidate.
-The controller passes only that target's repository secret (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-`GEMINI_API_KEY`, `OPENROUTER_API_KEY`, or `NOUS_API_KEY`) to the test step.
-Set the corresponding repository variable `NEMOCLAW_OPENAI_MODEL`, `NEMOCLAW_ANTHROPIC_MODEL`,
-`NEMOCLAW_GEMINI_MODEL`, `NEMOCLAW_OPENROUTER_MODEL`, or `NEMOCLAW_HERMES_MODEL` to an approved model.
+The controller passes only `OPENROUTER_API_KEY` to the test step.
+Set `NEMOCLAW_OPENROUTER_MODEL` to an approved model.
 Missing credentials or models fail before onboarding. A selected test that skips cannot produce passing evidence.
 The existing controller binds artifacts to the tested source revision and trusted workflow revision.
 For an authorized hosted-provider candidate run, the trusted reporter comments on the PR after the selected jobs finish.
@@ -2493,9 +2491,4 @@ Candidate-controlled host processes can read or copy the selected provider key w
 The sandbox isolation check does not attest isolation from those host processes.
 Job cleanup and artifact redaction do not revoke the key or erase a copy made by candidate code.
 Rotate or revoke the key in its issuing provider to remove later access.
-Hermes API-key evidence does not qualify interactive OAuth login.
-
-Hermes OAuth remains a separate live qualification for Slice 2 (#12589). An authorized account operator
-must complete device authorization in an approved disposable interactive environment, verify a fresh
-request through the returned native endpoint, restart, and verify another fresh request. Record the
-tested commit and redacted results. This prerequisite adds no OAuth selector or automation.
+Hermes interactive OAuth evidence is also deferred for Slice 2 (#12589).

@@ -32,10 +32,7 @@ import {
 import { SANDBOX_SURVIVAL_TARGET_TIMEOUT_MINUTES } from "./sandbox-survival-timeout-contract.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
-import {
-  HOSTED_PROVIDER_SMOKE_CASES,
-  hostedProviderSmokeEnvironment,
-} from "./hosted-provider-smoke.mts";
+import { OPENROUTER_SMOKE, configureOpenRouterSmokeEnvironment } from "./hosted-provider-smoke.mts";
 
 export const E2E_EXECUTION_PROFILES = [
   "standard",
@@ -1004,46 +1001,28 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_SANDBOX_NAME: "e2e-issue-4462",
     },
   }),
-  ...HOSTED_PROVIDER_SMOKE_CASES.map((selected) =>
-    dockerOnlyTarget(`hosted-inference-${selected.selector}`, {
-      displayName:
-        selected.selector === "openrouter"
-          ? "Inference: completes native OpenRouter agent requests"
-          : `Inference: completes a native ${selected.label} agent request`,
-      agentRuntime:
-        selected.selector === "hermes"
-          ? "hermes"
-          : selected.selector === "openrouter"
-            ? "openclaw + langchain-deepagents-code"
-            : "openclaw",
-      prAdvisorSelectable: true,
-      owningPaths: [
-        "test/e2e/live/inference-routing-credential-scan.ts",
-        `managed-inference/provider-profiles/nemoclaw-${selected.selector}-inference-v1.yaml`,
-        ...(["openai", "anthropic", "hermes"].includes(selected.selector)
-          ? ["src/lib/inference/native-provider/", "src/lib/onboard/setup-inference.ts"]
-          : []),
-        ...(selected.selector === "hermes" ? ["src/lib/hermes-provider-auth.ts"] : []),
-        ...(selected.selector === "openrouter"
-          ? [
-              "agents/langchain-deepagents-code/managed-dcode-runtime.py",
-              "agents/langchain-deepagents-code/generate-config.ts",
-              "src/lib/inference/managed-dcode/",
-            ]
-          : []),
-      ],
-      environmentOrInferenceEndpoint: `Ubuntu; ${selected.label} hosted inference`,
-      profile: "hosted-inference",
-      releaseRequired: false,
-      testFile: "test/e2e/live/inference-routing-provider-smoke.test.ts",
-      selector: selected.selector === "openrouter" ? selected.id : `^${selected.id}`,
-      timeoutMinutes: selected.selector === "openrouter" ? 90 : 30,
-      installMode: "none",
-      restoreCli: true,
-      exposeCliBin: true,
-      environment: { NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE: selected.selector },
-    }),
-  ),
+  dockerOnlyTarget("hosted-inference-openrouter", {
+    displayName: "Inference: completes native OpenRouter agent requests",
+    agentRuntime: "openclaw + langchain-deepagents-code",
+    prAdvisorSelectable: true,
+    owningPaths: [
+      "test/e2e/live/inference-routing-credential-scan.ts",
+      "managed-inference/provider-profiles/nemoclaw-openrouter-inference-v1.yaml",
+      "agents/langchain-deepagents-code/managed-dcode-runtime.py",
+      "agents/langchain-deepagents-code/generate-config.ts",
+      "src/lib/inference/managed-dcode/",
+    ],
+    environmentOrInferenceEndpoint: "Ubuntu; OpenRouter hosted inference",
+    profile: "hosted-inference",
+    releaseRequired: false,
+    testFile: "test/e2e/live/inference-routing-provider-smoke.test.ts",
+    selector: OPENROUTER_SMOKE.id,
+    timeoutMinutes: 90,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: true,
+    environment: { NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE: "openrouter" },
+  }),
   managedRuntimeTarget("inference-routing", {
     displayName: "Inference: rejects unsafe routes and proves runtime identities",
     agentRuntime: "openclaw + langchain-deepagents-code",
@@ -1924,9 +1903,7 @@ export function catalogueMatrix(
       e2eRuntimeProviders(entry.gatewayRuntimes, gatewayRuntimes).map((runtimeProvider) => ({
         ...(profile === "hosted-inference"
           ? {
-              model_env: HOSTED_PROVIDER_SMOKE_CASES.find(
-                (selected) => entry.id === `hosted-inference-${selected.selector}`,
-              )!.modelEnv,
+              model_env: OPENROUTER_SMOKE.modelEnv,
             }
           : {}),
         id: entry.id,
@@ -1965,10 +1942,7 @@ export async function runCatalogueTarget(id: string, testFile: string): Promise<
   }
   Object.assign(process.env, entry.environment);
   if (entry.profile === "hosted-inference") {
-    const selectedEnvironment = hostedProviderSmokeEnvironment(id, process.env);
-    for (const selected of HOSTED_PROVIDER_SMOKE_CASES) delete process.env[selected.credential];
-    delete process.env.HOSTED_INFERENCE_API_KEY;
-    Object.assign(process.env, selectedEnvironment);
+    configureOpenRouterSmokeEnvironment(process.env);
   }
   if (entry.exposeCliBin) {
     process.env.NEMOCLAW_CLI_BIN = path.join(process.cwd(), "bin", "nemoclaw.js");
