@@ -74,6 +74,7 @@ export interface RebuildBackupPhaseInput {
   bail: RebuildBail;
   runtimeSelection?: OpenShellRuntimeSelection;
   stoppedNativeState?: PreparedStoppedNativeState;
+  removedImmutabilityStateRecord?: boolean;
 }
 
 export interface RebuildBackupPhaseResult {
@@ -194,6 +195,7 @@ export async function runRebuildBackupPhase(
         input.log,
         input.bail,
         input.stoppedNativeState,
+        input.removedImmutabilityStateRecord === true,
       ));
     if (backupManifest === undefined) return null;
     const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;

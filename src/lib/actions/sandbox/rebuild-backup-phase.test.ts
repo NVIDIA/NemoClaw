@@ -187,6 +187,7 @@ describe("rebuild policy handoff", () => {
       expect.any(Function),
       expect.any(Function),
       stoppedNativeState,
+      false,
     );
     expect(mocks.beginOpenClawBackupQuiesce).not.toHaveBeenCalled();
   });

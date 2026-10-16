@@ -523,6 +523,7 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
         ...(mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {}),
+        ...(retireRemovedImmutabilityState ? { removedImmutabilityStateRecord: true } : {}),
       });
       if (!backup) return;
       sourceOpenClawDoctorWindow = backup.sourceOpenClawDoctorWindow ?? null;
@@ -974,7 +975,7 @@ async function rebuildSandboxUnlocked(
           credentialEnv,
           baseImagePreflight,
           recoveryRecreate,
-          preparedBackupRecovery,
+          allowRemovedImmutabilityStateRecord: retireRemovedImmutabilityState,
           registryRollback,
           backupManifest: backup.backupManifest,
           mcpEntries: mcpPreparation.entries,

@@ -5,6 +5,15 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import {
+  SECRET_BLOCK_PATTERNS,
+  STRUCTURED_TOKEN_PATTERNS,
+  TOKEN_PREFIX_PATTERNS,
+  isCredentialField,
+  isSafeCredentialPlaceholder,
+  isSensitiveFile,
+  sanitizeEnvFileContent,
+} from "../../../../nemoclaw/dist/shared/credential-filter-boundary.cjs";
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { isErrnoException } from "../../core/errno";
 import { isValidName } from "../../sandbox-name-contract";
@@ -41,6 +50,183 @@ const LEGACY_PROVIDER_RECORD_NAMES = new Set([
 ]);
 const MAX_LEGACY_LEDGER_ENTRIES = 4096;
 const MAX_LEGACY_LEDGER_RECORD_BYTES = 128 * 1024;
+const MAX_REMOVED_IMMUTABILITY_DOWNLOAD_SCAN_BYTES = 16 * 1024 * 1024;
+const REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILES = new Set([
+  "/sandbox/.openclaw/workspace/AGENTS.md",
+  "/sandbox/.openclaw/workspace/HEARTBEAT.md",
+  "/sandbox/.openclaw/workspace/IDENTITY.md",
+  "/sandbox/.openclaw/workspace/MEMORY.md",
+  "/sandbox/.openclaw/workspace/POLICY.md",
+  "/sandbox/.openclaw/workspace/SOUL.md",
+  "/sandbox/.openclaw/workspace/TOOLS.md",
+  "/sandbox/.openclaw/workspace/USER.md",
+  "/sandbox/SOUL.md",
+  "/sandbox/.hermes/state.db",
+  "/sandbox/.deepagents/config.toml",
+  "/sandbox/.deepagents/agent/AGENTS.md",
+]);
+const REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_DIRS = [
+  "/sandbox/.openclaw/workspace/memory",
+  "/sandbox/.hermes/platforms",
+  "/sandbox/.deepagents/agent/memories",
+  "/sandbox/.deepagents/agent/skills",
+] as const;
+const REMOVED_IMMUTABILITY_DISALLOWED_DOWNLOAD_SEGMENTS = new Set([
+  ".env",
+  ".mcp.json",
+  ".netrc",
+  ".npmrc",
+  ".pypirc",
+  ".state",
+  "auth.json",
+  "chatgpt-auth.json",
+  "config.json",
+  "config.yaml",
+  "config.yml",
+  "credentials",
+  "credentials.json",
+  "device-auth.json",
+  "device.json",
+  "id_dsa",
+  "id_ecdsa",
+  "id_ed25519",
+  "id_rsa",
+  "openclaw.json",
+  "paired.json",
+  "pending.json",
+  "secrets.json",
+  "tokens.json",
+]);
+
+function isDisallowedRemovedImmutabilityDownloadSegment(segment: string): boolean {
+  const lower = segment.toLowerCase();
+  return (
+    REMOVED_IMMUTABILITY_DISALLOWED_DOWNLOAD_SEGMENTS.has(lower) ||
+    isSensitiveFile(lower) ||
+    lower.endsWith(".env") ||
+    lower.endsWith(".pem") ||
+    lower.endsWith(".key")
+  );
+}
+
+export function isRemovedImmutabilityRecoveryDownloadPath(
+  sandboxPath: string | null | undefined,
+): boolean {
+  if (typeof sandboxPath !== "string") return false;
+  const trimmed = sandboxPath.trim();
+  if (!trimmed || /[\0-\x1f\x7f]/u.test(trimmed)) return false;
+  const normalized = trimmed.length > 1 && trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
+  if (
+    !normalized.startsWith("/sandbox/") ||
+    normalized.includes("//") ||
+    path.posix.normalize(normalized) !== normalized
+  ) {
+    return false;
+  }
+  const segments = normalized.split("/").slice(1);
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    return false;
+  }
+  if (REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILES.has(normalized)) {
+    return true;
+  }
+  const inAllowedDir = REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_DIRS.some(
+    (directory) => normalized === directory || normalized.startsWith(`${directory}/`),
+  );
+  if (!inAllowedDir) return false;
+  return !segments.some(isDisallowedRemovedImmutabilityDownloadSegment);
+}
+
+function downloadContentContainsCredential(content: string): boolean {
+  if (sanitizeEnvFileContent(content) !== content) return true;
+  if (/-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u.test(content)) return true;
+  for (const pattern of [
+    ...TOKEN_PREFIX_PATTERNS,
+    ...STRUCTURED_TOKEN_PATTERNS,
+    ...SECRET_BLOCK_PATTERNS,
+  ]) {
+    pattern.lastIndex = 0;
+    if (pattern.test(content)) return true;
+  }
+  const assignment =
+    /(?<![A-Za-z0-9_.-])["']?([_A-Za-z][_A-Za-z0-9.-]{0,127})["']?[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s,;{}]+))/gu;
+  for (;;) {
+    const match = assignment.exec(content);
+    if (!match) break;
+    const field = match[1]!.replace(/^_+/u, "");
+    const candidate = match[2] ?? match[3] ?? match[4] ?? "";
+    if (isCredentialField(field) && !isSafeCredentialPlaceholder(candidate)) {
+      return true;
+    }
+    assignment.lastIndex = match.index + 1;
+  }
+  return false;
+}
+
+export function assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+  stagedArtifact: string,
+  sandboxPath: string,
+  sandboxName: string,
+): void {
+  const reject = (): never => {
+    throw new Error(
+      `Cannot download '${sandboxPath}' from sandbox '${sandboxName}': downloaded content contains credential-bearing or uninspectable material. Do not destroy the sandbox if you need this file.`,
+    );
+  };
+  const inspectEntry = (entryPath: string, checkSegmentName: boolean): void => {
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(entryPath);
+    } catch {
+      reject();
+    }
+    if (stat!.isSymbolicLink()) reject();
+    if (
+      checkSegmentName &&
+      isDisallowedRemovedImmutabilityDownloadSegment(path.basename(entryPath))
+    ) {
+      reject();
+    }
+    if (stat!.isDirectory()) {
+      let children: string[];
+      try {
+        children = fs.readdirSync(entryPath).sort();
+      } catch {
+        reject();
+      }
+      for (const child of children!) {
+        inspectEntry(path.join(entryPath, child), true);
+      }
+      return;
+    }
+    if (!stat!.isFile()) reject();
+    let opened: ReturnType<typeof openRegularFileNoFollow>;
+    try {
+      opened = openRegularFileNoFollow(entryPath);
+    } catch {
+      reject();
+    }
+    try {
+      const content = opened!
+        .readBytes(MAX_REMOVED_IMMUTABILITY_DOWNLOAD_SCAN_BYTES)
+        .toString("utf8");
+      if (downloadContentContainsCredential(content)) {
+        reject();
+      }
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes("downloaded content contains credential-bearing")
+      ) {
+        throw error;
+      }
+      reject();
+    } finally {
+      opened!.close();
+    }
+  };
+  inspectEntry(stagedArtifact, false);
+}
 
 interface LegacyProviderLedgerInspection {
   readonly artifactsBySandbox: ReadonlyMap<string, readonly string[]>;
@@ -319,6 +505,7 @@ export function reportRemovedImmutabilityUpgrade(
 
   const affectedSandboxes = new Set<string>();
   let hasTopLevelRecoveryState = false;
+  let hasUnsafeStateRecord = false;
   for (const entry of entries) {
     if (isLegacyTopLevelRecoveryEntry(entry)) {
       hasTopLevelRecoveryState = true;
@@ -326,7 +513,10 @@ export function reportRemovedImmutabilityUpgrade(
     }
     if (entry.startsWith("shields-") && entry.endsWith(".json")) {
       const candidate = entry.slice("shields-".length, -".json".length);
-      if (isValidName(candidate)) affectedSandboxes.add(candidate);
+      if (isValidName(candidate)) {
+        affectedSandboxes.add(candidate);
+        if (!isRetirableLegacyStateRecord(path.join(stateDir, entry))) hasUnsafeStateRecord = true;
+      }
     }
   }
   const providerLedger = inspectLegacyProviderLedger(stateDir);
@@ -352,9 +542,14 @@ export function reportRemovedImmutabilityUpgrade(
       noticeOnlyArtifacts.length > 0
         ? ` Nonblocking retired provider intent paths retained for review: ${noticeOnlyArtifacts.map((artifact) => JSON.stringify(artifact)).join(", ")}. These notice-only paths did not establish mutation authority and do not block lifecycle operations.`
         : "";
-    const recovery =
-      names.length > 0 || hasBlockingUnattributedRecoveryState
-        ? " Back up trusted user data and rebuild or recreate affected sandboxes with the current version."
+    const hasBlockingRecoveryState =
+      hasBlockingUnattributedRecoveryState ||
+      hasUnsafeStateRecord ||
+      providerLedger.artifactsBySandbox.size > 0;
+    const recovery = hasBlockingRecoveryState
+      ? " Legacy Shields recovery files block sandbox commands and onboarding. Quarantine the files that a blocked command lists, then run `rebuild`."
+      : names.length > 0
+        ? " Run `rebuild` for each affected sandbox. If rebuild cannot back up state that Shields locked, it prints the steps to replace the sandbox."
         : "";
     (options.warn ?? console.warn)(
       `Shields has been retired from NemoClaw. This release has no Shields commands or supported Shields posture.${affected}${unresolved}${noticeOnly}${recovery}`,
@@ -391,7 +586,8 @@ export function enforceRemovedImmutabilityMigrationBoundary(
       [
         `Sandbox '${sandboxName}' has a state record from the removed Shields feature. Its current mutable posture cannot be proven.`,
         "Shields has been retired and this release has no command that can restore or lower that posture.",
-        "Create a trusted snapshot or backup, then use the supported rebuild/recreate path before other mutations.",
+        "Run `rebuild` for this sandbox before you run other commands for it. Onboarding cannot recreate it while this record exists.",
+        "If rebuild cannot back up state that Shields locked, it prints the steps to replace the sandbox.",
       ].join(" "),
     );
   }

@@ -18,6 +18,7 @@ import {
 import { withSandboxLifecycleLock } from "../actions/sandbox/lifecycle/lock";
 import {
   enforceRemovedImmutabilityMigrationBoundary,
+  isRemovedImmutabilityRecoveryDownloadPath,
   reportRemovedImmutabilityUpgrade,
 } from "../state/migrations/removed-immutability";
 import { log } from "./logger";
@@ -167,7 +168,9 @@ export abstract class NemoClawCommand extends Command {
     if (!sandboxName) return await super._run<T>();
     const allowRemovedImmutabilityStateRecord =
       (typeof commandId === "string" && REMOVED_IMMUTABILITY_REMEDIATION_COMMANDS.has(commandId)) ||
-      (commandId === "sandbox:doctor" && this.lifecycleParserOutput?.flags["fix"] !== true);
+      (commandId === "sandbox:doctor" && this.lifecycleParserOutput?.flags["fix"] !== true) ||
+      (commandId === "sandbox:download" &&
+        isRemovedImmutabilityRecoveryDownloadPath(this.resolveLifecycleDownloadPath()));
     enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
       allowStateRecord: allowRemovedImmutabilityStateRecord,
     });
@@ -209,6 +212,15 @@ export abstract class NemoClawCommand extends Command {
       commandId === "launch" ||
       (commandId === "sandbox:connect" && this.lifecycleParserOutput?.flags["probe-only"] !== true)
     );
+  }
+
+  private resolveLifecycleDownloadPath(): string | null {
+    const parsedArgs = this.lifecycleParserOutput?.args as Record<string, unknown> | undefined;
+    const sandboxPath =
+      typeof parsedArgs?.sandboxPath === "string"
+        ? parsedArgs.sandboxPath
+        : this.lifecycleParserOutput?.argv[1];
+    return typeof sandboxPath === "string" ? sandboxPath : null;
   }
 
   private async resolveLifecycleSandboxName(

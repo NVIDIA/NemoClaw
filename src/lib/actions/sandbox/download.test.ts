@@ -539,4 +539,42 @@ describe("downloadFromSandbox", () => {
     expect(publishMock).toHaveBeenCalledWith(stagedArtifact, "/tmp/p", "file");
     expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
   });
+
+  it("rejects credential-bearing source paths and content when a legacy Shields record exists", async () => {
+    vi.restoreAllMocks();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-download-legacy-shields-"));
+    vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", root);
+    try {
+      fs.writeFileSync(path.join(root, "shields-alpha.json"), "{}\n");
+      runMock.mockImplementation(async ({ destination }: { destination: string }) => {
+        fs.writeFileSync(destination, `OPENAI_API_KEY=${"sk-" + "a".repeat(32)}\n`);
+        return {
+          outcome: { kind: "completed", exitCode: 0 },
+          release: vi.fn(),
+          wasInterrupted: () => false,
+        };
+      });
+
+      await expect(
+        downloadFromSandbox({
+          sandboxName: "alpha",
+          sandboxPath: "/sandbox/.openclaw/credentials/tokens.json",
+          hostDest: path.join(root, "out"),
+        }),
+      ).rejects.toThrow(/mutable posture cannot be proven/u);
+      expect(runMock).not.toHaveBeenCalled();
+
+      await expect(
+        downloadFromSandbox({
+          sandboxName: "alpha",
+          sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
+          hostDest: path.join(root, "out"),
+        }),
+      ).rejects.toThrow(/credential-bearing or uninspectable material/u);
+      expect(publishMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
