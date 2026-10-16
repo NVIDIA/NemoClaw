@@ -12,6 +12,7 @@ import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import type {
   OpenShellProviderAdapter,
   OpenShellProviderError,
+  OpenShellProviderProfileMutationResult,
 } from "../../adapters/openshell/provider-adapter";
 import {
   createCliOpenShellProviderAdapter,
@@ -78,6 +79,37 @@ function expectedMessagingBindings(input: ProviderPreparationInput) {
         },
       ]),
   );
+}
+
+function ownedProfileFailureDetail(
+  failure: Extract<OpenShellProviderProfileMutationResult, { ok: false }>,
+): string {
+  const { error, operation = "verify" } = failure;
+  const classification = "reason" in error ? `${error.kind}/${error.reason}` : error.kind;
+  const guidance = (() => {
+    if (error.kind === "command" && error.reason === "profile_incompatible") {
+      return "Resolve the conflicting same-ID profile on the selected gateway, then retry.";
+    }
+    if (error.kind === "command" && error.reason === "not_found") {
+      return "Inspect the selected gateway's provider profile and resolve the missing resource, then retry.";
+    }
+    if (error.kind === "validation" && operation === "read") {
+      return "Restore the bundled provider profile from this NemoClaw release, then retry.";
+    }
+    return {
+      authentication: "Restore authentication for the selected OpenShell gateway, then retry.",
+      schema:
+        "Use this NemoClaw release's supported OpenShell CLI and gateway versions, then retry.",
+      timeout: "Confirm the selected OpenShell gateway is available, then retry verification.",
+      validation:
+        "Check the selected gateway configuration and provider-profile inputs, then retry.",
+      transport:
+        "Check the OpenShell CLI and the selected gateway's identity and connectivity, then retry.",
+      command:
+        "Inspect the selected gateway's provider profile and resolve the OpenShell command failure, then retry.",
+    }[error.kind];
+  })();
+  return `Profile ${operation} failed (${classification}). ${guidance}`;
 }
 
 /** Recheck known owned profiles before binding previously registered providers. */
@@ -152,7 +184,7 @@ export async function validateAttachedOwnedProfilesBeforeSandboxCreation(
     if (!imported.ok) {
       throwAfterCleanup(
         deps,
-        `Could not verify provider profile '${profile.profileType}' before sandbox creation.`,
+        `Could not verify provider profile '${profile.profileType}' before sandbox creation. ${ownedProfileFailureDetail(imported)}`,
       );
     }
     profileIds.add(profile.profileType);
