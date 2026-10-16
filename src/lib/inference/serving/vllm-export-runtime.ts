@@ -218,7 +218,7 @@ function containerFormat(
     emptyArray('(index .HostConfig "Devices")'),
     emptyArray('(index .HostConfig "CapAdd")'),
     `(or ${emptyArray(securityOptions)} ${equalJson(securityOptions, ["label=disable"])})`,
-    `(or ${equalJson(ulimits, null)} (and (eq (len ${ulimits}) 2) $ulimits))`,
+    `(or ${emptyArray(ulimits)} (and (eq (len ${ulimits}) 2) $ulimits))`,
     `(or ${equalJson('(index .HostConfig "Tmpfs")', null)} ${equalJson('(index .HostConfig "Tmpfs")', {})})`,
     equalJson(".HostConfig.Memory", 0),
     equalJson(".HostConfig.NanoCpus", 0),
