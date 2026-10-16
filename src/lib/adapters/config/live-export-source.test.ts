@@ -13,6 +13,7 @@ import {
   type HostedProviderDefinition,
 } from "../../inference/native-provider/hosted";
 import { nativeProviderLifecycle } from "../../inference/native-provider";
+import { BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } from "../../inference/bedrock-runtime";
 import {
   customNativeProvider,
   boundCustomNativeProfile,
@@ -21,7 +22,7 @@ import { parseCheckedInProviderProfileContract } from "../openshell/provider-pro
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { createHash } from "node:crypto";
-import { describe, expect, it, vi } from "vitest";
+import { assert, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import {
   managedBraveProfile,
@@ -827,6 +828,8 @@ describe("live export snapshot reader", () => {
       ["compatible-endpoint", "openai-completions", "https://custom.example/team/v1"],
       ["compatible-endpoint", "openai-responses", "https://custom.example/team/v1"],
       ["compatible-anthropic-endpoint", "anthropic-messages", "https://custom.example/team"],
+      ["compatible-anthropic-endpoint", "openai-completions", "https://custom.example/team"],
+      ["compatible-anthropic-endpoint", "openai-responses", "https://custom.example/team"],
     ].map(([provider, api, endpointUrl]) =>
       customNativeProvider({
         provider,
@@ -836,6 +839,14 @@ describe("live export snapshot reader", () => {
         allowedIps: ["8.8.8.8"],
       }),
     ),
+    customNativeProvider({
+      provider: "compatible-anthropic-endpoint",
+      api: "openai-completions",
+      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      credentialEnv: "TEAM_KEY",
+      allowedIps: [],
+      adapterEndpointUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
+    }),
   ])(
     "exports native $label without reading shared routing or secret values",
     async (definition: HostedProviderDefinition) => {
@@ -852,6 +863,37 @@ describe("live export snapshot reader", () => {
       expect(readCredential).not.toHaveBeenCalled();
       expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
       expect(yaml).not.toContain(readFailureCanary);
+    },
+  );
+
+  it.each(["selected", "runtime", "both"] as const)(
+    "rejects custom native export when the %s endpoint changes",
+    async (changed) => {
+      const definition = customNativeProvider({
+        provider: "compatible-anthropic-endpoint",
+        api: "openai-completions",
+        endpointUrl: "https://custom.example/team",
+        credentialEnv: "TEAM_KEY",
+        allowedIps: ["8.8.8.8"],
+      });
+      mockNativeHostedSource(definition);
+      const observed = await createLiveExportSnapshotReader().read("alpha");
+      assert(observed.kind === "observed" && observed.inference.endpointEvidence);
+      const { endpointEvidence: evidence, ...inference } = observed.inference;
+      const result = await observeStableExportSource("alpha", {
+        read: async () => ({
+          ...observed,
+          inference: {
+            ...inference,
+            endpoint: changed === "runtime" ? inference.endpoint : "https://drift.example/v1",
+            endpointEvidence: {
+              ...evidence,
+              endpoint: changed === "selected" ? evidence.endpoint : "https://drift.example/v1",
+            },
+          },
+        }),
+      });
+      expect(result).toMatchObject({ ok: false });
     },
   );
 

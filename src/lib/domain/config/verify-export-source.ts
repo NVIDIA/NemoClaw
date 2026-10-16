@@ -1386,6 +1386,15 @@ function expectedEndpointProviderName(snapshot: QualifiedExportSnapshot): string
   return nativeExportReceipt(snapshot.registry)?.providerName ?? snapshot.inference.provider;
 }
 
+function endpointEvidenceMatchesExportEndpoint(snapshot: QualifiedExportSnapshot): boolean {
+  const { inference } = snapshot;
+  // Managed profiles can transform the selected endpoint. Both endpoints must
+  // still match their independently verified receipt fields.
+  if (inference.endpointEvidence?.source.kind === "managed-profile")
+    return endpointEvidenceMatchesRoute(snapshot);
+  return inference.endpointEvidence?.endpoint === inference.endpoint;
+}
+
 function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference, sandbox, gateway } = snapshot;
   const evidence = inference.endpointEvidence;
@@ -1412,7 +1421,7 @@ function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFind
         "The live inference endpoint evidence is invalid or unsafe.",
       ),
     );
-  if (evidence.endpoint !== inference.endpoint)
+  if (!endpointEvidenceMatchesExportEndpoint(snapshot))
     findings.push(
       finding(
         "spec.inferenceProviders[].endpoint",
