@@ -101,7 +101,9 @@ function hardRouteConflict(
     const local = normalizeNativeLocalProviderAttachment(target.nativeLocalProviderAttachment);
     if (
       !local ||
-      target.agent !== "langchain-deepagents-code" ||
+      (target.agent === "hermes"
+        ? local.agent !== "hermes"
+        : target.agent !== "langchain-deepagents-code" || local.agent !== undefined) ||
       local.sandboxName !== sandboxName ||
       local.gatewayName !== gatewayName ||
       local.provider !== route.provider

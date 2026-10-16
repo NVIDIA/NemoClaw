@@ -39,7 +39,11 @@ const NETWORK_AUTHORITY = "3".repeat(64);
 const MODEL = "qwen3.5-9b";
 const SANDBOX = "host-local-agent";
 const APPLICATIONS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
-const SHARED_APPLICATIONS = ["openclaw", "hermes"] as const;
+const SHARED_APPLICATIONS = ["openclaw"] as const;
+const NATIVE_APPLICATIONS = ["hermes", "langchain-deepagents-code"] as const;
+const NATIVE_RESUME_ROLLBACK_CASES = NATIVE_APPLICATIONS.flatMap((application) =>
+  (["running", "stopped"] as const).map((stateAtEntry) => ({ application, stateAtEntry })),
+);
 const PUBLISHED_RESUME_ROLLBACK_CASES = SHARED_APPLICATIONS.flatMap((application) =>
   (["running", "stopped"] as const).map((stateAtEntry) => ({ application, stateAtEntry })),
 );
@@ -430,26 +434,29 @@ function llamaFixture(application: HostLocalInferenceApplication) {
 }
 
 describe("onboard host-local inference routing", () => {
-  it("retires an unreserved Deep Agents Code native provider after managed runtime pre-commit fails (#13197)", async () => {
-    const route = fixture("langchain-deepagents-code", "vllm", {
-      validationError: new Error("managed runtime pre-commit refused"),
-    });
-    const harness = createHarness({
-      overrides: {
-        applyLocalInferenceRoute: undefined,
-      },
-    });
-    await expect(
-      harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
-        agentName: "langchain-deepagents-code",
-        gatewayName: "nemoclaw",
-        hostLocalInference: route.selection,
-      }),
-    ).rejects.toThrow("EXIT_CALLED:1");
-    expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
-    expect(harness.native.adapter.deleteProvider).toHaveBeenCalledOnce();
-    expect(harness.native.authorities.size).toBe(0);
-  });
+  it.each(NATIVE_APPLICATIONS)(
+    "retires an unreserved %s native provider after managed runtime pre-commit fails (#13197)",
+    async (application) => {
+      const route = fixture(application, "vllm", {
+        validationError: new Error("managed runtime pre-commit refused"),
+      });
+      const harness = createHarness({
+        overrides: {
+          applyLocalInferenceRoute: undefined,
+        },
+      });
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
+          agentName: application,
+          gatewayName: "nemoclaw",
+          hostLocalInference: route.selection,
+        }),
+      ).rejects.toThrow("EXIT_CALLED:1");
+      expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+      expect(harness.native.adapter.deleteProvider).toHaveBeenCalledOnce();
+      expect(harness.native.authorities.size).toBe(0);
+    },
+  );
 
   it("explicitly clears stale host-local ownership for a remote route", async () => {
     const harness = createHarness({
@@ -606,10 +613,65 @@ describe("onboard host-local inference routing", () => {
     },
   );
 
+  it.each(NATIVE_APPLICATIONS)(
+    "registers a scoped %s native provider while preserving host runtime publication",
+    async (application) => {
+      const sharedUpsert = vi.fn(() => ({ ok: true }));
+      const route = fixture(application, "ollama", { gatewayUpsertProvider: sharedUpsert });
+      const reserve = vi.fn(
+        (_name: string, _reservation: Parameters<SetupInferenceDeps["updateSandbox"]>[1]) => true,
+      );
+      const harness = createHarness({
+        overrides: { applyLocalInferenceRoute: undefined, updateSandbox: reserve },
+      });
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "ollama-local", null, null, null, [], {
+          gatewayName: "nemoclaw",
+          hostLocalInference: route.selection,
+        }),
+      ).resolves.toEqual({ ok: true });
+      expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+      expect(sharedUpsert).not.toHaveBeenCalled();
+      expect(harness.commands).toEqual([]);
+      const reservation = reserve.mock.calls.at(-1)?.[1];
+      expect(reservation).toMatchObject({
+        provider: "ollama-local",
+        model: MODEL,
+        endpointUrl: "https://inference.local/v1",
+        nativeLocalProviderAttachment: {
+          sandboxName: SANDBOX,
+          gatewayName: "nemoclaw",
+          provider: "ollama-local",
+          endpointUrl: "http://host.openshell.internal:11434/v1",
+        },
+      });
+      expect(reservation?.nativeLocalProviderAttachment?.agent).toBe(
+        application === "hermes" ? "hermes" : undefined,
+      );
+      expect(
+        parseHostLocalInferenceReceipt(reservation?.hostLocalInferenceReceipt ?? ""),
+      ).toMatchObject({
+        service: "ollama",
+        endpoint: { host: "host.openshell.internal", port: 11434 },
+      });
+      expect(route.events).toEqual([
+        "provider-ready-proof",
+        "gateway-snapshot",
+        "runtime-precommit-validation",
+        "gateway-commit",
+        "runtime-precommit-validation",
+        "runtime-commit",
+      ]);
+      expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
+      expect(harness.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
+      expect(route.gatewayRollback).not.toHaveBeenCalled();
+    },
+  );
+
   it("uses a transaction-owned provider create instead of the generic gateway upsert", async () => {
     const exactProviderCreate = vi.fn(() => ({ ok: true }));
     const genericUpsertProvider = vi.fn(async () => ({ ok: true }));
-    const route = fixture("hermes", "ollama", {
+    const route = fixture("openclaw", "ollama", {
       gatewayUpsertProvider: exactProviderCreate,
     });
     const harness = createHarness({
@@ -851,15 +913,17 @@ describe("onboard host-local inference routing", () => {
     },
   );
 
-  it.each(["running", "stopped"] as const)(
-    "restores DCode native provider resume state %s after registration fails (#13197)",
-    async (stateAtEntry) => {
-      const route = fixture("langchain-deepagents-code", "vllm", {
+  it.each(NATIVE_RESUME_ROLLBACK_CASES)(
+    "restores $application native provider resume state $stateAtEntry after registration fails (#13197)",
+    async ({ application, stateAtEntry }) => {
+      const route = fixture(application, "vllm", {
         resume: true,
         priorState: "absent",
         resumeStateAtEntry: stateAtEntry,
       });
-      const harness = createHarness();
+      const harness = createHarness({
+        overrides: { error: () => route.events.push("redacted-evidence") },
+      });
       harness.native.adapter.createProvider.mockResolvedValue({
         ok: false,
         error: { kind: "command", reason: "failed", message: "denied" },
@@ -872,31 +936,41 @@ describe("onboard host-local inference routing", () => {
       expect(route.preparedStartups[0]?.rollback).toHaveReturnedWith(
         expect.objectContaining({ status: "restored", priorState: stateAtEntry }),
       );
-      expect(route.events.slice(-2)).toEqual(["gateway-rollback", "runtime-rollback"]);
+      expect(route.events.slice(-3)).toEqual([
+        "redacted-evidence",
+        "gateway-rollback",
+        "runtime-rollback",
+      ]);
+      expect(route.gatewayCommit).not.toHaveBeenCalled();
+      expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
+      expect(harness.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
       expect(harness.updateSandbox).not.toHaveBeenCalled();
       expect(harness.commands.some(({ command }) => command.includes("inference set"))).toBe(false);
     },
   );
 
-  it("retains the DCode runtime when failed native registration cannot restore the gateway (#13197)", async () => {
-    const route = fixture("langchain-deepagents-code", "vllm", {
-      gatewayRollbackError: new Error("indeterminate gateway cleanup"),
-    });
-    const harness = createHarness();
-    harness.native.adapter.createProvider.mockResolvedValue({
-      ok: false,
-      error: { kind: "command", reason: "failed", message: "denied" },
-    });
-    await expect(
-      harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
-        hostLocalInference: route.selection,
-      }),
-    ).rejects.toThrow("EXIT_CALLED:1");
-    expect(route.events.at(-1)).toBe("gateway-rollback");
-    expect(route.preparedStartups[0]?.rollback).not.toHaveBeenCalled();
-    expect(harness.updateSandbox).not.toHaveBeenCalled();
-    expect(harness.errors.join(" ")).toContain("indeterminate gateway cleanup");
-  });
+  it.each(NATIVE_APPLICATIONS)(
+    "retains the %s runtime when failed native registration cannot restore the gateway (#13197)",
+    async (application) => {
+      const route = fixture(application, "vllm", {
+        gatewayRollbackError: new Error("indeterminate gateway cleanup"),
+      });
+      const harness = createHarness();
+      harness.native.adapter.createProvider.mockResolvedValue({
+        ok: false,
+        error: { kind: "command", reason: "failed", message: "denied" },
+      });
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
+          hostLocalInference: route.selection,
+        }),
+      ).rejects.toThrow("EXIT_CALLED:1");
+      expect(route.events.at(-1)).toBe("gateway-rollback");
+      expect(route.preparedStartups[0]?.rollback).not.toHaveBeenCalled();
+      expect(harness.updateSandbox).not.toHaveBeenCalled();
+      expect(harness.errors.join(" ")).toContain("indeterminate gateway cleanup");
+    },
+  );
 
   it.each(SHARED_APPLICATIONS)(
     "rolls back %s gateway denial and exact prior runtime state",

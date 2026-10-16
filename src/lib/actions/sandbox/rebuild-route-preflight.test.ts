@@ -4,7 +4,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry, SandboxRegistry } from "../../state/registry/types";
-import { nativeLocalIdentity } from "../../inference/native-local/contract";
+import {
+  nativeLocalIdentity,
+  type NativeLocalBinding,
+} from "../../inference/native-local/contract";
 import {
   commitRebuildRoutePreflight,
   type RebuildRoutePreflightReceipt,
@@ -80,6 +83,33 @@ function targetUpdate(entry: SandboxEntry): Partial<Omit<SandboxEntry, "name">> 
   };
 }
 
+function nativeTarget(
+  agent: string,
+  bindingOverrides: Partial<NativeLocalBinding> = {},
+): SandboxEntry {
+  const binding = {
+    provider: "compatible-endpoint" as const,
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "authenticated" as const,
+    sandboxName: "target",
+    gatewayName: "nemoclaw",
+    agent: "hermes" as const,
+    ...bindingOverrides,
+  };
+  return sandbox("target", "compatible-endpoint", {
+    agent,
+    endpointUrl: "http://localhost:8000/v1",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    nativeLocalProviderAttachment: {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1,
+      providerId: "owned",
+    },
+  });
+}
+
 const remoteProviders = [
   ...Object.values(REMOTE_PROVIDER_CONFIG),
   {
@@ -101,49 +131,78 @@ const remoteProviderRouteOverrides = new Map<string, Partial<SandboxEntry>>([
 ]);
 
 describe("commitRebuildRoutePreflight", () => {
-  it("rebuilds a native local target without changing a different shared peer (#13197)", () => {
-    const binding = {
-      provider: "compatible-endpoint" as const,
-      endpointUrl: "http://host.openshell.internal:8000/v1",
-      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-      authMode: "authenticated" as const,
-      sandboxName: "target",
-      gatewayName: "nemoclaw",
-    };
-    const target = sandbox("target", binding.provider, {
-      agent: "langchain-deepagents-code",
-      endpointUrl: "http://localhost:8000/v1",
-      credentialEnv: "COMPATIBLE_API_KEY",
-      nativeLocalProviderAttachment: {
-        ...binding,
-        ...nativeLocalIdentity(binding),
-        schemaVersion: 1,
-        providerId: "owned",
-      },
-    });
-    const peer = sandbox("peer", binding.provider, { credentialEnv: "COMPATIBLE_API_KEY" });
-    const state = transactionDependencies(registry(target, peer));
-    const result = commitRebuildRoutePreflight(
-      { sandboxName: "target", gatewayName: "nemoclaw", targetUpdate: targetUpdate(target) },
-      state.dependencies,
-    );
-    expect(result).toMatchObject({ ok: true, receipt: { migratedSandboxNames: [] } });
-    expect(state.persisted().sandboxes.peer).toEqual(peer);
-    const nativeReceipt = (result as Extract<typeof result, { ok: true }>).receipt;
-    expect(revalidateRebuildRouteBeforeDelete(nativeReceipt, state.dependencies)).toEqual({
-      ok: true,
-      receipt: nativeReceipt,
-    });
+  it.each([
+    { agent: "langchain-deepagents-code", tag: undefined },
+    { agent: "hermes", tag: "hermes" as const },
+  ])(
+    "rebuilds native local $agent without changing a different shared peer (#13197)",
+    ({ agent, tag }) => {
+      const target = nativeTarget(agent, { agent: tag });
+      const peer = sandbox("peer", "compatible-endpoint", { credentialEnv: "COMPATIBLE_API_KEY" });
+      const state = transactionDependencies(registry(target, peer));
+      const result = commitRebuildRoutePreflight(
+        { sandboxName: "target", gatewayName: "nemoclaw", targetUpdate: targetUpdate(target) },
+        state.dependencies,
+      );
+      expect(result).toMatchObject({ ok: true, receipt: { migratedSandboxNames: [] } });
+      expect(state.persisted().sandboxes.peer).toEqual(peer);
+      const nativeReceipt = (result as Extract<typeof result, { ok: true }>).receipt;
+      expect(revalidateRebuildRouteBeforeDelete(nativeReceipt, state.dependencies)).toEqual({
+        ok: true,
+        receipt: nativeReceipt,
+      });
 
-    const incompletePeer = { ...peer, credentialEnv: null, endpointUrl: null };
-    const invalid = transactionDependencies(registry(target, incompletePeer));
+      const incompletePeer = { ...peer, credentialEnv: null, endpointUrl: null };
+      const invalid = transactionDependencies(registry(target, incompletePeer));
+      expect(
+        commitRebuildRoutePreflight(
+          { sandboxName: "target", gatewayName: "nemoclaw", targetUpdate: targetUpdate(target) },
+          invalid.dependencies,
+        ),
+      ).toMatchObject({ ok: false });
+      expect(invalid.save).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { label: "Hermes with untagged DCode receipt", agent: "hermes", binding: { agent: undefined } },
+    { label: "DCode with Hermes receipt", agent: "langchain-deepagents-code", binding: {} },
+    { label: "OpenClaw with Hermes receipt", agent: "openclaw", binding: {} },
+    { label: "Pi with Hermes receipt", agent: "pi", binding: {} },
+    { label: "foreign sandbox", agent: "hermes", binding: { sandboxName: "sibling" } },
+    { label: "foreign gateway", agent: "hermes", binding: { gatewayName: "other" } },
+    { label: "wrong provider", agent: "hermes", binding: { provider: "vllm-local" as const } },
+  ])("rejects $label at both route mutation boundaries", ({ agent, binding }) => {
+    const target = nativeTarget(agent, binding);
+    const initial = registry(target);
+    const state = transactionDependencies(initial);
+    const rejection = {
+      ok: false,
+      message: "Native local provider authority does not match the rebuild target.",
+    };
     expect(
       commitRebuildRoutePreflight(
-        { sandboxName: "target", gatewayName: "nemoclaw", targetUpdate: targetUpdate(target) },
-        invalid.dependencies,
+        {
+          sandboxName: "target",
+          gatewayName: "nemoclaw",
+          targetUpdate: targetUpdate(target),
+        },
+        state.dependencies,
       ),
-    ).toMatchObject({ ok: false });
-    expect(invalid.save).not.toHaveBeenCalled();
+    ).toEqual(rejection);
+    expect(state.save).not.toHaveBeenCalled();
+    expect(state.persisted()).toEqual(initial);
+    expect(
+      revalidateRebuildRouteBeforeDelete(
+        {
+          sandboxName: "target",
+          gatewayName: "nemoclaw",
+          migratedSandboxNames: [],
+          route: targetUpdate(target),
+        },
+        state.dependencies,
+      ),
+    ).toEqual(rejection);
   });
 
   it("includes a credential-bearing provider in the migration matrix (#7798)", () => {

@@ -4,7 +4,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
-import { rebuildBackupPhase } from "../../../../test/helpers/rebuild-flow-harness";
+import {
+  rebuildBackupPhase,
+  listHarnessRebuildBackups,
+} from "../../../../test/helpers/rebuild-flow-harness";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
+
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
@@ -14,6 +19,11 @@ import {
   makePreparedRecoveryManifest,
   nativeProviderRebuildScenario,
 } from "./rebuild-flow-test-fixtures";
+
+const nativeLocalProfile =
+  require("../../inference/native-local/profile") as typeof import("../../inference/native-local/profile");
+const hermesPostRestore =
+  require("./rebuild-hermes-post-restore") as typeof import("./rebuild-hermes-post-restore");
 
 type Harness = ReturnType<typeof createRebuildFlowHarness>;
 
@@ -83,6 +93,51 @@ function createNativeProviderRebuildHarness(replaced: boolean, provider = "nvidi
   return { harness, reads, providerName };
 }
 
+function createNativeLocalRebuildHarness(
+  agent: "hermes" | "langchain-deepagents-code",
+  beforeBackup: () => void = () => {},
+) {
+  const binding = {
+    agent: agent === "hermes" ? ("hermes" as const) : undefined,
+    provider: "compatible-endpoint" as const,
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "authenticated" as const,
+    sandboxName: "alpha",
+    gatewayName: "nemoclaw",
+  };
+  const attachment = {
+    ...binding,
+    ...nativeLocalIdentity(binding),
+    schemaVersion: 1 as const,
+    providerId: "owned",
+  };
+  const verify = vi
+    .spyOn(nativeLocalProfile, "verifyRecordedNativeLocalProviderAttachment")
+    .mockResolvedValue(attachment);
+  const refresh = vi
+    .spyOn(hermesPostRestore, "refreshRestoredHermesInferenceRoute")
+    .mockResolvedValue(undefined);
+  const harness = createRebuildFlowHarness({
+    sandboxEntry: {
+      agent,
+      provider: binding.provider,
+      model: MODEL,
+      endpointUrl: binding.endpointUrl,
+      credentialEnv: "COMPATIBLE_API_KEY",
+      nativeLocalProviderAttachment: attachment,
+    },
+    hydrateCredentialEnv: () => null,
+    runOpenshell: providerRuntime([]),
+    beforeBackup,
+  });
+  configureSession(harness, binding.provider, "COMPATIBLE_API_KEY", {
+    agent,
+    endpointUrl: binding.endpointUrl,
+  });
+  return { harness, verify, refresh, attachment };
+}
+
 function diagnostics(harness: Harness): string {
   return harness.errorSpy.mock.calls.flat().map(String).join("\n");
 }
@@ -109,6 +164,74 @@ function makeStagedHermesMessagingPlan() {
 
 describe("rebuildSandbox flow: credential preflight", () => {
   installRebuildFlowTestHooks();
+
+  it.each(["hermes", "langchain-deepagents-code"] as const)(
+    "rebuilds native local %s with only its scoped provider",
+    async (agent) => {
+      const { harness, verify, refresh, attachment } = createNativeLocalRebuildHarness(agent);
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+      expect(harness.onboardSpy).toHaveBeenCalledOnce();
+      expect(verify).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          expected: attachment,
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          agent,
+          provider: "compatible-endpoint",
+        }),
+      );
+      const finalProofOrder = verify.mock.invocationCallOrder.at(-1)!;
+      expect(finalProofOrder).toBeGreaterThan(
+        harness.backupSandboxStateSpy.mock.invocationCallOrder[0],
+      );
+      expect(finalProofOrder).toBeLessThan(harness.onboardSpy.mock.invocationCallOrder[0]);
+      expect(refresh).toHaveBeenCalledTimes(Number(agent === "hermes"));
+    },
+  );
+
+  it.each(["hermes", "langchain-deepagents-code"] as const)(
+    "retains the source and backup when native local %s authority drifts during backup",
+    async (agent) => {
+      const { harness, verify, refresh } = createNativeLocalRebuildHarness(agent, () => {
+        verify.mockRejectedValue(new Error("private provider diagnostic"));
+      });
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+      ).rejects.toThrow("Native local provider authority changed before sandbox deletion.");
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(refresh).not.toHaveBeenCalled();
+      expect(listHarnessRebuildBackups()).toHaveLength(1);
+      expect(diagnostics(harness)).not.toContain("private provider diagnostic");
+    },
+  );
+
+  it("rechecks native Hermes authority after asynchronous policy recapture", async () => {
+    const { harness, verify, refresh } = createNativeLocalRebuildHarness("hermes");
+    const capture = rebuildBackupPhase.captureRebuildPolicyDocument;
+    const captureSpy = vi
+      .spyOn(rebuildBackupPhase, "captureRebuildPolicyDocument")
+      .mockImplementation(async (...args) => {
+        const document = await capture(...args);
+        verify.mockRejectedValue(new Error("attachment changed during policy recapture"));
+        return document;
+      });
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+    ).rejects.toThrow("Native local provider authority changed before sandbox deletion.");
+    expect(captureSpy).toHaveBeenCalledOnce();
+    expect(verify.mock.invocationCallOrder.at(-1)).toBeGreaterThan(
+      captureSpy.mock.invocationCallOrder[0],
+    );
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(listHarnessRebuildBackups()).toHaveLength(1);
+  });
 
   it.each(["nvidia-prod", "hermes-provider"])(
     "rebuilds with recorded native %s and no host key",

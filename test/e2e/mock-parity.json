@@ -102,6 +102,7 @@
         "test/e2e/live/openclaw-admin-scope.ts"
       ],
       "fast": [
+        "test/e2e/support/hermes-native-local-evidence.test.ts",
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
@@ -679,6 +680,7 @@
         "test/e2e/live/public-nvidia-switch-provider.ts"
       ],
       "fast": [
+        "test/e2e/support/hermes-native-local-evidence.test.ts",
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/hermes-inference-switch-command-shape.test.ts",
         "test/e2e/support/public-nvidia-switch-provider.test.ts",
