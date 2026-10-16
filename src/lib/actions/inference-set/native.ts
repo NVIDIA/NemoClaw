@@ -5,6 +5,33 @@ import { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "../../infe
 import type { InferenceSetDeps } from "../inference-set";
 import type { ConfigObject } from "../../security/credential-filter";
 import { nativeHostedAgentConfig } from "../../inference/native-provider/agent-config";
+import {
+  isLocalInferenceProvider,
+  nativeLocalCredentialReference,
+} from "../../inference/native-local/agent-config";
+export { isLocalInferenceProvider };
+export {
+  resolveOpenClawLocalSwitch,
+  prepareOpenClawLocalSwitch,
+  rollbackOpenClawLocalSwitch,
+  detachPreviousOpenClawLocal,
+  restorePreviousOpenClawLocal,
+  retirePreviousOpenClawLocal,
+  openClawLocalProbeFields,
+  openClawLocalRegistryFields,
+} from "./native-local";
+export {
+  getNativeLocalProviderAuthority,
+  setNativeLocalProviderAuthority,
+  clearNativeLocalProviderAuthority,
+  listNativeLocalProviderAuthorities,
+} from "../../state/registry/native-local-provider-authority";
+export { reconcilePreviousOpenClawLocal } from "./native-local";
+export {
+  resolveLocalSwitchRuntime,
+  validateLocalProvider,
+  type ValidationResult,
+} from "./local-runtime";
 import { isSafeModelId } from "../../validation";
 import { InferenceSetError } from "../inference-set-error";
 import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
@@ -352,11 +379,17 @@ export function nativeSelectionConfigCredentials(
   return {
     apiKey:
       native?.apiKey ??
+      (isLocalInferenceProvider(provider)
+        ? nativeLocalCredentialReference(provider, baseUrl)
+        : null) ??
       managedInferenceApiKey(
         baseUrl,
         typeof existingApiKey === "string" &&
           existingApiKey &&
-          existingApiKey !== NVIDIA_INFERENCE_PLACEHOLDER
+          existingApiKey !== NVIDIA_INFERENCE_PLACEHOLDER &&
+          !/^openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?NEMOCLAW_LOCAL_INFERENCE_TOKEN$/u.test(
+            existingApiKey,
+          )
           ? existingApiKey
           : "unused",
       ),

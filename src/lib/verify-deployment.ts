@@ -34,6 +34,7 @@ import { retryUntilAsync } from "./core/retry";
 import { isNativeNvidiaProvider } from "./inference/native-nvidia";
 import { requireHostedProviderAttachment } from "./inference/native-provider/hosted-attachment";
 import {
+  isPersistedPiSharedLocalInferenceRoute,
   normalizeNativeLocalBinding,
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInferenceForAgent,
@@ -45,6 +46,7 @@ import {
   type SandboxCommandExecutor,
 } from "./onboard/custom-openclaw-runtime-diagnosis";
 import { GATEWAY_PORT, resolveGatewayLogPathForPort } from "./onboard/gateway/state-dir";
+import { gatewayReachableCompatibleEndpointUrl } from "./onboard/inference-providers/compatible-endpoint-gateway-route";
 import { getMessagingProviderNamesForChannel } from "./onboard/messaging-reuse";
 import { HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL } from "./onboard/runtime-provider/host-local-inference-routing";
 
@@ -438,7 +440,7 @@ function matchesNativeLocalVerificationRoute(
     return true;
   const selected = normalizeNativeLocalBinding({
     ...attachment,
-    endpointUrl: context.endpointUrl,
+    endpointUrl: gatewayReachableCompatibleEndpointUrl(attachment.provider, context.endpointUrl),
   });
   return selected?.endpointUrl === attachment.endpointUrl;
 }
@@ -1001,6 +1003,7 @@ export function onboardInferenceVerificationContext(
   agentName: string,
   flow: Pick<InferenceInvocationContext, "model" | "provider" | "preferredInferenceApi"> & {
     endpointUrl?: string | null;
+    nimContainer?: string | null;
   },
   attachment?:
     | (Pick<
@@ -1008,15 +1011,22 @@ export function onboardInferenceVerificationContext(
         "nativeLocalProviderAttachment" | "nativeHostedProviderAttachment"
       > & {
         nimContainer?: string | null;
+        agent?: string | null;
+        provider?: string | null;
+        model?: string | null;
+        endpointUrl?: string | null;
+        createdAt?: string | null;
+        pendingRouteReservation?: boolean;
       })
     | null,
 ): { route: InferenceRouteContext; invocation: InferenceInvocationContext } {
-  const nativeLocalExpected = usesNativeLocalInferenceForAgent(
-    agentName,
-    flow.provider,
-    flow.endpointUrl,
-    flow.provider === "vllm-local" && Boolean(attachment?.nimContainer),
-  );
+  const nativeLocalExpected =
+    usesNativeLocalInferenceForAgent(
+      agentName,
+      flow.provider,
+      flow.endpointUrl,
+      flow.provider === "vllm-local" && Boolean(attachment?.nimContainer),
+    ) && !isPersistedPiSharedLocalInferenceRoute(attachment, flow);
   const nativeLocalProviderAttachment =
     flow.provider === "vllm-local" && attachment?.nimContainer
       ? undefined

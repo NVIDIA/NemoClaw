@@ -208,6 +208,12 @@ describe("runInferenceGet", () => {
       endpointUrl: "http://host.openshell.internal:11435/v1",
     },
     {
+      agent: "openclaw",
+      provider: "ollama-local",
+      sandboxName: "alpha",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+    },
+    {
       agent: "langchain-deepagents-code",
       provider: "compatible-endpoint",
       sandboxName: "alpha",
@@ -218,7 +224,12 @@ describe("runInferenceGet", () => {
     async ({ agent, provider, sandboxName, endpointUrl }) => {
       const deps = createDeps(configuredRoute("stale-shared-provider", "stale-shared-model"));
       const sandbox = nativeLocalSandbox();
-      const binding = { ...sandbox.nativeLocalProviderAttachment, provider, endpointUrl };
+      const binding = {
+        ...sandbox.nativeLocalProviderAttachment,
+        provider,
+        endpointUrl,
+        ...(agent === "openclaw" ? { agent: "openclaw" as const } : {}),
+      };
       deps.getSandbox = () =>
         nativeLocalSandbox({
           agent,

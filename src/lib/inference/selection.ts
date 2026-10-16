@@ -9,6 +9,7 @@ import {
 import { usesNativeLocalInferenceForAgent } from "./native-local/contract";
 
 export {
+  isPersistedPiSharedLocalInferenceRoute,
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInferenceForAgent,
 } from "./native-local/contract";
@@ -23,6 +24,7 @@ export function hasLegacySharedLocalInferenceRoute(recorded: {
 }): boolean {
   return (
     recorded.nativeLocalProviderAttachment === undefined &&
+    !recorded.nimContainer &&
     usesNativeLocalInferenceForAgent(
       recorded.agent ?? "openclaw",
       recorded.provider,

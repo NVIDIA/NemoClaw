@@ -3019,6 +3019,13 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (generateOutputs.openshell_version !== "${{ steps.openshell_version.outputs.version }}") {
     errors.push("generate-matrix must expose the reviewed candidate OpenShell version");
   }
+  for (const field of ["supervisor_image", "runtime_provenance"]) {
+    if (
+      generateOutputs[`openshell_${field}`] !== `\${{ steps.openshell_version.outputs.${field} }}`
+    ) {
+      errors.push(`generate-matrix must expose the reviewed candidate OpenShell ${field}`);
+    }
+  }
   if (
     asRecord(asRecord(jobs["external-gateway-health"]).env).NEMOCLAW_OPENSHELL_PIN_VERSION !==
     "${{ needs.generate-matrix.outputs.openshell_version }}"

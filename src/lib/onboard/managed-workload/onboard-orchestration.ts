@@ -25,6 +25,7 @@ import {
   type BuiltManagedStartupOnboardProfile,
   buildManagedStartupOnboardProfile,
   resolveManagedStartupInferenceEndpoint,
+  resolveManagedStartupNativeLocalAttachment,
   type ManagedStartupOnboardProfileInput,
 } from "../managed-startup/onboard-profile";
 export {
@@ -398,10 +399,7 @@ export function createManagedWorkloadOnboardRuntime(
       return input.managedWorkloadRebuild.replacementProfile;
     }
     if (preparedProfile) return preparedProfile;
-    const nativeLocalProviderAttachment =
-      input.agentName === "langchain-deepagents-code"
-        ? input.nativeLocalProviderAttachment
-        : undefined;
+    const nativeLocalProviderAttachment = resolveManagedStartupNativeLocalAttachment(input);
     const selectedModel = input.model?.trim() || "";
     const selectedProvider = input.provider?.trim() || null;
     const endpointUrl = resolveManagedStartupInferenceEndpoint({

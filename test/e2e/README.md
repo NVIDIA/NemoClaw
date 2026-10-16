@@ -487,6 +487,8 @@ the Linux AMD64 and Linux ARM64 receipts to identify one source revision, releas
 cohort.
 
 The gateway restart fixture restarts the user service it stopped. If no service was selected, the candidate CLI startup code starts the registered gateway.
+
+Pi qualification preserves its hosted onboarding, rebuild, recovery, policy, and credential checks. After destroying that sandbox, the same target onboards a fresh Pi sandbox against an authenticated local compatible endpoint. A fresh Pi process must send the selected model to that endpoint. The target then rebuilds Pi and requires another authenticated request for the recorded model. The upstream credential must stay outside the sandbox, and public destroy must leave the sandbox absent. The hosted lifecycle retains its 90-minute allowance; the native phase adds 60 minutes for onboarding, two requests, a rebuild, isolation, and cleanup. The job adds 10 minutes of headroom. Operation deadlines and the target selector stay unchanged.
 A selected service that cannot restart remains selected for cleanup; recovery does not switch to another startup path.
 Restart inputs are checked before stopping the gateway. A failed start ends the test before health polling. Sandbox readiness, retained state, and agent turns remain separate assertions.
 
@@ -753,7 +755,7 @@ Successful-export schema, secret, and pinned-consumer checks remain on Docker be
 The fixture contract and runtime refusal are covered in `support/e2e-phase-config-export-validation.test.ts`.
 
 The OpenClaw shard of the pinned Docker `mcp-bridge` target also owns Error-state recovery for
-OpenShell 0.0.116. After its healthy-source rebuild checks, it kills only the runtime bound to the
+the candidate's reviewed OpenShell release. After its healthy-source rebuild checks, it kills only the runtime bound to the
 test-created native sandbox ID, observes Error, and rebuilds without reintroducing the MCP host
 secret. A different container must preserve a workspace marker and complete the authenticated MCP
 tool call with the existing denial rule. The Podman and explicit-only development-runtime targets
@@ -1381,7 +1383,7 @@ then uploads the verified bytes under a content-addressed name with the shared
 14-day E2E retention policy.
 
 `mcp-bridge-dev` is an explicit-only compatibility lane. Empty-selector full-suite
-dispatches qualify the exact stable OpenShell 0.0.116 product contract and do not
+dispatches test the candidate's reviewed stable OpenShell release and do not
 select the development runtime.
 
 The OpenClaw, Hermes, and LangChain Deep Agents Code shards restore and verify that same artifact with the trusted workflow revision.
@@ -1469,6 +1471,12 @@ The credential-generation window runs as an independent fresh-runner job in
 parallel with the stable MCP agent matrix. Empty-selector dispatches and
 explicit `mcp-bridge` selections run both jobs, while the credential-window job
 keeps its own release provenance, secret scan, and artifact.
+Both jobs receive the supervisor image digest and binary provenance for the
+candidate's reviewed OpenShell release from the trusted candidate resolver.
+The provenance identifies the source revision and the CLI, gateway, and standalone
+sandbox binary hashes. Missing or unreviewed runtime evidence stops the jobs.
+Candidate approval and installer source validation still apply; selecting a
+reviewed release does not establish a live test result.
 Before setting the variable, an organization owner must:
 
 1. Create a GitHub-hosted Ubuntu x64 larger runner with 8 vCPU, 32 GB RAM, and

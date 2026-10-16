@@ -191,7 +191,8 @@ During the lease, `launch` still verifies the owning OpenShell gateway, exact li
 Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
 Shared-route providers use `inference.local`.
 Their models probe must return HTTP 2xx, except that a retained legacy `openrouter-api` shared route can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
-NVIDIA Endpoints and supported fixed hosted selections verify their recorded sandbox-attached provider and run the bounded model request at its native endpoint without the shared-route models probe.
+NVIDIA Endpoints, supported fixed hosted selections, and new OpenClaw Ollama, standalone vLLM, and llama.cpp selections verify their recorded sandbox-attached provider and run the bounded model request at its native endpoint without the shared-route models probe.
+Retained OpenClaw local selections with a valid shared route continue to use `inference.local` for supported model switches. An older OpenClaw Ollama, standalone vLLM, or llama.cpp sandbox without a native attachment cannot resume or rebuild. Back it up and re-onboard it with `--fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NVIDIA NIM sandboxes retain the shared route and can resume or rebuild without a native attachment.
 A failed required probe or model request rejects launch readiness.
 This check is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 </AgentOnly>

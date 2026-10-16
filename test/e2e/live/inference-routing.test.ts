@@ -1116,7 +1116,7 @@ async function onboardNativeDcode(
     apiKey,
     model,
     chatContent: "PONG",
-    host: "0.0.0.0",
+    host: authenticated ? "0.0.0.0" : "127.0.0.1",
     port: 8000,
     publicHost: "localhost",
     requireAuth: authenticated,
