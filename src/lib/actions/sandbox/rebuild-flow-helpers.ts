@@ -75,9 +75,10 @@ export type RebuildLiveState = {
   staleRecovery: boolean;
   staleRegistrySnapshot: ReturnType<typeof loadRegistry> | null;
   terminalPhase?: boolean;
+  notReadyPhase?: boolean;
 };
 
-/** Select complete stopped native state for supported fresh terminal-state rebuilds. */
+/** Select complete stopped native state for supported fresh not-ready or terminal rebuilds. */
 export async function prepareRebuildStoppedAgentState(
   entry: RebuildSandboxEntry,
   liveState: RebuildLiveState,
@@ -85,7 +86,7 @@ export async function prepareRebuildStoppedAgentState(
   getSandbox: Parameters<typeof snapshotBackup.prepareStoppedAgentState>[1],
 ): Promise<PreparedStoppedNativeState | null> {
   if (
-    !liveState.terminalPhase ||
+    (!liveState.terminalPhase && !liveState.notReadyPhase) ||
     liveState.staleRecovery ||
     hasRecoveryManifest ||
     !["openclaw", "langchain-deepagents-code"].includes(entry.agent ?? "openclaw")
@@ -244,6 +245,7 @@ export async function resolveRebuildLiveState(
       staleRecovery: false,
       staleRegistrySnapshot: null,
       ...(liveSource.readiness === "terminal" ? { terminalPhase: true } : {}),
+      ...(liveSource.readiness === "not_ready" ? { notReadyPhase: true } : {}),
     };
 
   const reconciled = await getReconciledSandboxGatewayState(sandboxName);

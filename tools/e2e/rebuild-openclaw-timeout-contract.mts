@@ -1,0 +1,15 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// Budget the 20-minute install and three 20-minute rebuild commands, plus
+// lifecycle waits, native-readiness retries, and in-test cleanup.
+export const REBUILD_OPENCLAW_TEST_TIMEOUT_MINUTES = 110;
+export const REBUILD_OPENCLAW_POST_TEST_CLEANUP_BUDGET_MS = 10 * 60_000;
+export const REBUILD_OPENCLAW_WORKFLOW_FINALIZATION_BUDGET_MS = 10 * 60_000;
+
+export const REBUILD_OPENCLAW_TEST_TIMEOUT_MS = REBUILD_OPENCLAW_TEST_TIMEOUT_MINUTES * 60_000;
+export const REBUILD_OPENCLAW_TARGET_TIMEOUT_MINUTES =
+  (REBUILD_OPENCLAW_TEST_TIMEOUT_MS +
+    REBUILD_OPENCLAW_POST_TEST_CLEANUP_BUDGET_MS +
+    REBUILD_OPENCLAW_WORKFLOW_FINALIZATION_BUDGET_MS) /
+  60_000;

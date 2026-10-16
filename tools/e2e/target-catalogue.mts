@@ -19,6 +19,7 @@ import {
   runtimeExecutionId,
 } from "./gateway-runtime.mts";
 import { FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES } from "./full-e2e-timeout-contract.mts";
+import { REBUILD_OPENCLAW_TARGET_TIMEOUT_MINUTES } from "./rebuild-openclaw-timeout-contract.mts";
 import {
   ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES,
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
@@ -1350,11 +1351,13 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     owningPaths: [
       "test/e2e/live/openclaw-stopped-recovery.ts",
       "test/e2e/live/openclaw-restoration.ts",
+      "tools/e2e/rebuild-openclaw-timeout-contract.mts",
     ],
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
-    timeoutMinutes: 45,
+    prAdvisorSelectable: true,
+    timeoutMinutes: REBUILD_OPENCLAW_TARGET_TIMEOUT_MINUTES,
     installMode: "credential-free",
     restoreCli: true,
     exposeCliBin: true,
