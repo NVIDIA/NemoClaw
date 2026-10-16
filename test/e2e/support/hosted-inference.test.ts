@@ -702,6 +702,7 @@ printf '{"data":[]}'
       forbiddenMarkers: ["FORBIDDEN_REQUEST_MARKER"],
       model: "nvidia/nvidia/fake-model",
       progress,
+      publicHost: "localhost",
       requestCanaryMarker: "EXPECTED_REQUEST_CANARY",
       requireAuth: true,
       responseText: "RESP_OK",
