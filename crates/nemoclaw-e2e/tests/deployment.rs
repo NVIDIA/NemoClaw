@@ -931,145 +931,6 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn destroy_does_not_require_the_inference_credential_or_rewrite_its_reference() {
-    struct Credential;
-    impl nemoclaw_sdk::Secrets for Credential {
-        fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
-            assert_eq!(name, "NEMOCLAW_TEST_REMOVED_INFERENCE_KEY");
-            Ok("fixture-inference-secret".into())
-        }
-    }
-    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
-    let directory = tempfile::tempdir().unwrap();
-    let fixture = Fixture::start().await;
-    let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
-    )
-    .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    document.spec.inference_providers[0].endpoint = "https://inference.example.test/v1".into();
-    document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::Credential {
-        env: "NEMOCLAW_TEST_REMOVED_INFERENCE_KEY".into(),
-    });
-    let cancel = CancellationToken::new();
-    Deployment::new(directory.path(), &bundle)
-        .with_secrets(std::sync::Arc::new(Credential))
-        .apply(&document, &cancel)
-        .await
-        .unwrap();
-    let initializations = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let counted = initializations.clone();
-    let deployment = Deployment::new(directory.path(), &bundle).with_progress(std::sync::Arc::new(
-        move |event| {
-            if let nemoclaw_sdk::Progress::Completed {
-                operation: "tofu.init",
-                ..
-            } = event
-            {
-                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            }
-        },
-    ));
-    let effects = fixture.state.lock().unwrap().effects;
-    assert_eq!(
-        deployment
-            .plan_destroy(&cancel)
-            .await
-            .unwrap()
-            .changes
-            .len(),
-        3
-    );
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    // Teardown initializes the stage once to read its bindings and once for
-    // its teardown graph; it does not read the same state again.
-    assert_eq!(
-        initializations.swap(0, std::sync::atomic::Ordering::SeqCst),
-        2
-    );
-    assert_eq!(
-        deployment.destroy(&cancel).await.unwrap().outcome,
-        Outcome::Destroyed
-    );
-    assert_eq!(initializations.load(std::sync::atomic::Ordering::SeqCst), 2);
-    let error = deployment.export(&cancel).await.unwrap_err().to_string();
-    assert!(
-        error.contains("cannot export a destroyed deployment"),
-        "{error}"
-    );
-    assert!(fixture.state.lock().unwrap().providers.is_empty());
-    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn apply_preserves_bindings_without_generating_inference() {
-    struct Secret;
-    impl nemoclaw_sdk::Secrets for Secret {
-        fn resolve(&self, reference: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
-            assert_eq!(reference, "MODEL_TOKEN");
-            Ok("fixture-remote-model-token".into())
-        }
-    }
-    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
-    let directory = tempfile::tempdir().unwrap();
-    let fixture = Fixture::start().await;
-    let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
-    )
-    .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    document.spec.inference_providers[0].endpoint = "https://unreachable.invalid/v1".into();
-    document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::Credential {
-        env: "MODEL_TOKEN".into(),
-    });
-    let deployment =
-        Deployment::new(directory.path(), &bundle).with_secrets(std::sync::Arc::new(Secret));
-    let cancel = CancellationToken::new();
-    fixture.state.lock().unwrap().inference_exit = 1;
-    deployment.plan(&document, &cancel).await.unwrap();
-    assert_eq!(fixture.state.lock().unwrap().effects, 0);
-    assert!(
-        fixture.state.lock().unwrap().exec_calls.is_empty(),
-        "plan ran an active inference probe"
-    );
-    deployment.apply(&document, &cancel).await.unwrap();
-    let state_path = directory.path().join("terraform.tfstate");
-    let bound = fs::read(&state_path).unwrap();
-    assert!(!String::from_utf8_lossy(&bound).contains("fixture-remote-model-token"));
-    let effects = fixture.state.lock().unwrap().effects;
-    assert_eq!(effects, 4);
-    assert!(
-        deployment
-            .apply(&document, &cancel)
-            .await
-            .unwrap()
-            .changes
-            .is_empty()
-    );
-    assert_same_deployment_state(&fs::read(&state_path).unwrap(), &bound);
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
-    assert!(
-        !fixture
-            .state
-            .lock()
-            .unwrap()
-            .exec_calls
-            .iter()
-            .flatten()
-            .any(|arg| arg.contains("inference-probe")
-                || arg.contains("pi-probe")
-                || arg == "probe"
-                || arg == "--message")
-    );
-    deployment.destroy(&cancel).await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; exercises a slow graceful sandbox stop"]
 async fn destroy_waits_for_graceful_sandbox_stop_without_retrying() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
@@ -1585,13 +1446,9 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
     fixture.state.lock().unwrap().configuration_error = Some(serde_json::json!({
         "error": {"stage":"start", "code":"lifecycle_adapter_start_failed", "runtime_state":"unavailable", "message":"native-secret-must-not-escape"}
     }));
-    // Redaction rules belong to nemoclaw-sdk's process tests; this checks
-    // that each rule reaches both output formats of a failed apply.
-    for (secret, format) in [
-        ("a", "text"),
-        ("lifecycle_adapter_start_failed", "json"),
-        ("inert-credential-for-context-check", "text"),
-    ] {
+    // The process tests own the credential/context matrix. Keep the native
+    // withholding and collision paths here, including failure recovery.
+    for (secret, format) in [("a", "text"), ("lifecycle_adapter_start_failed", "json")] {
         let failed = invoke("apply", format, secret);
         assert_eq!(failed.status.code(), Some(1));
         let stdout = String::from_utf8(failed.stdout).unwrap();
@@ -1614,23 +1471,14 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
                 !message.contains("[redacted]"),
                 "short-value character matches must not escape"
             );
-        } else if secret == "lifecycle_adapter_start_failed" {
+        } else {
+            assert!(message.contains("sandbox/assistant"), "{message}");
             assert!(message.contains("[redacted]"), "{message}");
             assert!(
                 message.contains("agent runtime is unavailable"),
                 "{message}"
             );
             assert!(!message.contains(secret));
-        } else {
-            assert!(message.contains("sandbox/assistant"), "{message}");
-            assert!(
-                message.contains("lifecycle_adapter_start_failed"),
-                "{message}"
-            );
-            assert!(
-                message.contains("agent runtime is unavailable"),
-                "{message}"
-            );
         }
         assert!(!message.contains("[[redacted]]"));
         assert!(!stdout.contains("native-secret-must-not-escape"));
@@ -1770,86 +1618,83 @@ async fn rejected_policy_fails_promptly_with_context_and_allows_recovery_or_dest
     }
 }
 
+// Text/JSON presentation is checked at the CLI renderer boundary. This native
+// case keeps the diagnostic producer, private-detail suppression, retained
+// resources, and successful cleanup through the actual executable stack.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn pi_start_failure_names_the_sandbox_in_cli_text_and_json_and_allows_destroy() {
+async fn pi_start_failure_names_the_sandbox_in_json_and_allows_destroy() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
-    for format in ["text", "json"] {
-        let directory = tempfile::tempdir().unwrap();
-        let fixture = Fixture::start().await;
-        let mut input: serde_json::Value = serde_saphyr::from_str(include_str!(
-            "../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
-        ))
-        .unwrap();
-        input["spec"]["gateway"]["endpoint"] = fixture.endpoint.clone().into();
-        input["spec"]["sandboxes"][0]["name"] = "coder".into();
-        input["spec"]["sandboxes"][0]["harness"]["kind"] = "nvidia.fabric.pi".into();
-        let mut document = Document::parse(input.to_string().as_bytes()).unwrap();
-        let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-        let input = directory.path().join("input.yaml");
-        fs::write(&input, document.yaml().unwrap()).unwrap();
-        let state = directory.path().join("state");
-        fixture.state.lock().unwrap().configuration_error = Some(serde_json::json!({
-            "error": {"stage":"start", "code":"pi_model_unknown", "runtime_state":"unavailable", "message":"PRIVATE_SENTINEL", "details":{"token":"PRIVATE_SENTINEL"}}
-        }));
-        let invoke = |operation: &str| {
-            let mut command = Command::new(
-                bundle
-                    .join("bin")
-                    .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
-            );
-            command
-                .arg("--bundle")
-                .arg(&bundle)
-                .arg("--state-dir")
-                .arg(&state)
-                .args(["--progress", "off", operation, "-o", format]);
-            if operation == "apply" {
-                command.arg(&input).arg("--non-interactive");
-            }
-            command.output().unwrap()
-        };
-        let failed = invoke("apply");
-        assert_eq!(failed.status.code(), Some(1));
-        let stdout = String::from_utf8(failed.stdout).unwrap();
-        let stderr = String::from_utf8(failed.stderr).unwrap();
-        let rendered = if format == "json" { &stdout } else { &stderr };
-        assert!(
-            rendered.contains("Changes may already have been made"),
-            "{rendered}"
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut input: serde_json::Value = serde_saphyr::from_str(include_str!(
+        "../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
+    ))
+    .unwrap();
+    input["spec"]["gateway"]["endpoint"] = fixture.endpoint.clone().into();
+    input["spec"]["sandboxes"][0]["name"] = "coder".into();
+    input["spec"]["sandboxes"][0]["harness"]["kind"] = "nvidia.fabric.pi".into();
+    let mut document = Document::parse(input.to_string().as_bytes()).unwrap();
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
+    let input = directory.path().join("input.yaml");
+    fs::write(&input, document.yaml().unwrap()).unwrap();
+    let state = directory.path().join("state");
+    fixture.state.lock().unwrap().configuration_error = Some(serde_json::json!({
+        "error": {"stage":"start", "code":"pi_model_unknown", "runtime_state":"unavailable", "message":"PRIVATE_SENTINEL", "details":{"token":"PRIVATE_SENTINEL"}}
+    }));
+    let invoke = |operation: &str| {
+        let mut command = Command::new(
+            bundle
+                .join("bin")
+                .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
         );
-        assert!(
-            !rendered.contains("No runtime resources changed"),
-            "{rendered}"
-        );
-        let message = if format == "json" {
-            let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-            assert_eq!(report["outcome"], "failed");
-            report["error"]["message"].as_str().unwrap().to_owned()
-        } else {
-            stderr.clone()
-        };
-        for expected in [
-            "sandbox/coder",
-            "start",
-            "pi_model_unknown",
-            "agent runtime is unavailable",
-            "resources retained",
-        ] {
-            assert!(message.contains(expected), "{message}");
+        command
+            .arg("--bundle")
+            .arg(&bundle)
+            .arg("--state-dir")
+            .arg(&state)
+            .args(["--progress", "off", operation, "-o", "json"]);
+        if operation == "apply" {
+            command.arg(&input).arg("--non-interactive");
         }
-        assert!(!stdout.contains("PRIVATE_SENTINEL") && !stderr.contains("PRIVATE_SENTINEL"));
-        assert_eq!(fixture.state.lock().unwrap().sandboxes.len(), 1);
-        assert!(state.join("terraform.tfstate").exists());
-        let destroyed = invoke("destroy");
-        assert!(
-            destroyed.status.success(),
-            "{} {}",
-            String::from_utf8_lossy(&destroyed.stdout),
-            String::from_utf8_lossy(&destroyed.stderr)
-        );
-        assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
+        command.output().unwrap()
+    };
+    let failed = invoke("apply");
+    assert_eq!(failed.status.code(), Some(1));
+    let stdout = String::from_utf8(failed.stdout).unwrap();
+    let stderr = String::from_utf8(failed.stderr).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["outcome"], "failed");
+    let remaining = report["remainingState"].as_str().unwrap();
+    assert!(
+        remaining.contains("Changes may already have been made"),
+        "{remaining}"
+    );
+    assert!(
+        !remaining.contains("No runtime resources changed"),
+        "{remaining}"
+    );
+    let message = report["error"]["message"].as_str().unwrap();
+    for expected in [
+        "sandbox/coder",
+        "start",
+        "pi_model_unknown",
+        "agent runtime is unavailable",
+        "resources retained",
+    ] {
+        assert!(message.contains(expected), "{message}");
     }
+    assert!(!stdout.contains("PRIVATE_SENTINEL") && !stderr.contains("PRIVATE_SENTINEL"));
+    assert_eq!(fixture.state.lock().unwrap().sandboxes.len(), 1);
+    assert!(state.join("terraform.tfstate").exists());
+    let destroyed = invoke("destroy");
+    assert!(
+        destroyed.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&destroyed.stdout),
+        String::from_utf8_lossy(&destroyed.stderr)
+    );
+    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -1095,6 +1095,74 @@ mod tests {
         }
     }
 
+    /// Safe native diagnostics must survive either presentation independently
+    /// of the progress display. Native failure tests establish their producer.
+    #[test]
+    fn native_execution_failure_context_and_mutation_facts_survive_both_formats() {
+        let error = Error::Execution {
+            operation: "apply".into(),
+            diagnostic: "sandbox/coder start failed (pi_model_unknown); agent runtime is unavailable; resources retained".into(),
+            postcondition_failures: None,
+        };
+        for mutated in [false, true] {
+            let cli =
+                Cli::try_parse_from(["nemoclaw", "apply", "pi.yaml", "--progress", "off"]).unwrap();
+            let context = RenderContext::new(&cli);
+            if mutated {
+                context.progress(Arc::new(|_| {}))(nemoclaw_sdk::Progress::MutationStarted);
+            }
+            assert_eq!(error_exit_code(&error), 1);
+            for format in [OutputFormat::Text, OutputFormat::Json] {
+                let rendered = render_error(&error, format, &context);
+                let (message, remaining) = match format {
+                    OutputFormat::Json => {
+                        let report: Value = serde_json::from_str(&rendered).unwrap();
+                        assert_eq!(report["outcome"], "failed");
+                        assert_eq!(report["operation"], "Apply");
+                        assert_eq!(report["input"], "pi.yaml");
+                        (
+                            report["error"]["message"].as_str().unwrap().to_owned(),
+                            report["remainingState"].as_str().unwrap().to_owned(),
+                        )
+                    }
+                    OutputFormat::Text => {
+                        assert!(rendered.contains("Apply failed"), "{rendered}");
+                        assert!(rendered.contains("Input: pi.yaml"), "{rendered}");
+                        (rendered.clone(), rendered)
+                    }
+                };
+                for expected in [
+                    "sandbox/coder",
+                    "start",
+                    "pi_model_unknown",
+                    "agent runtime is unavailable",
+                    "resources retained",
+                ] {
+                    assert!(message.contains(expected), "missing {expected}: {message}");
+                }
+                if mutated {
+                    assert!(
+                        remaining.contains("Changes may already have been made"),
+                        "{remaining}"
+                    );
+                    assert!(
+                        !remaining.contains("No runtime resources changed"),
+                        "{remaining}"
+                    );
+                } else {
+                    assert!(
+                        remaining.contains("No runtime resources changed"),
+                        "{remaining}"
+                    );
+                    assert!(
+                        !remaining.contains("Changes may already have been made"),
+                        "{remaining}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn later_preflight_failure_does_not_erase_prior_mutations() {
         let cli =

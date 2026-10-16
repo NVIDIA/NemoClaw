@@ -353,17 +353,23 @@ mod tests {
     }
 
     #[test]
-    fn pi_model_failure_keeps_the_code_and_named_sandbox_without_native_details() {
-        let error = super::configuration_failure("start", "pi_model_unknown", Some("stopped"));
-        let message = nemoclaw_tofu::observation_message(error, Some("coder"));
-        for expected in [
-            "sandbox/coder",
-            "pi_model_unknown",
-            "start",
-            "resources retained",
+    fn known_configuration_failures_keep_the_code_and_named_sandbox_without_native_details() {
+        for (code, sandbox) in [
+            ("pi_model_unknown", "coder"),
+            ("lifecycle_adapter_start_failed", "assistant"),
         ] {
-            assert!(message.contains(expected), "{message}");
+            let error = super::configuration_failure("start", code, Some("stopped"));
+            let message = nemoclaw_tofu::observation_message(error, Some(sandbox));
+            assert!(message.contains(&format!("sandbox/{sandbox}")), "{message}");
+            for expected in [
+                code,
+                "start",
+                "agent runtime is unavailable",
+                "resources retained",
+            ] {
+                assert!(message.contains(expected), "{message}");
+            }
+            assert!(!message.contains("PRIVATE_SENTINEL"));
         }
-        assert!(!message.contains("PRIVATE_SENTINEL"));
     }
 }

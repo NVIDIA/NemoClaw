@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Destroy that repeats after it completed, meets an authentication failure,
-//! or is cancelled.
+//! Destroy that meets an authentication failure or is cancelled.
 //!
 //! The pinned Helm provider treats a release lookup that the API server rejects
 //! as an absent release: it drops the binding and sends no delete. A 401 must
@@ -9,51 +8,7 @@
 //! observations, with every binding and the issuer's objects kept.
 
 use super::*;
-use nemoclaw_sdk::Outcome;
 use std::time::{Duration, Instant};
-
-/// Whether `event` shows that a plan or an apply was launched.
-fn launches_tofu(event: &Progress) -> bool {
-    matches!(
-        event,
-        Progress::Waiting {
-            operation: "tofu.plan" | "tofu.apply",
-            ..
-        }
-    )
-}
-
-#[tokio::test]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated Kubernetes API fixture"]
-async fn a_second_destroy_after_completion_launches_no_plan_or_apply_and_changes_nothing() {
-    let fixture = Fixture::create().await;
-    fixture.finish().await;
-    let finished = fixture.snapshot();
-    let events = Events::default();
-    let deployment = fixture.deployment().with_progress(events.recording());
-
-    let destroyed = deployment.destroy(&CancellationToken::new()).await.unwrap();
-    let previewed = deployment
-        .plan_destroy(&CancellationToken::new())
-        .await
-        .unwrap();
-
-    assert_eq!(destroyed.outcome, Outcome::Destroyed);
-    assert_eq!(previewed.outcome, Outcome::Planned);
-    for result in [&destroyed, &previewed] {
-        assert!(result.changes.is_empty(), "{:?}", result.changes);
-        assert_eq!(result.retained, ["openshell_kubernetes_storage.runtime"]);
-    }
-    // The saved record already says the deployment is destroyed. A regression
-    // that plans again refreshes the retained storage through an OpenTofu plan.
-    let launched: Vec<_> = events.all().into_iter().filter(launches_tofu).collect();
-    assert!(
-        launched.is_empty(),
-        "the second destroy launched OpenTofu steps: {launched:?}"
-    );
-    finished.assert_unchanged(&fixture, "second destroy");
-    finished.assert_state_unchanged(&fixture, "second destroy");
-}
 
 #[tokio::test]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated Kubernetes API fixture"]

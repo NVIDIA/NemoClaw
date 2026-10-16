@@ -161,6 +161,8 @@ mod resource_management;
 mod runtime_boundaries;
 #[path = "runtime_compile.rs"]
 mod runtime_compile;
+#[path = "sandbox_admission.rs"]
+mod sandbox_admission;
 #[path = "service_references.rs"]
 mod service_references;
 #[path = "spark_examples.rs"]

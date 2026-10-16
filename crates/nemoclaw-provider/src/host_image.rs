@@ -308,6 +308,7 @@ mod tests {
             for variant in [
                 "valid",
                 "backend",
+                "missing_backend",
                 "architecture",
                 "identity",
                 "absent",
@@ -330,6 +331,12 @@ mod tests {
                     _ => 200,
                 };
                 match variant {
+                    "missing_backend" => {
+                        image["Config"]["Labels"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("org.nemoclaw.backend");
+                    }
                     "backend" => {
                         image["Config"]["Labels"]["org.nemoclaw.backend"] =
                             json!("PRIVATE_SENTINEL")
@@ -384,7 +391,7 @@ mod tests {
                     _ => {
                         let message = result.unwrap_err().to_string();
                         assert!(!message.contains("PRIVATE_SENTINEL"), "{message}");
-                        if variant == "backend" {
+                        if matches!(variant, "backend" | "missing_backend") {
                             assert!(message.contains("org.nemoclaw.backend"), "{message}");
                         }
                         if variant.ends_with("bearer_routes") {

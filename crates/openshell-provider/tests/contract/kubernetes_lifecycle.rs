@@ -10,7 +10,14 @@
 
 use crate::{kube_api::Objects, tofu::TofuWorkspace, transport::Fixture};
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, fs};
+use std::{
+    collections::BTreeMap,
+    fs,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 const NAME: &str = "nc-0123456789abcdef-gateway";
 const NAMESPACE: &str = "agents";
@@ -98,12 +105,22 @@ struct Platform {
     objects: Objects,
     _api: Fixture,
     workspace: TofuWorkspace,
+    writes: Arc<AtomicUsize>,
 }
 
 impl Platform {
     async fn start() -> Self {
         let objects = cluster();
-        let api = objects.serve().await;
+        let writes = Arc::new(AtomicUsize::new(0));
+        let observed = writes.clone();
+        let served = objects.clone();
+        let api = Fixture::start_tcp(move |request| {
+            if !matches!(request.method.as_str(), "GET" | "HEAD") {
+                observed.fetch_add(1, Ordering::SeqCst);
+            }
+            served.answer(&request.method, &request.path, &request.body)
+        })
+        .await;
         let workspace = crate::workspace();
         let kubeconfig = json!({
             "apiVersion": "v1", "kind": "Config",
@@ -120,6 +137,7 @@ impl Platform {
             objects,
             _api: api,
             workspace,
+            writes,
         }
     }
 
@@ -244,6 +262,81 @@ provider "openshell" {{ {destroy} }}
         platform.configure(Stage::Installed);
         platform.apply(true);
         platform
+    }
+}
+
+/// A missing ownership receipt is not evidence that bound storage is absent.
+/// Reject the teardown plan without dropping bindings or touching the cluster;
+/// once the receipt returns, issuer cleanup may finish while storage is kept.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; in-memory Kubernetes API"]
+async fn kubernetes_receipt_loss_preserves_bindings_until_restoration_allows_cleanup() {
+    let platform = Platform::start().await;
+    platform.configure(Stage::Prepared);
+    platform.apply(true);
+    let bound = platform.resources();
+    let namespace_uid = platform.uid("v1", "Namespace", NAMESPACE).unwrap();
+    let key_name = format!("{NAME}-kek");
+    let key_uid = platform.uid("v1", "Secret", &key_name).unwrap();
+    let lineage = serde_json::from_slice::<Value>(&platform.state()).unwrap()["lineage"].clone();
+    let objects = platform.snapshot();
+    let writes = platform.writes.load(Ordering::SeqCst);
+    let receipt = platform.workspace.path().join("kubernetes/receipt.json");
+    let saved = fs::read(&receipt).unwrap();
+    platform.configure(Stage::Teardown);
+    fs::remove_file(&receipt).unwrap();
+
+    let error = platform.tofu(
+        &["plan", "-input=false", "-no-color", "-out=blocked.plan"],
+        false,
+    );
+    assert!(error.contains("incomplete"), "{error}");
+    assert_eq!(
+        platform.resources(),
+        bound,
+        "failed refresh dropped a binding"
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&platform.state()).unwrap()["lineage"],
+        lineage,
+        "failed refresh changed state lineage"
+    );
+    assert_eq!(
+        platform.snapshot(),
+        objects,
+        "failed refresh changed objects"
+    );
+    assert_eq!(
+        platform.writes.load(Ordering::SeqCst),
+        writes,
+        "failed refresh sent a write"
+    );
+    assert!(!receipt.exists(), "failed refresh recreated the receipt");
+
+    fs::write(&receipt, saved).unwrap();
+    platform.apply(true);
+    assert_eq!(
+        platform
+            .resources()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [STORAGE]
+    );
+    assert_eq!(platform.resources()[STORAGE], bound[STORAGE]);
+    assert_eq!(
+        platform.uid("v1", "Namespace", NAMESPACE).as_deref(),
+        Some(namespace_uid.as_str())
+    );
+    assert_eq!(
+        platform.uid("v1", "Secret", &key_name).as_deref(),
+        Some(key_uid.as_str())
+    );
+    for (api_version, kind, name) in ISSUER {
+        assert!(
+            platform.uid(api_version, kind, name).is_none(),
+            "{kind}/{name} remains"
+        );
     }
 }
 

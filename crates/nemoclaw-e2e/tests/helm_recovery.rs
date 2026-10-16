@@ -1,17 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Helm release recovery during destroy, through the bundled OpenTofu, the
-//! Helm provider, and the public `destroy`, `plan_destroy`, `export`, and
-//! `apply`, against a loopback Kubernetes API that injects outages, permission
-//! failures, and authentication failures.
+//! Helm release recovery during destroy, through bundled OpenTofu, the
+//! Helm provider, and the public `destroy`, `plan_destroy`, and `export`
+//! operations, against a loopback Kubernetes API that injects outages,
+//! permission failures, and authentication failures.
 //!
 //! Installing a release through `apply` would pull the pinned chart, so each
 //! test starts from an interrupted runtime apply that the SDK's
-//! `test-scenarios` setup builds, with the fixture release either imported by
-//! the Helm provider or left as a release record that OpenTofu does not bind.
-//! The tests in this file check a lost Helm binding; the child modules check a
-//! deleted or truncated receipt, a release record with no binding, and a
-//! second destroy, a 401, or a cancellation.
+//! `test-scenarios` setup builds, then imports the fixture release with the
+//! Helm provider. This file checks lost Helm bindings; its child module checks
+//! authentication failures and cancellation.
 
 use super::kube_api;
 use super::transport;
@@ -33,11 +31,6 @@ use std::{
 
 #[path = "helm_recovery/destroy_faults.rs"]
 mod destroy_faults;
-#[path = "helm_recovery/receipt.rs"]
-mod receipt;
-#[path = "helm_recovery/release_record.rs"]
-mod release_record;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Fault {
     Healthy,
@@ -157,18 +150,6 @@ impl Api {
         self.writes().len()
     }
 
-    /// Delete the record of release `name`, as `helm uninstall` does.
-    fn uninstall(&self, name: &str, namespace: &str) {
-        let record = format!(
-            "{}/sh.helm.release.v1.{name}.v1",
-            kube_api::collection("v1", "Secret", namespace)
-        );
-        assert!(
-            self.objects.0.lock().unwrap().remove(&record).is_some(),
-            "release {name} has no record"
-        );
-    }
-
     fn release(&self, name: &str, namespace: &str) {
         // Helm accepts its original uncompressed JSON storage format. The
         // release has no workloads: these tests qualify recovery, not a chart.
@@ -268,22 +249,6 @@ fn durable_files(stage: &Path) -> BTreeSet<String> {
     recovery_files(stage, &BTreeSet::new())
         .into_iter()
         .collect()
-}
-
-/// The progress events a deployment has reported.
-#[derive(Clone, Default)]
-struct Events(Arc<Mutex<Vec<Progress>>>);
-
-impl Events {
-    /// A progress callback that records into these events.
-    fn recording(&self) -> Arc<dyn Fn(Progress) + Send + Sync> {
-        let events = self.0.clone();
-        Arc::new(move |event| events.lock().unwrap().push(event))
-    }
-
-    fn all(&self) -> Vec<Progress> {
-        self.0.lock().unwrap().clone()
-    }
 }
 
 /// `error` is a failed OpenTofu `operation` whose diagnostic contains every
@@ -491,7 +456,7 @@ impl Fixture {
     }
 
     /// The managed Kubernetes ownership receipt (`kubernetes/receipt.json`).
-    /// Tests only copy, delete, truncate, and restore its bytes.
+    /// Included opaquely in state-preservation snapshots.
     fn receipt(&self) -> PathBuf {
         self.directory.path().join("state/kubernetes/receipt.json")
     }

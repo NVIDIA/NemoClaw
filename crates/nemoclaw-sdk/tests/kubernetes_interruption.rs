@@ -22,7 +22,7 @@ use crate::scripted_tofu::{
     plan_json, planning, state_json,
 };
 use nemoclaw_sdk::{
-    CancellationToken, Deployment, Error, OperationResult,
+    CancellationToken, Deployment, Error, OperationResult, Outcome, Progress,
     compile::{self, Target},
     config::Document,
     kubernetes::{AUTH_KIND, STORAGE_KIND},
@@ -154,6 +154,78 @@ async fn applied_with_destroy_plan(scripted: &Scripted, retained: &[&str]) -> De
     scripted.set("root.state", state_json(&bound));
     scripted.set("root.destroy.plan", destroy_plan_json(&bound, retained));
     deployment
+}
+
+/// A completed destroy and its preview report retained storage without planning
+/// or applying again. Canned bindings stand in for the provider's retained
+/// storage; the bundle tests establish actual Helm teardown and retention.
+#[tokio::test]
+async fn a_completed_kubernetes_destroy_and_its_preview_keep_retained_storage_without_replanning() {
+    let scripted = fresh();
+    let deployment = applied_with_destroy_plan(&scripted, &[STORAGE]).await;
+    let finished = deployment.destroy(&uncancelled()).await.unwrap();
+    assert_eq!(finished.outcome, Outcome::Destroyed);
+    assert_eq!(finished.retained, [STORAGE]);
+
+    // Report the state left after the successful destroy. If the SDK replans,
+    // the script returns a valid no-op plan rather than failing on stale data.
+    let retained: Vec<_> = compile::runtime_targets(&original(), &scripted.generations())
+        .unwrap()
+        .into_iter()
+        .filter(|target| target.kind == STORAGE_KIND)
+        .collect();
+    scripted.set("root.state", state_json(&retained));
+    scripted.set(
+        "root.destroy.plan",
+        destroy_plan_json(&retained, &[STORAGE]),
+    );
+    let saved = scripted.intent();
+    let files = ["terraform.tfstate", "kubernetes/receipt.json"].map(|path| {
+        let path = scripted.state().join(path);
+        let bytes = fs::read(&path).ok();
+        (path, bytes)
+    });
+    let before = scripted.commands().len();
+    let events = Events::default();
+    let deployment = deployment.with_progress(events.recording());
+    let unchanged = || {
+        let commands = scripted.commands();
+        let launched: Vec<_> = commands[before..]
+            .iter()
+            .filter(|command| command.ends_with(" plan") || command.ends_with(" apply"))
+            .collect();
+        assert!(
+            launched.is_empty(),
+            "completed destroy launched {launched:?}"
+        );
+        assert!(
+            !events.contains(|event| matches!(
+                event,
+                Progress::Waiting {
+                    operation: "tofu.plan" | "tofu.apply",
+                    ..
+                }
+            )),
+            "completed destroy announced a plan or apply"
+        );
+        events.assert_mutations(0, "completed destroy");
+        assert_record(&scripted, &saved, "completed destroy");
+        for (path, bytes) in &files {
+            assert_eq!(fs::read(path).ok(), *bytes, "{} changed", path.display());
+        }
+    };
+
+    let destroyed = deployment.destroy(&uncancelled()).await.unwrap();
+    assert_eq!(destroyed.outcome, Outcome::Destroyed);
+    assert!(destroyed.changes.is_empty());
+    assert_eq!(destroyed.retained, [STORAGE]);
+    unchanged();
+
+    let previewed = deployment.plan_destroy(&uncancelled()).await.unwrap();
+    assert_eq!(previewed.outcome, Outcome::Planned);
+    assert!(previewed.changes.is_empty());
+    assert_eq!(previewed.retained, [STORAGE]);
+    unchanged();
 }
 
 /// A retried destroy whose OpenTofu state was lost is refused, not reported as

@@ -318,7 +318,8 @@ async fn managed_pi_applies_without_generation_and_refused_sandbox_changes_keep_
     present_incompatible_images_fail_before_effects(&s).await;
     plan_collects_no_host_capacity(&s).await;
     s.apply().await;
-    refused_sandbox_changes_preserve_retained_intent(&s.root, &s.bundle, &s.gateway).await;
+    refused_sandbox_and_runtime_change_preserves_retained_intent(&s.root, &s.bundle, &s.gateway)
+        .await;
     s.run("destroy", "", true).await;
     assert!(read(&s.root, "engine.json")["container"].is_null());
 }
@@ -389,7 +390,8 @@ async fn pulled_incompatible_image_fails_before_storage(s: &Scenario) {
     assert_eq!(read(root, "engine.json")["effects"], 1);
 }
 
-// An already present incompatible image must fail before any owned resources exist.
+// The fast host-image matrix owns label variations. Each backend keeps this
+// native check that a private invalid value is rejected before any mutation.
 async fn present_incompatible_images_fail_before_effects(s: &Scenario) {
     let root = s.root.as_path();
     let original = read(root, "fixture.json");
@@ -399,21 +401,15 @@ async fn present_incompatible_images_fail_before_effects(s: &Scenario) {
         "engine.json",
         &json!({"effects":0,"creates":0,"image_missing":false,"pulls":0}),
     );
-    for backend in [None, Some("other"), Some("PRIVATE_IMAGE_SENTINEL")] {
-        let mut stale = original.clone();
-        let labels = stale["image"]["Config"]["Labels"].as_object_mut().unwrap();
-        labels.remove("org.nemoclaw.backend");
-        if let Some(backend) = backend {
-            labels.insert("org.nemoclaw.backend".into(), json!(backend));
-        }
-        save(root, "fixture.json", &stale);
-        for command in ["plan", "apply"] {
-            let error = String::from_utf8(s.run(command, "config.yaml", false).await).unwrap();
-            assert!(error.contains("org.nemoclaw.backend"), "{error}");
-            assert!(!error.contains("PRIVATE_IMAGE_SENTINEL"), "{error}");
-            assert_eq!(read(root, "engine.json")["effects"], 0);
-            assert_eq!(s.gateway.state.lock().unwrap().effects, 0);
-        }
+    let mut stale = original.clone();
+    stale["image"]["Config"]["Labels"]["org.nemoclaw.backend"] = json!("PRIVATE_IMAGE_SENTINEL");
+    save(root, "fixture.json", &stale);
+    for command in ["plan", "apply"] {
+        let error = String::from_utf8(s.run(command, "config.yaml", false).await).unwrap();
+        assert!(error.contains("org.nemoclaw.backend"), "{error}");
+        assert!(!error.contains("PRIVATE_IMAGE_SENTINEL"), "{error}");
+        assert_eq!(read(root, "engine.json")["effects"], 0);
+        assert_eq!(s.gateway.state.lock().unwrap().effects, 0);
     }
     save(root, "fixture.json", &original);
     save(root, "engine.json", &engine);
@@ -964,7 +960,7 @@ async fn replacement_cleanup(root: &Path, bundle: &Path) {
     assert_eq!(read(root, "engine.json")["container"], before["container"]);
 }
 
-async fn refused_sandbox_changes_preserve_retained_intent(
+async fn refused_sandbox_and_runtime_change_preserves_retained_intent(
     root: &Path,
     bundle: &Path,
     gateway: &Fixture,
@@ -982,51 +978,38 @@ async fn refused_sandbox_changes_preserve_retained_intent(
         .map(|path| fs::read(root.join("deployment").join(path)).unwrap());
     let engine = read(root, "engine.json");
     let effects = gateway.state.lock().unwrap().effects;
-    for change in ["remove", "image", "policy", "image-with-runtime-change"] {
-        let mut rejected = original.clone();
-        match change {
-            "remove" => {
-                rejected["spec"]["sandboxes"].as_array_mut().unwrap().pop();
-            }
-            "policy" => {
-                rejected["spec"]["sandboxes"][1]["network"] =
-                    json!({"policy":{"explicit":{"version":1,"network_policies":{}}}});
-            }
-            _ => {
-                rejected["spec"]["sandboxes"][1]["image"]["ref"] =
-                    json!(format!("sandbox@sha256:{}", "c".repeat(64)));
-                if change == "image-with-runtime-change" {
-                    rejected["spec"]["services"]["qwen"]["image"] =
-                        json!(format!("runtime@sha256:{}", "f".repeat(64)));
-                }
-            }
+    // The SDK integration matrix covers individual sandbox edits. This native
+    // case proves a refused replacement cannot partially update its model runtime.
+    let mut rejected = original.clone();
+    rejected["spec"]["sandboxes"][1]["image"]["ref"] =
+        json!(format!("sandbox@sha256:{}", "c".repeat(64)));
+    rejected["spec"]["services"]["qwen"]["image"] =
+        json!(format!("runtime@sha256:{}", "f".repeat(64)));
+    save(root, "rejected.yaml", &rejected);
+    for operation in ["apply", "plan"] {
+        let result: Value =
+            serde_json::from_slice(&run(root, bundle, operation, "rejected.yaml", false).await)
+                .unwrap();
+        for (path, saved) in ["intent.json", "terraform.tfstate"].iter().zip(&before) {
+            assert_eq!(
+                fs::read(root.join("deployment").join(path)).unwrap(),
+                *saved,
+                "{operation} changed {path}"
+            );
         }
-        save(root, "rejected.yaml", &rejected);
-        for operation in ["apply", "plan"] {
-            let result: Value =
-                serde_json::from_slice(&run(root, bundle, operation, "rejected.yaml", false).await)
-                    .unwrap();
-            for (path, saved) in ["intent.json", "terraform.tfstate"].iter().zip(&before) {
-                assert_eq!(
-                    fs::read(root.join("deployment").join(path)).unwrap(),
-                    *saved,
-                    "{change}: {operation} changed {path}"
-                );
-            }
-            assert_eq!(read(root, "engine.json"), engine, "{change}: {operation}");
-            assert_eq!(gateway.state.lock().unwrap().effects, effects);
-            let message = result["error"]["message"].as_str().unwrap();
-            assert!(message.contains("reviewer"), "{result}");
-            assert!(message.contains("apply cannot"), "{result}");
-            assert!(!message.contains("ordinary"), "{result}");
-            // Only operations that can mutate resources report remaining state.
-            if operation == "apply" {
-                assert_eq!(result["remainingState"], "No runtime resources changed.");
-            } else {
-                assert!(result.get("remainingState").is_none(), "{result}");
-            }
-            assert!(result["help"].as_str().unwrap().contains("docs/usage.md"));
+        assert_eq!(read(root, "engine.json"), engine, "{operation}");
+        assert_eq!(gateway.state.lock().unwrap().effects, effects);
+        let message = result["error"]["message"].as_str().unwrap();
+        assert!(message.contains("reviewer"), "{result}");
+        assert!(message.contains("apply cannot"), "{result}");
+        assert!(!message.contains("ordinary"), "{result}");
+        // Only operations that can mutate resources report remaining state.
+        if operation == "apply" {
+            assert_eq!(result["remainingState"], "No runtime resources changed.");
+        } else {
+            assert!(result.get("remainingState").is_none(), "{result}");
         }
+        assert!(result["help"].as_str().unwrap().contains("docs/usage.md"));
     }
     // The saved intent is byte-identical after each refusal, so one export
     // shows it still reproduces the accepted document.
@@ -1035,8 +1018,8 @@ async fn refused_sandbox_changes_preserve_retained_intent(
         Document::parse(exported.as_slice()).unwrap(),
         Document::parse(serde_json::to_vec(&original).unwrap().as_slice()).unwrap()
     );
-    // A root observation failure after runtime planning must not save a new
-    // document either, even when its sandbox changes would otherwise be valid.
+    // An observation failure must not save a new document either, even when
+    // its sandbox changes would otherwise be valid.
     let mut revised = original.clone();
     revised["metadata"]["name"] = json!("unaccepted-display-name");
     save(root, "unaccepted.yaml", &revised);

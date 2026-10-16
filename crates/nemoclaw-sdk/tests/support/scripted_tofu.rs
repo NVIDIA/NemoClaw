@@ -219,7 +219,7 @@ fn bound(target: &Target) -> Value {
     values["id"] = if target.address == HELM_RELEASE {
         values["name"].clone()
     } else {
-        json!(format!("physical-{}", target.kind))
+        json!(format!("physical-{}", target.address))
     };
     values
 }
@@ -281,6 +281,12 @@ type Hook = Arc<dyn Fn(Progress) + Send + Sync>;
 pub struct Events(Arc<Mutex<Vec<Progress>>>);
 
 impl Events {
+    /// Records every event.
+    pub fn recording(&self) -> Hook {
+        let events = self.0.clone();
+        Arc::new(move |event| events.lock().unwrap().push(event))
+    }
+
     /// Records every event and cancels `token` at each one `when` accepts.
     pub fn cancelling(
         &self,
@@ -305,6 +311,11 @@ impl Events {
             .filter(|event| **event == Progress::MutationStarted)
             .count();
         assert_eq!(started, expected, "{context}: OpenTofu applies started");
+    }
+
+    /// Whether any recorded event satisfies `wanted`.
+    pub fn contains(&self, wanted: impl Fn(&Progress) -> bool) -> bool {
+        self.0.lock().unwrap().iter().any(wanted)
     }
 }
 

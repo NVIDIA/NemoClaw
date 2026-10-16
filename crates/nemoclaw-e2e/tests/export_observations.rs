@@ -66,13 +66,23 @@ async fn export_refreshes_through_opentofu_without_applying_or_losing_bindings()
     deployment.destroy(&cancel).await.unwrap();
 }
 
+/// One credentialed deployment checks apply/reapply and both export modes
+/// before its credential becomes unavailable for preview and teardown.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn export_uses_provider_observations_without_resolving_inference_credentials() {
+async fn credentialed_inference_applies_without_probes_then_exports_and_destroys_without_secrets() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    const REFERENCE: &str = "INFERENCE_LIFECYCLE_KEY";
+    const SECRET: &str = "fixture-inference-secret";
     struct Values;
     impl nemoclaw_sdk::Secrets for Values {
-        fn resolve(&self, _: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
-            Ok("fixture-value".into())
+        fn resolve(&self, reference: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
+            assert_eq!(reference, REFERENCE);
+            Ok(SECRET.into())
         }
     }
     struct Unavailable;
@@ -90,39 +100,111 @@ async fn export_uses_provider_observations_without_resolving_inference_credentia
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    document.spec.inference_providers[0].endpoint = "https://models.example/v1".into();
+    document.spec.inference_providers[0].endpoint = "https://unreachable.invalid/v1".into();
     document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::Credential {
-        env: "EXPORT_INFERENCE_REFERENCE".into(),
+        env: REFERENCE.into(),
     });
     let cancel = CancellationToken::new();
-    Deployment::new(directory.path(), &bundle)
-        .with_secrets(std::sync::Arc::new(Values))
-        .apply(&document, &cancel)
-        .await
-        .unwrap();
-    let deployment =
-        Deployment::new(directory.path(), &bundle).with_secrets(std::sync::Arc::new(Unavailable));
-    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
-    // The plan's refreshed observations, rather than the saved state snapshot,
-    // must supply references that export is allowed to project back into YAML.
-    let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+    let available = Deployment::new(directory.path(), &bundle).with_secrets(Arc::new(Values));
+    fixture.state.lock().unwrap().inference_exit = 1;
+    available.plan(&document, &cancel).await.unwrap();
+    assert_eq!(fixture.state.lock().unwrap().effects, 0);
+    assert!(
+        fixture.state.lock().unwrap().exec_calls.is_empty(),
+        "plan ran an active inference probe"
+    );
+    available.apply(&document, &cancel).await.unwrap();
+    let state_path = directory.path().join("terraform.tfstate");
+    let bound = fs::read(&state_path).unwrap();
+    assert!(!String::from_utf8_lossy(&bound).contains(SECRET));
+    let effects = fixture.state.lock().unwrap().effects;
+    assert_eq!(effects, 4);
+    assert!(
+        available
+            .apply(&document, &cancel)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+    nemoclaw_e2e::assert_same_deployment_state(&fs::read(&state_path).unwrap(), &bound);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(available.export(&cancel).await.unwrap(), document);
+    drop(available);
+
+    let unavailable =
+        Deployment::new(directory.path(), &bundle).with_secrets(Arc::new(Unavailable));
+    assert_eq!(unavailable.export(&cancel).await.unwrap(), document);
+    // Fresh observations may change the exported reference without rewriting
+    // the accepted document or its saved OpenTofu state.
+    let state = fs::read(&state_path).unwrap();
+    let intent = fs::read(directory.path().join("intent.json")).unwrap();
     for provider in fixture.state.lock().unwrap().providers.values_mut() {
         provider.metadata.as_mut().unwrap().labels.insert(
             openshell_provider::CREDENTIAL.into(),
             "CHANGED_EXPORT_REFERENCE".into(),
         );
     }
-    document.spec.inference_providers[0]
+    let mut observed = document.clone();
+    observed.spec.inference_providers[0]
         .credential
         .as_mut()
         .unwrap()
         .env = "CHANGED_EXPORT_REFERENCE".into();
-    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    assert_eq!(unavailable.export(&cancel).await.unwrap(), observed);
+    assert_eq!(fs::read(&state_path).unwrap(), state);
     assert_eq!(
-        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-        state
+        fs::read(directory.path().join("intent.json")).unwrap(),
+        intent
     );
-    deployment.destroy(&cancel).await.unwrap();
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .unwrap()
+            .exec_calls
+            .iter()
+            .flatten()
+            .any(|arg| arg.contains("inference-probe")
+                || arg.contains("pi-probe")
+                || arg == "probe"
+                || arg == "--message")
+    );
+
+    // Losing the credential must not prevent a non-mutating preview or destroy.
+    let initializations = Arc::new(AtomicUsize::new(0));
+    let counted = initializations.clone();
+    let teardown = Deployment::new(directory.path(), &bundle)
+        .with_secrets(Arc::new(Unavailable))
+        .with_progress(Arc::new(move |event| {
+            if let nemoclaw_sdk::Progress::Completed {
+                operation: "tofu.init",
+                ..
+            } = event
+            {
+                counted.fetch_add(1, Ordering::SeqCst);
+            }
+        }));
+    assert_eq!(
+        teardown.plan_destroy(&cancel).await.unwrap().changes.len(),
+        3
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    // One initialization reads bindings; the other plans the teardown graph.
+    assert_eq!(initializations.swap(0, Ordering::SeqCst), 2);
+    assert_eq!(
+        teardown.destroy(&cancel).await.unwrap().outcome,
+        nemoclaw_sdk::Outcome::Destroyed
+    );
+    assert_eq!(initializations.load(Ordering::SeqCst), 2);
+    let error = teardown.export(&cancel).await.unwrap_err().to_string();
+    assert!(
+        error.contains("cannot export a destroyed deployment"),
+        "{error}"
+    );
+    assert!(fixture.state.lock().unwrap().providers.is_empty());
+    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
