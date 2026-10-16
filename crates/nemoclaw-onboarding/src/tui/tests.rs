@@ -197,11 +197,14 @@ fn configured_target_prerequisite_blocks_save_until_observed() {
     .unwrap();
     let state = JourneyDefinition::new("target-gated", base)
         .omit([
-            "adapter:nvidia.fabric.openclaw:/agent_name",
-            "adapter:nvidia.fabric.openclaw:/cli",
-            "adapter:nvidia.fabric.openclaw:/home",
-            "adapter:nvidia.fabric.openclaw:/native_config",
-            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            "adapter:nvidia.fabric.openclaw:/port_range",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
         ])
         .require_target([TargetPrerequisite::EngineAndImageCompatible])
         .start(&capabilities)
@@ -492,32 +495,6 @@ mod example_journeys {
 }
 
 #[test]
-fn existing_model_metadata_is_offered_as_an_editable_suggestion() {
-    let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
-    let mut wizard = JourneyWizard::new(capabilities, state);
-    let mut seen = Vec::new();
-    for _ in 0..40 {
-        if wizard
-            .question()
-            .unwrap()
-            .is_some_and(|question| question.id() == "model:/model_metadata")
-        {
-            return;
-        }
-        seen.push(
-            wizard
-                .question()
-                .unwrap()
-                .map(|question| question.id().to_owned()),
-        );
-        wizard.advance();
-        assert!(wizard.error.is_none(), "{:?}", wizard.error);
-    }
-    panic!("The supplied model metadata was skipped; seen={seen:?}");
-}
-
-#[test]
 fn discovered_model_menu_keeps_a_custom_text_answer() {
     use nemoclaw_sdk::{
         discovery::ObservationStatus,
@@ -683,11 +660,14 @@ fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
     .unwrap();
     let state = JourneyDefinition::new("conflicted-target", base)
         .omit([
-            "adapter:nvidia.fabric.openclaw:/agent_name",
-            "adapter:nvidia.fabric.openclaw:/cli",
-            "adapter:nvidia.fabric.openclaw:/home",
-            "adapter:nvidia.fabric.openclaw:/native_config",
-            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            "adapter:nvidia.fabric.openclaw:/port_range",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
         ])
         .start(&capabilities)
         .unwrap();

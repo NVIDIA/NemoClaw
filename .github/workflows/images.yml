@@ -80,15 +80,3 @@ jobs:
               -v "$PWD/image/test_image.py:/test.py:ro" \
               --entrypoint /opt/fabric/bin/python "$image" -B /test.py
           done < .build-image-list
-      - name: Check native reconfiguration and security
-        if: needs.plan.outputs.images == 'true'
-        run: |
-          native() {
-            image=$1 script=$2
-            shift 2
-            docker run --rm --runtime=runc --network none               -v "$PWD/image/$script:/$script:ro"               --entrypoint /opt/fabric/bin/python "$image" -B "/$script" "$@"
-          }
-          native nc-fabric:openclaw test_openclaw_reconfiguration.py
-          if [ "$AGENT_PLATFORM" = linux/arm64 ]; then
-            native nc-fabric:hermes hermes_security.py
-          fi

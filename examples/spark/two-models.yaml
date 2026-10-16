@@ -91,24 +91,8 @@ spec:
               providerRef: fast
               overrides:
                 model: Qwen/Qwen3-4B
-                settings:
-                  model_metadata:
-                    api: openai-completions
-                    contextWindow: 32768
-                    maxTokens: 2048
-                    reasoning: false
-                    input:
-                      - text
             - name: smart
               providerRef: smart
               overrides:
                 model: nvidia/Qwen3.6-27B-NVFP4
-                settings:
-                  model_metadata:
-                    api: openai-completions
-                    contextWindow: 32768
-                    maxTokens: 2048
-                    reasoning: false
-                    input:
-                      - text
           default: fast

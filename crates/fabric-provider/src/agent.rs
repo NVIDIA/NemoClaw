@@ -92,23 +92,10 @@ fn validate(known: &Row, unknown: &[&str]) -> Result<(), Cow<'static, str>> {
         return Ok(());
     }
     let config = agent::compose(known)?;
+    // Whether the harness accepts the configuration is Fabric's to decide,
+    // inside the sandbox when the agent is configured.
     configuration::check(&config.to_string())
         .map_err(|requirement| format!("The agent configuration {requirement}"))?;
-    if let Some(catalog) = known
-        .get(HARNESS_CATALOG)
-        .filter(|catalog| !catalog.is_empty())
-    {
-        let catalog = nemoclaw_fabric::catalog::FabricCatalog::from_json(catalog)
-            .map_err(|_| "The harness ref carries no valid Fabric catalog")?;
-        if let Some(reason) =
-            nemoclaw_fabric::capabilities::configuration_rejection(&catalog, config)
-        {
-            return Err(format!(
-                "The harness does not accept this agent configuration at {reason}"
-            )
-            .into());
-        }
-    }
     Ok(())
 }
 

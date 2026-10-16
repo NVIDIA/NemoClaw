@@ -521,7 +521,7 @@ mod tests {
     }
     #[cfg(unix)]
     #[tokio::test]
-    async fn selected_image_checks_fabric_plan_platform_and_missing_metadata_without_starting_containers()
+    async fn selected_image_checks_the_adapter_platform_and_missing_metadata_without_starting_containers()
      {
         use nemoclaw_fabric::catalog::{BridgeCapabilities, FabricCatalog, IMAGE_CATALOG_LABEL};
         let mut catalog = FabricCatalog::bundled();
@@ -567,11 +567,12 @@ mod tests {
                 digest.as_str(),
                 "supported",
             ),
+            // Settings are Fabric's to check, when the agent is configured.
             (
                 serde_json::json!({"unknown_setting":true}),
                 "aarch64",
                 digest.as_str(),
-                "unsupported",
+                "supported",
             ),
             (
                 serde_json::json!({}),

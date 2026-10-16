@@ -42,7 +42,8 @@ The generated graphs manage these objects and observations:
 | OpenShell provider | Kubernetes namespace and encryption key (`openshell_kubernetes_storage`), development issuer (`openshell_kubernetes_auth`), and gateway readiness (`openshell_kubernetes_gateway`) |
 | Host provider data source | Engine facts and advertised hardware (`host_engine`) |
 | Host provider data source | Managed vLLM and Ollama image platform and labels (`host_image`) |
-| Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
+| Host provider data source | Application container health (`host_container_health`) |
+| Docker provider | Docker gateway, inference, proxy, and application containers; model-cache and application volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 | Helm provider | The managed Kubernetes gateway's OpenShell chart release (`helm_release.gateway`) |
 
@@ -118,6 +119,10 @@ Other inputs are typed too:
   It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/sandboxes/runtimes.mdx).
   The gateway accepts it only when its driver allows driver configuration, which OpenShell disables by default, NemoClaw-installed gateways included.
   It is part of the sandbox's immutable specification: changing it, or a different configuration observed on the gateway, would replace the sandbox, which apply refuses, as for the image; see [change paths](usage.md#choose-the-change-path).
+- `openshell_sandbox`'s optional `service` blocks are OpenShell's sandbox service exposures: `name`, `target_port`, and optional `authorization_mode` (`STRIP` or `BEARER_PASSTHROUGH`).
+  They are passed through unchanged in the creation request, so OpenShell's defaults apply: an omitted mode is `STRIP`, and an empty name is the unnamed endpoint.
+  Like `driver_config`, they are part of the sandbox's creation: changing them, or a different endpoint observed on the gateway, would replace the sandbox, which apply refuses.
+- The computed `service_urls` maps each service name to the URL the gateway reports for it, such as `openshell_sandbox.researcher.service_urls["research"]`. A service the gateway reports without a URL has no entry.
 - `owner` and `generation` are optional; when omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [credential storage](#vllm-and-ollama-types).
 
 ```hcl
@@ -128,6 +133,10 @@ resource "openshell_sandbox" "assistant" {
   image        = var.image
   launch_json  = data.fabric_harnesses.assistant.launch_json
   providers    = [openshell_inference.local.ref]
+  service {
+    name        = "research"
+    target_port = 8080
+  }
   policy {
     explicit {
       version = 1
@@ -251,7 +260,7 @@ Every section of Fabric's agent configuration is an input with Fabric's name: `i
 Their types come from Fabric's published configuration schema, with snake_case names.
 Named objects, such as model roles, are labeled blocks: `models "default" { ... }`.
 A value Fabric leaves open, such as `settings`, is JSON text; write it with `jsonencode`.
-Fields an object accepts beyond those Fabric's schema declares, such as a model's `api`, go in that object's `extensions` attribute, also as JSON text.
+Fields an object accepts beyond those Fabric's schema declares, such as one an adapter documents for its models, go in that object's `extensions` attribute, also as JSON text.
 Fabric requires a `runtime` section, so omitting `runtime` sends an empty one.
 
 ```hcl
@@ -278,7 +287,7 @@ resource "fabric_agent" "travel" {
 ```
 
 Planning rejects a configuration Fabric cannot parse, naming the field but not its value.
-It also rejects one the harness does not accept, using the catalog records in the harness ref: Pi, for example, replaces system instructions and cannot append to them.
+Whether the harness accepts a configuration is Fabric's to decide, inside the sandbox when the agent is configured: Pi, for example, replaces system instructions and cannot append to them, so asking it to append fails during apply ([#13319](https://github.com/NVIDIA/NemoClaw/issues/13319)).
 Once the sandbox is known, planning refuses a `name` or harness other than the agent and harness the sandbox launches.
 Changing the sandbox, harness, or `name` replaces the agent; any other change reconfigures it through the sandbox's Fabric host without replacing the sandbox.
 Removing the resource stops the agent, as removing an attachment does: Fabric stops its runtime through the host's `prepare` operation and the host forgets the configuration, while the sandbox stays.
@@ -343,6 +352,7 @@ The `host` provider observes container engines and changes nothing; it has no se
 |---|---|
 | `host_engine` | [Engine version, platform, CPUs, memory](#engine-and-fabric-discovery), and [advertised hardware](#target-hardware) |
 | `host_image` | [An image's platform and labels](#runtime-image-compatibility) |
+| `host_container_health` | [Owned container readiness](#application-container-health): Docker HEALTHCHECK, HTTP, or managed-runtime status |
 
 ### Docker and Helm Types
 
@@ -448,12 +458,9 @@ Optional `filesystem_read` lists the paths the sandbox policy grants for reading
 A configuration without `harness.adapter_id` is rejected.
 Optional `architecture` and `operating_system` supply the execution engine's platform.
 The computed `compatibility_status` is `supported`, `unsupported`, or `unknown`, with details in `observation_json.compatibility`.
-The SDK checks image identity, source revision and platform, then calls Fabric's pure planner with the selected image's descriptors.
-Fabric owns settings, model, extension and workflow validation.
-Missing native capability contracts and mismatched Fabric revisions remain unknown; explicit schema violations are unsupported.
-The `fabric_plan` check retains a bounded canonical field path and a fixed explanation for classified planner failures.
-Raw schema messages and rejected values are omitted; unsafe or overlong field identifiers fall back to `configuration`.
-For a rejected model token limit, the reason also names `overrides.maxTokens` and up to 16 model routes carrying that setting, including Fabric's generated `default` role.
+The SDK checks image identity, source revision and platform, and that the image provides the selected adapter (the `fabric_adapter` check).
+A mismatched Fabric revision leaves compatibility unknown; an image without the adapter is unsupported.
+Fabric owns settings, model, extension and workflow validation, which it performs inside the sandbox when the agent is configured.
 Deployment postconditions name the sandbox and adapter and preserve unsupported check reasons in text and JSON errors.
 Onboarding uses the same assessment; unknown error variants retain a generic rejection.
 Omitting `config_json` preserves metadata-only discovery.
@@ -673,6 +680,22 @@ The SDK emits a read for the currently selected image and another dependent on a
 An absent image may therefore be pulled before a compatibility failure, but storage, network, and container creation remain blocked.
 SDK plan reports preserve unresolved runtime-image checks in `deferred`, separate from supplemental catalog and service-readiness advisories.
 Teardown removes both image observations and their dependency gates.
+
+## Application Container Health
+
+`host_container_health` requires an `engine`, a container `name`, and a `container_id`.
+Optional `labels` maps each label the container must carry to its value; generated graphs require the deployment owner, generation, and compiled launch digest.
+The source verifies that the selected container is running and matches its identity and labels; it never runs a command in it.
+By default it requires Docker HEALTHCHECK to report `healthy`.
+Optional `http_url` selects an HTTP GET that must return 200, without credentials in the URL or redirects.
+Optional `runtime_status` instead selects a managed-runtime status file: `phase`, `updated`, `detail`, and `pid`, with a ready report no older than the container's start time.
+These modes are mutually exclusive; neither interprets application configuration or invokes a model.
+A successful read sets `healthy`.
+It waits for startup within `wait_timeout_seconds` (capped at 3600, default 0); zero performs one bounded observation.
+Missing or stopped containers, mismatched labels, malformed or stopped runtime reports, rejected HTTP reads, and unhealthy Docker reports fail the read.
+A stale runtime report or loading phase is not readiness; it can be polled within the deadline.
+Failed engine observations are not absence.
+Generated graphs set `read_trigger` so every apply, including an unchanged apply, observes current health before dependent services start.
 
 ## Runtime Capacity and Readiness
 

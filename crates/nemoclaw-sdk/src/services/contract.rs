@@ -3,6 +3,16 @@
 
 //! Package-independent service installer input and output.
 
+/// Escape OpenTofu template sequences in every string of `value`.
+pub(crate) fn literal(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(text) => *text = text.replace("${", "$${").replace("%{", "%%{"),
+        serde_json::Value::Array(values) => values.iter_mut().for_each(literal),
+        serde_json::Value::Object(values) => values.values_mut().for_each(literal),
+        _ => {}
+    }
+}
+
 /// OpenTofu stage that executes an installer plan.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InstallStage {
@@ -11,6 +21,7 @@ pub(crate) enum InstallStage {
 }
 
 /// Declarative install result. OpenTofu performs the mutations in dependency order.
+#[derive(Default)]
 pub(crate) struct InstallPlan {
     pub targets: Vec<crate::compile::Target>,
     pub dependencies: std::collections::BTreeMap<String, Vec<String>>,

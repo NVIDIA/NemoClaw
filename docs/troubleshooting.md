@@ -101,7 +101,7 @@ For an external Ollama digest mismatch, use [the proxy guide](inference.md#use-e
 | Model appears in the endpoint inventory | The service reports that model | Confirm API compatibility and an inference request |
 | Apply succeeds | Declared resources and agent configuration pass readiness checks | Verify inference and a native agent turn through the intended interface |
 | Agent configuration drift | Native settings differ from retained intent | Restore expected settings; checks do not overwrite them |
-| Dashboard cannot connect | Native service, forwarding, authentication, or browser pairing may be incomplete | Follow [interface diagnosis](interfaces.md#diagnose-failures); keep local forwarding ports consistent |
+| Forwarded native service cannot connect | Native service, forwarding, or authentication may be incomplete | Follow [interface diagnosis](interfaces.md#diagnose-failures); keep local forwarding ports consistent |
 | Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect [retained status and logs](models.md#diagnose-and-recover-a-stopped-runtime) and correct capacity/startup conditions before explicit recovery |
 
 Terminal sandbox apply errors name the sandbox and report the OpenShell phase, a recognized failure reason, and the main process exit code, or `unknown` when unavailable.
@@ -166,35 +166,24 @@ NemoClaw does not reconnect OpenShell's internal transport or automatically repl
 ## Read Native Service Logs
 
 For a reachable sandbox, [select its gateway and workspace](interfaces.md#select-the-gateway-and-workspace) on the client host.
-Run the command for its harness from any directory, replacing `assistant` with the declared sandbox name.
-These commands read native process output without restarting it.
 Logs can contain prompts, responses, and native errors that have not passed through the SDK's secret redaction; inspect them privately before sharing excerpts.
 
-OpenClaw writes gateway stdout and stderr to its retained native home:
+The selected Fabric adapter owns where its harness writes process output; see the [OpenClaw](https://github.com/NVIDIA/NeMo-Fabric/tree/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/openclaw) and [Hermes](https://github.com/NVIDIA/NeMo-Fabric/tree/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/hermes) adapters.
+Read a file the adapter documents without restarting the process, replacing `assistant` with the declared sandbox name:
 
 ```sh
-openshell sandbox exec -n assistant -- tail -n 100 /sandbox/.openclaw/gateway.log
+openshell sandbox exec -n assistant -- tail -n 100 REPLACE_WITH_LOG_PATH
 ```
 
-The Hermes service mode writes its Fabric-owned API process output separately from dashboard sessions:
-
-```sh
-openshell sandbox exec -n assistant -- tail -n 100 /sandbox/.hermes/api.log
-```
-
-Expect the latest process output, which may be empty before the process emits a message.
 A missing file can mean startup stopped before opening the log; it does not establish that the sandbox or its data is absent.
 Use the original apply error and the [failure table](#identify-the-failure) to choose recovery.
 Do not replay an uncertain native invocation merely to reproduce a log entry.
-The [OpenClaw](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw) and [Hermes](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/hermes) adapters define these paths and append behavior.
-The selected Fabric settings determine Hermes' native runtime mode.
-[Relay trace artifacts](agents.md#hermes-relay-tracing) alone do not establish a native API process or `api.log`.
 
-Log collection for other harnesses, Hermes dashboard logs and an inaccessible sandbox is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
+Log collection and an inaccessible sandbox are tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
 
 ## Traces and Web Search
 
-OpenClaw tracing and Brave search have their own [configuration and verification limits](agents.md#openclaw-tracing).
+[Hermes Relay tracing](agents.md#hermes-relay-tracing) and [web search](agents.md#web-search) have their own configuration and verification limits.
 Configuration readiness does not prove collector delivery, a valid Brave credential, or available quota.
 
 Troubleshooting a production collector is tracked in [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144), and testing hosted search live in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).

@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::{
-    fabric_capabilities::plan_configuration,
-    fabric_catalog::{FabricAdapter, FabricCatalog},
-};
+use nemoclaw_sdk::fabric_catalog::{FabricAdapter, FabricCatalog};
 use serde_json::json;
 
 fn catalog() -> FabricCatalog {
@@ -26,27 +23,6 @@ fn catalog() -> FabricCatalog {
 }
 fn config() -> serde_json::Value {
     json!({"schema_version":"fabric.agent/v1alpha1","metadata":{"name":"agent"},"harness":{"adapter_id":"org.fixture.new-adapter","settings":{"mode":"advanced","budget":4}},"runtime":{},"models":{"default":{"provider":"openai","model":"fixture-model"}}})
-}
-
-#[test]
-fn canonical_fabric_planner_owns_unknown_adapter_settings_and_model_validation() {
-    let catalog = catalog();
-    let plan = plan_configuration(&catalog, config()).unwrap();
-    assert_eq!(plan.config.harness.unwrap().settings["budget"], 4);
-    for invalid in [
-        json!({"mode":"advanced"}),
-        json!({"mode":"advanced","budget":9}),
-    ] {
-        let mut request = config();
-        request["harness"]["settings"] = invalid;
-        assert!(plan_configuration(&catalog, request).is_err());
-    }
-    let mut request = config();
-    request["models"]["default"]["model"] = "incorrect".into();
-    assert!(plan_configuration(&catalog, request).is_err());
-    let mut missing = catalog;
-    missing.adapters.clear();
-    assert!(plan_configuration(&missing, config()).is_err());
 }
 
 /// An image without the selected harness can never run it, so the image is
@@ -110,45 +86,6 @@ fn different_fabric_revision_is_unverified_even_when_the_configuration_is_valid(
 }
 
 #[test]
-fn missing_native_api_contract_is_unknown_but_explicit_exclusion_is_unsupported() {
-    use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, Support, assess_fabric};
-    let mut catalog = catalog();
-    let mut configuration = config();
-    configuration["models"]["default"]["api"] = "openai-completions".into();
-    let request = FabricRequirements {
-        configuration,
-        filesystem_read: None,
-    };
-    assert_eq!(assess_fabric(&catalog, &request).status, Support::Unknown);
-    catalog.adapters[0].descriptor["extension_schemas"] = json!({"model":{"type":"object","properties":{"api":{"enum":["anthropic-messages"]}},"additionalProperties":false}});
-    assert_eq!(
-        assess_fabric(&catalog, &request).status,
-        Support::Unsupported
-    );
-}
-
-#[test]
-fn canonical_workflow_targets_are_planned_from_the_image_snapshot_only() {
-    let mut raw = serde_json::to_value(catalog()).unwrap();
-    raw["adapters"][0]["descriptor"]["target_types"] = json!(["workflow"]);
-    raw["targets"] = json!([{
-        "descriptor": {"contract_version":"fabric.adapter/v1alpha2","type":"workflow","id":"org.fixture.workflow","adapter_id":"org.fixture.new-adapter","spec":{"entrypoint":{"kind":"interactive_agent_factory","ref":"fixture:factory"},"settings_schema":{"type":"object","required":["budget"],"properties":{"budget":{"type":"integer","minimum":1}},"additionalProperties":false}}},
-        "provenance":[{"source":"explicit_local","path":"/image/fixture.fabric-target.json","root":"/image"}]
-    }]);
-    let catalog = FabricCatalog::from_json(&raw.to_string()).unwrap();
-    let mut request = config();
-    request["workflow"] = json!({"target_id":"org.fixture.workflow","settings":{"budget":4}});
-    let plan = plan_configuration(&catalog, request.clone()).unwrap();
-    assert!(plan.adapter_target_descriptor.is_some());
-    request["workflow"]["settings"]["budget"] = 0.into();
-    assert!(plan_configuration(&catalog, request.clone()).is_err());
-    raw["targets"] = json!([]);
-    request["workflow"]["settings"]["budget"] = 4.into();
-    let absent = FabricCatalog::from_json(&raw.to_string()).unwrap();
-    assert!(plan_configuration(&absent, request).is_err());
-}
-
-#[test]
 fn explicit_filesystem_policy_must_allow_the_image_runtime_directory() {
     use nemoclaw_sdk::fabric_capabilities::{
         CapabilityCheck, FabricRequirements, Support, assess_fabric,
@@ -187,66 +124,6 @@ fn explicit_filesystem_policy_must_allow_the_image_runtime_directory() {
         assess_fabric(&catalog, &without_policy).status,
         Support::Supported
     );
-}
-
-#[test]
-fn rejected_model_limit_identifies_the_field_and_authored_route_without_values() {
-    use nemoclaw_sdk::{
-        config::Document,
-        fabric_capabilities::{Support, assess_fabric},
-    };
-    let mut input: serde_json::Value =
-        serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
-    input["spec"]["sandboxes"][0]["harness"]["kind"] = "nvidia.fabric.pi".into();
-    input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["name"] = "fast".into();
-    input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["maxTokens"] =
-        256.into();
-    let document = Document::parse(input.to_string().as_bytes()).unwrap();
-    let mut request = nemoclaw_sdk::fabric_capabilities::requirements_for_sandbox(
-        &document,
-        &document.spec.sandboxes[0],
-    )
-    .unwrap();
-    let report = assess_fabric(&FabricCatalog::bundled(), &request);
-    assert_eq!(report.status, Support::Unsupported);
-    let text = serde_json::to_string(&report).unwrap();
-    for expected in [
-        "nvidia.fabric.pi",
-        "models.default.max_tokens",
-        "overrides.maxTokens",
-        "fast",
-    ] {
-        assert!(text.contains(expected), "{expected}: {text}");
-    }
-    for model in request.configuration["models"]
-        .as_object_mut()
-        .unwrap()
-        .values_mut()
-    {
-        model.as_object_mut().unwrap().remove("max_tokens");
-    }
-    assert_eq!(
-        assess_fabric(&FabricCatalog::bundled(), &request).status,
-        Support::Supported
-    );
-}
-
-#[test]
-fn schema_rejection_reports_a_field_without_echoing_its_secret_value() {
-    use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, Support, assess_fabric};
-    let mut configuration = config();
-    configuration["harness"]["settings"]["budget"] = "PRIVATE_SENTINEL\u{1b}[31m".into();
-    let report = assess_fabric(
-        &catalog(),
-        &FabricRequirements {
-            configuration,
-            filesystem_read: None,
-        },
-    );
-    assert_eq!(report.status, Support::Unsupported);
-    let text = serde_json::to_string(&report).unwrap();
-    assert!(text.contains("harness.settings.budget"), "{text}");
-    assert!(!text.contains("PRIVATE_SENTINEL"));
 }
 
 #[test]
@@ -349,64 +226,92 @@ fn explicit_filesystem_grants_reject_nul_in_required_paths_and_grants() {
     }
 }
 
-/// The reference dummy image publishes this descriptor, so a deployment that
-/// selects it must plan through the canonical planner like any adapter.
+/// Whether a harness accepts a configuration is Fabric's to decide, when the
+/// agent is configured in its sandbox. NemoClaw only establishes that the image
+/// provides the selected adapter.
 #[test]
-fn the_reference_dummy_descriptor_plans_a_deployment_configuration() {
-    use nemoclaw_sdk::config::Document;
-    let document = Document::parse(
-        br#"apiVersion: nemoclaw.nvidia.com/v1alpha1
-kind: NemoClawConfig
-metadata:
-  name: dummy
-  uid: 7c6f0a52-3a3f-4c3e-9a51-2b7de1c0a9f1
-spec:
-  gateway:
-    management: managed
-    runtime:
-      provider: docker
-    engine: unix:///var/run/docker.sock
-    endpoint: http://127.0.0.1:18080
-    networkCIDR: 10.231.200.0/24
-  inferenceProviders:
-    - name: hosted
-      provider: openai
-      endpoint: https://inference.example.test/v1
-  sandboxes:
-    - name: assistant
-      image:
-        ref: nc-dummy@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      network:
-        tier: isolated
-      harness:
-        kind: org.nemoclaw.dummy
-        settings:
-          reply: dummy-ok
-      agent:
-        name: main
-        inference:
-          routes:
-            - name: primary
-              providerRef: hosted
-              overrides:
-                model: fixture-model
-"#
-        .as_slice(),
+fn whether_a_harness_accepts_a_configuration_is_left_to_fabric() {
+    use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, Support, assess_fabric};
+    let mut configuration = config();
+    // The adapter's settings schema allows a budget of at most 8.
+    configuration["harness"]["settings"]["budget"] = 9.into();
+    let report = assess_fabric(
+        &catalog(),
+        &FabricRequirements {
+            configuration,
+            filesystem_read: None,
+        },
+    );
+    assert_eq!(report.status, Support::Supported, "{:?}", report.checks);
+    assert!(
+        report
+            .checks
+            .iter()
+            .all(|check| check.requirement != "fabric_plan"),
+        "{:?}",
+        report.checks
+    );
+}
+
+#[test]
+fn generated_base_urls_go_only_to_adapters_that_accept_them() {
+    // Fabric rejects a normalized field an adapter does not accept, so the SDK
+    // sends its generated base URL only where the descriptor accepts one.
+    let remote = nemoclaw_sdk::config::Document::parse(
+        include_bytes!("../../../examples/fabric-remote-agent.yaml").as_slice(),
     )
     .unwrap();
-    let mut catalog = catalog();
-    catalog.adapters = vec![FabricAdapter {
-        provenance: json!([{"source":"explicit_local","path":"/opt/nemoclaw/dummy.fabric-adapter.json","root":"/opt/nemoclaw"}]),
-        descriptor: serde_json::from_str(include_str!(
-            "../../../image/fabric/dummy.fabric-adapter.json"
-        ))
-        .unwrap(),
-    }];
-    let configuration =
-        nemoclaw_sdk::fabric_config::for_sandbox(&document, &document.spec.sandboxes[0]).unwrap();
-    let plan = plan_configuration(&catalog, configuration.clone()).unwrap();
-    assert_eq!(plan.config.harness.unwrap().settings["reply"], "dummy-ok");
-    let mut unknown = configuration;
-    unknown["harness"]["settings"]["unknown"] = true.into();
-    assert!(plan_configuration(&catalog, unknown).is_err());
+    let config =
+        nemoclaw_sdk::fabric_config::for_sandbox(&remote, &remote.spec.sandboxes[0]).unwrap();
+    assert!(
+        config["models"]["default"].get("base_url").is_none(),
+        "{config}"
+    );
+    assert!(
+        config["models"]["default"]["api_key_env"].is_string(),
+        "{config}"
+    );
+
+    let openclaw = nemoclaw_sdk::config::Document::parse(
+        include_bytes!("../../../examples/openclaw.yaml").as_slice(),
+    )
+    .unwrap();
+    let config =
+        nemoclaw_sdk::fabric_config::for_sandbox(&openclaw, &openclaw.spec.sandboxes[0]).unwrap();
+    assert_eq!(
+        config["models"]["default"]["base_url"],
+        "https://inference.example.com/v1"
+    );
+}
+
+#[test]
+fn declared_model_extensions_get_the_provider_api_and_authored_fields() {
+    // Pi declares `api`, `context_window`, and `max_tokens` as model extensions.
+    let pi = nemoclaw_sdk::config::Document::parse(
+        include_bytes!("../../../examples/fabric-pi.yaml").as_slice(),
+    )
+    .unwrap();
+    let model = &nemoclaw_sdk::fabric_config::for_sandbox(&pi, &pi.spec.sandboxes[0]).unwrap()["models"]
+        ["default"];
+    assert_eq!(model["api"], "openai-completions", "{model}");
+    assert_eq!(model["context_window"], 32768, "{model}");
+    assert_eq!(model["max_tokens"], 4096, "{model}");
+
+    // OpenClaw declares no model `api`, so none is sent.
+    let text = include_str!("../../../examples/openclaw.yaml");
+    let openclaw = nemoclaw_sdk::config::Document::parse(text.as_bytes()).unwrap();
+    let config =
+        nemoclaw_sdk::fabric_config::for_sandbox(&openclaw, &openclaw.spec.sandboxes[0]).unwrap();
+    assert!(config["models"]["default"].get("api").is_none(), "{config}");
+
+    // Extensions cannot replace a field the deployment sets.
+    let reserved = text.replace(
+        "                maxTokens: 8192\n",
+        "                maxTokens: 8192\n                extensions:\n                  base_url: https://elsewhere.example.com/v1\n",
+    );
+    assert_ne!(reserved, text);
+    let reserved = nemoclaw_sdk::config::Document::parse(reserved.as_bytes()).unwrap();
+    assert!(
+        nemoclaw_sdk::fabric_config::for_sandbox(&reserved, &reserved.spec.sandboxes[0]).is_err()
+    );
 }

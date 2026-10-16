@@ -63,11 +63,3 @@ spec:
               providerRef: local
               overrides:
                 model: Qwen/Qwen3-4B
-                settings:
-                  model_metadata:
-                    api: openai-completions
-                    contextWindow: 32768
-                    maxTokens: 2048
-                    reasoning: false
-                    input:
-                      - text

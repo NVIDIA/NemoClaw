@@ -45,9 +45,12 @@ fn printed_tree_identifies_its_sdk_schema_and_exact_fabric_catalog() {
 
 #[test]
 fn configured_native_questions_appear_in_the_same_definition_tree() {
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+    // nooa is a bundled adapter whose models take native settings.
+    let mut base: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
+    base["spec"]["sandboxes"][0]["harness"] = serde_json::json!({"kind": "nvidia.fabric.nooa"});
+    let base = PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap();
     let definition = JourneyDefinition::new("native", base).ask([JourneyScope::NativeSettings]);
     let capabilities = Capabilities::available();
     let state = definition.start(&capabilities).unwrap();
@@ -69,7 +72,7 @@ fn minimum_values_preview_shows_harness_branches_and_optional_omission() {
     .unwrap();
     let journey = JourneyDefinition::new("minimum-values", base)
         .ask(["/metadata/name"])
-        .omit(["adapter:nvidia.fabric.openclaw:/cli"]);
+        .omit(["adapter:nvidia.fabric.openclaw:/openclaw_command"]);
     let tree = journey.print_tree(&Capabilities::available()).unwrap();
 
     assert!(tree.contains("/metadata/name"));
@@ -85,7 +88,7 @@ fn minimum_values_preview_shows_harness_branches_and_optional_omission() {
         "{tree}"
     );
     assert!(tree.contains("nvidia.fabric.openclaw"));
-    assert!(tree.contains("/cli: omitted"));
+    assert!(tree.contains("/openclaw_command: omitted"));
     assert!(tree.contains("Other unresolved SDK constraints"));
 }
 
@@ -95,11 +98,14 @@ fn supplied_document_with_explicit_optional_omissions_has_no_preview_questions()
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let journey = JourneyDefinition::new("express", base).omit([
-        "adapter:nvidia.fabric.openclaw:/agent_name",
-        "adapter:nvidia.fabric.openclaw:/cli",
-        "adapter:nvidia.fabric.openclaw:/home",
-        "adapter:nvidia.fabric.openclaw:/native_config",
-        "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/agent_id",
+        "adapter:nvidia.fabric.openclaw:/channel_config",
+        "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/openclaw_command",
+        "adapter:nvidia.fabric.openclaw:/port_range",
+        "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
     ]);
     let tree = journey.print_tree(&Capabilities::available()).unwrap();
 
@@ -173,14 +179,14 @@ fn preview_does_not_print_supplied_native_setting_values() {
         .unwrap()
         .insert(
             "settings".into(),
-            serde_json::json!({"cli":"SECRET_SENTINEL"}),
+            serde_json::json!({"openclaw_command":"SECRET_SENTINEL"}),
         );
     let base = PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap();
-    let journey =
-        JourneyDefinition::new("secret-safe", base).ask(["adapter:nvidia.fabric.openclaw:/cli"]);
+    let journey = JourneyDefinition::new("secret-safe", base)
+        .ask(["adapter:nvidia.fabric.openclaw:/openclaw_command"]);
     let tree = journey.print_tree(&Capabilities::available()).unwrap();
 
-    assert!(tree.contains("/cli"));
+    assert!(tree.contains("/openclaw_command"));
     assert!(!tree.contains("SECRET_SENTINEL"));
 }
 
@@ -191,13 +197,13 @@ fn omission_is_scoped_to_its_adapter() {
             .unwrap();
     let harness = base.pointer_mut("/spec/sandboxes/0/harness").unwrap();
     harness["kind"] = serde_json::json!("nvidia.fabric.hermes");
-    harness["settings"] = serde_json::json!({"cli": "from-other-adapter"});
+    harness["settings"] = serde_json::json!({"openclaw_command": "from-other-adapter"});
     let base = PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap();
-    let journey =
-        JourneyDefinition::new("adapter-scope", base).omit(["adapter:nvidia.fabric.openclaw:/cli"]);
+    let journey = JourneyDefinition::new("adapter-scope", base)
+        .omit(["adapter:nvidia.fabric.openclaw:/openclaw_command"]);
 
     let tree = journey.print_tree(&Capabilities::available()).unwrap();
-    assert!(!tree.contains("/cli: omitted"));
+    assert!(!tree.contains("/openclaw_command: omitted"));
 }
 
 #[test]
@@ -273,13 +279,17 @@ fn invalid_fabric_setting_is_labeled_without_printing_its_value() {
     let mut base: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    base["spec"]["sandboxes"][0]["harness"]["settings"] = serde_json::json!({"cli": 42});
+    base["spec"]["sandboxes"][0]["harness"]["settings"] =
+        serde_json::json!({"openclaw_command": 42});
     let base = PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap();
 
     let tree = JourneyDefinition::new("invalid-setting", base)
         .print_tree(&Capabilities::available())
         .unwrap();
-    assert!(tree.contains("/cli: [omit | <string>]"), "{tree}");
+    assert!(
+        tree.contains("/openclaw_command: [omit | <string>]"),
+        "{tree}"
+    );
     assert!(tree.contains("invalid supplied value"), "{tree}");
     // Schema and catalog digests can contain the digits by chance.
     assert!(

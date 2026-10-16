@@ -66,13 +66,7 @@ spec:
       execution:
         timeoutSeconds: 900
       settings:
-        native_config:
-          gateway:
-            port: 18800
-            bind: loopback
-            controlUi:
-              enabled: true
-              allowedOrigins: [http://127.0.0.1:18800]
+        startup_timeout_seconds: 60
   sandboxes:
     - name: researcher
       harnessRef: assistant
@@ -174,23 +168,22 @@ For integration examples, see [define and attach integrations](agents.md#define-
 
 ## Combine Supported Features
 
-The [full-featured OpenClaw example](../examples/full-featured-openclaw.yaml) combines a managed gateway, remote authenticated vLLM, explicit ownership and GPU requirements, three agents in separate sandboxes, shared search, tracing, dashboard access, execution settings, tool restrictions, and explicit network policy.
-All three agents select the same provider and inference settings; only two receive search access.
+The [full-featured OpenClaw example](../examples/full-featured-openclaw.yaml) combines a managed gateway, remote authenticated vLLM, explicit ownership and GPU requirements, three agents in separate sandboxes, execution settings, tool restrictions, and explicit network policy.
+All three agents select the same provider and inference settings.
 It passes the SDK parser and JSON Schema checks, but this combined deployment has not been qualified against live services.
 Replace the image placeholders, deployment UID, SSH alias, addresses, and model settings for your hosts before use.
-Follow the [SSH service prerequisites](remote-service.md), [agent image procedure](build.md#build-agent-images), and [Brave credential instructions](agents.md#brave-web-search).
-The OTLP collector must already exist and be reachable; follow the [sandbox policy prerequisites](sandbox-network.md).
+Follow the [SSH service prerequisites](remote-service.md), [agent image procedure](build.md#build-agent-images), and [sandbox policy prerequisites](sandbox-network.md).
 Apply provisions the managed resources and checks readiness; verify inference separately.
 
 No single active configuration exercises every schema branch:
 
 | Alternative | Example or guide | Why separate |
 |---|---|---|
-| Inline provider or integration | [Inline provider](../examples/inline-inference.yaml), [inline integration](agents.md#brave-web-search) | A consumer cannot both inline and reference the same definition |
+| Inline provider or integration | [Inline provider](../examples/inline-inference.yaml), [inline integration](agents.md#web-search) | A consumer cannot both inline and reference the same definition |
 | Managed Ollama or an existing endpoint | [Managed Ollama](../examples/managed-ollama.yaml), [external endpoint](../examples/inference-tuning.yaml) | Each provider selects one service connection; see the [Ollama deployment limits](inference.md#combine-local-and-hosted-providers) |
 | Existing Ollama through an authenticated proxy | [Proxy guide](inference.md#use-external-ollama-through-a-managed-proxy) | Alternative provider mode to managed vLLM |
-| Hermes authentication, interfaces, or Relay | [Authentication](../examples/hermes-auth.yaml), [interfaces](../examples/hermes-interfaces.yaml), [Relay](agents.md#hermes-relay-tracing) | Explicit Hermes interfaces can include Relay tracing |
-| Pi model metadata | [Pi example](../examples/fabric-pi.yaml) | Accepted fields depend on the selected Fabric model settings schema |
+| Hermes provider authentication or Relay tracing | [Authentication](../examples/hermes-auth.yaml), [Relay](agents.md#hermes-relay-tracing) | The full-featured example selects OpenClaw |
+| Pi model extensions | [Pi example](../examples/fabric-pi.yaml) | Pi needs a context window for a model it does not ship |
 | Model preparation recipe | [Spark recipe](../examples/spark/spark-inline.yaml) | Separate model, image, and hardware contract |
 | External gateway credentials and mTLS | [Gateway fields](reference/configuration.md#gateway) | Managed gateways use local HTTP and reject these fields |
 

@@ -63,8 +63,8 @@ mod execution_settings;
 mod explicit_hardware;
 #[path = "fabric_capabilities.rs"]
 mod fabric_capabilities;
-#[path = "fabric_planner.rs"]
-mod fabric_planner;
+#[path = "fabric_compatibility.rs"]
+mod fabric_compatibility;
 #[path = "gpu_inventory.rs"]
 mod gpu_inventory;
 #[path = "hardware_discovery.rs"]

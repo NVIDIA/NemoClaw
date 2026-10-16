@@ -53,31 +53,6 @@ def fabric_revision():
         return None
 
 
-def takes_text(config):
-    """Whether the configured adapter accepts only a text prompt. Fabric does
-    not declare an adapter's input type, so the bridge names the one that does."""
-    harness = config.get("harness") if isinstance(config, dict) else None
-    if not isinstance(harness, dict):
-        return False
-    settings = harness.get("settings")
-    return (
-        harness.get("adapter_id") == "nvidia.fabric.hermes"
-        and isinstance(settings, dict)
-        and settings.get("mode") == "service"
-    )
-
-
-def adapter_input(config, value):
-    """The input Fabric receives. A caller always sends an object; for an
-    adapter that takes text, the object must be exactly {"text": "..."} and
-    the bridge passes the string. Other adapters receive the object as sent."""
-    if not takes_text(config):
-        return value
-    if set(value) != {"text"} or not isinstance(value["text"], str):
-        raise ProtocolError("text_input_required", "invoke")
-    return value["text"]
-
-
 def load_backend():
     # Each image installs its owner implementation at this fixed module path.
     # Clients and protocol parsing do not need to import an adapter or the SDK.
@@ -217,11 +192,9 @@ class RuntimeHost:
                 stage = "invoke"
                 if self.snapshot()["runtime_state"] != "running":
                     raise ProtocolError("runtime_unavailable", stage)
-                # Refusing the input sends nothing, so its effects are none.
-                native_input = adapter_input(self.config, request["input"])
                 changed, effects = None, "unknown"
                 runtime_id = self.runtime.runtime_id
-                native_result = (await self.runtime.invoke(input=native_input)).to_mapping()
+                native_result = (await self.runtime.invoke(input=request["input"])).to_mapping()
                 result = {"runtime_id": runtime_id, "fabric_result": native_result}
                 if native_result.get("status") != "succeeded":
                     raise ProtocolError("fabric_invoke_failed", stage)

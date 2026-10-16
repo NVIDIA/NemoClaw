@@ -132,7 +132,7 @@ fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
 }
 
 #[test]
-fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
+fn input_schema_preserves_defaults_strict_objects_and_opaque_route_settings() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let mut value = input("spark/spark-inline.yaml");
     for key in ["endpoint", "engine", "image", "networkCIDR"] {
@@ -157,6 +157,9 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
     value["spec"]["gateway"]["surprise"] = json!(true);
     agrees(&validator, &value, false);
     let mut value = input("fabric-pi.yaml");
+    value
+        .pointer_mut("/spec/sandboxes/0/agent/inference/routes/0/overrides")
+        .unwrap()["settings"] = json!({});
     let path = "/spec/sandboxes/0/agent/inference/routes/0/overrides/settings";
     *value.pointer_mut(path).unwrap() = json!({"future": [null, {"value": null}]});
     agrees(&validator, &value, true);

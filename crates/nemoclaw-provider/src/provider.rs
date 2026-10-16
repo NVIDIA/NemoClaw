@@ -149,7 +149,8 @@ fn runtime_type(definition: &Definition) -> Option<&'static str> {
     nemoclaw_sdk::services::provider_types::runtime_type(definition.kind)
 }
 
-/// The `host` provider: read-only observations of a container engine.
+/// The `host` provider: read-only observations of a container engine, its
+/// images, and container health.
 #[derive(Default)]
 pub struct HostProvider {
     backend: Arc<ConfiguredBackend>,
@@ -188,6 +189,12 @@ impl Provider for HostProvider {
                 "image".into(),
                 Box::new(crate::host_image::HostImageDataSource(self.backend.clone()))
                     as Box<dyn DynamicDataSource>,
+            ),
+            (
+                "container_health".into(),
+                Box::new(crate::host_container_health::HostContainerHealthDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
             ),
         ]))
     }

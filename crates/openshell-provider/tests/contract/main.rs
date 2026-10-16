@@ -33,6 +33,8 @@ mod gateway_storage;
 mod inference;
 mod kubernetes_hcl;
 mod kubernetes_lifecycle;
+mod sandbox_providers;
+mod services;
 mod standalone;
 mod web_search;
 
@@ -286,14 +288,12 @@ fixtures! {
     fabric_pi => "fabric-pi",
     fabric_remote_agent => "fabric-remote-agent",
     hermes_auth => "hermes-auth",
-    hermes_interfaces => "hermes-interfaces",
     inference_tuning => "inference-tuning",
     inline_inference => "inline-inference",
     local => "local",
     multiple_models => "multiple-models",
     multiple_providers => "multiple-providers",
     multiple_sandboxes => "multiple-sandboxes",
-    openclaw_dashboard => "openclaw-dashboard",
-    openclaw_web_search => "openclaw-web-search",
-    tavily_web_search => "tavily-web-search",
+    openclaw => "openclaw",
+    web_search => "web-search",
 }

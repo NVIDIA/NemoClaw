@@ -145,19 +145,10 @@ async fn pi_configuration_updates_without_replacing_the_sandbox() {
     assert!(stderr.contains("at instructions.system.mode"), "{stderr}");
     assert!(!stderr.contains("PRIVATE_SENTINEL"), "{stderr}");
     assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
-    // Valid Fabric configuration the harness cannot apply fails at plan too:
-    // Pi replaces system instructions and cannot append to them.
-    let unsupported = tofu.run(&["plan", "-input=false", "-var=mode=append"], false);
-    let stderr = String::from_utf8_lossy(&unsupported.stderr)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    assert!(
-        stderr.contains(
-            "The harness does not accept this agent configuration at instructions.system.mode"
-        ),
-        "{stderr}"
-    );
+    // Valid Fabric configuration plans even when the harness can't apply it,
+    // such as Pi appending to system instructions: Fabric decides that when
+    // the agent is configured in its sandbox.
+    tofu.run(&["plan", "-input=false", "-var=mode=append"], true);
     assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
     tofu.run(&["plan", "-input=false"], true);
     assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
