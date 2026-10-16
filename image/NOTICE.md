@@ -25,6 +25,6 @@ Fabric owns those source tests.
 
 [`qualify_native.py`](qualify_native.py) runs in built images from the image workflow.
 It came from NeMo Fabric's `tests/native/` at the pinned revision; its header records the source revision and every modification.
-It uses only owned local processes and a simulated inference endpoint, so they do not establish external provider compatibility.
+It uses only owned local processes and a simulated inference endpoint, so it does not establish external provider compatibility.
 
 The [image metadata contract](../docs/design/fabric-management.md#image-metadata) describes the catalog labels and runtime manifests these recipes produce.
