@@ -78,6 +78,7 @@ function withCreateAttemptLabel(
 // to live validation or the GPU proof.
 const REPLACEMENT_STABLE_READY_POLLS = 2;
 const SANDBOX_READY_PROBE_TIMEOUT_MS = 5_000;
+const COMPATIBILITY_LIFECYCLE_TIMEOUT_MS = 60_000;
 const CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS = 1;
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/gu;
@@ -205,7 +206,7 @@ function requireCompatibilityLifecycleCommand(
     killProcessTreeOnTimeout: true,
     killSignal: "SIGKILL",
     suppressOutput: true,
-    timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
+    timeout: COMPATIBILITY_LIFECYCLE_TIMEOUT_MS,
   });
   if (Number(result.status ?? 1) !== 0 || result.error || ("signal" in result && result.signal)) {
     throw new Error(
