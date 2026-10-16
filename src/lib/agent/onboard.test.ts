@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHermesApiPortReservationScope } from "../onboard/hermes-api-port";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import type {
   OpenShellSandboxBufferedCommandExecutor,
@@ -343,6 +344,7 @@ describe("agent setup session boundaries", () => {
         recordStepComplete: vi.fn(async () => undefined),
         recordStepFailed: vi.fn(async () => undefined),
         skippedStepMessage: vi.fn(),
+        prepareHermesInferenceForward: vi.fn(async () => undefined),
         ...timing,
         ...identityBoundary,
       },
@@ -422,7 +424,7 @@ describe("agent setup session boundaries", () => {
           .mockReturnValueOnce(""),
     },
   ])(
-    "waits for Hermes API readiness before route initialization during $name",
+    "hands off the reserved API port after readiness and before route restart during $name",
     async ({ resume, skipped, probe }) => {
       let nowMs = 0;
       const healthProbe = probe();
@@ -441,7 +443,19 @@ describe("agent setup session boundaries", () => {
         },
         { revalidateSandboxIdentity },
       );
+      const reservation = createHermesApiPortReservationScope();
+      const release = vi.fn(async () => undefined);
+      reservation.current = { port: 8643, release };
+      const establishForward = vi.fn();
+      context.prepareHermesInferenceForward.mockImplementationOnce(async () => {
+        expect(healthProbe.mock.results.at(-1)?.value).toBe("ok");
+        await reservation.releaseBeforeForward("hermes", 8643);
+        establishForward();
+      });
       initializeHermesInferenceRouteMock.mockImplementationOnce(async () => {
+        expect(reservation.current).toBeNull();
+        expect(release).toHaveBeenCalledOnce();
+        expect(establishForward).toHaveBeenCalledOnce();
         // The native restart must not interrupt the gateway's first startup.
         expect(healthProbe).toHaveReturnedWith("ok");
         expect(healthProbe.mock.results.at(-1)?.value).toBe("ok");
@@ -459,6 +473,7 @@ describe("agent setup session boundaries", () => {
           gatewayName: "gateway-x",
         },
       );
+      expect(context.prepareHermesInferenceForward).toHaveBeenCalledOnce();
       expect(context.skippedStepMessage).toHaveBeenCalledTimes(skipped);
       expect(probeUrlsFrom(runCaptureOpenshell)).toEqual(
         Array(healthProbe.mock.calls.length).fill("http://localhost:8643/health"),
@@ -475,6 +490,43 @@ describe("agent setup session boundaries", () => {
       );
     },
   );
+
+  it.each([
+    { name: "missing fresh handoff", resume: false, prepare: undefined },
+    { name: "missing resume handoff", resume: true, prepare: undefined },
+    {
+      name: "failed fresh handoff",
+      resume: false,
+      prepare: async () => {
+        throw new Error("API forward handoff failed");
+      },
+    },
+    {
+      name: "failed resume handoff",
+      resume: true,
+      prepare: async () => {
+        throw new Error("API forward handoff failed");
+      },
+    },
+  ])("refuses route initialization and completion after $name", async ({ resume, prepare }) => {
+    const { context } = createAgentSetupContext(
+      vi.fn((args: string[]) => (args.includes("curl") ? "ok" : "NEMOCLAW_AGENT_BINARY_CHECK:ok")),
+    );
+    await expect(
+      handleAgentSetup(
+        "sandbox-x",
+        "model-x",
+        "compatible-endpoint",
+        hermesProbeAgent,
+        resume,
+        null,
+        { ...context, prepareHermesInferenceForward: prepare },
+      ),
+    ).rejects.toThrow(/handoff/);
+    expect(initializeHermesInferenceRouteMock).not.toHaveBeenCalled();
+    expect(context.recordStepComplete).not.toHaveBeenCalled();
+    expect(context.skippedStepMessage).not.toHaveBeenCalled();
+  });
 
   it.each([false, true])(
     "does not complete setup when Hermes route initialization fails (resume=%s)",
@@ -669,6 +721,7 @@ describe("agent setup session boundaries", () => {
       );
       expect(context.recordStepComplete).not.toHaveBeenCalled();
       expect(initializeHermesInferenceRouteMock).not.toHaveBeenCalled();
+      expect(context.prepareHermesInferenceForward).not.toHaveBeenCalled();
     },
   );
 

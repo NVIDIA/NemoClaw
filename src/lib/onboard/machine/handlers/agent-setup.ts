@@ -30,7 +30,11 @@ export interface AgentSetupStateOptions<Agent> {
       context: unknown,
     ): Promise<void>;
     agentSetupContext(): { gatewayName: string };
-    ensureAgentDashboardForward(sandboxName: string, agent: Agent | null): Promise<number> | number;
+    ensureAgentDashboardForward(
+      sandboxName: string,
+      agent: Agent | null,
+      revalidateSandboxIdentity?: (operation: string) => void,
+    ): Promise<number> | number;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
     isOpenclawReady(sandboxName: string): Promise<boolean>;
@@ -123,19 +127,31 @@ export async function handleAgentSetupState<Agent>({
   };
 
   if (agent) {
+    let forwardHandoff: Promise<number> | undefined;
+    const ensureForward = (): Promise<number> =>
+      (forwardHandoff ??= (async () => {
+        revalidateSandboxIdentity?.(`establish agent forwards for sandbox '${sandboxName}'`);
+        const dashboardPort = await deps.ensureAgentDashboardForward(
+          sandboxName,
+          agent,
+          revalidateSandboxIdentity,
+        );
+        revalidateSandboxIdentity?.(`publish agent forward for sandbox '${sandboxName}'`);
+        // Persist the returned primary port so guarded restart recovery and
+        // dashboard-url select the actual forward, including a bumped UI port.
+        if (dashboardPort > 0) deps.persistDashboardPort(sandboxName, dashboardPort);
+        return dashboardPort;
+      })());
     await deps.handleAgentSetup(sandboxName, model, provider, agent, resume, session, {
       ...agentSetupContext,
       ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
+      prepareHermesInferenceForward: async () => {
+        if ((await ensureForward()) <= 0) {
+          throw new Error("Hermes inference activation requires an owned API forward handoff.");
+        }
+      },
     });
-    // ensureAgentDashboardForward returns the port the dashboard forward was
-    // actually established on, which may be bumped when the default is already
-    // taken by another sandbox. Persist it to the registry so `dashboard-url`
-    // reports the live port instead of the default. Discarding the return here
-    // regressed multi-sandbox onboarding in the machine handler path (#8214).
-    const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, agent);
-    if (dashboardPort > 0) {
-      deps.persistDashboardPort(sandboxName, dashboardPort);
-    }
+    await ensureForward();
     session = await deps.recordStepSkipped("openclaw");
     return { session, stateResult: advanceTo("policies", { metadata: { state: "agent_setup" } }) };
   }

@@ -61,6 +61,7 @@ export interface OnboardContext {
   recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
   revalidateSandboxIdentity?: (operation: string) => void;
+  prepareHermesInferenceForward?: () => Promise<void>;
   now?: () => number;
   sleepSeconds?: (seconds: number) => void;
 }
@@ -375,6 +376,10 @@ export async function handleAgentSetup(
 
   const initializeReadyAgentInference = async (): Promise<void> => {
     if (agent.name === "hermes") {
+      if (!ctx.prepareHermesInferenceForward) {
+        throw new Error("Hermes inference activation requires an owned API forward handoff.");
+      }
+      await ctx.prepareHermesInferenceForward();
       await initializeHermesInferenceRoute(
         sandboxName,
         model,
