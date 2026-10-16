@@ -1001,6 +1001,7 @@ export async function readManagedDcodeCreateSelectionDrift(
     model: string;
     preferredInferenceApi: string | null;
     createIntent: Pick<SandboxCreateIntent, "endpointUrl"> | null;
+    nativeLocalProviderAttachment?: { endpointUrl: string };
     nativeProvider: boolean;
   },
   readDcodeSelectionDrift: DcodeSelectionDriftReader,
@@ -1010,7 +1011,7 @@ export async function readManagedDcodeCreateSelectionDrift(
     input.provider,
     input.model,
     input.preferredInferenceApi,
-    input.createIntent?.endpointUrl ?? null,
+    input.nativeLocalProviderAttachment?.endpointUrl ?? input.createIntent?.endpointUrl ?? null,
     input.nativeProvider,
   );
 }
@@ -2128,12 +2129,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           provider,
           preferredInferenceApi,
           endpointUrl: createIntent?.endpointUrl ?? null,
+          localNimSelected: createIntent?.localNimSelected === true,
           nativeLocalProviderAttachment: resolvedCreateIntent.nativeLocalProviderAttachment,
-          nativeProvider: Boolean(
-            resolvedCreateIntent.nativeLocalProviderAttachment ||
-            resolvedCreateIntent.nativeHostedProviderAttachment ||
-            resolvedCreateIntent.nativeNvidiaProviderAttachment,
-          ),
+          nativeProvider:
+            createIntent?.localNimSelected === true
+              ? false
+              : Boolean(
+                  resolvedCreateIntent.nativeLocalProviderAttachment ||
+                  resolvedCreateIntent.nativeHostedProviderAttachment ||
+                  resolvedCreateIntent.nativeNvidiaProviderAttachment,
+                ),
           startupProfile: {
             chatUiUrl,
             effectiveDashboardPort: effectivePort,
@@ -2487,6 +2492,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               model,
               preferredInferenceApi,
               createIntent,
+              nativeLocalProviderAttachment: resolvedCreateIntent.nativeLocalProviderAttachment,
               nativeProvider: Boolean(
                 existingSandboxEntry?.nativeLocalProviderAttachment ||
                 existingSandboxEntry?.nativeHostedProviderAttachment ||

@@ -196,7 +196,6 @@ describe("managed startup shared-state transaction", () => {
         pi: () => {
           fs.mkdirSync(path.join(root, "agent"));
           fs.writeFileSync(path.join(root, "agent", "models.json"), "{}\n");
-          fs.writeFileSync(path.join(root, "agent", "settings.json"), "{}\n");
         },
       };
       createManagedDrift[agent]();
@@ -214,7 +213,7 @@ describe("managed startup shared-state transaction", () => {
         openclaw: [],
         hermes: [".config-hash"],
         "langchain-deepagents-code": [".state"],
-        pi: ["agent", path.join("agent", "models.json"), path.join("agent", "settings.json")],
+        pi: ["agent", path.join("agent", "models.json")],
       };
       expect(
         absentManagedPaths[agent].every((relativePath) =>

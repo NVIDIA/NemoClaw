@@ -33,10 +33,7 @@ export {
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
 };
-export {
-  isPersistedPiSharedLocalInferenceRoute,
-  normalizeNativeLocalProviderAttachment,
-} from "./native-local/contract";
+export { normalizeNativeLocalProviderAttachment } from "./native-local/contract";
 export { hasLegacySharedLocalInferenceRoute } from "./selection";
 export type { NativeLocalProviderAttachment } from "./native-local/contract";
 export { OLLAMA_LOCAL_CREDENTIAL_ENV };
@@ -341,6 +338,7 @@ export function getSandboxInferenceConfig(
   preferredInferenceApi: string | null = null,
   nativeProvider?: boolean,
   nativeEndpointUrl?: string | null,
+  agentName?: string | null,
 ): SandboxInferenceConfig {
   let providerKey: string = nativeOpenClawProviderKey(provider) ?? MANAGED_PROVIDER_ID;
   let primaryModelRef: string;
@@ -433,6 +431,7 @@ export function getSandboxInferenceConfig(
 
   if (
     useNativeProvider &&
+    (agentName === "langchain-deepagents-code" || agentName === "hermes") &&
     nativeEndpointUrl &&
     usesNativeLocalInference(provider, nativeEndpointUrl) &&
     nativeLocalCredentialReference(provider, nativeEndpointUrl)

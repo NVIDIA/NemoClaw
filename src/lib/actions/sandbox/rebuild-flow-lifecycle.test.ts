@@ -212,26 +212,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
-  it("stops a legacy local route before rebuild effects (#12975)", async () => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        createdAt: "2026-09-01T00:00:00Z",
-        agent: "openclaw",
-        provider: "ollama-local",
-        model: "local-model",
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Legacy shared local inference cannot be rebuilt safely");
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.onboardSpy).not.toHaveBeenCalled();
-    expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
-    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-  });
-
   it("blocks an unsafe removed-immutability record before rebuild effects", async () => {
     const stateDir = createHarnessTempDir("nemoclaw-rebuild-unsafe-retired-state-");
     fs.mkdirSync(path.join(stateDir, "shields-alpha.json"));
@@ -425,7 +405,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({
-        provider: "nvidia-router",
+        provider: "ollama-local",
         model: "nvidia/nemotron",
         webSearchEnabled: false,
         fromDockerfile: null,

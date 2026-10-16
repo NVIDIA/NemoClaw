@@ -5,7 +5,6 @@ import type { ModelSelectionProvenance } from "../../../domain/telemetry/provena
 import { clearAutoDetectedCompatibleContextWindow } from "../../../inference/compatible-endpoint-context";
 import {
   hasLegacySharedLocalInferenceRoute,
-  isPersistedPiSharedLocalInferenceRoute,
   resolveAgentProviderInferenceApi,
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
@@ -91,8 +90,8 @@ function selectedNativeInference(
 
 export interface ProviderInferenceSetupOptions {
   agentName?: string;
-  /** Resume the exact published Pi shared route without selecting a new native provider. */
-  preserveLegacyPiSharedLocalRoute?: boolean;
+  /** Local NIM shares vllm-local's provider ID but keeps its existing route. */
+  localNimSelected?: boolean;
   gatewayName?: string;
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
@@ -118,6 +117,8 @@ export interface ProviderInferenceSetupOptions {
   reservationSessionId?: string;
   /** Keep a published source row intact until the sandbox create phase passes backup. */
   deferPublishedRouteReservation?: boolean;
+  /** Explicit fresh recreation, with publication owned by the sandbox backup transaction. */
+  recreatePublishedSandbox?: boolean;
   /** Recheck recorded-route ownership after acquiring route mutation locks. */
   isRecordedProviderRecoveryAuthorized?: () => boolean;
   /** Recheck live OpenShell sandbox identity at each inference mutation edge. */
@@ -180,6 +181,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   gatewayName: string;
   resume: boolean;
   fresh: boolean;
+  recreateSandbox?: boolean;
   session: Session | null;
   gpu: Gpu;
   /** Accepted sandbox GPU-passthrough choice for this flow, including resume. */
@@ -328,7 +330,12 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       credentialEnv: string | null,
     ):
       | { ok: boolean; endpointUrl: string; message?: string; status?: number }
-      | Promise<{ ok: boolean; endpointUrl: string; message?: string; status?: number }>;
+      | Promise<{
+          ok: boolean;
+          endpointUrl: string;
+          message?: string;
+          status?: number;
+        }>;
     reserveSandboxInferenceRoute(
       sandboxName: string,
       route: {
@@ -372,6 +379,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
 }
 
 export interface ProviderInferenceStateResult {
+  stagedNativeLocalRecreation?: import("../../inference-providers/types").StagedNativeLocalRecreation;
   deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
   sandboxName: string | null;
   model: string;
@@ -542,7 +550,10 @@ async function resolveHostLocalResumeSetup(input: {
   canonicalResume: boolean;
   promptSandboxName(): Promise<string>;
   resolve(sandboxName: string): HostLocalInferenceSetupOptions;
-}): Promise<{ sandboxName: string | null; setupOptions: HostLocalInferenceSetupOptions }> {
+}): Promise<{
+  sandboxName: string | null;
+  setupOptions: HostLocalInferenceSetupOptions;
+}> {
   let sandboxName = input.sandboxName;
   if (!sandboxName && input.effectiveResume && isHostLocalInferenceProvider(input.provider)) {
     sandboxName = await input.promptSandboxName();
@@ -610,7 +621,10 @@ function hostLocalInferenceSessionRoute(
   routeOnly: boolean,
   endpointUrl: string | null,
   endpointSource: InferenceEndpointSource | null,
-): { endpointUrl?: string | null; endpointSource?: InferenceEndpointSource | null } {
+): {
+  endpointUrl?: string | null;
+  endpointSource?: InferenceEndpointSource | null;
+} {
   return routeOnly ? { endpointUrl, endpointSource } : {};
 }
 
@@ -656,9 +670,6 @@ function hostLocalInferenceSetupOptions(
     (candidate): candidate is HostLocalInferenceApplication => candidate === input.application,
   );
   if (!application) {
-    // Pi's local route is selected by the provider path, not the managed
-    // host-local runtime selector used by OpenClaw, DCode, and Hermes.
-    if (input.application === "pi") return {};
     if (!isHostLocalInferenceProvider(input.provider)) return {};
     throw new Error(`Unsupported host-local inference application '${input.application}'.`);
   }
@@ -1273,8 +1284,18 @@ async function resolveSelectionSandboxName<Agent>(
   return deps.promptValidatedSandboxName(agent);
 }
 
-function nativeLocalAgentOptions(agent: unknown, provider: string, endpointUrl: string | null) {
-  return usesNativeLocalInference(provider, endpointUrl) ? { agentName: agentName(agent) } : {};
+function nativeLocalAgentOptions(
+  agent: unknown,
+  provider: string,
+  endpointUrl: string | null,
+  nimContainer: string | null,
+) {
+  return usesNativeLocalInference(provider, endpointUrl)
+    ? {
+        agentName: agentName(agent),
+        ...(provider === "vllm-local" ? { localNimSelected: Boolean(nimContainer) } : {}),
+      }
+    : {};
 }
 
 function assertNoLegacySharedLocalResume(
@@ -1290,8 +1311,7 @@ function assertNoLegacySharedLocalResume(
   if (
     recorded &&
     recorded.pendingRouteReservation !== true &&
-    hasLegacySharedLocalInferenceRoute(recorded) &&
-    recorded.agent !== "pi"
+    hasLegacySharedLocalInferenceRoute(recorded)
   ) {
     throw new Error(
       `Sandbox ${sandboxName} uses a legacy shared local inference route. Resume is unavailable for this route. Back up the sandbox, then re-onboard it with --fresh --name ${sandboxName} --recreate-sandbox to attach a native provider before upgrading OpenShell.`,
@@ -1299,27 +1319,11 @@ function assertNoLegacySharedLocalResume(
   }
 }
 
-function createPersistedPiRouteSelector(
-  getRecorded: ((name: string) => Partial<SandboxEntry> | null) | undefined,
-  effectiveResume: boolean,
-) {
-  return (
-    name: string | null,
-    selection: { provider: string | null; model: string | null; endpointUrl: string | null },
-  ) =>
-    effectiveResume &&
-    Boolean(name) &&
-    isPersistedPiSharedLocalInferenceRoute(name ? getRecorded?.(name) : null, selection);
-}
-
-function preservedPiRouteSetupOption(preserve: boolean) {
-  return preserve ? { preserveLegacyPiSharedLocalRoute: true } : {};
-}
-
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gatewayName,
   resume,
   fresh,
+  recreateSandbox = false,
   session,
   gpu,
   gpuPassthrough,
@@ -1390,12 +1394,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
   let vllmModelIdentity: string | undefined;
   const effectiveResume = resume && !fresh;
-  const preservesLegacyPiRoute = createPersistedPiRouteSelector(
-    deps.getSandboxRegistryEntry,
-    effectiveResume,
-  );
   let hostLocalInferenceRouteOnly = false;
   let hostLocalInferenceProofAuthority: HostLocalInferenceSandboxProofAuthority | null = null;
+  let stagedNativeLocalRecreation:
+    | import("../../inference-providers/types").StagedNativeLocalRecreation
+    | undefined;
   let deferredInferenceRoute: ((reserve: () => void) => Promise<void>) | undefined;
   const hostLocalInferenceResolutionCache = new Map<
     string,
@@ -1545,8 +1548,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         gatewayName,
         sandboxName,
         { provider, model, endpointUrl, credentialEnv, preferredInferenceApi },
-        usesNativeLocalInferenceForAgent(agentName(agent), provider, endpointUrl) &&
-          !preservesLegacyPiRoute(sandboxName, { provider, model, endpointUrl }),
+        usesNativeLocalInferenceForAgent(
+          agentName(agent),
+          provider,
+          endpointUrl,
+          Boolean(nimContainer),
+        ),
       );
       // A completed provider-selection checkpoint is not proof that a managed
       // host runtime survived a process or gateway restart. Recover the exact
@@ -1684,6 +1691,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
                   agentName(agent),
                   route.provider,
                   route.endpointUrl,
+                  route.localNimSelected,
                 ),
                 route,
               ),
@@ -1691,7 +1699,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
               const preflight = deps.preflightGatewayRouteDiscovery({
                 gatewayName,
                 sandboxName,
-                ...(usesNativeLocalInferenceForAgent(agentName(agent), provider)
+                ...(usesNativeLocalInferenceForAgent(
+                  agentName(agent),
+                  provider,
+                  null,
+                  Boolean(nimContainer),
+                )
                   ? { nativeLocalSelection: true }
                   : {}),
                 route: {
@@ -1786,8 +1799,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         gatewayName,
         sandboxName,
         { provider, model, endpointUrl, credentialEnv, preferredInferenceApi },
-        usesNativeLocalInferenceForAgent(agentName(agent), provider, endpointUrl) &&
-          !preservesLegacyPiRoute(sandboxName, { provider, model, endpointUrl }),
+        usesNativeLocalInferenceForAgent(
+          agentName(agent),
+          provider,
+          endpointUrl,
+          Boolean(nimContainer),
+        ),
       );
     }
     if (
@@ -1909,7 +1926,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
           const confirmedSandboxName = sandboxName;
           const inferenceOptions = {
-            ...nativeLocalAgentOptions(agent, selectedProvider, endpointUrl),
+            ...nativeLocalAgentOptions(agent, selectedProvider, endpointUrl, nimContainer),
             gatewayName,
             allowToolsIncompatible,
             ...(skipHostInferenceSmoke ? { skipHostInferenceSmoke } : {}),
@@ -1952,13 +1969,19 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         }
         if (inferenceResult?.retry === "selection") {
           const retryStateResult = retryTo("provider_selection", {
-            metadata: { state: "inference", provider, model, reason: "selection_retry" },
+            metadata: {
+              state: "inference",
+              provider,
+              model,
+              reason: "selection_retry",
+            },
           });
           retryStateResults.push(retryStateResult);
           stateResults.push(retryStateResult);
           forceProviderSelection = true;
           continue;
         }
+        stagedNativeLocalRecreation = inferenceResult.stagedNativeLocalRecreation;
         deferredInferenceRoute = inferenceResult.deferredInferenceRoute;
         ({ endpointUrl, credentialEnv } = selectedNativeInference(
           inferenceResult?.nativeInference,
@@ -2012,12 +2035,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
                 credentialEnv,
                 preferredInferenceApi,
               },
-              usesNativeLocalInferenceForAgent(agentName(agent), selectedProvider, endpointUrl) &&
-                !preservesLegacyPiRoute(sandboxName, {
-                  provider: selectedProvider,
-                  model: selectedModel,
-                  endpointUrl,
-                }),
+              usesNativeLocalInferenceForAgent(
+                agentName(agent),
+                selectedProvider,
+                endpointUrl,
+                Boolean(nimContainer),
+              ),
             );
             try {
               await deps.reconcileModelRouter();
@@ -2086,12 +2109,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
               credentialEnv,
               preferredInferenceApi,
             },
-            usesNativeLocalInferenceForAgent(agentName(agent), selectedProvider, endpointUrl) &&
-              !preservesLegacyPiRoute(resumeReservationName, {
-                provider: selectedProvider,
-                model: selectedModel,
-                endpointUrl,
-              }),
+            usesNativeLocalInferenceForAgent(
+              agentName(agent),
+              selectedProvider,
+              endpointUrl,
+              Boolean(nimContainer),
+            ),
           );
           return reserveRecoveredSandboxInferenceRoute(
             deps.reserveSandboxInferenceRoute,
@@ -2237,14 +2260,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         deps.prepareLocalProviderForInference,
       );
       const inferenceOptions = {
-        ...nativeLocalAgentOptions(agent, selectedProvider, endpointUrl),
-        ...preservedPiRouteSetupOption(
-          preservesLegacyPiRoute(confirmedSandboxName, {
-            provider: selectedProvider,
-            model: selectedModel,
-            endpointUrl,
-          }),
-        ),
+        ...nativeLocalAgentOptions(agent, selectedProvider, endpointUrl, nimContainer),
         gatewayName,
         allowToolsIncompatible,
         ...legacyRecordedNoAuthEndpointSetupOptions({
@@ -2263,6 +2279,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
         ...(freshManagedOllama ? { reservationSessionId: session?.sessionId } : {}),
+        ...(fresh && !effectiveResume && recreateSandbox
+          ? { recreatePublishedSandbox: true, reservationSessionId: session?.sessionId }
+          : {}),
         ...preBackupRouteReservationOptions(
           effectiveResume,
           session?.steps?.sandbox?.status === "complete",
@@ -2297,13 +2316,19 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     }
     if (inferenceResult?.retry === "selection") {
       const retryStateResult = retryTo("provider_selection", {
-        metadata: { state: "inference", provider, model, reason: "selection_retry" },
+        metadata: {
+          state: "inference",
+          provider,
+          model,
+          reason: "selection_retry",
+        },
       });
       retryStateResults.push(retryStateResult);
       stateResults.push(retryStateResult);
       forceProviderSelection = true;
       continue;
     }
+    stagedNativeLocalRecreation = inferenceResult.stagedNativeLocalRecreation;
     deferredInferenceRoute = inferenceResult.deferredInferenceRoute;
     ({ endpointUrl, credentialEnv } = selectedNativeInference(
       inferenceResult?.nativeInference,
@@ -2390,6 +2415,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     hostLocalInferenceRouteOnly,
     hostLocalInferenceSandboxProofAuthority: hostLocalInferenceProofAuthority,
     deferredInferenceRoute,
+    stagedNativeLocalRecreation,
     session,
     stateResult,
     stateResults,

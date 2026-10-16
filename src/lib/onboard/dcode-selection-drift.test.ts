@@ -1,9 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import { createOnboardCreatedSandboxCompletion } from "./created-sandbox-finalization";
+import { pendingSandboxCreateIdentityForBoundary } from "./sandbox-create/identity-boundary";
+import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
+import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
+import * as sandboxRegistration from "./sandbox-registration";
 import { normalizeManagedDcodeModelName } from "../inference/managed-dcode/identity";
 import {
   createDcodeSelectionDriftReader,
@@ -71,31 +76,6 @@ function identity(
 }
 
 describe("live DCode selection drift", () => {
-  it.each([
-    ["http://host.openshell.internal:42103/v1", "https://inference.local/v1"],
-    ["http://host.openshell.internal:8000/v1", "http://host.openshell.internal:8000/v1"],
-  ])("accepts the selected compatible transport for %s (#12558)", async (endpoint, expected) => {
-    const output = identity({
-      Provider: "compatible-endpoint",
-      Model: "openai:model-a",
-      Endpoint: expected,
-    });
-    expect(
-      await getDcodeSelectionDrift(
-        "alpha",
-        "compatible-endpoint",
-        "model-a",
-        "openai-completions",
-        driftDeps(() => output, endpoint),
-      ),
-    ).toMatchObject({
-      changed: false,
-      providerChanged: false,
-      modelChanged: false,
-      unknown: false,
-    });
-  });
-
   it.each([
     [
       "openai-api",
@@ -458,4 +438,245 @@ describe("live DCode selection drift", () => {
       unknown: true,
     });
   });
+});
+
+describe("DCode selection through production completion", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    {
+      behavior: "rejects a shared identity for an OpenRouter selection",
+      endpointUrl: "https://openrouter.ai/api/v1",
+      attachmentEndpoint: undefined,
+      observedEndpoint: "https://inference.local/v1",
+      observedModel: "openai:nvidia/nemotron-3-ultra-550b-a55b",
+      expectedError: "exit 1",
+      registrationCount: 0,
+    },
+    {
+      behavior: "accepts the authenticated native local identity",
+      endpointUrl: "http://localhost:8000/v1",
+      attachmentEndpoint: "http://host.openshell.internal:8000/v1",
+      observedEndpoint: "http://host.openshell.internal:8000/v1",
+      observedModel: "openai:nvidia/nemotron-3-ultra-550b-a55b",
+      expectedError: "registration reached",
+      registrationCount: 1,
+    },
+    {
+      behavior: "accepts the native identity of the credentialless endpoint bridge",
+      endpointUrl: "http://localhost:8000/v1",
+      attachmentEndpoint: "http://host.openshell.internal:11435/v1",
+      observedEndpoint: "http://host.openshell.internal:11435/v1",
+      observedModel: "openai:nvidia/nemotron-3-ultra-550b-a55b",
+      expectedError: "registration reached",
+      registrationCount: 1,
+    },
+    {
+      behavior: "rejects a shared identity for a native local attachment",
+      endpointUrl: "http://localhost:8000/v1",
+      attachmentEndpoint: "http://host.openshell.internal:8000/v1",
+      observedEndpoint: "https://inference.local/v1",
+      observedModel: "openai:nvidia/nemotron-3-ultra-550b-a55b",
+      expectedError: "exit 1",
+      registrationCount: 0,
+    },
+    {
+      behavior: "rejects model drift on a native local attachment",
+      endpointUrl: "http://localhost:8000/v1",
+      attachmentEndpoint: "http://host.openshell.internal:8000/v1",
+      observedEndpoint: "http://host.openshell.internal:8000/v1",
+      observedModel: "openai:wrong-model",
+      expectedError: "exit 1",
+      registrationCount: 0,
+    },
+    {
+      behavior: "accepts the shared identity of a nonlocal custom endpoint",
+      endpointUrl: "https://custom.example/v1",
+      attachmentEndpoint: undefined,
+      observedEndpoint: "https://inference.local/v1",
+      observedModel: "openai:nvidia/nemotron-3-ultra-550b-a55b",
+      expectedError: "registration reached",
+      registrationCount: 1,
+    },
+  ])(
+    "$behavior through the production completion constructor (#13197)",
+    async ({
+      endpointUrl,
+      attachmentEndpoint,
+      observedEndpoint,
+      observedModel,
+      expectedError,
+      registrationCount,
+    }) => {
+      const model = "nvidia/nemotron-3-ultra-550b-a55b";
+      // Stop at the registry write boundary after the real drift reader runs.
+      const register = vi
+        .spyOn(sandboxRegistration, "registerCreatedSandbox")
+        .mockImplementation(() => {
+          throw new Error("registration reached");
+        });
+      const verifiedCreateBoundary = {
+        sandboxName: "dcode",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "generation-1",
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        route: "native" as const,
+      };
+      const verifiedCreate = {
+        reservation: { authority: { selection: {} } } as never,
+        checkpoint: pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary),
+      } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
+      const runCaptureOpenshell = vi.fn(() =>
+        [
+          "Sandbox:  dcode",
+          "Route:    inference",
+          "Provider: compatible-endpoint",
+          `Model:    ${observedModel}`,
+          `Endpoint: ${observedEndpoint}`,
+          "Runtime:  Deep Agents Code (terminal)",
+        ].join("\n"),
+      );
+      const runBuffered = vi.fn(async () => ({
+        outcome: { kind: "completed" as const, exitCode: 0 },
+        stdout: runCaptureOpenshell(),
+        stderr: "",
+      }));
+      vi.spyOn(process, "exit").mockImplementation((code): never => {
+        throw new Error(`exit ${code}`);
+      });
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      const completionArgs = [
+        "dcode",
+        null,
+        null,
+        null,
+        null,
+        { customOpenClawImage: false, isManagedDcodeAgent: true },
+        {
+          provider: "compatible-endpoint",
+          model,
+          preferredInferenceApi: "openai-completions",
+          endpointUrl,
+        },
+        {
+          createIntent: {
+            endpointUrl,
+            endpointSource: null,
+            observabilityEnabled: false,
+          },
+          resolvedCreateIntent: {
+            nativeLocalProviderAttachment: attachmentEndpoint
+              ? { endpointUrl: attachmentEndpoint }
+              : undefined,
+            policy: { options: {} },
+            hostMounts: undefined,
+          },
+        },
+        {
+          gpuEnabled: false,
+          hostGpuDetected: false,
+          sandboxGpuEnabled: false,
+          sandboxGpuMode: "none",
+          sandboxGpuDevice: null,
+          sandboxGpuProof: null,
+          openshellDriver: "docker",
+          openshellVersion: "0.0.101",
+        },
+        false,
+        { toolDisclosure: undefined, dcodeAutoApprovalMode: "disabled" },
+        { webSearchConfig: null, hermesAuthMethod: null },
+        {
+          plannedMessagingState: undefined,
+          preservedMcpState: undefined,
+          hermesToolGateways: [],
+        },
+        null,
+        { gatewayName: "nemoclaw", gatewayPort: 8080 },
+        {
+          initialSandboxPolicy: {
+            appliedPresets: ["personal-open-internet"],
+            policyPath: "/private/initial-policy.yaml",
+          },
+          compatibilityPolicyPath: null,
+          dashboardRemoteBindPrepared: false,
+          getVerifiedCreateBoundary: () => verifiedCreateBoundary,
+          getVerifiedCreateRegistrationAuthority: () => verifiedCreate,
+          revalidateSandboxIdentity: vi.fn(),
+        },
+        null,
+        "build-1",
+        {
+          mode: "none",
+          hostGpuDetected: false,
+          hostGpuPlatform: "linux",
+          sandboxGpuEnabled: false,
+          sandboxGpuDevice: null,
+          errors: [],
+        },
+        false,
+        vi.fn(),
+        runCaptureOpenshell,
+        "http://127.0.0.1:8643",
+        { config: null, enabled: false },
+        vi.fn(),
+        vi.fn(),
+        vi.fn(),
+        {
+          runtimeProvider: null,
+          ensurePreparedWorkload: vi.fn(),
+          ensurePreparedProfile: vi.fn(),
+        },
+        {
+          source: {
+            kind: "legacy-dockerfile",
+            dockerfilePath: "/workspace/Dockerfile",
+            reason: "agent-not-managed",
+          },
+          release: null,
+          fallbackDiagnostic: null,
+        },
+        vi.fn(),
+        { runBuffered },
+      ] as unknown as Parameters<typeof createOnboardCreatedSandboxCompletion>;
+      const completion = createOnboardCreatedSandboxCompletion(...completionArgs);
+      const created = {
+        createResult: { status: 0, output: "", sawProgress: true },
+        route: "native",
+        firstCreateOutput: "",
+        registryImageRef: null,
+        lifecycleRegistrationFields: { lifecycleGeneration: "generation-1" },
+      } as SandboxGpuCreateFlowResult;
+      const lifecycleLiveIdentityFingerprint = "a".repeat(64);
+      const lifecycle = {
+        generation: "generation-1",
+        recordExactIdentity: () => ({
+          lifecycleGeneration: "generation-1",
+          lifecycleLiveIdentityFingerprint,
+        }),
+        capture: () => ({
+          lifecycleGeneration: "generation-1",
+          lifecycleLiveIdentityFingerprint,
+        }),
+        revalidate: (registration: {
+          lifecycleGeneration: string;
+          lifecycleLiveIdentityFingerprint: string;
+        }) => registration,
+      };
+
+      await expect(
+        completion.complete(
+          created,
+          null,
+          "disabled",
+          false,
+          () => ({ lifecycleGeneration: "generation-1" }),
+          lifecycle,
+        ),
+      ).rejects.toThrow(expectedError);
+      expect(runBuffered).toHaveBeenCalledOnce();
+      expect(register).toHaveBeenCalledTimes(registrationCount);
+    },
+  );
 });

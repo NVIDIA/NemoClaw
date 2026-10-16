@@ -13,6 +13,7 @@ import type { registryEntryGatewayPort } from "../../../state/gateway-registry";
 import type * as OnboardSession from "../../../state/onboard-session";
 import { resolveNemoclawStateGatewayPort } from "../../../state/paths";
 import type * as Registry from "../../../state/registry";
+import { listNativeLocalProviderAuthorities } from "../../../state/registry/native-local-provider-authority";
 import {
   classifySandboxInferenceRouteReservation,
   isRouteOnlySandboxReservation,
@@ -110,6 +111,12 @@ function requireReservationOwner(
   session: OnboardSession.Session | null,
   state: RecoveryState,
 ): void {
+  if (
+    entry?.nativeLocalProviderAttachment !== undefined ||
+    listNativeLocalProviderAuthorities(record.sandboxName, record.gatewayName).length > 0
+  ) {
+    refuse(record.sandboxName, "native local provider cleanup authority remains");
+  }
   if (!entry) {
     if (
       (state.forceLocal || record.createAuthority) &&

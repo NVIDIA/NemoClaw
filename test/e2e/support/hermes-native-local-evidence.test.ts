@@ -7,6 +7,7 @@ import type {
   FakeOpenAiCompatibleRequest,
   FakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
+import { runManagedActivationAgentTurn } from "../live/managed-image-activation-e2e-helpers.ts";
 import { expectNativeLocalHermesTurn } from "../live/hermes-inference-switch-helpers.ts";
 
 const authenticated = {
@@ -72,5 +73,57 @@ describe("Hermes native local live evidence", () => {
     const fixture = evidenceFixture([authenticated], "previous-model");
     await expect(expectNativeLocalHermesTurn(fixture.options)).rejects.toThrow();
     expect(fixture.execShell).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Hermes managed image request evidence", () => {
+  it.each([
+    {
+      name: "new authenticated completion",
+      newRequests: [{ ...authenticated, model: "nemoclaw-managed-activation-model" }],
+      accepted: true,
+    },
+    { name: "stale completion", newRequests: [], accepted: false },
+    { name: "wrong model", newRequests: [authenticated], accepted: false },
+    {
+      name: "unauthenticated completion",
+      newRequests: [
+        { ...authenticated, model: "nemoclaw-managed-activation-model", auth: "missing" },
+      ],
+      accepted: false,
+    },
+    {
+      name: "inventory only",
+      newRequests: [
+        {
+          ...authenticated,
+          model: "nemoclaw-managed-activation-model",
+          method: "GET",
+          path: "/v1/models",
+        },
+      ],
+      accepted: false,
+    },
+  ])("classifies $name", async ({ newRequests, accepted }) => {
+    const requests: FakeOpenAiCompatibleRequest[] = [
+      { ...authenticated, model: "nemoclaw-managed-activation-model" },
+    ];
+    const exec = vi.fn(async () => {
+      requests.push(...newRequests);
+      return { exitCode: 0, stdout: "PONG", stderr: "", timedOut: false };
+    });
+    const outcome = await runManagedActivationAgentTurn(
+      { exec } as unknown as SandboxClient,
+      "hermes",
+      "ext-img-hermes",
+      "after",
+      {},
+      () => requests,
+    ).then(
+      () => true,
+      () => false,
+    );
+    expect(outcome).toBe(accepted);
+    expect(exec).toHaveBeenCalledOnce();
   });
 });

@@ -9,7 +9,6 @@ import {
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import type { ServingProfileProvenance } from "../../inference/serving/profile-provenance";
-import { nativeLocalRebuildAttachment } from "../../../../test/helpers/rebuild-flow-test-support";
 
 const savedProfileProvenance: ServingProfileProvenance = {
   schemaVersion: 1,
@@ -42,7 +41,6 @@ describe("rebuildSandbox flow: target session", () => {
         sessionSandboxName,
         sandboxEntry: {
           provider: "vllm-local",
-          nativeLocalProviderAttachment: nativeLocalRebuildAttachment("vllm-local"),
           model: "example/model",
           servingProfileProvenance: savedProfileProvenance,
         },
@@ -72,7 +70,6 @@ describe("rebuildSandbox flow: target session", () => {
         sessionSandboxName,
         sandboxEntry: {
           provider: "vllm-local",
-          nativeLocalProviderAttachment: nativeLocalRebuildAttachment("vllm-local"),
           model: "example/model",
           servingProfileProvenance: undefined,
         },
@@ -153,7 +150,6 @@ describe("rebuildSandbox flow: target session", () => {
         applyPreset: () => true,
         sandboxEntry: {
           provider: "vllm-local",
-          nativeLocalProviderAttachment: nativeLocalRebuildAttachment("vllm-local"),
           model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
           endpointUrl: null,
           endpointSource: null,
@@ -193,7 +189,7 @@ describe("rebuildSandbox flow: target session", () => {
 
     try {
       const harness = createRebuildFlowHarness({
-        sandboxEntry: { agent: "hermes" },
+        sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
         baseImagePreflight: {
           ok: true,
           imageRef: "nemoclaw-hermes-sandbox-base-local:12345678",

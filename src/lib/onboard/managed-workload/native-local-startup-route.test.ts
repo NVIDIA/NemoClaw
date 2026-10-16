@@ -20,13 +20,6 @@ const nativeAttachment = {
   schemaVersion: 1 as const,
   providerId: "fixture-provider",
 };
-const hermesBinding = { ...nativeBinding, agent: "hermes" as const };
-const attachments = {
-  openclaw: nativeAttachment,
-  hermes: { ...nativeAttachment, ...hermesBinding, ...nativeLocalIdentity(hermesBinding) },
-  "langchain-deepagents-code": nativeAttachment,
-  pi: nativeAttachment,
-};
 const routes = [
   {
     name: "resolved native attachment",
@@ -39,69 +32,71 @@ const routes = [
     endpointUrl: "http://host.openshell.internal:42103/v1",
     expected: "https://inference.local/v1",
   },
-  {
-    name: "unattached native endpoint",
-    endpointUrl: "http://host.openshell.internal:8000/v1",
-    expected: "https://inference.local/v1",
-  },
-  {
-    name: "hosted endpoint with stale native attachment",
-    endpointUrl: "https://example.com/v1",
-    attachment: nativeAttachment,
-    expected: "https://inference.local/v1",
-  },
 ] as const;
 
-describe.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const)(
+type AgentName = "openclaw" | "hermes" | "langchain-deepagents-code";
+
+function prepareProfile(
+  agentName: AgentName,
+  route: {
+    endpointUrl: string | null;
+    attachment?: typeof nativeAttachment & { agent?: "hermes" };
+    provider?: string;
+    localNimSelected?: boolean;
+    nativeProvider?: boolean;
+  },
+) {
+  const runtime = createManagedWorkloadOnboardRuntime(
+    {
+      computePlan: { driverName: "docker", gatewayLauncher: "nemoclaw" },
+      managedWorkloadRebuild: null,
+      tempManagedRuntime: false,
+      stockManagedRuntime: true,
+      tempManagedRuntimeCatalog: null,
+      agentName,
+      legacyDockerfilePath: "Dockerfile",
+      customDockerfilePath: null,
+      rootDir: process.cwd(),
+      model: "fixture-model",
+      provider: route.provider ?? "compatible-endpoint",
+      preferredInferenceApi: "openai-completions",
+      endpointUrl: route.endpointUrl,
+      localNimSelected: route.localNimSelected,
+      nativeProvider: route.nativeProvider ?? Boolean(route.attachment),
+      ...("attachment" in route ? { nativeLocalProviderAttachment: route.attachment } : {}),
+      startupProfile: {
+        chatUiUrl: "http://localhost:18789",
+        effectiveDashboardPort: 18789,
+        dashboardBindAddress: undefined,
+        manageDashboard: agentName !== "langchain-deepagents-code",
+        wslExposure: false,
+        hermesDashboardState: {
+          config: { enabled: false, port: 19189, internalPort: 29189, tuiEnabled: false },
+          enabled: false,
+        },
+        webSearch: null,
+        toolDisclosure: "progressive",
+        hermesToolGateways: [],
+        messagingPlan: null,
+        dcodeAutoApprovalMode: "disabled",
+        observabilityEnabled: false,
+        environment: {},
+      },
+      note: vi.fn(),
+      fallbackBuildEstimate: () => null,
+    },
+    { getSandboxInferenceConfig, resolveAgentInferenceApi },
+  );
+  return runtime.ensurePreparedProfile({ source: { kind: "managed-image" } } as never);
+}
+
+describe.each(["openclaw", "langchain-deepagents-code"] as const)(
   "%s managed startup inference",
   (agentName) => {
     it.each(routes)("keeps $name on its selected transport (#12558)", (route) => {
-      const { endpointUrl } = route;
-      const expected = route.expected;
-      const runtime = createManagedWorkloadOnboardRuntime(
-        {
-          computePlan: { driverName: "docker", gatewayLauncher: "nemoclaw" },
-          managedWorkloadRebuild: null,
-          tempManagedRuntime: false,
-          stockManagedRuntime: true,
-          tempManagedRuntimeCatalog: null,
-          agentName,
-          legacyDockerfilePath: "Dockerfile",
-          customDockerfilePath: null,
-          rootDir: process.cwd(),
-          model: "fixture-model",
-          provider: "compatible-endpoint",
-          preferredInferenceApi: "openai-completions",
-          endpointUrl,
-          ...("attachment" in route
-            ? { nativeLocalProviderAttachment: attachments[agentName] }
-            : {}),
-          startupProfile: {
-            chatUiUrl: "http://localhost:18789",
-            effectiveDashboardPort: 18789,
-            dashboardBindAddress: undefined,
-            manageDashboard: agentName !== "langchain-deepagents-code" && agentName !== "pi",
-            wslExposure: false,
-            hermesDashboardState: {
-              config: { enabled: false, port: 19189, internalPort: 29189, tuiEnabled: false },
-              enabled: false,
-            },
-            webSearch: null,
-            toolDisclosure: "progressive",
-            hermesToolGateways: [],
-            messagingPlan: null,
-            dcodeAutoApprovalMode: "disabled",
-            observabilityEnabled: false,
-            environment: {},
-          },
-          note: vi.fn(),
-          fallbackBuildEstimate: () => null,
-        },
-        { getSandboxInferenceConfig, resolveAgentInferenceApi },
-      );
-      const prepared = runtime.ensurePreparedProfile({
-        source: { kind: "managed-image" },
-      } as never);
+      const expected =
+        agentName === "langchain-deepagents-code" ? route.expected : "https://inference.local/v1";
+      const prepared = prepareProfile(agentName, route);
       expect(prepared?.profile.inference).toMatchObject({
         model: "fixture-model",
         upstreamProvider: "compatible-endpoint",
@@ -110,3 +105,43 @@ describe.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const
     });
   },
 );
+
+it.each(["openclaw", "hermes"] as const)(
+  "%s keeps an unattached native endpoint as its legacy route (#12558)",
+  (agentName) => {
+    const prepared = prepareProfile(agentName, {
+      endpointUrl: nativeBinding.endpointUrl,
+    });
+    expect(prepared?.profile.inference?.routedBaseUrl).toBe("https://inference.local/v1");
+  },
+);
+
+it("rejects unattached Deep Agents Code native inference (#13197)", () => {
+  expect(() =>
+    prepareProfile("langchain-deepagents-code", { endpointUrl: nativeBinding.endpointUrl }),
+  ).toThrow("requires its native provider attachment");
+});
+
+it("keeps owned Local NIM on the Deep Agents Code shared route without an attachment (#13116)", () => {
+  const prepared = prepareProfile("langchain-deepagents-code", {
+    provider: "vllm-local",
+    endpointUrl: "http://127.0.0.1:8000/v1",
+    localNimSelected: true,
+    nativeProvider: false,
+  });
+  expect(prepared?.profile.inference).toMatchObject({
+    upstreamProvider: "vllm-local",
+    routedBaseUrl: "https://inference.local/v1",
+  });
+});
+
+it("projects the Hermes-scoped native attachment into managed startup", () => {
+  const binding = { ...nativeBinding, agent: "hermes" as const };
+  const attachment = { ...nativeAttachment, ...binding, ...nativeLocalIdentity(binding) };
+  const prepared = prepareProfile("hermes", { endpointUrl: null, attachment });
+  expect(prepared?.profile.inference).toMatchObject({
+    model: "fixture-model",
+    upstreamProvider: "compatible-endpoint",
+    routedBaseUrl: nativeBinding.endpointUrl,
+  });
+});

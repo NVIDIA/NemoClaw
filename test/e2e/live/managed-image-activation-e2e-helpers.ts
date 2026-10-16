@@ -7,7 +7,6 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { resolveSandboxHealthProbeUrl } from "../../../src/lib/actions/sandbox/forward-recovery.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
-import { normalizeNativeLocalProviderAttachment } from "../../../src/lib/inference/native-local/contract.ts";
 import { resolveGatewayLogPathForPort } from "../../../src/lib/onboard/gateway/state-dir.ts";
 import {
   type ManagedImagePlatform,
@@ -203,33 +202,25 @@ function exactCatalog(
   return contracts;
 }
 
-export function managedActivationCommandEnv(
-  guard: Pick<ContainerBuildGuard, "env">,
+function commandEnv(
+  guard: ContainerBuildGuard,
   catalogPath: string,
   endpointUrl: string,
-  credentialless = false,
 ): NodeJS.ProcessEnv {
   const gatewayRuntime = process.env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
   return {
     ...guard.env,
-    COMPATIBLE_API_KEY: credentialless ? undefined : API_KEY,
+    COMPATIBLE_API_KEY: API_KEY,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_COMPAT_MODEL: MODEL,
-    NEMOCLAW_ENDPOINT_URL: credentialless ? undefined : endpointUrl,
+    NEMOCLAW_ENDPOINT_URL: endpointUrl,
     NEMOCLAW_IGNORE_RUNTIME_RESOURCES: "1",
     NEMOCLAW_GATEWAY_RUNTIME: gatewayRuntime,
     NEMOCLAW_MANAGED_ACTIVATION_CATALOG: catalogPath,
     NEMOCLAW_MODEL: MODEL,
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_PREFERRED_API: "openai-completions",
-    NEMOCLAW_PROVIDER: credentialless ? "vllm" : "custom",
-    ...(credentialless
-      ? {
-          NEMOCLAW_VLLM_PORT: new URL(endpointUrl).port,
-          NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL: undefined,
-          NEMOCLAW_VLLM_LOCAL_TOKEN: undefined,
-        }
-      : {}),
+    NEMOCLAW_PROVIDER: "custom",
     NEMOCLAW_RECREATE_SANDBOX: "1",
     OPENSHELL_DRIVERS: gatewayRuntime,
     OPENSHELL_GATEWAY: GATEWAY,
@@ -291,11 +282,7 @@ exec ${command.map((argument) => shellQuote(argument)).join(" ")}
 interface ExternalImageRegistryDocument {
   sandboxes?: Record<
     string,
-    {
-      toolDisclosure?: "progressive" | "direct";
-      workload?: Record<string, unknown>;
-      nativeLocalProviderAttachment?: unknown;
-    }
+    { toolDisclosure?: "progressive" | "direct"; workload?: Record<string, unknown> }
   >;
 }
 
@@ -417,7 +404,6 @@ export async function runManagedActivationAgentTurn(
   sandboxName: string,
   phase: "before" | "boundary" | "after",
   env: NodeJS.ProcessEnv,
-  artifactPrefix: string = agent,
   observeRequests?: () => readonly FakeOpenAiCompatibleRequest[],
 ): Promise<void> {
   const requestStart = observeRequests?.().length ?? 0;
@@ -431,7 +417,7 @@ export async function runManagedActivationAgentTurn(
       : undefined,
   );
   const options = {
-    artifactName: `${artifactPrefix}-agent-turn-${phase}-restart`,
+    artifactName: `${agent}-agent-turn-${phase}-restart`,
     env,
     redactionValues: [API_KEY],
     timeoutMs:
@@ -450,11 +436,12 @@ export async function runManagedActivationAgentTurn(
         .slice(requestStart)
         .some(
           (request) =>
+            request.auth === "ok" &&
             request.method === "POST" &&
             request.path === "/v1/chat/completions" &&
             request.model === MODEL,
         ),
-      `${artifactPrefix} ${phase} restart must send a new completion to its selected endpoint and model`,
+      `${sandboxName} ${phase} turn must send a new authenticated completion to its selected endpoint and model`,
     ).toBe(true);
 }
 
@@ -724,11 +711,7 @@ async function verifyExactCleanup(
   // absence. Its terminal and deadline failures already reject this cleanup.
 }
 
-function enterOnboardPhase(
-  progress: TestProgress,
-  agent: ShippedManagedImageAgent,
-  credentialless = false,
-): void {
+function enterOnboardPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
   switch (agent) {
     case "openclaw":
       progress.phase("onboard and exercise OpenClaw");
@@ -737,11 +720,7 @@ function enterOnboardPhase(
       progress.phase("onboard and exercise Hermes");
       return;
     case "langchain-deepagents-code":
-      if (credentialless) {
-        progress.phase("qualify credentialless Deep Agents Code lifecycle");
-      } else {
-        progress.phase("qualify authenticated Deep Agents Code lifecycle");
-      }
+      progress.phase("onboard and exercise Deep Agents Code");
       return;
   }
 }
@@ -755,7 +734,7 @@ function enterPublicLifecyclePhase(progress: TestProgress, agent: ShippedManaged
       progress.phase("stop and start Hermes through public NemoClaw lifecycle");
       return;
     case "langchain-deepagents-code":
-      progress.event("stop and start Deep Agents Code through public NemoClaw lifecycle");
+      progress.phase("stop and start Deep Agents Code through public NemoClaw lifecycle");
       return;
   }
 }
@@ -769,7 +748,7 @@ function enterCleanupPhase(progress: TestProgress, agent: ShippedManagedImageAge
       progress.phase("destroy and verify Hermes cleanup");
       return;
     case "langchain-deepagents-code":
-      progress.event("destroy and verify Deep Agents Code cleanup");
+      progress.phase("destroy and verify Deep Agents Code cleanup");
       return;
   }
 }
@@ -902,24 +881,22 @@ export async function qualifyAgent(
   endpointUrl: string,
   agent: ShippedManagedImageAgent,
   contract: ManagedImageContractV1,
-  credentialless = false,
   observeRequests?: () => readonly FakeOpenAiCompatibleRequest[],
 ): Promise<void> {
   const { artifacts, cleanup, host, lifecycle, progress, sandbox } = fixtures;
-  const sandboxName = `${SANDBOX_NAMES[agent]}${credentialless ? "-noauth" : ""}`;
-  const artifactPrefix = `${agent}${credentialless ? "-credentialless" : ""}`;
-  const env = managedActivationCommandEnv(guard, catalogPath, endpointUrl, credentialless);
+  const sandboxName = SANDBOX_NAMES[agent];
+  const env = commandEnv(guard, catalogPath, endpointUrl);
   cleanup.trackDisposable(`delete OpenShell sandbox ${sandboxName}`, () =>
     sandbox.cleanupSandbox(sandboxName, { env, timeoutMs: 60_000 }),
   );
   cleanup.trackSandbox(host, sandboxName, { env, timeoutMs: 3 * 60_000 });
   await preclean(host, lifecycle, sandbox, sandboxName, env);
 
-  enterOnboardPhase(progress, agent, credentialless);
+  enterOnboardPhase(progress, agent);
   const onboard = await host.nemoclaw(
     managedActivationOnboardArgs(catalogPath, agent, sandboxName),
     {
-      artifactName: `managed-activation-onboard-${artifactPrefix}`,
+      artifactName: `managed-activation-onboard-${agent}`,
       env,
       redactionValues: [API_KEY],
       timeoutMs: ONBOARD_TIMEOUT_MS,
@@ -933,21 +910,13 @@ export async function qualifyAgent(
   if (agent === "openclaw") {
     await approveOpenClawAdminScope(host, sandbox, sandboxName, env, [API_KEY]);
   }
-  await runManagedActivationAgentTurn(
-    sandbox,
-    agent,
-    sandboxName,
-    "before",
-    env,
-    artifactPrefix,
-    observeRequests,
-  );
+  await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "before", env, observeRequests);
   if (agent === "openclaw") await runOpenClawSubagentTurn(sandbox, sandboxName, env);
   if (agent === "hermes") {
     progress.phase("prove Hermes secret-boundary refusal before native restart");
     await proveHermesRestartSecretBoundary(host, sandbox, sandboxName, env);
   }
-  const marker = `managed-activation-${artifactPrefix}-${Date.now()}`;
+  const marker = `managed-activation-${agent}-${Date.now()}`;
   await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(
@@ -960,7 +929,7 @@ export async function qualifyAgent(
         .join("\n"),
     ),
     {
-      artifactName: `${artifactPrefix}-write-durable-marker`,
+      artifactName: `${agent}-write-durable-marker`,
       env,
       timeoutMs: 30_000,
     },
@@ -968,7 +937,7 @@ export async function qualifyAgent(
 
   enterPublicLifecyclePhase(progress, agent);
   const stop = await host.nemoclaw([sandboxName, "stop"], {
-    artifactName: `${artifactPrefix}-public-stop`,
+    artifactName: `${agent}-public-stop`,
     env,
     redactionValues: [API_KEY],
     timeoutMs: 120_000,
@@ -977,7 +946,7 @@ export async function qualifyAgent(
     await collectOnboardFailureRuntimeDiagnostics(artifacts, host, agent, sandboxName, env);
   }
   const start = await host.nemoclaw([sandboxName, "start"], {
-    artifactName: `${artifactPrefix}-public-start`,
+    artifactName: `${agent}-public-start`,
     env,
     redactionValues: [API_KEY],
     timeoutMs: 10 * 60_000,
@@ -990,7 +959,7 @@ export async function qualifyAgent(
     `${resultText(stop)}\n${resultText(start)}`,
   ).toBe(true);
   await lifecycle.waitForSandboxReadyAfterGatewayRestart(sandboxName, {
-    artifactNamePrefix: `${artifactPrefix}-post-public-start-ready`,
+    artifactNamePrefix: `${agent}-post-public-start-ready`,
     env,
   });
   expectManagedReceipt(sandboxName, contract);
@@ -1007,7 +976,7 @@ export async function qualifyAgent(
         .join("\n"),
     ),
     {
-      artifactName: `${artifactPrefix}-read-durable-marker-after-public-lifecycle`,
+      artifactName: `${agent}-read-durable-marker-after-public-lifecycle`,
       env,
       timeoutMs: 30_000,
     },
@@ -1016,41 +985,11 @@ export async function qualifyAgent(
     readMarker.exitCode === 0 && readMarker.stdout.trim() === marker,
     resultText(readMarker),
   ).toBe(true);
-  await runManagedActivationAgentTurn(
-    sandbox,
-    agent,
-    sandboxName,
-    "after",
-    env,
-    artifactPrefix,
-    observeRequests,
-  );
-  if (agent === "openclaw" || agent === "langchain-deepagents-code") {
-    const receipt = normalizeNativeLocalProviderAttachment(
-      registryDocument().sandboxes?.[sandboxName]?.nativeLocalProviderAttachment,
-    );
-    const attachments = await sandbox.openshell(
-      ["sandbox", "provider", "list", "-g", GATEWAY, sandboxName],
-      {
-        artifactName: `managed-activation-native-provider-attachment-${artifactPrefix}`,
-        env,
-        timeoutMs: 60_000,
-      },
-    );
-    expect(
-      receipt?.gatewayName === GATEWAY &&
-        receipt.sandboxName === sandboxName &&
-        receipt.endpointUrl === endpointUrl &&
-        receipt.authMode === (credentialless ? "sentinel" : "authenticated") &&
-        attachments.exitCode === 0 &&
-        attachments.stdout.split(/\s+/u).includes(receipt.providerName),
-      `receipt=${JSON.stringify(receipt)} attachments=${resultText(attachments)}`,
-    ).toBe(true);
-  }
+  await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "after", env, observeRequests);
 
   enterCleanupPhase(progress, agent);
   await sandbox.cleanupSandbox(sandboxName, {
-    artifactName: `managed-activation-openshell-delete-${artifactPrefix}`,
+    artifactName: `managed-activation-openshell-delete-${agent}`,
     env,
     timeoutMs: 120_000,
   });
@@ -1065,6 +1004,7 @@ async function qualifyExternalImage(
   endpointUrl: string,
   agent: ExternalImageAgent,
   contract: ManagedImageContractV1,
+  observeRequests?: () => readonly FakeOpenAiCompatibleRequest[],
 ): Promise<{
   readonly agent: ExternalImageAgent;
   readonly reference: string;
@@ -1077,7 +1017,7 @@ async function qualifyExternalImage(
 }> {
   const { artifacts, cleanup, host, lifecycle, sandbox } = fixtures;
   const sandboxName = EXTERNAL_IMAGE_SANDBOX_NAMES[agent];
-  const env = managedActivationCommandEnv(guard, catalogPath, endpointUrl);
+  const env = commandEnv(guard, catalogPath, endpointUrl);
   cleanup.trackDisposable(`delete external-image sandbox ${sandboxName}`, () =>
     sandbox.cleanupSandbox(sandboxName, { env, timeoutMs: 60_000 }),
   );
@@ -1104,7 +1044,7 @@ async function qualifyExternalImage(
     artifactNamePrefix: `external-image-${agent}-ready`,
     env,
   });
-  await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "before", env);
+  await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "before", env, observeRequests);
 
   const beforeInspection = await inspectRuntimeImageId(
     host,
@@ -1180,7 +1120,7 @@ async function qualifyExternalImage(
       // before exercising the same privileged CLI boundary again.
       await approveOpenClawAdminScope(host, sandbox, sandboxName, env, [API_KEY]);
     }
-    await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "after", env);
+    await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "after", env, observeRequests);
     rebuilt = true;
   }
   registryEntry = registryDocument().sandboxes?.[sandboxName];
@@ -1242,6 +1182,12 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     guard.dispose,
   );
   cleanup.trackGateway(host, GATEWAY, { env: guard.env, timeoutMs: 60_000 });
+  const runtimeInfo = await host.command(containerEngine, ["info"], {
+    artifactName: `managed-activation-${containerEngine}-info`,
+    env: guard.env,
+    timeoutMs: 30_000,
+  });
+  expect(runtimeInfo.exitCode, resultText(runtimeInfo)).toBe(0);
   const inference = await startFakeOpenAiCompatibleServer({
     apiKey: API_KEY,
     chatContent: "PONG",
@@ -1275,39 +1221,9 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
       inference.baseUrl,
       agent,
       contracts.get(agent)!,
-      false,
-      inference.requests,
+      agent === "hermes" ? inference.requests : undefined,
     );
   }
-
-  // Exercise the existing bearerless vLLM selection through DCode's real client.
-  // An ephemeral port keeps this fixture separate from the authenticated backend.
-  const credentiallessInference = await startFakeOpenAiCompatibleServer({
-    chatContent: "PONG",
-    host: "0.0.0.0",
-    model: MODEL,
-    progress,
-    publicHost: "host.openshell.internal",
-    requireAuth: false,
-    requireAuthModels: false,
-  });
-  cleanup.trackDisposable("close credentialless DCode inference responder", async () => {
-    await artifacts.writeJson(
-      "dcode-credentialless-inference-requests.json",
-      credentiallessInference.requests(),
-    );
-    await credentiallessInference.close();
-  });
-  await qualifyAgent(
-    fixtures,
-    guard,
-    catalogPath,
-    credentiallessInference.baseUrl,
-    "langchain-deepagents-code",
-    contracts.get("langchain-deepagents-code")!,
-    true,
-    credentiallessInference.requests,
-  );
 
   progress.phase(
     "prove buildless external-image onboarding, drift rejection, rebuild, and retention",
@@ -1323,6 +1239,7 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
         inference.baseUrl,
         agent,
         contracts.get(agent)!,
+        agent === "hermes" ? inference.requests : undefined,
       ),
     );
   }
@@ -1339,7 +1256,8 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     .requests()
     .filter((request) => request.method === "POST" && request.path === "/v1/chat/completions");
   expect(
-    chatRequests.every((request) => request.auth === "ok" && request.model === MODEL) &&
+    chatRequests.length >= SHIPPED_MANAGED_IMAGE_AGENTS.length * 2 &&
+      chatRequests.every((request) => request.auth === "ok" && request.model === MODEL) &&
       chatRequests.some((request) => request.requestCanaryPresent === true) &&
       chatRequests.some((request) => request.toolResultPresent === true) &&
       externalImages.every((image) => image.verified),

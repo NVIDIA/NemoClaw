@@ -142,11 +142,9 @@ const nativeInferenceRouteDeps: InitialOpenclawInferenceRouteDeps = {
       throw new Error("Initial OpenClaw inference route does not match its registered selection.");
     }
     return {
-      endpointUrl: entry.nativeLocalProviderAttachment?.endpointUrl ?? entry.endpointUrl,
+      endpointUrl: entry.endpointUrl,
       nativeProvider: Boolean(
-        entry.nativeLocalProviderAttachment ||
-        entry.nativeHostedProviderAttachment ||
-        entry.nativeNvidiaProviderAttachment,
+        entry.nativeHostedProviderAttachment || entry.nativeNvidiaProviderAttachment,
       ),
     };
   },

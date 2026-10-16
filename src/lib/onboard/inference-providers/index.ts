@@ -28,7 +28,6 @@ export type {
 
 export { requireNativeProviderPolicy } from "../../adapters/openshell/provider-policy";
 export {
-  isPersistedPiSharedLocalInferenceRoute,
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,

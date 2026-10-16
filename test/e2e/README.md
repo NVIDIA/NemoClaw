@@ -17,6 +17,16 @@ Fixes and regression coverage for those behaviors belong upstream.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
+The DCode Auto-mode check captures bounded, redacted per-thread debug logs before
+failure recovery. Its cleanup removes those logs from the disposable sandbox.
+The authenticated native-local routing scenario uses a serial timeout contract
+for both onboarding calls, rebuild, restart, consumer, credential scan and sibling
+denial. Its catalogue job adds both DCode scenario budgets to the existing
+75-minute routing allowance, for a total of 243 minutes. This preserves the
+inherited suite's overall limit instead of summing every per-test failure guard.
+Manual PR runs use the catalogue from the trusted workflow commit on `main`, so
+a candidate's job-timeout change applies only after it reaches that commit.
+
 On disposable GitHub runners, the `full-e2e` OpenClaw launch segment uses the
 final host user's home at mode `0775` with `umask 0002`. It removes only that
 test sandbox's persistent readiness receipt before the existing probe and two
@@ -250,6 +260,10 @@ Manual PR E2E does not fall back to local Dockerfile builds.
 
 PR image publication builds each shipped agent on native AMD64 and ARM64 runners.
 Each platform retains its own digest contract and runs the direct startup checks.
+For OpenClaw, those checks also run the shared agent-reload proof against the image's generated
+gateway policy and installed distribution. The proof checks live named-agent discovery, gateway
+health, and a nonzero exit after a restart-class bind failure. Google Chat's reload-off exception
+is tracked separately in #13274.
 Docker activation selects the matching platform catalog and runs the existing all-agent lifecycle test.
 Rootless Podman activation remains AMD64. The catalog reader accepts only one platform per catalog;
 it rejects missing agents, mixed platforms, revisions, releases, and cohorts.
@@ -473,8 +487,6 @@ the Linux AMD64 and Linux ARM64 receipts to identify one source revision, releas
 cohort.
 
 The gateway restart fixture restarts the user service it stopped. If no service was selected, the candidate CLI startup code starts the registered gateway.
-
-Pi qualification preserves its hosted onboarding, rebuild, recovery, policy, and credential checks. After destroying that sandbox, the same target onboards a fresh Pi sandbox against an authenticated local compatible endpoint. A fresh Pi process must send the selected model to that endpoint. The target then rebuilds Pi and requires another authenticated request for the recorded model. The upstream credential must stay outside the sandbox, and public destroy must leave the sandbox absent. The hosted lifecycle retains its 90-minute allowance; the native phase adds 60 minutes for onboarding, two requests, a rebuild, isolation, and cleanup. The job adds 10 minutes of headroom. Operation deadlines and the target selector stay unchanged.
 A selected service that cannot restart remains selected for cleanup; recovery does not switch to another startup path.
 Restart inputs are checked before stopping the gateway. A failed start ends the test before health polling. Sandbox readiness, retained state, and agent turns remain separate assertions.
 
@@ -1275,24 +1287,20 @@ completed onboarding session remains unchanged as historical onboarding
 evidence. Deterministic startup and action tests own the corresponding launch
 environment and session non-rewrite checks.
 
-The local baseline uses an authenticated fixture on port 11434. Real Hermes gateway requests
-must reach that endpoint with the selected model at fresh startup and after a model-only switch.
-The existing `double-onboard-hermes` lane proves that a sibling sandbox cannot access the
-native local endpoint while its owner can make authenticated requests. Deterministic startup,
-consumer, and selection tests own reference rotation, schema validation, guarded writes,
-and failure compensation.
+The local baseline uses an authenticated fixture on port 11434.
+Real Hermes gateway requests must reach that endpoint with the selected model at startup and after a model-only switch.
+The `double-onboard-hermes` lane requires sibling denial and an authenticated request from the owning sandbox.
+OpenClaw retains its existing shared-route scenario.
+Deterministic startup and action tests own reference rotation, schema validation, guarded writes, and failure compensation.
 
-The Hermes lane replaces seven redundant live assertions with the native-local request proof.
-Four model-field projection checks already belong to `inference-set-patch-hermes.test.ts`
-and `generate-hermes-config.test.ts`; live dashboard, API, and CLI checks retain the selected-route
-behavior. The top-level `models` absence check is unnecessary: Hermes routing owns `model`,
-`providers`, and `custom_providers`, while the patch tests explicitly preserve unrelated `models`
-state. Two checksum `OK` text checks duplicate the retained exit-status assertions for
-`sha256sum -c ... --status && echo OK`. Both checksum validations and permission checks remain live.
-The Hermes file's transitive assertion budget stays at 75 points.
+Seven redundant Hermes switch assertions are removed: four model-field projections and the obsolete `models` map belong to configuration tests; two hash-tool success strings duplicate checked exit statuses.
+The live dashboard, API, CLI, hash exit status, file permissions, and credential isolation checks remain.
+Double-onboard retains one registry observation after both read-only stale commands because neither command can recreate registration.
+Managed-image cleanup retains the polling predicate that requires successful inventories and absence from both OpenShell and the container runtime; repeated post-poll checks add no evidence.
+The managed-image Hermes turns additionally require a fresh authenticated completion for the selected model from the responder on port 8000.
+OpenClaw and Deep Agents Code retain their current main qualification scenarios.
 
-Entering or leaving native routing must restart the gateway to refresh provider credentials.
-Both switch fixtures start from native local routing. The live lane requires
+The native switch restarts the gateway to refresh provider credentials. The live lane requires
 successful probes that each identify one gateway PID before comparing its lifecycle.
 Support tests reject failed, empty, and ambiguous PID probes.
 
@@ -2395,21 +2403,22 @@ test, and makes `full-e2e` the source of truth for the hard cold-path contract.
 
 ## DGX Station Express
 
-The explicit `dgx-station-express` target runs the local Station Express installer with cached Ultra weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
+The explicit `dgx-station-express` target runs the local Station Express installer with cached Nemotron 3.5 Super VL weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
 
-### Native host-local inference
+## DCode Native Local Inference
 
-`managed-image-activation` owns real OpenClaw and DCode agent turns before and after restart. Its authenticated compatible-server fixture listens on native-local port 8000, so those turns exercise sandbox-attached providers and the server's selected-model request ledger. A second DCode sandbox uses the existing credentialless vLLM selection against a separate fixture port. Its real agent turns before and after restart must reach that endpoint and model, and its recorded attachment must declare `authMode: sentinel`. Each case keeps separate artifacts and verifies sandbox removal. Hermes uses its shared route. `double-onboard` owns two real OpenShell sandboxes; its sibling uses a native provider on port 11434, and the first sandbox must receive a policy denial when it requests that endpoint. Existing GPU qualification owns Ollama, vLLM, llama.cpp, startup, and cleanup.
-
-Profile rules, ownership collisions, credential custody, mutation reconciliation, gateway prerequisites, and generated request behavior belong to the native-local, provider-policy, gateway bootstrap, and compatible-endpoint-smoke source tests. Sibling denial remains live because a source test cannot prove OpenShell composes provider policy per sandbox. No assertion about terminal formatting is added.
-
-The existing cases also remove redundant checks. Managed-image cleanup relies on its retained poll, which rejects failed inventory commands and returns only when both the sandbox and its containers are absent; four assertions repeated those exact results. Double-onboard retains registration after both stale status and connect calls, replacing the two intermediate registration checks. Its initial registration check is covered by onboarding source tests and the retained managed-workload receipt and reuse checks.
-
-Pi qualification removes six checks: two checks of fixed catalogue mode/model inputs, a seed exit check already proved by reading the fresh random canary, a pipeline exit check that only reported `sort` success, a configuration-read exit check already covered by strict parsing and route validation, and a diagnostic version-command exit check. The selected model and endpoint, persistent-state contents, command lifecycle, credential isolation, and cleanup remain checked. The polling, Pi evidence parser, managed-image diagnostics, and stale-sandbox source tests cover these retained owners.
-
-`gpu-e2e` and `gpu-double-onboard` retain their existing live chat assertions against the qualified Ollama proxy endpoint with the attached provider placeholder. They protect native routing after GPU startup and recreation. Request construction and credential reference selection remain in source and generator tests; these live assertions prove the real OpenShell proxy boundary. Their assertion counts are unchanged.
-
-Native Ollama and managed vLLM export reuse the existing GPU export cases. SDK metadata, exact native profile permissions, attachment identity, stable observation, credential custody, and unchanged service serialization are covered by the live-export-source Ollama/vLLM pipeline tests in the CLI lane. Export adds no live assertions.
+The credential-free `inference-routing` job owns the real OpenShell boundary for
+DCode local inference in `live/inference-routing.test.ts`.
+TC-INF-15 rebuilds and restarts the authenticated owner, then runs DCode against
+the recorded endpoint. It checks a bounded credential scan and denies an
+unattached sibling access to that endpoint. TC-INF-16 runs DCode against a
+credentialless endpoint and checks that upstream requests omit authorization.
+Both cases use synthetic credentials and register cleanup before onboarding.
+OpenShell commands use the fixture's explicit gateway environment because the
+child environment does not inherit the active gateway selection.
+Source tests own receipt validation, endpoint selection, configuration, and
+lifecycle handoffs. The live cases own consumer execution, credential
+substitution, and sandbox isolation.
 
 ## Fixed hosted provider qualification
 
@@ -2457,7 +2466,9 @@ sandbox isolation, restart, and failed-operation recovery.
 Each selected case requires its matching approved model variable, listed below. The smoke does not select a default model.
 The Hermes smoke uses `NOUS_API_KEY`. It does not prove interactive OAuth login or token refresh.
 Credentials remain in the test host environment and OpenShell provider store; artifacts redact them.
-The cleanup helper destroys each test sandbox. After successful onboarding, strict cleanup checks sandbox absence and requires public `nemoclaw destroy` to succeed so provider retirement cannot be silently skipped. The Deep Agents Code case also checks sandbox absence if onboarding fails; other hosted cases use best-effort cleanup after failed onboarding. Neither path proves removal of credentials from the OpenShell provider store.
+The cleanup helper destroys each test sandbox. The Deep Agents Code case checks sandbox absence even if onboarding fails.
+Other hosted cases check absence after successful onboarding; failed onboarding uses best-effort cleanup.
+Neither path proves removal of credentials from the OpenShell provider store.
 Discard the approved disposable gateway after each run, including failed onboarding. Use a fresh gateway for a retry.
 
 Select one explicit target with `targets=hosted-inference-openai`, `hosted-inference-anthropic`,

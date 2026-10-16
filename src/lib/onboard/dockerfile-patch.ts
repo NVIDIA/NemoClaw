@@ -131,6 +131,7 @@ export function renderHermesPortableDockerfileBuildSettings(
     input.preferredInferenceApi,
     true,
     input.nativeEndpointUrl,
+    "hermes",
   );
   const replacements = [
     ["NEMOCLAW_MODEL", input.model],
@@ -315,6 +316,7 @@ export function patchStagedDockerfile(
     preferredInferenceApi,
     options.nativeProvider,
     options.upstreamEndpointUrl,
+    options.agentName,
   );
   const { providerKey, primaryModelRef, inferenceApi, inferenceCompat } = providerless
     ? { providerKey: "", primaryModelRef: "", inferenceApi: "", inferenceCompat: null }

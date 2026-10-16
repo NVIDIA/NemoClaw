@@ -10,7 +10,6 @@ import {
   baseSession,
   createCompatibleProviderCapture,
   createDeps,
-  nativeLocalTestReceipt,
 } from "../../../test/helpers/inference-set";
 
 describe("runInferenceSet context window", () => {
@@ -65,7 +64,6 @@ describe("runInferenceSet context window", () => {
       name: "alpha",
       agent: "openclaw",
       provider: "ollama-local",
-      nativeLocalProviderAttachment: nativeLocalTestReceipt(),
       model: "llama3.2:3b",
       endpointUrl: null,
       preferredInferenceApi: "openai-completions",
@@ -95,7 +93,6 @@ describe("runInferenceSet context window", () => {
       name: "alpha",
       agent: "openclaw",
       provider: "ollama-local",
-      nativeLocalProviderAttachment: nativeLocalTestReceipt(),
       model: "qwen2.5:7b",
       endpointUrl: null,
       preferredInferenceApi: "openai-completions",
@@ -129,7 +126,7 @@ describe("runInferenceSet context window", () => {
         agent: "openclaw",
         provider: previousProvider,
         model: "llama3.2:3b",
-        endpointUrl: "http://host.openshell.internal:18767/v1",
+        endpointUrl: "http://host.openshell.internal:8000/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
       };
@@ -170,7 +167,7 @@ describe("runInferenceSet context window", () => {
       const options = {
         provider: "compatible-endpoint",
         model: "llama3.2:3b",
-        endpointUrl: "http://host.openshell.internal:18768/v1",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         inferenceApi: "openai-completions",
         noVerify: true,
@@ -196,7 +193,6 @@ describe("runInferenceSet context window", () => {
         name: "alpha",
         agent: "openclaw",
         provider: "ollama-local",
-        nativeLocalProviderAttachment: nativeLocalTestReceipt(),
         model: "llama3.2:3b",
       };
       let rejectReceipt = failure === "receipt";

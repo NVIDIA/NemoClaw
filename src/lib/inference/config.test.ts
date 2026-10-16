@@ -368,34 +368,6 @@ describe("inference selection config", () => {
 });
 
 describe("getSandboxInferenceConfig", () => {
-  it.each([
-    ["compatible-endpoint", "http://host.openshell.internal:42103/v1", true, INFERENCE_ROUTE_URL],
-    [
-      "compatible-endpoint",
-      "http://host.openshell.internal:8000/v1",
-      true,
-      "http://host.openshell.internal:8000/v1",
-    ],
-    ["compatible-endpoint", "http://host.openshell.internal:8000/v1", false, INFERENCE_ROUTE_URL],
-    ["ollama-local", "http://192.168.65.2:11435/v1", true, "http://192.168.65.2:11435/v1"],
-    ["ollama-local", "http://192.168.65.2:11435/v1", false, INFERENCE_ROUTE_URL],
-    ["vllm-local", "http://host.openshell.internal:8000/v1", false, INFERENCE_ROUTE_URL],
-    ["llama-cpp-local", "http://192.168.65.2:8080/v1", false, INFERENCE_ROUTE_URL],
-  ] as const)(
-    "selects %s transport for %s with nativeProvider=%s (#12558)",
-    (provider, endpoint, nativeProvider, expected) => {
-      expect(
-        getSandboxInferenceConfig(
-          "model-a",
-          provider,
-          "openai-completions",
-          nativeProvider,
-          endpoint,
-        ).inferenceBaseUrl,
-      ).toBe(expected);
-    },
-  );
-
   it("enables streaming usage for ollama-local behind the managed inference route", () => {
     expect(getSandboxInferenceConfig("qwen3.6:35b", "ollama-local")).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
@@ -676,4 +648,24 @@ describe("formatInferenceRouteDriftForDisplay", () => {
         "gateway inference route (openai[2J/gpt-5.2) differs from the recorded route for sandbox 'alpha' (nvidia/nvidia/nemotron).",
     });
   });
+});
+
+it.each([
+  ["openclaw", true, "https://inference.local/v1"],
+  ["pi", true, "https://inference.local/v1"],
+  ["langchain-deepagents-code", false, "https://inference.local/v1"],
+  ["langchain-deepagents-code", true, "http://host.openshell.internal:8000/v1"],
+  ["hermes", true, "http://host.openshell.internal:8000/v1"],
+  ["hermes", false, "https://inference.local/v1"],
+] as const)("routes %s with native attachment %s to %s (#13197)", (agent, attached, expected) => {
+  expect(
+    getSandboxInferenceConfig(
+      "fixture-model",
+      "compatible-endpoint",
+      "openai-completions",
+      attached,
+      "http://host.openshell.internal:8000/v1",
+      agent,
+    ).inferenceBaseUrl,
+  ).toBe(expected);
 });

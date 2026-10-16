@@ -120,8 +120,6 @@ RUN set -eu; \
     [ "$installed_version" = "${PI_VERSION}" ]
 
 COPY agents/pi/generate-config.ts agents/pi/check-native-credentials.ts /opt/nemoclaw-pi/
-COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/endpoint-url-safety.ts
-COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/agent-config.ts
 COPY src/lib/inference/native-nvidia/contract.ts /src/lib/inference/native-nvidia/contract.ts
 COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
 COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
@@ -129,7 +127,7 @@ COPY agents/pi/start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 
-RUN chmod 444 /src/lib/core/endpoint-url-safety.ts /src/lib/inference/native-local/agent-config.ts /opt/nemoclaw-pi/generate-config.ts /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
+RUN chmod 444 /opt/nemoclaw-pi/generate-config.ts /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
     && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold \
     && chmod -R a+rX /opt/nemoclaw-blueprint
 

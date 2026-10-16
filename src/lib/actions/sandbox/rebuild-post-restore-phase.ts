@@ -615,9 +615,7 @@ export async function runRebuildPostRestorePhase(
       classifyPortableLifecycleReceipt(sandboxName),
       recreatedEntry.lifecycleGeneration,
     );
-    const portablePairing = await settlePortableOpenClawPairing(sandboxName, {
-      portableRequired,
-    });
+    const portablePairing = await settlePortableOpenClawPairing(sandboxName, { portableRequired });
     const pairing =
       portablePairing.kind === "not-portable"
         ? await settleOrdinaryOpenClawPairing(sandboxName)

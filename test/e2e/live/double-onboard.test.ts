@@ -318,20 +318,24 @@ test(
       await artifacts.writeJson("fake-openai-requests.json", fake.requests());
       await fake.close();
     });
-    const siblingInference = await startFakeOpenAiCompatibleServer({
-      apiKey: "dummy",
-      host: "0.0.0.0",
-      model: "test-model",
-      port: 11434,
-      progress,
-      publicHost: "host.openshell.internal",
-      requireAuth: true,
-      requireAuthModels: true,
-    });
-    cleanup.trackDisposable("close sibling OpenAI-compatible endpoint", async () => {
-      await artifacts.writeJson("sibling-openai-requests.json", siblingInference.requests());
-      await siblingInference.close();
-    });
+    const siblingInference =
+      process.env.NEMOCLAW_AGENT === "hermes"
+        ? await startFakeOpenAiCompatibleServer({
+            apiKey: "dummy",
+            host: "0.0.0.0",
+            model: "test-model",
+            port: 11434,
+            progress,
+            publicHost: "host.openshell.internal",
+            requireAuth: true,
+            requireAuthModels: true,
+          })
+        : null;
+    siblingInference &&
+      cleanup.trackDisposable("close sibling OpenAI-compatible endpoint", async () => {
+        await artifacts.writeJson("sibling-openai-requests.json", siblingInference.requests());
+        await siblingInference.close();
+      });
     cleanup.trackGateway(host, "nemoclaw", {
       artifactName: "cleanup-openshell-gateway-destroy-nemoclaw",
       env: commandEnv(),
@@ -390,7 +394,9 @@ test(
               "changed-model OpenClaw onboarding replaces the sandbox and updates agent and registry selection",
             ]),
         "a sibling sandbox keeps a separate owned dashboard forward",
-        "a sibling native provider does not grant the first sandbox access to its endpoint",
+        ...(process.env.NEMOCLAW_AGENT === "hermes"
+          ? ["a sibling native provider does not grant the first sandbox access to its endpoint"]
+          : []),
         "stopping the sibling releases only its dashboard forward",
         "status and connect preserve a stale local registration",
         "explicit removal permits a clean replacement and complete cleanup",
@@ -507,50 +513,56 @@ test(
     const sibling = await runOnboard(
       host,
       SANDBOX_B,
-      siblingInference.baseUrl,
+      siblingInference?.baseUrl ?? fake.baseUrl,
       "phase-4-sibling-onboard",
     );
     expect(sibling.exitCode, resultText(sibling)).toBe(0);
 
-    progress.phase("verify sibling native endpoint remains isolated");
-    const denied = await sandbox.exec(
-      SANDBOX_A,
-      ["curl", "-sS", "--max-time", "15", "http://host.openshell.internal:11434/v1/models"],
-      {
-        artifactName: "phase-4-sibling-native-endpoint-denial",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(JSON.parse(denied.stdout)).toMatchObject({ error: "policy_denied" });
+    siblingInference && progress.phase("verify sibling native endpoint remains isolated");
+    const denied = siblingInference
+      ? await sandbox.exec(
+          SANDBOX_A,
+          ["curl", "-sS", "--max-time", "15", "http://host.openshell.internal:11434/v1/models"],
+          {
+            artifactName: "phase-4-sibling-native-endpoint-denial",
+            env: commandEnv(),
+            timeoutMs: 30_000,
+          },
+        )
+      : null;
+    denied && expect(JSON.parse(denied.stdout)).toMatchObject({ error: "policy_denied" });
 
-    progress.phase("verify sibling native endpoint accepts authenticated requests");
-    const previousRequests = siblingInference.requests().length;
-    const accepted = await sandbox.exec(
-      SANDBOX_B,
-      [
-        "sh",
-        "-lc",
-        `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; curl -fsS --max-time 15 http://host.openshell.internal:11434/v1/chat/completions -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data '{"model":"test-model","messages":[{"role":"user","content":"ping"}]}'`,
-      ],
-      {
-        artifactName: "phase-4-sibling-native-endpoint-authenticated-post",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(accepted.exitCode, resultText(accepted)).toBe(0);
-    expect(
-      siblingInference
-        .requests()
-        .slice(previousRequests)
-        .some(
-          (request) =>
-            request.auth === "ok" &&
-            request.method === "POST" &&
-            request.path === "/v1/chat/completions",
-        ),
-    ).toBe(true);
+    siblingInference &&
+      progress.phase("verify sibling native endpoint accepts authenticated requests");
+    const previousRequests = siblingInference?.requests().length ?? 0;
+    const accepted = siblingInference
+      ? await sandbox.exec(
+          SANDBOX_B,
+          [
+            "sh",
+            "-lc",
+            `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; curl -fsS --max-time 15 http://host.openshell.internal:11434/v1/chat/completions -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data '{"model":"test-model","messages":[{"role":"user","content":"ping"}]}'`,
+          ],
+          {
+            artifactName: "phase-4-sibling-native-endpoint-authenticated-post",
+            env: commandEnv(),
+            timeoutMs: 30_000,
+          },
+        )
+      : null;
+    accepted && expect(accepted.exitCode, resultText(accepted)).toBe(0);
+    siblingInference &&
+      expect(
+        siblingInference
+          .requests()
+          .slice(previousRequests)
+          .some(
+            (request) =>
+              request.auth === "ok" &&
+              request.method === "POST" &&
+              request.path === "/v1/chat/completions",
+          ),
+      ).toBe(true);
 
     const dashboardABeforeStop = await waitForDashboardReachability(
       host,

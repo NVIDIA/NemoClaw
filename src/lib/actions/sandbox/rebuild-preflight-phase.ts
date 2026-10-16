@@ -139,12 +139,7 @@ export function blockRebuildOnLegacySharedLocalRoute(
   sandboxEntry: RebuildSandboxEntry,
   bail: RebuildBail,
 ): boolean {
-  if (
-    sandboxEntry.pendingRouteReservation === true ||
-    sandboxEntry.agent === "pi" ||
-    !hasLegacySharedLocalInferenceRoute(sandboxEntry)
-  )
-    return false;
+  if (!hasLegacySharedLocalInferenceRoute(sandboxEntry)) return false;
   printRebuildPreflightFailure(
     `sandbox '${sandboxName}' uses a legacy shared local inference route without a native provider attachment.`,
     "Back up the sandbox, then re-onboard it with --fresh --name <name> --recreate-sandbox before upgrading OpenShell.",

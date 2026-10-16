@@ -45,7 +45,7 @@ function nativeLocalSandbox(overrides: Record<string, unknown> = {}) {
   };
   return {
     name: "alpha",
-    agent: "openclaw",
+    agent: "langchain-deepagents-code",
     provider: binding.provider,
     model: "qwen2.5:7b",
     gatewayName: binding.gatewayName,
@@ -201,7 +201,7 @@ function expectBoundedAffectedDiagnostics(result: InferenceGetResult, output: st
 describe("runInferenceGet", () => {
   it.each([
     {
-      agent: "openclaw",
+      agent: "langchain-deepagents-code",
       provider: "ollama-local",
       sandboxName: undefined,
       endpointUrl: "http://host.openshell.internal:11435/v1",

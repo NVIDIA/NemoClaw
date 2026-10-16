@@ -33,22 +33,6 @@ export function nativeLocalAttachmentMatchesHostLocalReceipt(
   }
 }
 
-/** Match the managed host listener selected before the application route is published. */
-export function nativeLocalHostSelectionMatchesHostLocalReceipt(
-  applicationEndpointUrl: string | null | undefined,
-  selectedEndpointUrl: string | null | undefined,
-  serializedReceipt: string | null | undefined,
-): boolean {
-  if (applicationEndpointUrl !== HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL || !serializedReceipt)
-    return false;
-  try {
-    const receipt = parseHostLocalInferenceReceipt(serializedReceipt);
-    return selectedEndpointUrl === `http://127.0.0.1:${String(receipt.endpoint.port)}/v1`;
-  } catch {
-    return false;
-  }
-}
-
 function receiptTransactionId(receipt: HostLocalInferenceReceipt): string | null {
   if (receipt.schemaVersion === 2) return receipt.publication?.transactionId ?? null;
   return receipt.runtime.kind === "container" ? (receipt.runtime.model?.generation ?? null) : null;

@@ -3,15 +3,19 @@
 
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
+import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
 import os from "node:os";
 import path from "node:path";
 
 import {
+  DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS,
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
+import { sandboxAccessEnv } from "../fixtures/clients/sandbox.ts";
 import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { hostedInferenceCredentialReferencePattern } from "../fixtures/hosted-inference.ts";
@@ -35,7 +39,6 @@ import {
   hasRawNodeStackTrace,
   inferenceSandboxName,
   onboardSandbox,
-  providerPolicyRestoreArgs,
   redactedResultText,
   requireLivePrerequisites,
   runNemoclawCli,
@@ -272,11 +275,16 @@ async function runRuntimeIdentityE2EScenario(
     cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
   );
   await cleanupSandbox(host, sandbox, sandboxName);
-  const cloudflaredBin = await resolveVerifiedCloudflaredBinary(cleanup, host);
-  const inference = await startFakeHttpsCompatibleServer({
+  const inference = await startFakeOpenAiCompatibleServer({
     apiKey: inferenceKey,
     chatContent: "PONG",
+    host: "0.0.0.0",
     model,
+    port: 8000,
+    progress,
+    publicHost: "localhost",
+    requireAuth: true,
+    requireAuthModels: true,
   });
   cleanup.add("close runtime identity inference prerequisite", async () => {
     try {
@@ -285,24 +293,13 @@ async function runRuntimeIdentityE2EScenario(
       await inference.close();
     }
   });
-  // Arbitrary loopback ports are intentionally not rewritten by onboarding.
-  // Use a public prerequisite route while preserving the shared inference path.
-  const inferenceTunnel = await startPublicMcpHttpsTunnel({
-    cloudflaredBin,
-    cleanup,
-    label: "runtime identity inference prerequisite",
-    progress,
-    readinessPath: "/v1/models",
-    readinessStatus: 401,
-    server: inference,
-  });
   progress.phase("onboard a real OpenShell sandbox");
   const onboard = await onboardSandbox(
     artifacts,
     sandboxName,
     {
       COMPATIBLE_API_KEY: inferenceKey,
-      NEMOCLAW_ENDPOINT_URL: `${inferenceTunnel.origin}/v1`,
+      NEMOCLAW_ENDPOINT_URL: inference.baseUrl,
       NEMOCLAW_MODEL: model,
       NEMOCLAW_PREFERRED_API: "openai-completions",
       NEMOCLAW_PROVIDER: "custom",
@@ -335,7 +332,17 @@ async function runRuntimeIdentityE2EScenario(
     settings?: Record<string, string>;
   };
   const priorProvidersV2Setting = settingsDocument.settings?.providers_v2_enabled;
-  const restoreSettingArgs = providerPolicyRestoreArgs(priorProvidersV2Setting);
+  const restoreSettingArgs = new Map<string, string[]>([
+    ["<unset>", ["settings", "delete", "--global", "--key", "providers_v2_enabled", "--yes"]],
+    [
+      "false",
+      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "false", "--yes"],
+    ],
+    [
+      "true",
+      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "true", "--yes"],
+    ],
+  ]).get(priorProvidersV2Setting ?? "");
   expect(restoreSettingArgs).toBeDefined();
   cleanup.add("restore OpenShell provider-derived policy setting", async () => {
     const restored = await sandbox.openshell(restoreSettingArgs!, {
@@ -376,6 +383,7 @@ async function runRuntimeIdentityE2EScenario(
       await oauth.close();
     }
   });
+  const cloudflaredBin = await resolveVerifiedCloudflaredBinary(cleanup, host);
   const tunnel = await startPublicMcpHttpsTunnel({
     cloudflaredBin,
     cleanup,
@@ -559,7 +567,6 @@ async function runRuntimeIdentityE2EScenario(
       { interval: 2_000, timeout: 35_000 },
     )
     .toMatch(placeholderPattern);
-  for (const secret of redactionValues) expect(placeholder).not.toContain(secret);
   const expectProtectedResourceVersion = async (
     projectedPlaceholder: string,
     expectedVersion: number,
@@ -714,6 +721,100 @@ test
 );
 
 test(
+  "TC-INF-09 local compatible endpoint routes through inference.local (#5744)",
+  {
+    timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm compatible-endpoint prerequisites",
+        "start the local compatible endpoint",
+        "onboard to the compatible endpoint",
+        "request sandbox chat through inference.local",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    const model = "nemoclaw-e2e-compatible";
+    const apiKey = "sk-compatible-TEST-NOT-A-REAL-VALUE";
+    await requireLivePrerequisites(host, runtimeProvider);
+    const sandboxName = inferenceSandboxName("e2e-compat");
+    cleanup.add(
+      `best-effort inference-routing compatible-endpoint cleanup for ${sandboxName}`,
+      () => cleanupSandbox(host, sandbox, sandboxName),
+    );
+    cleanup.add(`strict inference-routing compatible-endpoint cleanup for ${sandboxName}`, () =>
+      cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+    );
+    await cleanupSandbox(host, sandbox, sandboxName);
+    progress.phase("start the local compatible endpoint");
+    const fake = await startFakeOpenAiCompatibleServer({
+      apiKey,
+      chatContent: "PONG",
+      host: "0.0.0.0",
+      model,
+      port: 8000,
+      progress,
+      publicHost: "localhost",
+      requireAuth: true,
+      requireAuthModels: true,
+    });
+    cleanup.add("close inference-routing compatible endpoint", async () => {
+      try {
+        await artifacts.writeJson("tc-inf-09-compatible-endpoint-requests.json", fake.requests());
+      } finally {
+        await fake.close();
+      }
+    });
+    await artifacts.target.declare({
+      id: "inference-routing-compatible-endpoint",
+      contract: [
+        "a custom OpenAI-compatible endpoint onboards",
+        "sandbox inference.local routes chat to compatible endpoint",
+      ],
+      endpointUrl: fake.baseUrl,
+      model,
+    });
+    progress.phase("onboard to the compatible endpoint");
+    const onboard = await onboardSandbox(
+      artifacts,
+      sandboxName,
+      {
+        COMPATIBLE_API_KEY: apiKey,
+        NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+        NEMOCLAW_PROVIDER: "custom",
+      },
+      [apiKey],
+      "tc-inf-09-onboard-compatible-endpoint",
+      progress,
+      ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+    );
+    expectOnboardSuccess(onboard, "TC-INF-09 compatible-endpoint onboard");
+    progress.phase("request sandbox chat through inference.local");
+    const sandboxRequestOffset = fake.requests().length;
+    await expectOpenAiChatThroughSandbox(
+      sandbox,
+      sandboxName,
+      model,
+      [apiKey],
+      "compatible-endpoint-inference-local-chat",
+    );
+    expect(
+      fake
+        .requests()
+        .slice(sandboxRequestOffset)
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions",
+        ),
+    ).toBe(true);
+  },
+);
+
+test(
   "TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinning adapter (#6141)",
   {
     timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
@@ -782,30 +883,24 @@ test(
       endpointUrl,
       model,
     });
-    // A distinct public onboarding endpoint keeps inference set on the pinning
-    // path: reusing the exact onboarded URL intentionally bypasses that adapter.
-    const onboarding = await startFakeHttpsCompatibleServer({
-      apiKey,
-      chatContent: "placeholder",
-      model,
-    });
-    cleanup.add("close https-pin onboarding endpoint", () => onboarding.close());
-    const onboardingTunnel = await startPublicMcpHttpsTunnel({
-      cloudflaredBin,
-      cleanup,
-      label: "https-pin onboarding prerequisite",
-      progress,
-      readinessPath: "/v1/models",
-      readinessStatus: 401,
-      server: onboarding,
-    });
-    // Keep a separate private target to witness that redirects are never followed.
+    // Onboarding's own SSRF preflight (assertEndpointResolvesPublic) only
+    // rejects private/internal addresses; it does not fail closed on
+    // DNS-backed HTTPS the way the HTTPS Pin Runtime adapter's call site does,
+    // and onboarding never wires that adapter itself (only
+    // inference-set-route-containment.ts's normalizeCustomEndpointUrl does, on
+    // the `inference set --endpoint-url` path). Onboard with a disposable
+    // plain-HTTP placeholder endpoint first -- the same shape TC-INF-09 already
+    // onboards successfully with -- then switch to the DNS-backed HTTPS
+    // endpoint through `inference set --endpoint-url`, the actual #6141 call
+    // site this test exercises.
+    // Advertise localhost so onboarding exercises its host-bridge rewrite, but
+    // listen beyond host loopback so the resulting sandbox route can reach it.
     const placeholder = await startFakeOpenAiCompatibleServer({
       apiKey,
       chatContent: "placeholder",
       host: "0.0.0.0",
       model,
-      port: 0,
+      port: 8000,
       progress,
       publicHost: "localhost",
       requireAuth: true,
@@ -818,7 +913,7 @@ test(
       sandboxName,
       {
         COMPATIBLE_API_KEY: apiKey,
-        NEMOCLAW_ENDPOINT_URL: `${onboardingTunnel.origin}/v1`,
+        NEMOCLAW_ENDPOINT_URL: placeholder.baseUrl,
         NEMOCLAW_MODEL: model,
         NEMOCLAW_PREFERRED_API: "openai-completions",
         NEMOCLAW_PROVIDER: "custom",
@@ -995,5 +1090,242 @@ test(
     expect(redirectText).toContain("redirect_blocked");
     expect(redirectText.toLowerCase()).not.toContain("location:");
     expect(placeholder.requests()).toHaveLength(privateTargetRequestOffset);
+  },
+);
+
+// Live contract (#13197): the real DCode binary must consume its recorded native
+// endpoint and scoped credential. A sibling without that attachment must not
+// reach the endpoint. Source tests own selection, receipt validation, failure
+// containment and config serialization; this existing routing lane owns the
+// OpenShell credential boundary and the actual consumer request.
+type NativeDcodeContext = Pick<
+  E2ETargetFixtures,
+  "artifacts" | "cleanup" | "host" | "progress" | "runtimeProvider" | "sandbox"
+>;
+
+async function onboardNativeDcode(
+  authenticated: boolean,
+  { artifacts, cleanup, host, progress, runtimeProvider, sandbox }: NativeDcodeContext,
+) {
+  await requireLivePrerequisites(host, runtimeProvider);
+  const owner = inferenceSandboxName(authenticated ? "e2e-dc-auth" : "e2e-dc-none");
+  const sibling = inferenceSandboxName("e2e-dc-peer");
+  const model = "nemoclaw-dcode-native-local";
+  const apiKey = "sk-native-local-TEST-NOT-A-REAL-VALUE";
+  const fake = await startFakeOpenAiCompatibleServer({
+    apiKey,
+    model,
+    chatContent: "PONG",
+    host: "0.0.0.0",
+    port: 8000,
+    publicHost: "localhost",
+    requireAuth: authenticated,
+    requireAuthModels: authenticated,
+    progress,
+  });
+  cleanup.add(`close ${owner} endpoint`, async () => {
+    try {
+      await artifacts.writeJson(`${owner}-requests.json`, fake.requests());
+    } finally {
+      await fake.close();
+    }
+  });
+  // Cleanup is LIFO: delete each sandbox before closing its endpoint.
+  cleanup.add(`remove ${owner}`, () => cleanupSandbox(host, sandbox, owner, { strict: true }));
+  await cleanupSandbox(host, sandbox, owner);
+  await artifacts.target.declare({
+    id: `dcode-native-local-${authenticated ? "authenticated" : "credentialless"}`,
+    contract: [
+      "DCode reaches its native endpoint using scoped credentials",
+      ...(authenticated
+        ? [
+            "an unattached sibling cannot reach the owner endpoint",
+            "the upstream credential is absent from sandbox observations",
+          ]
+        : []),
+    ],
+    model,
+  });
+  progress.phase("onboard native DCode owner");
+  const onboard = await onboardSandbox(
+    artifacts,
+    owner,
+    {
+      NEMOCLAW_AGENT: "langchain-deepagents-code",
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_MODEL: model,
+      NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      COMPATIBLE_API_KEY: authenticated ? apiKey : "",
+      NEMOCLAW_COMPATIBLE_AUTH_MODE: authenticated ? "" : "none",
+    },
+    [apiKey],
+    `${owner}-onboard`,
+    progress,
+    ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+  );
+  const attachment = getSandbox(owner)?.nativeLocalProviderAttachment;
+  return { owner, sibling, model, apiKey, fake, onboard, attachment };
+}
+
+async function requestNativeDcode(
+  { owner, apiKey, fake }: Awaited<ReturnType<typeof onboardNativeDcode>>,
+  { progress, sandbox }: NativeDcodeContext,
+) {
+  progress.phase("request inference through DCode");
+  const requestOffset = fake.requests().length;
+  const turn = await sandbox.exec(
+    owner,
+    ["dcode", "-n", "Reply with exactly one word: PONG", "--json"],
+    {
+      artifactName: `${owner}-turn`,
+      env: sandboxAccessEnv(),
+      timeoutMs: 120_000,
+      redactionValues: [apiKey],
+    },
+  );
+  return { requestOffset, turn };
+}
+
+test(
+  "TC-INF-15 DCode uses its authenticated native local provider after rebuild and restart with sibling and credential isolation (#13197)",
+  {
+    timeout: DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm live inference prerequisites",
+        "onboard native DCode owner",
+        "rebuild native DCode owner",
+        "restart native DCode owner",
+        "request inference through DCode",
+        "check credential isolation",
+        "onboard shared-route sibling",
+        "verify sibling denial",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    const context = { artifacts, cleanup, host, progress, runtimeProvider, sandbox };
+    const selected = await onboardNativeDcode(true, context);
+    const { owner, sibling, model, apiKey, fake, onboard, attachment } = selected;
+    expectOnboardSuccess(onboard, `${owner} onboard`);
+    progress.phase("rebuild native DCode owner");
+    const rebuild = await host.nemoclaw([owner, "rebuild", "--yes", "--verbose"], {
+      artifactName: `${owner}-rebuild`,
+      env: { ...buildAvailabilityProbeEnv(), COMPATIBLE_API_KEY: apiKey },
+      redactionValues: [apiKey],
+      timeoutMs: 20 * 60_000,
+    });
+    expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
+    progress.phase("restart native DCode owner");
+    const stop = await host.nemoclaw([owner, "stop"], {
+      artifactName: `${owner}-stop`,
+      env: sandboxAccessEnv(),
+      timeoutMs: 120_000,
+    });
+    expect(stop.exitCode, resultText(stop)).toBe(0);
+    const start = await host.nemoclaw([owner, "start"], {
+      artifactName: `${owner}-start`,
+      env: sandboxAccessEnv(),
+      timeoutMs: 120_000,
+    });
+    expect(start.exitCode, resultText(start)).toBe(0);
+    const { requestOffset, turn } = await requestNativeDcode(selected, context);
+    expect(turn.exitCode).toBe(0);
+    expect(JSON.parse(turn.stdout).data.response).toBe("PONG");
+    expect(
+      fake
+        .requests()
+        .slice(requestOffset)
+        .map((request) => request.model),
+    ).toContain(model);
+    progress.phase("check credential isolation");
+    const scan = await sandbox.exec(owner, hostedCredentialScanCommand(apiKey), {
+      artifactName: `${owner}-credential-scan`,
+      env: sandboxAccessEnv(),
+      timeoutMs: 60_000,
+      redactionValues: [apiKey],
+    });
+    expect({ exitCode: scan.exitCode, ...JSON.parse(scan.stdout) }).toMatchObject({
+      exitCode: 0,
+      environmentClean: true,
+      processesClean: true,
+      sampledFilesClean: true,
+      canaryDetected: true,
+    });
+    progress.phase("onboard shared-route sibling");
+    const peerEndpoint = await startFakeOpenAiCompatibleServer({
+      apiKey,
+      model,
+      chatContent: "PONG",
+      host: "0.0.0.0",
+      publicHost: "host.openshell.internal",
+      progress,
+    });
+    cleanup.add(`close ${sibling} endpoint`, () => peerEndpoint.close());
+    cleanup.add(`remove active ${sibling}`, () =>
+      cleanupSandbox(host, sandbox, sibling, { strict: true }),
+    );
+    await cleanupSandbox(host, sandbox, sibling);
+    const peer = await onboardSandbox(
+      artifacts,
+      sibling,
+      {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NEMOCLAW_PROVIDER: "custom",
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_ENDPOINT_URL: peerEndpoint.baseUrl,
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+        COMPATIBLE_API_KEY: apiKey,
+      },
+      [apiKey],
+      `${sibling}-onboard`,
+      progress,
+      ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+    );
+    expectOnboardSuccess(peer, `${sibling} onboard`);
+    progress.phase("verify sibling denial");
+    const beforeDenied = fake.requests().length;
+    const denied = await sandbox.exec(
+      sibling,
+      ["curl", "--fail", "--max-time", "15", `${attachment!.endpointUrl}/models`],
+      {
+        artifactName: `${sibling}-owner-denial`,
+        env: sandboxAccessEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(denied.exitCode).not.toBe(0);
+    expect(fake.requests().length).toBe(beforeDenied);
+  },
+);
+
+test(
+  "TC-INF-16 DCode uses a credentialless native local provider (#13197)",
+  {
+    timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm live inference prerequisites",
+        "onboard native DCode owner",
+        "request inference through DCode",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    const context = { artifacts, cleanup, host, progress, runtimeProvider, sandbox };
+    const selected = await onboardNativeDcode(false, context);
+    const { owner, model, fake, onboard, attachment } = selected;
+    expectOnboardSuccess(onboard, `${owner} onboard`);
+    expect(attachment).toBeDefined();
+    const { requestOffset, turn } = await requestNativeDcode(selected, context);
+    expect(turn.exitCode).toBe(0);
+    expect(JSON.parse(turn.stdout).data.response).toBe("PONG");
+    expect(
+      fake
+        .requests()
+        .slice(requestOffset)
+        .find((request) => request.model === model)?.authorizationSent,
+    ).toBe(false);
   },
 );

@@ -8,13 +8,17 @@ import {
 } from "../domain/telemetry/provenance";
 import { usesNativeLocalInferenceForAgent } from "./native-local/contract";
 
-export { normalizeNativeLocalProviderAttachment } from "./native-local/contract";
+export {
+  normalizeNativeLocalProviderAttachment,
+  usesNativeLocalInferenceForAgent,
+} from "./native-local/contract";
 
 /** Identify an existing local selection that predates sandbox-attached providers. */
 export function hasLegacySharedLocalInferenceRoute(recorded: {
   agent?: string | null;
   provider?: string | null;
   endpointUrl?: string | null;
+  nimContainer?: string | null;
   nativeLocalProviderAttachment?: unknown;
 }): boolean {
   return (
@@ -23,6 +27,7 @@ export function hasLegacySharedLocalInferenceRoute(recorded: {
       recorded.agent ?? "openclaw",
       recorded.provider,
       recorded.endpointUrl,
+      Boolean(recorded.nimContainer),
     )
   );
 }

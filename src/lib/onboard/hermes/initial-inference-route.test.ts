@@ -279,6 +279,14 @@ describe("external Hermes initial native-local route", () => {
       },
     },
     {
+      name: "owned Local NIM",
+      setup(f: ReturnType<typeof fixture>) {
+        delete f.entry.nativeLocalProviderAttachment;
+        f.entry.provider = "vllm-local";
+        f.entry.nimContainer = "nemoclaw-nim-owned";
+      },
+    },
+    {
       name: "hosted",
       setup(f: ReturnType<typeof fixture>) {
         delete f.entry.nativeLocalProviderAttachment;

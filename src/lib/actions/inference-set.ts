@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { rejectInferenceSelectionProbe } from "./inference-set-provider-diagnostics";
 import {
   type NativeLocalProviderAttachment,
   usesNativeLocalInferenceForAgent,
@@ -91,7 +90,7 @@ import {
   nativeSelectionRegistryFields,
 } from "./inference-set/native";
 import type { NativeProviderAttachment } from "../inference/native-provider/contract";
-import { InferenceSetError } from "./inference-set-error";
+import { InferenceSetError, requireSuccessfulInferenceProbe } from "./inference-set-error";
 import {
   completeInferencePostCommit,
   defaultInferenceGatewayRestart,
@@ -885,6 +884,7 @@ export function patchHermesInferenceConfig(
     preferredInferenceApi,
     nativeProvider,
     nativeEndpointUrl,
+    "hermes",
   );
   applyHermesManagedRoute(config, {
     model,
@@ -1292,20 +1292,27 @@ async function runInferenceSetWithoutHostLock(
   // Registered peers are compared exactly as recorded. In particular, a
   // stopped legacy Hermes row that still records the Anthropic frontend will
   // depend on that route when restarted and must not be normalized away.
-  const selectingNativeLocal = usesNativeLocalInferenceForAgent(
-    agentName,
-    provider,
-    options.endpointUrl ?? (entry.provider === provider ? entry.endpointUrl : null),
-  );
+  const selectingNativeLocal =
+    agentName === "hermes" &&
+    usesNativeLocalInferenceForAgent(
+      agentName,
+      provider,
+      options.endpointUrl ?? (entry.provider === provider ? entry.endpointUrl : null),
+      Boolean(entry.nimContainer),
+    );
   const selectingNative =
     selectingNativeLocal ||
     isNativeInferenceSelection(provider, entry, options.endpointUrl, expectedGatewayName, deps);
-  const previousNativeLocalAttachment = await prepareNativeLocalSelectionBoundary({
-    entry,
-    selectingNativeLocal,
-    gatewayName: expectedGatewayName,
-    requirePolicy: deps.requireNativeProviderPolicy,
-  });
+  const previousNativeLocalAttachment =
+    agentName === "hermes"
+      ? await prepareNativeLocalSelectionBoundary({
+          entry,
+          sandboxName,
+          selectingNativeLocal,
+          gatewayName: expectedGatewayName,
+          requirePolicy: deps.requireNativeProviderPolicy,
+        })
+      : undefined;
   const routeSandboxes = deps.listSandboxes().sandboxes;
   const preparedRoute = prepareInferenceSetRoute({
     entry: routeEntry,
@@ -1724,18 +1731,18 @@ async function runInferenceSetWithoutHostLock(
           httpStatus: null,
         };
       }
-      if (!probe.ok) {
-        await rejectInferenceSelectionProbe({
-          nativeLocal: selectingNativeLocal,
-          sandboxName,
-          provider,
-          model,
-          detail: probe.detail,
-          previousProvider: rollbackRoute?.provider ?? previousProvider,
-          previousModel: rollbackRoute?.model ?? previousModel,
-          restorePreviousSelection: restorePreviousInferenceSelection,
-        });
-      }
+      await requireSuccessfulInferenceProbe({
+        probe,
+        selectingNativeLocal,
+        selectingNative,
+        sandboxName,
+        provider,
+        model,
+        previousProvider,
+        previousModel,
+        rollbackRoute,
+        restorePreviousInferenceSelection,
+      });
     }
 
     // Removing previous native access is a security gate for publishing another
@@ -2178,19 +2185,21 @@ export async function runInferenceSet(
       recordInferenceSetResult(selected.sandboxName, "failed", "partial", gatewayName);
       throw error;
     }
-    const committed = deps.getSandbox(selected.sandboxName);
-    if (!committed)
-      throw new InferenceSetError(
-        "Sandbox cleanup authority is unavailable after inference selection.",
-      );
-    await retireUnselectedNativeLocalProviders({
-      adapter: deps.providerAdapter,
-      sandboxName: selected.sandboxName,
-      gatewayName,
-      selected: committed.nativeLocalProviderAttachment,
-      listAuthorities: deps.listNativeLocalProviderAuthorities,
-      clearAuthority: deps.clearNativeLocalProviderAuthority,
-    });
+    if (selected.agentName === "hermes") {
+      const committed = deps.getSandbox(selected.sandboxName);
+      if (!committed)
+        throw new InferenceSetError(
+          "Sandbox cleanup authority is unavailable after inference selection.",
+        );
+      await retireUnselectedNativeLocalProviders({
+        adapter: deps.providerAdapter,
+        sandboxName: selected.sandboxName,
+        gatewayName,
+        selected: committed.nativeLocalProviderAttachment,
+        listAuthorities: deps.listNativeLocalProviderAuthorities,
+        clearAuthority: deps.clearNativeLocalProviderAuthority,
+      });
+    }
     completeInferenceSetTelemetry(selected.sandboxName, gatewayName);
     return mutation.result;
   });

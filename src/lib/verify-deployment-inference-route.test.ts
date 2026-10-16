@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { serializedLlamaCppHostLocalInferenceReceipt } from "../../test/helpers/host-local-inference-receipt";
+import { hostLocalInferenceReceipt } from "../../test/helpers/host-local-inference-receipt";
+import { serializeHostLocalInferenceReceipt } from "./onboard/runtime-provider/host-local-inference";
 import { buildChain } from "./dashboard/contract.js";
 import {
   nativeLocalIdentity,
@@ -59,9 +60,9 @@ function makeModelsRouteDeps(code: string, overrides: Record<string, unknown> = 
 
 describe("verifyDeployment inference route model-catalog validation", () => {
   it.each([
-    ["openclaw", true],
+    ["openclaw", false],
     [DCODE_AGENT, true],
-    ["pi", true],
+    ["pi", false],
     ["hermes", true],
   ])("selects the same onboarding verification route for %s", (agentName, expected) => {
     const context = onboardInferenceVerificationContext("my-sandbox", "my-gateway", agentName, {
@@ -73,6 +74,36 @@ describe("verifyDeployment inference route model-catalog validation", () => {
 
     expect(context.route.nativeLocalExpected).toBe(expected);
     expect(context.invocation.nativeLocalExpected).toBe(expected);
+  });
+
+  it("verifies owned Local NIM through the shared route while expecting native standalone vLLM", () => {
+    const flow = {
+      provider: "vllm-local",
+      model: "test-model",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      preferredInferenceApi: "openai-completions",
+    };
+    const binding = {
+      ...localBinding,
+      provider: "vllm-local" as const,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+    };
+    const staleAttachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "stale-provider",
+    };
+    const nim = onboardInferenceVerificationContext("my-sandbox", "my-gateway", DCODE_AGENT, flow, {
+      nimContainer: "nemoclaw-nim-owned",
+      nativeLocalProviderAttachment: staleAttachment,
+    });
+    const vllm = onboardInferenceVerificationContext("my-sandbox", "my-gateway", DCODE_AGENT, flow);
+    expect(nim.route.nativeLocalExpected).toBe(false);
+    expect(nim.invocation.nativeLocalExpected).toBe(false);
+    expect(nim.route.nativeLocalProviderAttachment).toBeUndefined();
+    expect(nim.invocation.nativeLocalProviderAttachment).toBeUndefined();
+    expect(vllm.route.nativeLocalExpected).toBe(true);
   });
 
   it("uses the recorded native local attachment instead of the shared models route", async () => {
@@ -112,7 +143,10 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       makeModelsRouteDeps("200", { probeInferenceInvocation }),
       {
         ...NO_RETRY,
-        inferenceRouteContext: { provider: "ollama-local", nativeLocalExpected: true },
+        inferenceRouteContext: {
+          provider: "ollama-local",
+          nativeLocalExpected: true,
+        },
       },
     );
 
@@ -147,31 +181,7 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     expect(probeInferenceInvocation).not.toHaveBeenCalled();
   });
 
-  it("probes an unchanged published Pi local selection over its recorded shared route", async () => {
-    const selection = {
-      provider: "ollama-local",
-      model: "qwen3:8b",
-      endpointUrl: "http://host.openshell.internal:11435/v1",
-      preferredInferenceApi: "openai-completions",
-    };
-    const context = onboardInferenceVerificationContext(
-      "my-sandbox",
-      "my-gateway",
-      "pi",
-      selection,
-      {
-        agent: "pi",
-        ...selection,
-        createdAt: "2026-09-01T00:00:00Z",
-      },
-    );
-    expect(context.route.nativeLocalExpected).toBe(false);
-    const probe = vi.fn(async () => ({ ok: true }) as const);
-    expect(await probeOnboardInferenceInvocation(context.invocation, probe)).toEqual({ ok: true });
-    expect(probe).toHaveBeenCalledWith(expect.not.objectContaining({ nativeProvider: true }));
-  });
-
-  it.each(["openclaw", DCODE_AGENT])(
+  it.each([DCODE_AGENT])(
     "accepts a managed local provider's canonical application route for %s",
     async (agentName) => {
       const binding = {
@@ -215,44 +225,6 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       expect(invocationProbe).toHaveBeenCalledOnce();
     },
   );
-
-  it("uses the published managed route when the provider phase still holds the host URL", async () => {
-    const binding = {
-      ...localBinding,
-      provider: "llama-cpp-local" as const,
-      endpointUrl: "http://host.openshell.internal:8081/v1",
-      authMode: "authenticated" as const,
-    };
-    const attachment = {
-      ...binding,
-      ...nativeLocalIdentity(binding),
-      schemaVersion: 1 as const,
-      providerId: "provider-1",
-    };
-    const context = onboardInferenceVerificationContext(
-      "my-sandbox",
-      "my-gateway",
-      "openclaw",
-      {
-        provider: "llama-cpp-local",
-        model: "test-model",
-        endpointUrl: "http://127.0.0.1:8081/v1",
-        preferredInferenceApi: "openai-completions",
-      },
-      {
-        provider: "llama-cpp-local",
-        model: "test-model",
-        endpointUrl: "https://inference.local/v1",
-        hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
-        nativeLocalProviderAttachment: attachment,
-      },
-    );
-    expect(context.route.endpointUrl).toBe("https://inference.local/v1");
-    expect(context.invocation.endpointUrl).toBe("https://inference.local/v1");
-    const probe = vi.fn(async () => ({ ok: true }) as const);
-    expect(await probeOnboardInferenceInvocation(context.invocation, probe)).toEqual({ ok: true });
-    expect(probe).toHaveBeenCalledOnce();
-  });
 
   it("rejects a native local attachment for a different selected endpoint in both probes", async () => {
     const context = onboardInferenceVerificationContext(
@@ -400,7 +372,11 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       makeModelsRouteDeps("200", {
         executeSandboxCommand: async (_name: string, script: string) =>
           script.includes("inference.local")
-            ? { status: 1, stdout: "200", stderr: "curl: (6) could not resolve host" }
+            ? {
+                status: 1,
+                stdout: "200",
+                stderr: "curl: (6) could not resolve host",
+              }
             : { status: 0, stdout: "200", stderr: "" },
       }),
       NO_RETRY,
@@ -413,7 +389,9 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     const result = await verifyDeployment(
       "my-sandbox",
       buildChain(),
-      makeModelsRouteDeps("404", { probeInferenceInvocation: async () => ({ ok: true }) }),
+      makeModelsRouteDeps("404", {
+        probeInferenceInvocation: async () => ({ ok: true }),
+      }),
       {
         ...NO_RETRY,
         inferenceRouteContext: { provider: "openrouter-api" },
@@ -429,7 +407,10 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       "my-sandbox",
       buildChain(),
       makeModelsRouteDeps("404", {
-        probeInferenceInvocation: async () => ({ ok: false, detail: "HTTP 401" }),
+        probeInferenceInvocation: async () => ({
+          ok: false,
+          detail: "HTTP 401",
+        }),
       }),
       {
         ...NO_RETRY,
@@ -454,7 +435,10 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       "my-sandbox",
       buildChain(),
       makeModelsRouteDeps("404", {
-        probeInferenceInvocation: async () => ({ ok: false, detail: "HTTP 401" }),
+        probeInferenceInvocation: async () => ({
+          ok: false,
+          detail: "HTTP 401",
+        }),
       }),
       {
         ...NO_RETRY,
@@ -508,7 +492,11 @@ describe("verifyDeployment inference route model-catalog validation", () => {
         const isModelsRoute = script.includes("inference.local");
         modelsRouteCalls += isModelsRoute ? 1 : 0;
         return isModelsRoute
-          ? { status: 0, stdout: responses[modelsRouteCalls - 1] ?? "200", stderr: "" }
+          ? {
+              status: 0,
+              stdout: responses[modelsRouteCalls - 1] ?? "200",
+              stderr: "",
+            }
           : { status: 0, stdout: "200", stderr: "" };
       },
     });
@@ -639,4 +627,58 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       detail: "no provider and model were recorded for this sandbox",
     });
   });
+});
+
+it("verifies the exact published Hermes host bridge route without changing DCode selection", () => {
+  const flow = {
+    provider: "compatible-endpoint",
+    model: "test-model",
+    endpointUrl: "http://127.0.0.1:8000/v1",
+    preferredInferenceApi: "openai-completions",
+  };
+  const binding = {
+    ...localBinding,
+    provider: "compatible-endpoint" as const,
+    agent: "hermes" as const,
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+  };
+  const attachment = {
+    ...flow,
+    endpointUrl: "https://inference.local/v1",
+    hostLocalInferenceReceipt: serializeHostLocalInferenceReceipt({
+      ...hostLocalInferenceReceipt(),
+      endpoint: { ...hostLocalInferenceReceipt().endpoint, host: "host.openshell.internal" },
+    }),
+    nativeLocalProviderAttachment: {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "hermes-provider",
+    },
+  };
+  const selected = onboardInferenceVerificationContext(
+    "my-sandbox",
+    "my-gateway",
+    "hermes",
+    flow,
+    attachment,
+  );
+  expect(selected.route.endpointUrl).toBe("https://inference.local/v1");
+  expect(selected.invocation.endpointUrl).toBe("https://inference.local/v1");
+  const mismatched = onboardInferenceVerificationContext(
+    "my-sandbox",
+    "my-gateway",
+    "hermes",
+    flow,
+    { ...attachment, model: "other-model" },
+  );
+  expect(mismatched.route.endpointUrl).toBe(flow.endpointUrl);
+  const dcode = onboardInferenceVerificationContext(
+    "my-sandbox",
+    "my-gateway",
+    DCODE_AGENT,
+    flow,
+    attachment,
+  );
+  expect(dcode.route.endpointUrl).toBe(flow.endpointUrl);
 });

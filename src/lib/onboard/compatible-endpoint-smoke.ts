@@ -2,18 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN } from "../inference/native-local/agent-config";
+import {
+  normalizeNativeLocalProviderAttachment,
+  type NativeLocalProviderAttachment,
+} from "../inference/native-local/contract";
 import { verifyNativeLocalProviderAttachment } from "../inference/native-local/profile";
 import type { StdioOptions } from "node:child_process";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { shellQuote } from "../core/shell-quote";
 import { compactText } from "../core/url-utils";
-import {
-  INFERENCE_ROUTE_URL,
-  MANAGED_PROVIDER_ID,
-  normalizeNativeLocalProviderAttachment,
-  type NativeLocalProviderAttachment,
-} from "../inference/config";
+import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
 import { resolveMaxTokensField } from "../inference/max-tokens-field";
 import type { HostLocalInferenceSandboxProofAuthority } from "./runtime-provider/host-local-inference-routing";
 import {
@@ -132,8 +131,6 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
   const local = normalizeNativeLocalProviderAttachment(options.nativeLocalProviderAttachment);
   if (options.nativeLocalProviderAttachment && !local)
     throw new Error("Invalid native local inference ownership receipt.");
-  if (local && local.provider !== options.provider)
-    throw new Error("Native local inference attachment does not match the selected provider.");
   if (
     !local &&
     options.forceCanonicalRoute !== true &&

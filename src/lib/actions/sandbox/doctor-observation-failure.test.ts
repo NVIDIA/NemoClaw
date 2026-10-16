@@ -6,9 +6,6 @@ import type { OpenShellSandboxError } from "../../adapters/openshell/sandbox-obs
 
 const mocks = vi.hoisted(() => ({
   listSandboxes: vi.fn(),
-  getSandbox: vi.fn(),
-  captureOpenshell: vi.fn(() => ({ status: 0, output: "" })),
-  collectInferenceChecks: vi.fn(() => []),
 }));
 
 vi.mock("../../adapters/openshell/sandbox-observer-cli", async (importOriginal) => {
@@ -25,7 +22,7 @@ vi.mock("../../adapters/openshell/resolve", () => ({
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
-  captureOpenshell: mocks.captureOpenshell,
+  captureOpenshell: () => ({ status: 0, output: "" }),
 }));
 
 vi.mock("../../agent/defs", () => ({
@@ -65,16 +62,14 @@ vi.mock("../../onboard/runtime-provider/access", () => ({
 }));
 
 vi.mock("../../state/registry", () => ({
-  getSandbox: mocks.getSandbox,
-  getConfiguredMessagingChannelsFromEntry: () => [],
-  getDisabledMessagingChannelsFromEntry: () => [],
+  getSandbox: () => null,
 }));
 
 vi.mock("./doctor-inference", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./doctor-inference")>();
   return {
     ...actual,
-    collectInferenceChecks: mocks.collectInferenceChecks,
+    collectInferenceChecks: () => [],
     collectManagedLlamaCppDoctorChecks: () => [],
     resolveDoctorReasoningEffort: () => undefined,
   };
@@ -106,14 +101,10 @@ vi.mock("./doctor-system-checks", async (importOriginal) => {
 });
 
 import { runSandboxDoctor } from "./doctor";
-import { nativeLocalIdentity } from "../../inference/native-local/contract";
 
 describe("doctor live sandbox observation", () => {
   beforeEach(() => {
     mocks.listSandboxes.mockReset();
-    mocks.getSandbox.mockReturnValue(null);
-    mocks.captureOpenshell.mockClear();
-    mocks.collectInferenceChecks.mockClear();
   });
 
   it.each<{
@@ -162,51 +153,4 @@ describe("doctor live sandbox observation", () => {
       expect(rendered).not.toContain("credential-value");
     },
   );
-});
-
-describe("doctor native local selection", () => {
-  it("passes recorded native access to diagnostics without reading a peer shared route (#12558)", async () => {
-    const binding = {
-      provider: "ollama-local" as const,
-      endpointUrl: "http://host.openshell.internal:11434/v1",
-      gatewayName: "nemoclaw-19080",
-      sandboxName: "alpha",
-      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-      authMode: "sentinel" as const,
-    };
-    const receipt = {
-      ...binding,
-      ...nativeLocalIdentity(binding),
-      schemaVersion: 1,
-      providerId: "local-id",
-    };
-    mocks.getSandbox.mockReturnValue({
-      name: "alpha",
-      agent: "openclaw",
-      provider: "ollama-local",
-      model: "local-model",
-      gatewayName: binding.gatewayName,
-      nativeLocalProviderAttachment: receipt,
-    });
-    mocks.listSandboxes.mockResolvedValue({
-      ok: false,
-      error: { kind: "transport", reason: "unreachable", message: "sandbox unavailable" },
-    });
-    await runSandboxDoctor("alpha", ["--json"], { quietJson: true });
-    expect(mocks.captureOpenshell).not.toHaveBeenCalledWith(
-      expect.arrayContaining(["inference", "get"]),
-      expect.anything(),
-    );
-    expect(mocks.collectInferenceChecks).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({
-        provider: "ollama-local",
-        model: "local-model",
-        nativeLocalProviderAttachment: receipt,
-      }),
-      false,
-      expect.anything(),
-    );
-    mocks.getSandbox.mockReturnValue(null);
-  });
 });

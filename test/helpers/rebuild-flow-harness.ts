@@ -47,15 +47,11 @@ export const mcpBridgeSource = requireDist("./mcp-bridge-source.js");
 export const messaging = requireDist("../../messaging/index.js");
 export const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
 export const mutableConfigPerms = requireDist("../../sandbox/mutable-config-perms.js");
-export const nativeLocalProfile = requireDist("../../inference/native-local/profile.js");
 export const nim = requireDist("../../inference/nim.js");
 export const onboardCredentialEnv = requireDist("../../onboard/credential-env.js");
 export const managedWorkloadRebuild = requireDist(
   "../../onboard/workload/rebuild.js",
 ) as typeof import("../../src/lib/onboard/workload/rebuild");
-export const rebuildHermesPostRestore = requireDist(
-  "./rebuild-hermes-post-restore.js",
-) as typeof import("../../src/lib/actions/sandbox/rebuild-hermes-post-restore");
 export const rebuildBackupPhase = requireDist(
   "./rebuild-backup-phase.js",
 ) as typeof import("../../src/lib/actions/sandbox/rebuild-backup-phase");

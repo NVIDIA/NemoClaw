@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { buildConfig } from "../../../scripts/generate-openclaw-config.mts";
-import { baseOpenClawGenerationEnv } from "../../../test/helpers/openclaw-env-fixture";
+import { OLLAMA_PROXY_PORT } from "../core/ollama-proxy-port";
+import { isProtectedLocalInferencePort } from "./gateway/local-endpoint-ports";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import {
@@ -20,6 +20,7 @@ import {
   ensureNativeLocalProviderAttached,
   prepareNativeLocalProfile,
   verifyNativeLocalProviderAttachment,
+  verifyRecordedNativeLocalProviderAttachment,
   retireNativeLocalProvider,
 } from "./native-local/profile";
 
@@ -74,7 +75,11 @@ function fixture(selectedBinding: NativeLocalBinding = binding) {
           }
         : {
             ok: false as const,
-            error: { kind: "command" as const, reason: "not_found" as const, message: "absent" },
+            error: {
+              kind: "command" as const,
+              reason: "not_found" as const,
+              message: "absent",
+            },
           },
     ),
     createProvider: vi.fn(async () => {
@@ -118,6 +123,96 @@ function fixture(selectedBinding: NativeLocalBinding = binding) {
 
 describe("native local inference", () => {
   it.each([
+    { reason: "wrong agent", override: { agent: "openclaw" } },
+    { reason: "untagged Hermes receipt", override: { agent: "hermes" } },
+    { reason: "wrong provider", override: { provider: "compatible-endpoint" } },
+    { reason: "wrong sandbox", override: { sandboxName: "bob" } },
+    { reason: "wrong gateway", override: { gatewayName: "nemoclaw-8081" } },
+    { reason: "malformed receipt", override: { expected: {} } },
+  ])(
+    "stops a native rebuild with $reason before provider access (#13197)",
+    async ({ override }) => {
+      const f = fixture();
+      await expect(
+        verifyRecordedNativeLocalProviderAttachment({
+          adapter: f.adapter,
+          expected: receipt,
+          agent: "langchain-deepagents-code",
+          sandboxName: binding.sandboxName,
+          gatewayName: binding.gatewayName,
+          provider: binding.provider,
+          ...override,
+        }),
+      ).rejects.toThrow("does not match the rebuild target");
+      expect(f.adapter.inspectProviderProfile).not.toHaveBeenCalled();
+      expect(f.adapter.getProvider).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      state: "missing",
+      change: (f: ReturnType<typeof fixture>, _expected: NativeLocalProviderAttachment) =>
+        f.adapter.deleteProvider(),
+    },
+    {
+      state: "changed instance",
+      change: (f: ReturnType<typeof fixture>, expected: NativeLocalProviderAttachment) => {
+        f.adapter.getProvider.mockResolvedValue({
+          ok: true,
+          value: {
+            name: expected.providerName,
+            type: expected.profileId,
+            credentialKeys: [expected.credentialEnv],
+            configKeys: [],
+            revision: { id: "different-instance", resourceVersion: 2 },
+          },
+        });
+      },
+    },
+    {
+      state: "detached",
+      change: (f: ReturnType<typeof fixture>, _expected: NativeLocalProviderAttachment) =>
+        f.adapter.detachProvider(),
+    },
+    {
+      state: "profile mismatch",
+      change: (f: ReturnType<typeof fixture>, _expected: NativeLocalProviderAttachment) => {
+        f.adapter.inspectProviderProfile.mockResolvedValue({
+          ok: false,
+          error: { kind: "parse", message: "mismatched" },
+        } as never);
+      },
+    },
+    {
+      state: "unavailable",
+      change: (f: ReturnType<typeof fixture>, _expected: NativeLocalProviderAttachment) => {
+        f.adapter.getProvider.mockRejectedValue(new Error("transport unavailable"));
+      },
+    },
+  ])("stops a native rebuild when recorded access is $state (#13197)", async ({ change }) => {
+    const f = fixture();
+    const expected = await ensureNativeLocalProvider(f.input);
+    await ensureNativeLocalProviderAttached({ adapter: f.adapter, expected, sandboxName: "alice" });
+    await change(f, expected);
+    vi.clearAllMocks();
+    await expect(
+      verifyRecordedNativeLocalProviderAttachment({
+        adapter: f.adapter,
+        expected,
+        agent: "langchain-deepagents-code",
+        sandboxName: "alice",
+        gatewayName: "nemoclaw",
+        provider: binding.provider,
+      }),
+    ).rejects.toThrow();
+    expect(f.adapter.createProvider).not.toHaveBeenCalled();
+    expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+  });
+
+  it.each([
     "http://host.openshell.internal:11435/v1",
     "http://host.docker.internal:11435/v1/",
     "http://10.1.2.3:8000/v1",
@@ -144,9 +239,9 @@ describe("native local inference", () => {
   });
 
   it.each([
-    ["openclaw", true],
+    ["openclaw", false],
     ["langchain-deepagents-code", true],
-    ["pi", true],
+    ["pi", false],
     ["hermes", true],
   ])("selects native local routing only for migrated %s", (agent, expected) => {
     expect(usesNativeLocalInferenceForAgent(agent, binding.provider, binding.endpointUrl)).toBe(
@@ -154,12 +249,88 @@ describe("native local inference", () => {
     );
   });
 
+  it("keeps an owned Local NIM selection on the shared route while standalone vLLM is native", () => {
+    expect(usesNativeLocalInferenceForAgent("openclaw", "vllm-local", null)).toBe(false);
+    expect(usesNativeLocalInferenceForAgent("langchain-deepagents-code", "vllm-local", null)).toBe(
+      true,
+    );
+    expect(usesNativeLocalInferenceForAgent("openclaw", "vllm-local", null, true)).toBe(false);
+    expect(
+      usesNativeLocalInferenceForAgent("langchain-deepagents-code", "vllm-local", null, true),
+    ).toBe(false);
+    expect(
+      usesNativeLocalInferenceForAgent("langchain-deepagents-code", "llama-cpp-local", null, true),
+    ).toBe(true);
+  });
+
+  it("isolates Hermes interpreter permissions without changing canonical DCode identity", () => {
+    expect(identity).toEqual({
+      profileId: "nemoclaw-local-authenticated-v1-2aa03053df038ef92e6bfbd9",
+      providerName: "nemoclaw-local-v1-a97b50ec4828f77f37ca0fd6",
+    });
+    const dcode = prepareNativeLocalProfile(binding);
+    expect(dcode.document.binaries).toEqual([
+      "/usr/bin/python3",
+      "/opt/venv/bin/python3",
+      "/usr/local/bin/curl",
+      "/usr/bin/curl",
+    ]);
+    const hermes = prepareNativeLocalProfile({ ...binding, agent: "hermes" });
+    expect(hermes.profileId).not.toBe(dcode.profileId);
+    expect(hermes.document.binaries).toEqual([
+      "/usr/bin/python3",
+      "/opt/hermes/.venv/bin/python",
+      "/opt/hermes/.venv/bin/python3",
+      "/opt/venv/bin/python3",
+      "/usr/local/bin/curl",
+      "/usr/bin/curl",
+    ]);
+    expect(hermes.document.endpoints).toEqual(dcode.document.endpoints);
+    expect(usesNativeLocalInferenceForAgent("hermes", "vllm-local", null, true)).toBe(false);
+  });
+
+  it.each(["pi", "openclaw", "langchain-deepagents-code", "unknown"])(
+    "rejects an explicit non-Hermes profile tag %s",
+    (agent) => {
+      expect(normalizeNativeLocalBinding({ ...binding, agent })).toBeUndefined();
+    },
+  );
+
+  it("verifies a tagged Hermes rebuild without mutating its provider", async () => {
+    const f = fixture({ ...binding, agent: "hermes" });
+    const expected = await ensureNativeLocalProvider(f.input);
+    await ensureNativeLocalProviderAttached({ adapter: f.adapter, expected, sandboxName: "alice" });
+    vi.clearAllMocks();
+    await expect(
+      verifyRecordedNativeLocalProviderAttachment({
+        adapter: f.adapter,
+        expected,
+        sandboxName: "alice",
+        gatewayName: "nemoclaw",
+        agent: "hermes",
+        provider: binding.provider,
+      }),
+    ).resolves.toEqual(expected);
+    expect(f.adapter.createProvider).not.toHaveBeenCalled();
+    expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+    await expect(
+      verifyRecordedNativeLocalProviderAttachment({
+        adapter: f.adapter,
+        expected,
+        sandboxName: "alice",
+        gatewayName: "nemoclaw",
+        agent: "langchain-deepagents-code",
+        provider: binding.provider,
+      }),
+    ).rejects.toThrow("does not match the rebuild target");
+  });
+
   it("restricts the selected bridge to models and chat requests (#12558)", () => {
     const profile = prepareNativeLocalProfile(binding);
-    expect(profile.document.binaries).toContain("/usr/local/bin/openclaw");
-    expect(profile.document.binaries).toContain("/usr/local/bin/pi");
+    expect(profile.document.binaries).toContain("/usr/bin/python3");
+    expect(profile.document.binaries).not.toContain("/usr/local/bin/openclaw");
     expect(profile.document.binaries).not.toContain("/opt/hermes/.venv/bin/python");
-    expect(profile.document.binaries).not.toContain("/opt/hermes/.venv/bin/python3");
     expect(profile.document.endpoints).toEqual([
       {
         host: "host.openshell.internal",
@@ -177,27 +348,23 @@ describe("native local inference", () => {
   });
   it("separates authentication modes and sandbox instances without credential-derived names (#12558)", () => {
     const sentinel = nativeLocalIdentity({ ...binding, authMode: "sentinel" });
-    const otherSandbox = nativeLocalIdentity({ ...binding, sandboxName: "bob" });
+    const otherSandbox = nativeLocalIdentity({
+      ...binding,
+      sandboxName: "bob",
+    });
     expect(sentinel.profileId).not.toBe(identity.profileId);
     expect(otherSandbox.profileId).toBe(identity.profileId);
     expect(otherSandbox.providerName).not.toBe(identity.providerName);
   });
-
-  it("gives Hermes interpreter permissions a distinct immutable profile without changing existing profiles", () => {
-    const existing = prepareNativeLocalProfile(binding);
-    const hermes = prepareNativeLocalProfile({ ...binding, agent: "hermes" });
-    expect(hermes.profileId).not.toBe(existing.profileId);
-    expect(hermes.providerName).not.toBe(existing.providerName);
-    expect(hermes.document.binaries).toEqual(
-      expect.arrayContaining(["/opt/hermes/.venv/bin/python", "/opt/hermes/.venv/bin/python3"]),
-    );
-    expect(hermes.document.endpoints).toEqual(existing.document.endpoints);
-    expect(hermes.document.credentials).toEqual(existing.document.credentials);
-    expect(normalizeNativeLocalBinding({ ...binding, agent: "unsupported" })).toBeUndefined();
-  });
   it("keeps runtime publication transactions distinct without changing endpoint permissions (#12558)", () => {
-    const first = nativeLocalIdentity({ ...binding, transactionId: "a".repeat(64) });
-    const second = nativeLocalIdentity({ ...binding, transactionId: "b".repeat(64) });
+    const first = nativeLocalIdentity({
+      ...binding,
+      transactionId: "a".repeat(64),
+    });
+    const second = nativeLocalIdentity({
+      ...binding,
+      transactionId: "b".repeat(64),
+    });
     expect(first.profileId).toBe(second.profileId);
     expect(first.providerName).not.toBe(second.providerName);
   });
@@ -215,7 +382,10 @@ describe("native local inference", () => {
     async (endpointUrl) => {
       const f = fixture();
       await expect(
-        ensureNativeLocalProvider({ ...f.input, binding: { ...binding, endpointUrl } }),
+        ensureNativeLocalProvider({
+          ...f.input,
+          binding: { ...binding, endpointUrl },
+        }),
       ).rejects.toThrow("boundary");
       expect(f.adapter.importProviderProfile).not.toHaveBeenCalled();
       expect(f.adapter.createProvider).not.toHaveBeenCalled();
@@ -249,7 +419,11 @@ describe("native local inference", () => {
     const f = fixture();
     f.adapter.importProviderProfile.mockResolvedValue({
       ok: false,
-      error: { kind: "command", reason: "profile_incompatible", message: "collision" },
+      error: {
+        kind: "command",
+        reason: "profile_incompatible",
+        message: "collision",
+      },
     } as never);
     await expect(ensureNativeLocalProvider(f.input)).rejects.toThrow("conflicts");
     expect(f.adapter.getProvider).not.toHaveBeenCalled();
@@ -260,7 +434,10 @@ describe("native local inference", () => {
     const create = f.adapter.createProvider.getMockImplementation()!;
     f.adapter.createProvider.mockImplementation(async () => {
       await create();
-      return { ok: false, error: { kind: "timeout", message: "lost response" } } as never;
+      return {
+        ok: false,
+        error: { kind: "timeout", message: "lost response" },
+      } as never;
     });
     expect(await ensureNativeLocalProvider(f.input)).toEqual(receipt);
     expect(f.adapter.createProvider).toHaveBeenCalledTimes(1);
@@ -285,14 +462,26 @@ describe("native local inference", () => {
     const f = fixture();
     const expected = await ensureNativeLocalProvider(f.input);
     await expect(
-      ensureNativeLocalProviderAttached({ adapter: f.adapter, expected, sandboxName: "bob" }),
+      ensureNativeLocalProviderAttached({
+        adapter: f.adapter,
+        expected,
+        sandboxName: "bob",
+      }),
     ).rejects.toThrow("selected sandbox");
     expect(f.adapter.attachProvider).not.toHaveBeenCalled();
     await expect(
-      ensureNativeLocalProviderAttached({ adapter: f.adapter, expected, sandboxName: "alice" }),
+      ensureNativeLocalProviderAttached({
+        adapter: f.adapter,
+        expected,
+        sandboxName: "alice",
+      }),
     ).resolves.toEqual({ receipt, changed: true });
     await expect(
-      verifyNativeLocalProviderAttachment({ adapter: f.adapter, expected, sandboxName: "alice" }),
+      verifyNativeLocalProviderAttachment({
+        adapter: f.adapter,
+        expected,
+        sandboxName: "alice",
+      }),
     ).resolves.toEqual(receipt);
   });
   it("rejects receipts changed to another endpoint or provider instance (#12558)", () => {
@@ -303,7 +492,10 @@ describe("native local inference", () => {
       }),
     ).toBeUndefined();
     expect(
-      normalizeNativeLocalProviderAttachment({ ...receipt, sandboxName: "bob" }),
+      normalizeNativeLocalProviderAttachment({
+        ...receipt,
+        sandboxName: "bob",
+      }),
     ).toBeUndefined();
   });
   it("refuses another sandbox's attachment before looking up or mutating access (#12558)", async () => {
@@ -323,7 +515,11 @@ describe("native local inference", () => {
     await ensureNativeLocalProvider(f.input);
     f.adapter.inspectProviderProfile.mockResolvedValue({
       ok: false,
-      error: { kind: "command", reason: "profile_incompatible", message: "changed" },
+      error: {
+        kind: "command",
+        reason: "profile_incompatible",
+        message: "changed",
+      },
     } as never);
     await expect(
       ensureNativeLocalProviderAttached({
@@ -393,27 +589,56 @@ describe("native local inference", () => {
   });
 });
 
-describe("OpenClaw native local inference config", () => {
-  it.each(["ollama-local", "vllm-local", "llama-cpp-local"])(
-    "writes the selected native endpoint and opaque credential for %s (#12558)",
-    (provider) => {
-      const environment = {
-        ...baseOpenClawGenerationEnv(),
-        NEMOCLAW_UPSTREAM_PROVIDER: provider,
-        NEMOCLAW_PROVIDER_KEY: "inference",
-        NEMOCLAW_MODEL: "local-model",
-        NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
-        NEMOCLAW_INFERENCE_API: "openai-completions",
-        OPENAI_API_KEY: "ambient-secret-must-not-escape",
-      };
-      const config = buildConfig(environment);
-      expect(config.models.providers.inference).toMatchObject({
-        baseUrl: "http://host.openshell.internal:11434/v1",
-        apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-        api: "openai-completions",
-        models: [expect.objectContaining({ id: "local-model" })],
-      });
-      expect(JSON.stringify(config)).not.toContain("ambient-secret-must-not-escape");
+vi.mock("../state/gateway-registry", () => ({
+  resolveHome: () => "/test-home",
+  listRecordedGatewayPorts: () => [12345],
+  listRecordedModelRouterPorts: () => [12346],
+}));
+
+describe("local inference endpoint port reservations", () => {
+  it.each([
+    { name: "ordinary backend", port: 11434, options: {}, protected: false },
+    { name: "default gateway", port: 8080, options: {}, protected: true },
+    { name: "recorded gateway", port: 12345, options: {}, protected: true },
+    { name: "retained router", port: 12346, options: {}, protected: true },
+    {
+      name: "router despite proxy authority",
+      port: 12346,
+      options: { ownedProxy: true },
+      protected: true,
     },
-  );
+    {
+      name: "unowned proxy",
+      port: OLLAMA_PROXY_PORT,
+      options: {},
+      protected: true,
+    },
+    {
+      name: "owned proxy",
+      port: OLLAMA_PROXY_PORT,
+      options: { ownedProxy: true },
+      protected: false,
+    },
+    {
+      name: "gateway despite proxy authority",
+      port: 12345,
+      options: { ownedProxy: true },
+      protected: true,
+    },
+  ])("protects $name at selection time (#12558)", ({ port, options, protected: expected }) => {
+    expect(isProtectedLocalInferencePort(port, options)).toBe(expected);
+  });
 });
+
+it.each(["http://10.1.2.3:8000/v1", "http://host.openshell.internal:42103/v1"])(
+  "keeps compatible endpoint %s on the shared route (#13197)",
+  (endpoint) => {
+    expect(
+      usesNativeLocalInferenceForAgent(
+        "langchain-deepagents-code",
+        "compatible-endpoint",
+        endpoint,
+      ),
+    ).toBe(false);
+  },
+);

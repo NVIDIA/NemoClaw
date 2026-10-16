@@ -159,6 +159,39 @@ describe("Hermes native local selection", () => {
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
+  describe.each(["ollama-local", "hermes-provider"])("switching to %s", (provider) => {
+    it.each([
+      { label: "foreign gateway", binding: { gatewayName: "other-gateway" } },
+      { label: "sibling sandbox", binding: { sandboxName: "other-sandbox" } },
+      { label: "different recorded provider", binding: { provider: "vllm-local" as const } },
+      { label: "malformed identity", invalid: { providerName: "invalid-provider" } },
+      { label: "malformed receipt", invalid: { schemaVersion: 2 } },
+      { label: "null receipt", nullReceipt: true },
+    ])("rejects a $label before provider operations", async (scenario) => {
+      const { config, receipt, deps } = fixture();
+      const binding = { ...receipt, ...scenario.binding };
+      Object.assign(deps.getSandbox("alpha")!, {
+        nativeLocalProviderAttachment: scenario.nullReceipt
+          ? null
+          : { ...binding, ...nativeLocalIdentity(binding), ...scenario.invalid },
+      });
+      const original = structuredClone(config);
+      const policy = vi.spyOn(deps, "requireNativeProviderPolicy");
+      const prepare = vi.spyOn(deps, "prepareNativeLocalSwitch");
+      await expect(runInferenceSet({ ...selection, provider }, deps)).rejects.toThrow(
+        "The recorded local provider attachment does not match this sandbox's selection",
+      );
+      expect(policy).not.toHaveBeenCalled();
+      expect(prepare).not.toHaveBeenCalled();
+      expect(deps.readNativeLocalCredentialHandle).not.toHaveBeenCalled();
+      expect(deps.verifyNativeLocalProviderAttachment).not.toHaveBeenCalled();
+      expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+      expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+      expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+      expect(config).toEqual(original);
+    });
+  });
+
   it("retains committed attachment authority when the guarded config write fails", async () => {
     const { deps, receipt, detach } = preparedAttachmentFixture();
     deps.calls.writeSandboxConfig.mockImplementationOnce(() => {

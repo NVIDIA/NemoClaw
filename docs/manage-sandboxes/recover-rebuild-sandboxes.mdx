@@ -192,12 +192,13 @@ Every configured route must serve a valid response to a bounded request for the 
 Shared-route providers use `inference.local`.
 Their models probe must return HTTP 2xx, except that a retained legacy `openrouter-api` shared route can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
 NVIDIA Endpoints and supported fixed hosted selections verify their recorded sandbox-attached provider and run the bounded model request at its native endpoint without the shared-route models probe.
+For Hermes, new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use the same native attachment check. Owned Local NVIDIA NIM and retained legacy shared routes continue to use `inference.local`.
 A failed required probe or model request rejects launch readiness.
 This check is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
-For retained legacy, custom, and local shared routes, the models probe must return HTTP 2xx, except that a legacy `openrouter-api` route can return HTTP 404 for `GET /v1/models` when the model request succeeds. NVIDIA Endpoints and supported fixed hosted selections instead verify the recorded native attachment and request the model through its native endpoint.
+For new Deep Agents Code standalone local selections, NemoClaw verifies the recorded sandbox-attached provider and requests the model through its qualified host-local endpoint. Older Deep Agents Code standalone local shared routes without an attachment stop before resume or rebuild; back up and recreate the sandbox with `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NVIDIA NIM retains its shared route and does not require a native attachment to resume or rebuild. For retained legacy and custom shared routes, the models probe must return HTTP 2xx, except that a legacy `openrouter-api` route can return HTTP 404 for `GET /v1/models` when the model request succeeds. NVIDIA Endpoints and supported fixed hosted selections instead verify the recorded native attachment and request the model through its native endpoint.
 A failed request rejects launch readiness and identifies the inference request as the failed check.
 </AgentOnly>
 <AgentOnly variant="openclaw">
@@ -322,7 +323,6 @@ A valid credential stored in OpenShell does not bypass validation of a supplied 
 
 Use the recovery guidance that matches the reported check:
 
-- If an OpenClaw or Deep Agents Code local sandbox still records a shared route without a native provider attachment, back up its data and freshly re-onboard it with `--fresh --name <name> --recreate-sandbox`. Rebuild stops before backup or deletion; it cannot convert that legacy route. Complete the replacement before upgrading OpenShell beyond 0.0.116.
 - Verify the sandbox name when its registry entry is missing.
 - Follow the printed OpenShell gateway recovery steps when the gateway schema is incompatible.
 - Correct the exported API key when rebuild reports `the host inference credential could not be validated`.
@@ -346,7 +346,7 @@ Use the recovery guidance that matches the reported check:
   before deletion if the handoff is missing or changed.
 </AgentOnly>
 
-A gateway that reports no live inference route does not stop rebuild for supported selections. Replacement onboarding configures and verifies the recorded route before it recreates the sandbox.
+A gateway that reports no live inference route does not stop the rebuild. Replacement onboarding configures and verifies the recorded route before it recreates the sandbox.
 
 <AgentOnly variant="openclaw">
   The rebuild command preserves the mounted workspace and carries the complete
@@ -394,7 +394,11 @@ nemohermes <sandbox-name> gateway-token --quiet
 ```
 
 Before post-restore repairs, NemoClaw verifies that the recreated sandbox still identifies as Hermes and exits nonzero if its identity does not match the rebuild target.
-After state restore, NemoClaw restarts the Hermes gateway so it reads the restored durable state, then restores managed MCP configuration through the normal lifecycle.
+For a native local selection, NemoClaw refreshes only the managed credential references after restore and before restart, preserving restored model and provider settings.
+The refresh validates the replacement sandbox identity and recorded route. An unsafe or changed configuration stops activation and preserves the backup and any acquired cron gate.
+A legacy local sandbox without a valid Hermes attachment must be backed up and recreated before native local resume or rebuild. Use `nemohermes onboard --fresh --name <sandbox-name> --recreate-sandbox` after preserving required data.
+Live qualification of the Hermes native local lifecycle is pending.
+After state restore and credential refresh, NemoClaw restarts the Hermes gateway so it reads the restored durable state, then restores managed MCP configuration through the normal lifecycle.
 MCP restoration performs an acknowledged gateway reload, so NemoClaw finishes by verifying the final running gateway and its managed MCP state without replacing that verified process again.
 The gateway starts during recreation and reads its durable state before the restore replaces it, which is why the first post-restore restart must happen before managed MCP restoration.
 `rebuild` exits nonzero instead of reporting success when it cannot verify final gateway health or managed MCP state.

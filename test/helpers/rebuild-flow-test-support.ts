@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type MockInstance, vi } from "vitest";
-import {
-  nativeLocalIdentity,
-  type NativeLocalProviderAttachment,
-} from "../../src/lib/inference/native-local/contract";
 import type { GatewayRestartResult } from "../../src/lib/actions/sandbox/gateway-restart";
 import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
 import type { OpenShellSandboxInventory } from "../../src/lib/adapters/openshell/sandbox-observer";
@@ -243,7 +239,7 @@ export function createRebuildFlowSession(machineSnapshotVersion: number): Rebuil
     updatedAt: "2026-06-01T00:00:00.000Z",
     sandboxName: "alpha",
     agent: null,
-    provider: "nvidia-router",
+    provider: "ollama-local",
     model: "nvidia/nemotron",
     credentialEnv: null,
     checkpoint: null,
@@ -304,24 +300,4 @@ export function installTerminalStepFailureMock(
       session.machine.revision += 1;
       return session;
     });
-}
-
-/** A normalized local source receipt for tests that exercise later rebuild boundaries. */
-export function nativeLocalRebuildAttachment(
-  provider: "ollama-local" | "vllm-local",
-): NativeLocalProviderAttachment {
-  const binding = {
-    provider,
-    endpointUrl: `http://host.openshell.internal:${provider === "vllm-local" ? "8000" : "11434"}/v1`,
-    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-    authMode: "sentinel" as const,
-    gatewayName: "nemoclaw",
-    sandboxName: "alpha",
-  };
-  return {
-    ...binding,
-    ...nativeLocalIdentity(binding),
-    schemaVersion: 1,
-    providerId: "11111111-2222-4333-8444-555555555555",
-  };
 }

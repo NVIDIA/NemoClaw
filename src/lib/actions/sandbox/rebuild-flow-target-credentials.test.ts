@@ -12,7 +12,6 @@ import {
   installRebuildFlowTestHooks,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
-import { nativeLocalRebuildAttachment } from "../../../../test/helpers/rebuild-flow-test-support";
 
 describe("rebuildSandbox flow: target credentials", () => {
   installRebuildFlowTestHooks();
@@ -35,7 +34,7 @@ describe("rebuildSandbox flow: target credentials", () => {
 
   it("rejects recorded web search when the target agent does not support it", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: { agent: "hermes", webSearchEnabled: true },
+      sandboxEntry: { agent: "hermes", provider: "nvidia-router", webSearchEnabled: true },
     });
 
     await expect(
@@ -169,13 +168,7 @@ describe("rebuildSandbox flow: target credentials", () => {
   });
 
   it("ignores a stale matching-session credential for a resolved local target", async () => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        provider: "ollama-local",
-        nativeLocalProviderAttachment: nativeLocalRebuildAttachment("ollama-local"),
-      },
-    });
-    harness.session.provider = "ollama-local";
+    const harness = createRebuildFlowHarness();
     harness.session.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
 
     await expect(

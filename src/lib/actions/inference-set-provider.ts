@@ -760,10 +760,6 @@ export {
 } from "./inference/native-local";
 export { requireNativeProviderPolicy } from "../adapters/openshell/provider-policy";
 export {
-  usesNativeLocalInference,
-  normalizeNativeLocalProviderAttachment,
-} from "../inference/native-local/contract";
-export {
   detachNativeLocalProvider,
   ensureNativeLocalProviderAttached,
   verifyNativeLocalProviderAttachment,

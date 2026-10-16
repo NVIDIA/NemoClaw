@@ -1,10 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  normalizeNativeLocalProviderAttachment,
-  usesNativeLocalInferenceForAgent,
-} from "../inference/native-local/contract";
 import { requireHostedProviderAttachment } from "../inference/native-provider/hosted-attachment";
 
 import { isDeepStrictEqual } from "node:util";
@@ -17,7 +13,9 @@ import type {
 } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
+  normalizeNativeLocalProviderAttachment,
   normalizeInferenceSelection,
+  usesNativeLocalInferenceForAgent,
 } from "../inference/selection";
 import {
   normalizeNativeNvidiaProviderAttachment,
@@ -32,9 +30,8 @@ import { withCurrentPortableHostFenceTry } from "../state/portable-uninstall-ret
 import {
   cloneSandboxHostLocalInferenceProvenance,
   cloneSandboxHostLocalInferenceReceipt,
-  nativeLocalAttachmentMatchesHostLocalReceipt,
-  nativeLocalHostSelectionMatchesHostLocalReceipt,
   requireSandboxHostLocalInferenceProvenance,
+  nativeLocalAttachmentMatchesHostLocalReceipt,
 } from "../state/registry/host-local-inference";
 import { cloneSandboxHostMounts } from "../state/registry/host-mount";
 import {
@@ -206,38 +203,6 @@ export function sandboxCreateInferenceSelection(
   return normalizeInferenceSelection(input);
 }
 
-function nativeLocalAttachmentMatchesSelection(
-  attachment: NonNullable<SandboxEntry["nativeLocalProviderAttachment"]>,
-  selection: {
-    agentName: string;
-    sandboxName: string;
-    gatewayName: string;
-    provider: string | null | undefined;
-    endpointUrl: string | null;
-    hostLocalInferenceReceipt?: string | null;
-  },
-): boolean {
-  const endpointMatches =
-    attachment.endpointUrl === selection.endpointUrl ||
-    nativeLocalAttachmentMatchesHostLocalReceipt(
-      selection.endpointUrl,
-      attachment.endpointUrl,
-      selection.hostLocalInferenceReceipt,
-    );
-  return (
-    usesNativeLocalInferenceForAgent(
-      selection.agentName,
-      selection.provider,
-      selection.endpointUrl,
-    ) &&
-    (attachment.agent === "hermes") === (selection.agentName === "hermes") &&
-    attachment.sandboxName === selection.sandboxName &&
-    attachment.gatewayName === selection.gatewayName &&
-    attachment.provider === selection.provider &&
-    endpointMatches
-  );
-}
-
 export function buildCreatedSandboxRegistryEntry(
   input: CreatedSandboxRegistryEntryInput,
 ): SandboxEntry {
@@ -289,6 +254,25 @@ export function buildCreatedSandboxRegistryEntry(
   );
   if (input.nativeLocalProviderAttachment !== undefined && !nativeLocalProviderAttachment)
     throw new Error("Invalid native local provider attachment.");
+  if (
+    nativeLocalProviderAttachment &&
+    (requestedAgent === "hermes" || nativeLocalProviderAttachment.agent === "hermes") &&
+    !(
+      requestedAgent === "hermes" &&
+      nativeLocalProviderAttachment.agent === "hermes" &&
+      nativeLocalProviderAttachment.sandboxName === input.sandboxName &&
+      nativeLocalProviderAttachment.gatewayName === input.gatewayName &&
+      nativeLocalProviderAttachment.provider === input.inferenceSelection.provider &&
+      (nativeLocalProviderAttachment.endpointUrl === input.inferenceSelection.endpointUrl ||
+        nativeLocalAttachmentMatchesHostLocalReceipt(
+          input.inferenceSelection.endpointUrl,
+          nativeLocalProviderAttachment.endpointUrl,
+          hostLocalInferenceReceipt,
+        ))
+    )
+  ) {
+    throw new Error("Native local provider attachment does not match the selected Hermes sandbox.");
+  }
   const nativeHostedProviderAttachment = requireHostedProviderAttachment(
     input.nativeHostedProviderAttachment,
     input.inferenceSelection.provider,
@@ -351,14 +335,7 @@ export function buildCreatedSandboxRegistryEntry(
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
     ...(nativeLocalProviderAttachment &&
-    nativeLocalAttachmentMatchesSelection(nativeLocalProviderAttachment, {
-      agentName: requestedAgent,
-      sandboxName: input.sandboxName,
-      gatewayName: input.gatewayName,
-      provider: input.inferenceSelection.provider,
-      endpointUrl: input.inferenceSelection.endpointUrl,
-      hostLocalInferenceReceipt,
-    })
+    !(input.inferenceSelection.provider === "vllm-local" && input.inferenceSelection.nimContainer)
       ? { nativeLocalProviderAttachment }
       : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
@@ -471,7 +448,9 @@ export function prepareCreatedSandboxRegistration(
       : {}),
     ...(pendingNativeNvidiaProviderAttachment === undefined
       ? {}
-      : { nativeNvidiaProviderAttachment: pendingNativeNvidiaProviderAttachment }),
+      : {
+          nativeNvidiaProviderAttachment: pendingNativeNvidiaProviderAttachment,
+        }),
   });
   if (input.portableLifecycle === true) {
     if (getRequestedSandboxAgentName(input.agent) !== "openclaw") {
@@ -565,94 +544,62 @@ export function nativeLocalReservationStatus(input: {
   endpointSource: InferenceEndpointSource | null;
   credentialEnv: string | null;
   preferredInferenceApi: string | null;
-  onMismatch?: (fields: readonly string[]) => void;
 }): "shared" | "exact" | "changed" {
-  if (!usesNativeLocalInferenceForAgent(input.agentName, input.provider, input.endpointUrl)) {
+  if (
+    !usesNativeLocalInferenceForAgent(
+      input.agentName,
+      input.provider,
+      input.endpointUrl,
+      input.provider === "vllm-local" && Boolean(input.entry.nimContainer),
+    )
+  ) {
     return "shared";
   }
   const attachment = normalizeNativeLocalProviderAttachment(
     input.entry.nativeLocalProviderAttachment,
   );
-  const selectedEndpointUrl = nativeLocalHostSelectionMatchesHostLocalReceipt(
-    input.entry.endpointUrl,
-    input.endpointUrl,
-    input.entry.hostLocalInferenceReceipt,
-  )
-    ? (input.entry.endpointUrl ?? null)
-    : input.endpointUrl;
-  const matches = {
-    attachment: Boolean(
-      attachment &&
-      nativeLocalAttachmentMatchesSelection(attachment, {
-        agentName: input.agentName,
-        sandboxName: input.sandboxName,
-        gatewayName: input.gatewayName,
-        provider: input.provider,
-        endpointUrl: selectedEndpointUrl,
-        hostLocalInferenceReceipt: input.entry.hostLocalInferenceReceipt,
-      }),
-    ),
-    provider: input.entry.provider === input.provider,
-    model: input.entry.model === input.model,
-    endpointUrl: input.entry.endpointUrl === selectedEndpointUrl,
-    endpointSource: (input.entry.endpointSource ?? null) === input.endpointSource,
-    credentialEnv: (input.entry.credentialEnv ?? null) === input.credentialEnv,
-    preferredInferenceApi:
-      (input.entry.preferredInferenceApi ?? null) === input.preferredInferenceApi,
-  };
-  const mismatches = Object.entries(matches)
-    .filter(([, matches]) => !matches)
-    .map(([field]) => field);
-  if (mismatches.length) input.onMismatch?.(mismatches);
-  return mismatches.length ? "changed" : "exact";
+  return attachment &&
+    (attachment.agent === "hermes") === (input.agentName === "hermes") &&
+    attachment.sandboxName === input.sandboxName &&
+    attachment.gatewayName === input.gatewayName &&
+    attachment.provider === input.provider &&
+    input.entry.provider === input.provider &&
+    input.entry.model === input.model &&
+    input.entry.endpointUrl === input.endpointUrl &&
+    (input.entry.endpointSource ?? null) === input.endpointSource &&
+    (input.entry.credentialEnv ?? null) === input.credentialEnv &&
+    (input.entry.preferredInferenceApi ?? null) === input.preferredInferenceApi
+    ? "exact"
+    : "changed";
 }
 
-export function nativeInferenceCreateIntentFields(input: {
-  agentName: string;
-  provider: string | null | undefined;
-  endpointUrl: string | null;
-  gatewayName: string;
-  entry: SandboxEntry | null;
-}): {
+export function nativeInferenceCreateIntentFields(
+  provider: string | null | undefined,
+  entry: SandboxEntry | null,
+  localNimSelected = false,
+): {
   inferenceProvider: string | null;
   nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
 } {
-  const retainedAttachment = input.entry
-    ? normalizeNativeLocalProviderAttachment(
-        retainedNativeLocalProviderAttachment(input.entry, {
-          provider: input.provider ?? null,
-          endpointUrl: input.endpointUrl,
-          gatewayName: input.gatewayName,
-        }),
-      )
-    : undefined;
+  // Local NIM keeps its shared route even if a stale vLLM attachment exists.
   const nativeLocalProviderAttachment =
-    retainedAttachment &&
-    input.entry &&
-    nativeLocalAttachmentMatchesSelection(retainedAttachment, {
-      agentName: input.agentName,
-      sandboxName: input.entry.name,
-      gatewayName: input.gatewayName,
-      provider: input.provider,
-      endpointUrl: input.endpointUrl,
-      hostLocalInferenceReceipt: input.entry?.hostLocalInferenceReceipt,
-    })
-      ? retainedAttachment
-      : undefined;
+    provider === "vllm-local" && (localNimSelected || entry?.nimContainer)
+      ? undefined
+      : normalizeNativeLocalProviderAttachment(entry?.nativeLocalProviderAttachment);
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
-    input.entry?.nativeNvidiaProviderAttachment,
+    entry?.nativeNvidiaProviderAttachment,
   );
   const hostedAttachment = requireHostedProviderAttachment(
-    input.entry?.nativeHostedProviderAttachment,
-    input.provider,
+    entry?.nativeHostedProviderAttachment,
+    provider,
   );
   return {
     inferenceProvider:
       nativeLocalProviderAttachment?.providerName ??
       hostedAttachment?.providerName ??
-      nativeInferenceProviderForSandbox(input.provider),
+      nativeInferenceProviderForSandbox(provider),
     ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
     nativeHostedProviderAttachment: hostedAttachment,
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),

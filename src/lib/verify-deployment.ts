@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeLocalAttachmentMatchesHostLocalReceipt } from "./state/registry/host-local-inference";
+
 /**
  * Post-deployment verification — confirms the full delivery chain is
  * operational before printing "YOUR AGENT IS LIVE". All deps injected
@@ -34,7 +36,6 @@ import { retryUntilAsync } from "./core/retry";
 import { isNativeNvidiaProvider } from "./inference/native-nvidia";
 import { requireHostedProviderAttachment } from "./inference/native-provider/hosted-attachment";
 import {
-  isPersistedPiSharedLocalInferenceRoute,
   normalizeNativeLocalBinding,
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInferenceForAgent,
@@ -48,7 +49,6 @@ import {
 import { GATEWAY_PORT, resolveGatewayLogPathForPort } from "./onboard/gateway/state-dir";
 import { getMessagingProviderNamesForChannel } from "./onboard/messaging-reuse";
 import { HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL } from "./onboard/runtime-provider/host-local-inference-routing";
-import { nativeLocalAttachmentMatchesHostLocalReceipt } from "./state/registry/host-local-inference";
 
 export { shouldDiagnoseCustomOpenClawRuntime } from "./onboard/custom-openclaw-runtime-diagnosis";
 
@@ -234,13 +234,21 @@ async function probeGatewayInSandboxOnce(
     `http://127.0.0.1:${port}${endpoint} 2>/dev/null || echo 000`;
   const result = await deps.executeSandboxCommand(sandboxName, script);
   if (!result) {
-    return { reachable: false, httpCode: 0, detail: "sandbox unreachable (SSH failed)" };
+    return {
+      reachable: false,
+      httpCode: 0,
+      detail: "sandbox unreachable (SSH failed)",
+    };
   }
   const code = parseInt(result.stdout.trim(), 10) || 0;
   if (GATEWAY_ALIVE_CODES.has(code)) {
     return { reachable: true, httpCode: code, detail: `HTTP ${code}` };
   }
-  return { reachable: false, httpCode: code, detail: `HTTP ${code} (gateway not responding)` };
+  return {
+    reachable: false,
+    httpCode: code,
+    detail: `HTTP ${code} (gateway not responding)`,
+  };
 }
 
 async function verifyGatewayInSandbox(
@@ -307,7 +315,11 @@ async function probeInferenceRouteOnce(
     `https://inference.local/v1/models 2>/dev/null || echo 000); echo $HTTP_CODE`;
   const result = await deps.executeSandboxCommand(sandboxName, script);
   if (!result) {
-    return { status: "unreachable", detail: "sandbox unreachable", httpCode: 0 };
+    return {
+      status: "unreachable",
+      detail: "sandbox unreachable",
+      httpCode: 0,
+    };
   }
   // curl writes exactly three digits and the script echoes `000` when it fails,
   // so any other token means the probe carries no status worth trusting.
@@ -344,7 +356,11 @@ async function probeInferenceRouteOnce(
       httpCode: code,
     };
   }
-  return { status: "ok", detail: `inference.local responded HTTP ${code}`, httpCode: code };
+  return {
+    status: "ok",
+    detail: `inference.local responded HTTP ${code}`,
+    httpCode: code,
+  };
 }
 
 /**
@@ -422,7 +438,10 @@ function matchesNativeLocalVerificationRoute(
     context.endpointUrl === HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL
   )
     return true;
-  const selected = normalizeNativeLocalBinding({ ...attachment, endpointUrl: context.endpointUrl });
+  const selected = normalizeNativeLocalBinding({
+    ...attachment,
+    endpointUrl: context.endpointUrl,
+  });
   return selected?.endpointUrl === attachment.endpointUrl;
 }
 
@@ -520,7 +539,10 @@ function probeDashboardFromHostOnce(
   if (code > 0) {
     return { reachable: false, detail: `host probe HTTP ${code} (unexpected)` };
   }
-  return { reachable: false, detail: "port forward not working (connection refused)" };
+  return {
+    reachable: false,
+    detail: "port forward not working (connection refused)",
+  };
 }
 
 async function verifyDashboardFromHost(
@@ -573,7 +595,10 @@ function probeAgentApiFromHostOnce(
   if (code > 0) {
     return { reachable: false, detail: `host probe HTTP ${code} (unexpected)` };
   }
-  return { reachable: false, detail: "port forward not working (connection refused)" };
+  return {
+    reachable: false,
+    detail: "port forward not working (connection refused)",
+  };
 }
 
 async function verifyAgentApiFromHost(
@@ -983,35 +1008,37 @@ export function onboardInferenceVerificationContext(
     | (Pick<
         InferenceRouteContext,
         "nativeLocalProviderAttachment" | "nativeHostedProviderAttachment"
-      > &
-        Partial<Pick<InferenceInvocationContext, "provider" | "model" | "endpointUrl">> & {
-          agent?: string | null;
-          createdAt?: string | null;
-          pendingRouteReservation?: boolean;
-          hostLocalInferenceReceipt?: string | null;
-        })
+      > & {
+        nimContainer?: string | null;
+        provider?: string | null;
+        model?: string | null;
+        endpointUrl?: string | null;
+        hostLocalInferenceReceipt?: string | null;
+      })
     | null,
 ): { route: InferenceRouteContext; invocation: InferenceInvocationContext } {
-  const nativeLocalExpected =
-    usesNativeLocalInferenceForAgent(agentName, flow.provider, flow.endpointUrl) &&
-    !isPersistedPiSharedLocalInferenceRoute(attachment, flow);
-  const nativeLocalProviderAttachment = attachment?.nativeLocalProviderAttachment;
+  const nativeLocalExpected = usesNativeLocalInferenceForAgent(
+    agentName,
+    flow.provider,
+    flow.endpointUrl,
+    flow.provider === "vllm-local" && Boolean(attachment?.nimContainer),
+  );
+  const nativeLocalProviderAttachment =
+    flow.provider === "vllm-local" && attachment?.nimContainer
+      ? undefined
+      : attachment?.nativeLocalProviderAttachment;
   const nativeHostedProviderAttachment = attachment?.nativeHostedProviderAttachment;
-  const recordedHostLocalRouteMatchesAttachment =
-    nativeLocalProviderAttachment &&
+  const endpointUrl =
+    agentName === "hermes" &&
+    nativeLocalExpected &&
+    nativeLocalProviderAttachment?.agent === "hermes" &&
+    attachment?.provider === flow.provider &&
+    attachment?.model === flow.model &&
     nativeLocalAttachmentMatchesHostLocalReceipt(
       attachment?.endpointUrl,
       nativeLocalProviderAttachment.endpointUrl,
       attachment?.hostLocalInferenceReceipt,
-    );
-  // The provider phase can still hold the host listener URL after publishing a
-  // managed local route. Verify the exact recorded application route instead.
-  const endpointUrl =
-    nativeLocalExpected &&
-    nativeLocalProviderAttachment &&
-    attachment?.provider === flow.provider &&
-    attachment?.model === flow.model &&
-    recordedHostLocalRouteMatchesAttachment
+    )
       ? attachment.endpointUrl
       : (flow.endpointUrl ?? null);
   return {
@@ -1051,13 +1078,19 @@ export async function probeOnboardInferenceInvocation(
 ): Promise<{ ok: boolean; detail?: string }> {
   const { model, provider } = context;
   if (!model || !provider) {
-    return { ok: false, detail: "no provider and model were recorded for this sandbox" };
+    return {
+      ok: false,
+      detail: "no provider and model were recorded for this sandbox",
+    };
   }
   if (
     (context.nativeLocalExpected || context.nativeLocalProviderAttachment !== undefined) &&
     !matchesNativeLocalVerificationRoute(context, context.sandboxName)
   ) {
-    return { ok: false, detail: "native local provider attachment is missing or invalid" };
+    return {
+      ok: false,
+      detail: "native local provider attachment is missing or invalid",
+    };
   }
   let hostedAttachment;
   try {

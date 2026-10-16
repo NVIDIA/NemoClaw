@@ -4,7 +4,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-local/agent-config.ts";
 import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -146,7 +145,7 @@ async function expectSandboxInference42(
     [
       "sh",
       "-lc",
-      `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; curl -fsS --max-time 120 http://host.openshell.internal:${PROXY_PORT}/v1/chat/completions -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data '${chatRequest(model)}' | ${parseReplyCommand()}`,
+      `curl -fsS --max-time 120 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${chatRequest(model)}' | ${parseReplyCommand()}`,
     ],
     {
       artifactName,
@@ -193,7 +192,7 @@ test(
         "the persisted Ollama auth-proxy token works after first onboard",
         "nemoclaw onboard --non-interactive --yes recreates the sandbox",
         "the running proxy accepts the persisted token after re-onboard and rejects unauthenticated/wrong-token requests",
-        "sandbox native endpoint reaches Ollama after re-onboard",
+        "sandbox inference.local reaches Ollama after re-onboard",
       ],
     });
 

@@ -9,39 +9,10 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { testTimeoutOptions } from "../../../../../test/helpers/timeouts";
-import { nativeLocalIdentity } from "../../../inference/native-local/contract";
-import * as registry from "../../../state/registry";
 import { handleSandboxState } from "./sandbox";
 import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 
 describe("sandbox registration route transaction", () => {
-  const nativeEndpoint = "http://host.openshell.internal:11434/v1";
-  const nativeBinding = {
-    provider: "compatible-endpoint",
-    endpointUrl: nativeEndpoint,
-    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-    authMode: "authenticated",
-    gatewayName: "nemoclaw",
-    sandboxName: "my-assistant",
-  } as const;
-  const nativeAttachment = {
-    ...nativeBinding,
-    ...nativeLocalIdentity(nativeBinding),
-    schemaVersion: 1 as const,
-    providerId: "native-provider-id",
-  };
-  const nativeEntry = {
-    name: "my-assistant",
-    provider: "compatible-endpoint",
-    model: "test-model",
-    endpointUrl: nativeEndpoint,
-    endpointSource: "onboard" as const,
-    credentialEnv: "COMPATIBLE_API_KEY",
-    preferredInferenceApi: "openai-completions",
-    gatewayName: "nemoclaw",
-    nativeLocalProviderAttachment: nativeAttachment,
-  };
-
   beforeEach(() => {
     vi.stubEnv("HOME", fs.mkdtempSync(path.join(os.tmpdir() ?? "/tmp", "nemoclaw-sandbox-route-")));
   });
@@ -49,7 +20,6 @@ describe("sandbox registration route transaction", () => {
   afterEach(() => {
     fs.rmSync(process.env.HOME!, { force: true, recursive: true });
     vi.unstubAllEnvs();
-    vi.restoreAllMocks();
   });
 
   it("allows valid peer-route drift after waiting for the gateway lock", async () => {
@@ -94,170 +64,6 @@ describe("sandbox registration route transaction", () => {
     expect(calls.updateSession).toHaveBeenCalled();
     expect(calls.error).not.toHaveBeenCalled();
   });
-
-  it.each(["openclaw", "langchain-deepagents-code", "pi", "hermes"])(
-    "accepts %s exact native local reservation before sandbox creation (#12975)",
-    async (agentName) => {
-      const startRecordedStep = vi.fn(async () => {
-        throw new Error("past-native-route-guard");
-      });
-      const checkGatewayRouteCompatibility = vi.fn(() => ({
-        ok: false as const,
-        gatewayName: "nemoclaw",
-        sandboxName: null,
-        route: { provider: "compatible-endpoint", model: "test-model" },
-        conflicts: [{ sandboxName: "shared-peer", reason: "custom-endpoint" as const }],
-      }));
-      const { calls, deps } = createDeps({
-        checkGatewayRouteCompatibility,
-        getSandboxRegistryEntry: () => {
-          const binding = {
-            ...nativeBinding,
-            ...(agentName === "hermes" ? { agent: "hermes" as const } : {}),
-          };
-          return {
-            ...nativeEntry,
-            nativeLocalProviderAttachment: {
-              ...nativeAttachment,
-              ...binding,
-              ...nativeLocalIdentity(binding),
-            },
-          };
-        },
-        startRecordedStep,
-      });
-
-      await expect(
-        handleSandboxState({
-          ...baseOptions(deps),
-          agent: { name: agentName },
-          provider: "compatible-endpoint",
-          model: "test-model",
-          endpointUrl: nativeEndpoint,
-          endpointSource: "onboard",
-          credentialEnv: "COMPATIBLE_API_KEY",
-        }),
-      ).rejects.toThrow("past-native-route-guard");
-
-      expect(checkGatewayRouteCompatibility).not.toHaveBeenCalled();
-      expect(startRecordedStep).toHaveBeenCalledOnce();
-      expect(calls.createSandbox).not.toHaveBeenCalled();
-      expect(calls.error).not.toHaveBeenCalled();
-    },
-  );
-
-  it("rejects a changed native local reservation before sandbox creation (#12975)", async () => {
-    const { calls, deps } = createDeps({
-      getSandboxRegistryEntry: () => ({
-        ...nativeEntry,
-        endpointUrl: "http://host.openshell.internal:8000/v1",
-      }),
-    });
-
-    await expect(
-      handleSandboxState({
-        ...baseOptions(deps),
-        agent: { name: "openclaw" },
-        provider: "compatible-endpoint",
-        model: "test-model",
-        endpointUrl: nativeEndpoint,
-        endpointSource: "onboard",
-        credentialEnv: "COMPATIBLE_API_KEY",
-      }),
-    ).rejects.toThrow("exit 1");
-
-    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("reservation"));
-    expect(calls.createSandbox).not.toHaveBeenCalled();
-  });
-
-  it("does not bypass shared route conflicts without a native local attachment (#12975)", async () => {
-    const { nativeLocalProviderAttachment: _attachment, ...legacyEntry } = nativeEntry;
-    const checkGatewayRouteCompatibility = vi.fn(() => ({
-      ok: false as const,
-      gatewayName: "nemoclaw",
-      sandboxName: null,
-      route: { provider: "compatible-endpoint", model: "test-model" },
-      conflicts: [{ sandboxName: "my-assistant", reason: "custom-endpoint" as const }],
-    }));
-    const { calls, deps } = createDeps({
-      checkGatewayRouteCompatibility,
-      getSandboxRegistryEntry: () => legacyEntry,
-    });
-
-    await expect(
-      handleSandboxState({
-        ...baseOptions(deps),
-        agent: { name: "openclaw" },
-        provider: "compatible-endpoint",
-        model: "test-model",
-        endpointUrl: nativeEndpoint,
-        endpointSource: "onboard",
-        credentialEnv: "COMPATIBLE_API_KEY",
-      }),
-    ).rejects.toThrow("exit 1");
-
-    expect(checkGatewayRouteCompatibility).toHaveBeenCalledOnce();
-    expect(calls.createSandbox).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["hermes", "https://hosted.example.test/v1"],
-    ["openclaw", "https://hosted.example.test/v1"],
-  ])("keeps %s at %s on the shared route guard (#12975)", async (agentName, endpointUrl) => {
-    const checkGatewayRouteCompatibility = vi.fn(() => ({
-      ok: false as const,
-      gatewayName: "nemoclaw",
-      sandboxName: null,
-      route: { provider: "compatible-endpoint", model: "test-model" },
-      conflicts: [{ sandboxName: "shared-peer", reason: "custom-endpoint" as const }],
-    }));
-    const { calls, deps } = createDeps({
-      checkGatewayRouteCompatibility,
-      getSandboxRegistryEntry: () => ({ ...nativeEntry }),
-    });
-
-    await expect(
-      handleSandboxState({
-        ...baseOptions(deps),
-        agent: { name: agentName },
-        provider: "compatible-endpoint",
-        model: "test-model",
-        endpointUrl,
-        endpointSource: "onboard",
-        credentialEnv: "COMPATIBLE_API_KEY",
-      }),
-    ).rejects.toThrow("exit 1");
-
-    expect(checkGatewayRouteCompatibility).toHaveBeenCalledOnce();
-    expect(calls.createSandbox).not.toHaveBeenCalled();
-  });
-
-  it.each(["hermes"])(
-    "does not carry OpenClaw's native local provider into %s sandbox creation (#12975)",
-    async (agentName) => {
-      vi.spyOn(registry, "getSandbox").mockReturnValue(null);
-      const { calls, deps } = createDeps({
-        getSandboxRegistryEntry: () => ({ ...nativeEntry }),
-      });
-
-      await expect(
-        handleSandboxState({
-          ...baseOptions(deps),
-          agent: { name: agentName },
-          provider: "compatible-endpoint",
-          model: "test-model",
-          endpointUrl: nativeEndpoint,
-          endpointSource: "onboard",
-          credentialEnv: "COMPATIBLE_API_KEY",
-        }),
-      ).rejects.toThrow("exit 1");
-
-      const createIntent = calls.resolveCreateIntent.mock.calls[0]?.[0];
-      expect(createIntent?.inferenceProvider).toBe("compatible-endpoint");
-      expect(createIntent).not.toHaveProperty("nativeLocalProviderAttachment");
-      expect(calls.createSandbox).not.toHaveBeenCalled();
-    },
-  );
 
   it("stages credentials, then holds sandbox, host dashboard, and gateway locks through creation", async () => {
     const events: string[] = [];

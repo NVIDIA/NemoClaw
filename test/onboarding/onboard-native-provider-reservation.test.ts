@@ -1,130 +1,124 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createRequire } from "node:module";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { handleProviderInferenceState } from "../../src/lib/onboard/machine/handlers/provider-inference";
+import {
+  baseOptions,
+  baseSelection,
+  createDeps,
+} from "../../src/lib/onboard/machine/handlers/provider-inference.test-support";
 import { nativeLocalSetupReceipt } from "../support/native-local-setup-harness";
 import { createDirectSetupInferenceHarness } from "../helpers/onboard-split-context";
 
-const testHome = await vi.hoisted(async () => {
-  const fs = await import("node:fs");
-  const os = await import("node:os");
-  const path = await import("node:path");
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "native-reservation-"));
-  vi.stubEnv("HOME", directory);
-  return directory;
+// Abandoned-reservation recovery has its own state tests. Keep this harness from
+// reading the developer's registry through the CommonJS onboarding boundary.
+const require = createRequire(import.meta.url);
+beforeEach(() => {
+  vi.spyOn(
+    require("../../src/lib/onboard/sandbox-lifecycle.ts"),
+    "releaseAbandonedRouteReservation",
+  ).mockReturnValue(false);
 });
-
-beforeEach((context) => {
-  vi.stubEnv("HOME", testHome);
-  fs.mkdirSync(testHome, { recursive: true });
-  context.onTestFinished(() => {
-    vi.unstubAllEnvs();
-    fs.rmSync(testHome, { recursive: true, force: true });
-  });
-});
+afterEach(() => vi.restoreAllMocks());
 
 describe("native provider ownership before route reservation", () => {
-  it("reserves a Hermes-specific profile before native local startup (#12921)", async () => {
+  it("selects the recorded agent route only while holding the sandbox mutation lock (#13197)", async () => {
+    let locked = false;
     const harness = createDirectSetupInferenceHarness({
-      overrides: { isNonInteractive: () => true, applyLocalInferenceRoute: undefined },
+      overrides: {
+        applyLocalInferenceRoute: undefined,
+        getSandbox: () => {
+          expect(locked).toBe(true);
+          return {
+            name: "test-box",
+            agent: "langchain-deepagents-code",
+            pendingRouteReservation: true,
+          };
+        },
+        withSandboxMutationLock: async (_name, operation) => {
+          locked = true;
+          try {
+            return await operation();
+          } finally {
+            locked = false;
+          }
+        },
+      },
     });
-    await harness.setupInference("test-box", "meta-llama", "vllm-local", null, null, null, [], {
-      agentName: "hermes",
+    await expect(harness.setupInference("test-box", "meta-llama", "vllm-local")).resolves.toEqual({
+      ok: true,
     });
-    expect(harness.native.profiles[0]).toMatchObject({
-      binaries: expect.arrayContaining([
-        "/opt/hermes/.venv/bin/python",
-        "/opt/hermes/.venv/bin/python3",
-      ]),
-      endpoints: [{ host: "host.openshell.internal", port: 8000 }],
-    });
-    expect([...harness.native.authorities.values()]).toEqual([
-      expect.objectContaining({ agent: "hermes", sandboxName: "test-box" }),
-    ]);
-    expect(harness.updateSandbox).toHaveBeenCalledWith(
-      "test-box",
-      expect.objectContaining({
-        nativeLocalProviderAttachment: expect.objectContaining({ agent: "hermes" }),
-      }),
-    );
-    expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
+    expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(false);
   });
 
-  it.each(["openclaw", "hermes"])(
-    "retires an unreserved %s provider after host smoke fails (#12558)",
-    async (agentName) => {
-      const harness = createDirectSetupInferenceHarness({
-        overrides: {
-          isNonInteractive: () => true,
-          applyLocalInferenceRoute: undefined,
-          verifyOnboardInferenceSmoke: async () => {
-            throw new Error("host smoke refused");
-          },
+  it("retires an unreserved provider after host smoke fails (#12558)", async () => {
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        isNonInteractive: () => true,
+        applyLocalInferenceRoute: undefined,
+        verifyOnboardInferenceSmoke: async () => {
+          throw new Error("host smoke refused");
         },
-      });
-      await expect(
-        harness.setupInference("test-box", "meta-llama", "vllm-local", null, null, null, [], {
-          agentName,
-        }),
-      ).rejects.toThrow("host smoke refused");
-      expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
-      expect(harness.updateSandbox).not.toHaveBeenCalled();
-      expect(harness.native.providers.size).toBe(0);
-      expect(harness.native.authorities.size).toBe(0);
-    },
-  );
+      },
+    });
+    await expect(
+      harness.setupInference("test-box", "meta-llama", "vllm-local", null, null, null, [], {
+        agentName: "langchain-deepagents-code",
+      }),
+    ).rejects.toThrow("host smoke refused");
+    expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(harness.updateSandbox).not.toHaveBeenCalled();
+    expect(harness.native.providers.size).toBe(0);
+    expect(harness.native.authorities.size).toBe(0);
+  });
 });
 
 describe("native provider cleanup uncertainty", () => {
-  it.each(["openclaw", "hermes"])(
-    "retains %s authority when deletion cannot be confirmed (#12558)",
-    async (agentName) => {
-      const harness = createDirectSetupInferenceHarness({
-        overrides: {
-          isNonInteractive: () => true,
-          applyLocalInferenceRoute: undefined,
-          verifyOnboardInferenceSmoke: async () => {
-            throw new Error("host smoke refused");
-          },
+  it("retains authority when deletion cannot be confirmed (#12558)", async () => {
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        isNonInteractive: () => true,
+        applyLocalInferenceRoute: undefined,
+        verifyOnboardInferenceSmoke: async () => {
+          throw new Error("host smoke refused");
         },
-      });
-      harness.native.adapter.deleteProvider.mockResolvedValue({
-        ok: false,
-        error: { kind: "transport", reason: "connection_loss", message: "delete outcome unknown" },
-      });
-      await expect(
-        harness.setupInference("test-box", "meta-llama", "vllm-local", null, null, null, [], {
-          agentName,
-        }),
-      ).rejects.toThrow(/host smoke refused[\s\S]*cleanup was not confirmed/);
-      expect(harness.native.providers.size).toBe(1);
-      expect(harness.native.authorities.size).toBe(1);
-    },
-  );
+      },
+    });
+    harness.native.adapter.deleteProvider.mockResolvedValue({
+      ok: false,
+      error: { kind: "transport", reason: "connection_loss", message: "delete outcome unknown" },
+    });
+    await expect(
+      harness.setupInference("test-box", "meta-llama", "vllm-local", null, null, null, [], {
+        agentName: "langchain-deepagents-code",
+      }),
+    ).rejects.toThrow(/host smoke refused[\s\S]*cleanup was not confirmed/);
+    expect(harness.native.providers.size).toBe(1);
+    expect(harness.native.authorities.size).toBe(1);
+  });
 
-  it.each(["openclaw", "hermes"])(
-    "retains %s authority after a failed reservation response (#12558)",
-    async (agentName) => {
-      const harness = createDirectSetupInferenceHarness({
-        overrides: {
-          isNonInteractive: () => true,
-          applyLocalInferenceRoute: undefined,
-          updateSandbox: () => {
-            throw new Error("reservation response lost");
-          },
+  it("retains authority after a failed reservation response (#12558)", async () => {
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        isNonInteractive: () => true,
+        applyLocalInferenceRoute: undefined,
+        updateSandbox: () => {
+          throw new Error("reservation response lost");
         },
-      });
-      await expect(
-        harness.setupInference("test-box", "meta-llama", "vllm-local", null, null, null, [], {
-          agentName,
-        }),
-      ).rejects.toThrow("reservation response lost");
-      expect(harness.native.adapter.deleteProvider).not.toHaveBeenCalled();
-      expect(harness.native.providers.size).toBe(1);
-      expect(harness.native.authorities.size).toBe(1);
-    },
-  );
+      },
+    });
+    await expect(
+      harness.setupInference("test-box", "meta-llama", "vllm-local", null, null, null, [], {
+        agentName: "langchain-deepagents-code",
+      }),
+    ).rejects.toThrow("reservation response lost");
+    expect(harness.native.adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(harness.native.providers.size).toBe(1);
+    expect(harness.native.authorities.size).toBe(1);
+  });
 
   it("keeps an existing selected provider after a pre-reservation failure (#12558)", async () => {
     const existing = nativeLocalSetupReceipt({
@@ -151,7 +145,7 @@ describe("native provider cleanup uncertainty", () => {
     harness.native.seed(existing);
     await expect(
       harness.setupInference("test-box", "meta-llama", "vllm-local", null, null, null, [], {
-        agentName: "openclaw",
+        agentName: "langchain-deepagents-code",
       }),
     ).rejects.toThrow("host smoke refused");
     expect(harness.native.adapter.deleteProvider).not.toHaveBeenCalled();
@@ -160,58 +154,142 @@ describe("native provider cleanup uncertainty", () => {
   });
 });
 
-describe("native selection with published shared-route staging enabled", () => {
-  it.each([
-    ["openclaw", "llama-cpp-local"],
-    ["openclaw", "compatible-endpoint"],
-    ["langchain-deepagents-code", "llama-cpp-local"],
-    ["langchain-deepagents-code", "compatible-endpoint"],
-  ])(
-    "reserves %s native %s ownership without changing the shared route (#12977)",
-    async (agentName, provider) => {
-      const port = provider === "llama-cpp-local" ? 8081 : 8000;
-      const endpointUrl = `http://127.0.0.1:${port}/v1`;
-      const harness = createDirectSetupInferenceHarness({
-        overrides: {
-          isNonInteractive: () => true,
-          hydrateCredentialEnv: () => "fixture-local-key",
-          getSandbox: () => ({
-            name: "test-box",
-            agent: agentName,
-            provider: "nvidia-prod",
-            model: "old-model",
-            gatewayName: "nemoclaw",
-          }),
-        },
-      });
-      const result = await harness.setupInference(
-        "test-box",
-        "new-model",
-        provider,
-        endpointUrl,
-        "LOCAL_KEY",
-        null,
-        [],
-        { agentName, deferPublishedRouteReservation: true, onboardEndpointUrl: endpointUrl },
-      );
-      expect(result).toEqual({ ok: true });
-      expect(harness.updateSandbox).toHaveBeenCalledExactlyOnceWith(
-        "test-box",
-        expect.objectContaining({
-          provider,
-          model: "new-model",
-          nativeLocalProviderAttachment: expect.objectContaining({
-            provider,
-            endpointUrl: `http://host.openshell.internal:${port}/v1`,
-            gatewayName: "nemoclaw",
-            sandboxName: "test-box",
-          }),
+function legacyRecreationHarness(
+  previousProvider = "vllm-local",
+  agent = "langchain-deepagents-code",
+) {
+  const row = {
+    name: "legacy-dcode",
+    agent,
+    provider: previousProvider,
+    model: previousProvider === "ollama-local" ? "old-model" : "meta-llama",
+    endpointUrl:
+      previousProvider === "ollama-local" ? null : "http://host.openshell.internal:8000/v1",
+    gatewayName: "nemoclaw",
+  };
+  const before = structuredClone(row);
+  const unloadOllamaModels = vi.fn(() => undefined);
+  const harness = createDirectSetupInferenceHarness({
+    overrides: {
+      unloadOllamaModels,
+      listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
+      getSandbox: () => row,
+      isNonInteractive: () => true,
+      applyLocalInferenceRoute: undefined,
+    },
+  });
+  const { deps } = createDeps({
+    setupNim: vi.fn(async () => ({
+      ...baseSelection,
+      provider: "vllm-local",
+      model: "meta-llama",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+    })),
+    setupInference: harness.setupInference,
+    getSandboxRegistryEntry: () => row,
+    hasSandboxLifecycleAuthority: () => true,
+  });
+  const run = (recreateSandbox: boolean) =>
+    handleProviderInferenceState({
+      ...baseOptions(deps),
+      fresh: true,
+      recreateSandbox,
+      sandboxName: row.name,
+      agent: { name: row.agent, inference: { provider_type: "openai_compatible" } },
+    });
+  return { row, before, harness, unloadOllamaModels, run };
+}
+
+describe("legacy native-local recreation", () => {
+  it("rejects legacy DCode setup without explicit recreation (#13197)", async () => {
+    const { row, before, harness, run } = legacyRecreationHarness();
+    await expect(run(false)).rejects.toThrow(
+      "Recreate this beta sandbox before using native local inference.",
+    );
+    expect(harness.native.adapter.createProvider).not.toHaveBeenCalled();
+    expect(harness.updateSandbox).not.toHaveBeenCalled();
+    expect(row).toEqual(before);
+  });
+
+  it.each(["vllm-local", "ollama-local"])(
+    "stages legacy %s without changing its published source (#13197)",
+    async (previousProvider) => {
+      const { row, before, harness, unloadOllamaModels, run } =
+        legacyRecreationHarness(previousProvider);
+      const result = await run(true);
+      expect(result.stagedNativeLocalRecreation).toEqual({
+        source: before,
+        attachment: expect.objectContaining({
+          sandboxName: row.name,
+          gatewayName: "nemoclaw",
+          provider: "vllm-local",
         }),
-      );
-      expect(harness.native.providers.size).toBe(1);
-      expect(harness.commands.filter(({ command }) => command.startsWith("inference set"))).toEqual(
-        [],
+      });
+      expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+      expect(harness.updateSandbox).not.toHaveBeenCalled();
+      expect(row).toEqual(before);
+      expect(unloadOllamaModels).not.toHaveBeenCalled();
+      expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(
+        false,
       );
     },
   );
+});
+
+describe("Hermes native provider ownership", () => {
+  it("selects a Hermes-scoped provider without mutating a shared route", async () => {
+    const harness = createDirectSetupInferenceHarness({
+      overrides: { applyLocalInferenceRoute: undefined },
+    });
+    await expect(
+      harness.setupInference("test-box", "meta-llama", "vllm-local", null, null, null, [], {
+        agentName: "hermes",
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+    expect([...harness.native.authorities.values()]).toEqual([
+      expect.objectContaining({ agent: "hermes", sandboxName: "test-box", provider: "vllm-local" }),
+    ]);
+    expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(false);
+  });
+
+  it("retires an unattached Hermes provider after host validation fails", async () => {
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        applyLocalInferenceRoute: undefined,
+        isNonInteractive: () => true,
+        verifyOnboardInferenceSmoke: async () => {
+          throw new Error("host smoke refused");
+        },
+      },
+    });
+    await expect(
+      harness.setupInference("test-box", "meta-llama", "vllm-local", null, null, null, [], {
+        agentName: "hermes",
+      }),
+    ).rejects.toThrow("host smoke refused");
+    expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(harness.updateSandbox).not.toHaveBeenCalled();
+    expect(harness.native.providers.size).toBe(0);
+    expect(harness.native.authorities.size).toBe(0);
+  });
+});
+
+it("stages explicit legacy Hermes recreation with a Hermes-scoped receipt", async () => {
+  const { row, before, harness, run } = legacyRecreationHarness("vllm-local", "hermes");
+  const result = await run(true);
+  expect(result.stagedNativeLocalRecreation).toEqual({
+    source: before,
+    attachment: expect.objectContaining({
+      agent: "hermes",
+      sandboxName: row.name,
+      gatewayName: "nemoclaw",
+    }),
+  });
+  expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+  expect(harness.updateSandbox).not.toHaveBeenCalled();
+  expect(row).toEqual(before);
+  expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(false);
 });

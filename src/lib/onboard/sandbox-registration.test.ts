@@ -26,17 +26,12 @@ const onboardSession = requireDist("../state/onboard-session.js");
 const {
   buildCreatedSandboxRegistryEntry,
   nativeInferenceCreateIntentFields,
-  nativeLocalReservationStatus,
   prepareCreatedSandboxRegistration,
   registerCreatedSandbox,
   registerPreparedCreatedSandbox,
   revalidatePreparedCreatedSandboxRegistration,
   selection,
 } = requireDist("./sandbox-registration.ts") as typeof import("./sandbox-registration");
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
 
 const runtimeFields = {
   gpuEnabled: true,
@@ -100,15 +95,15 @@ function createdRegistryEntryInput(
 }
 
 describe("buildCreatedSandboxRegistryEntry", () => {
-  it("retains the managed llama.cpp attachment for its published application route", () => {
+  it("omits stale Local NIM native attachments while retaining standalone vLLM attachments", () => {
     const { nativeLocalIdentity } = requireDist(
       "../inference/native-local/contract.ts",
     ) as typeof import("../inference/native-local/contract");
     const binding = {
-      provider: "llama-cpp-local" as const,
-      endpointUrl: "http://host.openshell.internal:8081/v1",
-      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
-      authMode: "authenticated" as const,
+      provider: "vllm-local" as const,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "sentinel" as const,
       gatewayName: "nemoclaw",
       sandboxName: "demo",
     };
@@ -116,256 +111,38 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       ...binding,
       ...nativeLocalIdentity(binding),
       schemaVersion: 1 as const,
-      providerId: "provider-1",
+      providerId: "vllm-provider",
     };
-    const hostLocalInferenceReceipt = serializedLlamaCppHostLocalInferenceReceipt("docker");
-    const base = createdRegistryEntryInput();
-    const input = {
-      ...base,
-      agent: { name: "openclaw" } as AgentDefinition,
-      hostLocalInferenceReceipt,
-      nativeLocalProviderAttachment: attachment,
-      inferenceSelection: {
-        ...base.inferenceSelection,
-        provider: "llama-cpp-local",
-        endpointUrl: "https://inference.local/v1",
-      },
-    };
-    expect(buildCreatedSandboxRegistryEntry(input).nativeLocalProviderAttachment).toEqual(
-      attachment,
-    );
-    const staleBinding = { ...binding, endpointUrl: "http://host.openshell.internal:8082/v1" };
-    expect(
-      buildCreatedSandboxRegistryEntry({
-        ...input,
-        nativeLocalProviderAttachment: {
-          ...staleBinding,
-          ...nativeLocalIdentity(staleBinding),
-          schemaVersion: 1,
-          providerId: "stale-provider",
-        },
-      }).nativeLocalProviderAttachment,
-    ).toBeUndefined();
-    expect(
-      nativeInferenceCreateIntentFields({
-        agentName: "openclaw",
-        provider: "llama-cpp-local",
-        endpointUrl: "https://inference.local/v1",
-        gatewayName: "nemoclaw",
-        entry: buildCreatedSandboxRegistryEntry(input),
-      }).nativeLocalProviderAttachment,
-    ).toEqual(attachment);
-    expect(
-      nativeLocalReservationStatus({
-        entry: buildCreatedSandboxRegistryEntry(input),
-        agentName: "openclaw",
-        sandboxName: "demo",
-        gatewayName: "nemoclaw",
-        provider: "llama-cpp-local",
-        model: "llama",
-        endpointUrl: "https://inference.local/v1",
-        endpointSource: null,
-        credentialEnv: null,
-        preferredInferenceApi: null,
-      }),
-    ).toBe("exact");
-    const hostSelection = {
-      entry: buildCreatedSandboxRegistryEntry(input),
-      agentName: "openclaw",
-      sandboxName: "demo",
-      gatewayName: "nemoclaw",
-      provider: "llama-cpp-local",
-      model: "llama",
-      endpointUrl: "http://127.0.0.1:8081/v1",
-      endpointSource: null,
-      credentialEnv: null,
-      preferredInferenceApi: null,
-    } as const;
-    expect(nativeLocalReservationStatus(hostSelection)).toBe("exact");
-    const onMismatch = vi.fn();
-    expect(
-      nativeLocalReservationStatus({
-        ...hostSelection,
-        endpointUrl: "http://127.0.0.1:8082/v1",
-        onMismatch,
-      }),
-    ).toBe("changed");
-    expect(onMismatch).toHaveBeenCalledWith(expect.arrayContaining(["endpointUrl"]));
-  });
-
-  it("does not inherit a native attachment from a different published route (#12558)", () => {
-    const registry = requireDist("../state/registry.js") as typeof import("../state/registry");
-    const { nativeLocalIdentity } = requireDist(
-      "../inference/native-local/contract.ts",
-    ) as typeof import("../inference/native-local/contract");
-    const binding = {
-      provider: "compatible-endpoint",
-      endpointUrl: "http://host.openshell.internal:8000/v1",
-      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-      authMode: "authenticated",
-      gatewayName: "nemoclaw",
-      sandboxName: "demo",
-    } as const;
-    const receipt = {
-      ...binding,
-      ...nativeLocalIdentity(binding),
-      schemaVersion: 1 as const,
-      providerId: "previous-id",
-    };
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "demo",
-      gatewayName: "nemoclaw",
-      provider: "compatible-endpoint",
-      endpointUrl: "http://localhost:8000/v1",
-      nativeLocalProviderAttachment: receipt,
-    });
-    const base = createdRegistryEntryInput();
-    const entry = prepareCreatedSandboxRegistration({
-      ...base,
-      inferenceSelection: {
-        ...base.inferenceSelection,
-        provider: "compatible-endpoint",
-        endpointUrl: "https://models.example.com/v1",
-      },
-    });
-    expect(entry.nativeLocalProviderAttachment).toBeUndefined();
-  });
-
-  it.each(["pi", "hermes", "openclaw", "langchain-deepagents-code"])(
-    "keeps a native local attachment only for a supported %s target and exact route (#12975)",
-    (agentName) => {
-      const registry = requireDist("../state/registry.js") as typeof import("../state/registry");
-      const { nativeLocalIdentity } = requireDist(
-        "../inference/native-local/contract.ts",
-      ) as typeof import("../inference/native-local/contract");
-      const endpointUrl = "http://host.openshell.internal:11434/v1";
-      const binding = {
-        ...(agentName === "hermes" ? { agent: "hermes" as const } : {}),
-        provider: "compatible-endpoint",
-        endpointUrl,
-        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-        authMode: "authenticated",
-        gatewayName: "nemoclaw",
-        sandboxName: "demo",
-      } as const;
-      const attachment = {
-        ...binding,
-        ...nativeLocalIdentity(binding),
-        schemaVersion: 1 as const,
-        providerId: "previous-id",
-      };
-      vi.spyOn(registry, "getSandbox").mockReturnValue({
-        name: "demo",
-        gatewayName: "nemoclaw",
-        provider: "compatible-endpoint",
-        endpointUrl,
-        nativeLocalProviderAttachment: attachment,
-      });
+    const makeEntry = (nimContainer: string | null) => {
       const base = createdRegistryEntryInput();
-      const input = {
+      return buildCreatedSandboxRegistryEntry({
         ...base,
-        agent: { name: agentName } as AgentDefinition,
+        agent: { name: "langchain-deepagents-code" } as AgentDefinition,
+        nativeLocalProviderAttachment: attachment,
         inferenceSelection: {
           ...base.inferenceSelection,
-          provider: "compatible-endpoint",
-          endpointUrl,
+          provider: "vllm-local",
+          endpointUrl: binding.endpointUrl,
+          nimContainer,
         },
-      };
-      const expectedAttachment = attachment;
-      const createIntent = nativeInferenceCreateIntentFields({
-        agentName,
-        provider: "compatible-endpoint",
-        endpointUrl,
-        gatewayName: "nemoclaw",
-        entry: registry.getSandbox("demo"),
       });
-      expect(createIntent.inferenceProvider).toBe(
-        expectedAttachment?.providerName ?? "compatible-endpoint",
-      );
-      expect(createIntent.nativeLocalProviderAttachment).toEqual(expectedAttachment);
+    };
+    const nim = makeEntry("nemoclaw-nim-owned");
+    const standalone = makeEntry(null);
 
-      const wrongAgentBinding = {
-        ...binding,
-        agent: agentName === "hermes" ? undefined : ("hermes" as const),
-      };
-      expect(
-        nativeInferenceCreateIntentFields({
-          agentName,
-          provider: "compatible-endpoint",
-          endpointUrl,
-          gatewayName: "nemoclaw",
-          entry: {
-            ...registry.getSandbox("demo")!,
-            nativeLocalProviderAttachment: {
-              ...attachment,
-              ...wrongAgentBinding,
-              ...nativeLocalIdentity(wrongAgentBinding),
-            },
-          },
-        }).nativeLocalProviderAttachment,
-      ).toBeUndefined();
-
-      expect(prepareCreatedSandboxRegistration(input).nativeLocalProviderAttachment).toEqual(
-        expectedAttachment,
-      );
-      expect(
-        prepareCreatedSandboxRegistration({
-          ...input,
-          nativeLocalProviderAttachment: attachment,
-        }).nativeLocalProviderAttachment,
-      ).toEqual(expectedAttachment);
-
-      const staleBinding = {
-        ...binding,
-        endpointUrl: "http://host.openshell.internal:8000/v1",
-      };
-      const staleAttachment = {
-        ...staleBinding,
-        ...nativeLocalIdentity(staleBinding),
-        schemaVersion: 1 as const,
-        providerId: "previous-id",
-      };
-      const staleEntry = {
-        ...registry.getSandbox("demo")!,
-        nativeLocalProviderAttachment: staleAttachment,
-      };
-      expect(
-        nativeInferenceCreateIntentFields({
-          agentName,
-          provider: "compatible-endpoint",
-          endpointUrl,
-          gatewayName: "nemoclaw",
-          entry: staleEntry,
-        }).nativeLocalProviderAttachment,
-      ).toBeUndefined();
-      expect(
-        prepareCreatedSandboxRegistration({
-          ...input,
-          nativeLocalProviderAttachment: staleAttachment,
-        }).nativeLocalProviderAttachment,
-      ).toBeUndefined();
-      expect(
-        nativeLocalReservationStatus({
-          entry: {
-            ...staleEntry,
-            model: "llama",
-            endpointSource: null,
-            credentialEnv: null,
-            preferredInferenceApi: null,
-          },
-          agentName,
-          sandboxName: "demo",
-          gatewayName: "nemoclaw",
-          provider: "compatible-endpoint",
-          model: "llama",
-          endpointUrl,
-          endpointSource: null,
-          credentialEnv: null,
-          preferredInferenceApi: null,
-        }),
-      ).toBe(expectedAttachment ? "changed" : "shared");
-    },
-  );
+    expect(nim.nativeLocalProviderAttachment).toBeUndefined();
+    expect(standalone.nativeLocalProviderAttachment).toEqual(attachment);
+    expect(
+      nativeInferenceCreateIntentFields("vllm-local", nim).nativeLocalProviderAttachment,
+    ).toBeUndefined();
+    expect(
+      nativeInferenceCreateIntentFields("vllm-local", standalone).nativeLocalProviderAttachment,
+    ).toEqual(attachment);
+    expect(
+      nativeInferenceCreateIntentFields("vllm-local", standalone, true)
+        .nativeLocalProviderAttachment,
+    ).toBeUndefined();
+  });
 
   it("records only an exact native NVIDIA provider identity", () => {
     const attachment = {
@@ -449,7 +226,10 @@ describe("buildCreatedSandboxRegistryEntry", () => {
 
     expect(() =>
       registerCreatedSandbox({
-        ...createdRegistryEntryInput({ imageTag: workload.reference, workload }),
+        ...createdRegistryEntryInput({
+          imageTag: workload.reference,
+          workload,
+        }),
         registerSandbox,
       }),
     ).toThrow(/agent identity does not match its managed workload receipt/u);
@@ -542,7 +322,12 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       hermesToolGateways: ["filesystem"],
       hermesDashboardState: {
         enabled: true,
-        config: { enabled: true, port: 18790, internalPort: 19123, tuiEnabled: true },
+        config: {
+          enabled: true,
+          port: 18790,
+          internalPort: 19123,
+          tuiEnabled: true,
+        },
       },
       dashboardPort: 18789,
       lifecycleGeneration: "22222222-2222-4222-8222-222222222222",
@@ -1132,5 +917,52 @@ describe("registerCreatedSandbox", () => {
       }),
     ).toThrow(/not registered/u);
     expect(registerSandbox).not.toHaveBeenCalled();
+  });
+});
+
+describe("Hermes native attachment registration", () => {
+  const makeInput = (attachmentAgent?: "hermes", sandboxName = "demo") => {
+    const { nativeLocalIdentity } = requireDist(
+      "../inference/native-local/contract.ts",
+    ) as typeof import("../inference/native-local/contract");
+    const binding = {
+      provider: "compatible-endpoint" as const,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated" as const,
+      gatewayName: "nemoclaw",
+      sandboxName,
+      ...(attachmentAgent ? { agent: attachmentAgent } : {}),
+    };
+    const base = createdRegistryEntryInput();
+    return createdRegistryEntryInput({
+      agent: { name: "hermes" } as AgentDefinition,
+      hermesApiPort: 8642,
+      inferenceSelection: {
+        ...base.inferenceSelection,
+        provider: binding.provider,
+        endpointUrl: binding.endpointUrl,
+      },
+      nativeLocalProviderAttachment: {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1,
+        providerId: "fixture-provider",
+      },
+    });
+  };
+  it("retains its exact Hermes provider receipt", () => {
+    const input = makeInput("hermes");
+    expect(buildCreatedSandboxRegistryEntry(input).nativeLocalProviderAttachment).toEqual(
+      input.nativeLocalProviderAttachment,
+    );
+  });
+  it.each([
+    { name: "another agent", input: () => makeInput() },
+    { name: "a sibling sandbox", input: () => makeInput("hermes", "sibling") },
+  ])("rejects an attachment scoped to $name", ({ input }) => {
+    expect(() => buildCreatedSandboxRegistryEntry(input())).toThrow(
+      "does not match the selected Hermes sandbox",
+    );
   });
 });

@@ -8,7 +8,6 @@ import { EXPORTED_VLLM_PROFILE_ID } from "../../../src/lib/config/model.ts";
 import type { V1Alpha1OllamaProxyService } from "../../../src/lib/config/v1alpha1-export.ts";
 import { cleanupLocalModelRuntimes } from "../../../src/lib/inference/local-model-profile/cleanup.ts";
 import { HOST_LOCAL_VLLM_CONTAINER_NAME } from "../../../src/lib/inference/serving/vllm-host-local-lifecycle.ts";
-import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-local/agent-config.ts";
 import { loadManagedVllmApiKey } from "../../../src/lib/inference/vllm-api-key.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -85,7 +84,7 @@ test(
         "install Ollama and GPU sandbox",
         "validate GPU runtime status",
         "validate Ollama proxy credential boundary",
-        "run sandbox native local chat",
+        "run sandbox inference.local chat",
         "restart Ollama and recover agent inference",
       ],
     },
@@ -94,7 +93,7 @@ test(
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
-        "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + native provider",
+        "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + inference.local",
       credentialBoundary:
         "The proxy token remains host/OpenShell-owned and is absent from sandbox env.",
       remoteInstallerBoundary:
@@ -192,6 +191,13 @@ test(
     expect(retainedSandboxContainer.State).toBe("running");
     expect(retainedSandboxContainer.Status).toMatch(/\(healthy\)/i);
 
+    const route = await sandbox.openshell(["inference", "get"], {
+      artifactName: "openshell-inference-route",
+      env: env(),
+      timeoutMs: 30_000,
+    });
+    expect(resultText(route)).toMatch(/ollama/i);
+
     progress.phase("validate Ollama proxy credential boundary");
     const tokenRecord = readTokenFileChecked(ollamaProxyTokenFile());
     expect(tokenRecord.mode).toBe("600");
@@ -232,12 +238,12 @@ test(
       "OpenShell owns proxy authentication; the host proxy token must not enter sandbox env",
     ).toBe("");
 
-    progress.phase("run sandbox native local chat");
+    progress.phase("run sandbox inference.local chat");
     const model = await detectOllamaModel(host);
     const chat = await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
-        `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; curl -sS --max-time 120 http://host.openshell.internal:${PROXY_PORT}/v1/chat/completions -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data '${JSON.stringify(
+        `curl -sS --max-time 120 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
           {
             model,
             messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
@@ -249,9 +255,8 @@ test(
           },
         )}'`,
       ),
-      { artifactName: "sandbox-native-local-chat", env: env(), timeoutMs: 150_000 },
+      { artifactName: "sandbox-inference-local-chat", env: env(), timeoutMs: 150_000 },
     );
-    expect(chat.exitCode, resultText(chat)).toBe(0);
     expect(chatContent(chat.stdout)).toMatch(/pong/i);
 
     const readySandbox = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
@@ -427,18 +432,6 @@ test(
       credentialBoundary:
         "The existing proxy owner authenticates observation; exported inference providers omit credentials and internal endpoints.",
     });
-    await host.command("lsof", ["-nP", "-iTCP:8080", "-sTCP:LISTEN"], {
-      artifactName: "export-gateway-listener-before-preclean",
-      env: env(),
-      timeoutMs: 10_000,
-    });
-    // Pre-clean may start a gateway; do it before creating the fresh private HOME.
-    await cleanupGpu(host, lifecycle, sandbox, env());
-    await host.command("lsof", ["-nP", "-iTCP:8080", "-sTCP:LISTEN"], {
-      artifactName: "export-gateway-listener-after-preclean",
-      env: env(),
-      timeoutMs: 10_000,
-    });
     // The SDK rejects gateway state below a world-writable ancestor such as /tmp.
     const directory = createGpuPrivateHome(os.homedir());
     const exportEnv = env({
@@ -461,6 +454,7 @@ test(
       expect(result.exitCode, resultText(result)).toBe(0);
     });
     cleanup.trackDisposable("stop the fixture-owned Ollama daemon", () => daemonOwner?.terminate());
+    await cleanupGpu(host, lifecycle, sandbox, exportEnv);
     await runtimeProvider.requireAvailable({
       artifactName: "export-runtime-info",
       scenarioLabel: "attached Ollama export",

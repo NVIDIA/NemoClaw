@@ -27,7 +27,6 @@
 //   NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME, NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE,
 //   NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION.
 
-import { nativeLocalCredentialReference } from "../src/lib/inference/native-local/agent-config.ts";
 import { nativeHostedAgentConfig } from "../src/lib/inference/native-provider/agent-config.ts";
 
 import { hasProviderlessInferenceEnvironment } from "../src/lib/providerless-inference.ts";
@@ -978,10 +977,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const providers = {
     [providerKey]: {
       baseUrl: inferenceBaseUrl,
-      apiKey:
-        nativeLocalCredentialReference(env.NEMOCLAW_UPSTREAM_PROVIDER, inferenceBaseUrl) ??
-        nativeHosted?.apiKey ??
-        managedInferenceApiKey(inferenceBaseUrl, "unused"),
+      apiKey: nativeHosted?.apiKey ?? managedInferenceApiKey(inferenceBaseUrl, "unused"),
       ...(nativeHosted?.headers ? { headers: nativeHosted.headers } : {}),
       api: inferenceApi,
       timeoutSeconds: agentTimeout,
@@ -1076,19 +1072,14 @@ export function buildConfig(env: Env = process.env): JsonObject {
       },
       trustedProxies: ["127.0.0.1", "::1"],
       auth: { token: "" },
-      // Restart-class config changes (plugins.installs, models.pricing,
-      // unrecognized keys, ...) must not let the gateway SIGUSR1-restart
-      // itself: in containers the in-process restart path can fail and park
-      // the process alive with no HTTP listener, which the PID-wait respawn
-      // loop in nemoclaw-start.sh cannot observe (#4710). Off mode makes the
-      // gateway ignore plan-driven reloads; NemoClaw applies restart-class
-      // changes through sandbox rebuild or `nemoclaw <name> recover` instead.
-      // Removal condition (also for the serving watchdog in
-      // nemoclaw-start.sh): once the pinned OpenClaw release exits non-zero
-      // when a failed in-process restart cannot re-bind its listener — so the
-      // respawn loop sees the death — this pin can revert to the default
-      // reload mode after a wedge drill proves no regression.
-      reload: { mode: "off" },
+      // Agent entries must reach the live gateway after creation (#13268).
+      // Hybrid mode applies those changes through OpenClaw's hot reload.
+      // Google Chat retains its channel-owned reload-off override to preserve
+      // webhook routes; its agent activation repair is tracked in #13274.
+      // Restart-class changes retain the container fresh-process patch in
+      // patch-openclaw-container-restart.mts; do not restore the in-process
+      // restart path that could leave a process without a listener (#4710).
+      reload: { mode: "hybrid" },
     },
   };
 

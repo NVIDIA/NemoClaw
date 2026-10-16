@@ -22,8 +22,7 @@ import { FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES } from "./full-e2e-timeou
 import {
   ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES,
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
-  ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
-  PI_QUALIFICATION_TARGET_TIMEOUT_MINUTES,
+  INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
 import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import {
@@ -315,8 +314,6 @@ const PI_IMAGE_SOURCE_OWNING_PATHS = [
   "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
   "scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch",
   "scripts/upgrade-bundled-npm.mts",
-  "src/lib/core/endpoint-url-safety.ts",
-  "src/lib/inference/native-local/agent-config.ts",
   "src/lib/inference/native-provider/agent-config.ts",
   "src/lib/inference/native-nvidia/contract.ts",
   "src/lib/inference/native-provider/contract.ts",
@@ -1052,7 +1049,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw + langchain-deepagents-code",
     environmentOrInferenceEndpoint: "Ubuntu; local compatible and HTTPS inference fixtures",
     profile: "standard",
-    timeoutMinutes: ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
+    timeoutMinutes: INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
     installMode: "none",
     restoreCli: true,
     exposeCliBin: false,
@@ -1333,10 +1330,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     targetId: "pi-agent-qualification",
     displayName: "Pi: qualifies managed runtime on Linux AMD64",
     agentRuntime: "pi",
-    environmentOrInferenceEndpoint: "Linux AMD64 Docker; NVIDIA hosted and native-local inference",
+    environmentOrInferenceEndpoint: "Linux AMD64 Docker; NVIDIA hosted inference",
     profile: "nvidia-api",
     testFile: "test/e2e/live/pi-agent-qualification.test.ts",
-    timeoutMinutes: PI_QUALIFICATION_TARGET_TIMEOUT_MINUTES,
+    timeoutMinutes: 100,
     installMode: "authenticated",
     installNonInteractive: true,
     restoreCli: true,

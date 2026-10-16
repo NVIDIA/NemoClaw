@@ -5,7 +5,6 @@ import { SandboxCommandTransportError } from "../../adapters/sandbox/command-tra
 import { spawnSync } from "node:child_process";
 import { getChatCompletionsProbePayload } from "../../inference/openai-probe-models";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
-import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import {
   existsSync,
   mkdtempSync,
@@ -703,69 +702,6 @@ describe("native inference transport failures", () => {
     ).rejects.toBe(error);
   });
 });
-
-it.each(["v42", `s${"a".repeat(64)}`])(
-  "preserves native local invocation credential identity %s",
-  (identity) => {
-    const binding = {
-      provider: "ollama-local",
-      endpointUrl: "http://host.openshell.internal:11434/v1",
-      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-      authMode: "sentinel",
-      gatewayName: "nemoclaw",
-      sandboxName: input.sandboxName,
-    } as const;
-    const reference = `openshell:resolve:env:${identity}_${binding.credentialEnv}`;
-    const result = runProbeCommandWithBody(
-      "200",
-      "{}",
-      tmpdir(),
-      {
-        ...input,
-        provider: binding.provider,
-        nativeLocalProviderAttachment: {
-          ...binding,
-          ...nativeLocalIdentity(binding),
-          schemaVersion: 1,
-          providerId: "owned",
-        },
-      },
-      { [binding.credentialEnv]: reference },
-    );
-    expect(result.argv).toContain(`Authorization: Bearer ${reference}`);
-  },
-);
-
-it.each(["", "opaque-host-secret-must-not-leak", "openshell:resolve:env:v42_OTHER_KEY"])(
-  "rejects invalid native local credential candidate %# before curl",
-  (reference) => {
-    const binding = {
-      provider: "ollama-local",
-      endpointUrl: "http://host.openshell.internal:11434/v1",
-      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-      authMode: "sentinel",
-      gatewayName: "nemoclaw",
-      sandboxName: input.sandboxName,
-    } as const;
-    const command = buildSandboxInferenceInvocationCommand({
-      ...input,
-      provider: binding.provider,
-      nativeLocalProviderAttachment: {
-        ...binding,
-        ...nativeLocalIdentity(binding),
-        schemaVersion: 1,
-        providerId: "owned",
-      },
-    });
-    const result = spawnSync("/bin/sh", ["-c", command], {
-      env: { PATH: process.env.PATH, [binding.credentialEnv]: reference },
-      encoding: "utf8",
-      timeout: 5000,
-    });
-    expect(result.status).toBe(2);
-    expect(result.stdout).toBe("");
-  },
-);
 
 it.each([
   "",

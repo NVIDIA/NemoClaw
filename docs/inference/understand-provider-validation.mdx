@@ -52,7 +52,7 @@ If the last retry fails or times out, validation stops without another Chat Comp
 
 <AgentOnly variant="deepagents">
 
-The managed Deep Agents runtime keeps `use_responses_api = false` and uses Chat Completions. NVIDIA Endpoints, supported fixed hosted providers, and new OpenClaw, Deep Agents Code, or Pi local selections use native endpoints through sandbox-attached OpenShell providers. Other custom endpoints, Hermes local selections, and existing legacy shared routes use `inference.local` on the pinned OpenShell 0.0.116 release.
+The managed Deep Agents runtime keeps `use_responses_api = false` and uses Chat Completions. NVIDIA Endpoints, supported fixed hosted providers, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, retained legacy and other custom shared routes use `inference.local`.
 `NEMOCLAW_PREFERRED_API` does not change that runtime selection.
 
 </AgentOnly>
@@ -109,8 +109,7 @@ Verify that route from inside the sandbox after onboarding.
 
 <AgentOnly variant="openclaw">
 
-For OpenClaw, the `compatible-endpoint` check probes the selected inference path from inside the sandbox.
-Qualified host-local selections use their attached provider; other compatible endpoints use `inference.local`.
+For OpenClaw, the compatible endpoint check validates `inference.local` from inside the sandbox only when the selected provider is `compatible-endpoint`.
 The check runs whether or not you select a messaging channel and stops onboarding if the route fails.
 
 </AgentOnly>

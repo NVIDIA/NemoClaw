@@ -37,7 +37,6 @@ import {
   messagingHostForwardLifecycle,
   mutableConfigPerms,
   nim,
-  nativeLocalProfile,
   onboardCredentialEnv,
   onboardSession,
   openClawLifecycle,
@@ -398,11 +397,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       );
     },
   );
-  // The flow harness isolates OpenShell observations. The native-local preflight
-  // suite exercises the real profile/provider/attachment proof with adapter responses.
-  vi.spyOn(nativeLocalProfile, "verifyNativeLocalProviderAttachment").mockImplementation(
-    async (...args: unknown[]) => (args[0] as { expected: unknown }).expected,
-  );
   const defaultHydrateCredentialEnv =
     onboardCredentialEnv.hydrateCredentialEnv.bind(onboardCredentialEnv);
   vi.spyOn(rebuildProviderPreflight, "validateRebuildHostInferenceCredential").mockResolvedValue(
@@ -466,7 +460,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
   const currentSandboxEntry = {
     name: "alpha",
-    provider: "nvidia-router",
+    provider: "ollama-local",
     model: "nvidia/nemotron",
     policies: ["npm"],
     agent: null,

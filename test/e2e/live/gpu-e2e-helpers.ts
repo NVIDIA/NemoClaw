@@ -2,13 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { ownChildProcess } from "../../helpers/child-process-lifecycle.ts";
-import { getSandboxAcrossGatewayRoots } from "../../../src/lib/state/registry/cross-port.ts";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -221,47 +218,19 @@ export function assertAgentExecutionSucceeded(
   );
 }
 
-/** Retain the serving process result even when the following agent assertion fails. */
-export async function captureManagedRuntimeLogArtifact(
-  artifacts: Pick<ArtifactSink, "writeJson">,
-  phase: "setup" | "pre-approval-agent" | "post-agent",
-  providerId: string,
-  runtimeId: string,
-  capture: () => {
-    status: number | null;
-    error?: { message: string } | null;
-    stdout: string;
-    stderr: string;
-  },
-): Promise<void> {
-  const runtimeLogs = capture();
-  await artifacts.writeJson(`managed-runtime-logs-${phase}.json`, {
-    providerId,
-    runtimeId,
-    status: runtimeLogs.status,
-    error: runtimeLogs.error?.message ?? null,
-    stdout: runtimeLogs.stdout,
-    stderr: runtimeLogs.stderr,
-  });
-}
-
 export async function cleanupGpu(
   host: HostCliClient,
   lifecycle: LifecyclePhaseFixture,
   sandbox: SandboxClient,
   environment: NodeJS.ProcessEnv = env(),
 ): Promise<void> {
-  // Destroying an absent sandbox starts a gateway, which can leave port 8080 occupied
-  // before the next scenario creates its own private HOME.
-  if (getSandboxAcrossGatewayRoots(SANDBOX_NAME, environment.HOME ?? os.homedir())) {
-    await preCleanBestEffort("destroy GPU sandbox", () =>
-      host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "cleanup-destroy-gpu",
-        env: environment,
-        timeoutMs: 120_000,
-      }),
-    );
-  }
+  await preCleanBestEffort("destroy GPU sandbox", () =>
+    host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
+      artifactName: "cleanup-destroy-gpu",
+      env: environment,
+      timeoutMs: 120_000,
+    }),
+  );
   await preCleanBestEffort("delete OpenShell sandbox", () =>
     sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "cleanup-delete-gpu",

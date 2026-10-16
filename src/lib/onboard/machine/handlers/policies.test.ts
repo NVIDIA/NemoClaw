@@ -8,43 +8,6 @@ import { createPolicyHandlerDeps, basePolicyHandlerOptions } from "./policies-te
 import { handlePoliciesState } from "./policies";
 
 describe("policy state handler", () => {
-  it("verifies a resumed published Pi local route without a native attachment", async () => {
-    const { deps, calls } = createPolicyHandlerDeps({
-      getActiveSandbox: vi.fn(() => ({
-        agent: "pi",
-        provider: "ollama-local",
-        model: "qwen3:8b",
-        endpointUrl: "http://host.openshell.internal:11435/v1",
-        createdAt: "2026-09-01T00:00:00Z",
-      })),
-    });
-    await handlePoliciesState({
-      ...basePolicyHandlerOptions(deps),
-      agent: { name: "pi" },
-      resume: true,
-      provider: "ollama-local",
-      model: "qwen3:8b",
-      endpointUrl: "http://host.openshell.internal:11435/v1",
-    });
-    expect(calls.smoke).toHaveBeenCalledWith(
-      expect.not.objectContaining({ nativeLocalProviderAttachment: expect.anything() }),
-    );
-  });
-
-  it("requires a native attachment for a fresh Pi local selection", async () => {
-    const { deps, calls } = createPolicyHandlerDeps();
-    await expect(
-      handlePoliciesState({
-        ...basePolicyHandlerOptions(deps),
-        agent: { name: "pi" },
-        provider: "ollama-local",
-        model: "qwen3:8b",
-        endpointUrl: "http://host.openshell.internal:11435/v1",
-      }),
-    ).rejects.toThrow("requires its recorded provider attachment");
-    expect(calls.setupPolicies).not.toHaveBeenCalled();
-  });
-
   it("resumes from the live OpenShell preset selection", async () => {
     const prepare = vi.fn(() => ({
       policyPresets: ["npm"],
@@ -79,7 +42,10 @@ describe("policy state handler", () => {
         suppressedAgentRequiredPresetsLive: false,
       })),
     });
-    await handlePoliciesState({ ...basePolicyHandlerOptions(deps), resume: true });
+    await handlePoliciesState({
+      ...basePolicyHandlerOptions(deps),
+      resume: true,
+    });
     expect(calls.setupPolicies).toHaveBeenCalledWith(
       "my-assistant",
       expect.objectContaining({ selectedPresets: ["npm", "github"] }),
@@ -152,6 +118,61 @@ describe("policy state handler", () => {
     expect(calls.complete).not.toHaveBeenCalled();
   });
 
+  it("verifies an owned Local NIM through the shared route before applying policies", async () => {
+    const { deps, calls } = createPolicyHandlerDeps({
+      getActiveSandbox: vi.fn(() => ({ nimContainer: "nemoclaw-nim-owned" })),
+    });
+
+    await handlePoliciesState({
+      ...basePolicyHandlerOptions(deps),
+      provider: "vllm-local",
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      agent: { name: "openclaw" },
+    });
+
+    expect(calls.smoke).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        provider: "vllm-local",
+        agent: { name: "openclaw" },
+      }),
+    );
+    const smokeOptions = calls.smoke.mock.calls[0]?.[0];
+    expect(smokeOptions).not.toHaveProperty("nativeLocalProviderAttachment");
+    expect(smokeOptions).not.toHaveProperty("forceCanonicalRoute");
+    expect(smokeOptions).not.toHaveProperty("hostLocalInferenceProofAuthority");
+    expect(calls.smoke.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.setupPolicies.mock.invocationCallOrder[0]!,
+    );
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ provider: "vllm-local" }),
+    );
+    expect(calls.complete).toHaveBeenCalledOnce();
+  });
+
+  it("stops Local NIM policy application when shared-route verification fails", async () => {
+    const failure = new Error("Local NIM shared-route smoke failed");
+    const { deps, calls } = createPolicyHandlerDeps({
+      getActiveSandbox: vi.fn(() => ({ nimContainer: "nemoclaw-nim-owned" })),
+    });
+    calls.smoke.mockImplementation(() => {
+      throw failure;
+    });
+
+    await expect(
+      handlePoliciesState({
+        ...basePolicyHandlerOptions(deps),
+        provider: "vllm-local",
+        endpointUrl: "http://127.0.0.1:8000/v1",
+        agent: { name: "openclaw" },
+      }),
+    ).rejects.toBe(failure);
+
+    expect(calls.smoke).toHaveBeenCalledOnce();
+    expect(calls.setupPolicies).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
+
   it("keeps a channel in policy requirements when every credential binding matches its gateway provider (#10667)", async () => {
     const discordPlan = makeMessagingPlan({
       channels: ["discord"],
@@ -201,7 +222,10 @@ describe("policy state handler", () => {
     expect(calls.mergeChannels).toHaveBeenCalledWith([], [], ["discord"], []);
     expect(calls.setupPolicies).toHaveBeenCalledWith(
       "my-assistant",
-      expect.objectContaining({ enabledChannels: ["discord"], disabledChannels: [] }),
+      expect.objectContaining({
+        enabledChannels: ["discord"],
+        disabledChannels: [],
+      }),
     );
   });
 
@@ -280,7 +304,10 @@ describe("policy state handler", () => {
   ] as const)(
     "keeps Google Chat in %s policy requirements when its gateway-minted bridge provider matches",
     async (agent, providerType) => {
-      const googlechatPlan = makeMessagingPlan({ channels: ["googlechat"], agent });
+      const googlechatPlan = makeMessagingPlan({
+        channels: ["googlechat"],
+        agent,
+      });
       const providerMatcher = vi.fn(async (name: string, type: string, credentialEnv: string) =>
         name === "my-assistant-googlechat-bridge" &&
         type === providerType &&
@@ -289,7 +316,9 @@ describe("policy state handler", () => {
           : { kind: "missing" as const },
       );
       const { deps, calls } = createPolicyHandlerDeps({
-        getActiveSandbox: vi.fn(() => ({ messaging: { plan: googlechatPlan } })),
+        getActiveSandbox: vi.fn(() => ({
+          messaging: { plan: googlechatPlan },
+        })),
         inspectGatewayCredential: providerMatcher,
       });
       calls.unconfiguredChannels.mockImplementation((_planChannels, configuredChannels) =>
@@ -309,13 +338,19 @@ describe("policy state handler", () => {
       );
       expect(calls.setupPolicies).toHaveBeenCalledWith(
         "my-assistant",
-        expect.objectContaining({ enabledChannels: ["googlechat"], disabledChannels: [] }),
+        expect.objectContaining({
+          enabledChannels: ["googlechat"],
+          disabledChannels: [],
+        }),
       );
     },
   );
 
   it("stops before policy reconciliation when gateway credential inspection fails", async () => {
-    const plan = makeMessagingPlan({ channels: ["googlechat"], agent: "hermes" });
+    const plan = makeMessagingPlan({
+      channels: ["googlechat"],
+      agent: "hermes",
+    });
     const { deps, calls } = createPolicyHandlerDeps({
       getActiveSandbox: vi.fn(() => ({ messaging: { plan } })),
       inspectGatewayCredential: vi.fn().mockResolvedValue({ kind: "indeterminate" }),

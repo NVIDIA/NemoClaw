@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry, SandboxRegistry } from "../../state/registry/types";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import {
   commitRebuildRoutePreflight,
   type RebuildRoutePreflightReceipt,
@@ -100,6 +101,51 @@ const remoteProviderRouteOverrides = new Map<string, Partial<SandboxEntry>>([
 ]);
 
 describe("commitRebuildRoutePreflight", () => {
+  it("rebuilds a native local target without changing a different shared peer (#13197)", () => {
+    const binding = {
+      provider: "compatible-endpoint" as const,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated" as const,
+      sandboxName: "target",
+      gatewayName: "nemoclaw",
+    };
+    const target = sandbox("target", binding.provider, {
+      agent: "langchain-deepagents-code",
+      endpointUrl: "http://localhost:8000/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      nativeLocalProviderAttachment: {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1,
+        providerId: "owned",
+      },
+    });
+    const peer = sandbox("peer", binding.provider, { credentialEnv: "COMPATIBLE_API_KEY" });
+    const state = transactionDependencies(registry(target, peer));
+    const result = commitRebuildRoutePreflight(
+      { sandboxName: "target", gatewayName: "nemoclaw", targetUpdate: targetUpdate(target) },
+      state.dependencies,
+    );
+    expect(result).toMatchObject({ ok: true, receipt: { migratedSandboxNames: [] } });
+    expect(state.persisted().sandboxes.peer).toEqual(peer);
+    const nativeReceipt = (result as Extract<typeof result, { ok: true }>).receipt;
+    expect(revalidateRebuildRouteBeforeDelete(nativeReceipt, state.dependencies)).toEqual({
+      ok: true,
+      receipt: nativeReceipt,
+    });
+
+    const incompletePeer = { ...peer, credentialEnv: null, endpointUrl: null };
+    const invalid = transactionDependencies(registry(target, incompletePeer));
+    expect(
+      commitRebuildRoutePreflight(
+        { sandboxName: "target", gatewayName: "nemoclaw", targetUpdate: targetUpdate(target) },
+        invalid.dependencies,
+      ),
+    ).toMatchObject({ ok: false });
+    expect(invalid.save).not.toHaveBeenCalled();
+  });
+
   it("includes a credential-bearing provider in the migration matrix (#7798)", () => {
     expect(remoteProviders.length).toBeGreaterThan(0);
   });

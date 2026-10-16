@@ -457,41 +457,26 @@ describe("restored native OpenClaw inference fields", () => {
   });
 });
 
-describe("initial native or shared provider selection", () => {
+describe("initial Hermes provider selection", () => {
   it.each([
     {
-      provider: "hermes-provider",
       nativeProvider: false,
       endpointUrl: "https://custom.example/v1",
       expected: "https://inference.local/v1",
     },
     {
-      provider: "hermes-provider",
       nativeProvider: true,
       endpointUrl: "https://authenticated.example/v1",
       expected: "https://authenticated.example/v1",
     },
     {
-      provider: "hermes-provider",
       nativeProvider: true,
       endpointUrl: "https://inference-api.nousresearch.com/v1",
       expected: "https://inference-api.nousresearch.com/v1",
     },
-    {
-      provider: "vllm-local",
-      nativeProvider: false,
-      endpointUrl: "http://host.openshell.internal:8000/v1",
-      expected: "https://inference.local/v1",
-    },
-    {
-      provider: "vllm-local",
-      nativeProvider: true,
-      endpointUrl: "http://host.openshell.internal:8000/v1",
-      expected: "http://host.openshell.internal:8000/v1",
-    },
   ])(
     "preserves $endpointUrl with nativeProvider=$nativeProvider",
-    async ({ expected, provider, ...selection }) => {
+    async ({ expected, ...selection }) => {
       const config = {};
       const writeConfig = vi.fn();
       const readInferenceSelection = vi.fn(() => selection);
@@ -501,11 +486,11 @@ describe("initial native or shared provider selection", () => {
         patchOpenclawInferenceConfig: patchOpenClawInferenceConfig,
         writeOpenclawInferenceConfigNatively: writeConfig,
       });
-      await write("alpha", "fixture-model", provider, null, "selected-gateway");
+      await write("alpha", "fixture-model", "hermes-provider", null, "selected-gateway");
       expect(readInferenceSelection).toHaveBeenCalledExactlyOnceWith(
         "alpha",
         "selected-gateway",
-        provider,
+        "hermes-provider",
       );
       expect(writeConfig).toHaveBeenCalledWith(
         "alpha",
@@ -517,7 +502,7 @@ describe("initial native or shared provider selection", () => {
       await write(
         "alpha",
         "fixture-model",
-        provider,
+        "hermes-provider",
         null,
         "selected-gateway",
         undefined,

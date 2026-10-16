@@ -60,7 +60,12 @@ export function createInitialHermesInferenceRoute(
     if (!acceptsWorkload(initial)) return;
     if (
       initial.nativeLocalProviderAttachment === undefined &&
-      !usesNativeLocalInferenceForAgent("hermes", initial.provider, initial.endpointUrl)
+      !usesNativeLocalInferenceForAgent(
+        "hermes",
+        initial.provider,
+        initial.endpointUrl,
+        initial.provider === "vllm-local" && Boolean(initial.nimContainer),
+      )
     )
       return;
     if (!revalidateSandboxIdentity) {

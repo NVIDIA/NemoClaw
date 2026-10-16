@@ -73,13 +73,17 @@ Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 <AgentOnly variant="hermes">
 
 For Hermes, NemoClaw updates the native `/sandbox/.hermes/config.yaml`, including the model, base URL, API-family mode, and managed API-key value.
+Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers without changing the shared route.
+Owned Local NVIDIA NIM and nonqualifying custom endpoints retain the shared route.
+A legacy local sandbox without a valid Hermes attachment must be recreated before a native local switch: back up required state, then run `nemohermes onboard --fresh --name <sandbox-name> --recreate-sandbox`.
+Live qualification of the Hermes native local lifecycle is pending.
 `inference.local` uses the OpenShell proxy rewrite sentinel.
 Generated NVIDIA Build configuration uses `${NVIDIA_INFERENCE_API_KEY}` for supervisor expansion.
-A live switch to NVIDIA Build writes the newly attached provider's scoped OpenShell credential reference.
+A live switch to NVIDIA Build or a qualified local provider writes the newly attached provider's scoped OpenShell credential reference.
 These values do not expose the raw provider credential.
 The gateway, CLI, TUI, and Web Dashboard all read that shared configuration.
 Changes between shared routes do not rebuild or restart Hermes.
-If the current or selected route uses a native hosted provider, NemoClaw restarts the Hermes gateway after configuration sync.
+If the current or selected route uses a native hosted or local provider, NemoClaw restarts the Hermes gateway after configuration sync.
 Active agent requests can be interrupted during the restart.
 If the restart fails, the route and configuration remain committed.
 Run `$$nemoclaw <name> gateway restart` to apply the switch.
@@ -186,7 +190,8 @@ Then rerun onboarding before you use the route.
 
 One gateway has one live route even when NemoClaw records different intended routes for its sandboxes.
 Review [Use Shared Gateway Routes](use-shared-gateway-routes) before changing a provider that another registered sandbox shares.
-Runtime `inference set` also refuses a change that would leave another registered sandbox with a different recorded route.
+For a shared-route switch, provider-global endpoint, API-family, credential, and incomplete-metadata conflicts stop the command before mutation.
+Native hosted and qualified Hermes local attachments do not change that shared route.
 
 ## Related Topics
 

@@ -11,7 +11,6 @@ import { classifyGatewayProviderNames, isBridgeProviderName } from "../credentia
 import {
   buildInferenceSetFailure,
   queryRegisteredGatewayProviders,
-  rejectInferenceSelectionProbe,
 } from "./inference-set-provider-diagnostics";
 
 const STATIC_WARNING =
@@ -116,65 +115,5 @@ describe("inference set provider diagnostics", () => {
       message: expect.stringContaining("Inspect gateway 'nemoclaw'"),
     });
     expect(providerAdapter.listProviders).not.toHaveBeenCalled();
-  });
-});
-
-describe("failed inference selection recovery", () => {
-  const selection = {
-    nativeLocal: false,
-    sandboxName: "alice",
-    provider: "new-provider",
-    model: "new-model",
-    detail: "model invocation rejected",
-    previousProvider: "old-provider",
-    previousModel: "old-model",
-  };
-
-  it("retains the probe failure and recovery guidance when restoration rejects", async () => {
-    const error = await rejectInferenceSelectionProbe({
-      ...selection,
-      restorePreviousSelection: async () => {
-        throw new Error("restore transport failed");
-      },
-    }).catch((error: Error) => error);
-    expect(error.name).toBe("InferenceSetError");
-    expect(error.message).toContain("model invocation rejected");
-    expect(error.message).toContain("restore transport failed");
-    expect(error.message).toContain("Re-run onboarding before using this route.");
-  });
-
-  it("redacts credential values from a rejected restore operation", async () => {
-    const error = await rejectInferenceSelectionProbe({
-      ...selection,
-      restorePreviousSelection: async () => {
-        throw new Error("restore failed: api_key=fixture-private-key");
-      },
-    }).catch((error: Error) => error);
-    expect(error.message).toContain("model invocation rejected");
-    expect(error.message).toContain("restore failed");
-    expect(error.message).not.toContain("fixture-private-key");
-  });
-
-  it("reports successful restoration without masking the rejected probe", async () => {
-    await expect(
-      rejectInferenceSelectionProbe({
-        ...selection,
-        restorePreviousSelection: async () => null,
-      }),
-    ).rejects.toThrow(
-      "model invocation rejected. The previous OpenShell inference selection was restored",
-    );
-  });
-
-  it("does not restore a shared route after a native-local probe fails", async () => {
-    const restorePreviousSelection = vi.fn();
-    await expect(
-      rejectInferenceSelectionProbe({
-        ...selection,
-        nativeLocal: true,
-        restorePreviousSelection,
-      }),
-    ).rejects.toThrow("Native local inference verification failed");
-    expect(restorePreviousSelection).not.toHaveBeenCalled();
   });
 });

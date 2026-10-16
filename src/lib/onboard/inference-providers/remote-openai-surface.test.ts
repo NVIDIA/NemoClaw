@@ -387,38 +387,6 @@ describe("custom Anthropic provider replacement on the OpenAI surface", () => {
 });
 
 describe("OpenAI-compatible no-auth provider registration", () => {
-  it("reports retained native proxy ownership when reservation throws (#12558)", async () => {
-    const harness = createHarness();
-    const persist = vi.fn();
-    const restore = vi.fn();
-    vi.mocked(noAuthProxy).mockReturnValue({
-      baseUrl: "http://host.openshell.internal:11435/v1",
-      credentialValue: "proxy-token",
-      persist,
-      restore,
-    });
-    harness.deps.reserveSandboxInferenceRoute.mockImplementation(() => {
-      throw new Error("registry readback secret unavailable");
-    });
-    harness.deps.redact.mockImplementation((value: string) =>
-      value.replaceAll("secret", "[redacted]"),
-    );
-
-    await expect(
-      setupRemoteProviderInference(
-        {
-          ...makeArgs(SANDBOX),
-          provider: "compatible-endpoint",
-          credentialEnv: NO_AUTH_ENV,
-        },
-        { ...harness.deps, nativeLocalInference: true },
-      ),
-    ).rejects.toThrow(
-      "Native local inference could not publish its proxy owner: registry readback [redacted] unavailable. The proxy was retained.",
-    );
-    expect(persist).toHaveBeenCalledOnce();
-    expect(restore).not.toHaveBeenCalled();
-  });
   it.each(["compatible-endpoint", "compatible-anthropic-endpoint"])(
     "publishes the pending %s owner before a waiting destroy checks the proxy",
     async (provider) => {

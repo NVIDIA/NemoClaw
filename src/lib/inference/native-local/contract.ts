@@ -6,9 +6,7 @@ export {
   isLocalInferenceProvider,
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
-  isPersistedPiSharedLocalInferenceRoute,
 } from "./eligibility";
-
 import { createHash } from "node:crypto";
 import { qualifiedNativeLocalEndpointUrl } from "./agent-config";
 import { isValidName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
@@ -28,7 +26,7 @@ export type NativeLocalBinding = Readonly<{
   authMode: "authenticated" | "sentinel";
   gatewayName: string;
   sandboxName: string;
-  /** Hermes requires its interpreter paths without changing existing immutable profiles. */
+  /** Hermes permissions use a distinct immutable profile identity. */
   agent?: "hermes";
   /** Existing runtime publication transaction, when that owner requires one. */
   transactionId?: string;
@@ -114,7 +112,12 @@ export function normalizeNativeLocalProviderAttachment(
     !receipt.providerId.trim()
   )
     return undefined;
-  return { ...binding, ...identity, schemaVersion: 1, providerId: receipt.providerId };
+  return {
+    ...binding,
+    ...identity,
+    schemaVersion: 1,
+    providerId: receipt.providerId,
+  };
 }
 
 export function normalizeNativeLocalProviderAuthorities(

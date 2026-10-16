@@ -12,6 +12,20 @@ describe("Station workflow authorization and ownership", () => {
     expect(validateDgxStationDispatchBoundary(readWorkflow())).toEqual([]);
   });
 
+  it.each(["E2E_OBSERVABLE_OUTCOME", "E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT"])(
+    "rejects a Station %s label that misidentifies the model",
+    (field) => {
+      const workflow = readWorkflow();
+      const job = (workflow.jobs as Record<string, { env: Record<string, string> }>)[
+        "dgx-station-express"
+      ];
+      job.env[field] = "Dedicated DGX Station GB300 with cached Nemotron 3 Ultra 550B";
+      expect(validateDgxStationDispatchBoundary(workflow)).toContain(
+        "Station evidence metadata must describe the Super VL default and cached model",
+      );
+    },
+  );
+
   it.each([
     ["jobs", " && inputs.jobs == ''"],
     ["targets", " && inputs.targets == ''"],

@@ -24,10 +24,6 @@ import {
   hasBedrockRuntimeAwsAuthEnv,
   isBedrockRuntimeEndpoint,
 } from "../../inference/bedrock-runtime";
-import {
-  verifyNativeLocalRebuildSelection,
-  type NativeLocalRebuildSelection,
-} from "./lifecycle/native-local-provider-preflight";
 import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
 import { fixedNativeProviderForAttachment } from "../../inference/native-provider/fixed";
 import { nativeProviderLifecycle } from "../../inference/native-provider";
@@ -41,6 +37,7 @@ import {
 import * as registry from "../../state/registry";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import { isLocalInferenceProvider } from "./rebuild-resume-config";
+import { verifyRecordedNativeLocalProviderAttachment } from "../../inference/native-local/profile";
 
 const hermesProviderAuth = require("../../hermes-provider-auth") as {
   HERMES_PROVIDER_NAME: string;
@@ -153,18 +150,6 @@ function rebuildProviderAdapter(
             runtimeSelection,
           })) as RunProviderCommand)
       : undefined,
-  );
-}
-
-/** Verify the recorded local provider using the rebuild command and registry owners. */
-export function verifyRebuildNativeLocalProvider(
-  sandboxName: string,
-  selection: NativeLocalRebuildSelection,
-  runtimeSelection?: OpenShellRuntimeSelection,
-  adapter = rebuildProviderAdapter(runtimeSelection),
-): Promise<boolean> {
-  return verifyNativeLocalRebuildSelection(sandboxName, selection, runtimeSelection, adapter, () =>
-    registry.getSandbox(sandboxName),
   );
 }
 
@@ -441,11 +426,20 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
   bail: (msg: string, code?: number) => never,
   deps: GatewayCredentialReusePreflightDeps = defaultGatewayCredentialReusePreflightDeps(),
 ): Promise<boolean> {
-  try {
-    if (await verifyRebuildNativeLocalProvider(sandboxName, config)) return true;
-  } catch {
-    bail("Could not verify the recorded native local provider attachment; sandbox is untouched.");
-    return false;
+  if (config.nativeLocalProviderAttachment !== undefined) {
+    try {
+      await verifyRecordedNativeLocalProviderAttachment({
+        adapter: rebuildProviderAdapter(),
+        expected: config.nativeLocalProviderAttachment,
+        sandboxName,
+        agent: config.agent,
+        provider: config.provider,
+      });
+      return true;
+    } catch {
+      bail("Could not verify native local provider credential reuse; sandbox is untouched");
+      return false;
+    }
   }
   const nativeAttachment = recordedNativeProviderAttachment(config);
   if (nativeAttachment) {

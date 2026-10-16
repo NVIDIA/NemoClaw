@@ -181,15 +181,27 @@ export async function rollbackNativeLocalSelection(input: {
 
 export async function prepareNativeLocalSelectionBoundary(input: {
   entry: SandboxEntry;
+  sandboxName: string;
   selectingNativeLocal: boolean;
   gatewayName: string;
   requirePolicy?: typeof requireNativeProviderPolicy;
 }) {
-  if (input.selectingNativeLocal)
-    await (input.requirePolicy ?? requireNativeProviderPolicy)(input.gatewayName);
   const previous = normalizeNativeLocalProviderAttachment(
     input.entry.nativeLocalProviderAttachment,
   );
+  if (
+    input.entry.nativeLocalProviderAttachment !== undefined &&
+    (!previous ||
+      input.entry.name !== input.sandboxName ||
+      previous.sandboxName !== input.sandboxName ||
+      previous.gatewayName !== input.gatewayName ||
+      previous.provider !== input.entry.provider)
+  ) {
+    throw new InferenceSetError(
+      "The recorded local provider attachment does not match this sandbox's selection. Recreate this beta sandbox before changing its inference selection.",
+      2,
+    );
+  }
   if (input.entry.agent === "hermes" && previous && previous.agent !== "hermes") {
     throw new InferenceSetError(
       "The recorded local provider does not authorize Hermes. Recreate this beta sandbox before changing its inference selection.",
@@ -206,6 +218,8 @@ export async function prepareNativeLocalSelectionBoundary(input: {
       2,
     );
   }
+  if (input.selectingNativeLocal)
+    await (input.requirePolicy ?? requireNativeProviderPolicy)(input.gatewayName);
   return previous;
 }
 
