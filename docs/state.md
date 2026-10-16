@@ -39,7 +39,7 @@ Use authenticated [native access](interfaces.md) for the selected deployment.
 | Hermes home | `.fabric/hermes/runtimes/<runtime-id>` under the configured Fabric artifact root |
 | Pi conversation | Held in the running Pi process; switching declared choices preserves it, while applying configuration changes or restarting the runtime loses it |
 
-The [OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw) and [interface guide](interfaces.md) define these locations.
+The [OpenClaw](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw) and [Hermes](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/hermes) adapters and the [interface guide](interfaces.md) define these locations.
 Agent state can survive a process restart while its files remain; deleting the sandbox deletes its files.
 Each declared agent runs in its own OpenShell sandbox; workspace directories do not further isolate processes within that sandbox.
 File locations for the other harnesses are tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
