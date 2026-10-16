@@ -93,6 +93,11 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "8754faf5ce97000259b81e36ec447e9fd13051260a8be1f5018e5db11d6414b9",
   // Reviewed Tavily preinstall with archive verification before native installation.
   "51dcdf8ba66279d7c1bee2b14d45fcd0ebf7ce1a8284241c9302b479ca2602a0",
+  // Reviewed optional-plugin helper/cache inputs and native offline installation;
+  // these instructions preserve the generated dashboard configuration.
+  "70a53841ec4540d84c6d12673dad8b428c6595c38521d86371ed3fb86f23f271",
+  "91585a6d2895181a9dcdb731a6fc0d5e9c348255c39833156389042dfdfd32af",
+  "fdbc0d5af007b5ea414c28def5fcd640024d8f4e649f9f2d6ea07a340a029223",
   // Reviewed local NemoClaw plugin installation with explicit capability
   // acceptance; the following inspect and pruning steps are unchanged.
   "464abc5ff104c8bdeae57e6fdb775b7bda7dd756cba0dd1a7752b7d03e8f8372",

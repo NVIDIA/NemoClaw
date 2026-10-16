@@ -57,6 +57,7 @@ it.each([
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         'openclaw() { printf "%s|BRAVE_API_KEY=%s|TAVILY_API_KEY=%s\\n" "$*" "${BRAVE_API_KEY:-}" "${TAVILY_API_KEY:-}" >> "$PLUGIN_CALL_LOG"; }',
+        'node() { case "$1" in /scripts/lib/install-reviewed-openclaw-plugin.mts) printf "node %s\\n" "$*" >> "$PLUGIN_CALL_LOG" ;; *) command node "$@" ;; esac; }',
         command
           .replace(
             "export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives;",
@@ -91,7 +92,8 @@ it.each([
       expect(result.status, result.stderr).toBe(0);
       expect(calls).toContain(`npm view @openclaw/${provider}-plugin@2026.9.2 dist.integrity`);
       expect(calls).toContain(`npm pack @openclaw/${provider}-plugin@2026.9.2 --pack-destination`);
-      expect(calls).toContain("plugins install --force --accept-capabilities npm-pack:");
+      expect(calls).toContain("node /scripts/lib/install-reviewed-openclaw-plugin.mts ");
+      expect(calls).toContain(`@openclaw/${provider}-plugin@2026.9.2 ${integrity} ${tarball}`);
       expect(calls).toContain("doctor --fix --non-interactive|");
       expect(calls).toContain(`${credential}=openshell:resolve:env:${credential}`);
     } finally {
@@ -188,6 +190,7 @@ it.each([
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         'openclaw() { printf "%s|%s|%s|%s\\n" "$*" "${NPM_CONFIG_OFFLINE:-}" "${NPM_CONFIG_IGNORE_SCRIPTS:-}" "${npm_config_ignore_scripts:-}" >> "$PLUGIN_CALL_LOG"; }',
+        'node() { case "$1" in /scripts/lib/install-reviewed-openclaw-plugin.mts) printf "node %s|%s|%s|%s\\n" "$*" "${NPM_CONFIG_OFFLINE:-}" "${NPM_CONFIG_IGNORE_SCRIPTS:-}" "${npm_config_ignore_scripts:-}" >> "$PLUGIN_CALL_LOG" ;; *) command node "$@" ;; esac; }',
         command.replace(
           "export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives;",
           'export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR="$PLUGIN_ARCHIVE_DIR";',
@@ -220,7 +223,7 @@ it.each([
       const expectedInstalls = installed
         .map(
           (plugin) =>
-            `plugins install --force --accept-capabilities npm-pack:${archiveDirectory}/${plugin}-2026.9.2.tgz|true|true|true\n`,
+            `node /scripts/lib/install-reviewed-openclaw-plugin.mts ${archiveDirectory}/${plugin}-2026.9.2.tgz @openclaw/${plugin}@2026.9.2 ${integrity} https://registry.npmjs.org/@openclaw/${plugin}/-/${plugin}-2026.9.2.tgz|true|true|true\n`,
         )
         .join("");
       expect(fs.readFileSync(log, "utf8")).toBe(expectedInstalls + doctor);
