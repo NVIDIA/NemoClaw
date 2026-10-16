@@ -5,14 +5,11 @@ import { requireNativeProviderPolicy } from "../../adapters/openshell/provider-p
 import { InferenceSetError } from "../inference-set-error";
 import type { SandboxEntry } from "../../state/registry";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
-import {
-  LLAMA_CPP_CREDENTIAL_ENV,
-  LLAMA_CPP_GATEWAY_BASE_URL,
-} from "../../inference/llama-cpp/contract";
-import { getOllamaProxyToken } from "../../inference/ollama/proxy";
+import { resolveHermesLocalSwitchRuntime } from "../inference-set/local-runtime";
 import {
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInference,
+  usesNativeLocalInferenceForAgent,
   type NativeLocalProvider,
   type NativeLocalProviderAttachment,
 } from "../../inference/native-local/contract";
@@ -24,10 +21,6 @@ import { prepareNativeLocalSelection } from "../../inference/native-local/select
 import type { InferenceSetProviderBinding } from "../inference-set-route-containment";
 
 export async function prepareNativeLocalSwitch(input: {
-  local: Pick<
-    typeof import("../../inference/local"),
-    "getLocalProviderBaseUrl" | "getManagedVllmProviderBinding" | "shouldFrontOllamaWithProxy"
-  >;
   provider: string;
   agentName?: string;
   gatewayName: string;
@@ -49,41 +42,23 @@ export async function prepareNativeLocalSwitch(input: {
       previousDetached: false,
     };
   }
-  const vllm = input.provider === "vllm-local" ? input.local.getManagedVllmProviderBinding() : null;
-  const proxy = input.provider === "ollama-local" && input.local.shouldFrontOllamaWithProxy();
-  const endpointUrl =
-    input.binding?.baseUrl ??
-    vllm?.baseUrl ??
-    (input.provider === "llama-cpp-local"
-      ? LLAMA_CPP_GATEWAY_BASE_URL
-      : input.local.getLocalProviderBaseUrl(input.provider));
-  if (!endpointUrl)
-    throw new Error("The local inference endpoint is unavailable. Run onboarding to qualify it.");
-  const credentialValue =
-    input.binding?.token ??
-    vllm?.apiKey ??
-    (input.provider === "ollama-local"
-      ? proxy
-        ? getOllamaProxyToken()
-        : "ollama"
-      : input.provider === "vllm-local"
-        ? "dummy"
-        : input.resolveCredentialValue(LLAMA_CPP_CREDENTIAL_ENV));
+  const runtime = resolveHermesLocalSwitchRuntime(
+    input.provider,
+    input.binding,
+    input.resolveCredentialValue,
+  );
   const receipt = await prepareNativeLocalSelection({
     adapter: input.adapter,
     binding: {
       provider: input.provider as NativeLocalProvider,
       gatewayName: input.gatewayName,
       sandboxName: input.sandboxName,
-      endpointUrl,
+      endpointUrl: runtime.endpointUrl,
       ...(input.agentName === "hermes" ? { agent: "hermes" as const } : {}),
-      authMode:
-        !input.binding && !vllm && !proxy && input.provider !== "llama-cpp-local"
-          ? "sentinel"
-          : "authenticated",
+      authMode: runtime.authMode,
     },
-    credentialValue: credentialValue || null,
-    ownedProxy: proxy,
+    credentialValue: runtime.credentialValue || null,
+    ownedProxy: runtime.ownedProxy,
     readAuthority: input.readAuthority,
     writeAuthority: input.writeAuthority,
   });
@@ -182,10 +157,17 @@ export async function rollbackNativeLocalSelection(input: {
 export async function prepareNativeLocalSelectionBoundary(input: {
   entry: SandboxEntry;
   sandboxName: string;
-  selectingNativeLocal: boolean;
+  provider: string;
+  endpointUrl?: string | null;
   gatewayName: string;
   requirePolicy?: typeof requireNativeProviderPolicy;
 }) {
+  const selectingNativeLocal = usesNativeLocalInferenceForAgent(
+    "hermes",
+    input.provider,
+    input.endpointUrl ?? (input.entry.provider === input.provider ? input.entry.endpointUrl : null),
+    Boolean(input.entry.nimContainer),
+  );
   const previous = normalizeNativeLocalProviderAttachment(
     input.entry.nativeLocalProviderAttachment,
   );
@@ -209,7 +191,7 @@ export async function prepareNativeLocalSelectionBoundary(input: {
     );
   }
   if (
-    input.selectingNativeLocal &&
+    selectingNativeLocal &&
     usesNativeLocalInference(input.entry.provider, input.entry.endpointUrl) &&
     !previous
   ) {
@@ -218,9 +200,9 @@ export async function prepareNativeLocalSelectionBoundary(input: {
       2,
     );
   }
-  if (input.selectingNativeLocal)
+  if (selectingNativeLocal)
     await (input.requirePolicy ?? requireNativeProviderPolicy)(input.gatewayName);
-  return previous;
+  return { previous, selectingNativeLocal };
 }
 
 export async function detachPreviousNativeLocalBeforePublish(input: {

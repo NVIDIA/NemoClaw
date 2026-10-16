@@ -1,18 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isLocalInferenceProvider } from "./eligibility";
-export {
-  isLocalInferenceProvider,
-  usesNativeLocalInference,
-  usesNativeLocalInferenceForAgent,
-} from "./eligibility";
+export { usesNativeLocalInference, usesNativeLocalInferenceForAgent } from "./eligibility";
 import { createHash } from "node:crypto";
-import { qualifiedNativeLocalEndpointUrl } from "./agent-config";
+import { isLocalInferenceProvider, qualifiedNativeLocalEndpointUrl } from "./agent-config";
 import { isValidName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
 import type { NativeProviderAttachment } from "../native-provider/lifecycle";
 
-export { NATIVE_LOCAL_CREDENTIAL_ENV, nativeLocalCredentialReference } from "./agent-config";
+export {
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+  isLocalInferenceProvider,
+  nativeLocalCredentialReference,
+} from "./agent-config";
 
 export type NativeLocalProvider =
   | "ollama-local"
@@ -21,13 +20,13 @@ export type NativeLocalProvider =
   | "compatible-endpoint";
 export type NativeLocalBinding = Readonly<{
   provider: NativeLocalProvider;
+  /** Tagged agents retain distinct immutable profile identities. */
+  agent?: "openclaw" | "hermes";
   endpointUrl: string;
   credentialEnv: string;
   authMode: "authenticated" | "sentinel";
   gatewayName: string;
   sandboxName: string;
-  /** Hermes permissions use a distinct immutable profile identity. */
-  agent?: "hermes";
   /** Existing runtime publication transaction, when that owner requires one. */
   transactionId?: string;
 }>;
@@ -40,6 +39,8 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
   if (
     (!isLocalInferenceProvider(input.provider as string) &&
       input.provider !== "compatible-endpoint") ||
+    (input.agent !== undefined && input.agent !== "openclaw" && input.agent !== "hermes") ||
+    (input.agent === "openclaw" && !isLocalInferenceProvider(input.provider as string)) ||
     typeof input.endpointUrl !== "string" ||
     typeof input.credentialEnv !== "string" ||
     !/^[A-Z][A-Z0-9_]*$/.test(input.credentialEnv) ||
@@ -48,7 +49,6 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
     !isValidName(input.gatewayName) ||
     typeof input.sandboxName !== "string" ||
     !isValidName(input.sandboxName) ||
-    (input.agent !== undefined && input.agent !== "hermes") ||
     (input.transactionId !== undefined &&
       (typeof input.transactionId !== "string" || !/^[a-f0-9]{64}$/.test(input.transactionId)))
   )
@@ -57,6 +57,7 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
   if (!endpointUrl) return undefined;
   return {
     provider: input.provider as NativeLocalProvider,
+    ...(input.agent === "openclaw" ? { agent: "openclaw" as const } : {}),
     endpointUrl,
     credentialEnv: input.credentialEnv,
     authMode: input.authMode,
@@ -74,10 +75,11 @@ export function nativeLocalIdentity(binding: NativeLocalBinding) {
     .update(
       JSON.stringify([
         normalized.provider,
+        ...(normalized.agent === "openclaw" ? [normalized.agent] : []),
         normalized.endpointUrl,
         normalized.credentialEnv,
         normalized.authMode,
-        ...(normalized.agent ? [normalized.agent] : []),
+        ...(normalized.agent === "hermes" ? [normalized.agent] : []),
       ]),
     )
     .digest("hex")

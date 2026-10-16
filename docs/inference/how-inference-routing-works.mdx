@@ -37,8 +37,7 @@ For an endpoint returned by Hermes login, NemoClaw records its accepted public I
 A different destination cannot gain access through a later DNS change.
 
 Existing sandboxes without a native attachment retain their recorded shared route.
-New Deep Agents Code and Hermes selections of Ollama, standalone vLLM, llama.cpp, and qualifying local compatible endpoints use sandbox-attached providers for their qualified host-local endpoints.
-OpenClaw, Pi, owned Local NVIDIA NIM, other custom endpoints, and Model Router retain the shared route.
+New Deep Agents Code, Hermes, and OpenClaw selections for Ollama, standalone vLLM, and llama.cpp use a sandbox-attached provider for the qualified host-local endpoint. Deep Agents Code and Hermes also use one for qualified host-local compatible endpoints. Pi, Local NVIDIA NIM, other custom endpoints, and Model Router retain the shared route.
 Hermes live qualification for the new local lifecycle remains pending.
 
 ```text
@@ -57,7 +56,7 @@ The sandbox does not receive the raw upstream API key.
 Local Ollama and local vLLM routes do not require the host `OPENAI_API_KEY`.
 NemoClaw uses provider-specific local tokens for those routes.
 For retained shared local routes, rebuilds migrate away from stale OpenAI credential requirements.
-Legacy Deep Agents local sandboxes without an attachment require a backup and fresh recreation.
+Legacy Deep Agents Code local sandboxes without an attachment require a backup and fresh recreation. Existing OpenClaw Ollama, standalone vLLM, and llama.cpp sandboxes without an attachment retain supported model switches on their shared route, but cannot resume or rebuild. Back one up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NVIDIA NIM sandboxes retain the shared route and can resume or rebuild.
 Hermes local sandboxes without a native attachment retain their recorded shared route.
 For an attached Hermes route, startup refreshes the credential reference before starting the gateway.
 Rebuild refreshes only the restored credential references, preserving the selected model and provider settings.

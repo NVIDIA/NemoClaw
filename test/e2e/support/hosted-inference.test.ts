@@ -644,6 +644,51 @@ printf '{"data":[]}'
     });
   });
 
+  it.each([
+    [false, undefined, 401],
+    [true, undefined, 200],
+    [false, "Bearer dummy", 200],
+    [true, "Bearer dummy", 200],
+    [false, "Bearer wrong", 401],
+    [true, "Bearer wrong", 401],
+  ] as const)(
+    "validates optional bearer authentication (%s, %s)",
+    async (allowMissingAuth, authorization, status) => {
+      const progress = startTestProgress(
+        "optional local authentication",
+        ["serve compatible API", "validate authentication"],
+        {
+          logLine: () => {},
+        },
+      );
+      const fake = await startFakeOpenAiCompatibleServer({
+        apiKey: "dummy",
+        model: "local-model",
+        requireAuth: true,
+        allowMissingAuth,
+        progress,
+      });
+      try {
+        const response = await fetch(`${fake.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(authorization === undefined ? {} : { Authorization: authorization }),
+          },
+          body: JSON.stringify({
+            model: "local-model",
+            messages: [{ role: "user", content: "ping" }],
+          }),
+        });
+        expect(response.status).toBe(status);
+        await response.text();
+      } finally {
+        await fake.close();
+        progress.stop();
+      }
+    },
+  );
+
   it("serves fake OpenAI-compatible chat and responses contracts", async () => {
     const progressLines: string[] = [];
     const progress = startTestProgress(

@@ -76,13 +76,14 @@ const throwingBail = (message: string): never => {
   throw new Error(message);
 };
 
-describe.each(["langchain-deepagents-code", "hermes"] as const)(
+describe.each(["langchain-deepagents-code", "hermes", "openclaw"] as const)(
   "native local rebuild credentials for %s",
   (agent) => {
     function nativeFixture() {
       const binding = {
-        agent: agent === "hermes" ? ("hermes" as const) : undefined,
-        provider: "compatible-endpoint" as const,
+        agent: agent === "langchain-deepagents-code" ? undefined : agent,
+        provider:
+          agent === "openclaw" ? ("llama-cpp-local" as const) : ("compatible-endpoint" as const),
         endpointUrl: "http://host.openshell.internal:8000/v1",
         credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
         authMode: "authenticated" as const,
@@ -123,6 +124,7 @@ describe.each(["langchain-deepagents-code", "hermes"] as const)(
         .mockReturnValue(null);
       const selection = config({
         agent,
+        provider: binding.provider,
         endpointUrl: "http://localhost:8000/v1",
         nativeLocalProviderAttachment: attachment,
       });
@@ -303,8 +305,9 @@ describe.each(["langchain-deepagents-code", "hermes"] as const)(
       );
       expect(validate).toHaveBeenCalledWith(
         expect.objectContaining({
-          provider: "compatible-endpoint",
-          credentialEnv: "COMPATIBLE_API_KEY",
+          provider: f.selection.provider,
+          credentialEnv:
+            agent === "openclaw" ? "NEMOCLAW_LLAMACPP_LOCAL_TOKEN" : "COMPATIBLE_API_KEY",
         }),
         "test-only-rejected-key",
       );

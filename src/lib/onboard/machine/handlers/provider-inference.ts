@@ -93,6 +93,7 @@ export interface ProviderInferenceSetupOptions {
   /** Local NIM shares vllm-local's provider ID but keeps its existing route. */
   localNimSelected?: boolean;
   gatewayName?: string;
+  nimContainer?: string | null;
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
   reuseGatewayCredentialWithoutLocalKey?: boolean;

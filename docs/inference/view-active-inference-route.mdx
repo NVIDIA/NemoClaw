@@ -16,6 +16,10 @@ When the selected sandbox has a valid native provider attachment, the command re
 For providers that still use the shared route, the command reads the live OpenShell inference route.
 For a compatible custom provider on a shared route, the command also reports its persisted endpoint URL when the registry provider and model match the live route.
 Native hosted providers are OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider.
+<AgentOnly variant="openclaw">
+New OpenClaw selections for Ollama, standalone vLLM, and llama.cpp also report their sandbox-attached local provider.
+Local NVIDIA NIM and generic compatible endpoints keep shared-route readback.
+</AgentOnly>
 <AgentOnly variant="hermes,deepagents">
 Deep Agents Code and Hermes also report a recorded native local attachment for qualified Ollama, vLLM, llama.cpp, and host-local compatible endpoints.
 The displayed endpoint is the host-reachable address recorded for that sandbox.

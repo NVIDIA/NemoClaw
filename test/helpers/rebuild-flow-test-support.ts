@@ -239,7 +239,7 @@ export function createRebuildFlowSession(machineSnapshotVersion: number): Rebuil
     updatedAt: "2026-06-01T00:00:00.000Z",
     sandboxName: "alpha",
     agent: null,
-    provider: "ollama-local",
+    provider: "build",
     model: "nvidia/nemotron",
     credentialEnv: null,
     checkpoint: null,

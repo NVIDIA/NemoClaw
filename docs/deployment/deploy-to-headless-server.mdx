@@ -275,6 +275,8 @@ Deep Agents Code does not expose a dashboard URL or gateway token. NVIDIA Endpoi
 
 <AgentOnly variant="openclaw">
 
+New OpenClaw Ollama, standalone vLLM, and llama.cpp selections use a sandbox-attached native provider. Local NVIDIA NIM and user-supplied compatible endpoints retain the shared `inference.local` route; an older local selection without an attachment may also retain it until a safe fresh recreation.
+
 OpenClaw generates a new gateway token when the sandbox container starts with mutable configuration.
 Retrieve the dashboard URL or token again after the container starts or a replacement sandbox is created.
 

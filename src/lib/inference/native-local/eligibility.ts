@@ -4,9 +4,8 @@
 import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
 import { VLLM_PORT } from "../../core/vllm-port";
 
-export function isLocalInferenceProvider(provider: string | null | undefined): boolean {
-  return provider === "ollama-local" || provider === "vllm-local" || provider === "llama-cpp-local";
-}
+import { isLocalInferenceProvider } from "./agent-config";
+export { isLocalInferenceProvider };
 
 /** Hosted compatible endpoints remain with their hosted migration slice. */
 export function usesNativeLocalInference(
@@ -42,7 +41,8 @@ export function usesNativeLocalInferenceForAgent(
 ): boolean {
   return (
     !(provider === "vllm-local" && localNimSelected) &&
-    (agentName === "langchain-deepagents-code" || agentName === "hermes") &&
-    usesNativeLocalInference(provider, endpointUrl)
+    (((agentName === "langchain-deepagents-code" || agentName === "hermes") &&
+      usesNativeLocalInference(provider, endpointUrl)) ||
+      (agentName === "openclaw" && isLocalInferenceProvider(provider)))
   );
 }

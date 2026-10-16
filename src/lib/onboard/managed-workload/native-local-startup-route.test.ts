@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { nativeLocalIdentity } from "../../inference/native-local/contract";
+import {
+  nativeLocalIdentity,
+  type NativeLocalProviderAttachment,
+} from "../../inference/native-local/contract";
 import { getSandboxInferenceConfig, resolveAgentInferenceApi } from "../../inference/config";
 import { createManagedWorkloadOnboardRuntime } from "./onboard-orchestration";
 
@@ -40,7 +43,7 @@ function prepareProfile(
   agentName: AgentName,
   route: {
     endpointUrl: string | null;
-    attachment?: typeof nativeAttachment & { agent?: "hermes" };
+    attachment?: NativeLocalProviderAttachment;
     provider?: string;
     localNimSelected?: boolean;
     nativeProvider?: boolean;
@@ -122,16 +125,43 @@ it("rejects unattached Deep Agents Code native inference (#13197)", () => {
   ).toThrow("requires its native provider attachment");
 });
 
-it("keeps owned Local NIM on the Deep Agents Code shared route without an attachment (#13116)", () => {
-  const prepared = prepareProfile("langchain-deepagents-code", {
-    provider: "vllm-local",
-    endpointUrl: "http://127.0.0.1:8000/v1",
-    localNimSelected: true,
-    nativeProvider: false,
+it.each(["openclaw", "langchain-deepagents-code"] as const)(
+  "keeps owned Local NIM on the %s shared route without an attachment (#13116)",
+  (agentName) => {
+    const prepared = prepareProfile(agentName, {
+      provider: "vllm-local",
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      localNimSelected: true,
+      nativeProvider: false,
+    });
+    expect(prepared?.profile.inference).toMatchObject({
+      upstreamProvider: "vllm-local",
+      routedBaseUrl: "https://inference.local/v1",
+    });
+  },
+);
+
+it("routes new OpenClaw Ollama through its sandbox attachment", () => {
+  const localBinding = {
+    ...nativeBinding,
+    provider: "ollama-local" as const,
+    agent: "openclaw" as const,
+  };
+  const attachment = {
+    ...localBinding,
+    ...nativeLocalIdentity(localBinding),
+    schemaVersion: 1 as const,
+    providerId: "local-fixture",
+  };
+  const prepared = prepareProfile("openclaw", {
+    provider: "ollama-local",
+    endpointUrl: localBinding.endpointUrl,
+    attachment,
   });
   expect(prepared?.profile.inference).toMatchObject({
-    upstreamProvider: "vllm-local",
-    routedBaseUrl: "https://inference.local/v1",
+    upstreamProvider: "ollama-local",
+    routedBaseUrl: localBinding.endpointUrl,
+    upstreamEndpointUrl: null,
   });
 });
 

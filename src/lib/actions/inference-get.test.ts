@@ -37,7 +37,7 @@ function configuredRoute(provider: string, model: string): OpenShellInferenceRou
 
 function nativeLocalSandbox(
   overrides: Record<string, unknown> = {},
-  agent: "langchain-deepagents-code" | "hermes" = "langchain-deepagents-code",
+  agent: "langchain-deepagents-code" | "hermes" | "openclaw" = "langchain-deepagents-code",
 ) {
   const binding: NativeLocalBinding = {
     provider: "ollama-local",
@@ -46,7 +46,7 @@ function nativeLocalSandbox(
     authMode: "authenticated",
     gatewayName: "nemoclaw",
     sandboxName: "alpha",
-    ...(agent === "hermes" ? { agent } : {}),
+    ...(agent !== "langchain-deepagents-code" ? { agent } : {}),
   };
   return {
     name: "alpha",
@@ -212,6 +212,12 @@ describe("runInferenceGet", () => {
       endpointUrl: "http://host.openshell.internal:11435/v1",
     },
     {
+      agent: "openclaw",
+      provider: "ollama-local",
+      sandboxName: "alpha",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+    },
+    {
       agent: "langchain-deepagents-code",
       provider: "compatible-endpoint",
       sandboxName: "alpha",
@@ -308,7 +314,7 @@ describe("runInferenceGet", () => {
       overrides: { gatewayName: undefined, gatewayPort: 8080 },
     },
     { label: "agent mismatch", overrides: { agent: "hermes" } },
-    { label: "unsupported agent", overrides: { agent: "openclaw" } },
+    { label: "OpenClaw with an untagged DCode attachment", overrides: { agent: "openclaw" } },
     {
       label: "Hermes attachment assigned to another agent",
       overrides: nativeLocalSandbox({ agent: "langchain-deepagents-code" }, "hermes"),

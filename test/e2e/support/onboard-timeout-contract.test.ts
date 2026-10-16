@@ -14,6 +14,8 @@ import {
   DCODE_TYPED_TARGET_TIMEOUT_MINUTES,
   LIVE_TARGET_BASE_TEST_TIMEOUT_MS,
   INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
+  OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS,
+  OPENCLAW_NATIVE_LOCAL_TARGET_TIMEOUT_MINUTES,
   liveTargetTimeoutContract,
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
@@ -38,7 +40,12 @@ import { CONFIG_EXPORT_EXPECTATIONS, type ConfigExportExpectation } from "../reg
 
 const MINUTE_MS = 60_000;
 const finalHandoffTimeoutMs = getDockerGpuSupervisorReconnectTimeoutSecs(1, {}) * 1_000;
-const affectedTargetIds = ["inference-routing", "onboard-repair", "onboard-resume"] as const;
+const affectedTargetIds = [
+  "inference-routing",
+  "inference-routing-openclaw-native",
+  "onboard-repair",
+  "onboard-resume",
+] as const;
 const timeoutContractPath = "tools/e2e/onboard-timeout-contract.mts";
 const commandDiagnosticHeadroomMs = 10 * MINUTE_MS;
 const testHeadroomMs = 10 * MINUTE_MS;
@@ -115,6 +122,19 @@ describe("onboard final-handoff timeout contract", () => {
     );
   });
 
+  it("contains both serial OpenClaw native-local scenarios and their finalization", () => {
+    expect(OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS + 5 * MINUTE_MS,
+    );
+    expect(
+      catalogueTarget("inference-routing-openclaw-native").timeoutMinutes * MINUTE_MS,
+    ).toBeGreaterThanOrEqual(
+      OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS +
+        ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS +
+        jobHeadroomMs,
+    );
+  });
+
   it("pins the reviewed command, test, and target timeout values", () => {
     expect({
       finalHandoffCommandMinutes: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS / MINUTE_MS,
@@ -122,6 +142,8 @@ describe("onboard final-handoff timeout contract", () => {
       singleFinalHandoffTargetMinutes: ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
       dcodeNativeLocalTestMinutes: DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS / MINUTE_MS,
       inferenceRoutingTargetMinutes: INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
+      openClawNativeLocalTestMinutes: OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS / MINUTE_MS,
+      openClawNativeLocalTargetMinutes: OPENCLAW_NATIVE_LOCAL_TARGET_TIMEOUT_MINUTES,
       noRecreateCommandMinutes: ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS / MINUTE_MS,
       configExportCommandMinutes: CONFIG_EXPORT_COMMAND_TIMEOUT_MS / MINUTE_MS,
       configExportPinnedV1ConsumerMinutes: CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS / MINUTE_MS,
@@ -142,6 +164,8 @@ describe("onboard final-handoff timeout contract", () => {
       singleFinalHandoffTargetMinutes: 75,
       dcodeNativeLocalTestMinutes: 117.5,
       inferenceRoutingTargetMinutes: 243,
+      openClawNativeLocalTestMinutes: 122.5,
+      openClawNativeLocalTargetMinutes: 193,
       noRecreateCommandMinutes: 15,
       configExportCommandMinutes: 2,
       configExportPinnedV1ConsumerMinutes: 10,
@@ -165,6 +189,11 @@ describe("onboard final-handoff timeout contract", () => {
       DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS,
       INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
     ],
+    [
+      "inference-routing-openclaw-native",
+      OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS + ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+      OPENCLAW_NATIVE_LOCAL_TARGET_TIMEOUT_MINUTES,
+    ],
     ["onboard-resume", ONBOARD_RESUME_TEST_TIMEOUT_MS, ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES],
     ["onboard-repair", ONBOARD_REPAIR_TEST_TIMEOUT_MS, ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES],
   ] as const)(
@@ -177,7 +206,7 @@ describe("onboard final-handoff timeout contract", () => {
     },
   );
 
-  it("selects both affected targets when the shared timeout contract changes", () => {
+  it("selects each affected target when the shared timeout contract changes", () => {
     expect(
       catalogueTargetsForChangedFiles([timeoutContractPath])
         .map((target) => target.id)

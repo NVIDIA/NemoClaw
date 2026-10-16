@@ -1314,7 +1314,9 @@ export function createSetupInference(
                 !options.recreatePublishedSandbox ||
                 !options.deferPublishedRouteReservation ||
                 !options.reservationSessionId ||
-                (recorded.agent !== "langchain-deepagents-code" && recorded.agent !== "hermes")
+                (recorded.agent !== "langchain-deepagents-code" &&
+                  recorded.agent !== "openclaw" &&
+                  recorded.agent !== "hermes")
               ) {
                 throw new Error("Recreate this beta sandbox before using native local inference.");
               }
@@ -1326,14 +1328,16 @@ export function createSetupInference(
               gatewayReachableCompatibleEndpointUrl(name, selectedEndpoint);
             if (typeof hostReachableEndpoint !== "string")
               throw new Error("Native local inference endpoint is missing.");
+            const selectedAgent =
+              options.agentName ??
+              options.hostLocalInference?.request.application ??
+              recorded?.agent;
             nativeLocalProviderAttachment = await prepareNativeLocalSelection({
               adapter: deps.providerAdapter,
               binding: {
                 provider: name as NativeLocalProvider,
-                ...((options.agentName ??
-                  options.hostLocalInference?.request.application ??
-                  recorded?.agent) === "hermes"
-                  ? { agent: "hermes" as const }
+                ...(selectedAgent === "openclaw" || selectedAgent === "hermes"
+                  ? { agent: selectedAgent }
                   : {}),
                 endpointUrl: hostReachableEndpoint,
                 authMode:

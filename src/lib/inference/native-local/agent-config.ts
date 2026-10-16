@@ -6,6 +6,10 @@ import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety.ts";
 
 export const NATIVE_LOCAL_CREDENTIAL_ENV = "NEMOCLAW_LOCAL_INFERENCE_TOKEN";
 
+export function isLocalInferenceProvider(provider: string | null | undefined): boolean {
+  return provider === "ollama-local" || provider === "vllm-local" || provider === "llama-cpp-local";
+}
+
 /** The endpoint shape shared by local provider registration and agent credentials. */
 export function qualifiedNativeLocalEndpointUrl(endpointUrl: string): string | null {
   if (!endpointUrl || unsafeEndpointUrlViolation(endpointUrl)) return null;

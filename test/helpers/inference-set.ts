@@ -19,6 +19,7 @@ import type { OpenShellProviderAdapter } from "../../src/lib/adapters/openshell/
 import { createCliOpenShellProviderAdapter } from "../../src/lib/adapters/openshell/provider-adapter-cli";
 import { HOSTED_NATIVE_PROVIDERS } from "../../src/lib/inference/native-provider/hosted";
 import { fixedNativeProvider } from "../../src/lib/inference/native-provider/fixed";
+import { isLocalInferenceProvider } from "../../src/lib/inference/native-local/agent-config";
 import type { NativeProviderAttachment } from "../../src/lib/inference/native-provider/contract";
 import type { AgentConfigTarget } from "../../src/lib/sandbox/config";
 import type { ConfigObject, ConfigValue } from "../../src/lib/security/credential-filter";
@@ -79,18 +80,31 @@ function nativeAwareProviderAdapter(
   base: OpenShellProviderAdapter,
   entries: SandboxEntry[],
 ): OpenShellProviderAdapter {
-  const definitions = [fixedNativeProvider("nvidia-prod")!, ...HOSTED_NATIVE_PROVIDERS];
+  const localReceipts = entries.flatMap((entry) =>
+    entry.nativeLocalProviderAttachment ? [entry.nativeLocalProviderAttachment] : [],
+  );
+  const definitions = [
+    fixedNativeProvider("nvidia-prod")!,
+    ...HOSTED_NATIVE_PROVIDERS,
+    ...localReceipts,
+  ];
   const receipts = entries.flatMap((entry) =>
-    [entry.nativeNvidiaProviderAttachment, entry.nativeHostedProviderAttachment].filter(
-      (receipt): receipt is NativeProviderAttachment => !!receipt,
-    ),
+    [
+      entry.nativeNvidiaProviderAttachment,
+      entry.nativeHostedProviderAttachment,
+      entry.nativeLocalProviderAttachment,
+    ].filter((receipt): receipt is NativeProviderAttachment => !!receipt),
   );
   const present = new Set(receipts.map((receipt) => receipt.providerName));
   const attachments = new Map(
     entries.map((entry) => [
       entry.name,
       new Set(
-        [entry.nativeNvidiaProviderAttachment, entry.nativeHostedProviderAttachment]
+        [
+          entry.nativeNvidiaProviderAttachment,
+          entry.nativeHostedProviderAttachment,
+          entry.nativeLocalProviderAttachment,
+        ]
           .filter((receipt) => !!receipt)
           .map((receipt) => receipt!.providerName),
       ),
@@ -101,6 +115,12 @@ function nativeAwareProviderAdapter(
   return {
     ...base,
     ensureProviderPolicyComposition: async () => ({ ok: true, value: undefined }),
+    inspectProviderProfile: async (request) => {
+      const local = localReceipts.find((receipt) => receipt.profileId === request.profileType);
+      return local
+        ? { ok: true, value: { credentialKeys: [local.credentialEnv] } }
+        : await base.inspectProviderProfile(request);
+    },
     importProviderProfile: async (request) =>
       definitions.some((definition) => request.profilePath.endsWith(`${definition.profileId}.yaml`))
         ? { ok: true }
@@ -159,6 +179,11 @@ function nativeAwareProviderAdapter(
       ok: true,
       value: { names: [...(attachments.get(request.sandboxName) ?? [])] },
     }),
+    deleteProvider: async (request) => {
+      if (!definitionFor(request.providerName)) return await base.deleteProvider(request);
+      present.delete(request.providerName);
+      return { ok: true };
+    },
   };
 }
 
@@ -313,6 +338,7 @@ export function createDeps(options: {
   withGatewayRouteMutationLock?: InferenceSetDeps["withGatewayRouteMutationLock"];
   getNativeNvidiaProviderAuthority?: InferenceSetDeps["getNativeNvidiaProviderAuthority"];
   setNativeNvidiaProviderAuthority?: InferenceSetDeps["setNativeNvidiaProviderAuthority"];
+  clearNativeLocalProviderAuthority?: InferenceSetDeps["clearNativeLocalProviderAuthority"];
 }): InferenceSetDeps & {
   calls: {
     captureOpenshell: ReturnType<typeof vi.fn>;
@@ -339,6 +365,7 @@ export function createDeps(options: {
     settleOpenClawPairing: ReturnType<typeof vi.fn>;
     withGatewayRouteMutationLock: ReturnType<typeof vi.fn>;
     setNativeNvidiaProviderAuthority: ReturnType<typeof vi.fn>;
+    clearNativeLocalProviderAuthority: ReturnType<typeof vi.fn>;
   };
   getSession: () => Session | null;
 } {
@@ -416,6 +443,7 @@ export function createDeps(options: {
           await operation()),
     ),
     setNativeNvidiaProviderAuthority: vi.fn(),
+    clearNativeLocalProviderAuthority: vi.fn(),
   };
   const providerAdapter =
     options.providerAdapter ??
@@ -501,6 +529,8 @@ export function createDeps(options: {
     getNativeNvidiaProviderAuthority: options.getNativeNvidiaProviderAuthority,
     setNativeNvidiaProviderAuthority:
       options.setNativeNvidiaProviderAuthority ?? calls.setNativeNvidiaProviderAuthority,
+    clearNativeLocalProviderAuthority:
+      options.clearNativeLocalProviderAuthority ?? calls.clearNativeLocalProviderAuthority,
     updateSandbox: calls.updateSandbox,
     getRequestedAgent: () => options.requestedAgent,
     loadSession: () => session,
@@ -529,8 +559,7 @@ export function createDeps(options: {
     providerAdapter,
     appendAuditEntry: calls.appendAuditEntry,
     log: calls.log,
-    isLocalInferenceProvider: (provider) =>
-      provider === "ollama-local" || provider === "vllm-local",
+    isLocalInferenceProvider,
     validateLocalProvider: calls.validateLocalProvider,
     ensureLocalProviderReachable: calls.ensureLocalProviderReachable,
     resolveContextWindowForModel: calls.resolveContextWindowForModel,

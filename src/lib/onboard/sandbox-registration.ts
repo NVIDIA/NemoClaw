@@ -559,7 +559,7 @@ export function nativeLocalReservationStatus(input: {
     input.entry.nativeLocalProviderAttachment,
   );
   return attachment &&
-    (attachment.agent === "hermes") === (input.agentName === "hermes") &&
+    input.agentName === (attachment.agent ?? "langchain-deepagents-code") &&
     attachment.sandboxName === input.sandboxName &&
     attachment.gatewayName === input.gatewayName &&
     attachment.provider === input.provider &&
