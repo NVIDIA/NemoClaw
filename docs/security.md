@@ -15,6 +15,7 @@ An explicit policy replaces the preset, and apply rejects policy changes that re
 The isolated preset uses Landlock `best_effort`; unavailable restrictions are not enforced.
 Each declared agent has its own OpenShell sandbox; tool grants do not further isolate processes or files within that sandbox.
 See [agent tool restrictions](agents.md#agent-tool-restrictions).
+Fabric's Hermes adapter defaults `HERMES_YOLO_MODE` and `HERMES_ACCEPT_HOOKS` to `1`, so Hermes runs commands and hooks without asking for approval; rely on the sandbox policy for isolation.
 
 A threat model, host-specific security qualification and hardening profiles are tracked in [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643).
 
@@ -101,7 +102,6 @@ Before enabling export, identify who can read the collector's stored data and ho
 The current integration selects an existing collector; it does not provision or manage that retention policy.
 Experimental [Hermes Relay tracing](agents.md#hermes-relay-tracing) instead writes local sandbox artifacts without adding a collector or egress rule.
 Its full-payload setting is disabled, but trace contents still need privacy review before sharing; deleting the sandbox deletes those files.
-Fabric's Hermes adapter sets `HERMES_YOLO_MODE=1` and accepts hooks when they are unset, so Hermes does not ask for approval before running commands; rely on the sandbox policy for isolation.
 
 Privacy review and retention guidance for production tracing are tracked in [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643).
 
