@@ -363,7 +363,7 @@ export async function runInferenceGet(
       attachment.credentialEnv !== NATIVE_LOCAL_CREDENTIAL_ENV ||
       typeof selectedSandbox.model !== "string" ||
       !selectedSandbox.model.trim() ||
-      selectedSandbox.agent !== "langchain-deepagents-code"
+      selectedSandbox.agent !== (attachment.agent ?? "langchain-deepagents-code")
     ) {
       throw new InferenceGetError(
         "Invalid native local provider attachment for the recorded inference selection",
