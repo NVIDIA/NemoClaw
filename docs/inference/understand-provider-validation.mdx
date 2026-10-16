@@ -59,7 +59,7 @@ The managed Deep Agents runtime keeps `use_responses_api = false` and uses Chat 
 
 <AgentOnly variant="openclaw">
 
-New OpenClaw Ollama, standalone vLLM, and llama.cpp selections use their recorded sandbox-attached native provider for validation. Local NVIDIA NIM, user-supplied compatible endpoints, and retained shared local selections use `inference.local`. An older OpenClaw local sandbox without a native attachment can use supported shared-route model switches, but cannot resume or rebuild. Back it up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`.
+New OpenClaw Ollama, standalone vLLM, and llama.cpp selections use their recorded sandbox-attached native provider for validation. Local NVIDIA NIM, user-supplied compatible endpoints, and retained shared local selections use `inference.local`. An older OpenClaw Ollama, standalone vLLM, or llama.cpp sandbox without a native attachment can use supported shared-route model switches, but cannot resume or rebuild. Back it up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NVIDIA NIM sandboxes can resume or rebuild on the shared route.
 
 </AgentOnly>
 

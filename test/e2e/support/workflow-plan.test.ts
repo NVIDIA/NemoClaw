@@ -268,6 +268,15 @@ describe("E2E workflow plan", () => {
   });
 
   it.each([
+    "src/lib/actions/inference-set/native-local.ts",
+    "src/lib/inference/native-local/profile.ts",
+  ])("selects native OpenClaw live evidence when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "inference-routing-openclaw-native",
+    );
+  });
+
+  it.each([
     "src/lib/onboard/runtime-provider/contract.ts",
     "src/lib/onboard/runtime-provider/docker.ts",
     "src/lib/onboard/runtime-provider/mxc.ts",
