@@ -168,7 +168,7 @@ cargo images qualify nc-contract:dummy --lifecycle dummy --require-ready
 Use `linux/amd64` on a native AMD64 host.
 The qualifier uses the inspected image ID and an owned disposable container with networking disabled, a read-only root filesystem, and temporary writable sandbox storage.
 It removes that container on success, failure, or timeout; the built image remains local.
-The suite exercises standalone validation and all six commands, including generation conflicts and readiness failure that preserves the configured runtime.
+The suite exercises standalone validation and all seven commands, including generation conflicts, explicit stop, and readiness failure that preserves the configured runtime.
 The [contract description](design/fabric-management.md#image-contract-and-reference-implementation) defines the dummy's settings and the real adapter backend boundary.
 
 To roll the same interface into all ten production adapter images on a native Linux ARM64 host, run:

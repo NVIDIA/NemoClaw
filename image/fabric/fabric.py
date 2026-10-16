@@ -194,8 +194,15 @@ class RuntimeHost:
                         == json.dumps(config, sort_keys=True)
                     ):
                         return envelope(operation, self.snapshot())
-                    if operation == "prepare" and self.runtime is None and self.state == "stopped":
-                        return envelope(operation, {**self.snapshot(), "prepared": True})
+                    if (
+                        operation in ("prepare", "stop")
+                        and self.runtime is None
+                        and self.state == "stopped"
+                    ):
+                        result = self.snapshot()
+                        if operation == "prepare":
+                            result["prepared"] = True
+                        return envelope(operation, result)
                     self.generation = uuid.uuid4().hex
                     changed, effects = None, "unknown"
                     stage = "stop"

@@ -43,6 +43,7 @@ pub struct State {
     pub inference_exit: i32,
     pub exec_truncated: bool,
     pub lose_configure_reply: bool,
+    pub stop_unsupported: bool,
     pub exec_stalled: bool,
     pub exec_calls: Vec<Vec<String>>,
     pub exec_environments: Vec<HashMap<String, String>>,
@@ -780,7 +781,7 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                     .and_then(|payload| serde_json::from_slice(payload).ok()),
                 None => None,
             };
-            if matches!(operation, "configure" | "prepare") && exit == 0 {
+            if matches!(operation, "configure" | "prepare" | "stop") && exit == 0 {
                 if flag("--expected-generation")
                     != Some(
                         format!(
@@ -798,8 +799,15 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                         serde_json::json!({"code":"stale_generation", "stage":"generation", "message":"stale generation", "effects":"none"}),
                     );
                     exit = 1;
-                } else if let Some(config) = config {
-                    changed = if operation == "prepare" {
+                } else if operation == "stop" && state.stop_unsupported {
+                    error = Some(
+                        serde_json::json!({"code":"invalid_request","stage":"request","message":"unsupported command","effects":"none"}),
+                    );
+                    exit = 1;
+                } else if let Some(config) =
+                    config.or_else(|| (operation == "stop").then(|| serde_json::json!({})))
+                {
+                    changed = if matches!(operation, "prepare" | "stop") {
                         state.fabric_configurations.contains_key(&sandbox_id)
                             && !state.fabric_stopped.contains(&sandbox_id)
                     } else {
@@ -812,7 +820,8 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                             .entry(sandbox_id.clone())
                             .or_default() += 1;
                     }
-                    let stopped = operation == "prepare" || state.configuration_error.is_some();
+                    let stopped = matches!(operation, "prepare" | "stop")
+                        || state.configuration_error.is_some();
                     if stopped {
                         state.fabric_stopped.insert(sandbox_id.clone());
                     } else {

@@ -230,6 +230,44 @@ pub(crate) async fn bridge_input(
     bridge(client, binding, &arguments, 120, payload).await
 }
 
+/// Stop once using an observed generation. A legacy image or an ambiguous
+/// reply must retain the attachment; never reinterpret either as absence.
+pub(crate) async fn stop_agent(
+    client: &OpenShell,
+    binding: &Row,
+    generation: &str,
+) -> Result<(), ObservationError> {
+    const UNCONFIRMED: ObservationError = ObservationError::Backend(
+        "Fabric agent stop was not confirmed; resources retained. The sandbox image must support fabric-agent stop; rebuild an older image before retrying removal.",
+    );
+    let response = bridge(
+        client,
+        binding,
+        &[
+            "stop",
+            "--agent",
+            value(binding, "agent_name"),
+            "--expected-generation",
+            generation,
+        ],
+        120,
+        Vec::new(),
+    )
+    .await
+    .map_err(|error| match error {
+        Error::Observation(error) => error,
+        _ => UNCONFIRMED,
+    })?;
+    if response.status != "succeeded" {
+        return Err(UNCONFIRMED);
+    }
+    let snapshot = response.snapshot().map_err(|_| UNCONFIRMED)?;
+    if snapshot.runtime_state != "stopped" {
+        return Err(UNCONFIRMED);
+    }
+    Ok(())
+}
+
 /// Fabric operations on an OpenShell sandbox that runs the Fabric bridge.
 #[async_trait]
 pub trait AgentBridge {

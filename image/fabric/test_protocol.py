@@ -17,6 +17,18 @@ CONFIG = {"metadata": {"name": "main"}, "harness": {"adapter_id": "vendor.new"}}
 
 
 class CommandArguments(unittest.TestCase):
+    def test_stop_requires_generation_but_not_configuration_or_stdin(self):
+        with patch("sys.stdin", new=Mock(read=Mock(side_effect=AssertionError("stdin")))):
+            request = bridge_protocol.parse_command(
+                ["stop", "--agent", "main", "--expected-generation", "opaque"]
+            )
+        self.assertEqual(
+            request, {"operation": "stop", "agent": "main", "expected_generation": "opaque"}
+        )
+        for flags in ([], ["--config", "PRIVATE"]):
+            with self.assertRaises(bridge_protocol.ProtocolError):
+                bridge_protocol.parse_command(["stop", "--agent", "main", *flags])
+
     def test_check_defaults_to_live_before_sending_the_request(self):
         self.assertEqual(
             bridge_protocol.parse_command(["check", "--agent", "main"]),

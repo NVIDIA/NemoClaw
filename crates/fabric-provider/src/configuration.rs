@@ -229,10 +229,21 @@ pub(crate) async fn remove(
     prior: &Row,
     _destroying: bool,
 ) -> Result<(), ObservationError> {
-    read(client, prior, true).await?;
-    // The sandbox owns this runtime. Forgetting its configuration binding
-    // must not mutate or delete a runtime independently of that sandbox.
-    Ok(())
+    let Some(parent) = configuration_parent(client, prior, true).await? else {
+        return Ok(());
+    };
+    if value(prior, "id") != value(&parent, "id") {
+        return Err(ObservationError::BindingMismatch);
+    }
+    let snapshot = client
+        .agent_snapshot(&parent)
+        .await
+        .map_err(Error::into_observation)?;
+    let generation = snapshot
+        .generation
+        .as_deref()
+        .ok_or(ObservationError::Incomplete)?;
+    crate::bridge::stop_agent(client, &parent, generation).await
 }
 pub(crate) async fn configure_agent(client: &OpenShell, binding: &Row) -> Result<(), Error> {
     let generation = tokio::time::timeout(Duration::from_secs(120), async {
