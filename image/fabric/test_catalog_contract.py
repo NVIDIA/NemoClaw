@@ -106,7 +106,15 @@ class CatalogContract(unittest.TestCase):
                 catalog["bridge"],
                 {
                     "interface_version": 1,
-                    "operations": ["validate", "prepare", "configure", "check", "invoke", "serve"],
+                    "operations": [
+                        "validate",
+                        "prepare",
+                        "configure",
+                        "stop",
+                        "check",
+                        "invoke",
+                        "serve",
+                    ],
                     "health_checks": [],
                 },
             )

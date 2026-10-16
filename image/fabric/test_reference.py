@@ -44,6 +44,53 @@ class ReferenceContract(unittest.IsolatedAsyncioTestCase):
         self.assertIs(invalid["result"]["valid"], False)
         self.assertEqual(invalid["error"]["effects"], "none")
 
+    async def test_stop_clears_configuration_without_validating_it_and_is_idempotent(self):
+        started = (await self.call("configure"))["result"]
+        runtime = self.host.runtime
+        # Removal must not need a configuration that the current image accepts.
+        self.host.backend.validate = lambda *args, **kwargs: self.fail("stop validated config")
+        request = {
+            "operation": "stop",
+            "agent": "main",
+            "expected_generation": started["generation"],
+        }
+        stopped = await self.host.handle(request)
+        self.assertEqual(stopped["status"], "succeeded")
+        self.assertTrue(stopped["changed"])
+        self.assertEqual(stopped["result"]["runtime_state"], "stopped")
+        self.assertIsNone(stopped["result"]["runtime_id"])
+        self.assertIsNone(stopped["result"]["applied_config"])
+        self.assertNotEqual(stopped["result"]["generation"], started["generation"])
+        self.assertNotEqual(runtime.status, "active")
+        bridge_protocol.validate_response(stopped, "stop")
+        request["expected_generation"] = stopped["result"]["generation"]
+        repeated = await self.host.handle(request)
+        self.assertFalse(repeated["changed"])
+        self.assertEqual(repeated["result"], stopped["result"])
+
+    async def test_stale_stop_preserves_the_running_agent(self):
+        before = (await self.call("configure"))["result"]
+        result = await self.host.handle(
+            {"operation": "stop", "agent": "main", "expected_generation": "stale"}
+        )
+        self.assertEqual(result["error"]["code"], "stale_generation")
+        self.assertEqual(result["error"]["effects"], "none")
+        self.assertEqual(self.host.snapshot(), before)
+
+    async def test_failed_stop_retains_the_runtime_and_configuration(self):
+        config = copy.deepcopy(CONFIG)
+        config["harness"]["settings"] = {"fail_stop": True}
+        before = (await self.call("configure", config=config))["result"]
+        response = await self.host.handle(
+            {"operation": "stop", "agent": "main", "expected_generation": before["generation"]}
+        )
+        self.assertEqual(response["status"], "failed")
+        self.assertEqual(response["error"]["code"], "fabric_stop_failed")
+        self.assertEqual(response["error"]["effects"], "unknown")
+        self.assertEqual(response["result"]["runtime_state"], "unknown")
+        self.assertEqual(response["result"]["runtime_id"], before["runtime_id"])
+        self.assertEqual(response["result"]["applied_config"], config)
+
     async def test_lifecycle_readiness_invocation_and_noops(self):
         stopped = await self.call("check", level="ready")
         self.assertEqual(stopped["status"], "failed")

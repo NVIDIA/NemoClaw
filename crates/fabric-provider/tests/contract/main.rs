@@ -122,6 +122,132 @@ fn every_fabric_type_has_a_contract_test() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
+async fn removing_an_agent_stops_it_without_removing_its_sandbox() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint, &[]);
+    tofu.apply();
+    let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
+    tofu.run(
+        &[
+            "apply",
+            "-auto-approve",
+            "-input=false",
+            "-var=agent_enabled=false",
+        ],
+        true,
+    );
+    {
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.sandboxes, sandboxes);
+        assert!(state.fabric_configurations.is_empty());
+        assert_eq!(
+            state
+                .exec_calls
+                .iter()
+                .filter(|args| args.get(1).is_some_and(|arg| arg == "stop"))
+                .count(),
+            1
+        );
+    }
+    // The removed agent has no state to remove again.
+    tofu.run(
+        &[
+            "apply",
+            "-auto-approve",
+            "-input=false",
+            "-var=agent_enabled=false",
+        ],
+        true,
+    );
+    assert_eq!(fixture.state.lock().unwrap().sandboxes, sandboxes);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
+async fn removing_an_agent_from_an_old_image_retains_its_binding_with_guidance() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint, &[]);
+    tofu.apply();
+    fixture.state.lock().unwrap().stop_unsupported = true;
+    let output = tofu.run(
+        &[
+            "apply",
+            "-auto-approve",
+            "-input=false",
+            "-var=agent_enabled=false",
+        ],
+        false,
+    );
+    let diagnostic = String::from_utf8_lossy(&output.stderr)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        diagnostic.contains("image must support fabric-agent stop"),
+        "{diagnostic}"
+    );
+    assert!(diagnostic.contains("resources retained"), "{diagnostic}");
+    let state: Value = serde_json::from_slice(&tofu.state()).unwrap();
+    assert!(
+        state["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|resource| resource["type"] == "fabric_agent")
+    );
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .unwrap()
+            .fabric_configurations
+            .is_empty()
+    );
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .exec_calls
+            .iter()
+            .filter(|args| args.get(1).is_some_and(|arg| arg == "stop"))
+            .count(),
+        1,
+        "failed mutations are never replayed"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
+async fn removing_an_agent_succeeds_when_its_sandbox_is_already_absent() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint, &[]);
+    tofu.apply();
+    fixture.state.lock().unwrap().sandboxes.clear();
+    let calls = fixture.state.lock().unwrap().exec_calls.len();
+    tofu.run(
+        &[
+            "destroy",
+            "-auto-approve",
+            "-input=false",
+            "-refresh=false",
+            "-target=fabric_agent.agent",
+        ],
+        true,
+    );
+    assert_eq!(fixture.state.lock().unwrap().exec_calls.len(), calls);
+    let state: Value = serde_json::from_slice(&tofu.state()).unwrap();
+    assert!(
+        !state["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|resource| resource["type"] == "fabric_agent")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
 async fn pi_configuration_updates_without_replacing_the_sandbox() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint, &[]);
@@ -266,6 +392,7 @@ async fn pi_configuration_updates_without_replacing_the_sandbox() {
     assert_eq!(tofu.state(), prior);
     assert_eq!(writes(), 4);
     assert!(!fixture.state.lock().unwrap().lose_configure_reply);
+    fixture.state.lock().unwrap().exec_truncated = false;
     tofu.run(
         &[
             "apply",

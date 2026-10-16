@@ -3,7 +3,7 @@
 """Capabilities shared by the bridge and image catalog."""
 
 INTERFACE_VERSION = 1
-OPERATIONS = ("validate", "prepare", "configure", "check", "invoke", "serve")
+OPERATIONS = ("validate", "prepare", "configure", "stop", "check", "invoke", "serve")
 REQUEST_LIMIT = 512 * 1024
 RESULT_LIMIT = 4 * 1024 * 1024
 SHUTDOWN_SECONDS = 4  # OpenShell allows five seconds before forced termination.

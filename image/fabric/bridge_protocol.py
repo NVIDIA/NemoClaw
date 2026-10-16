@@ -12,7 +12,7 @@ from bridge_contract import OPERATIONS, REQUEST_LIMIT, RESULT_LIMIT
 
 LEVELS = ("live", "active", "ready", "operational")
 CONFIG_OPERATIONS = ("validate", "prepare", "configure")
-MUTATIONS = ("prepare", "configure")
+MUTATIONS = ("prepare", "configure", "stop")
 
 MESSAGES = {
     "invalid_request": "The request is invalid.",
@@ -286,6 +286,14 @@ def confirms_success(response):
         return False
     if operation == "prepare":
         return result.get("prepared") is True and result.get("runtime_state") == "stopped"
+    if operation == "stop":
+        return (
+            result.get("runtime_state") == "stopped"
+            and "runtime_id" in result
+            and result["runtime_id"] is None
+            and "applied_config" in result
+            and result["applied_config"] is None
+        )
     return (
         operation == "configure"
         and result.get("runtime_state") == "running"

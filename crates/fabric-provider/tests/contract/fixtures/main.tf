@@ -11,6 +11,7 @@ variable "endpoint" { type = string }
 variable "launch_json" { type = string }
 variable "binaries" { type = list(string) }
 variable "enabled" { default = true }
+variable "agent_enabled" { default = true }
 variable "destroying" { default = false }
 variable "image" { default = "fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
 provider "fabric" {
@@ -91,7 +92,7 @@ locals {
 }
 resource "fabric_agent" "agent" {
   gateway = local.gateway
-  count   = var.enabled ? 1 : 0
+  count   = var.enabled && var.agent_enabled ? 1 : 0
   sandbox = openshell_sandbox.agent[0].ref
   harness = local.harness
   name    = "assistant"

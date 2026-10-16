@@ -124,7 +124,7 @@ class AgentContract(unittest.TestCase):
         self.assertEqual(advertised["interface_version"], 1)
         self.assertEqual(
             advertised["operations"],
-            ["validate", "prepare", "configure", "check", "invoke", "serve"],
+            ["validate", "prepare", "configure", "stop", "check", "invoke", "serve"],
         )
         health = advertised["health_checks"]
         self.assertEqual(health, ["live", "active", "ready"][: len(health)])
@@ -247,6 +247,16 @@ class AgentContract(unittest.TestCase):
         self.assertFalse(self.call("prepare", *flags)["changed"])
         self.assertEqual(
             self.call("invoke", "--input", "-", stdin=json.dumps(invocation))["status"], "failed"
+        )
+        restarted = self.call("configure", *flags)
+        self.assertEqual(restarted["status"], "succeeded", restarted)
+        stopped = self.call("stop", "--expected-generation", restarted["result"]["generation"])
+        self.assertEqual(stopped["status"], "succeeded", stopped)
+        self.assertEqual(stopped["result"]["runtime_state"], "stopped")
+        self.assertIsNone(stopped["result"]["runtime_id"])
+        self.assertIsNone(stopped["result"]["applied_config"])
+        self.assertFalse(
+            self.call("stop", "--expected-generation", stopped["result"]["generation"])["changed"]
         )
 
     def test_configured_runtime_is_ready(self):

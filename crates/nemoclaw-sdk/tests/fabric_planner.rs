@@ -276,6 +276,19 @@ fn image_compatibility_requires_a_matching_bridge_contract() {
     assert_eq!(status(&raw), Support::Unknown);
     raw["bridge"] = bridge.clone();
     assert_eq!(status(&raw), Support::Supported);
+    // Stop is an additive capability. Old images can still be observed, but
+    // removal must confirm stop rather than silently forget their binding.
+    raw["bridge"]["operations"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("stop"));
+    assert_eq!(status(&raw), Support::Supported);
+    raw["bridge"]["operations"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("stop"));
+    assert_eq!(status(&raw), Support::Unknown);
+    raw["bridge"] = bridge.clone();
     // Interface version 1 is one exact shape; images built for another are rebuilt.
     raw["bridge"]["input_sources"] = json!(["file", "stdin"]);
     assert!(FabricCatalog::from_json(&raw.to_string()).is_err());

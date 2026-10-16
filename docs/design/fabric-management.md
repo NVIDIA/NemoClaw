@@ -24,6 +24,8 @@ Unchanged configuration preserves the active handle; a changed document stops th
 A host process restart waits for explicit apply before starting Fabric so that persisted configuration cannot outrun current gateway routes.
 This resource is reconstructible and separate from immutable sandbox identity and retained deployment bindings.
 It does not promise conversation continuity across a native runtime restart.
+Removing the resource stops its runtime and clears the applied configuration, while retaining the sandbox and agent files.
+An absent sandbox needs no stop; an older image without `stop` fails removal with rebuild guidance and retains its binding.
 
 ## Bridge Commands
 
@@ -39,6 +41,7 @@ The provider sends configuration and invocation input on stdin in the same execu
 | `validate --agent NAME --config FILE` | Validate locally through the installed backend, without a control socket or running host. |
 | `prepare --agent NAME --config FILE --expected-generation TOKEN` | Validate, then stop the runtime, including when its configuration is unchanged. |
 | `configure --agent NAME --config FILE --expected-generation TOKEN` | Keep a matching runtime or replace it after validation. |
+| `stop --agent NAME --expected-generation TOKEN` | Stop the runtime and clear its configuration, without validating configuration or deleting the sandbox. |
 | `check --agent NAME [--live\|--active\|--ready\|--operational]` | Return a coherent snapshot and request the selected health level; default to `--live`. |
 | `invoke --agent NAME --input FILE` | Send one explicit request and preserve Fabric's result. |
 | `serve --agent NAME` | Own the control socket and wait for explicit configuration. |
@@ -48,7 +51,7 @@ Success exits 0; failure and unsupported operations exit 1.
 Requests are limited to 512 KiB and responses to 4 MiB, including the socket newline.
 A timeout, malformed response, or disconnection leaves the outcome unconfirmed; callers do not replay mutations or invocation.
 
-Prepare and configure compare a generation token atomically before changing the runtime.
+Prepare, configure, and stop compare a generation token atomically before changing the runtime.
 Lifecycle attempts invalidate the token even when they fail; rejected requests and confirmed no-ops preserve it.
 Snapshot reads remain available during invocation and stop.
 Apply uses configure directly; prepare is a separate bridge operation.
@@ -66,7 +69,8 @@ OpenShell stop completion and retained-data behavior still require qualification
 ## Image Contract and Reference Implementation
 
 Every packaged `fabric-agent` image exposes `/opt/nemoclaw/bridge.json` and the matching `io.nemoclaw.fabric.bridge` label.
-The manifest contains exactly `interface_version`, the six `operations`, and a cumulative prefix of native `health_checks` (`live`, `active`, `ready`); consumers reject other fields.
+The manifest contains exactly `interface_version`, the advertised `operations`, and a cumulative prefix of native `health_checks` (`live`, `active`, `ready`); consumers reject other fields.
+New images advertise `stop` alongside the original six operations. Consumers can observe older images, but cannot remove a running agent without confirmed stop support.
 The current command and response interface remains version 1.
 Fabric image catalogs embed the same capability object; the builder rejects disagreement.
 Fabric revision remains provenance for validation responses; missing provenance does not invalidate a configuration that the installed validator accepts.
@@ -133,7 +137,7 @@ The following boundaries need coordination; these notes do not claim upstream ac
 | NeMo-Fabric | Supply native `live`, `active`, and `ready` health through supported APIs; the pinned backend advertises no health checks until that exists. |
 | NeMo-Fabric | Preserve invalid versus unverified validation outcomes through supported APIs; the existing local error-code patch remains necessary at this pin. |
 | NeMo-Fabric / NemoClaw | Agree versioned discovery metadata for authoring and configuration/response compatibility, without duplicating Fabric validation in NemoClaw. |
-| NeMo-Fabric / NemoClaw | Transfer image, bridge, and shared contract-test ownership when Fabric accepts it; preserve the six-command interface and jointly review contract changes. |
+| NeMo-Fabric / NemoClaw | Transfer image, bridge, and shared contract-test ownership when Fabric accepts it; preserve the command interface and jointly review contract changes. |
 | OpenShell | Qualify completed sandbox stop as the boundary that terminates all old workload processes before start, while retaining required data; request implementation changes only for demonstrated gaps. |
 
 ## Observation Limits

@@ -58,7 +58,9 @@ impl BridgeCapabilities {
             "serve",
         ];
         self.interface_version == 1
-            && self.operations.len() == operations.len()
+            && (self.operations.len() == operations.len()
+                || (self.operations.len() == operations.len() + 1
+                    && self.operations.iter().any(|operation| operation == "stop")))
             && operations
                 .iter()
                 .all(|operation| self.operations.iter().any(|value| value == operation))

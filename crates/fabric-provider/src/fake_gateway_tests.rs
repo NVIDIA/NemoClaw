@@ -135,6 +135,25 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
             .unwrap()
             .is_some()
     );
+    fixture.state.lock().unwrap().exec_exit = 0;
+    fabric.remove("agent", &binding, false).await.unwrap();
+    {
+        let state = fixture.state.lock().unwrap();
+        assert!(state.fabric_configurations.is_empty());
+        assert!(state.sandboxes.contains_key(&key(&sandbox)));
+        assert!(
+            state
+                .exec_calls
+                .iter()
+                .any(|args| args.get(1).is_some_and(|arg| arg == "stop"))
+        );
+    }
+    // Repeated removal is safe, and an already absent sandbox needs no bridge.
+    fabric.remove("agent", &binding, false).await.unwrap();
+    fixture.state.lock().unwrap().sandboxes.clear();
+    let calls = fixture.state.lock().unwrap().exec_calls.len();
+    fabric.remove("agent", &binding, false).await.unwrap();
+    assert_eq!(fixture.state.lock().unwrap().exec_calls.len(), calls);
 }
 
 #[tokio::test]
