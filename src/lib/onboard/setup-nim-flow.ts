@@ -324,7 +324,7 @@ function maybePromptForSupportedInferenceInputCapability(
   return deps.maybePromptForInferenceInputCapability(model);
 }
 
-function exitAfterPinnedVllmFailure(
+function exitAfterPinnedProviderFailure(
   deps: Pick<SetupNimFlowDeps, "abortNonInteractive" | "exitProcess" | "isNonInteractive">,
   requestedProvider: string | null,
   message: string,
@@ -1333,7 +1333,7 @@ export function createSetupNim(
           if (!sandboxName) {
             const message = "Managed llama.cpp requires a selected sandbox name.";
             deps.error(`  ${message}`);
-            if (deps.isNonInteractive()) deps.abortNonInteractive(message);
+            exitAfterPinnedProviderFailure(deps, requestedProvider, message);
             continue selectionLoop;
           }
           // Menu discovery is advisory. Re-read the canonical readiness/catalog
@@ -1349,7 +1349,7 @@ export function createSetupNim(
           });
           if (resolved.kind === "rejected") {
             deps.error(`  Managed llama.cpp selection failed: ${resolved.reason}`);
-            if (deps.isNonInteractive()) deps.abortNonInteractive(resolved.reason);
+            exitAfterPinnedProviderFailure(deps, requestedProvider, resolved.reason);
             continue selectionLoop;
           }
           const state = createSelectionState();
@@ -1379,7 +1379,7 @@ export function createSetupNim(
           );
           if (!installed.ok) {
             deps.error(`  Managed llama.cpp install failed: ${installed.reason}`);
-            if (deps.isNonInteractive()) deps.abortNonInteractive(installed.reason);
+            exitAfterPinnedProviderFailure(deps, requestedProvider, installed.reason);
             continue selectionLoop;
           }
           state.model = installed.model;
@@ -1491,7 +1491,7 @@ export function createSetupNim(
               String(process.env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim() !== "";
             const message = vllmPortConflictMessage(gpu?.platform, deps.vllmPort, hasGpuSelection);
             deps.error(`  ${message}`);
-            exitAfterPinnedVllmFailure(deps, requestedProvider, message);
+            exitAfterPinnedProviderFailure(deps, requestedProvider, message);
             continue selectionLoop;
           }
           const vllmState = createSelectionState();
@@ -1526,7 +1526,7 @@ export function createSetupNim(
             readinessReport,
           );
           if (!result.ok) {
-            exitAfterPinnedVllmFailure(
+            exitAfterPinnedProviderFailure(
               deps,
               requestedProvider,
               "vLLM install failed. See errors above.",
