@@ -189,7 +189,7 @@ network_policies:
 `;
 
     expect(() => mergeReplacementPolicyAccess(live, replacement, ["teams", "wechat"])).toThrow(
-      "live network policy 'teams' does not match the enabled channel requirement",
+      "live network policy 'teams' does not match the selected runtime requirement",
     );
   });
 
@@ -301,7 +301,7 @@ network_policies:
 `;
 
     expect(() => mergeReplacementPolicyAccess(legacy, widened, ["wechat_bridge"])).toThrow(
-      "does not match the enabled channel requirement",
+      "does not match the selected runtime requirement",
     );
   });
 

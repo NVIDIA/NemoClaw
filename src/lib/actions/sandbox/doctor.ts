@@ -39,6 +39,8 @@ import {
   collectInferenceChecks,
   collectManagedLlamaCppDoctorChecks,
   type DoctorInferenceRoute,
+  isNativeNvidiaProvider,
+  normalizeNativeNvidiaProviderAttachment,
   resolveDoctorReasoningEffort,
 } from "./doctor-inference";
 import {
@@ -386,8 +388,17 @@ async function resolveInferenceRoute(
   openshellConnected: boolean,
   gatewayName: string | null,
 ): Promise<DoctorInferenceRoute> {
+  const recordedNativeNvidia = isNativeNvidiaProvider(sb?.provider);
+  const recordedNativeLocal = sb?.nativeLocalProviderAttachment !== undefined;
   let live: { provider: string; model: string } | null = null;
-  if (openshellBin && openshellConnected && gatewayName) {
+  if (
+    !recordedNativeNvidia &&
+    !recordedNativeLocal &&
+    sb?.nativeHostedProviderAttachment === undefined &&
+    openshellBin &&
+    openshellConnected &&
+    gatewayName
+  ) {
     const result = await createSynchronousCliOpenShellInferenceRouteObserver(
       captureOpenshell,
     ).observeInferenceRoute({
@@ -401,6 +412,21 @@ async function resolveInferenceRoute(
     provider: live?.provider || sb?.provider || "unknown",
     effectiveReasoningEffort: resolveDoctorReasoningEffort(sb),
     recordedEndpointUrl: sb?.endpointUrl,
+    agentName: sb?.agent,
+    ...(recordedNativeLocal
+      ? { nativeLocalProviderAttachment: sb?.nativeLocalProviderAttachment }
+      : {}),
+    preferredInferenceApi: sb?.preferredInferenceApi,
+    ...(sb?.nativeHostedProviderAttachment !== undefined
+      ? { nativeHostedProviderAttachment: sb.nativeHostedProviderAttachment }
+      : {}),
+    ...(recordedNativeNvidia
+      ? {
+          nativeNvidiaProviderAttachment: normalizeNativeNvidiaProviderAttachment(
+            sb?.nativeNvidiaProviderAttachment,
+          ),
+        }
+      : {}),
   };
 }
 
@@ -533,7 +559,7 @@ async function collectDoctorChecks(
     ...(await collectToolScopeChecks(sandboxName, sb, sandbox.reachable, intent.wantsFix)),
     ...collectManagedLlamaCppDoctorChecks(sandboxName, sb?.gatewayPort),
     ollamaDoctorCheck(route.provider),
-    cloudflaredDoctorCheck(sandboxName),
+    cloudflaredDoctorCheck(sandboxName, sb?.gatewayPort ?? GATEWAY_PORT),
   ];
 }
 

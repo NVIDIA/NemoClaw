@@ -3,10 +3,12 @@
 
 import { CLI_NAME } from "../cli/branding";
 import * as registry from "../state/registry";
+import { findSandboxAcrossGatewayRoots } from "../state/registry/cross-port";
 
 export function serviceDeps() {
   return {
     listSandboxes: () => registry.listSandboxes(),
+    findSandboxAcrossGatewayRoots,
   };
 }
 

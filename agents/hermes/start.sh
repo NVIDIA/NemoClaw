@@ -2633,7 +2633,7 @@ refresh_hermes_provider_placeholders() {
   if [ -f "$runtime_plan" ]; then
     args+=(--runtime-plan "$runtime_plan")
   fi
-  "$_HERMES_PYTHON" -I "${args[@]}"
+  "$_HERMES_PYTHON" -I "${args[@]}" || return $?
   validate_hermes_env_secret_boundary
 }
 

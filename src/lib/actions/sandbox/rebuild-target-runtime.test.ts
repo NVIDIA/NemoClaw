@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
+import { preflightAuthoritativeRebuildTarget } from "../../onboard/authoritative-rebuild-target";
 
 const mocks = vi.hoisted(() => ({
   detectGpu: vi.fn(),
@@ -14,6 +17,14 @@ const mocks = vi.hoisted(() => ({
   preflightRebuildCredentials: vi.fn(),
   readGatewayProviderMetadata: vi.fn(),
   runOpenshell: vi.fn(),
+  providerAdapter: vi.fn(),
+}));
+
+vi.mock("../../adapters/openshell/managed-provider-adapter", () => ({
+  createManagedProviderAdapter: mocks.providerAdapter,
+}));
+vi.mock("../../adapters/openshell/provider-policy", () => ({
+  requireNativeProviderPolicy: vi.fn(async () => {}),
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
@@ -241,6 +252,97 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
 });
 
 describe("authoritative rebuild readiness", () => {
+  it.each(["authenticated", "sentinel"] as const)(
+    "rebuilds the recorded %s local attachment when the shared route differs (#13197)",
+    async (authMode) => {
+      const binding = {
+        provider: "compatible-endpoint" as const,
+        endpointUrl: "http://host.openshell.internal:11435/v1",
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        authMode,
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+      };
+      const receipt = {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "owned",
+      };
+      const providerAdapter = {
+        inspectProviderProfile: vi.fn(async () => ({
+          ok: true,
+          value: { credentialKeys: [binding.credentialEnv] },
+        })),
+        getProvider: vi.fn(async () => ({
+          ok: true,
+          value: {
+            name: receipt.providerName,
+            type: receipt.profileId,
+            credentialKeys: [binding.credentialEnv],
+            configKeys: [],
+            revision: { id: "owned", resourceVersion: 1 },
+          },
+        })),
+        listProviderAttachments: vi.fn(async () => ({
+          ok: true,
+          value: { names: [receipt.providerName] },
+        })),
+      };
+      mocks.providerAdapter.mockReturnValue(providerAdapter as unknown as OpenShellProviderAdapter);
+      const route = vi.fn(() => "mismatched" as const);
+      const readiness = vi.fn();
+      const authority = { checkpoint: "gateway-authority" };
+      mocks.preflightAuthoritativeRebuildTarget.mockImplementation(async (options) => {
+        await preflightAuthoritativeRebuildTarget(
+          { ...options, controlUiPort: null },
+          {
+            resolveBaselinePolicy: () => ({}),
+            bindGatewayAuthority: vi.fn(),
+            runFatalRuntimePreflight: readiness,
+            ensureOpenshell: vi.fn(),
+            assertGatewayReadiness: vi.fn(),
+            inferenceRouteState: route,
+            observeForwardPorts: vi.fn(),
+          },
+        );
+        return authority;
+      });
+      const recreateOptions = { ...RECREATE_OPTIONS, targetGatewayName: "nemoclaw" };
+      const bail = (message: string): never => {
+        throw new Error(message);
+      };
+      try {
+        await expect(
+          preflightAuthoritativeOnboardRuntime(
+            "alpha",
+            {
+              ...TARGET.resumeConfig,
+              agent: "langchain-deepagents-code",
+              provider: binding.provider,
+              nativeLocalProviderAttachment: receipt,
+            },
+            recreateOptions,
+            bail,
+          ),
+        ).resolves.toBe(true);
+        expect(recreateOptions.rebuildGatewayAuthority).toBe(authority);
+        expect(readiness).toHaveBeenCalledOnce();
+        expect(route).not.toHaveBeenCalled();
+        expect(providerAdapter.getProvider).toHaveBeenCalledWith({
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          providerName: receipt.providerName,
+        });
+        expect(providerAdapter.listProviderAttachments).toHaveBeenCalledWith({
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          sandboxName: "alpha",
+        });
+      } finally {
+        mocks.preflightAuthoritativeRebuildTarget.mockReset();
+      }
+    },
+  );
+
   it("passes recorded managed-vLLM intent to the pre-delete readiness gate (#9292)", async () => {
     const authority = { checkpoint: "gateway-authority" };
     const runtimeSelection = {

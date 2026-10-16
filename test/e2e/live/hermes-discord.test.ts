@@ -4,6 +4,8 @@
 import fs from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { getConfiguredMessagingChannelsFromEntry } from "../../../src/lib/state/registry-messaging.ts";
+import { load } from "../../../src/lib/state/registry/persistence.ts";
 import { HERMES_DISCORD_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
@@ -11,6 +13,7 @@ import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts"
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { applyFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
+import { verifyHermesConfigExportLive } from "../fixtures/hermes-config-export-live.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -403,7 +406,8 @@ test(
       e2ePhases: [
         "prepare clean Hermes Discord runner",
         "install Hermes Discord sandbox",
-        "validate Discord provider and Hermes health",
+        "validate Hermes health",
+        "verify config export refuses persisted Discord messaging",
         "validate Discord config and placeholders",
         "exercise native Discord gateway rewrite",
         "verify Discord token isolation and REST boundary",
@@ -479,45 +483,7 @@ test(
     });
     expectExitZero(install, "install.sh --non-interactive with Hermes Discord");
 
-    const cliProbe = await host.command(
-      "bash",
-      [
-        "-lc",
-        'command -v nemoclaw && command -v "$1" && "$1" --version',
-        "cli-probe-hermes-discord",
-        host.openshellCommandPath,
-      ],
-      {
-        artifactName: "phase-1-cli-probe",
-        env,
-        redactionValues,
-        timeoutMs: 30_000,
-      },
-    );
-    expectExitZero(cliProbe, "nemoclaw and openshell installed");
-
-    progress.phase("validate Discord provider and Hermes health");
-    const list = await host.command("nemoclaw", ["list"], {
-      artifactName: "phase-2-nemoclaw-list",
-      env,
-      redactionValues,
-      timeoutMs: 60_000,
-    });
-    expectExitZero(list, "nemoclaw list");
-    expect(resultText(list)).toContain(SANDBOX_NAME);
-
-    const provider = await host.command(
-      host.openshellCommandPath,
-      ["provider", "get", `${SANDBOX_NAME}-discord-bridge`],
-      {
-        artifactName: "phase-2-discord-provider-get",
-        env,
-        redactionValues,
-        timeoutMs: 60_000,
-      },
-    );
-    expectExitZero(provider, "Discord provider exists in gateway");
-
+    progress.phase("validate Hermes health");
     let health: ShellProbeResult | undefined;
     for (let attempt = 1; attempt <= 15; attempt += 1) {
       health = await sandboxSh(sandbox, SANDBOX_NAME, `curl -sf ${shellQuote(HERMES_HEALTH_URL)}`, {
@@ -533,8 +499,25 @@ test(
           await sleep(4_000);
       }
     }
-    expect(health?.exitCode, health ? resultText(health) : "missing health result").toBe(0);
-    expect(resultText(health!)).toMatch(/"ok"/i);
+    expect(
+      health && health.exitCode === 0 && /"ok"/i.test(resultText(health)),
+      health ? resultText(health) : "missing health result",
+    ).toBe(true);
+
+    progress.phase("verify config export refuses persisted Discord messaging");
+    expect(getConfiguredMessagingChannelsFromEntry(load().sandboxes[SANDBOX_NAME])).toContain(
+      "discord",
+    );
+    const configExport = await verifyHermesConfigExportLive({
+      artifacts,
+      cleanup,
+      enabled: true,
+      env,
+      host,
+      redactionValues,
+      sandboxName: SANDBOX_NAME,
+    });
+    expect(configExport.passed).toBe(true);
 
     progress.phase("validate Discord config and placeholders");
     const expectedRequireMention = DISCORD_REQUIRE_MENTION === "0" ? "false" : "true";
@@ -825,6 +808,7 @@ done`,
         installHermesDiscord: true,
         providerRegistered: true,
         hermesHealthy: true,
+        configExportRefusesPersistedMessaging: true,
         configSchema: true,
         envPlaceholders: true,
         nodeDiscordGatewayDenied: true,

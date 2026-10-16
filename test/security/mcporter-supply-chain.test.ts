@@ -104,6 +104,9 @@ describe("mcporter image supply-chain controls", () => {
     const graph = JSON.parse(result.stdout) as DependencyNode & { problems?: string[] };
     expect(graph.problems).toBeUndefined();
     expect(graph.dependencies?.mcporter?.version).toBe(expectedVersion);
+    expect(findDependency(graph, "@modelcontextprotocol/sdk")).toEqual(
+      expect.objectContaining({ overridden: true, version: "1.31.0" }),
+    );
     expect(findDependency(graph, "@hono/node-server")).toEqual(
       expect.objectContaining({
         overridden: true,

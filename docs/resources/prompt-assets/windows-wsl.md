@@ -9,11 +9,11 @@ Use these instructions only after official detection identifies Windows WSL.
 
 Offer the maintained Windows Express path before the normal provider menu.
 Explain that Express keeps the selected agent, selects the admitted local inference profile, and leaves optional setup at its defaults.
-For a qualifying N1x WSL host, Express uses managed llama.cpp with Qwen 3.6 35B-A3B and downloads a pinned 20.4 GB GGUF file.
+For a qualifying N1x or Station GB300 WSL host, Express uses managed llama.cpp with Qwen 3.6 35B-A3B and downloads a pinned 20.4 GB GGUF file.
 The installer leaves provider, model, and recipe selection to onboarding.
-Before managed llama.cpp starts, onboarding requires Linux Arm64 WSL, one proof-backed GPU whose normalized identity is `NVIDIA RTX Spark N1X`, `NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)`, or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`, the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and successful Docker Desktop GPU passthrough.
+Before managed llama.cpp starts, onboarding requires Linux Arm64 WSL, the default local Docker context, at least 48,000 MiB of Docker and aggregate GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and successful Docker Desktop GPU passthrough. N1x requires one proof-backed accepted N1x GPU identity. Station GB300 requires a bounded matching Windows product observation and a proof that reconciles every reported GPU and includes an `NVIDIA GB300` device.
 Before selecting managed llama.cpp, unset `DOCKER_HOST` and select Docker's `default` context.
-Managed N1x WSL selection rejects other Docker selectors.
+Managed WSL selection rejects other Docker selectors.
 For other Windows WSL hosts, Express uses WSL-local Ollama with its memory-aware default model.
 WSL-local Ollama can use Docker Desktop or the qualification-backed rootless Podman provider.
 When the operator selects Podman, set `NEMOCLAW_GATEWAY_RUNTIME=podman` before onboarding and require the current-user Podman service. Require the NVIDIA CDI device only when the operator enables sandbox GPU passthrough or needs the N1x CUDA capacity proof.
@@ -28,8 +28,8 @@ If Express is selected:
 
 - Leave `NEMOCLAW_PROVIDER` and `NEMOCLAW_MODEL` unset.
   Leave `NEMOCLAW_LLAMACPP_RECIPE` unset for the automatic Qwen recipe, or set it to a compatible recipe ID to make the managed recipe explicit.
-  Onboarding selects managed llama.cpp only after the complete N1x WSL readiness contract passes.
-  If N1x readiness does not match before managed selection starts, onboarding selects WSL-local Ollama. If a required check fails after selection starts, onboarding stops before installation.
+  Onboarding selects managed llama.cpp only after the complete N1x or Station GB300 WSL readiness contract passes.
+  If neither readiness contract matches before managed selection starts, onboarding selects WSL-local Ollama. If a required check fails after selection starts, onboarding stops before installation.
 - For managed llama.cpp, explain that Hugging Face authentication is optional and anonymous downloads can return HTTP 429. If needed, `HF_TOKEN` supplies a Hugging Face read token only to the temporary downloader. The token remains in the installer environment; remove `HF_TOKEN` after installation when no process needs it.
 - For other WSL hosts, onboarding installs WSL-local Ollama and uses the sandbox authentication proxy.
   Use Docker Desktop by default; preserve `NEMOCLAW_GATEWAY_RUNTIME=podman` only when the operator selected the qualified rootless Podman path and its current-user service prerequisites pass. Require NVIDIA CDI only for sandbox GPU passthrough or the N1x CUDA capacity proof.

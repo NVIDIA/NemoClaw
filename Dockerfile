@@ -14,7 +14,7 @@ ARG CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY=sha512-I1f6WoSLbLlsWq4zH+vtwdoc4Y41mq
 FROM scratch AS reviewed-npm-archive
 ADD --chmod=0444 --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz
 FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS npm12
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates=20250419 curl=8.14.1-2+deb13u5 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates=20250419 curl=8.14.1-2+deb13u7 && rm -rf /var/lib/apt/lists/*
 COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/
 COPY scripts/patch-bundled-npm-brace-expansion.mts scripts/patch-bundled-npm-tar.mts scripts/upgrade-bundled-npm.mts /scripts/
 COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
@@ -684,22 +684,19 @@ COPY scripts/verify-wechat-runtime-lock.mts /usr/local/lib/nemoclaw/verify-wecha
 
 FROM scratch AS openclaw-runtime-payload
 
-COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY scripts/lib/sandbox-init.sh scripts/lib/entrypoint-env-wrapper.sh scripts/lib/sandbox-rlimits.sh scripts/lib/openclaw_device_approval_policy.py scripts/lib/openclaw_pairing_state.py scripts/lib/refresh-openclaw-wechat-placeholder.py /usr/local/lib/nemoclaw/
 COPY --chmod=0444 scripts/lib/corporate-ca-runtime.sh /usr/local/lib/nemoclaw/corporate-ca-runtime.sh
-COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
-COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
-COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
-COPY scripts/lib/openclaw_pairing_state.py /usr/local/lib/nemoclaw/openclaw_pairing_state.py
-COPY scripts/lib/refresh-openclaw-wechat-placeholder.py /usr/local/lib/nemoclaw/refresh-openclaw-wechat-placeholder.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
-COPY scripts/generate-openclaw-config.mts /scripts/
-COPY scripts/validate-openclaw-tool-search.mts /scripts/
+COPY scripts/generate-openclaw-config.mts scripts/validate-openclaw-tool-search.mts /scripts/
 COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
-COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts src/lib/providerless-inference.ts /src/lib/
+COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts src/lib/providerless-inference.ts src/lib/inference-credential.ts /src/lib/
+COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/
+COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
+COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 
@@ -1539,17 +1536,15 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
-# Set up blueprint for local resolution.
-# Blueprints are immutable at runtime; DAC protection (root ownership) is applied
-# later since /sandbox/.nemoclaw is Landlock read_write for plugin state (#804).
+# Blueprint files stay immutable; apply root ownership after copying because
+# /sandbox/.nemoclaw permits plugin writes (#804).
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
-# Copy configuration inputs before the cached non-messaging plugin install.
-COPY scripts/generate-openclaw-config.mts /scripts/
-COPY scripts/validate-openclaw-tool-search.mts /scripts/
-COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts src/lib/providerless-inference.ts /src/lib/
-COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
+# Reuse managed config inputs.
+COPY --from=openclaw-runtime-payload /scripts/ /scripts/
+COPY --from=openclaw-runtime-payload /src/ /src/
+COPY --from=openclaw-runtime-payload /usr/local/share/ /usr/local/share/
 
 RUN chmod 755 /scripts/generate-openclaw-config.mts \
         /scripts/validate-openclaw-tool-search.mts /src /src/lib \

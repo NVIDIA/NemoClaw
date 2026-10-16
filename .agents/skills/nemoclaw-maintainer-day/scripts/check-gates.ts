@@ -782,13 +782,11 @@ function currentCheckRollup(
     const selected: StatusCheck[] = [];
     const selectedIds = new Set<string>();
     for (const check of checks) {
-      const match = check.detailsUrl?.match(
-        new RegExp(`/actions/runs/${runId}/job/(\\d+)(?:[/?#]|$)`, "u"),
-      );
-      if (!match) return null;
-      if (expectedIds.has(match[1])) {
-        if (selectedIds.has(match[1])) return null;
-        selectedIds.add(match[1]);
+      const identity = actionRunJobIdentity(check);
+      if (!identity || identity.runId !== runId) return null;
+      if (expectedIds.has(identity.jobId)) {
+        if (selectedIds.has(identity.jobId)) return null;
+        selectedIds.add(identity.jobId);
         selected.push(check);
       }
     }
@@ -1009,7 +1007,19 @@ function currentCheckRollup(
         (check.detailsUrl?.includes("/actions/") ||
           (Boolean(check.workflowName) && !/\/runs\/\d+(?:[/?#]|$)/u.test(check.detailsUrl ?? ""))),
     );
-    if ((requiredCheck || expectsActionEvidence) && group.some((check) => !actionRunId(check))) {
+    const hasActionsCounterpart = mergeRelevantStatusChecks.some(
+      (check) =>
+        check.__typename !== "StatusContext" &&
+        check.name === groupName &&
+        actionRunJobIdentity(check),
+    );
+    if (
+      (requiredCheck || expectsActionEvidence) &&
+      group.some(
+        (check) =>
+          !actionRunId(check) && (check.__typename !== "StatusContext" || !hasActionsCounterpart),
+      )
+    ) {
       incompleteAttemptEvidence.add(groupName);
     }
     if (group.length === 1) {

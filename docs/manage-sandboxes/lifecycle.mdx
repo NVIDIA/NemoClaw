@@ -81,7 +81,7 @@ The log command reads both agent gateway output and OpenShell audit events, so p
 <AgentOnly variant="deepagents">
 The log command reads OpenShell logs, including audit events, so policy denials appear with other OpenShell log entries.
 </AgentOnly>
-If NemoClaw cannot enable OpenShell audit logs, it prints a warning and policy-denial events can be missing.
+If NemoClaw cannot enable OpenShell audit logs, it prints a warning and policy-denial events can be missing. With `NEMOCLAW_NO_AUTO_AUDIT_LOGS=1`, NemoClaw leaves the audit setting unchanged and does not print that warning; policy-denial events can also be missing if audit logging was disabled. See [the audit-setting guidance](../../reference/troubleshooting#a-request-inside-the-sandbox-fails-with-connect-tunnel-failed-response-403).
 
 ## Collect Diagnostics
 

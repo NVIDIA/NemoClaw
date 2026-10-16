@@ -30,6 +30,7 @@ const EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL = 64;
 export interface PodmanContainerEngineOptions {
   readonly operation:
     | "host-doctor"
+    | "external-image-preparation"
     | "gateway-inspection"
     | "host-local-inference"
     | "sandbox-lifecycle"
@@ -198,6 +199,7 @@ export function createPodmanContainerEngine(
 ): PodmanBoundContainerEngine {
   const assertAuthority = options.assertAuthority ?? assertPodmanSocketAuthority;
   const requiresExecutableAuthority =
+    options.operation === "external-image-preparation" ||
     options.operation === "host-local-inference" ||
     options.operation === "workload-cleanup" ||
     options.executableAuthority !== undefined ||
@@ -254,6 +256,8 @@ export function createPodmanContainerEngine(
   let allowedEnvironmentNames: string[] = [];
   if (options.operation === "host-local-inference") {
     allowedEnvironmentNames = ["NGC_API_KEY", "NIM_NGC_API_KEY", "OLLAMA_CONTEXT_LENGTH"];
+  } else if (options.operation === "external-image-preparation") {
+    allowedEnvironmentNames = ["REGISTRY_AUTH_FILE"];
   }
   const engine = createContainerEngineCommand({
     operation: options.operation,

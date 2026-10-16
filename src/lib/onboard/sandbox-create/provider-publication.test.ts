@@ -13,6 +13,7 @@ import {
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
+import { createProviderEffectBoundary, runSandboxCreateWithProviderEffects } from "./orchestration";
 
 const providerName = "my-assistant-telegram-bridge";
 const target = { kind: "named", gatewayName: "nemoclaw" } as const;
@@ -27,6 +28,9 @@ function typedProviderAdapter(
   overrides: Partial<OpenShellProviderAdapter> = {},
 ): OpenShellProviderAdapter {
   const adapter: OpenShellProviderAdapter = {
+    ensureProviderPolicyComposition: vi
+      .fn<OpenShellProviderAdapter["ensureProviderPolicyComposition"]>()
+      .mockResolvedValue({ ok: true, value: undefined }),
     listProviders: vi.fn(async () => ({ ok: true as const, value: { names: [] } })),
     createProvider: vi.fn(async () => ({ ok: true as const })),
     getProvider: vi.fn(async (request) => ({
@@ -101,6 +105,276 @@ async function prepareProviders(
 }
 
 describe("sandbox provider preparation", () => {
+  it.each(["brave", "google-chat-bridge", "generic"])(
+    "checks an attached %s provider only when its profile is NemoClaw-owned",
+    async (type) => {
+      const warningCheck = vi.fn();
+      const adapter = Object.assign(
+        typedProviderAdapter({
+          getProvider: vi.fn(async () => ({
+            ok: true as const,
+            value: {
+              name: "search-provider",
+              type,
+              credentialKeys: ["SEARCH_TOKEN"],
+              configKeys: [],
+            },
+          })),
+        }),
+        { warnIfVerifiedProfilesChangedAfterSandboxCreate: warningCheck },
+      );
+      const harness = createHarness(adapter);
+      const boundary = createProviderEffectBoundary({
+        deferred: false,
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        preparationInput: publicationInput({
+          messagingProviders: [],
+          messagingProviderRequests: [],
+          extraProviders: ["search-provider"],
+          directCreateProviderNames: ["search-provider"],
+        }),
+        preparationDeps: harness.deps,
+        runVerifiedSandboxCreateEffects: null,
+        activateDeferredProviderEffects: null,
+        revalidateSandboxIdentityBeforeCreate: vi.fn(),
+      });
+
+      await boundary.validateBeforeCreate();
+      await boundary.runAfterVerifiedCreate?.({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "generation-1",
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        route: "none",
+        revalidateSandboxIdentity: vi.fn(),
+      });
+      expect(adapter.importProviderProfile).toHaveBeenCalledTimes(type === "generic" ? 0 : 1);
+      expect(warningCheck).toHaveBeenCalledTimes(type === "generic" ? 0 : 1);
+      expect(warningCheck.mock.calls[0] ?? null).toEqual(
+        type === "generic" ? null : [{ target }, [type]],
+      );
+    },
+  );
+
+  it("stops direct create when an attached provider cannot be inspected", async () => {
+    const adapter = typedProviderAdapter({
+      getProvider: vi.fn(async () => ({
+        ok: false as const,
+        error: {
+          kind: "command" as const,
+          reason: "failed" as const,
+          message: "provider inspection failed",
+        },
+      })),
+    });
+    const harness = createHarness(adapter);
+    const boundary = createProviderEffectBoundary({
+      deferred: false,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      preparationInput: publicationInput({
+        messagingProviders: [],
+        messagingProviderRequests: [],
+        extraProviders: ["search-provider"],
+        directCreateProviderNames: ["search-provider"],
+      }),
+      preparationDeps: harness.deps,
+      runVerifiedSandboxCreateEffects: null,
+      activateDeferredProviderEffects: null,
+      revalidateSandboxIdentityBeforeCreate: vi.fn(),
+    });
+
+    await expect(boundary.validateBeforeCreate()).rejects.toThrow(
+      "Could not inspect attached provider 'search-provider' before sandbox creation",
+    );
+    expect(harness.cleanupCreateSources).toHaveBeenCalledOnce();
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(adapter.updateProvider).not.toHaveBeenCalled();
+    expect(harness.runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it.each(["nemoclaw-hermes-tool-gateway-v1", "generic"])(
+    "preserves the %s Hermes tool gateway binding on direct create",
+    async (type) => {
+      const warningCheck = vi.fn();
+      const providerName = "alpha-hermes-tool-gateway";
+      const adapter = Object.assign(
+        typedProviderAdapter({
+          getProvider: vi.fn(async () => ({
+            ok: true as const,
+            value: {
+              name: providerName,
+              type,
+              credentialKeys: ["NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN"],
+              configKeys: [],
+            },
+          })),
+        }),
+        { warnIfVerifiedProfilesChangedAfterSandboxCreate: warningCheck },
+      );
+      const harness = createHarness(adapter);
+      const boundary = createProviderEffectBoundary({
+        deferred: false,
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        preparationInput: publicationInput({
+          messagingProviders: [],
+          messagingProviderRequests: [],
+          hermesToolGateway: {
+            providerName,
+            profileType: "nemoclaw-hermes-tool-gateway-v1",
+            credentialEnv: "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
+          },
+        }),
+        preparationDeps: harness.deps,
+        runVerifiedSandboxCreateEffects: null,
+        activateDeferredProviderEffects: null,
+        revalidateSandboxIdentityBeforeCreate: vi.fn(),
+      });
+
+      await boundary.validateBeforeCreate();
+      expect(adapter.importProviderProfile).toHaveBeenCalledTimes(type === "generic" ? 0 : 1);
+      await boundary.runAfterVerifiedCreate?.({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "generation-1",
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        route: "none",
+        revalidateSandboxIdentity: vi.fn(),
+      });
+      expect(warningCheck).toHaveBeenCalledTimes(type === "generic" ? 0 : 1);
+      expect(warningCheck.mock.calls[0] ?? null).toEqual(
+        type === "generic" ? null : [{ target }, [type]],
+      );
+    },
+  );
+
+  it("blocks a changed Hermes tool gateway profile before sandbox creation", async () => {
+    const providerName = "alpha-hermes-tool-gateway";
+    const adapter = typedProviderAdapter({
+      getProvider: vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          name: providerName,
+          type: "nemoclaw-hermes-tool-gateway-v1",
+          credentialKeys: ["NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN"],
+          configKeys: [],
+        },
+      })),
+      importProviderProfile: vi.fn(async () => ({
+        ok: false as const,
+        error: {
+          kind: "command" as const,
+          reason: "profile_incompatible" as const,
+          message: "drift",
+        },
+      })),
+    });
+    const harness = createHarness(adapter);
+    const boundary = createProviderEffectBoundary({
+      deferred: false,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      preparationInput: publicationInput({
+        messagingProviders: [],
+        messagingProviderRequests: [],
+        hermesToolGateway: {
+          providerName,
+          profileType: "nemoclaw-hermes-tool-gateway-v1",
+          credentialEnv: "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
+        },
+      }),
+      preparationDeps: harness.deps,
+      runVerifiedSandboxCreateEffects: null,
+      activateDeferredProviderEffects: null,
+      revalidateSandboxIdentityBeforeCreate: vi.fn(),
+    });
+
+    await expect(boundary.validateBeforeCreate()).rejects.toThrow(
+      "Could not verify Hermes tool gateway profile before sandbox creation",
+    );
+    expect(harness.cleanupCreateSources).toHaveBeenCalledOnce();
+    expect(adapter.updateProvider).not.toHaveBeenCalled();
+  });
+
+  it("checks one verified messaging profile after direct sandbox creation", async () => {
+    const warningCheck = vi.fn();
+    const adapter = Object.assign(typedProviderAdapter(), {
+      warnIfVerifiedProfilesChangedAfterSandboxCreate: warningCheck,
+    });
+    const harness = createHarness(adapter);
+    const boundary = createProviderEffectBoundary({
+      deferred: false,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      preparationInput: publicationInput({ messagingProviders: [providerName, providerName] }),
+      preparationDeps: harness.deps,
+      runVerifiedSandboxCreateEffects: null,
+      activateDeferredProviderEffects: null,
+      revalidateSandboxIdentityBeforeCreate: vi.fn(),
+    });
+
+    await boundary.validateBeforeCreate();
+    expect(warningCheck).not.toHaveBeenCalled();
+    const result = await runSandboxCreateWithProviderEffects({
+      resumingVerifiedCreate: false,
+      providerEffectBoundary: boundary,
+      create: async (afterVerifiedCreate) => {
+        await afterVerifiedCreate?.({
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          lifecycleGeneration: "generation-1",
+          lifecycleLiveIdentityFingerprint: "a".repeat(64),
+          route: "none",
+          revalidateSandboxIdentity: vi.fn(),
+        });
+        return "created";
+      },
+    });
+
+    expect(result).toBe("created");
+    expect(warningCheck).toHaveBeenCalledExactlyOnceWith({ target }, [
+      MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+    ]);
+    expect(harness.runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("does not infer the original bind-time profile from a resumed create", async () => {
+    const warningCheck = vi.fn();
+    const adapter = Object.assign(typedProviderAdapter(), {
+      warnIfVerifiedProfilesChangedAfterSandboxCreate: warningCheck,
+    });
+    const harness = createHarness(adapter);
+    const boundary = createProviderEffectBoundary({
+      deferred: false,
+      resumingVerifiedCreate: true,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      preparationInput: publicationInput(),
+      preparationDeps: harness.deps,
+      runVerifiedSandboxCreateEffects: null,
+      activateDeferredProviderEffects: null,
+      revalidateSandboxIdentityBeforeCreate: vi.fn(),
+    });
+
+    await boundary.validateBeforeCreate();
+    await boundary.runAfterVerifiedCreate?.({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      route: "none",
+      revalidateSandboxIdentity: vi.fn(),
+    });
+    expect(adapter.importProviderProfile).toHaveBeenCalledOnce();
+    expect(warningCheck).not.toHaveBeenCalled();
+  });
+
   it("prepares and verifies a messaging provider through exact adapter calls (#9806)", async () => {
     const harness = createHarness();
 

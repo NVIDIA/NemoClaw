@@ -56,6 +56,10 @@ export interface HostLocalInferenceGatewayMutationInput {
  * owner captures the prior provider and inference selection before returning.
  */
 export interface HostLocalInferenceGatewayMutation {
+  /** Register native inference through the runtime owner's existing publication journal. */
+  registerNativeProvider?: () => Promise<
+    import("../../inference/native-local/contract").NativeLocalProviderAttachment
+  >;
   /** Exact provider mutation owned by a product transaction when supplied. */
   upsertProvider?: (
     name: string,

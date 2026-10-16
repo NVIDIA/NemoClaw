@@ -11,6 +11,7 @@ import {
   classifyExistingLock,
   ProcessBoundLockContentionError,
   releaseProcessBoundLock,
+  tryAcquireProcessBoundLockAt,
   withProcessBoundRegistryLockAt,
   withProcessBoundRegistryLockAtAsync,
   withRegistryLockAt,
@@ -520,15 +521,42 @@ describe("registry lock exhaustion remediation", () => {
 });
 
 describe("generation-safe registry lock removal", () => {
+  it("returns null only for contention and propagates lock-inspection errors", () => {
+    const test = fixture("nemoclaw-try-lock-error-");
+    writeExactGeneration(test, 4242, PROCESS_IDENTITY);
+    const inspectionError = new Error("injected lock inspection I/O failure");
+
+    expect(
+      tryAcquireProcessBoundLockAt(test.lockDir, exactDeps({ now: () => LOCK_MTIME })),
+    ).toBeNull();
+    expect(() =>
+      tryAcquireProcessBoundLockAt(
+        test.lockDir,
+        exactDeps({
+          now: () => {
+            throw inspectionError;
+          },
+        }),
+      ),
+    ).toThrow(inspectionError);
+    expect(fs.readFileSync(test.ownerFile, "utf8")).toBe("4242");
+    expect(fs.readFileSync(test.processStartFile, "utf8")).toBe(`${"4242"} ${PROCESS_IDENTITY}\n`);
+  });
+
   it("holds and releases one opaque process-bound generation", () => {
     const test = fixture("nemoclaw-opaque-handle-");
     const handle = acquireProcessBoundLockAt(test.lockDir, exactDeps());
 
     expect(fs.readFileSync(test.ownerFile, "utf8")).toBe(String(process.pid));
+    expect(tryAcquireProcessBoundLockAt(test.lockDir, exactDeps())).toBeNull();
     expect(() => acquireProcessBoundLockAt(test.lockDir, exactDeps({ maxRetries: 1 }))).toThrow(
       ProcessBoundLockContentionError,
     );
     releaseProcessBoundLock(handle);
+    expect(fs.existsSync(test.lockDir)).toBe(false);
+    const retried = tryAcquireProcessBoundLockAt(test.lockDir, exactDeps());
+    expect(retried).not.toBeNull();
+    releaseProcessBoundLock(retried!);
     expect(fs.existsSync(test.lockDir)).toBe(false);
     expect(() => releaseProcessBoundLock(handle)).toThrow(/inactive/);
   });

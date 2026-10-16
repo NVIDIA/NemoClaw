@@ -55,7 +55,7 @@ export function buildMessagingProviderApplication(
   for (const tokenDef of input.tokenDefs) {
     const providerType = tokenDef.providerType ?? "generic";
     const bridgeProfile = profilesByType.get(providerType);
-    const profile = providerProfile(input.root, providerType, bridgeProfile);
+    const profile = messagingProviderProfileForType(input.root, providerType, bridgeProfile);
     const channelId =
       bridgeProfile?.channelId ??
       input.channelIdForCredential?.(tokenDef.envKey, tokenDef.name) ??
@@ -88,7 +88,7 @@ export function buildMessagingProviderApplication(
   return { definitions, refreshes };
 }
 
-function providerProfile(
+export function messagingProviderProfileForType(
   root: string,
   providerType: string,
   bridgeProfile: MessagingBridgeProfile | undefined,

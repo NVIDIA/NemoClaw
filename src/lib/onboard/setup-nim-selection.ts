@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ModelSelectionProvenance } from "../domain/telemetry/provenance";
+import type { NimStartReceipt } from "../inference/nim";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import { canonicalEndpoint, normalizeProviderBaseUrl } from "../core/url-utils";
 import { applyCompatibleEndpointContextWindow } from "../inference/compatible-endpoint-context";
@@ -18,7 +20,9 @@ export {
   selectFeaturedModelAfterCredentialPrompt,
 } from "./nvidia-featured-model-selection";
 
-export type SetupNimSelectionBackNavigation = Readonly<{ kind: "NEMOCLAW_BACK_TO_SELECTION" }>;
+export type SetupNimSelectionBackNavigation = Readonly<{
+  kind: "NEMOCLAW_BACK_TO_SELECTION";
+}>;
 
 /** Defaults passed into Ollama model selection and runtime context adoption. */
 export type OllamaModelSelectionDefaults = {
@@ -32,6 +36,7 @@ export type OllamaModelSelectionDefaults = {
 };
 
 export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
+  onModelSelected?: (model: string, source: ModelSelectionProvenance["modelSource"]) => void;
   model: string | SetupNimSelectionBackNavigation | null;
   provider: string;
   endpointUrl: string | null;
@@ -42,6 +47,8 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   compatibleEndpointReasoning?: string | null;
   compatibleEndpointReasoningEffort?: string | null;
   nimContainer: string | null;
+  /** Ephemeral selection identity before the owned NIM container is started. */
+  localNimSelected?: boolean;
   allowToolsIncompatible: boolean;
   /** Minimum Ollama daemon context length to request for this agent. */
   ollamaContextWindowFloor?: number;
@@ -86,36 +93,44 @@ export function withCredentialMutationGuard<T extends object>(
   return guard ? { ...options, revalidateSandboxIdentity: guard } : options;
 }
 
-export type CloudFallbackConfig = {
-  providerName: string;
-  endpointUrl: string | null;
-  credentialEnv: string | null;
-  defaultModel: string;
-};
-
-export function applyCloudFallbackSelection(
+export function clearNimContainerBeforeRetry(
   state: SetupNimSelectionState,
-  cloudConfig: CloudFallbackConfig,
+  removeOwnedContainer: (name: string) => void,
 ): void {
-  // Source boundary: fallback may run after a local Ollama/NIM/vLLM branch
-  // accepted provider-specific tool constraints. Cloud fallback is a fresh
-  // provider selection, so clear local-only compatibility state here.
-  state.provider = cloudConfig.providerName;
-  state.endpointUrl = cloudConfig.endpointUrl;
-  state.credentialEnv = cloudConfig.credentialEnv;
-  state.model = cloudConfig.defaultModel;
-  state.preferredInferenceApi = null;
+  if (!state.nimContainer) {
+    throw new Error("Cannot retry Local NIM selection without its owned container identity");
+  }
+  assertSelectionMutationAuthority(
+    state,
+    "remove the local NIM runtime before retrying provider selection",
+  );
+  removeOwnedContainer(state.nimContainer);
   state.nimContainer = null;
-  state.allowToolsIncompatible = false;
-  state.skipHostInferenceSmoke = false;
-  state.reuseGatewayCredentialWithoutLocalKey = false;
-  delete state.vllmModelIdentity;
-  delete state.endpointPinnedAddresses;
-  delete state.endpointTrustedPrivateCapability;
+  delete state.localNimSelected;
 }
 
-export function clearNimContainerBeforeRetry(state: SetupNimSelectionState): void {
+/** Stop onboarding after failed Local NIM startup without changing its selected route. */
+export function abortFailedNimStartup(
+  state: SetupNimSelectionState,
+  started: NimStartReceipt,
+  removeExactContainer: (id: string) => void,
+): never {
+  if (state.nimContainer !== started.name) {
+    throw new Error("Local NIM startup receipt does not match the selected container");
+  }
+  try {
+    assertSelectionMutationAuthority(
+      state,
+      "remove the local NIM runtime after failed health validation",
+    );
+  } catch {
+    // The exact ID from `docker run -d` still proves which container this
+    // attempt created, even when the sandbox identity changed during the wait.
+  }
+  removeExactContainer(started.id);
   state.nimContainer = null;
+  delete state.localNimSelected;
+  throw new Error("Local NVIDIA NIM failed to become healthy. Onboarding stopped.");
 }
 
 type CompatibleEndpointKind = "openai" | "anthropic";
@@ -253,7 +268,11 @@ type ValidationResult =
       pinnedAddresses?: string[];
       trustedPrivateCapability?: TrustedPrivateEndpointCapability;
     }
-  | { ok: false; api?: string; retry?: "credential" | "retry" | "model" | "selection" | string };
+  | {
+      ok: false;
+      api?: string;
+      retry?: "credential" | "retry" | "model" | "selection" | string;
+    };
 
 type RemoteModelValidationResult = "selected" | "retry-model" | "retry-selection";
 

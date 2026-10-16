@@ -63,6 +63,7 @@ export function resolveHermesGpuStartupScenario(
 export function extractHermesGpuDiagnosticsDirectory(output: string): string {
   return (
     output.match(/Pre-rollback diagnostics saved:\s*(\S+)/u)?.[1] ??
+    output.match(/Docker GPU diagnostics saved:\s*(\S+)/u)?.[1] ??
     output.match(/Native GPU diagnostics saved:\s*(\S+)/u)?.[1] ??
     ""
   );

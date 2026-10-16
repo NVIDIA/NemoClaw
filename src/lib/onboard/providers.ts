@@ -18,6 +18,12 @@ const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
 const { createCliOpenShellProviderAdapter } = require("../adapters/openshell/provider-adapter-cli");
 const {
+  getNativeNvidiaProviderAuthority,
+  getNativeHostedProviderAuthority,
+  setNativeHostedProviderAuthority,
+  setNativeNvidiaProviderAuthority,
+} = require("../state/registry/native-provider-authority");
+const {
   LLAMA_CPP_CREDENTIAL_ENV,
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
@@ -389,6 +395,17 @@ async function providerExistsInGateway(name, runOpenshell) {
   throw new Error(result.error.message);
 }
 
+function setupInferenceProviderDeps(runOpenshell) {
+  return {
+    providerExistsInGateway,
+    providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
+    getNativeNvidiaProviderAuthority,
+    getNativeHostedProviderAuthority,
+    setNativeHostedProviderAuthority,
+    setNativeNvidiaProviderAuthority,
+  };
+}
+
 /**
  * Recheck current OpenShell sandbox identity before each provider command.
  * Commands in one provider operation can be separated by
@@ -437,7 +454,8 @@ async function upsertProvider(
 ) {
   const operation = `inspect or change provider ${JSON.stringify(name)}`;
   const revalidate = () => options.revalidateSandboxIdentity?.(operation);
-  const adapter = createCliOpenShellProviderAdapter({ run: _runOpenshell });
+  const adapter =
+    options.providerAdapter ?? createCliOpenShellProviderAdapter({ run: _runOpenshell });
   let observed = null;
   if (options.knownExists === undefined || options.requireExactBinding) {
     revalidate();
@@ -594,6 +612,7 @@ module.exports = {
   getRequestedModelHint,
   isProviderKeyCredentialCandidate,
   upsertProvider,
+  setupInferenceProviderDeps,
   providerExistsInGateway,
   readGatewayProviderMetadata,
   getSandboxInferenceConfig,

@@ -470,6 +470,28 @@ export function acquireProcessBoundLockAt(
   handles.set(handle, acquire(lockDirectory, process.platform === "linux", deps));
   return handle;
 }
+
+/** Attempt one process-bound lock acquisition without blocking the caller. */
+export function tryAcquireProcessBoundLockAt(
+  lockDirectory: string,
+  deps: RegistryLockDeps = {},
+): ProcessBoundLockHandle | null {
+  const handle = {};
+  const attempts = acquisitionAttempts(lockDirectory, process.platform === "linux", {
+    ...deps,
+    maxRetries: 1,
+    wait: () => undefined,
+  });
+  try {
+    const step = attempts.next();
+    if (!step.done) return null;
+    handles.set(handle, step.value);
+    return handle;
+  } catch (error) {
+    if (error instanceof ProcessBoundLockContentionError) return null;
+    throw error;
+  }
+}
 export function releaseProcessBoundLock(handle: ProcessBoundLockHandle): void {
   const lock = handles.get(handle);
   if (!lock) throw new Error("Process-bound registry lock handle is inactive");

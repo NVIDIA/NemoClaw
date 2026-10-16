@@ -45,6 +45,7 @@ type HeadlessCheckOperation =
   | "classify-output"
   | "contains-secret"
   | "entrypoint-rlimits"
+  | "inference-route-contract"
   | "managed-placeholder"
   | "managed-route"
   | "positive-integer";
@@ -69,6 +70,9 @@ case "$1" in
     ;;
   managed-placeholder)
     printf "%s" "$CONFIG" | references_managed_placeholder_key && printf key
+    ;;
+  inference-route-contract)
+    printf "%s" "$CONFIG" | configured_inference_route_contract
     ;;
   classify-output)
     if classification="$(classify_headless_output "$DCODE_EXIT" "$HEADLESS_OUTPUT")"; then

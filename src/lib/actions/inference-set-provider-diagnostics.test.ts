@@ -52,6 +52,15 @@ describe("inference set provider diagnostics", () => {
     expect(isBridgeProviderName("nvidia-prod")).toBe(false);
   });
 
+  it("normalizes the internal native NVIDIA provider to its public name", () => {
+    expect(
+      classifyGatewayProviderNames(["nemoclaw-nvidia-prod-v1", "nvidia-prod", "custom-provider"]),
+    ).toEqual({
+      bridgeNames: [],
+      credentialNames: ["custom-provider", "nvidia-prod"],
+    });
+  });
+
   it.each([
     {
       name: "thrown adapter error",

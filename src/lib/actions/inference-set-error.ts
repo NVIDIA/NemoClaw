@@ -10,3 +10,14 @@ export class InferenceSetError extends Error {
     this.name = "InferenceSetError";
   }
 }
+
+export function inferenceProbeRecoveryMessage(
+  selectingNative: boolean,
+  previousProvider: string,
+  previousModel: string,
+  rollbackRoute: { provider: string; model: string } | null,
+): string {
+  if (selectingNative)
+    return `The previous inference selection '${previousProvider}' / '${previousModel}' was not changed.`;
+  return `The previous OpenShell inference selection was restored to '${rollbackRoute?.provider ?? previousProvider}' / '${rollbackRoute?.model ?? previousModel}'.`;
+}

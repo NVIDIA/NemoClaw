@@ -31,6 +31,7 @@ import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
 import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
 import {
   isExactOpenShellDockerSandboxReplacement,
+  captureOpenShellDockerSandboxFailureOutput,
   queryOpenShellDockerSandboxContainers,
   queryOpenShellDockerSandboxRuntimeSnapshot,
 } from "./openshell-docker-sandbox-containers";
@@ -334,8 +335,10 @@ async function checkSandboxExecutableReadiness(
   if (result.outcome.kind === "failed") {
     return "probe_failed";
   }
+  if (result.outcome.signal) return "probe_failed";
   if (result.outcome.exitCode === 0) return "ready";
-  return OPENSHELL_SANDBOX_NOT_READY.test(normalizedOpenShellCommandOutput(result))
+  const output = normalizedOpenShellCommandOutput(result);
+  return output.trim().length === 0 || OPENSHELL_SANDBOX_NOT_READY.test(output)
     ? "not_ready"
     : "probe_failed";
 }
@@ -414,6 +417,17 @@ export function createSandboxGpuCreateAttemptRunner(
   },
 ) {
   const portableLifecycle = input.portableLifecycle === true;
+  /**
+   * Capture failed-container output before rollback can remove or replace the
+   * container that holds the startup error (#13178).
+   */
+  const captureSandboxContainerOutput = (runtimePatch: SandboxCreateRuntimePatch): string | null =>
+    portableLifecycle || input.hermesPortableLifecycle
+      ? null
+      : (deps.captureSandboxContainerOutput ?? captureOpenShellDockerSandboxFailureOutput)(
+          input.sandboxName,
+          runtimePatch.replacementRuntimeId?.() ?? null,
+        );
   const printCreateFailureDiagnostics =
     deps.printCreateFailureDiagnostics ??
     (input.hermesPortableLifecycle
@@ -803,6 +817,7 @@ export function createSandboxGpuCreateAttemptRunner(
             ? "create"
             : undefined,
       } as const;
+      if (createAttemptNonce) input.beforeCreateAttempt?.(createAttemptNonce);
       const createResult = await deps.createSandbox(
         Object.freeze({ ...attemptRequest, environment: Object.freeze({ ...input.sandboxEnv }) }),
         createOptions,
@@ -916,6 +931,7 @@ export function createSandboxGpuCreateAttemptRunner(
             : {}),
         } as const;
       } else {
+        const sandboxContainerOutput = captureSandboxContainerOutput(runtimePatch);
         await runtimePatch.rollbackManagedStartupAfterCreateFailure();
         reportSandboxCreateFailure(
           {
@@ -924,6 +940,7 @@ export function createSandboxGpuCreateAttemptRunner(
             createOutput: createResult.output,
             restoreBackupPath: input.restoreBackupPath,
             ...createFailureRecoveryEvidence(),
+            sandboxContainerOutput,
           },
           {
             classifyCreateFailure: classifySandboxCreateFailure,
@@ -1058,9 +1075,11 @@ export function createSandboxGpuCreateAttemptRunner(
           ...captureRetainedSandboxRecovery(),
         } as const;
       }
+      const sandboxContainerOutput = captureSandboxContainerOutput(runtimePatch);
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
       printCreateFailureDiagnostics(input.sandboxName, {
         backupPath: input.restoreBackupPath,
+        sandboxContainerOutput,
       });
       if (input.externalImage === true) {
         console.error(

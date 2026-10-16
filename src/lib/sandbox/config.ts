@@ -14,6 +14,16 @@
 
 import type { AgentConfigTarget } from "./agent-config";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/client";
+import {
+  recordTelemetryTarget,
+  isTelemetryConfigurationKey,
+  persistConfigurationTelemetry,
+  configSetUnsupportedAgentMessage,
+} from "./config-telemetry";
+export {
+  isTelemetryConfigurationKey,
+  retireNativeConfigurationTelemetry,
+} from "./config-telemetry";
 
 export type { AgentConfigTarget } from "./agent-config";
 
@@ -57,9 +67,13 @@ const {
   serializeConfig,
 }: typeof import("./config-format") = require("./config-format");
 const {
-  OPENSHELL_OPERATION_TIMEOUT_MS,
-}: typeof import("../adapters/openshell/timeouts") = require("../adapters/openshell/timeouts");
-const { redactFull }: typeof import("../security/redact") = require("../security/redact");
+  buildOpenClawNativeConfigBatchInvocation,
+  buildOpenClawNativeConfigSetInvocation,
+  executeOpenClawNativeConfigBatch,
+  executeOpenClawNativeConfigSet,
+  runOpenClawNativeConfigBatchUntilHandleReady,
+  runOpenClawNativeConfigCommand,
+}: typeof import("./openclaw-native-config") = require("./openclaw-native-config");
 const {
   loadSandboxCredentialRoute,
   loadRotateTokenSession,
@@ -69,6 +83,8 @@ const {
 
 type ConfigObject = import("../security/credential-filter").ConfigObject;
 type ConfigValue = import("../security/credential-filter").ConfigValue;
+import type { OpenClawConfigUpdate } from "./openclaw-native-config";
+export type { OpenClawConfigUpdate } from "./openclaw-native-config";
 const { runOpenshellCommand, captureOpenshellCommand } = require("../adapters/openshell/client");
 
 function parseJson<T>(text: string): T {
@@ -611,89 +627,6 @@ function recomputeSandboxConfigHash(sandboxName: string, target: AgentConfigTarg
   privilegedSandboxExec(sandboxName, ["sh", "-c", script]);
 }
 
-function runOpenClawNativeConfigCommand(
-  sandboxName: string,
-  args: string[],
-  gateway?: string | OpenShellRuntimeSelection,
-): void {
-  validateName(sandboxName, "sandbox name");
-  const result = captureOpenshellCommand(
-    getOpenshellBinary(),
-    [
-      ...(gateway ? ["-g", typeof gateway === "string" ? gateway : gateway.gatewayName] : []),
-      "sandbox",
-      "exec",
-      "--name",
-      sandboxName,
-      "--env",
-      "HOME=/sandbox",
-      "--",
-      "openclaw",
-      "config",
-      ...args,
-    ],
-    {
-      ...(!gateway || typeof gateway === "string"
-        ? {}
-        : {
-            env: buildSelectedOpenShellSubprocessEnv(gateway),
-            replaceEnv: true,
-          }),
-      ignoreError: true,
-      includeStreams: true,
-      maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
-      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-    },
-  );
-  if (!result.error && !result.signal && result.status === 0) return;
-  const detail = redactFull(result.error?.message || result.stderr?.trim() || "command failed");
-  throw new Error(`Native OpenClaw config command failed: ${detail}`);
-}
-
-function buildOpenClawNativeConfigSetInvocation(
-  sandboxName: string,
-  dotpath: string,
-  value: ConfigValue,
-  gateway?: string | OpenShellRuntimeSelection,
-) {
-  return buildOpenClawNativeConfigBatchInvocation(sandboxName, [{ dotpath, value }], gateway);
-}
-
-export interface OpenClawConfigUpdate {
-  dotpath: string;
-  value: ConfigValue;
-}
-
-function buildOpenClawNativeConfigBatchInvocation(
-  sandboxName: string,
-  updates: readonly OpenClawConfigUpdate[],
-  gateway?: string | OpenShellRuntimeSelection,
-) {
-  return {
-    ...(!gateway || typeof gateway === "string"
-      ? {}
-      : {
-          env: buildSelectedOpenShellSubprocessEnv(gateway),
-          replaceEnv: true,
-        }),
-    args: [
-      ...(gateway ? ["-g", typeof gateway === "string" ? gateway : gateway.gatewayName] : []),
-      "sandbox",
-      "exec",
-      "--name",
-      sandboxName,
-      "--env",
-      "HOME=/sandbox",
-      "--",
-      "sh",
-      "-c",
-      'umask 077; file=$(mktemp /tmp/nemoclaw-openclaw-config.XXXXXX) || exit $?; trap \'rm -f "$file"\' EXIT; cat >"$file" || exit $?; openclaw config set --batch-file "$file"',
-      "nemoclaw-openclaw-config-set-batch",
-    ],
-    input: JSON.stringify(updates.map(({ dotpath, value }) => ({ path: dotpath, value }))),
-  };
-}
-
 function setOpenClawConfigValue(
   sandboxName: string,
   dotpath: string,
@@ -702,24 +635,16 @@ function setOpenClawConfigValue(
 ): void {
   validateName(sandboxName, "sandbox name");
   const validation = validateConfigDotpath(dotpath);
-  if (!validation.ok) {
+  if (!validation.ok)
     throw new Error(`Invalid OpenClaw config key '${dotpath}': ${validation.reason}.`);
-  }
-  const invocation = buildOpenClawNativeConfigSetInvocation(sandboxName, dotpath, value, gateway);
-  const result = runOpenshellCommand(getOpenshellBinary(), invocation.args, {
-    env: invocation.env,
-    replaceEnv: invocation.replaceEnv,
-    ignoreError: true,
-    input: invocation.input,
-    maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-  });
-  if (!result.error && !result.signal && result.status === 0) return;
-  const detail = redactFull(
-    result.error?.message || String(result.stderr ?? "").trim() || "command failed",
+  executeOpenClawNativeConfigSet(
+    getOpenshellBinary(),
+    CONFIG_CAPTURE_MAX_BUFFER,
+    sandboxName,
+    dotpath,
+    value,
+    gateway,
   );
-  throw new Error(`Native OpenClaw config command failed: ${detail}`);
 }
 
 function setOpenClawConfigValues(
@@ -728,30 +653,20 @@ function setOpenClawConfigValues(
   gateway?: string | OpenShellRuntimeSelection,
 ): void {
   validateName(sandboxName, "sandbox name");
-  if (updates.length === 0) {
+  if (updates.length === 0)
     throw new Error("Native OpenClaw config update requires at least one value.");
-  }
   for (const { dotpath } of updates) {
     const validation = validateConfigDotpath(dotpath);
-    if (!validation.ok) {
+    if (!validation.ok)
       throw new Error(`Invalid OpenClaw config key '${dotpath}': ${validation.reason}.`);
-    }
   }
-  const invocation = buildOpenClawNativeConfigBatchInvocation(sandboxName, updates, gateway);
-  const result = runOpenshellCommand(getOpenshellBinary(), invocation.args, {
-    env: invocation.env,
-    replaceEnv: invocation.replaceEnv,
-    ignoreError: true,
-    input: invocation.input,
-    maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-  });
-  if (!result.error && !result.signal && result.status === 0) return;
-  const detail = redactFull(
-    result.error?.message || String(result.stderr ?? "").trim() || "command failed",
+  executeOpenClawNativeConfigBatch(
+    getOpenshellBinary(),
+    CONFIG_CAPTURE_MAX_BUFFER,
+    sandboxName,
+    updates,
+    gateway,
   );
-  throw new Error(`Native OpenClaw config command failed: ${detail}`);
 }
 
 function unsetOpenClawConfigValue(
@@ -760,10 +675,16 @@ function unsetOpenClawConfigValue(
   gateway?: string | OpenShellRuntimeSelection,
 ): void {
   const validation = validateConfigDotpath(dotpath);
-  if (!validation.ok) {
+  if (!validation.ok)
     throw new Error(`Invalid OpenClaw config key '${dotpath}': ${validation.reason}.`);
-  }
-  runOpenClawNativeConfigCommand(sandboxName, ["unset", dotpath], gateway);
+  validateName(sandboxName, "sandbox name");
+  runOpenClawNativeConfigCommand(
+    getOpenshellBinary(),
+    CONFIG_CAPTURE_MAX_BUFFER,
+    sandboxName,
+    ["unset", dotpath],
+    gateway,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1151,27 +1072,13 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   }
 
   const target = resolveAgentConfig(sandboxName);
-  if (target.agentName === "openclaw") {
-    configFail([
-      "  config set is not available for OpenClaw because OpenClaw owns its configuration.",
-      `  Connect to the sandbox and use the native command instead: openclaw config set ${shellQuote(configKey)} <value>`,
-    ]);
-  }
-  // dcode bakes its config into the sandbox image at build time, so — unlike
-  // Hermes — it has no host-side config-mutation path (the same reason
-  // inference set refuses it, #6321). config get now reads TOML, but refuse
-  // config set cleanly and point at the only way to change it: re-onboard. #6548
-  if (target.agentName !== "hermes" && target.format === "toml") {
-    const { CLI_NAME } = require("../cli/branding");
-    configFail(
-      `  config set is not available for '${target.agentName}': its config is baked into the sandbox image at build time. To change it, re-onboard with the new selection (e.g. ${CLI_NAME} onboard --agent dcode --name ${shellQuote(sandboxName)} --fresh).`,
-    );
-  }
-  if (target.agentName !== "hermes") {
-    configFail(
-      `  config set is available only for Hermes; '${target.agentName}' config was not changed. Use the agent's native configuration command.`,
-    );
-  }
+  const unsupportedAgent = configSetUnsupportedAgentMessage(
+    target,
+    sandboxName,
+    configKey,
+    shellQuote,
+  );
+  if (unsupportedAgent) configFail(unsupportedAgent);
   // Read current config
   console.log(`  Reading ${target.agentName} config...`);
   const config = readSandboxConfig(sandboxName, target);
@@ -1241,6 +1148,14 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
         throw error;
       }
       if (!confirmed) {
+        if (isTelemetryConfigurationKey(configKey)) {
+          recordTelemetryTarget({
+            scope: "configuration",
+            sandboxName,
+            outcome: "cancelled",
+            state: "unchanged",
+          });
+        }
         configFail("  Aborted.");
       }
     }
@@ -1263,6 +1178,8 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     configFail(`  URL validation failed${suffix}: ${message}`);
   }
 
+  let telemetryPersistenceVerified = true;
+  const telemetryMetadataErrors: import("../domain/telemetry/event").TelemetryMetadataError[] = [];
   // Re-read under the sandbox mutation lock and enforce the source digest.
   await withSandboxMutationLock(sandboxName, () => {
     const currentConfig = readSandboxConfig(sandboxName, target);
@@ -1278,6 +1195,32 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
 
     console.log(`  Writing config to sandbox (${target.configPath})...`);
     writeSandboxConfig(sandboxName, target, currentConfig);
+    telemetryPersistenceVerified = persistConfigurationTelemetry(
+      sandboxName,
+      configKey,
+      currentConfig,
+      Object.is(oldValue, safeValue) && !opts.restart ? undefined : true,
+      !Object.is(oldValue, safeValue),
+    );
+    if (!telemetryPersistenceVerified) {
+      telemetryMetadataErrors.push({ category: "native_model_source" });
+      if (!Object.is(oldValue, safeValue) || opts.restart)
+        telemetryMetadataErrors.push({ category: "configuration_apply_state" });
+    }
+    if (isTelemetryConfigurationKey(configKey)) {
+      recordTelemetryTarget({
+        scope: "configuration",
+        sandboxName,
+        outcome: Object.is(oldValue, safeValue) && !opts.restart ? "no_change" : "completed",
+        state: Object.is(oldValue, safeValue) && !opts.restart ? "unchanged" : "pending",
+        ...(!telemetryPersistenceVerified
+          ? {
+              verificationStatus: "collection_error" as const,
+              metadataErrors: telemetryMetadataErrors,
+            }
+          : {}),
+      });
+    }
     appendAuditEntry({
       action: "config_set",
       sandbox: sandboxName,
@@ -1290,7 +1233,36 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
 
   // Restart if requested
   if (opts.restart) {
-    await restartSandboxAgentAfterConfigSet(sandboxName, target.agentName);
+    try {
+      await restartSandboxAgentAfterConfigSet(sandboxName, target.agentName);
+    } catch (error) {
+      if (isTelemetryConfigurationKey(configKey)) {
+        recordTelemetryTarget({
+          scope: "configuration",
+          sandboxName,
+          outcome: "failed",
+          state: "partial",
+        });
+      }
+      throw error;
+    }
+    const pendingStateSaved = persistConfigurationTelemetry(sandboxName, configKey, null, false);
+    if (!pendingStateSaved) telemetryMetadataErrors.push({ category: "configuration_apply_state" });
+    telemetryPersistenceVerified = pendingStateSaved && telemetryPersistenceVerified;
+    if (isTelemetryConfigurationKey(configKey)) {
+      recordTelemetryTarget({
+        scope: "configuration",
+        sandboxName,
+        outcome: "completed",
+        state: "applied",
+        ...(!telemetryPersistenceVerified
+          ? {
+              verificationStatus: "collection_error" as const,
+              metadataErrors: telemetryMetadataErrors,
+            }
+          : {}),
+      });
+    }
   } else {
     console.log("");
     for (const line of buildConfigSetRestartGuidance(sandboxName)) {
@@ -1361,6 +1333,7 @@ export {
   resolveAgentConfig,
   restartSandboxAgentAfterConfigSet,
   rewriteConfigUrlsWithDnsPinning,
+  runOpenClawNativeConfigBatchUntilHandleReady,
   setOpenClawConfigValue,
   setOpenClawConfigValues,
   setDotpath,

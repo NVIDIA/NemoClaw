@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ModelSelectionProvenance } from "../domain/telemetry/provenance";
 import { BACK_TO_SELECTION, type BackToSelection } from "../navigation";
 import { isSafeModelId } from "../validation";
 import { CLOUD_MODEL_OPTIONS, HERMES_PROVIDER_MODEL_OPTIONS } from "./config";
@@ -36,6 +37,8 @@ export interface PromptValidationResult {
 }
 
 export interface ModelPromptOptions {
+  onModelSelected?: (model: string, source: ModelSelectionProvenance["modelSource"]) => void;
+  catalogModelSource?: "product_catalog" | "provider_catalog";
   promptFn?: (question: string) => Promise<string>;
   errorLine?: (message: string) => void;
   writeLine?: (message: string) => void;
@@ -61,6 +64,24 @@ export interface ModelPromptOptions {
   otherShowsFullList?: boolean;
 }
 
+/** Loaded provider options are provider catalog choices; built-in defaults retain product catalog origin. */
+export function providerModelCatalogSource(
+  models: readonly string[],
+): "product_catalog" | "provider_catalog" {
+  return models.length > 0 ? "provider_catalog" : "product_catalog";
+}
+
+/** Record a default selection only when this operation actually chose it rather than recovering it. */
+export function recordDefaultModelSelection(
+  state: Pick<ModelPromptOptions, "onModelSelected">,
+  model: string,
+  requestedModel: string | null,
+  recoveredFromSandbox: boolean,
+): void {
+  if (!recoveredFromSandbox)
+    state.onModelSelected?.(model, requestedModel ? "custom" : "product_catalog");
+}
+
 function getNavigationChoice(value = ""): "back" | "exit" | null {
   const normalized = String(value || "")
     .trim()
@@ -84,6 +105,8 @@ function shouldDeferValidationFailure(validation: PromptValidationResult): boole
 
 function resolvePromptOptions(options: ModelPromptOptions = {}) {
   return {
+    onModelSelected: options.onModelSelected,
+    catalogModelSource: options.catalogModelSource,
     promptFn: options.promptFn ?? prompt,
     errorLine: options.errorLine ?? console.error,
     writeLine: options.writeLine ?? console.log,
@@ -126,11 +149,13 @@ export async function promptManualModelId(
           deps.errorLine(`  ${validation.message}`);
         }
         if (shouldDeferValidationFailure(validation)) {
+          deps.onModelSelected?.(trimmed, "custom");
           return trimmed;
         }
         continue;
       }
     }
+    deps.onModelSelected?.(trimmed, "custom");
     return trimmed;
   }
 }
@@ -167,7 +192,9 @@ export async function promptCloudModel(
   }
   const index = parseInt(choice || String(defaultListChoice), 10) - 1;
   if (Number.isFinite(index) && index >= 0 && index < deps.cloudModelOptions.length) {
-    return deps.cloudModelOptions[index].id;
+    const model = deps.cloudModelOptions[index].id;
+    deps.onModelSelected?.(model, options.catalogModelSource ?? "product_catalog");
+    return model;
   }
 
   const manualCredentialEnv = options.manualCredentialEnv ?? "NVIDIA_INFERENCE_API_KEY";
@@ -250,9 +277,14 @@ export async function promptRemoteModel(
   }
   const index = parseInt(choice || String(defaultChoice), 10) - 1;
   if (currentDefaultChoice !== null && index === currentDefaultChoice - 1) {
+    deps.onModelSelected?.(
+      defaultModel,
+      defaultIndex >= 0 ? (options.catalogModelSource ?? "product_catalog") : "unknown",
+    );
     return defaultModel;
   }
   if (Number.isFinite(index) && index >= 0 && index < visibleOptions.length) {
+    deps.onModelSelected?.(visibleOptions[index], options.catalogModelSource ?? "product_catalog");
     return visibleOptions[index];
   }
   if (index === visibleOptions.length) {
@@ -292,6 +324,7 @@ async function promptFullRemoteModelList(
   }
   const index = parseInt(choice || String(defaultIndex + 1), 10) - 1;
   if (Number.isFinite(index) && index >= 0 && index < modelOptions.length) {
+    deps.onModelSelected?.(modelOptions[index], options.catalogModelSource ?? "product_catalog");
     return modelOptions[index];
   }
 
@@ -326,11 +359,13 @@ export async function promptInputModel(
           deps.errorLine(`  ${validation.message}`);
         }
         if (shouldDeferValidationFailure(validation)) {
+          deps.onModelSelected?.(trimmed, "custom");
           return trimmed;
         }
         continue;
       }
     }
+    deps.onModelSelected?.(trimmed, "custom");
     return trimmed;
   }
 }

@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { runInferenceSet } from "./inference-set";
-import { createCompatibleProviderCapture, createDeps } from "./inference-set.test-support";
+import { createCompatibleProviderCapture, createDeps } from "../../../test/helpers/inference-set";
 
 describe("runInferenceSet live rollback authority", () => {
   it("does not reapply or report restoration when the observed route already matches the rejected route", async () => {

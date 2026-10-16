@@ -1,7 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  HOSTED_NATIVE_PROVIDERS,
+  hostedNativeProvider,
+} from "../../inference/native-provider/hosted";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
+import {
+  NVIDIA_HOSTED_NATIVE_PROVIDER,
+  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+} from "../../inference/native-nvidia";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
 import type { GatewayProviderMetadata } from "../../onboard/gateway-provider-metadata";
 import {
@@ -9,9 +18,21 @@ import {
   checkRebuildGatewayCredentialReuseOrBail,
   checkRebuildGatewayProviderOrBail,
   inspectRebuildGatewayProviderRegistration,
+  verifyRebuildNativeLocalProviderBeforeDelete,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
+import * as managedProviderAdapter from "../../adapters/openshell/managed-provider-adapter";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
+import { preflightRebuildCredentials } from "./rebuild-credential-preflight";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
+import * as providerPreflight from "./rebuild-provider-preflight";
+import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+
+vi.mock("../../adapters/openshell/provider-policy", () => ({
+  requireNativeProviderPolicy: vi.fn(async () => {}),
+}));
 
 const exactGatewayProvider: GatewayProviderMetadata = {
   name: "compatible-endpoint",
@@ -55,6 +76,155 @@ const throwingBail = (message: string): never => {
   throw new Error(message);
 };
 
+describe("native local rebuild credentials", () => {
+  function nativeFixture(openclaw = false) {
+    const binding = {
+      ...(openclaw ? { agent: "openclaw" as const } : {}),
+      provider: openclaw ? ("llama-cpp-local" as const) : ("compatible-endpoint" as const),
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated" as const,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+    };
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "owned",
+    };
+    const adapter = {
+      inspectProviderProfile: vi.fn(async () => ({
+        ok: true,
+        value: { credentialKeys: [binding.credentialEnv] },
+      })),
+      getProvider: vi.fn(async () => ({
+        ok: true,
+        value: {
+          name: attachment.providerName,
+          type: attachment.profileId,
+          credentialKeys: [binding.credentialEnv],
+          configKeys: [],
+          revision: { id: "owned", resourceVersion: 1 },
+        },
+      })),
+      listProviderAttachments: vi.fn(async () => ({
+        ok: true,
+        value: { names: [attachment.providerName] },
+      })),
+    };
+    vi.spyOn(managedProviderAdapter, "createManagedProviderAdapter").mockReturnValue(
+      adapter as unknown as OpenShellProviderAdapter,
+    );
+    const hydrate = vi
+      .spyOn(rebuildOnboardDependencies, "hydrateCredentialEnv")
+      .mockReturnValue(null);
+    const selection = config({
+      agent: openclaw ? "openclaw" : "langchain-deepagents-code",
+      provider: binding.provider,
+      endpointUrl: "http://localhost:8000/v1",
+      nativeLocalProviderAttachment: attachment,
+    });
+    const entry = {
+      ...selection,
+      name: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    } as unknown as RebuildSandboxEntry;
+    return { attachment, adapter, selection, entry, hydrate };
+  }
+
+  it("reuses the native credential without requiring a shared registration or host key (#13197)", async () => {
+    const f = nativeFixture();
+    const readShared = vi.fn();
+    await expect(preflightRebuildCredentials(f.entry, vi.fn(), throwingBail)).resolves.toBe(true);
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail("alpha", f.selection, false, vi.fn(), throwingBail, {
+        readGatewayProviderMetadata: readShared,
+        readRecordedProviderEndpoints: vi.fn(),
+      }),
+    ).resolves.toBe(true);
+    expect(f.adapter.getProvider.mock.calls).toEqual([
+      [
+        {
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          providerName: f.attachment.providerName,
+        },
+      ],
+      [
+        {
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          providerName: f.attachment.providerName,
+        },
+      ],
+    ]);
+    expect(readShared).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "rechecks exact native authority at deletion for OpenClaw=%s",
+    async (openclaw) => {
+      const f = nativeFixture(openclaw);
+      const runtime = { gatewayName: "nemoclaw", workspace: "/test/workspace" };
+      await expect(
+        verifyRebuildNativeLocalProviderBeforeDelete("alpha", f.selection, "nemoclaw", runtime),
+      ).resolves.toBeUndefined();
+      expect(f.adapter.getProvider).toHaveBeenCalledWith({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        providerName: f.attachment.providerName,
+      });
+      await expect(
+        verifyRebuildNativeLocalProviderBeforeDelete("alpha", f.selection, "other", {
+          ...runtime,
+          gatewayName: "other",
+        }),
+      ).rejects.toThrow("authority does not match");
+      f.adapter.listProviderAttachments.mockResolvedValue({ ok: true, value: { names: [] } });
+      await expect(
+        verifyRebuildNativeLocalProviderBeforeDelete("alpha", f.selection, "nemoclaw", runtime),
+      ).rejects.toThrow();
+    },
+  );
+
+  it("still rejects a staged host credential that cannot recreate native access (#13197)", async () => {
+    const f = nativeFixture();
+    f.hydrate.mockReturnValue("test-only-rejected-key");
+    const validate = vi
+      .spyOn(providerPreflight, "validateRebuildHostInferenceCredential")
+      .mockResolvedValue(false);
+    await expect(preflightRebuildCredentials(f.entry, vi.fn(), throwingBail)).rejects.toThrow(
+      "Host inference credential validation failed",
+    );
+    expect(validate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        credentialEnv: "COMPATIBLE_API_KEY",
+      }),
+      "test-only-rejected-key",
+    );
+  });
+
+  it.each([false, true])(
+    "rejects detached native credentials even with host key available=%s (#13197)",
+    async (hostKey) => {
+      const f = nativeFixture();
+      f.adapter.listProviderAttachments.mockResolvedValue({ ok: true, value: { names: [] } });
+      await expect(preflightRebuildCredentials(f.entry, vi.fn(), throwingBail)).rejects.toThrow(
+        "Could not verify native local provider credentials",
+      );
+      await expect(
+        checkRebuildGatewayCredentialReuseOrBail(
+          "alpha",
+          f.selection,
+          hostKey,
+          vi.fn(),
+          throwingBail,
+        ),
+      ).rejects.toThrow("Could not verify native local provider credential reuse");
+    },
+  );
+});
+
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
@@ -97,6 +267,59 @@ describe("canRecreateMissingRebuildGatewayProvider", () => {
 });
 
 describe("inspectRebuildGatewayProviderRegistration", () => {
+  it.each([
+    ["exact native binding", {}, "registered"],
+    ["replaced provider", { revision: { id: "foreign", resourceVersion: 2 } }, "indeterminate"],
+    ["wrong profile", { type: "openai" }, "indeterminate"],
+    [
+      "extra credential",
+      { credentialKeys: ["NVIDIA_INFERENCE_API_KEY", "OTHER"] },
+      "indeterminate",
+    ],
+    ["mutable endpoint", { configKeys: ["OPENAI_BASE_URL"] }, "indeterminate"],
+    ["expired credential", { credentialExpiresAtMs: { NVIDIA_INFERENCE_API_KEY: 1 } }, "expired"],
+  ] as const)(
+    "checks %s against the recorded native identity",
+    async (_label, changes, expected) => {
+      const adapter = createCliOpenShellProviderAdapter();
+      const get = vi.spyOn(adapter, "getProvider").mockResolvedValue({
+        ok: true,
+        value: {
+          name: NVIDIA_HOSTED_NATIVE_PROVIDER,
+          type: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+          configKeys: [],
+          credentialExpiresAtMs: {},
+          revision: { id: "recorded-id", resourceVersion: 1 },
+          ...changes,
+        },
+      });
+      const receipt = {
+        schemaVersion: 1,
+        providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+        profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+        providerId: "recorded-id",
+      } as const;
+      await expect(
+        inspectRebuildGatewayProviderRegistration(
+          "nvidia-prod",
+          vi.fn(),
+          "Before deletion",
+          undefined,
+          adapter,
+          "NVIDIA_INFERENCE_API_KEY",
+          receipt,
+        ),
+      ).resolves.toBe(expected);
+      expect(get).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+          includeCredentialExpirations: true,
+        }),
+      );
+    },
+  );
+
   it("pins the delete-edge lookup to the frozen target under hostile ambient selectors (#10514)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
     vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
@@ -338,4 +561,61 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
     expect(diagnostics).toContain("The recorded endpoint identity is missing or incompatible.");
     expect(diagnostics).not.toContain("secret-canary");
   });
+});
+
+describe("hosted native rebuild provider preflight", () => {
+  it.each([
+    ...HOSTED_NATIVE_PROVIDERS,
+    hostedNativeProvider("hermes-provider", "https://staging.nous.example/v1")!,
+  ])(
+    "verifies $providerName instead of the legacy provider before deletion",
+    async (definition) => {
+      const adapter = createCliOpenShellProviderAdapter();
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: definition.profileId,
+        providerName: definition.providerName,
+        providerId: "owned-id",
+        ...("endpointUrl" in definition
+          ? { endpointUrl: definition.endpointUrl, allowedIps: ["8.8.8.8"] }
+          : {}),
+      };
+      const get = vi.spyOn(adapter, "getProvider").mockResolvedValue({
+        ok: true,
+        value: {
+          name: definition.providerName,
+          type: definition.profileId,
+          credentialKeys: [definition.credentialEnv],
+          configKeys: [],
+          credentialExpiresAtMs: {},
+          revision: { id: "owned-id", resourceVersion: 1 },
+        },
+      });
+      await expect(
+        inspectRebuildGatewayProviderRegistration(
+          definition.logicalProvider,
+          vi.fn(),
+          "Preflight",
+          undefined,
+          adapter,
+          definition.credentialEnv,
+          receipt,
+        ),
+      ).resolves.toBe("registered");
+      expect(get).toHaveBeenCalledWith(
+        expect.objectContaining({ providerName: definition.providerName }),
+      );
+      await expect(
+        inspectRebuildGatewayProviderRegistration(
+          definition.logicalProvider,
+          vi.fn(),
+          "Preflight",
+          undefined,
+          adapter,
+          definition.credentialEnv,
+          { ...receipt, providerId: "different-id" },
+        ),
+      ).resolves.toBe("indeterminate");
+    },
+  );
 });

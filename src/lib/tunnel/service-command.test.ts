@@ -18,10 +18,12 @@ describe("services command", () => {
       NEMOCLAW_SANDBOX_NAME: process.env.NEMOCLAW_SANDBOX_NAME,
       NEMOCLAW_SANDBOX: process.env.NEMOCLAW_SANDBOX,
       SANDBOX_NAME: process.env.SANDBOX_NAME,
+      NEMOCLAW_GATEWAY_PORT: process.env.NEMOCLAW_GATEWAY_PORT,
     };
     delete process.env.NEMOCLAW_SANDBOX_NAME;
     delete process.env.NEMOCLAW_SANDBOX;
     delete process.env.SANDBOX_NAME;
+    delete process.env.NEMOCLAW_GATEWAY_PORT;
   });
 
   afterEach(() => {
@@ -129,6 +131,51 @@ describe("services command", () => {
       startAll,
     });
     expect(startAll).toHaveBeenCalledWith({ sandboxName: "alpha", dashboardPort: 18_791 });
+  });
+
+  it("keeps a cross-gateway sandbox's dashboard and tunnel state on the same gateway", async () => {
+    process.env.NEMOCLAW_SANDBOX_NAME = "alpha";
+    const startAll = vi.fn(async () => {});
+
+    await runStartCommand({
+      listSandboxes: () => ({ defaultSandbox: null, sandboxes: [] }),
+      findSandboxAcrossGatewayRoots: () => ({
+        entry: { name: "alpha", dashboardPort: 18_791 },
+        gatewayPort: 18_080,
+      }),
+      startAll,
+    });
+
+    expect(startAll).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      dashboardPort: 18_791,
+      gatewayPort: 18_080,
+    });
+  });
+
+  it("keeps an explicit gateway selection ahead of cross-gateway sandbox ownership", async () => {
+    process.env.NEMOCLAW_SANDBOX_NAME = "alpha";
+    process.env.NEMOCLAW_GATEWAY_PORT = "19080";
+    const startAll = vi.fn(async () => {});
+    const findSandboxAcrossGatewayRoots = vi.fn(() => ({
+      entry: { name: "alpha", dashboardPort: 18_791 },
+      gatewayPort: 18_080,
+    }));
+
+    await runStartCommand({
+      listSandboxes: () => ({
+        defaultSandbox: null,
+        sandboxes: [{ name: "alpha", dashboardPort: 19_791 }],
+      }),
+      findSandboxAcrossGatewayRoots,
+      startAll,
+    });
+
+    expect(findSandboxAcrossGatewayRoots).not.toHaveBeenCalled();
+    expect(startAll).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      dashboardPort: 19_791,
+    });
   });
 
   it("keeps the service fallback when the selected sandbox is not registered", () => {

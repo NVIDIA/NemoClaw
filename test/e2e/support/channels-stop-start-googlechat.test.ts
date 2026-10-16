@@ -77,7 +77,6 @@ describe("channels stop/start Google Chat live composition", () => {
         updateSession: vi.fn() as never,
         stagedLegacyValues: new Map(),
         migratedLegacyKeys: new Set(),
-        persistMigratedLegacyKeys: vi.fn(),
       });
       const onboard = vi.spyOn(commonJsOnboard, "onboard").mockImplementation(async () => {
         await registration.applyMessagingProviders(

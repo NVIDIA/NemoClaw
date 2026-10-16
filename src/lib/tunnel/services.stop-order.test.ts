@@ -117,6 +117,40 @@ describe("stopAll tunnel stop ordering", () => {
     expect(stopMocks.releaseGatewayPortForStop).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    {
+      name: "an unmanaged cloudflared process remains",
+      inspect: () => [4242],
+      expected: "cloudflared remains running outside NemoClaw ownership (PID 4242)",
+    },
+    {
+      name: "unmanaged-process ownership inspection fails",
+      inspect: () => {
+        throw new Error("ownership inspection unavailable");
+      },
+      expected: "ownership inspection unavailable",
+    },
+  ])("finishes dependent cleanup when $name", ({ inspect, expected }) => {
+    const unloadOllamaModels = vi.fn(() => undefined);
+    stopMocks.stopSandboxChannels.mockImplementation(() => {});
+    stopMocks.releaseGatewayPortForStop.mockImplementation(() => "attempted");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(() =>
+      stopAll({
+        pidDir,
+        sandboxName: "test-box",
+        unmanagedCloudflaredPids: inspect,
+        unloadOllamaModels,
+        releaseGatewayPort: true,
+      }),
+    ).toThrow(expected);
+
+    expect(stopMocks.stopSandboxChannels).toHaveBeenCalledOnce();
+    expect(unloadOllamaModels).toHaveBeenCalledOnce();
+    expect(stopMocks.releaseGatewayPortForStop).toHaveBeenCalledOnce();
+  });
+
   it("uses the explicit PID directory lock when the sandbox name is invalid", () => {
     const lockName = `cloudflared-${createHash("sha256").update(resolve(pidDir)).digest("hex")}`;
     const unloadOllamaModels = vi.fn(() => {

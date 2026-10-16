@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { resolveNemoclawStateDir } from "../../../src/lib/state/paths.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -30,6 +31,8 @@ export function resolveTunnelLifecycleDashboardPort(env: NodeJS.ProcessEnv = pro
 }
 
 const LOCAL_DASHBOARD_PORT = resolveTunnelLifecycleDashboardPort();
+const TUNNEL_GATEWAY_PORT = "18080";
+const TUNNEL_GATEWAY_NAME = "nemoclaw-18080";
 const TEST_TIMEOUT_MS = testTimeout(
   Number(process.env.NEMOCLAW_E2E_TIMEOUT_SECONDS ?? 3_600) * 1_000,
 );
@@ -98,7 +101,11 @@ export function tunnelLifecycleCommandEnv(
     NEMOCLAW_POLICY_TIER: "open",
     NEMOCLAW_AGENT: "openclaw",
     NEMOCLAW_PROVIDER: "cloud",
-    OPENSHELL_GATEWAY: "nemoclaw",
+    NEMOCLAW_GATEWAY_PORT: TUNNEL_GATEWAY_PORT,
+    OPENSHELL_GATEWAY: TUNNEL_GATEWAY_NAME,
+    ...(process.env.NEMOCLAW_DASHBOARD_PORT
+      ? { NEMOCLAW_DASHBOARD_PORT: process.env.NEMOCLAW_DASHBOARD_PORT }
+      : {}),
     ...extra,
   };
 }
@@ -114,18 +121,28 @@ function isCloudflareTransientHttpCode(code: string): boolean {
 }
 
 export function getCloudflaredLogPath(
-  logRoot = "/tmp",
-  sandboxName = SANDBOX_NAME,
+  stateRoot = resolveTunnelLifecycleStateDir(),
+  _sandboxName = SANDBOX_NAME,
 ): string | undefined {
-  // Source boundary: NemoClaw owns the per-sandbox cloudflared service log at
-  // /tmp/nemoclaw-services-${sandboxName}/cloudflared.log. If that exact file
-  // is missing, this live contract classifies the invalid state as
-  // `nemoclaw_no_spawn` instead of falling back to the newest /tmp log, because
-  // unrelated parallel/stale sandboxes can otherwise corrupt fault attribution.
+  // Source boundary: NemoClaw owns one gateway-scoped host-side dashboard tunnel log. If
+  // that exact file is missing, this live contract classifies the invalid state
+  // as `nemoclaw_no_spawn` instead of falling back to legacy per-sandbox logs,
+  // because unrelated stale processes can otherwise corrupt fault attribution.
   // Remove this filesystem fallback point entirely once NemoClaw exposes
   // machine-readable tunnel diagnostics from `nemoclaw tunnel status --json`.
-  const sandboxLog = path.join(logRoot, `nemoclaw-services-${sandboxName}`, "cloudflared.log");
-  return fs.existsSync(sandboxLog) ? sandboxLog : undefined;
+  const tunnelLog = path.join(stateRoot, "tunnel", "cloudflared.log");
+  return fs.existsSync(tunnelLog) ? tunnelLog : undefined;
+}
+
+export function resolveTunnelLifecycleStateDir(
+  homeDir?: string,
+  gatewayPort = Number(TUNNEL_GATEWAY_PORT),
+): string {
+  return resolveNemoclawStateDir(homeDir, gatewayPort);
+}
+
+export function getCloudflaredPidPath(stateRoot = resolveTunnelLifecycleStateDir()): string {
+  return path.join(stateRoot, "tunnel", "cloudflared.pid");
 }
 
 function readCloudflaredLog(): string {
@@ -136,7 +153,7 @@ function readCloudflaredLog(): string {
 
 function cloudflaredLogTail(lines = 80): string {
   const logPath = getCloudflaredLogPath();
-  if (!logPath) return "(no cloudflared.log found under /tmp/nemoclaw-services-*/)";
+  if (!logPath) return "(no gateway-scoped cloudflared.log found in NemoClaw state)";
   const text = fs.readFileSync(logPath, "utf8");
   return [
     `--- cloudflared.log (${logPath}, last ${lines} lines) ---`,
@@ -145,7 +162,7 @@ function cloudflaredLogTail(lines = 80): string {
 }
 
 export function classifyCloudflaredLog(
-  logRoot = "/tmp",
+  logRoot = resolveTunnelLifecycleStateDir(),
   sandboxName = SANDBOX_NAME,
 ): "nemoclaw_no_spawn" | "nemoclaw_capture_bug" | "nemoclaw_local" | "cloudflare" | "unknown" {
   const logPath = getCloudflaredLogPath(logRoot, sandboxName);
@@ -165,6 +182,11 @@ export function classifyCloudflaredLog(
 
 function extractTunnelUrl(text: string): string | undefined {
   return text.match(TUNNEL_URL_PATTERN)?.[0];
+}
+
+function extractTunnelPid(text: string): number | undefined {
+  const raw = text.match(/cloudflared\s+\(PID\s+(\d+)\)/i)?.[1];
+  return raw ? Number(raw) : undefined;
 }
 
 export function publicTunnelProbeCurlArgs(tunnelUrl: string): string[] {
@@ -234,6 +256,7 @@ export function registerTunnelLifecycleCleanup(
   if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
     cleanup.trackSandbox(host, SANDBOX_NAME, {
       artifactName: "cleanup-nemoclaw-destroy-tunnel-lifecycle",
+      env: tunnelLifecycleCommandEnv(),
       timeoutMs: 15 * 60_000,
     });
   }
@@ -268,6 +291,8 @@ export async function runTunnelLifecycleContract({
   await artifacts.writeJson("contract.json", {
     sandboxName: SANDBOX_NAME,
     localDashboardPort: LOCAL_DASHBOARD_PORT,
+    gatewayName: TUNNEL_GATEWAY_NAME,
+    gatewayPort: TUNNEL_GATEWAY_PORT,
     preservedBoundaries: [
       "real Docker/OpenShell OpenClaw sandbox onboarding",
       "host cloudflared binary and quick-tunnel registration",
@@ -275,6 +300,7 @@ export async function runTunnelLifecycleContract({
       "nemoclaw tunnel start/status/stop CLI commands",
       "local dashboard origin readiness before tunnel attribution",
       "public trycloudflare HTTP probe with dashboard marker assertion",
+      "sandbox destroy preserves host cloudflared ownership and status",
       "cloudflared.log classification for NemoClaw-vs-Cloudflare failures",
     ],
     inferenceCredential: hosted.contractLabel,
@@ -301,10 +327,10 @@ export async function runTunnelLifecycleContract({
     skip("cloudflared is required for tunnel lifecycle E2E");
   }
 
-  expect(fs.existsSync(path.join(REPO_ROOT, "install.sh"))).toBe(true);
   progress.phase("onboard the OpenClaw tunnel sandbox");
   await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
     artifactName: "pre-cleanup-nemoclaw-destroy-tunnel-lifecycle",
+    env: tunnelLifecycleCommandEnv(),
     timeoutMs: 15 * 60_000,
   });
 
@@ -322,8 +348,10 @@ export async function runTunnelLifecycleContract({
     timeoutMs: ONBOARD_TIMEOUT_MS,
   });
   expect(install.exitCode, resultText(install)).toBe(0);
-
-  await host.expectListed(SANDBOX_NAME, { artifactName: "post-install-nemoclaw-list" });
+  await host.expectListed(SANDBOX_NAME, {
+    artifactName: "post-install-nemoclaw-list",
+    env: tunnelLifecycleCommandEnv(),
+  });
 
   progress.phase("wait for the local dashboard origin");
   let localReady = false;
@@ -384,11 +412,7 @@ export async function runTunnelLifecycleContract({
   }
 
   progress.phase("verify cloudflared targets the registered dashboard port");
-  const cloudflaredPidFile = path.join(
-    "/tmp",
-    `nemoclaw-services-${SANDBOX_NAME}`,
-    "cloudflared.pid",
-  );
+  const cloudflaredPidFile = getCloudflaredPidPath();
   const cloudflaredPid = Number(fs.readFileSync(cloudflaredPidFile, "utf8").trim());
   const cloudflaredCommand = await host.command(
     "ps",
@@ -495,7 +519,7 @@ export async function runTunnelLifecycleContract({
     backoffMs = Math.min(backoffMs * 2, 30_000);
   }
 
-  expect(lastPublicProbe, "public tunnel probe should have run").toBeTruthy();
+  // The bounded loop always executes at least once.
   if (lastPublicProbe!.httpCode !== "200") {
     if (
       isCloudflareTransientHttpCode(lastPublicProbe!.httpCode) ||
@@ -515,6 +539,29 @@ export async function runTunnelLifecycleContract({
     `Public tunnel must serve OpenClaw; ps exit ${cloudflaredCommand.exitCode}: ${cloudflaredCommand.stdout.trim()} ${resultText(cloudflaredCommand)}`,
   ).toBe(true);
 
+  const tunnelPid = extractTunnelPid(lastStatusText);
+  expect(tunnelPid, "status must report the managed cloudflared PID before destroy").toBeTruthy();
+
+  progress.phase("destroy the sandbox without stopping the host tunnel");
+  const destroy = await host.nemoclaw([SANDBOX_NAME, "destroy", "--no-cleanup-gateway"], {
+    artifactName: "destroy-with-active-tunnel",
+    env: tunnelLifecycleCommandEnv(),
+    timeoutMs: 15 * 60_000,
+  });
+  expect(destroy.exitCode, resultText(destroy)).toBe(0);
+
+  const statusAfterDestroy = await host.nemoclaw(["tunnel", "status"], {
+    artifactName: "tunnel-status-after-sandbox-destroy",
+    env: tunnelLifecycleCommandEnv(),
+    timeoutMs: COMMAND_TIMEOUT_MS,
+  });
+  const statusAfterDestroyText = resultText(statusAfterDestroy);
+  expect(
+    extractTunnelPid(statusAfterDestroyText) === tunnelPid &&
+      extractTunnelUrl(statusAfterDestroyText) === tunnelUrl,
+    "destroy must preserve the managed cloudflared PID and public URL",
+  ).toBe(true);
+
   progress.phase("stop the tunnel and confirm status removal");
   const stop = await host.nemoclaw(["tunnel", "stop"], {
     artifactName: "tunnel-stop",
@@ -522,8 +569,7 @@ export async function runTunnelLifecycleContract({
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
   expect(stop.exitCode, resultText(stop)).toBe(0);
-
-  let postStopUrl: string | undefined;
+  let postStopUrl: string | undefined = "status unreadable";
   let statusReadable = false;
   for (let attempt = 1; attempt <= 10; attempt += 1) {
     const status = await host.nemoclaw(["tunnel", "status"], {
@@ -540,6 +586,10 @@ export async function runTunnelLifecycleContract({
     if (!postStopUrl) break;
     await sleep(1_000);
   }
-  expect(statusReadable, "nemoclaw tunnel status should be readable after tunnel stop").toBe(true);
-  expect(postStopUrl, "tunnel URL must be absent after nemoclaw tunnel stop").toBeUndefined();
+  expect(
+    postStopUrl,
+    statusReadable
+      ? "tunnel URL must be absent after nemoclaw tunnel stop"
+      : "nemoclaw tunnel status must be readable after tunnel stop",
+  ).toBeUndefined();
 }

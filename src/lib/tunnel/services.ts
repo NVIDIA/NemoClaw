@@ -6,11 +6,13 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   closeSync,
+  copyFileSync,
   constants,
   existsSync,
   fchmodSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   unlinkSync,
   writeFileSync,
@@ -19,15 +21,24 @@ import { basename, join, resolve } from "node:path";
 import { renderBox } from "../cli/banner";
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { isObjectRecord } from "../core/json-types";
-import { DASHBOARD_PORT } from "../core/ports";
+import { DASHBOARD_PORT, GATEWAY_PORT } from "../core/ports";
 import {
   clearPendingOllamaModelCleanup as clearDefaultPendingOllamaModelCleanup,
   unloadOllamaModels as unloadDefaultOllamaModels,
   type OllamaUnloadResult,
 } from "../inference/ollama/proxy";
 import type { RuntimeProviderChannelStopTransport } from "../onboard/runtime-provider/access";
+import { listGatewayStateRoots, resolveHome } from "../state/gateway-registry";
+import { resolveNemoclawStateDir } from "../state/paths";
+import {
+  findSandboxAcrossGatewayRoots,
+  listPendingSandboxNamesAcrossGatewayRoots,
+  listPublishedSandboxNamesAcrossGatewayRoots,
+  listSandboxNamesInGatewayRoot,
+} from "../state/registry/cross-port";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { registerTunnelOrigin } from "./allowed-origins";
+import { resolveExplicitGatewayPortEnv } from "./gateway-port-resolution";
 import * as gatewayStop from "./gateway-stop";
 import * as sandboxGatewayStop from "./sandbox-gateway-stop";
 import {
@@ -49,10 +60,17 @@ export interface ServiceOptions {
   dashboardPort?: number;
   /** Repo root directory — used to locate scripts/. */
   repoDir?: string;
-  /** Override PID directory (default: /tmp/nemoclaw-services-{sandbox}). */
+  /** Override the cloudflared PID directory (default: one gateway-scoped host-side directory). */
   pidDir?: string;
+  /** Gateway port whose gateway-scoped host-side tunnel state is owned by this operation. */
+  gatewayPort?: number;
   /** Injectable process operations (identity + signalling) for tests. */
   processControl?: ProcessControl;
+  /** Injectable current-user cloudflared discovery for tests. */
+  unmanagedCloudflaredPids?: (
+    managedPid: number | null,
+    failOnInspectionError: boolean,
+  ) => number[];
   /** Injectable Ollama model cleanup for tests. */
   unloadOllamaModels?: () => OllamaUnloadResult | void;
   /** Whether this scoped stop owns Ollama models that require cleanup. Defaults to true. */
@@ -65,6 +83,8 @@ export interface ServiceOptions {
   cloudflareTunnelToken?: string;
   /** Also release the managed host gateway port (legacy full-stop only). */
   releaseGatewayPort?: boolean;
+  /** Stop the shared dashboard tunnel. Sandbox cleanup sets this false. */
+  stopCloudflared?: boolean;
 }
 
 export interface ServiceStatus {
@@ -204,6 +224,94 @@ function commandLineMayWrapCloudflared(commandLine: string): boolean {
     /^(?:ba|da|z)?sh$/i.test(executableNames[startIndex] ?? "") &&
     executableNames[startIndex + 1] === "cloudflared"
   );
+}
+
+/** Find current-user cloudflared processes that have no NemoClaw PID record. */
+export function findUnmanagedCloudflaredPids(
+  managedPid: number | readonly number[] | null,
+  captureProcessList: () => string = () =>
+    execFileSync("ps", ["-x", "-o", "pid=", "-o", "comm=", "-o", "args="], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1000,
+    }),
+  failOnInspectionError = false,
+): number[] {
+  if (process.platform === "win32") return [];
+  let output: string;
+  try {
+    output = captureProcessList();
+  } catch (error) {
+    if (!failOnInspectionError) return [];
+    throw new Error(
+      "Cannot inspect current-user cloudflared processes; refusing to continue tunnel operation.",
+      { cause: error },
+    );
+  }
+
+  const managedPids = new Set(
+    managedPid === null ? [] : typeof managedPid === "number" ? [managedPid] : managedPid,
+  );
+  return output.split(/\r?\n/).flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\S+)(?:\s+(.*))?$/.exec(line);
+    if (!match) return [];
+    const pid = Number(match[1]);
+    if (!Number.isSafeInteger(pid) || pid <= 0 || managedPids.has(pid)) return [];
+    const executable = basename(match[2] ?? "").toLowerCase();
+    return executable === "cloudflared" || executable === "cloudflared.exe" ? [pid] : [];
+  });
+}
+
+function nemoClawManagedCloudflaredPids(): number[] {
+  try {
+    const home = resolveHome();
+    const sandboxNames = new Set([
+      ...listPublishedSandboxNamesAcrossGatewayRoots(home),
+      ...listPendingSandboxNamesAcrossGatewayRoots(home),
+    ]);
+    const pidDirs = new Set([
+      resolvePidDir({}),
+      ...listGatewayStateRoots(home).map(({ root }) => join(root, "state", "tunnel")),
+      ...[...sandboxNames].flatMap((name) => [
+        `/tmp/nemoclaw-services-${name}`,
+        `/tmp/nemoclaw-services-${name}-googlechat`,
+      ]),
+    ]);
+    return [...pidDirs].flatMap((pidDir) => {
+      const state = readCloudflaredState(pidDir);
+      return state.kind === "running" || state.kind === "unverified-pid-process" ? [state.pid] : [];
+    });
+  } catch (error) {
+    throw new Error(
+      "Cannot inspect NemoClaw cloudflared ownership; refusing to continue tunnel operation.",
+      { cause: error },
+    );
+  }
+}
+
+/** Find current-user cloudflared processes only when NemoClaw ownership is readable. */
+export function findHostUnmanagedCloudflaredPids(
+  managedPid: number | null,
+  captureProcessList?: () => string,
+  failOnInspectionError = false,
+): number[] {
+  const ownedPids = nemoClawManagedCloudflaredPids();
+  return findUnmanagedCloudflaredPids(
+    [...(managedPid === null ? [] : [managedPid]), ...ownedPids],
+    captureProcessList,
+    failOnInspectionError,
+  );
+}
+
+function unmanagedCloudflaredPids(
+  opts: ServiceOptions,
+  managedPid: number | null,
+  failOnInspectionError = false,
+): number[] {
+  if (opts.unmanagedCloudflaredPids) {
+    return opts.unmanagedCloudflaredPids(managedPid, failOnInspectionError);
+  }
+  return findHostUnmanagedCloudflaredPids(managedPid, undefined, failOnInspectionError);
 }
 
 // Process operations behind a small seam so lifecycle tests can model PID
@@ -931,19 +1039,165 @@ function validateSandboxName(name: string): string {
   return name;
 }
 
+function resolveTunnelGatewayPort(opts: ServiceOptions): number {
+  const gatewayPort = opts.gatewayPort ?? resolveExplicitGatewayPortEnv();
+  if (gatewayPort !== null) return gatewayPort;
+  if (!opts.sandboxName) return GATEWAY_PORT;
+  return findSandboxAcrossGatewayRoots(opts.sandboxName)?.gatewayPort ?? GATEWAY_PORT;
+}
+
 function resolvePidDir(opts: ServiceOptions): string {
+  if (opts.pidDir) return opts.pidDir;
+  return join(resolveNemoclawStateDir(undefined, resolveTunnelGatewayPort(opts)), "tunnel");
+}
+
+function legacyTunnelPidDirs(): string[] {
+  try {
+    return readdirSync("/tmp", { withFileTypes: true })
+      .filter(
+        (entry) =>
+          entry.isDirectory() &&
+          entry.name.startsWith("nemoclaw-services-") &&
+          !entry.name.endsWith("-googlechat"),
+      )
+      .map((entry) => join("/tmp", entry.name))
+      .filter((pidDir) => !existsSync(join(pidDir, "nemoclaw-googlechat-webhook-proxy.pid")));
+  } catch {
+    return [];
+  }
+}
+
+export interface LegacyCloudflaredMigrationDeps {
+  legacyPidDirs?: () => string[];
+  readState?: (pidDir: string) => CloudflaredState;
+  registeredSandboxNames?: () => readonly string[];
+  reportAdoption?: boolean;
+  /** Selected destroy recovery authority when its registry row is already absent. */
+  recoverySandboxName?: string;
+}
+
+/**
+ * Move one live legacy sandbox-scoped dashboard tunnel record into the gateway-scoped host-side state
+ * directory. Dedicated Google Chat tunnel directories are never candidates.
+ * Multiple live records are ambiguous and fail closed.
+ */
+function migrateLegacyCloudflaredStateLocked(
+  opts: ServiceOptions = {},
+  deps: LegacyCloudflaredMigrationDeps = {},
+): boolean {
+  if (opts.pidDir) return false;
+
+  const gatewayPort = resolveTunnelGatewayPort(opts);
+  const targetPidDir = resolvePidDir({ ...opts, gatewayPort });
+  const readState = deps.readState ?? readCloudflaredState;
+  const registeredSandboxNames =
+    deps.registeredSandboxNames ?? (() => listSandboxNamesInGatewayRoot(gatewayPort));
+  ensurePidDir(targetPidDir);
+  const targetState = readState(targetPidDir);
+  const eligibleSandboxNames = new Set(registeredSandboxNames());
+  if (deps.recoverySandboxName) eligibleSandboxNames.add(deps.recoverySandboxName);
+  const ownsSelectedGateway = (sandboxName: string): boolean => {
+    if (deps.registeredSandboxNames) return true;
+    const hit = findSandboxAcrossGatewayRoots(sandboxName);
+    if (!hit) return sandboxName === deps.recoverySandboxName;
+    if (hit.registryGatewayPort === gatewayPort) return true;
+    if (sandboxName === deps.recoverySandboxName) {
+      throw new Error(
+        `Legacy cloudflared state for sandbox ${JSON.stringify(sandboxName)} belongs to gateway port ${String(hit.registryGatewayPort)}. ` +
+          `Retry destroy through that gateway before removing ${resolveSandboxServicePidDir({ sandboxName })}.`,
+      );
+    }
+    return false;
+  };
+  const eligiblePidDirs = new Set(
+    [...eligibleSandboxNames]
+      .filter(ownsSelectedGateway)
+      .map((name) => basename(resolveSandboxServicePidDir({ sandboxName: name }))),
+  );
+
+  const candidates = (deps.legacyPidDirs ?? legacyTunnelPidDirs)().flatMap((pidDir) => {
+    if (!eligiblePidDirs.has(basename(pidDir))) return [];
+    const state = readState(pidDir);
+    return state.kind === "running" || state.kind === "unverified-pid-process"
+      ? [{ pidDir, pid: state.pid }]
+      : [];
+  });
+  if (candidates.length === 0) return false;
+  const targetHasLiveRecord =
+    targetState.kind === "running" || targetState.kind === "unverified-pid-process";
+  if (targetHasLiveRecord || candidates.length > 1) {
+    const activeRecords = [
+      ...(targetHasLiveRecord ? [{ pidDir: targetPidDir, pid: targetState.pid }] : []),
+      ...candidates,
+    ];
+    const detail = activeRecords.map(({ pidDir, pid }) => `${pid} (${pidDir})`).join(", ");
+    throw new Error(
+      `Multiple live cloudflared PID records exist: ${detail}. ` +
+        "Inspect each process and stop only the unintended one, then retry the tunnel command.",
+    );
+  }
+
+  const candidate = candidates[0]!;
+  const sourceLog = join(candidate.pidDir, "cloudflared.log");
+  const targetLog = join(targetPidDir, "cloudflared.log");
+  if (existsSync(targetLog)) unlinkSync(targetLog);
+  if (existsSync(sourceLog)) {
+    copyFileSync(sourceLog, targetLog, constants.COPYFILE_EXCL);
+    chmodSync(targetLog, 0o600);
+  }
+  removePid(targetPidDir, "cloudflared");
+  writePid(targetPidDir, "cloudflared", candidate.pid);
+  removePid(candidate.pidDir, "cloudflared");
+  if (deps.reportAdoption !== false) {
+    console.error(
+      `${GREEN}[services]${NC} Adopted legacy cloudflared state from ${candidate.pidDir}.`,
+    );
+  }
+  return true;
+}
+
+export function migrateLegacyCloudflaredState(
+  opts: ServiceOptions = {},
+  deps: LegacyCloudflaredMigrationDeps = {},
+): boolean {
+  if (opts.pidDir) return false;
+  const pidDir = resolvePidDir(opts);
+  return withMcpLifecycleLockSync(cloudflaredLifecycleLockName(pidDir), () =>
+    migrateLegacyCloudflaredStateLocked(opts, deps),
+  );
+}
+
+function resolveSandboxServicePidDir(opts: ServiceOptions): string {
   const sandbox = validateSandboxName(
     opts.sandboxName ?? process.env.NEMOCLAW_SANDBOX ?? process.env.SANDBOX_NAME ?? "default",
   );
-  return opts.pidDir ?? `/tmp/nemoclaw-services-${sandbox}`;
+  return `/tmp/nemoclaw-services-${sandbox}`;
 }
 
-export function showStatus(opts: ServiceOptions = {}): void {
+export function showStatus(
+  opts: ServiceOptions = {},
+  migrationDeps: LegacyCloudflaredMigrationDeps = {},
+): void {
+  if (opts.pidDir === undefined) migrateLegacyCloudflaredState(opts, migrationDeps);
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
 
   console.log("");
   const state = readCloudflaredState(pidDir, opts.processControl ?? REAL_PROCESS_CONTROL);
+  const unmanagedPids =
+    state.kind === "running" || state.kind === "unverified-pid-process"
+      ? []
+      : unmanagedCloudflaredPids(opts, state.kind === "stale-pid-process" ? state.pid : null);
+  if (unmanagedPids.length > 0) {
+    console.log(
+      `  ${YELLOW}●${NC} cloudflared  (unmanaged ${unmanagedPids.map((pid) => `PID ${String(pid)}`).join(", ")})`,
+    );
+    console.log(
+      "      cloudflared is running without NemoClaw ownership; stop it through its process manager before running `nemoclaw tunnel start`",
+    );
+    console.log("");
+    return;
+  }
   // #2604: distinguish stopped / stale-pid-file / stale-pid-process and
   // surface the matching remediation. The previous "(stopped)" line was
   // emitted in all three failure modes with no recovery hint.
@@ -1006,7 +1260,10 @@ export function showStatus(opts: ServiceOptions = {}): void {
   }
 }
 
-function resolveStopPidDir(opts: ServiceOptions): string | undefined {
+function resolveStopSandboxSelection(opts: ServiceOptions): {
+  rawSandboxName: string | undefined;
+  sandboxName: string | undefined;
+} {
   const rawSandboxName =
     opts.sandboxName ??
     process.env.NEMOCLAW_SANDBOX_NAME ??
@@ -1016,6 +1273,11 @@ function resolveStopPidDir(opts: ServiceOptions): string | undefined {
     rawSandboxName && SAFE_NAME_RE.test(rawSandboxName) && !rawSandboxName.includes("..")
       ? rawSandboxName
       : undefined;
+  return { rawSandboxName, sandboxName };
+}
+
+function resolveStopPidDir(opts: ServiceOptions): string | undefined {
+  const { rawSandboxName, sandboxName } = resolveStopSandboxSelection(opts);
   return (
     opts.pidDir ??
     (rawSandboxName && !sandboxName
@@ -1024,30 +1286,35 @@ function resolveStopPidDir(opts: ServiceOptions): string | undefined {
   );
 }
 
-export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
+export function stopAll(
+  opts: ServiceOptions = {},
+  migrationDeps: LegacyCloudflaredMigrationDeps = {},
+): OllamaUnloadResult | void {
   const pidDir = resolveStopPidDir(opts);
   return pidDir
-    ? withMcpLifecycleLockSync(cloudflaredLifecycleLockName(pidDir), () =>
-        stopAllLocked({ ...opts, pidDir }),
-      )
+    ? withMcpLifecycleLockSync(cloudflaredLifecycleLockName(pidDir), () => {
+        if (opts.stopCloudflared !== false && opts.pidDir === undefined) {
+          const { rawSandboxName, sandboxName } = resolveStopSandboxSelection(opts);
+          migrateLegacyCloudflaredStateLocked(
+            {
+              ...opts,
+              sandboxName: sandboxName ?? (rawSandboxName ? undefined : "default"),
+            },
+            migrationDeps,
+          );
+        }
+        return stopAllLocked({ ...opts, pidDir });
+      })
     : stopAllLocked(opts);
 }
 
 function stopAllLocked(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   // Resolve the target sandbox once and reuse it for in-sandbox and host-side cleanup.
-  const rawSandboxName =
-    opts.sandboxName ??
-    process.env.NEMOCLAW_SANDBOX_NAME ??
-    process.env.NEMOCLAW_SANDBOX ??
-    process.env.SANDBOX_NAME;
-  const sandboxName =
-    rawSandboxName && SAFE_NAME_RE.test(rawSandboxName) && !rawSandboxName.includes("..")
-      ? rawSandboxName
-      : undefined;
+  const { rawSandboxName, sandboxName } = resolveStopSandboxSelection(opts);
 
   // Reuse the resolver used by the lock wrapper so cleanup cannot target a
   // different PID directory from the one protected during this transition.
-  const pidDir = resolveStopPidDir(opts);
+  const pidDir = opts.stopCloudflared === false ? undefined : resolveStopPidDir(opts);
   if (pidDir) ensurePidDir(pidDir);
 
   // Stop cloudflared before dependent shutdown so an unverified live tunnel
@@ -1059,6 +1326,21 @@ function stopAllLocked(opts: ServiceOptions = {}): OllamaUnloadResult | void {
     throw new Error(
       "Cloudflared cleanup is incomplete: cloudflared could not be stopped; its process and state were retained.",
     );
+  }
+  let unmanagedError: Error | undefined;
+  try {
+    const unmanagedPids =
+      cloudflaredCleanupComplete && pidDir && opts.stopCloudflared !== false
+        ? unmanagedCloudflaredPids(opts, null)
+        : [];
+    if (unmanagedPids.length > 0) {
+      unmanagedError = new Error(
+        `cloudflared remains running outside NemoClaw ownership (${unmanagedPids.map((pid) => `PID ${String(pid)}`).join(", ")}). ` +
+          "Stop it through its process manager; NemoClaw did not signal it.",
+      );
+    }
+  } catch (error) {
+    unmanagedError = error instanceof Error ? error : new Error(String(error));
   }
   if (!pidDir && rawSandboxName) {
     warn("Invalid sandbox name without an explicit PID directory; skipping host service stop.");
@@ -1116,6 +1398,7 @@ function stopAllLocked(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   }
   const finishCleanup = (): OllamaUnloadResult | void => {
     if (ollamaCleanupError) throw ollamaCleanupError;
+    if (unmanagedError) throw unmanagedError;
     if (!cloudflaredCleanupComplete) {
       throw new Error(
         "Cloudflared cleanup is incomplete. Keep the PID record until the process exits, then retry cleanup.",
@@ -1165,6 +1448,8 @@ function stopAllLocked(opts: ServiceOptions = {}): OllamaUnloadResult | void {
     info("Host service cleanup remains incomplete; cloudflared was not stopped.");
   } else if (ollamaCleanupIncomplete) {
     info("Host services stopped; Ollama model cleanup remains incomplete.");
+  } else if (unmanagedError) {
+    info("NemoClaw-managed services stopped; unmanaged cloudflared requires attention.");
   } else {
     info("All services stopped.");
   }
@@ -1178,6 +1463,11 @@ function stopAllLocked(opts: ServiceOptions = {}): OllamaUnloadResult | void {
  * used by `start`, `stop`, and `status`.
  */
 export function resolveServicePidDir(opts: ServiceOptions = {}): string {
+  return opts.pidDir ?? resolveSandboxServicePidDir(opts);
+}
+
+/** Resolve the shared dashboard tunnel state directory without changing state. */
+export function resolveTunnelPidDir(opts: ServiceOptions = {}): string {
   return resolvePidDir(opts);
 }
 
@@ -1189,10 +1479,11 @@ export function resolveServicePidDir(opts: ServiceOptions = {}): string {
  */
 export function stopCloudflared(opts: ServiceOptions = {}): boolean {
   const pidDir = resolvePidDir(opts);
-  ensurePidDir(pidDir);
-  return withMcpLifecycleLockSync(cloudflaredLifecycleLockName(pidDir), () =>
-    stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL),
-  );
+  return withMcpLifecycleLockSync(cloudflaredLifecycleLockName(pidDir), () => {
+    if (opts.pidDir === undefined) migrateLegacyCloudflaredStateLocked(opts);
+    ensurePidDir(pidDir);
+    return stopService(pidDir, "cloudflared", opts.processControl ?? REAL_PROCESS_CONTROL);
+  });
 }
 
 /**
@@ -1223,8 +1514,6 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   const processControl = opts.processControl ?? REAL_PROCESS_CONTROL;
   let namedTunnelStarted = false;
 
-  ensurePidDir(pidDir);
-
   // Messaging channels are handled natively by the agent runtime
   // inside the sandbox via the OpenShell provider/placeholder/L7-proxy pipeline.
   // No host-side bridge processes are needed. See: PR #1081.
@@ -1246,6 +1535,24 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   }
 
   const tunnelReady = await withMcpLifecycleLock(cloudflaredLifecycleLockName(pidDir), async () => {
+    if (opts.pidDir === undefined) migrateLegacyCloudflaredStateLocked(opts);
+    ensurePidDir(pidDir);
+
+    const recordedState = readCloudflaredState(pidDir, processControl);
+    if (recordedState.kind !== "running" && recordedState.kind !== "unverified-pid-process") {
+      const unmanagedPids = unmanagedCloudflaredPids(
+        opts,
+        recordedState.kind === "stale-pid-process" ? recordedState.pid : null,
+        true,
+      );
+      if (unmanagedPids.length > 0) {
+        throw new Error(
+          `cloudflared is already running outside NemoClaw ownership (${unmanagedPids.map((pid) => `PID ${String(pid)}`).join(", ")}). ` +
+            "Stop it through its process manager, then retry `nemoclaw tunnel start`.",
+        );
+      }
+    }
+
     let state = readCloudflaredState(pidDir, processControl);
     if (state.kind === "stale-pid-file") {
       removePid(pidDir, "cloudflared");
@@ -1442,16 +1749,26 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
 // Exported status helper (useful for programmatic access)
 // ---------------------------------------------------------------------------
 
-export function getServiceStatuses(opts: ServiceOptions = {}): ServiceStatus[] {
+export function getServiceStatuses(
+  opts: ServiceOptions = {},
+  migrationDeps: LegacyCloudflaredMigrationDeps = {},
+): ServiceStatus[] {
+  if (opts.pidDir === undefined) {
+    migrateLegacyCloudflaredState(opts, { ...migrationDeps, reportAdoption: false });
+  }
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
   return SERVICE_NAMES.map((name) => {
     const state = readCloudflaredState(pidDir, opts.processControl ?? REAL_PROCESS_CONTROL);
-    const running = state.kind === "running";
+    const unmanagedPids =
+      state.kind === "running" || state.kind === "unverified-pid-process"
+        ? []
+        : unmanagedCloudflaredPids(opts, state.kind === "stale-pid-process" ? state.pid : null);
+    const running = state.kind === "running" || unmanagedPids.length > 0;
     return {
       name,
       running,
-      pid: running ? state.pid : null,
+      pid: state.kind === "running" ? state.pid : (unmanagedPids[0] ?? null),
     };
   });
 }

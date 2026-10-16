@@ -28,6 +28,7 @@ test(
         "start the quick tunnel and discover its URL",
         "verify cloudflared targets the registered dashboard port",
         "probe public tunnel reachability",
+        "destroy the sandbox without stopping the host tunnel",
         "stop the tunnel and confirm status removal",
       ],
     },

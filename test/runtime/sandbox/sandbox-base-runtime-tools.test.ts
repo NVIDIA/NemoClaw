@@ -23,6 +23,12 @@ const fixtures: string[] = [];
 
 type RuntimeToolsFixture = "valid" | "missing-setpriv" | "gosu-present";
 
+function runtimeToolsEndMarker(dockerfile: string): string {
+  return dockerfile === MANAGED_BASE_DOCKERFILES[2]
+    ? "COPY src/lib/agent/deep-agents-code-runtime-identity.json"
+    : "RUN groupadd";
+}
+
 function writeSetprivFixture(setpriv: string) {
   fs.writeFileSync(setpriv, "#!/usr/bin/env bash\nprintf 'setpriv fixture\\n'\n", {
     mode: 0o755,
@@ -48,7 +54,7 @@ function runRuntimeToolsContract(dockerfile: string, fixture: RuntimeToolsFixtur
   const runtimeContract = dockerRunCommandBetween(
     source,
     "# setpriv runtime contract",
-    "RUN groupadd",
+    runtimeToolsEndMarker(dockerfile),
   );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-tools-"));
   fixtures.push(tmp);
@@ -123,7 +129,7 @@ describe("sandbox base runtime tools", () => {
       const runtimeContract = dockerRunCommandBetween(
         source,
         "# setpriv runtime contract",
-        "RUN groupadd",
+        runtimeToolsEndMarker(dockerfile),
       );
 
       expect(source).toContain("util-linux=2.41-5");

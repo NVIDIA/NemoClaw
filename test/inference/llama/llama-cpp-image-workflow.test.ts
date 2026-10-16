@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -107,6 +107,216 @@ function jobPermissionValues(workflowValue: Workflow): string[] {
   );
 }
 
+const approvedPublicationRef = "refs/heads/fix/issue-12285-wsl-transport";
+const publicationSha = "c".repeat(40);
+const trustedPublisherSha = "a".repeat(40);
+const imageContextSha = "b".repeat(40);
+const callerTemplate = fs.readFileSync(
+  path.join(repoRoot, "ci/llama-cpp-branch-publication.yaml"),
+  "utf8",
+);
+const publisherSource = fs
+  .readFileSync(path.join(repoRoot, ".github/workflows/llama-cpp-image.yaml"), "utf8")
+  .replace(
+    callerTemplate.replaceAll(
+      "PUBLISHER_REVISION",
+      workflow.jobs?.["publish-approved-branch"]?.uses?.split("@")[1] ?? "PUBLISHER_REVISION",
+    ),
+    "",
+  );
+const canonicalWrapper =
+  publisherSource + callerTemplate.replaceAll("PUBLISHER_REVISION", trustedPublisherSha);
+const wrapperSha = execFileSync("git", ["hash-object", "--stdin"], {
+  input: canonicalWrapper,
+  encoding: "utf8",
+}).trim();
+const publicationChecks = [
+  "checks",
+  "commit-lint",
+  "dco-check",
+  "check-hash",
+  "changes",
+  "Build native llama.cpp server (amd64)",
+  "Build native llama.cpp server (arm64)",
+];
+type PublicationScenario = {
+  ref?: string;
+  event?: string;
+  repository?: string;
+  state?: string;
+  sourceRepository?: string;
+  headSha?: string;
+  verified?: boolean;
+  appId?: number;
+  missingCheck?: string;
+  checkOverrides?: Record<string, Record<string, unknown>>;
+  additionalFailedChecks?: string[];
+  additionalSkippedChecks?: string[];
+  commitStatus?: string;
+  statusCreatorId?: number;
+  caller?: string;
+  wrapperSha?: string;
+  imageContextSha?: string;
+  definitionRef?: string;
+  rootWorkflowSha?: string;
+  jobMetadata?: Record<string, unknown>;
+};
+
+function runPublicationBoundary(step: Step, scenario: PublicationScenario = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "llama-publication-boundary-"));
+  const bin = path.join(root, "bin");
+  const output = path.join(root, "output");
+  fs.mkdirSync(bin);
+  fs.mkdirSync(path.join(root, ".github/workflows"), { recursive: true });
+  fs.mkdirSync(path.join(root, "ci"));
+  fs.writeFileSync(path.join(root, ".github/workflows/llama-cpp-image.yaml"), publisherSource);
+  fs.writeFileSync(path.join(root, "ci/llama-cpp-branch-publication.yaml"), callerTemplate);
+  const ref = scenario.ref ?? approvedPublicationRef;
+  fs.writeFileSync(
+    path.join(root, "wrapper.json"),
+    JSON.stringify({ type: "file", sha: scenario.wrapperSha ?? wrapperSha }),
+  );
+  fs.writeFileSync(
+    path.join(root, "tree.json"),
+    JSON.stringify({
+      data: {
+        repository: {
+          object: { __typename: "Tree", oid: scenario.imageContextSha ?? imageContextSha },
+        },
+      },
+    }),
+  );
+  const check = (name: string, index: number) => ({
+    id: index + 1,
+    name,
+    head_sha: publicationSha,
+    app: { id: scenario.appId ?? 15368 },
+    status: "completed",
+    conclusion: "success",
+    ...scenario.checkOverrides?.[name],
+  });
+  fs.writeFileSync(
+    path.join(root, "pull.json"),
+    JSON.stringify({
+      state: scenario.state ?? "open",
+      head: {
+        sha: scenario.headSha ?? publicationSha,
+        ref: "fix/issue-12285-wsl-transport",
+        repo: { full_name: scenario.sourceRepository ?? "NVIDIA/NemoClaw" },
+      },
+      base: { ref: "main", repo: { full_name: "NVIDIA/NemoClaw" } },
+    }),
+  );
+  fs.writeFileSync(
+    path.join(root, "checks.json"),
+    JSON.stringify([
+      {
+        check_runs: [
+          ...publicationChecks.filter((name) => name !== scenario.missingCheck).map(check),
+          ...(scenario.additionalFailedChecks ?? []).map((name) => ({
+            ...check(name, 100),
+            conclusion: "failure",
+          })),
+          ...(scenario.additionalSkippedChecks ?? []).map((name) => ({
+            ...check(name, 101),
+            conclusion: "skipped",
+          })),
+        ],
+      },
+    ]),
+  );
+  fs.writeFileSync(
+    path.join(root, "statuses.json"),
+    JSON.stringify([
+      [
+        { id: 1, context: "check-hash", state: "pending", creator: { id: 41898282, type: "Bot" } },
+        {
+          id: 2,
+          context: "check-hash",
+          state: scenario.commitStatus ?? "success",
+          creator: { id: scenario.statusCreatorId ?? 41898282, type: "Bot" },
+        },
+      ],
+    ]),
+  );
+  fs.writeFileSync(
+    path.join(bin, "gh"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "api repos/NVIDIA/NemoClaw/pulls/12664") cat "$TEST_ROOT/pull.json" ;;
+  "api repos/NVIDIA/NemoClaw/contents/.github/workflows/llama-cpp-image.yaml?ref=$TEST_SHA") cat "$TEST_ROOT/wrapper.json" ;;
+  "api graphql "*) cat "$TEST_ROOT/tree.json" ;;
+  "api repos/NVIDIA/NemoClaw/commits/$TEST_SHA --jq .commit.verification.verified") printf '%s\\n' "$TEST_VERIFIED" ;;
+  "api --paginate --slurp repos/NVIDIA/NemoClaw/commits/$TEST_SHA/check-runs?per_page=100&filter=latest") cat "$TEST_ROOT/checks.json" ;;
+  "api --paginate --slurp repos/NVIDIA/NemoClaw/commits/$TEST_SHA/statuses?per_page=100") cat "$TEST_ROOT/statuses.json" ;;
+  *) exit 93 ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  try {
+    const result = spawnSync(
+      "bash",
+      ["--noprofile", "--norc", "-c", required(step.run, "gate script missing")],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          TEST_ROOT: root,
+          TEST_SHA: publicationSha,
+          TEST_VERIFIED: String(scenario.verified ?? true),
+          GITHUB_OUTPUT: output,
+          GITHUB_REPOSITORY: scenario.repository ?? "NVIDIA/NemoClaw",
+          GITHUB_EVENT_NAME: scenario.event ?? "workflow_dispatch",
+          GITHUB_REF: ref,
+          GITHUB_SHA: publicationSha,
+          ROOT_WORKFLOW_SHA: scenario.rootWorkflowSha ?? publicationSha,
+          TRUSTED_REVISION: trustedPublisherSha,
+          DEFINITION_REF:
+            scenario.definitionRef ??
+            `NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@${trustedPublisherSha}`,
+          WRAPPER_SHA: wrapperSha,
+          IMAGE_CONTEXT_SHA: imageContextSha,
+          WORKFLOW_JOB: JSON.stringify(scenario.jobMetadata ?? {}),
+          GITHUB_RUN_ID: "123",
+          GITHUB_RUN_ATTEMPT: "1",
+          ALLOWED_REF: "refs/heads/main",
+          PUBLICATION_TRIGGER: "workflow_dispatch",
+          PUBLICATION_ENABLED: "true",
+          IMAGE: "ghcr.io/nvidia/nemoclaw/llama-cpp-server",
+          PUBLICATION_REPOSITORY: "ghcr.io/nvidia/nemoclaw/llama-cpp-server",
+          PLATFORMS: '["linux/amd64","linux/arm64"]',
+          SBOM_FORMAT: "spdx-json",
+          SLSA_PREDICATE_TYPE: "https://slsa.dev/provenance/v1",
+          SIGNATURE_MODE: "sigstore-keyless",
+          SIGNATURE_TRANSPARENCY_LOG: "required",
+          VULNERABILITY_SCANNER: "grype",
+          VULNERABILITY_SEVERITY_CUTOFF: "high",
+          VULNERABILITY_ONLY_FIXED: "true",
+          ANONYMOUS_EXACT_DIGEST_PULL: "true",
+          RECEIPT_SCHEMA_VERSION: "1",
+          QUALIFICATION: JSON.stringify(imageManifest.spec?.publication?.qualification),
+          CANDIDATE_TAG_TEMPLATE: "llama-cpp-candidate-{runId}-{runAttempt}",
+          SIGNATURE_IDENTITY:
+            "https://github.com/NVIDIA/NemoClaw/.github/workflows/llama-cpp-image-attest.yaml@refs/heads/main",
+          CALLER_WORKFLOW_REF:
+            scenario.caller ?? `NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@${ref}`,
+          INPUT_CANDIDATE_TAG: "llama-cpp-candidate-123-1",
+          INPUT_DIGEST: `sha256:${"a".repeat(64)}`,
+          INPUT_IMAGE: "ghcr.io/nvidia/nemoclaw/llama-cpp-server",
+          INPUT_SBOM_FORMAT: "spdx-json",
+          INPUT_RETENTION_DAYS: "90",
+        },
+      },
+    );
+    return { ...result, output: fs.existsSync(output) ? fs.readFileSync(output, "utf8") : "" };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 function runAnonymousPull(step: Step, result: "denied" | "success") {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "llama-cpp-anonymous-pull-"));
   const fakeBin = path.join(temporaryRoot, "bin");
@@ -196,21 +406,160 @@ describe("llama.cpp image PR workflow", () => {
   const buildStep = namedStep(build, "Build native PR image without publishing");
   const validate = namedStep(build, "Validate native PR image contract");
 
+  it.each([
+    ["publisher", workflow, "config", "Resolve the workflow's own source", "llama-cpp-image.yaml"],
+    [
+      "signer",
+      attestationWorkflow,
+      "validate-inputs",
+      "Resolve the signer's own source",
+      "llama-cpp-image-attest.yaml",
+    ],
+  ] as const)(
+    "uses the native job identity before checking out the %s",
+    (_label, owner, job, name, file) => {
+      const step = namedStep(required(owner.jobs?.[job], "source owner missing"), name);
+      const metadata = {
+        workflow_repository: "NVIDIA/NemoClaw",
+        workflow_file_path: `.github/workflows/${file}`,
+        workflow_sha: trustedPublisherSha,
+        workflow_ref: `NVIDIA/NemoClaw/.github/workflows/${file}@${trustedPublisherSha}`,
+      };
+      const valid = runPublicationBoundary(step, { jobMetadata: metadata });
+      expect(valid.status, valid.stderr).toBe(0);
+      expect(valid.output).toContain(`revision=${trustedPublisherSha}\n`);
+      expect(runPublicationBoundary(step).status).not.toBe(0);
+      expect(
+        runPublicationBoundary(step, {
+          jobMetadata: { ...metadata, workflow_repository: "other/NemoClaw" },
+        }).status,
+      ).not.toBe(0);
+      expect(
+        runPublicationBoundary(step, {
+          jobMetadata: { ...metadata, workflow_file_path: ".github/workflows/other.yaml" },
+        }).status,
+      ).not.toBe(0);
+      expect(
+        runPublicationBoundary(step, {
+          jobMetadata: { ...metadata, workflow_sha: approvedPublicationRef },
+        }).status,
+      ).not.toBe(0);
+    },
+  );
+
+  it.each(["refs/heads/main", approvedPublicationRef])(
+    "binds manual publication and signing to the authorized ref [%s]",
+    (ref) => {
+      const gate = namedStep(
+        required(workflow.jobs?.["publication-gate"], "publication gate missing"),
+        "Enforce declarative publication boundary",
+      );
+      const result = runPublicationBoundary(gate, { ref, additionalSkippedChecks: ["changes"] });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.output).toContain(`publication_ref=${ref}`);
+      expect(result.output).toContain(
+        `signature_identity=https://github.com/NVIDIA/NemoClaw/.github/workflows/llama-cpp-image-attest.yaml@${ref === "refs/heads/main" ? ref : trustedPublisherSha}`,
+      );
+      const attest = namedStep(
+        required(attestationWorkflow.jobs?.["validate-inputs"], "attestation gate missing"),
+        "Validate exact inputs",
+      );
+      const signed = runPublicationBoundary(attest, { ref });
+      expect(signed.status, signed.stderr).toBe(0);
+    },
+  );
+
+  it.each([
+    ["closed PR", { state: "closed" }],
+    ["fork", { sourceRepository: "other/NemoClaw" }],
+    ["stale head", { headSha: "d".repeat(40) }],
+    ["unsigned head", { verified: false }],
+    ["modified caller workflow", { wrapperSha: "d".repeat(40) }],
+    ["changed candidate build inputs", { imageContextSha: "d".repeat(40) }],
+    [
+      "mutable publisher source",
+      {
+        definitionRef: `NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@${approvedPublicationRef}`,
+      },
+    ],
+    ["different caller workflow revision", { rootWorkflowSha: "d".repeat(40) }],
+    ["pending admission status", { commitStatus: "pending" }],
+    ["failed admission status", { commitStatus: "failure" }],
+    ["untrusted status producer", { statusCreatorId: 1 }],
+    [
+      "skipped changes without an actual pass",
+      { checkOverrides: { changes: { conclusion: "skipped" } } },
+    ],
+    [
+      "skipped native proof",
+      { checkOverrides: { "Build native llama.cpp server (amd64)": { conclusion: "skipped" } } },
+    ],
+    ["missing native proof", { missingCheck: "Build native llama.cpp server (arm64)" }],
+    ["failed required check", { checkOverrides: { "check-hash": { conclusion: "failure" } } }],
+    [
+      "pending native proof",
+      {
+        checkOverrides: {
+          "Build native llama.cpp server (amd64)": { status: "in_progress", conclusion: null },
+        },
+      },
+    ],
+    ["untrusted check app", { appId: 1 }],
+    ["failure hidden by duplicate check name", { additionalFailedChecks: ["checks"] }],
+    ["unapproved branch", { ref: "refs/heads/other" }],
+    ["other repository", { repository: "other/NemoClaw" }],
+    ["pull request event", { event: "pull_request" }],
+  ] satisfies Array<[string, PublicationScenario]>)(
+    "refuses publication before write jobs for %s",
+    (_name, scenario) => {
+      const gate = namedStep(
+        required(workflow.jobs?.["publication-gate"], "publication gate missing"),
+        "Enforce declarative publication boundary",
+      );
+      const result = runPublicationBoundary(gate, scenario);
+      expect(result.status).not.toBe(0);
+      expect(result.output).toBe("");
+    },
+  );
+
+  it.each([
+    ["changed PR head", { headSha: "d".repeat(40) }],
+    ["modified caller workflow", { wrapperSha: "d".repeat(40) }],
+    ["different caller workflow revision", { rootWorkflowSha: "d".repeat(40) }],
+    ["unsigned head", { verified: false }],
+    ["missing native proof", { missingCheck: "Build native llama.cpp server (arm64)" }],
+    ["failed admission status", { commitStatus: "failure" }],
+    ["closed PR", { state: "closed" }],
+    ["fork", { sourceRepository: "other/NemoClaw" }],
+    ["unapproved ref", { ref: "refs/heads/other" }],
+    [
+      "different caller",
+      { caller: `NVIDIA/NemoClaw/.github/workflows/other.yaml@${approvedPublicationRef}` },
+    ],
+  ] satisfies Array<[string, PublicationScenario]>)(
+    "refuses attestation for %s",
+    (_name, scenario) => {
+      const gate = namedStep(
+        required(attestationWorkflow.jobs?.["validate-inputs"], "attestation gate missing"),
+        "Validate exact inputs",
+      );
+      const result = runPublicationBoundary(gate, scenario);
+      expect(result.status).not.toBe(0);
+      expect(result.output).toBe("");
+    },
+  );
+
   it("keeps pull requests read-only while exposing only an explicit manual publication trigger (#8250)", () => {
-    expect(workflow.on?.pull_request?.paths).toEqual(
-      expect.arrayContaining([
-        ".github/workflows/llama-cpp-image.yaml",
-        ".github/workflows/llama-cpp-image-attest.yaml",
-        "managed-inference/images/llama-cpp/**",
-        "managed-inference/recipes/llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
-        "scripts/checks/export-llama-cpp-image-config.mts",
-        "scripts/checks/verify-llama-cpp-image-publication-evidence.sh",
-        "test/inference/llama/llama-cpp-image-publication-evidence.test.ts",
-      ]),
+    expect(Object.keys(workflow.on ?? {})).toEqual([
+      "pull_request",
+      "workflow_dispatch",
+      "workflow_call",
+    ]);
+    expect(workflow.on?.pull_request?.paths).toContain(
+      "src/lib/onboard/runtime-provider/docker-operation-authority.ts",
     );
-    expect(Object.keys(workflow.on ?? {})).toEqual(["pull_request", "workflow_dispatch"]);
     expect(workflow.on?.workflow_dispatch?.inputs?.publish).toEqual({
-      description: "Publish the declaratively enabled run-unique candidate from main",
+      description: "Publish a run-unique candidate from main or the approved PR 12664 branch",
       required: true,
       default: false,
       type: "boolean",
@@ -225,7 +574,8 @@ describe("llama.cpp image PR workflow", () => {
     expect(buildStep.with?.load).toBe(true);
     expect(workflow.concurrency).toEqual({
       "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
-      group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
+      group:
+        "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.publisher_call && 'publisher' || 'controller' }}",
     });
     expect(build.if).toBe("github.event_name == 'pull_request'");
   });
@@ -240,7 +590,6 @@ describe("llama.cpp image PR workflow", () => {
       cuda_runtime_image: "${{ steps.manifest.outputs.cuda_runtime_image }}",
       image: "${{ steps.manifest.outputs.image }}",
       matrix: "${{ steps.manifest.outputs.matrix }}",
-      request_guard_go_version: "${{ steps.manifest.outputs.request_guard_go_version }}",
       runtime_forbidden_paths: "${{ steps.manifest.outputs.runtime_forbidden_paths }}",
       runtime_gid: "${{ steps.manifest.outputs.runtime_gid }}",
       runtime_required_paths: "${{ steps.manifest.outputs.runtime_required_paths }}",
@@ -289,7 +638,6 @@ describe("llama.cpp image PR workflow", () => {
         "compiler_cxx",
         "cuda_dev_image",
         "cuda_runtime_image",
-        "request_guard_go_version",
         "runtime_gid",
         "runtime_uid",
         "source_archive_sha256",
@@ -297,15 +645,6 @@ describe("llama.cpp image PR workflow", () => {
       ].every((output) => args.includes(`needs.config.outputs.${output}`)),
     ).toBe(true);
     expect(args).toContain("CUDA_ARCHITECTURES=${{ matrix.cuda_architectures }}");
-    expect(args).toContain(
-      "REQUEST_GUARD_GO_ARCHIVE_SHA256=${{ matrix.request_guard_go_archive_sha256 }}",
-    );
-    expect(validate.run).toContain(
-      'Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.version"] == $requestGuardGoVersion',
-    );
-    expect(validate.run).toContain(
-      'Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.archive-sha256"] == $requestGuardGoArchive',
-    );
     expect(args).toContain("TARGETPLATFORM=${{ matrix.platform }}");
     expect(args).not.toMatch(/sha256:[0-9a-f]{64}/u);
     expect(args).not.toMatch(/[0-9a-f]{40}/u);
@@ -321,7 +660,7 @@ describe("llama.cpp image PR workflow", () => {
     );
   });
 
-  it("gates digest-first native publication on an enabled main-only declarative contract (#8250)", () => {
+  it("gates digest-first native publication on its declared default and approved PR boundary (#8250)", () => {
     const gate = required(workflow.jobs?.["publication-gate"], "publication gate is missing");
     const publish = required(workflow.jobs?.["publish-platform"], "platform publisher is missing");
     const publishGuard = namedStep(publish, "Validate trusted image build args");
@@ -339,7 +678,7 @@ describe("llama.cpp image PR workflow", () => {
 
     expect(gate.if).toContain("github.event_name == 'workflow_dispatch'");
     expect(gate.if).toContain("inputs.publish == true");
-    expect(gate.permissions).toEqual({});
+    expect(gate.permissions).toEqual({ contents: "read", checks: "read", "pull-requests": "read" });
     const gateStep = namedStep(gate, "Enforce declarative publication boundary");
     expect(gateStep.run).toContain('PUBLICATION_ENABLED" != "true"');
     expect(gateStep.run).toContain('GITHUB_REPOSITORY" != "NVIDIA/NemoClaw"');
@@ -385,12 +724,6 @@ describe("llama.cpp image PR workflow", () => {
     expect(publishBuild.with?.provenance).toBe(false);
     expect(publishBuild.with?.sbom).toBe(false);
     const publishArgs = String(publishBuild.with?.["build-args"] ?? "");
-    expect(publishArgs).toContain(
-      "REQUEST_GUARD_GO_ARCHIVE_SHA256=${{ matrix.request_guard_go_archive_sha256 }}",
-    );
-    expect(publishArgs).toContain(
-      "REQUEST_GUARD_GO_VERSION=${{ needs.config.outputs.request_guard_go_version }}",
-    );
     const publishArgNames = [...publishArgs.matchAll(/^([A-Z0-9_]+)=/gmu)].map((match) => match[1]);
     const guardedArgNames = [
       ...(publishGuard.run ?? "").matchAll(/--build-arg "([A-Z0-9_]+)=/gu),
@@ -409,9 +742,6 @@ describe("llama.cpp image PR workflow", () => {
     );
     expect(publish.steps?.indexOf(logout)).toBeLessThan(
       publish.steps?.indexOf(anonymousPull) ?? Number.POSITIVE_INFINITY,
-    );
-    expect(publish.steps?.indexOf(anonymousPull)).toBeLessThan(
-      publish.steps?.indexOf(uploadAnonymousPull) ?? Number.POSITIVE_INFINITY,
     );
     expect(publish.steps?.indexOf(uploadAnonymousPull)).toBeLessThan(
       publish.steps?.indexOf(uploadDigest) ?? Number.POSITIVE_INFINITY,
@@ -526,6 +856,8 @@ describe("llama.cpp image PR workflow", () => {
       contents: "read",
       "id-token": "write",
       packages: "write",
+      checks: "read",
+      "pull-requests": "read",
     });
     expect(verify.needs).toEqual([
       "config",
@@ -539,6 +871,11 @@ describe("llama.cpp image PR workflow", () => {
     expect(crypto.run).toContain('--certificate-identity "$CERTIFICATE_IDENTITY"');
     expect(crypto.run).toContain('--certificate-oidc-issuer "$CERTIFICATE_OIDC_ISSUER"');
     expect(crypto.run).toContain("gh attestation verify");
+    expect(crypto.env?.CERTIFICATE_IDENTITY).toBe(
+      "${{ needs.publication-gate.outputs.signature_identity }}",
+    );
+    expect(crypto.env?.EXPECTED_REF).toBe("${{ needs.publication-gate.outputs.publication_ref }}");
+    expect(receipt.env?.CERTIFICATE_IDENTITY).toBe(crypto.env?.CERTIFICATE_IDENTITY);
     expect(crypto.run).toContain("--signer-workflow");
     expect(crypto.run).toContain('--source-ref "$EXPECTED_REF"');
     expect(crypto.run).toContain('--source-digest "$EXPECTED_REVISION"');
@@ -605,14 +942,18 @@ describe("llama.cpp image PR workflow", () => {
       attestationWorkflow.jobs?.attest,
       "reusable attestation job is missing",
     );
-    expect(validateInputs.permissions).toEqual({});
+    expect(validateInputs.permissions).toEqual({
+      contents: "read",
+      checks: "read",
+      "pull-requests": "read",
+    });
     const reusableGate = namedStep(validateInputs, "Validate exact inputs");
     expect(reusableGate.env?.CALLER_WORKFLOW_REF).toBe("${{ github.workflow_ref }}");
     expect(reusableGate.run).toContain('GITHUB_REPOSITORY" != "NVIDIA/NemoClaw"');
     expect(reusableGate.run).toContain('GITHUB_EVENT_NAME" != "workflow_dispatch"');
-    expect(reusableGate.run).toContain('GITHUB_REF" != "refs/heads/main"');
+    expect(reusableGate.run).toContain('GITHUB_REF" = "refs/heads/main"');
     expect(reusableGate.run).toContain(
-      'CALLER_WORKFLOW_REF" != "NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@refs/heads/main"',
+      'CALLER_WORKFLOW_REF" != "NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@$GITHUB_REF"',
     );
     expect(attest.permissions).toEqual({
       attestations: "write",
@@ -678,6 +1019,7 @@ describe("llama.cpp image PR workflow", () => {
       .map((step) => step.uses)
       .filter((uses): uses is string => uses !== undefined);
     expect(actions.filter((action) => action.startsWith("./"))).toEqual([
+      "./.github/actions/setup-reviewed-npm",
       "./.github/actions/setup-reviewed-npm",
     ]);
     actions

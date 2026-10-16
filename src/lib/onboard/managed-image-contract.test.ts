@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { DEEP_AGENTS_CODE_SANDBOX_USER } from "../agent/deep-agents-code-runtime-identity";
 import {
   CANDIDATE_MANAGED_IMAGE_AGENTS,
   isCandidateManagedImageAgent,
@@ -14,6 +15,7 @@ import {
   MANAGED_IMAGE_RUNTIME_IDENTITIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  managedImageRuntimeIdentity,
   type ManagedImageAgent,
   type ManagedImageContractV1,
   parseManagedImageContractV1,
@@ -69,6 +71,11 @@ describe("managed image contract v1", () => {
       "langchain-deepagents-code": { uid: 999, gid: 999, workdir: "/sandbox" },
       pi: { uid: 999, gid: 999, workdir: "/sandbox" },
     });
+  });
+
+  it("uses the build and cleanup identity for Deep Agents managed startup", () => {
+    const managedIdentity = managedImageRuntimeIdentity("langchain-deepagents-code");
+    expect(`${managedIdentity.uid}:${managedIdentity.gid}`).toBe(DEEP_AGENTS_CODE_SANDBOX_USER);
   });
 
   it.each(Array.from(SHIPPED_MANAGED_IMAGE_AGENTS, (value) => [value]))(

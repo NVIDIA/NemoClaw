@@ -140,6 +140,9 @@ export function resolveSandboxCreateIntent({
   basePolicyPath,
   sandboxName,
   inferenceProvider,
+  nativeLocalProviderAttachment,
+  nativeNvidiaProviderAttachment,
+  nativeHostedProviderAttachment,
   hostLocalInferenceRouteOnly = false,
   channels,
   enabledChannels,
@@ -187,6 +190,9 @@ export function resolveSandboxCreateIntent({
   return {
     sandboxName,
     inferenceProvider: normalizedInferenceProvider,
+    ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
+    ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+    ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
     activeMessagingChannels,
     messagingProviderRequests: messagingProviderRequests.map((request) => ({ ...request })),
     reusableMessagingProviders: enabledReusableMessagingProviders,
@@ -202,7 +208,9 @@ export function resolveSandboxCreateIntent({
           ? { hostGpuAvailable: sandboxGpuConfig.hostGpuDetected }
           : {}),
         additionalPresets: [...hermesToolGateways],
-        ...(hostLocalInferenceRouteOnly ? { hostLocalInferenceRouteOnly: true as const } : {}),
+        ...(hostLocalInferenceRouteOnly || nativeLocalProviderAttachment
+          ? { hostLocalInferenceRouteOnly: true as const }
+          : {}),
         ...(agentName !== undefined ? { agentName } : {}),
         policyTier,
       },

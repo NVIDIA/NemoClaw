@@ -11,6 +11,7 @@ import {
   buildSandboxInferenceRouteHealth,
   isTransientInferenceInvocationFailure,
   probeSandboxInferenceGatewayHealth,
+  probeSandboxNativeNvidiaModelsHealth,
   runSandboxInferenceInvocationProbe,
   type SandboxInferenceRouteHealth,
 } from "./inference-route-health";
@@ -116,6 +117,29 @@ describe("sandbox inference route health", () => {
       detail: DCODE_MANAGED_EXEC_MISSING_DETAIL,
     });
   });
+
+  it("probes native NVIDIA models through the attached provider placeholder", async () => {
+    const commandExecutor = makeExecutor("OK 200");
+
+    const result = await probeSandboxNativeNvidiaModelsHealth("alpha", {
+      gatewayName: "nemoclaw-19080",
+      agentName: "openclaw",
+      commandExecutor,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      httpStatus: 200,
+      endpoint: "https://integrate.api.nvidia.com/v1/models",
+    });
+    expect(commandExecutor.runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "nemoclaw-19080" },
+        command: ["sh", "-c", expect.stringContaining("NVIDIA_INFERENCE_API_KEY")],
+      }),
+    );
+  });
 });
 
 describe("buildSandboxInferenceRouteHealth (#10080)", () => {
@@ -124,6 +148,44 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     endpoint: "https://inference.local/v1/models",
     httpStatus,
     detail: `probe returned ${httpStatus}`,
+  });
+
+  it("uses the native NVIDIA invocation instead of the legacy gateway route", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(503, false),
+      null,
+      { ok: true },
+      { provider: "nvidia-prod", nativeNvidia: true },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      probed: true,
+      endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+    });
+    expect(result.subprobes).toBeUndefined();
+  });
+
+  it("does not let a healthy legacy gateway mask a failed native NVIDIA request", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(200),
+      null,
+      {
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 401",
+        httpStatus: 401,
+        endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+      },
+      { provider: "nvidia-prod", nativeNvidia: true },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      probed: true,
+      failureLabel: "unauthorized",
+      endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+    });
+    expect(result.subprobes).toBeUndefined();
   });
 
   it.each([
@@ -383,4 +445,20 @@ describe("transient inference invocation failures", () => {
   it("reports no failure when no inference request was sent (#10709)", () => {
     expect(isTransientInferenceInvocationFailure(null)).toBe(false);
   });
+});
+
+it("offers conditional recreation guidance when the legacy route cannot be reached", () => {
+  const health = buildSandboxInferenceRouteHealth(
+    {
+      ok: false,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 0,
+      detail: "Inference gateway is unreachable.",
+    },
+    null,
+    null,
+    { provider: "compatible-endpoint", model: "selected" },
+  );
+  expect(health.ok).toBe(false);
+  expect(health.detail).toContain("If this legacy route is no longer available");
 });

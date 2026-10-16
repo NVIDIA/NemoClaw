@@ -102,6 +102,7 @@ export function dcodeProfileInput(
     "openai-api",
     "gpt-5",
     "openai-completions",
+    false,
   );
   return {
     ...profileInput(),
@@ -225,6 +226,61 @@ export function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): Obser
       globalPolicyVersion: 0,
     },
     ...overrides,
+  };
+}
+
+export function geminiSnapshot(): ObservedExportSnapshot {
+  const base = snapshot();
+  const endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/";
+  const model = "gemini-3.6-flash";
+  const route = resolveManagedStartupInferenceRoute(
+    "openclaw",
+    "gemini-api",
+    model,
+    "openai-completions",
+  );
+  return {
+    ...base,
+    registry: entry({
+      provider: "gemini-api",
+      model,
+      preferredInferenceApi: "openai-completions",
+      endpointUrl: endpoint,
+      credentialEnv: "GEMINI_API_KEY",
+      workload: managedWorkload(
+        profileInput({
+          inference: {
+            routeProvider: route.providerKey,
+            upstreamProvider: "gemini-api",
+            model,
+            routedBaseUrl: route.inferenceBaseUrl,
+            upstreamEndpointUrl: null,
+            api: "openai-completions",
+            primaryModelRef: route.primaryModelRef,
+            compatibility: route.inferenceCompat ?? {},
+          },
+        }),
+      ),
+    }),
+    inference: {
+      ...base.inference,
+      provider: "gemini-api",
+      model,
+      api: "openai-completions",
+      endpoint,
+      credentialEnv: "GEMINI_API_KEY",
+      endpointEvidence: {
+        endpoint,
+        provider: {
+          gatewayName: "nemoclaw",
+          workspace: "default",
+          name: "gemini-api",
+          id: "gemini-provider-id",
+          resourceVersion: "8",
+        },
+        source: { kind: "provider-config", key: "OPENAI_BASE_URL" },
+      },
+    },
   };
 }
 
@@ -462,6 +518,7 @@ export function compatibleSnapshot(
     "compatible-endpoint",
     "gpt-5",
     "openai-completions",
+    false,
   );
   const input = {
     ...base,

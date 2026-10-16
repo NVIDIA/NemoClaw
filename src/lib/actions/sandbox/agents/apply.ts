@@ -1,12 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createCliOpenShellSandboxCommandExecutor } from "../../../adapters/openshell/sandbox-command-cli";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../../adapters/openshell/sandbox-command";
-import { selectedOpenShellGateway } from "../../../adapters/openshell/sandbox-observer";
+import type { TelemetryOutcome, TelemetryState } from "../../../domain/telemetry/event";
+import {
+  configuredAgentIds,
+  persistVerifiedAgentModelSelections,
+  readAgentSelectionEntry,
+} from "./model-selections";
 import { loadAgentsManifest } from "../../../onboard/agents-manifest";
 import { isOpenclawAgent } from "../../../onboard/openclaw-otel-policy-presets";
 import * as registry from "../../../state/registry";
+import { isTelemetryOperationActive, recordTelemetryTarget } from "../../telemetry/operation";
+
+import {
+  createCliOpenShellSandboxCommandExecutor,
+  type OpenShellGatewayTarget,
+  selectedOpenShellGateway,
+  readTelemetryAgentCommand,
+  readTelemetryAgentConfiguration,
+} from "./telemetry-verification";
+export { readTelemetryAgentConfiguration } from "./telemetry-verification";
 
 // Lazy-require `ensureLiveSandboxOrExit` because its import chain pulls in
 // `runner`/`./platform`, which the Vitest TS loader cannot resolve at module
@@ -250,7 +264,8 @@ function parseJsonFromOutput(output: string): unknown {
   return JSON.parse(text || "[]");
 }
 
-export function parseOpenClawAgentsList(output: string): OpenClawAgentEntry[] {
+export function parseOpenClawAgentsList(output: string, strict = false): OpenClawAgentEntry[] {
+  if (strict && !output.trim()) throw new Error("Agent roster output is empty");
   const parsed = parseJsonFromOutput(output || "[]");
   let entries: unknown[] | null = null;
   if (Array.isArray(parsed)) {
@@ -264,6 +279,18 @@ export function parseOpenClawAgentsList(output: string): OpenClawAgentEntry[] {
   if (!entries) {
     throw new Error("openclaw agents list --json did not return a JSON array");
   }
+  if (strict) {
+    const ids = new Set<string>();
+    for (const entry of entries) {
+      const id =
+        entry && typeof entry === "object" && !Array.isArray(entry)
+          ? (entry as { id?: unknown }).id
+          : undefined;
+      if (typeof id !== "string" || !id || ids.has(id))
+        throw new Error("Agent roster output contains invalid or duplicated entries");
+      ids.add(id);
+    }
+  }
   return entries.filter((entry): entry is OpenClawAgentEntry => {
     return (
       entry !== null &&
@@ -271,6 +298,29 @@ export function parseOpenClawAgentsList(output: string): OpenClawAgentEntry[] {
       typeof (entry as { id?: unknown }).id === "string"
     );
   });
+}
+
+export async function readTelemetryAgentRoster(
+  sandboxName: string,
+  target: OpenShellGatewayTarget = selectedOpenShellGateway(),
+  configuration?: unknown,
+): Promise<string[] | null> {
+  const configured = configuredAgentIds(
+    configuration === undefined
+      ? await readTelemetryAgentConfiguration(sandboxName, target)
+      : configuration,
+  );
+  if (configured !== undefined) return configured;
+  return readTelemetryAgentCommand(
+    sandboxName,
+    target,
+    ["openclaw", "agents", "list", "--json"],
+    (raw) =>
+      parseOpenClawAgentsList(raw, true)
+        .map((entry) => entry.id)
+        .sort(),
+    5_000,
+  );
 }
 
 async function executeAgentCommand(
@@ -366,6 +416,15 @@ export async function runAgentsApply(
   options: RunAgentsApplyOptions,
   deps: RunAgentsApplyDeps = {},
 ): Promise<void> {
+  const telemetryActive = isTelemetryOperationActive();
+  const record = (outcome: TelemetryOutcome, state: TelemetryState, collectionError = false) =>
+    recordTelemetryTarget({
+      scope: "configuration",
+      sandboxName: options.sandboxName,
+      outcome,
+      state,
+      ...(collectionError ? { verificationStatus: "collection_error" as const } : {}),
+    });
   const log = deps.log ?? ((message: string) => console.log(message));
   const exit = deps.exit ?? ((code: number) => process.exit(code));
   const ensureLive = deps.ensureLive ?? lazyEnsureLive();
@@ -385,6 +444,7 @@ export async function runAgentsApply(
     log(
       `  agents apply is OpenClaw-specific; sandbox "${options.sandboxName}" runs ${sandboxAgent}. Manage agents through the in-sandbox CLI for that runtime.`,
     );
+    record("failed", "unchanged");
     exit(1);
   }
 
@@ -394,9 +454,12 @@ export async function runAgentsApply(
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     log(`  Manifest rejected before mutation: ${reason}`);
+    record("failed", "unchanged");
     exit(1);
   }
   const currentList = await listAgents(options.sandboxName);
+  const selectionEntry = telemetryActive ? readAgentSelectionEntry(options.sandboxName) : null;
+  const beforeRoster = telemetryActive ? await readTelemetryAgentRoster(options.sandboxName) : null;
   const diff = buildAgentsApplyDiff(currentList, manifest);
 
   log(`  Sandbox: ${options.sandboxName}`);
@@ -420,30 +483,86 @@ export async function runAgentsApply(
   }
   if (diff.toAdd.length === 0 && diff.toDelete.length === 0) {
     log("  No roster changes to apply.");
+    const verified =
+      beforeRoster &&
+      JSON.stringify(beforeRoster) === JSON.stringify(currentList.map((entry) => entry.id).sort());
+    record(
+      telemetryActive && !verified ? "unverified" : "no_change",
+      telemetryActive && !verified
+        ? "unavailable"
+        : diff.rebuildOnlyFields.length > 0
+          ? "pending"
+          : "unchanged",
+      telemetryActive && !verified,
+    );
     return;
   }
   if (!options.yes && options.nonInteractive) {
     log("  Pass --yes to apply roster changes in non-interactive mode.");
+    record("skipped", "unchanged");
     exit(1);
   }
   if (!options.yes && !options.nonInteractive) {
     log("  Pass --yes to confirm the roster changes above.");
+    record("skipped", "unchanged");
     exit(2);
   }
 
   const toolsAgentIds = findManifestToolsByAgentId(manifest.agents);
-  for (const id of diff.toDelete) {
-    log(`  Deleting agent: ${id}`);
-    await deleteAgent(options.sandboxName, id);
+  try {
+    for (const id of diff.toDelete) {
+      log(`  Deleting agent: ${id}`);
+      await deleteAgent(options.sandboxName, id);
+    }
+    for (const entry of diff.toAdd) {
+      if (toolsAgentIds.has(entry.id)) {
+        log(
+          `  ⚠  Manifest declares tools for "${entry.id}"; the live add cannot bake a tool policy. Rerun \`nemoclaw onboard --agents <file> --recreate-sandbox\` to apply it.`,
+        );
+      }
+      log(`  Adding agent: ${entry.id}`);
+      await addAgent(options.sandboxName, entry.id, entry.workspace);
+    }
+  } catch (error) {
+    const after = telemetryActive ? await readTelemetryAgentRoster(options.sandboxName) : null;
+    const changed = beforeRoster && after && JSON.stringify(after) !== JSON.stringify(beforeRoster);
+    const deleted = beforeRoster?.filter((id) => after && !after.includes(id)) ?? [];
+    const sourceVerified =
+      deleted.length === 0 ||
+      persistVerifiedAgentModelSelections(
+        selectionEntry,
+        await readTelemetryAgentConfiguration(options.sandboxName),
+        [],
+        deleted,
+      );
+    record(
+      "failed",
+      beforeRoster && after ? (changed ? "partial" : "unchanged") : "unavailable",
+      ((!beforeRoster || !after) && telemetryActive) || !sourceVerified,
+    );
+    throw error;
   }
-  for (const entry of diff.toAdd) {
-    if (toolsAgentIds.has(entry.id)) {
-      log(
-        `  ⚠  Manifest declares tools for "${entry.id}"; the live add cannot bake a tool policy. Rerun \`nemoclaw onboard --agents <file> --recreate-sandbox\` to apply it.`,
+  if (telemetryActive) {
+    const after = await readTelemetryAgentRoster(options.sandboxName);
+    const expected = new Set(currentList.map((entry) => entry.id));
+    for (const id of diff.toDelete) expected.delete(id);
+    for (const entry of diff.toAdd) expected.add(entry.id);
+    if (!beforeRoster || !after || JSON.stringify(after) !== JSON.stringify([...expected].sort())) {
+      record("unverified", "unavailable", true);
+    } else {
+      const config = await readTelemetryAgentConfiguration(options.sandboxName);
+      const sourceVerified = persistVerifiedAgentModelSelections(
+        selectionEntry,
+        config,
+        [],
+        diff.toDelete,
+      );
+      record(
+        "completed",
+        diff.rebuildOnlyFields.length > 0 ? "partial" : "applied",
+        !sourceVerified,
       );
     }
-    log(`  Adding agent: ${entry.id}`);
-    await addAgent(options.sandboxName, entry.id, entry.workspace);
   }
   log("  Apply complete.");
 }
