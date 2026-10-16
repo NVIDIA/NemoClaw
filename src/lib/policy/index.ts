@@ -3,6 +3,7 @@
 //
 // Policy preset management — list, load, merge, and apply presets.
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
@@ -1143,11 +1144,13 @@ export async function setPolicyDocument(
       if (outcome.kind === "ambiguous") {
         console.error(
           `  Could not confirm the policy update for sandbox '${sandboxName}': ${redact(outcome.detail)}. ` +
-            "The current live policy differs from the requested document; the update remains unconfirmed.",
+            "The current live policy differs from the requested document; the update remains unconfirmed. " +
+            policyMismatchReason(observedDocument, requestedDocument),
         );
       } else {
         console.error(
-          `  NemoClaw applied the sandbox policy for '${sandboxName}', but the resulting base policy did not match the requested policy. The policy update is incomplete.`,
+          `  NemoClaw applied the sandbox policy for '${sandboxName}', but the resulting base policy did not match the requested policy. The policy update is incomplete. ` +
+            policyMismatchReason(observedDocument, requestedDocument),
         );
       }
       if (options.nonFatal) return false;
@@ -1395,16 +1398,97 @@ function classifyPresetEntries(currentPolicy: string, presetEntries: string): Pr
  * re-include `_provider_*` entries that `policy set` must never submit, so
  * those keys are not part of a successful apply or remove result (#12048).
  */
+function operatorOwnedPolicy(document: string): PolicyDocument {
+  const parsed = parseOpenShellPolicy(document);
+  return parseOpenShellPolicy(stripProviderComposedPolicies(parsed.yamlBody))
+    .policy as PolicyDocument;
+}
+
 function policyDocumentsMatch(left: string, right: string): boolean {
   try {
-    const leftPolicy = parseOpenShellPolicy(left);
-    const rightPolicy = parseOpenShellPolicy(right);
-    return isDeepStrictEqual(
-      parseOpenShellPolicy(stripProviderComposedPolicies(leftPolicy.yamlBody)).policy,
-      parseOpenShellPolicy(stripProviderComposedPolicies(rightPolicy.yamlBody)).policy,
-    );
+    return isDeepStrictEqual(operatorOwnedPolicy(left), operatorOwnedPolicy(right));
   } catch {
     return false;
+  }
+}
+
+const POLICY_DIAGNOSTIC_FIELDS = new Set([
+  "version",
+  "network_policies",
+  "personal_open_internet",
+  "endpoints",
+  "binaries",
+  "allowed_ips",
+  "ports",
+  "port",
+  "host",
+  "protocol",
+  "rules",
+  "enforcement",
+  "name",
+  "path",
+  "method",
+  "allow",
+  "filesystem_policy",
+  "process",
+]);
+
+function policyDiagnosticField(key: string): string {
+  return POLICY_DIAGNOSTIC_FIELDS.has(key)
+    ? key
+    : `key:${createHash("sha256").update(key).digest("hex").slice(0, 12)}`;
+}
+
+/** Report field locations without exposing policy values or user-defined keys. */
+function policyMismatchReason(observedDocument: string, requestedDocument: string): string {
+  try {
+    const differences: string[] = [];
+    const compare = (
+      observed: PolicyValue | undefined,
+      requested: PolicyValue | undefined,
+      location: string,
+      depth: number,
+    ): void => {
+      if (differences.length >= 8 || isDeepStrictEqual(observed, requested)) return;
+      if (observed === undefined || requested === undefined || depth >= 12) {
+        differences.push(
+          `${location} (${observed === undefined ? "missing live" : requested === undefined ? "extra live" : "changed"})`,
+        );
+        return;
+      }
+      if (Array.isArray(observed) && Array.isArray(requested)) {
+        for (
+          let i = 0;
+          i < Math.max(observed.length, requested.length) && differences.length < 8;
+          i += 1
+        ) {
+          compare(observed[i], requested[i], `${location}[${i}]`, depth + 1);
+        }
+      } else if (isPolicyObject(observed) && isPolicyObject(requested)) {
+        for (const key of [
+          ...new Set([...Object.keys(observed), ...Object.keys(requested)]),
+        ].sort()) {
+          if (differences.length >= 8) break;
+          compare(
+            observed[key],
+            requested[key],
+            `${location}.${policyDiagnosticField(key)}`,
+            depth + 1,
+          );
+        }
+      } else {
+        differences.push(`${location} (changed)`);
+      }
+    };
+    compare(
+      operatorOwnedPolicy(observedDocument),
+      operatorOwnedPolicy(requestedDocument),
+      "policy",
+      0,
+    );
+    return `Semantic policy difference at ${differences.join(", ")} (values omitted).`;
+  } catch {
+    return "The requested or live policy could not be compared.";
   }
 }
 

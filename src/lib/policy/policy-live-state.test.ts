@@ -357,10 +357,26 @@ describe("live OpenShell policy mutations", () => {
     );
   });
 
-  it("rejects an ambiguous write when live readback differs", async () => {
+  it("reports policy fields without values when ambiguous readback differs (#13349)", async () => {
+    const credential = ["nvapi", "abcdefghijklmnopqrstuvwxyz"].join("-");
+    livePolicy = YAML.stringify({
+      version: 1,
+      network_policies: {
+        personal_open_internet: {
+          name: "personal_open_internet",
+          endpoints: [{ allowed_ips: ["192.0.2.0/24"], ports: [80, 443] }],
+        },
+        [credential]: {},
+      },
+    });
     const desiredPolicy = YAML.stringify({
       version: 1,
-      network_policies: { requested_but_absent: {} },
+      network_policies: {
+        personal_open_internet: {
+          name: credential,
+          endpoints: [{ allowed_ips: ["203.0.113.0/24"], ports: [80, 443] }],
+        },
+      },
     });
     mocks.setSandboxPolicy.mockReturnValue({
       outcome: { kind: "ambiguous", detail: "openshell: response stream reset" },
@@ -371,6 +387,14 @@ describe("live OpenShell policy mutations", () => {
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("The current live policy differs from the requested document"),
     );
+    const reported = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(reported).toContain(
+      "policy.network_policies.personal_open_internet.endpoints[0].allowed_ips[0]",
+    );
+    expect(reported).toContain("key:");
+    expect(reported).not.toContain(credential);
+    expect(reported).not.toContain("203.0.113.0/24");
+    expect(reported).not.toContain("192.0.2.0/24");
   });
 
   it("rejects an ambiguous write when live readback is unavailable", async () => {
