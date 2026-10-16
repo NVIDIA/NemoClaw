@@ -2381,7 +2381,7 @@ test, and makes `full-e2e` the source of truth for the hard cold-path contract.
 
 ## DGX Station Express
 
-The explicit `dgx-station-express` target runs the local Station Express installer with cached Ultra weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
+The explicit `dgx-station-express` target runs the local Station Express installer with cached Nemotron 3.5 Super VL weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
 
 ## Fixed hosted provider qualification
 
