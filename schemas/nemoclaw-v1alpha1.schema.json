@@ -892,7 +892,7 @@
           "description": "Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef."
         },
         "endpoint": {
-          "description": "Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef.",
+          "description": "Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. With a Kubernetes or OpenShift gateway, `http://SERVICE.NAMESPACE.svc.cluster.local:PORT` with an optional path names a Service in the gateway's cluster; sandboxes reach it through OpenShell, and plan and onboarding do not read its model catalog.",
           "type": "string",
           "x-nemoclaw-required": "Without serviceRef"
         },

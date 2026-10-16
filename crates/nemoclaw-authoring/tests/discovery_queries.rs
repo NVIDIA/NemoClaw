@@ -129,3 +129,42 @@ fn provider_without_an_explicit_api_is_probed_with_its_protocol_default() {
         .unwrap();
     assert_eq!(request.api, InferenceApi::AnthropicMessages);
 }
+
+/// A Kubernetes or OpenShift gateway's sandboxes reach a Service in its
+/// cluster by a DNS name the control host cannot resolve. Onboarding, like
+/// plan, then reads no model catalog for the route.
+#[test]
+fn a_cluster_service_route_has_no_control_host_catalog_to_read() {
+    for driver in ["kubernetes", "openshift"] {
+        let mut value = serde_json::to_value(onboarding_example()).unwrap();
+        value["spec"]["gateway"] = serde_json::json!({
+            "management": "external",
+            "runtime": {"provider": driver},
+            "endpoint": "https://openshell.example.com",
+        });
+        value["spec"]["sandboxes"][0]["image"] = serde_json::json!({
+            "ref": "registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "metadata": {"env": "AGENT_IMAGE_METADATA"},
+        });
+        let provider = &mut value["spec"]["inferenceProviders"][0];
+        provider["endpoint"] = "http://qwen.models.svc.cluster.local:8000/v1".into();
+        provider.as_object_mut().unwrap().remove("credential");
+        let document = Document::parse(value.to_string().as_bytes()).unwrap();
+        assert_eq!(
+            inference_request_for_document(&document, None).unwrap(),
+            None,
+            "{driver}"
+        );
+        for queries in [
+            plan_queries(&document).unwrap(),
+            discovery_queries(&document, None).unwrap(),
+        ] {
+            assert!(
+                queries
+                    .iter()
+                    .all(|query| !matches!(query, DiscoveryQuery::Inference(_))),
+                "{driver}"
+            );
+        }
+    }
+}

@@ -198,7 +198,7 @@ pub struct InferenceProvider {
     pub api: Option<super::InferenceApi>,
     #[serde(default, rename = "endpoint", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef.
+    /// Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. With a Kubernetes or OpenShift gateway, `http://SERVICE.NAMESPACE.svc.cluster.local:PORT` with an optional path names a Service in the gateway's cluster; sandboxes reach it through OpenShell, and plan and onboarding do not read its model catalog.
     #[schemars(extend("x-nemoclaw-required" = "Without serviceRef"))]
     pub endpoint: String,
     #[serde(rename = "credential", skip_serializing_if = "Option::is_none")]

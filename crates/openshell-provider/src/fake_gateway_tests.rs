@@ -212,6 +212,101 @@ async fn gateway_validation_rejections_preserve_details_for_credential_free_muta
     }
 }
 
+/// A Kubernetes gateway's sandboxes reach a model server in its cluster by
+/// the Service's DNS name, and OpenShell decides which addresses that name
+/// may reach. The profile then grants no address, and neither does the
+/// sandbox's rule for it. The gateway composes the profile's rule into the
+/// sandbox's policy and rejects ambiguous endpoints; composed from what this
+/// fake gateway received, the policy has none. An address on one side only is
+/// the ambiguity a cluster gateway reported for an earlier address grant.
+#[tokio::test]
+async fn a_service_name_profile_and_a_sandbox_without_grants_pass_endpoint_ambiguity_checks() {
+    const HOST: &str = "qwen.models.svc.cluster.local";
+    for name in ["local", "hermes-auth"] {
+        let fixture = Fixture::start().await;
+        let client = client(&fixture, Arc::new(Keys));
+        let mut rows = fixture_rows(name);
+        let mut registration = String::new();
+        for (kind, row) in &mut rows {
+            match *kind {
+                "provider_profile" | "provider" => {
+                    row.insert("endpoint".into(), format!("http://{HOST}:8000/v1"));
+                    if *kind == "provider" {
+                        registration = row["name"].clone();
+                    }
+                }
+                "sandbox" => {
+                    // The rule the SDK compiles for this endpoint.
+                    let mut policy: Value = serde_json::from_str(&row["policy_json"]).unwrap();
+                    let rules = policy["managed"].as_object_mut().unwrap();
+                    assert_eq!(rules.len(), 1, "{name}");
+                    for rule in rules.values_mut() {
+                        rule["endpoints"] = serde_json::json!([{
+                            "host": HOST, "port": 8000, "path": "/v1/**",
+                            "protocol": "rest", "access": "full"
+                        }]);
+                    }
+                    row.insert("policy_json".into(), policy.to_string());
+                }
+                _ => {}
+            }
+        }
+        create(&client, &rows).await;
+        let state = fixture.state.lock().unwrap();
+        let [profile] = state.profiles.values().collect::<Vec<_>>()[..] else {
+            panic!("{name}: one inference profile");
+        };
+        let [sandbox] = state.sandboxes.values().collect::<Vec<_>>()[..] else {
+            panic!("{name}: one sandbox");
+        };
+        let policy = sandbox.spec.as_ref().unwrap().policy.clone().unwrap();
+        let rule = &policy.network_policies[&profile.id];
+        assert_eq!(rule.endpoints.len(), 1, "{name}");
+        assert_eq!(profile.endpoints.len(), 1, "{name}");
+        for endpoint in [&rule.endpoints[0], &profile.endpoints[0]] {
+            assert_eq!((endpoint.host.as_str(), endpoint.port), (HOST, 8000));
+            assert!(endpoint.allowed_ips.is_empty(), "{name}");
+        }
+        let rule_name = openshell_policy::provider_rule_name(&registration);
+        let layer = openshell_policy::ProviderPolicyLayer {
+            rule: proto::NetworkPolicyRule {
+                name: rule_name.clone(),
+                endpoints: profile.endpoints.clone(),
+                binaries: profile.binaries.clone(),
+            },
+            rule_name,
+        };
+        let ambiguities = |policy: &proto::SandboxPolicy| {
+            openshell_policy::find_endpoint_ambiguities(
+                &openshell_policy::compose_effective_policy(policy, std::slice::from_ref(&layer)),
+            )
+        };
+        assert_eq!(ambiguities(&policy), [], "{name}");
+        let mut granted = policy.clone();
+        granted
+            .network_policies
+            .get_mut(&profile.id)
+            .unwrap()
+            .endpoints[0]
+            .allowed_ips = vec!["10.96.189.228/32".into()];
+        let [ambiguity] = &ambiguities(&granted)[..] else {
+            panic!("{name}: one ambiguity");
+        };
+        // Either rule may come first: the policy's rules are an unordered map.
+        let [conflict] = &ambiguity.conflicts[..] else {
+            panic!("{name}: one conflict");
+        };
+        assert!(
+            [
+                r#"allowed_ips=["10.96.189.228/32"] vs []"#,
+                r#"allowed_ips=[] vs ["10.96.189.228/32"]"#
+            ]
+            .contains(&conflict.as_str()),
+            "{name}: {conflict}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn credential_requests_reads_and_exec_keep_backend_rejection_text_private() {
     for rpc in [

@@ -441,7 +441,7 @@ Paths:
 |---|---|---|---|---|
 | `api` | [InferenceApi](#inferenceapi) | No | — | Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers; explicit values are preserved for Fabric validation. |
 | `credential` | [Credential](#credential) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef. |
-| `endpoint` | string | Without serviceRef | — | Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. |
+| `endpoint` | string | Without serviceRef | — | Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. With a Kubernetes or OpenShift gateway, `http://SERVICE.NAMESPACE.svc.cluster.local:PORT` with an optional path names a Service in the gateway's cluster; sandboxes reach it through OpenShell, and plan and onboarding do not read its model catalog. |
 | `name` | string | Yes | — | Provider name referenced by model choices. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
 | `serviceRef` | string | No | — | Name of a managed service in spec.services. Excludes endpoint and credential. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
