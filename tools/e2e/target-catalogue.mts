@@ -1058,6 +1058,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
   }),
   managedRuntimeTarget("inference-routing-openclaw-native", {
+    testFile: "test/e2e/live/openclaw-inference-switch.test.ts",
+    selector: "^TC-INF-1",
     displayName: "Inference: OpenClaw native local requests and isolation",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint:
@@ -1259,6 +1261,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("openclaw-inference-switch", {
+    selector: "^openclaw-inference-switch:",
     displayName: "Inference: OpenClaw switches to native NVIDIA and remains responsive",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; native NVIDIA Endpoints provider",
@@ -1302,6 +1305,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("openclaw-compatible-anthropic-inference-switch", {
+    selector: "^openclaw-inference-switch:",
     targetId: "openclaw-inference-switch",
     displayName: "Inference: OpenClaw switches to an Anthropic-compatible endpoint",
     agentRuntime: "openclaw",

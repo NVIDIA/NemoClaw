@@ -86,6 +86,22 @@ describe("OpenClaw native local live selection", () => {
     expect(deps.calls.clearNativeLocalProviderAuthority).toHaveBeenCalledWith(attachment);
   });
 
+  it("preserves the switch failure when restoring local access also fails", async () => {
+    const deps = fixture();
+    deps.calls.updateSandbox.mockReturnValue(false);
+    vi.spyOn(deps.providerAdapter, "attachProvider").mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "failed", message: "reattach rejected" },
+    });
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-router", model: "routed-model", sandboxName: "alpha" },
+        deps,
+      ),
+    ).rejects.toThrow(/Failed to update NemoClaw registry.*restoring.*reattach rejected/s);
+    expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalled();
+  });
+
   it("changes the selected model without touching the shared gateway route", async () => {
     const deps = fixture();
     const result = await runInferenceSet(
