@@ -64,6 +64,7 @@ import {
   prepareNativeSelection,
   isNativeInferenceSelection,
   isLocalInferenceProvider,
+  usesNativeConfigByDefault,
   rollbackNativeSelection,
   detachPreviousNativeBeforePublish,
   restorePreviousNativeAfterFailedPublish,
@@ -746,7 +747,7 @@ export function patchOpenClawInferenceConfig(
   reasoningEffort: ReasoningEffortRequest = { effort: null, explicit: false },
   inheritPrimaryReplyBudget = true,
   nativeEndpointUrl?: string,
-  nativeProvider = true,
+  nativeProvider = usesNativeConfigByDefault(provider, nativeEndpointUrl),
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(
@@ -857,7 +858,7 @@ export function patchHermesInferenceConfig(
   preferredInferenceApi: string | null = null,
   contextWindow?: number,
   nativeEndpointUrl?: string,
-  nativeProvider = true,
+  nativeProvider = usesNativeConfigByDefault(provider, nativeEndpointUrl),
   nativeCredentialHandle?: string,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
@@ -1090,8 +1091,10 @@ async function assertHermesCompatibleAnthropicOpenAiProvider(
   httpsPinProviderBinding: {
     providerType: "openai" | "anthropic";
   } | null = null,
+  nativeProvider = false,
 ): Promise<void> {
   if (
+    nativeProvider ||
     agentName !== "hermes" ||
     provider !== "compatible-anthropic-endpoint" ||
     isBedrockRuntimeEndpoint(endpointUrl)
@@ -1324,6 +1327,7 @@ async function runInferenceSetWithoutHostLock(
     httpsPinProviderBinding,
     routeImpactWarning,
   } = await finalizeInferenceSetRoute({
+    nativeProvider: selectingNative,
     prepared: preparedRoute,
     sandboxName,
     provider,
@@ -1414,6 +1418,7 @@ async function runInferenceSetWithoutHostLock(
     registryMetadata.endpointUrl ?? null,
     deps,
     httpsPinProviderBinding ?? directProviderBinding,
+    selectingNative,
   );
 
   // Read the in-sandbox config *before* mutating the gateway route or registry.
@@ -1542,6 +1547,20 @@ async function runInferenceSetWithoutHostLock(
       expectedAttachment: nativeProviderAuthority,
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
+      endpointUrl: registryMetadata.endpointUrl,
+      credentialEnv: registryMetadata.credentialEnv,
+      inferenceApi: preMutationInferenceApi,
+      beforeAttach: async (receipt) => {
+        previousNativeDetached = await detachPreviousNativeBeforePublish({
+          selectingNative,
+          selectedProvider: provider,
+          selectedAttachment: receipt,
+          previousAttachment: previousNativeAttachment,
+          gatewayName: preparedRoute.gatewayName,
+          sandboxName,
+          deps,
+        });
+      },
       deps,
     });
     nativeProviderAttachment = nativeSelection.attachment;
@@ -1716,9 +1735,10 @@ async function runInferenceSetWithoutHostLock(
       sandboxName,
       deps,
     });
-    previousNativeDetached = await detachPreviousNativeBeforePublish({
+    previousNativeDetached ||= await detachPreviousNativeBeforePublish({
       selectingNative,
       selectedProvider: provider,
+      selectedAttachment: nativeProviderAttachment,
       previousAttachment: previousNativeAttachment,
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
@@ -1752,7 +1772,8 @@ async function runInferenceSetWithoutHostLock(
       ...(openClawConfigSyncPending ? { openClawConfigSyncPending: true as const } : {}),
       ...nativeSelectionRegistryFields(nativeProviderAttachment, previousNativeDetached),
       ...openClawLocalRegistryFields(localSwitch.selected, previousLocalDetached),
-      ...((nativeSelection.endpointUrl ?? localSwitch.selected?.endpointUrl)
+      ...(!nativeProviderAttachment?.custom &&
+      (nativeSelection.endpointUrl ?? localSwitch.selected?.endpointUrl)
         ? { endpointUrl: nativeSelection.endpointUrl ?? localSwitch.selected?.endpointUrl }
         : {}),
     });
@@ -1995,6 +2016,17 @@ async function runInferenceSetWithoutHostLock(
       expectedGatewayName,
     );
     if (error instanceof OpenClawInferenceConfigSyncError) throw error;
+    // Custom endpoints share an injection environment name. Remove the failed
+    // selection before restoring access so the provider composition cannot collide.
+    await rollbackNativeSelection({
+      attachmentChanged: nativeAttachmentChanged,
+      registryCommitted: nativeRegistryCommitted,
+      attachment: nativeProviderAttachment,
+      gatewayName: preparedRoute.gatewayName,
+      sandboxName,
+      error,
+      deps,
+    });
     await restorePreviousOpenClawLocal({
       previous: localSwitch.previous,
       detached: previousLocalDetached,
@@ -2006,15 +2038,6 @@ async function runInferenceSetWithoutHostLock(
       detached: previousNativeDetached,
       committed: previousNativeDetachCommitted,
       previousAttachment: previousNativeAttachment,
-      gatewayName: preparedRoute.gatewayName,
-      sandboxName,
-      error,
-      deps,
-    });
-    await rollbackNativeSelection({
-      attachmentChanged: nativeAttachmentChanged,
-      registryCommitted: nativeRegistryCommitted,
-      attachment: nativeProviderAttachment,
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
       error,

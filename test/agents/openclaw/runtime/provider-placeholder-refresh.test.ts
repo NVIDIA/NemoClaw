@@ -177,6 +177,78 @@ os.fsync = sync_or_fail`
     },
   );
 
+  it.each(
+    [false, true].flatMap((rootMode) =>
+      [
+        { provider: "inference", key: "COMPATIBLE_API_KEY", endpoint: "http://10.1.1.225:8123/v1" },
+        {
+          provider: "anthropic",
+          key: "COMPATIBLE_ANTHROPIC_API_KEY",
+          endpoint: "https://fixture.example",
+        },
+        { provider: "openai", key: "OPENAI_API_KEY", endpoint: "https://api.openai.com/v1" },
+      ].map((route) => ({ ...route, rootMode })),
+    ),
+  )(
+    "refreshes only the persisted $provider credential on restart (root=$rootMode)",
+    async ({ provider, key, endpoint, rootMode }) => {
+      const saved = `openshell:resolve:env:v42_${key}`;
+      const current = `openshell:resolve:env:s${"a".repeat(64)}_${key}`;
+      const run = await runRefresh(
+        {
+          models: {
+            providers: {
+              [provider]: { baseUrl: endpoint, apiKey: saved },
+              unrelated: { baseUrl: endpoint, apiKey: saved },
+            },
+          },
+          channels: { telegram: { botToken: saved } },
+        },
+        { [key]: current },
+        rootMode,
+      );
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.config.models.providers[provider].apiKey).toBe(current);
+      expect(run.config.models.providers.unrelated.apiKey).toBe(saved);
+      expect(run.config.channels.telegram.botToken).toBe(saved);
+    },
+  );
+
+  it.each(
+    [false, true].flatMap((rootMode) =>
+      [
+        "",
+        "raw-do-not-copy",
+        "openshell:resolve:env:v43_OTHER_API_KEY",
+        "openshell:resolve:env:COMPATIBLE_API_KEY",
+      ].map((runtime) => ({ runtime, rootMode })),
+    ),
+  )(
+    "keeps the saved custom credential when the runtime handle is invalid (root=$rootMode, runtime=$runtime)",
+    async ({ runtime, rootMode }) => {
+      const saved = "openshell:resolve:env:v42_COMPATIBLE_API_KEY";
+      const run = await runRefresh(
+        {
+          models: {
+            providers: {
+              inference: {
+                baseUrl: "https://fixture.example/v1",
+                apiKey: saved,
+              },
+            },
+          },
+        },
+        { COMPATIBLE_API_KEY: runtime },
+        rootMode,
+      );
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.config.models.providers.inference.apiKey).toBe(saved);
+      expect(JSON.stringify(run.config)).not.toContain("raw-do-not-copy");
+      expect(run.result.stderr).not.toContain("raw-do-not-copy");
+      expect(run.handoffEnv).not.toContain("raw-do-not-copy");
+    },
+  );
+
   it.each([
     ["https://integrate.api.nvidia.com/v1/", "NVIDIA_INFERENCE_API_KEY"],
     ["https://openrouter.ai/api/v1/", "OPENROUTER_API_KEY"],

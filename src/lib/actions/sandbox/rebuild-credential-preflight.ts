@@ -211,16 +211,18 @@ export async function preflightRebuildCredentials(
     return false;
   }
   if (nativeAttachment) {
-    const nativeCredentialEnv = fixedNativeProviderForAttachment(nativeAttachment).credentialEnv;
+    const definition = fixedNativeProviderForAttachment(nativeAttachment);
+    const nativeCredentialEnv = definition.credentialEnv;
     if (
       !(await checkRebuildGatewayProviderOrBail(rebuildProvider, nativeCredentialEnv, log, bail, {
         nativeAttachment,
       }))
     )
       return false;
+    const sourceCredentialEnv = definition.custom?.credentialEnv ?? nativeCredentialEnv;
     return preflightRebuildHostCredential(
-      { ...sb, credentialEnv: nativeCredentialEnv },
-      rebuildOnboardDependencies.hydrateCredentialEnv(nativeCredentialEnv),
+      { ...sb, credentialEnv: sourceCredentialEnv },
+      rebuildOnboardDependencies.hydrateCredentialEnv(sourceCredentialEnv),
       bail,
     );
   }

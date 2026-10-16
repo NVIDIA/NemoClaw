@@ -197,3 +197,59 @@ it("lists registered sandboxes that retain native NVIDIA provider ownership", as
     vi.unstubAllEnvs();
   }
 });
+
+it.each([
+  ["unchanged binding", {}, true],
+  ["model change", { model: "model-b" }, true],
+  ["endpoint change", { endpointUrl: "https://other.example/v1" }, false],
+  ["API change", { preferredInferenceApi: "openai-responses" }, false],
+  ["credential change", { credentialEnv: "OTHER_KEY" }, false],
+  ["gateway change", { gatewayName: "other-gateway" }, false],
+] as const)(
+  "preserves custom native reservation authority only for its binding: %s",
+  async (_label, changes, retained) => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-custom-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const { customNativeProvider } = await import("../inference/native-provider/custom");
+      const route = {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: "https://custom.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+        gatewayName: "nemoclaw",
+      };
+      const definition = customNativeProvider({
+        provider: route.provider,
+        endpointUrl: route.endpointUrl,
+        credentialEnv: route.credentialEnv,
+        api: route.preferredInferenceApi,
+        allowedIps: ["8.8.8.8"],
+      });
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: definition.profileId,
+        providerName: definition.providerName,
+        providerId: "owned-provider-id",
+        endpointUrl: definition.endpointUrl,
+        allowedIps: definition.allowedIps,
+        custom: definition.custom,
+      };
+      registry.registerSandbox({
+        name: "alpha",
+        ...route,
+        nativeHostedProviderAttachment: receipt,
+      });
+      expect(registry.reserveSandboxInferenceRoute("alpha", { ...route, ...changes })).toBe(true);
+      expect(registry.getSandbox("alpha")?.nativeHostedProviderAttachment).toEqual(
+        retained ? receipt : undefined,
+      );
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+    }
+  },
+);

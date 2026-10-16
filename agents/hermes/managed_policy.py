@@ -66,7 +66,7 @@ def _native_hosted_placeholder(config: dict, base_url: str) -> str | None:
         return None
     url = urlsplit(base_url)
     if (
-        url.scheme != "https"
+        url.scheme not in {"http", "https"}
         or not url.hostname
         or url.username
         or url.password
@@ -74,6 +74,18 @@ def _native_hosted_placeholder(config: dict, base_url: str) -> str | None:
         or "#" in base_url
         or re.search(r"[\\\s]", base_url)
     ):
+        return None
+    custom_credentials = {
+        "compatible-endpoint": "COMPATIBLE_API_KEY",
+        "compatible-anthropic-endpoint": "COMPATIBLE_ANTHROPIC_API_KEY",
+    }
+    custom_credential = custom_credentials.get(provider.strip())
+    if custom_credential is not None:
+        # Match nativeHostedAgentConfig, including the HTTP Bedrock adapter route.
+        if url.hostname in {"inference.local", "localhost", "127.0.0.1", "::1"}:
+            return None
+        return "${" + custom_credential + "}"
+    if url.scheme != "https":
         return None
     if provider.strip() == "hermes-provider":
         # Match the authenticated endpoint contract in canonicalHermesNativeEndpoint.
@@ -177,7 +189,7 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
             )
         expected_key = NVIDIA_INFERENCE_PLACEHOLDER if native_nvidia else HERMES_PROXY_REWRITE_SENTINEL
         api_key = policy_value(config, "model.api_key")
-        hosted_placeholder = None if native_nvidia else _native_hosted_placeholder(config, base_url)
+        hosted_placeholder = _native_hosted_placeholder(config, base_url)
         scoped_nvidia_handle = (
             native_nvidia
             and isinstance(api_key, str)

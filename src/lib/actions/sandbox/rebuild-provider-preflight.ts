@@ -514,7 +514,11 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
   console.error(
     `  ${_RD}Rebuild preflight failed:${R} cannot safely reuse the recorded gateway credential.`,
   );
-  console.error(`  ${rebuildCredentialReuseCondition(decision.condition)}`);
+  console.error(
+    `  ${rebuildCredentialReuseCondition(
+      decision.kind === "reject" ? decision.condition : "gateway-provider-identity",
+    )}`,
+  );
   console.error("  Export the provider credential to use normal validation and upsert.");
   console.error("  Sandbox is untouched — no data was lost.");
   bail("Unsafe gateway credential reuse");

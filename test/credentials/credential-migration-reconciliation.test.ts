@@ -404,3 +404,50 @@ describe("legacy credential reconciliation", () => {
     }
   });
 });
+
+it.each([true, false])(
+  "retires only the persisted native credential value (matches=%s)",
+  async (matches) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "native-credential-migration-"));
+    const legacy = path.join(directory, ".nemoclaw", "credentials.json");
+    fs.mkdirSync(path.dirname(legacy), { recursive: true });
+    fs.writeFileSync(legacy, JSON.stringify({ COMPATIBLE_API_KEY: LEGACY_SECRET }), {
+      mode: 0o600,
+    });
+    try {
+      await withProcessEnv({ HOME: directory, COMPATIBLE_API_KEY: undefined }, async () => {
+        const stagedKeys = stageLegacyCredentialsToEnv();
+        const stagedValues = new Map(stagedKeys.map((key) => [key, process.env[key] ?? ""]));
+        const migrated = new Set<string>();
+        const revalidate = vi.fn();
+        const registration = createCredentialProviderRegistration({
+          root: directory,
+          getGatewayName: () => "gateway",
+          getCredential: () => null,
+          runOpenshell: vi.fn(),
+          updateSession: vi.fn(),
+          stagedLegacyValues: stagedValues,
+          migratedLegacyKeys: migrated,
+        });
+        registration.recordMigratedProviderCredential(
+          "compatible-endpoint",
+          "COMPATIBLE_API_KEY",
+          matches ? LEGACY_SECRET : "different-persisted-key",
+          revalidate,
+        );
+        expect(revalidate).toHaveBeenCalledTimes(1);
+        await finalizeMigration(stagedKeys, migrated, stagedValues);
+        expect(fs.existsSync(legacy)).toBe(!matches);
+        const retainedCredentials = fs
+          .readdirSync(path.dirname(legacy))
+          .filter((name) => name === "credentials.json")
+          .map((name) =>
+            JSON.parse(fs.readFileSync(path.join(path.dirname(legacy), name), "utf8")),
+          );
+        expect(retainedCredentials).toEqual(matches ? [] : [{ COMPATIBLE_API_KEY: LEGACY_SECRET }]);
+      });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
