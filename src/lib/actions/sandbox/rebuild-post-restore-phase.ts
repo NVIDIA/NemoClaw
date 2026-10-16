@@ -28,6 +28,7 @@ import {
   isHermesCronRestoreDrainMarkerRollbackFailure,
   printHermesGatewayRestoreRecovery,
   restartHermesGatewayAfterStateRestore,
+  refreshRestoredHermesInferenceRoute,
   verifyHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
@@ -358,6 +359,32 @@ export async function runRebuildPostRestorePhase(
       return;
     }
 
+    if (targetAgentName === "hermes") {
+      try {
+        await refreshRestoredHermesInferenceRoute(
+          sandboxName,
+          mcpRuntimeSelection,
+          registry.getSandbox,
+          buildSandboxCommandEnvironment(mcpRuntimeSelection),
+        );
+      } catch {
+        // Config parser failures can contain credentials or restored user content.
+        const message = "Hermes inference configuration could not be rebound after state restore.";
+        if (hermesCronRestoreIdentity) {
+          return bailAfterHermesCronRestoreFailure(
+            sandboxName,
+            backupManifest,
+            "Hermes cron dispatch remains drained because inference configuration was not rebound.",
+            message,
+            bail,
+          );
+        }
+        if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+        bail(message);
+        return;
+      }
+    }
+
     // Recreation starts Hermes before restore replaces its durable home. Rebind
     // every Hermes gateway to that restored state before MCP restoration; the
     // cron-gated path additionally proves the replacement process identity.
@@ -588,7 +615,9 @@ export async function runRebuildPostRestorePhase(
       classifyPortableLifecycleReceipt(sandboxName),
       recreatedEntry.lifecycleGeneration,
     );
-    const portablePairing = await settlePortableOpenClawPairing(sandboxName, { portableRequired });
+    const portablePairing = await settlePortableOpenClawPairing(sandboxName, {
+      portableRequired,
+    });
     const pairing =
       portablePairing.kind === "not-portable"
         ? await settleOrdinaryOpenClawPairing(sandboxName)

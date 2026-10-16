@@ -6,6 +6,7 @@ import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtu
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   rebuildBackupPhase,
+  rebuildHermesPostRestore,
   nativeLocalProfile,
 } from "../../../../test/helpers/rebuild-flow-harness";
 import {
@@ -660,6 +661,11 @@ describe("rebuildSandbox flow: credential preflight", () => {
   it.each([null, "hermes"] as const)(
     "rebuilds a native local custom endpoint for %s without a shared logical provider",
     async (agent) => {
+      // This flow fixture stubs recreation and has no live replacement identity.
+      // Post-restore projection has separate owner and orchestration coverage.
+      const refreshRestoredInference = vi
+        .spyOn(rebuildHermesPostRestore, "refreshRestoredHermesInferenceRoute")
+        .mockResolvedValue(undefined);
       const binding = {
         ...nativeLocalRebuildAttachment("vllm-local"),
         provider: "compatible-endpoint" as const,
@@ -688,6 +694,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
       expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
       expect(harness.onboardSpy).toHaveBeenCalledOnce();
       expect(nativeLocalProfile.verifyNativeLocalProviderAttachment).toHaveBeenCalledTimes(3);
+      expect(refreshRestoredInference).toHaveBeenCalledTimes(Number(agent === "hermes"));
     },
   );
 

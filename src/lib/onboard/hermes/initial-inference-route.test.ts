@@ -17,7 +17,19 @@ import {
 const issued = (scope: string) => `openshell:resolve:env:${scope}_NEMOCLAW_LOCAL_INFERENCE_TOKEN`;
 const digest = Symbol("matching read digest");
 
-function fixture(provider: "compatible-endpoint" | "vllm-local" = "compatible-endpoint") {
+type MutableHermesConfig = ConfigObject & {
+  model: ConfigObject;
+  providers: Record<string, ConfigObject>;
+  custom_providers: ConfigObject[];
+};
+
+function fixture(
+  provider:
+    | "compatible-endpoint"
+    | "vllm-local"
+    | "ollama-local"
+    | "llama-cpp-local" = "compatible-endpoint",
+) {
   const binding = {
     provider,
     endpointUrl: "http://host.openshell.internal:8000/v1",
@@ -62,7 +74,10 @@ function fixture(provider: "compatible-endpoint" | "vllm-local" = "compatible-en
     model: "image-model",
     inferenceApi: "openai-completions",
   });
-  Object.defineProperty(config, digest, { value: "original-bytes-sha256", enumerable: false });
+  Object.defineProperty(config, digest, {
+    value: "original-bytes-sha256",
+    enumerable: false,
+  });
   const target = {
     agentName: "hermes",
     configPath: "/sandbox/.hermes/config.yaml",
@@ -105,7 +120,17 @@ function fixture(provider: "compatible-endpoint" | "vllm-local" = "compatible-en
   const revalidate = vi.fn();
   const initialize = createInitialHermesInferenceRoute(deps);
   const run = () => initialize("alpha", "selected-local-model", provider, "gateway-a", revalidate);
-  return { entry, receipt, config, target, deps, events, revalidate, initialize, run };
+  return {
+    entry,
+    receipt,
+    config: config as MutableHermesConfig,
+    target,
+    deps,
+    events,
+    revalidate,
+    initialize,
+    run,
+  };
 }
 
 function bridgeFixture() {
@@ -215,8 +240,12 @@ describe("external Hermes initial native-local route", () => {
           base_url: f.receipt.endpointUrl,
         }),
       ]);
-      expect(f.config.providers.unrelated).toEqual({ api_key: "${UNRELATED_TOKEN}" });
-      expect(f.config.mcp_servers).toEqual({ example: { command: "example-mcp" } });
+      expect(f.config.providers.unrelated).toEqual({
+        api_key: "${UNRELATED_TOKEN}",
+      });
+      expect(f.config.mcp_servers).toEqual({
+        example: { command: "example-mcp" },
+      });
       expect(f.config.display).toEqual({ show_reasoning: false });
       expect(f.entry).toEqual(beforeEntry);
       expect(f.deps.readCredentialHandle).toHaveBeenCalledExactlyOnceWith(
@@ -288,14 +317,20 @@ describe("external Hermes initial native-local route", () => {
     {
       name: "invalid-identity",
       setup(f: ReturnType<typeof fixture>) {
-        f.entry.nativeLocalProviderAttachment = { ...f.receipt, providerName: "other" };
+        f.entry.nativeLocalProviderAttachment = {
+          ...f.receipt,
+          providerName: "other",
+        };
       },
     },
     {
       name: "other-agent",
       setup(f: ReturnType<typeof fixture>) {
         const { agent: _agent, ...binding } = f.receipt;
-        f.entry.nativeLocalProviderAttachment = { ...binding, ...nativeLocalIdentity(binding) };
+        f.entry.nativeLocalProviderAttachment = {
+          ...binding,
+          ...nativeLocalIdentity(binding),
+        };
       },
     },
   ])("refuses $name local receipt", async ({ setup }) => {
@@ -317,7 +352,10 @@ describe("external Hermes initial native-local route", () => {
   it("rejects changed receipt authority after the credential probe without touching config", async () => {
     const f = fixture();
     vi.mocked(f.deps.readCredentialHandle).mockImplementation(async () => {
-      f.entry.nativeLocalProviderAttachment = { ...f.receipt, providerId: "replaced" };
+      f.entry.nativeLocalProviderAttachment = {
+        ...f.receipt,
+        providerId: "replaced",
+      };
       return issued("v7");
     });
     await expect(f.run()).rejects.toThrow("does not match");
@@ -361,5 +399,200 @@ describe("external Hermes initial native-local route", () => {
     await f.run();
     expect(f.deps.restartGateway).toHaveBeenCalledTimes(2);
     expect(f.deps.restartGateway).toHaveBeenLastCalledWith("alpha", "gateway-a");
+  });
+});
+
+describe("restored Hermes native route projection", () => {
+  it.each(["vllm-local", "ollama-local", "llama-cpp-local"] as const)(
+    "retains the effective API for %s despite a stale Responses preference",
+    async (provider) => {
+      const f = fixture(provider);
+      f.entry.preferredInferenceApi = "openai-responses";
+      await f.run();
+      const restored = structuredClone(f.config);
+      vi.mocked(f.deps.readCredentialHandle).mockResolvedValue(issued("v8"));
+      const project = createInitialHermesInferenceRoute(f.deps, {
+        activation: "deferred",
+        workload: "registered",
+        projection: "credential",
+      });
+      await project("alpha", "selected-local-model", provider, "gateway-a", f.revalidate);
+      restored.model.api_key = issued("v8");
+      restored.providers[provider].api_key = issued("v8");
+      restored.custom_providers[0].api_key = issued("v8");
+      expect(f.config).toEqual(restored);
+    },
+  );
+
+  it.each([
+    {
+      name: "changed model",
+      change: (f: ReturnType<typeof fixture>) => {
+        f.config.model.default = "different-model";
+      },
+    },
+    {
+      name: "changed endpoint",
+      change: (f: ReturnType<typeof fixture>) => {
+        f.config.model.base_url = "http://foreign.example/v1";
+      },
+    },
+    {
+      name: "inconsistent credential",
+      change: (f: ReturnType<typeof fixture>) => {
+        f.config.providers["compatible-endpoint"].api_key = issued("v3");
+      },
+    },
+    {
+      name: "missing credential",
+      change: (f: ReturnType<typeof fixture>) => {
+        delete f.config.model.api_key;
+        delete f.config.providers["compatible-endpoint"].api_key;
+        delete f.config.custom_providers[0].api_key;
+      },
+    },
+  ])("does not replace a restored route with $name", async ({ change }) => {
+    const f = fixture();
+    await f.run();
+    change(f);
+    vi.mocked(f.deps.writeSandboxConfig).mockClear();
+    vi.mocked(f.deps.restartGateway).mockClear();
+    const before = structuredClone(f.config);
+    const project = createInitialHermesInferenceRoute(f.deps, {
+      activation: "deferred",
+      workload: "registered",
+      projection: "credential",
+    });
+    await expect(
+      project("alpha", "selected-local-model", "compatible-endpoint", "gateway-a", f.revalidate),
+    ).rejects.toThrow("does not match its registered route");
+    expect(f.config).toEqual(before);
+    expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(f.deps.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: "missing replacement identity", gateway: "gateway-a", revalidate: undefined },
+    { name: "foreign selected gateway", gateway: "foreign-gateway", revalidate: vi.fn() },
+  ])("refuses $name before reading restored configuration", async ({ gateway, revalidate }) => {
+    const f = fixture();
+    const project = createInitialHermesInferenceRoute(f.deps, {
+      activation: "deferred",
+      workload: "registered",
+      projection: "credential",
+    });
+    await expect(
+      project("alpha", "selected-local-model", "compatible-endpoint", gateway, revalidate),
+    ).rejects.toThrow();
+    expect(f.deps.readCredentialHandle).not.toHaveBeenCalled();
+    expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(f.deps.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: "external", setup: (_f: ReturnType<typeof fixture>) => {} },
+    {
+      name: "legacy registered",
+      setup: (f: ReturnType<typeof fixture>) => {
+        delete f.entry.workload;
+      },
+    },
+    {
+      name: "managed",
+      setup: (f: ReturnType<typeof fixture>) => {
+        f.entry.workload = {
+          ...f.entry.workload,
+          kind: "managed-image",
+        } as SandboxEntry["workload"];
+      },
+    },
+  ])(
+    "rebinds the archived reference for $name state without activating twice",
+    async ({ setup }) => {
+      const f = fixture();
+      await f.run();
+      setup(f);
+      f.config.model.context_length = 32768;
+      f.config.model.temperature = 0.25;
+      f.config.providers["compatible-endpoint"].discover_models = false;
+      f.config.custom_providers[0].timeout = 120;
+      f.config.user_model_options = f.config.model;
+      const restored = structuredClone(f.config);
+      vi.mocked(f.deps.readCredentialHandle).mockResolvedValue(issued("v8"));
+      vi.mocked(f.deps.restartGateway).mockClear();
+      f.events.length = 0;
+      const project = createInitialHermesInferenceRoute(f.deps, {
+        activation: "deferred",
+        workload: "registered",
+        projection: "credential",
+      });
+      await project(
+        "alpha",
+        "selected-local-model",
+        "compatible-endpoint",
+        "gateway-a",
+        f.revalidate,
+      );
+      restored.model = { ...restored.model, api_key: issued("v8") };
+      restored.providers["compatible-endpoint"].api_key = issued("v8");
+      restored.custom_providers[0].api_key = issued("v8");
+      expect(f.config).toEqual(restored);
+      expect(f.config.model.api_key).toBe(issued("v8"));
+      expect(f.config.providers["compatible-endpoint"].api_key).toBe(issued("v8"));
+      expect(f.config.custom_providers).toEqual([
+        expect.objectContaining({ api_key: issued("v8") }),
+      ]);
+      expect(f.config.providers.unrelated).toEqual({
+        api_key: "${UNRELATED_TOKEN}",
+      });
+      expect(f.config.mcp_servers).toEqual({
+        example: { command: "example-mcp" },
+      });
+      expect(f.events).toEqual(["lock", "read", "write", "unlock"]);
+      expect(f.deps.restartGateway).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      name: "live replacement",
+      change: (f: ReturnType<typeof fixture>) => {
+        f.revalidate.mockImplementation(() => {
+          throw new Error("live identity changed");
+        });
+      },
+    },
+    {
+      name: "registered workload",
+      change: (f: ReturnType<typeof fixture>) => {
+        f.entry.workload = undefined;
+      },
+    },
+    {
+      name: "provider attachment",
+      change: (f: ReturnType<typeof fixture>) => {
+        f.entry.nativeLocalProviderAttachment = {
+          ...f.receipt,
+          providerId: "foreign",
+        };
+      },
+    },
+  ])("refuses changed $name before overwriting restored configuration", async ({ change }) => {
+    const f = fixture();
+    vi.mocked(f.deps.readCredentialHandle).mockImplementation(async () => {
+      change(f);
+      return issued("v8");
+    });
+    const project = createInitialHermesInferenceRoute(f.deps, {
+      activation: "deferred",
+      workload: "registered",
+      projection: "credential",
+    });
+    await expect(
+      project("alpha", "selected-local-model", "compatible-endpoint", "gateway-a", f.revalidate),
+    ).rejects.toThrow();
+    expect(f.deps.readSandboxConfig).not.toHaveBeenCalled();
+    expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(f.deps.restartGateway).not.toHaveBeenCalled();
   });
 });

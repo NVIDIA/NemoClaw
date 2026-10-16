@@ -53,6 +53,9 @@ export const onboardCredentialEnv = requireDist("../../onboard/credential-env.js
 export const managedWorkloadRebuild = requireDist(
   "../../onboard/workload/rebuild.js",
 ) as typeof import("../../src/lib/onboard/workload/rebuild");
+export const rebuildHermesPostRestore = requireDist(
+  "./rebuild-hermes-post-restore.js",
+) as typeof import("../../src/lib/actions/sandbox/rebuild-hermes-post-restore");
 export const rebuildBackupPhase = requireDist(
   "./rebuild-backup-phase.js",
 ) as typeof import("../../src/lib/actions/sandbox/rebuild-backup-phase");

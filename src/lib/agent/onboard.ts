@@ -371,6 +371,9 @@ export async function handleAgentSetup(
         }
       },
     });
+  };
+
+  const initializeReadyAgentInference = async (): Promise<void> => {
     if (agent.name === "hermes") {
       await initializeHermesInferenceRoute(
         sandboxName,
@@ -439,6 +442,7 @@ export async function handleAgentSetup(
         // to the Dockerfile's zero-byte placeholder. Mirrors the OpenClaw
         // path in src/lib/onboard.ts. Fixes #3999 for non-OpenClaw agents.
         await syncNemoClawConfig();
+        await initializeReadyAgentInference();
         revalidateSandboxIdentity?.(`record resumed agent setup for sandbox '${sandboxName}'`);
         skippedStepMessage("agent_setup", sandboxName);
         await recordStepComplete("agent_setup", { sandboxName, provider, model });
@@ -525,6 +529,9 @@ export async function handleAgentSetup(
       },
     });
     if (healthy) {
+      // Hermes exposes its API only after first-start readiness. Restarting to
+      // apply inference before that barrier can terminate the sandbox entrypoint.
+      await initializeReadyAgentInference();
       revalidateSandboxIdentity?.(`record completed agent setup for sandbox '${sandboxName}'`);
       console.log(`  \u2713 ${agent.displayName} gateway is healthy`);
     } else {
