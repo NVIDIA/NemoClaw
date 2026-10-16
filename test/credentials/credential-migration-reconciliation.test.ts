@@ -188,7 +188,7 @@ describe("legacy credential reconciliation", () => {
           const providerMissing = { status: 1, stdout: "", stderr: "provider not found" };
           let providerCreated = false;
           const success = { status: 0, stdout: "", stderr: "" };
-          const runOpenshell = vi.fn((args: string[]) => {
+          const runOpenshell = vi.fn((args: string[], _options?: Record<string, unknown>) => {
             const isCreate = args[0] === "provider" && args[1] === "create";
             const result =
               args.includes("profile") && args.includes("export")
