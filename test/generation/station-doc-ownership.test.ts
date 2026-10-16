@@ -122,7 +122,7 @@ describe("DGX Station documentation ownership", () => {
     expect(stationPreparation).toContain("## Next Step\n");
     expect(stationPreparation).not.toContain("## Next Steps\n");
     expect(stationPreparation).not.toContain(
-      "Station Express selects `nemotron-3-ultra-550b-a55b`",
+      "It selects distributed `nemotron-3-ultra-550b-a55b` only when a reciprocal pair qualifies.",
     );
     expect(stationPreparation).not.toContain("owner-only pair state");
     expect(stationPreparation).not.toContain("Trusted Pair Boundary");
@@ -131,7 +131,12 @@ describe("DGX Station documentation ownership", () => {
     expect(dualStationVllmSetup).not.toContain(
       "Configure SSH host-key trust and non-interactive authentication",
     );
-    expect(dualStationVllmSetup).toContain("Station Express selects `nemotron-3-ultra-550b-a55b`");
+    expect(dualStationVllmSetup).toContain(
+      "It selects distributed `nemotron-3-ultra-550b-a55b` only when a reciprocal pair qualifies.",
+    );
+    expect(dualStationVllmSetup).toContain(
+      "If no trusted pair qualifies, a new single-Station Express install selects Nemotron 3.5 Super VL.",
+    );
     expect(dualStationVllmSetup).toContain(
       "preparation binds the preparing non-root account's UID",
     );
