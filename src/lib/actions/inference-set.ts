@@ -2056,7 +2056,7 @@ async function runInferenceSetWithoutHostLock(
       error,
       deps,
     });
-    await rollbackOpenClawLocalSwitch({
+    const localRollbackFailure = await rollbackOpenClawLocalSwitch({
       selection: localSwitch,
       committed: localRegistryCommitted,
       sandboxName,
@@ -2069,7 +2069,7 @@ async function runInferenceSetWithoutHostLock(
       detached: previousLocalDetached,
       committed: previousLocalDetachCommitted,
       sandboxName,
-      error,
+      error: localRollbackFailure,
       deps,
     });
     await restorePreviousNativeAfterFailedPublish({

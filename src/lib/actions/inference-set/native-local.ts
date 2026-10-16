@@ -116,8 +116,8 @@ export async function rollbackOpenClawLocalSwitch(input: {
   gatewayName: string;
   deps: InferenceSetDeps;
   error: unknown;
-}) {
-  if (!input.selection.prepare || input.committed || !input.selection.selected) return;
+}): Promise<unknown> {
+  if (!input.selection.prepare || input.committed || !input.selection.selected) return input.error;
   try {
     await detachNativeLocalProvider({
       adapter: input.deps.providerAdapter,
@@ -136,10 +136,11 @@ export async function rollbackOpenClawLocalSwitch(input: {
         "The failed local selection remains attached; retain its authority for repair.",
       );
   } catch (cleanupError) {
-    throw new InferenceSetError(
-      `${input.error instanceof Error ? input.error.message : String(input.error)}\nLocal selection rollback failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+    return new InferenceSetError(
+      `${input.error instanceof Error ? input.error.message : String(input.error)}\nLocal selection rollback failed for provider '${input.selection.selected.providerName}' (retained authority): ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
     );
   }
+  return input.error;
 }
 
 export function openClawLocalProbeFields(
@@ -196,7 +197,7 @@ export async function restorePreviousOpenClawLocal(input: {
     const recoveryDetail =
       reattachError instanceof Error ? reattachError.message : String(reattachError);
     return new InferenceSetError(
-      `${detail}\n  Native local provider access was detached before the failed switch, but restoring the attachment failed: ${recoveryDetail}. Retain this sandbox and its provider authority for repair.`,
+      `${detail}\n  Native local provider access was detached before the failed switch, but restoring provider '${input.previous.providerName}' failed: ${recoveryDetail}. Retain this sandbox and its provider authority for repair.`,
       input.error instanceof InferenceSetError ? input.error.exitCode : 1,
     );
   }

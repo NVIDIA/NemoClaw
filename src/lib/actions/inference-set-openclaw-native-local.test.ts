@@ -156,6 +156,53 @@ describe("OpenClaw native local live selection", () => {
     expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalledWith(attachment);
   });
 
+  it("restores prior access even when replacement retirement fails", async () => {
+    const { deps, next } = switchingFixture();
+    deps.calls.updateSandbox.mockReturnValue(false);
+    vi.spyOn(deps.providerAdapter, "deleteProvider").mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "failed", message: "retirement rejected" },
+    });
+    await expect(
+      runInferenceSet({ provider: "vllm-local", model: "new-model", sandboxName: "alpha" }, deps),
+    ).rejects.toThrow(/Failed to update NemoClaw registry.*removal was not confirmed/s);
+    expect(
+      await deps.providerAdapter.listProviderAttachments({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        sandboxName: "alpha",
+      }),
+    ).toMatchObject({ ok: true, value: { names: [attachment.providerName] } });
+    expect(deps.getNativeLocalProviderAuthority(next.providerName)).toEqual(next);
+    expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalled();
+  });
+
+  it("identifies both retained providers when cleanup and restoration fail", async () => {
+    const { deps, next } = switchingFixture();
+    deps.calls.updateSandbox.mockReturnValue(false);
+    vi.spyOn(deps.providerAdapter, "deleteProvider").mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "failed", message: "retirement rejected" },
+    });
+    const attach = deps.providerAdapter.attachProvider;
+    vi.spyOn(deps.providerAdapter, "attachProvider").mockImplementation(async (request) =>
+      request.providerName === attachment.providerName
+        ? {
+            ok: false,
+            error: { kind: "command", reason: "failed", message: "restoration rejected" },
+          }
+        : attach(request),
+    );
+    const result = runInferenceSet(
+      { provider: "vllm-local", model: "new-model", sandboxName: "alpha" },
+      deps,
+    );
+    await expect(result).rejects.toThrow(/removal was not confirmed.*restoration rejected/s);
+    await expect(result).rejects.toThrow(attachment.providerName);
+    await expect(result).rejects.toThrow(next.providerName);
+    expect(deps.getNativeLocalProviderAuthority(next.providerName)).toEqual(next);
+    expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalled();
+  });
+
   it("changes the selected model without touching the shared gateway route", async () => {
     const deps = fixture();
     const result = await runInferenceSet(
