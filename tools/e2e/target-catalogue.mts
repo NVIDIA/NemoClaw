@@ -1071,6 +1071,11 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: false,
     owningPaths: [
+      "src/lib/actions/inference-set/native-local.ts",
+      "src/lib/inference/native-local/",
+      "src/lib/onboard/openclaw/initial-inference-route.ts",
+      "src/lib/onboard/setup-inference.ts",
+      "src/lib/actions/sandbox/rebuild-preflight-guards.ts",
       "test/e2e/fixtures/inference-routing-openclaw-native.ts",
       "tools/e2e/onboard-timeout-contract.mts",
     ],

@@ -15,25 +15,25 @@
     "testFileCount": 78,
     "liveFileCount": 187,
     "direct": {
-      "expectCalls": 1301,
-      "matcherAssertions": 1280,
+      "expectCalls": 1302,
+      "matcherAssertions": 1281,
       "nodeAssertions": 104,
       "namedAssertionHelpers": 425,
       "failCalls": 0,
       "throwGuards": 50,
-      "objectFieldAssertions": 189,
+      "objectFieldAssertions": 188,
       "assertionPoints": 2048,
       "generatedProbeBlocks": 86,
       "generatedProbeConditions": 215
     },
     "unique": {
-      "expectCalls": 1723,
-      "matcherAssertions": 1697,
+      "expectCalls": 1724,
+      "matcherAssertions": 1698,
       "nodeAssertions": 127,
       "namedAssertionHelpers": 669,
       "failCalls": 1,
       "throwGuards": 526,
-      "objectFieldAssertions": 266,
+      "objectFieldAssertions": 265,
       "assertionPoints": 3286,
       "generatedProbeBlocks": 208,
       "generatedProbeConditions": 720
@@ -229,9 +229,9 @@
         14
       ],
       "test/e2e/live/inference-routing-openclaw-native.test.ts": [
-        19,
+        20,
         32,
-        45,
+        46,
         76,
         2
       ],
