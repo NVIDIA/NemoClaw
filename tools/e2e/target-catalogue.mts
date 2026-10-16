@@ -23,6 +23,8 @@ import {
   ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES,
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
+  OPENCLAW_NATIVE_LOCAL_TARGET_TIMEOUT_MINUTES,
+  PI_QUALIFICATION_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
 import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import {
@@ -314,6 +316,8 @@ const PI_IMAGE_SOURCE_OWNING_PATHS = [
   "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
   "scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch",
   "scripts/upgrade-bundled-npm.mts",
+  "src/lib/core/endpoint-url-safety.ts",
+  "src/lib/inference/native-local/agent-config.ts",
   "src/lib/inference/native-provider/agent-config.ts",
   "src/lib/inference/native-nvidia/contract.ts",
   "src/lib/inference/native-provider/contract.ts",
@@ -1056,6 +1060,21 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     cloudflared: true,
     owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
   }),
+  managedRuntimeTarget("inference-routing-openclaw-native", {
+    displayName: "Inference: OpenClaw native local requests and isolation",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint:
+      "Ubuntu; authenticated llama.cpp and credentialless vLLM fixtures",
+    profile: "standard",
+    timeoutMinutes: OPENCLAW_NATIVE_LOCAL_TARGET_TIMEOUT_MINUTES,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: false,
+    owningPaths: [
+      "test/e2e/fixtures/inference-routing-openclaw-native.ts",
+      "tools/e2e/onboard-timeout-contract.mts",
+    ],
+  }),
   dockerOnlyTarget("llama-cpp-generic-gpu", {
     displayName: "Inference: completes an agent turn with llama.cpp on a generic NVIDIA GPU",
     agentRuntime: "openclaw",
@@ -1330,10 +1349,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     targetId: "pi-agent-qualification",
     displayName: "Pi: qualifies managed runtime on Linux AMD64",
     agentRuntime: "pi",
-    environmentOrInferenceEndpoint: "Linux AMD64 Docker; NVIDIA hosted inference",
+    environmentOrInferenceEndpoint: "Linux AMD64 Docker; NVIDIA hosted and native-local inference",
     profile: "nvidia-api",
     testFile: "test/e2e/live/pi-agent-qualification.test.ts",
-    timeoutMinutes: 100,
+    timeoutMinutes: PI_QUALIFICATION_TARGET_TIMEOUT_MINUTES,
     installMode: "authenticated",
     installNonInteractive: true,
     restoreCli: true,

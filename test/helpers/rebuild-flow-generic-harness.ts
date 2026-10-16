@@ -460,7 +460,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
   const currentSandboxEntry = {
     name: "alpha",
-    provider: "ollama-local",
+    provider: "build",
     model: "nvidia/nemotron",
     policies: ["npm"],
     agent: null,

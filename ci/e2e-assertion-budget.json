@@ -1,5 +1,5 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nInitial no-growth baseline for issue #10934 and Epic #10920. The epic reference remains fixed at fe18b2f004e2304c52db33cf7bb5895828197f9a. Current main is lower because #10722 removed the live Shields assertion suites before this ratchet landed. PR #10341 adds the accepted public deferred-install and same-home credential continuation boundary for Hermes and Deep Agents Code; existing per-file budgets remain unchanged. PR #13055 adds five explicitly approved assertions for the native Deep Agents Code OpenRouter request in the existing hosted OpenRouter target.",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nInitial no-growth baseline for issue #10934 and Epic #10920. The epic reference remains fixed at fe18b2f004e2304c52db33cf7bb5895828197f9a. Current main is lower because #10722 removed the live Shields assertion suites before this ratchet landed. PR #10341 adds the accepted public deferred-install and same-home credential continuation boundary for Hermes and Deep Agents Code; existing per-file budgets remain unchanged. PR #13055 adds five explicitly approved assertions for the native Deep Agents Code OpenRouter request in the existing hosted OpenRouter target. PR #13293 adds an independently timed OpenClaw native-local live target with authenticated and credentialless consumer checks, model switching, rebuild/restart, sibling denial and credential isolation.",
   "schemaVersion": 1,
   "issue": 10934,
   "epic": 10920,
@@ -12,29 +12,29 @@
     "epicLiveExpectCalls": 2677
   },
   "limits": {
-    "testFileCount": 77,
-    "liveFileCount": 186,
+    "testFileCount": 78,
+    "liveFileCount": 187,
     "direct": {
-      "expectCalls": 1272,
-      "matcherAssertions": 1251,
+      "expectCalls": 1301,
+      "matcherAssertions": 1280,
       "nodeAssertions": 104,
-      "namedAssertionHelpers": 420,
+      "namedAssertionHelpers": 425,
       "failCalls": 0,
       "throwGuards": 50,
-      "objectFieldAssertions": 181,
-      "assertionPoints": 2006,
+      "objectFieldAssertions": 189,
+      "assertionPoints": 2048,
       "generatedProbeBlocks": 86,
       "generatedProbeConditions": 215
     },
     "unique": {
-      "expectCalls": 1694,
-      "matcherAssertions": 1668,
+      "expectCalls": 1723,
+      "matcherAssertions": 1697,
       "nodeAssertions": 127,
-      "namedAssertionHelpers": 664,
+      "namedAssertionHelpers": 669,
       "failCalls": 1,
       "throwGuards": 526,
-      "objectFieldAssertions": 258,
-      "assertionPoints": 3244,
+      "objectFieldAssertions": 266,
+      "assertionPoints": 3286,
       "generatedProbeBlocks": 208,
       "generatedProbeConditions": 720
     },
@@ -227,6 +227,13 @@
         29,
         87,
         14
+      ],
+      "test/e2e/live/inference-routing-openclaw-native.test.ts": [
+        19,
+        32,
+        45,
+        76,
+        2
       ],
       "test/e2e/live/inference-routing-provider-smoke.test.ts": [
         27,
@@ -439,10 +446,10 @@
         2
       ],
       "test/e2e/live/pi-agent-qualification.test.ts": [
-        29,
-        36,
-        29,
-        52,
+        39,
+        46,
+        39,
+        62,
         4
       ],
       "test/e2e/live/podman-cpu-lifecycle.test.ts": [

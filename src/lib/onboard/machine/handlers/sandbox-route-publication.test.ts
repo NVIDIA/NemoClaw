@@ -434,11 +434,11 @@ describe("sandbox route publication", () => {
   });
 });
 
-function nativeRecreationHarness() {
+function nativeRecreationHarness(agent = "langchain-deepagents-code") {
   const session = createSession({ sandboxName: "saved" });
   const row: SandboxEntry = {
     name: "saved",
-    agent: "langchain-deepagents-code",
+    agent,
     provider: "vllm-local",
     model: "meta-llama",
     endpointUrl: "http://host.openshell.internal:8000/v1",
@@ -447,6 +447,7 @@ function nativeRecreationHarness() {
   };
   const source = structuredClone(row);
   const attachment = nativeLocalSetupReceipt({
+    ...(agent === "pi" ? { agent: "pi" as const } : {}),
     provider: "vllm-local",
     sandboxName: "saved",
     gatewayName: "nemoclaw",
@@ -482,9 +483,9 @@ function nativeRecreationHarness() {
   return { row, source, attachment, session, reserve, deps, calls, run };
 }
 
-describe("legacy DCode recreation publication", () => {
+describe.each(["langchain-deepagents-code", "pi"])("legacy %s recreation publication", (agent) => {
   it("publishes the native attachment only at the post-backup replacement seam (#13197)", async () => {
-    const { row, source, attachment, session, reserve, deps, run } = nativeRecreationHarness();
+    const { row, source, attachment, session, reserve, deps, run } = nativeRecreationHarness(agent);
     deps.createSandbox = async (...args: unknown[]) => {
       expect(row).toEqual(source);
       expect(reserve).not.toHaveBeenCalled();
@@ -511,7 +512,7 @@ describe("legacy DCode recreation publication", () => {
   });
 
   it("preserves the legacy source when backup rejects recreation (#13197)", async () => {
-    const { row, source, reserve, deps, run } = nativeRecreationHarness();
+    const { row, source, reserve, deps, run } = nativeRecreationHarness(agent);
     deps.createSandbox = async () => {
       throw new Error("backup refused");
     };
@@ -521,7 +522,7 @@ describe("legacy DCode recreation publication", () => {
   });
 
   it("rejects a changed legacy source before starting recreation (#13197)", async () => {
-    const { row, reserve, calls, run } = nativeRecreationHarness();
+    const { row, reserve, calls, run } = nativeRecreationHarness(agent);
     row.model = "another-model";
     await expect(run()).rejects.toThrow("legacy route ownership changed");
     expect(reserve).not.toHaveBeenCalled();

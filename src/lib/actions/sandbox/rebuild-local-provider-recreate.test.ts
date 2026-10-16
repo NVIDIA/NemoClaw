@@ -151,7 +151,7 @@ describe("rebuild local-provider recreation", () => {
       let setupResult: SetupResult | undefined;
       const routeApplier = makeRouteApplier();
       harness = createRebuildFlowHarness({
-        sandboxEntry: { provider, model, credentialEnv: null },
+        sandboxEntry: { agent: "hermes", provider, model, credentialEnv: null },
         onboard: async (session) => {
           const callsBeforeSetup = harness.runOpenshellSpy.mock.calls.map(
             (call) => call[0] as string[],
@@ -231,7 +231,7 @@ describe("rebuild local-provider recreation", () => {
       });
       expect(calls.some((args) => args[0] === "provider" && args[1] === "update")).toBe(false);
       expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith("alpha", harness.backupPath, {
-        targetAgentType: "openclaw",
+        targetAgentType: "hermes",
       });
     },
   );

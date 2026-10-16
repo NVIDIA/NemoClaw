@@ -251,6 +251,9 @@ describe("rebuild legacy local route preflight", () => {
     },
     { agent: "langchain-deepagents-code", provider: "ollama-local", createdAt: undefined },
     { agent: "langchain-deepagents-code", provider: "vllm-local", createdAt: undefined },
+    { agent: "openclaw", provider: "ollama-local", createdAt: undefined },
+    { agent: "openclaw", provider: "vllm-local", createdAt: undefined },
+    { agent: "openclaw", provider: "llama-cpp-local", createdAt: undefined },
     {
       agent: "langchain-deepagents-code",
       provider: "ollama-local",
@@ -281,6 +284,21 @@ describe("rebuild legacy local route preflight", () => {
     },
   );
 
+  it("leaves Local NIM on its existing shared rebuild path", () => {
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+    const entry = {
+      name: "alpha",
+      agent: "openclaw",
+      provider: "vllm-local",
+      model: "nim-model",
+      nimContainer: "nim-alpha",
+    } as RebuildSandboxEntry;
+    expect(blockRebuildOnLegacySharedLocalRoute("alpha", entry, bail)).toBe(false);
+    expect(bail).not.toHaveBeenCalled();
+  });
+
   it("leaves attached selections on their existing preflight path", () => {
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
@@ -298,6 +316,28 @@ describe("rebuild legacy local route preflight", () => {
       blockRebuildOnLegacySharedLocalRoute(
         "alpha",
         { ...entry, pendingRouteReservation: true },
+        bail,
+      ),
+    ).toBe(false);
+    expect(bail).not.toHaveBeenCalled();
+  });
+});
+
+describe("Pi shared local rebuild compatibility", () => {
+  it("keeps a published Pi shared route eligible for rebuild (#12975)", () => {
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+    expect(
+      blockRebuildOnLegacySharedLocalRoute(
+        "alpha",
+        {
+          name: "alpha",
+          createdAt: "2026-09-01T00:00:00Z",
+          agent: "pi",
+          provider: "ollama-local",
+          model: "local-model",
+        },
         bail,
       ),
     ).toBe(false);

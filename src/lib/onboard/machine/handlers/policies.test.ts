@@ -8,6 +8,43 @@ import { createPolicyHandlerDeps, basePolicyHandlerOptions } from "./policies-te
 import { handlePoliciesState } from "./policies";
 
 describe("policy state handler", () => {
+  it("verifies a resumed published Pi local route without a native attachment", async () => {
+    const { deps, calls } = createPolicyHandlerDeps({
+      getActiveSandbox: vi.fn(() => ({
+        agent: "pi",
+        provider: "ollama-local",
+        model: "qwen3:8b",
+        endpointUrl: "http://host.openshell.internal:11435/v1",
+        createdAt: "2026-09-01T00:00:00Z",
+      })),
+    });
+    await handlePoliciesState({
+      ...basePolicyHandlerOptions(deps),
+      agent: { name: "pi" },
+      resume: true,
+      provider: "ollama-local",
+      model: "qwen3:8b",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+    });
+    expect(calls.smoke).toHaveBeenCalledWith(
+      expect.not.objectContaining({ nativeLocalProviderAttachment: expect.anything() }),
+    );
+  });
+
+  it("requires a native attachment for a fresh Pi local selection", async () => {
+    const { deps, calls } = createPolicyHandlerDeps();
+    await expect(
+      handlePoliciesState({
+        ...basePolicyHandlerOptions(deps),
+        agent: { name: "pi" },
+        provider: "ollama-local",
+        model: "qwen3:8b",
+        endpointUrl: "http://host.openshell.internal:11435/v1",
+      }),
+    ).rejects.toThrow("requires its recorded provider attachment");
+    expect(calls.setupPolicies).not.toHaveBeenCalled();
+  });
+
   it("resumes from the live OpenShell preset selection", async () => {
     const prepare = vi.fn(() => ({
       policyPresets: ["npm"],

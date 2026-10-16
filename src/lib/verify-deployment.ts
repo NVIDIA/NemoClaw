@@ -34,6 +34,7 @@ import { retryUntilAsync } from "./core/retry";
 import { isNativeNvidiaProvider } from "./inference/native-nvidia";
 import { requireHostedProviderAttachment } from "./inference/native-provider/hosted-attachment";
 import {
+  isPersistedPiSharedLocalInferenceRoute,
   normalizeNativeLocalBinding,
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInferenceForAgent,
@@ -1001,6 +1002,7 @@ export function onboardInferenceVerificationContext(
   agentName: string,
   flow: Pick<InferenceInvocationContext, "model" | "provider" | "preferredInferenceApi"> & {
     endpointUrl?: string | null;
+    nimContainer?: string | null;
   },
   attachment?:
     | (Pick<
@@ -1008,15 +1010,22 @@ export function onboardInferenceVerificationContext(
         "nativeLocalProviderAttachment" | "nativeHostedProviderAttachment"
       > & {
         nimContainer?: string | null;
+        agent?: string | null;
+        provider?: string | null;
+        model?: string | null;
+        endpointUrl?: string | null;
+        createdAt?: string | null;
+        pendingRouteReservation?: boolean;
       })
     | null,
 ): { route: InferenceRouteContext; invocation: InferenceInvocationContext } {
-  const nativeLocalExpected = usesNativeLocalInferenceForAgent(
-    agentName,
-    flow.provider,
-    flow.endpointUrl,
-    flow.provider === "vllm-local" && Boolean(attachment?.nimContainer),
-  );
+  const nativeLocalExpected =
+    usesNativeLocalInferenceForAgent(
+      agentName,
+      flow.provider,
+      flow.endpointUrl,
+      flow.provider === "vllm-local" && Boolean(attachment?.nimContainer),
+    ) && !isPersistedPiSharedLocalInferenceRoute(attachment, flow);
   const nativeLocalProviderAttachment =
     flow.provider === "vllm-local" && attachment?.nimContainer
       ? undefined

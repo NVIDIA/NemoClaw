@@ -60,6 +60,7 @@
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
         "src/lib/inference/llama-cpp/managed-installer.test.ts",
         "src/lib/onboard/setup-nim-flow.test.ts",
+        "test/onboarding/onboard-host-local-inference-routing.test.ts",
         "test/security/admin-approval-helper.test.ts",
         "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts",
@@ -188,6 +189,7 @@
       ],
       "fast": [
         "src/lib/inference/native-local.test.ts",
+        "test/onboarding/onboard-host-local-inference-routing.test.ts",
         "test/agents/deepagents/langchain-deepagents-code-config.test.ts",
         "nemoclaw/src/shared/openshell-gateway-health-sdk.test.ts",
         "nemoclaw/src/blueprint/runner.test.ts",
@@ -200,6 +202,16 @@
         "test/onboarding/onboard-inference-gateway-scope.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
         "test/e2e/support/hosted-provider-smoke-selection.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/inference-routing-openclaw-native.test.ts",
+      "liveSources": ["test/e2e/fixtures/inference-routing-openclaw-native.ts"],
+      "fast": [
+        "src/lib/inference/native-local.test.ts",
+        "src/lib/actions/inference-set-openclaw-native-local.test.ts",
+        "test/onboarding/onboard-host-local-inference-routing.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts"
       ]
     },
     {

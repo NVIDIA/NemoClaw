@@ -539,6 +539,9 @@ export function nativeLocalReservationStatus(input: {
     input.entry.nativeLocalProviderAttachment,
   );
   return attachment &&
+    (input.agentName === "langchain-deepagents-code"
+      ? attachment.agent === undefined
+      : attachment.agent === input.agentName) &&
     attachment.sandboxName === input.sandboxName &&
     attachment.gatewayName === input.gatewayName &&
     attachment.provider === input.provider &&

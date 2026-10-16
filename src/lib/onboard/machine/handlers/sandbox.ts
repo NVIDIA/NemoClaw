@@ -1314,11 +1314,16 @@ class SandboxStateFlow<
   ): SandboxEntry | null {
     const staged = this.options.stagedNativeLocalRecreation;
     if (!staged) return entry;
+    const selectedAgent = (this.options.agent as { name?: string } | null)?.name;
+    const matchesAgent =
+      selectedAgent === "langchain-deepagents-code"
+        ? staged.attachment.agent === undefined
+        : selectedAgent === "pi" && staged.attachment.agent === "pi";
     if (
       this.options.resume ||
       !this.options.recreateSandbox(false) ||
       !this.options.session?.sessionId ||
-      (this.options.agent as { name?: string } | null)?.name !== "langchain-deepagents-code" ||
+      !matchesAgent ||
       staged.attachment.sandboxName !== sandboxName ||
       staged.attachment.gatewayName !== this.options.gatewayName ||
       staged.attachment.provider !== this.options.provider ||

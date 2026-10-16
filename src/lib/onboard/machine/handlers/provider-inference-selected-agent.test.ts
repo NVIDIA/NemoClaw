@@ -8,7 +8,7 @@ import { createSetupInference, type SetupInferenceDeps } from "../../setup-infer
 import { handleProviderInferenceState } from "./provider-inference";
 import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
 
-it.each(["langchain-deepagents-code"])(
+it.each(["langchain-deepagents-code", "pi"])(
   "admits selected %s local inference when the prior registration was Hermes",
   async (name) => {
     const { deps, calls } = createDeps();
@@ -43,14 +43,14 @@ it.each(["langchain-deepagents-code"])(
   },
 );
 
-it.each(["openclaw", "pi", "hermes"])(
+it.each(["openclaw", "hermes"])(
   "keeps selected %s local inference on the existing shared route",
   async (name) => {
     const { deps, calls } = createDeps();
     const session = createSession();
     calls.setupNim.mockResolvedValue({
       ...baseSelection,
-      provider: name === "pi" ? "compatible-endpoint" : "ollama-local",
+      provider: "ollama-local",
       model: "local-model",
       endpointUrl: "http://host.openshell.internal:11434/v1",
       credentialEnv: null,
