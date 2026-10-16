@@ -2282,6 +2282,7 @@ const getSetupInferenceDeps = (): SetupInferenceDeps => ({
   isNonInteractive,
   updateSandbox: registry.reserveSandboxInferenceRoute,
   getSandbox: registry.getSandbox,
+  getSandboxRecreateObservation,
   listSandboxes: registry.listSandboxes,
   unloadOllamaModels,
   hermesProviderAuth,
@@ -2369,7 +2370,6 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
       promptOrDefault,
     }),
 });
-
 const stageSandboxCredentialProviders = (
   input: import("./onboard/credential-provider-registration").StageSandboxCredentialProvidersInput<AgentDefinition | null>,
 ) =>

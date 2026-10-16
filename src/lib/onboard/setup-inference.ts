@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SandboxReuseHelpers } from "./sandbox-reuse";
 import type {
   NativeLocalProvider,
   NativeLocalProviderAttachment,
@@ -48,6 +49,7 @@ import type {
 import { getManagedVllmProviderBinding, shouldFrontOllamaWithProxy } from "../inference/local";
 import {
   ensureNativeNvidiaProvider,
+  verifyNativeNvidiaProviderAttachment,
   isNativeNvidiaProvider,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   normalizeNativeNvidiaProviderAttachment,
@@ -267,6 +269,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   providerExistsInGateway: (name: string, gatewayName: string) => Promise<boolean>;
   run: typeof import("../runner").run;
   updateSandbox: typeof import("../state/registry").reserveSandboxInferenceRoute;
+  getSandboxRecreateObservation?: SandboxReuseHelpers["getSandboxRecreateObservation"];
   // #9110 optional GPU-release seams; omitted by test literals that build deps
   // by hand, so every read below must stay optional-chained.
   getSandbox?: typeof import("../state/registry").getSandbox;
@@ -681,6 +684,35 @@ function releaseSupersededOllamaModel(
   }
   if (cleanupWarning) console.warn(cleanupWarning);
   if (authorityRefusal) throw authorityRefusal;
+}
+
+async function verifyNativeNvidiaRecoveryMembership(input: {
+  sandboxName: string | null;
+  gatewayName: string;
+  recordedAttachment: NativeNvidiaProviderAttachment | undefined;
+  credentialValue: string | null;
+  reuseExistingCredential: boolean;
+  deps: SetupInferenceDeps;
+}): Promise<void> {
+  if (
+    !input.recordedAttachment ||
+    input.credentialValue ||
+    !input.reuseExistingCredential ||
+    !input.sandboxName
+  )
+    return;
+  const { getSandboxRecreateObservation, providerAdapter } = input.deps;
+  if (!getSandboxRecreateObservation || !providerAdapter) {
+    throw new Error("Native NVIDIA recovery cannot verify the sandbox attachment.");
+  }
+  const observation = getSandboxRecreateObservation(input.sandboxName, input.gatewayName);
+  if (observation.state === "missing") return;
+  await verifyNativeNvidiaProviderAttachment({
+    adapter: providerAdapter,
+    target: { kind: "named", gatewayName: input.gatewayName },
+    sandboxName: input.sandboxName,
+    expected: input.recordedAttachment,
+  });
 }
 
 async function rejectNativeLocalSetupFailure(input: {
@@ -1593,6 +1625,14 @@ export function createSetupInference(
               gatewayName,
               gatewayAuthority: deps.getNativeNvidiaProviderAuthority?.(gatewayName),
               recordedAttachment,
+            });
+            await verifyNativeNvidiaRecoveryMembership({
+              sandboxName,
+              gatewayName,
+              recordedAttachment,
+              credentialValue,
+              reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
+              deps,
             });
             nativeNvidiaProviderAttachment = await ensureNativeNvidiaProvider({
               adapter: providerAdapter,
