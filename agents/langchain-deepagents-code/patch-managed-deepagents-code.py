@@ -218,7 +218,20 @@ async def _nemoclaw_handle_command(self, command: str) -> None:
         await self._mount_message(UserMessage(command))
         await self._mount_message(AppMessage(_NEMOCLAW_MANAGED_UI_MESSAGE))
         return
-    await _nemoclaw_original_handle_command(self, command)
+    session = self._session_state
+    previous_thread_id = session.thread_id if session is not None else None
+    try:
+        await _nemoclaw_original_handle_command(self, command)
+    finally:
+        # A clear can fail after creating the thread. Consent must still reset.
+        if (
+            normalized in {"/clear", "/force-clear"}
+            and self._session_state is not None
+            and self._session_state.thread_id != previous_thread_id
+        ):
+            from deepagents_code.approval_mode import ApprovalMode
+
+            await self._set_approval_mode(ApprovalMode.MANUAL)
 
 
 async def _nemoclaw_switch_model(
