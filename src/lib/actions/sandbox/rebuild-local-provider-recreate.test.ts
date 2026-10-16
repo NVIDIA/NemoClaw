@@ -152,7 +152,13 @@ describe("rebuild local-provider recreation", () => {
       const routeApplier = makeRouteApplier();
       harness = createRebuildFlowHarness({
         // Pi retains the shared-local route exercised here; OpenClaw and Hermes require native attachments.
-        sandboxEntry: { agent: "pi", provider, model, credentialEnv: null },
+        sandboxEntry: {
+          agent: "pi",
+          provider,
+          model,
+          credentialEnv: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        },
         onboard: async (session) => {
           const callsBeforeSetup = harness.runOpenshellSpy.mock.calls.map(
             (call) => call[0] as string[],
