@@ -96,6 +96,13 @@ function lifecycleError(
           : `OpenShell rejected the ${action} request because the sandbox's current state does not permit it.`,
     };
   }
+  if (code === "13" || connectCode === "13") {
+    return {
+      kind: "command",
+      reason: "failed",
+      message: "OpenShell returned an internal error.",
+    };
+  }
   const errorName = error instanceof Error && error.name ? error.name : "unknown error";
   const diagnostic = [
     errorName,
