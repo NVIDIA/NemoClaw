@@ -1,18 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const PLUGIN_PATH = path.join(
+import {
+  applyHermesManagedRoute,
+  type HermesManagedRouting,
+} from "../../../src/lib/hermes-managed-route";
+
+const PLUGIN_DIR = path.join(import.meta.dirname, "../../..", "agents", "hermes", "plugin");
+const PLUGIN_PATH = path.join(PLUGIN_DIR, "__init__.py");
+const CHECK_NATIVE_CREDENTIALS_PATH = path.join(
   import.meta.dirname,
   "../../..",
   "agents",
   "hermes",
-  "plugin",
-  "__init__.py",
+  "check-native-credentials.ts",
 );
 
 function runPython(script: string): string {
@@ -20,6 +28,131 @@ function runPython(script: string): string {
     encoding: "utf-8",
   });
 }
+
+const ONBOARDING_SELECTION = {
+  endpointType: "custom",
+  endpointUrl: "https://inference.local/v1",
+  model: "nvidia/nemotron-3-nano",
+  provider: "vllm-local",
+  providerLabel: "Local vLLM",
+};
+
+const ROUTE_REPORT_SCRIPT = `
+import importlib.util
+import json
+import pathlib
+import sys
+import types
+
+yaml_stub = types.ModuleType("yaml")
+yaml_stub.safe_load = json.load
+sys.modules["yaml"] = yaml_stub
+spec = importlib.util.spec_from_file_location("hermes_plugin", pathlib.Path(sys.argv[1]))
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+def skip_health_probe(*_args, **_kwargs):
+    raise OSError("health probe skipped")
+
+module.subprocess = types.SimpleNamespace(run=skip_health_probe)
+module._install_nous_tool_broker_patch = lambda: False
+module._install_messaging_response_patch = lambda: False
+module._install_googlechat_adapter = lambda _ctx: False
+
+tools = {}
+hooks = {}
+class Context:
+    def register_tool(self, name, handler, **_kwargs):
+        tools[name] = handler
+
+    def register_hook(self, name, callback, **_kwargs):
+        hooks[name] = callback
+
+module.register(Context())
+
+model_mode = sys.argv[2]
+hook_kwargs = {
+    "session_id": "session-1",
+    "task_id": "task-1",
+    "turn_id": "turn-1",
+    "user_message": "status",
+    "conversation_history": [],
+    "is_first_turn": True,
+    "platform": "cli",
+    "parent_session_id": "",
+    "sender_id": "",
+}
+if model_mode != "__omit_model__":
+    hook_kwargs["model"] = None if model_mode == "__none_model__" else sys.argv[3]
+
+raw_result = hooks["pre_llm_call"](**hook_kwargs)
+context = (
+    str(raw_result["context"])
+    if isinstance(raw_result, dict) and raw_result.get("context")
+    else ""
+)
+
+print(json.dumps({
+    "info": json.loads(tools["nemoclaw_info"]({}, None)),
+    "context": context,
+    "status": tools["nemoclaw_status"]({}, None),
+}))
+`;
+
+type RouteReport = {
+  info: Record<string, unknown>;
+  context: string;
+  status: string;
+};
+
+function managedHermesConfig(
+  model: string,
+  upstreamProvider: string,
+  baseUrl = "https://inference.local/v1",
+  inferenceApi = "openai-completions",
+): Record<string, unknown> & HermesManagedRouting {
+  const config: Record<string, unknown> = {};
+  applyHermesManagedRoute(config, { model, baseUrl, upstreamProvider, inferenceApi });
+  return config;
+}
+
+/** Run the plugin against a Hermes config while a stale onboarding selection is present. */
+function reportHermesRoute(
+  hermesConfig: Record<string, unknown>,
+  liveModel: string | null | undefined = "",
+): RouteReport {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-route-"));
+  try {
+    fs.mkdirSync(path.join(home, ".hermes"));
+    fs.mkdirSync(path.join(home, ".nemoclaw"));
+    fs.writeFileSync(path.join(home, ".hermes", "config.yaml"), JSON.stringify(hermesConfig));
+    fs.writeFileSync(
+      path.join(home, ".nemoclaw", "config.json"),
+      JSON.stringify(ONBOARDING_SELECTION),
+    );
+    const modelMode =
+      liveModel === undefined ? "__omit_model__" : liveModel === null ? "__none_model__" : "supply";
+    const output = execFileSync(
+      "python3",
+      ["-c", ROUTE_REPORT_SCRIPT, PLUGIN_PATH, modelMode, liveModel ?? ""],
+      {
+        encoding: "utf-8",
+        env: { ...process.env, HOME: home, HERMES_HOME: path.join(home, ".hermes") },
+      },
+    );
+    return JSON.parse(output) as RouteReport;
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+const ONBOARDED_CONFIG = managedHermesConfig("nvidia/nemotron-3-nano", "vllm-local");
+const LAB_MODEL = {
+  ...ONBOARDED_CONFIG.model,
+  default: "qwen/qwen3-32b",
+  provider: "custom:My Lab",
+};
+const LAB_ENDPOINT = "http://lab-gpu.internal:8000/v1";
 
 describe("Hermes NemoClaw plugin handlers", () => {
   it("uses only the migrated Hermes home when no explicit home is set", () => {
@@ -195,6 +328,410 @@ print(json.dumps(result))
       gateway: "running",
       port: 8642,
     });
+  });
+
+  it.each([
+    {
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      baseUrl: "https://inference.local/v1",
+      inferenceApi: "openai-completions",
+      modelProvider: "custom",
+    },
+    {
+      provider: "anthropic-prod",
+      model: "claude-sonnet-4-6",
+      baseUrl: "https://inference.local",
+      inferenceApi: "anthropic-messages",
+      modelProvider: "custom",
+    },
+    {
+      provider: "openai-api",
+      model: "gpt-5.4",
+      baseUrl: "https://api.openai.com/v1",
+      inferenceApi: "openai-responses",
+      modelProvider: "custom",
+    },
+    {
+      provider: "openai-api",
+      model: "gpt-5.4",
+      baseUrl: "https://api.openai.com/v1",
+      inferenceApi: "openai-responses",
+      modelProvider: "custom:openai-api",
+    },
+    {
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      baseUrl: "https://integrate.api.nvidia.com/v1",
+      inferenceApi: "openai-completions",
+      modelProvider: "custom",
+    },
+  ])(
+    "reports the switched $provider route at $baseUrl for model.provider $modelProvider when the onboarding selection is stale",
+    ({ provider, model, baseUrl, inferenceApi, modelProvider }) => {
+      const managedConfig = managedHermesConfig(model, provider, baseUrl, inferenceApi);
+      const report = reportHermesRoute({
+        ...managedConfig,
+        model: { ...managedConfig.model, provider: modelProvider },
+      });
+
+      expect(report.info).toMatchObject({
+        model,
+        provider,
+        base_url: baseUrl,
+        chat_uses_managed_route: true,
+        managed_route: { model, provider, base_url: baseUrl },
+      });
+      expect(report.context).toContain(
+        `- NemoClaw provider state: model=${model}, provider=${provider}, endpoint=${baseUrl}, gateway=stopped.`,
+      );
+      expect(report.status).toContain(`Provider: ${provider}`);
+      expect(JSON.stringify(report)).not.toMatch(
+        /vllm-local|nemotron-3-nano|not used by the configured chat route/,
+      );
+    },
+  );
+
+  it("distinguishes a user-selected provider from a native hosted managed route at the same endpoint", () => {
+    const nativeManaged = managedHermesConfig(
+      "gpt-5.4",
+      "openai-api",
+      "https://api.openai.com/v1",
+      "openai-responses",
+    );
+    const report = reportHermesRoute({
+      ...nativeManaged,
+      model: {
+        ...nativeManaged.model,
+        default: "gpt-5.4-mini",
+        provider: "custom:My Lab",
+      },
+      providers: {
+        ...nativeManaged.providers,
+        "my-lab": { name: "My Lab", api: "https://api.openai.com/v1" },
+      },
+    });
+
+    expect(report.info).toMatchObject({
+      model: "gpt-5.4-mini",
+      provider: "custom:My Lab",
+      base_url: "https://api.openai.com/v1",
+      chat_uses_managed_route: false,
+      managed_route: {
+        model: "gpt-5.4",
+        provider: "openai-api",
+        base_url: "https://api.openai.com/v1",
+      },
+    });
+    expect(report.context).toContain(
+      "- Hermes chat route: model=gpt-5.4-mini, provider=custom:My Lab, endpoint=https://api.openai.com/v1, gateway=stopped.",
+    );
+    expect(report.context).toContain(
+      "- NemoClaw-managed inference route (not used by the configured chat route): model=gpt-5.4, provider=openai-api, endpoint=https://api.openai.com/v1.",
+    );
+    expect(report.status).toContain(
+      "Managed:  model=gpt-5.4, provider=openai-api, endpoint=https://api.openai.com/v1 (NemoClaw-managed inference route; not used by the configured chat route)",
+    );
+  });
+
+  it.each([
+    {
+      entries: "providers",
+      config: {
+        ...ONBOARDED_CONFIG,
+        model: LAB_MODEL,
+        providers: {
+          ...ONBOARDED_CONFIG.providers,
+          "my-lab": { name: "My Lab", api: LAB_ENDPOINT },
+        },
+      },
+    },
+    {
+      entries: "custom_providers",
+      config: {
+        ...ONBOARDED_CONFIG,
+        model: LAB_MODEL,
+        custom_providers: [
+          ...ONBOARDED_CONFIG.custom_providers,
+          { name: "My Lab", base_url: LAB_ENDPOINT },
+        ],
+      },
+    },
+  ])(
+    "reports the Hermes chat route and labels the managed route when model.provider selects a $entries entry",
+    ({ config }) => {
+      const report = reportHermesRoute(config);
+
+      expect(report.info).toMatchObject({
+        model: "qwen/qwen3-32b",
+        provider: "custom:My Lab",
+        base_url: LAB_ENDPOINT,
+        chat_uses_managed_route: false,
+        managed_route: {
+          model: "nvidia/nemotron-3-nano",
+          provider: "vllm-local",
+          base_url: "https://inference.local/v1",
+        },
+      });
+      expect(report.context).toContain(
+        `- Hermes chat route: model=qwen/qwen3-32b, provider=custom:My Lab, endpoint=${LAB_ENDPOINT}, gateway=stopped.`,
+      );
+      expect(report.context).toContain(
+        "- NemoClaw-managed inference route (not used by the configured chat route): model=nvidia/nemotron-3-nano, provider=vllm-local, endpoint=https://inference.local/v1.",
+      );
+      expect(report.context).not.toContain("NemoClaw provider state");
+      expect(report.status).toContain("Model:    qwen/qwen3-32b");
+      expect(report.status).toContain(
+        "Managed:  model=nvidia/nemotron-3-nano, provider=vllm-local, endpoint=https://inference.local/v1 (NemoClaw-managed inference route; not used by the configured chat route)",
+      );
+    },
+  );
+
+  it.each(["my-lab", "MY-LAB"])(
+    "prefers a case-insensitive provider-key match over an earlier display-name alias for %s",
+    (provider) => {
+      const report = reportHermesRoute({
+        ...ONBOARDED_CONFIG,
+        model: { ...LAB_MODEL, provider },
+        providers: {
+          shadow: { name: "My Lab", api: "https://shadow.example/v1" },
+          ...ONBOARDED_CONFIG.providers,
+          "my-lab": { name: "Selected Lab", api: LAB_ENDPOINT },
+        },
+      });
+
+      expect(report.info).toMatchObject({ provider, base_url: LAB_ENDPOINT });
+      expect(report.context).toContain(`provider=${provider}, endpoint=${LAB_ENDPOINT}`);
+      expect(report.status).toContain(`Endpoint: ${LAB_ENDPOINT}`);
+      expect(JSON.stringify(report)).not.toContain("shadow.example");
+    },
+  );
+
+  it("prefers the managed route's provider key over an earlier display-name alias", () => {
+    const report = reportHermesRoute({
+      ...ONBOARDED_CONFIG,
+      model: LAB_MODEL,
+      providers: {
+        shadow: { name: "vllm-local", api: "https://shadow.example/v1" },
+        ...ONBOARDED_CONFIG.providers,
+        "my-lab": { name: "My Lab", api: LAB_ENDPOINT },
+      },
+    });
+
+    expect(report.info).toMatchObject({
+      base_url: LAB_ENDPOINT,
+      managed_route: { provider: "vllm-local", base_url: "https://inference.local/v1" },
+    });
+    expect(report.context).toContain("provider=vllm-local, endpoint=https://inference.local/v1");
+    expect(report.status).toContain("provider=vllm-local, endpoint=https://inference.local/v1");
+    expect(JSON.stringify(report)).not.toContain("shadow.example");
+  });
+
+  it("reports a user-defined endpoint without its user info, query, or fragment", () => {
+    const report = reportHermesRoute({
+      ...ONBOARDED_CONFIG,
+      model: { ...ONBOARDED_CONFIG.model, provider: "my-lab" },
+      providers: {
+        ...ONBOARDED_CONFIG.providers,
+        "my-lab": {
+          name: "my-lab",
+          api: "https://lab-user:lab-password@lab.example:8443/v1?api_key=lab-query-secret#lab-fragment",
+        },
+      },
+    });
+
+    expect(report.info).toMatchObject({
+      base_url: "https://lab.example:8443/v1",
+      chat_uses_managed_route: false,
+    });
+    expect(JSON.stringify(report)).not.toMatch(
+      /lab-user|lab-password|lab-query-secret|lab-fragment/,
+    );
+  });
+
+  it.each([
+    { model: "qwen/qwen3-32b", provider: "custom" },
+    { model: ONBOARDED_CONFIG.model.default, provider: "custom" },
+    { model: "qwen/qwen3-32b", provider: "custom:My Lab" },
+  ])(
+    "omits configured route details from runtime context when Hermes supplies live model $model and configured provider is $provider",
+    ({ model, provider }) => {
+      const report = reportHermesRoute(
+        {
+          ...ONBOARDED_CONFIG,
+          model: { ...ONBOARDED_CONFIG.model, provider },
+          providers: {
+            ...ONBOARDED_CONFIG.providers,
+            "my-lab": { name: "My Lab", api: LAB_ENDPOINT },
+          },
+        },
+        model,
+      );
+
+      expect(report.context).toContain(`- Hermes chat model: ${model}.`);
+      expect(report.context).toContain(
+        "Hermes does not supply the active provider or endpoint to this hook.",
+      );
+      expect(report.context).not.toMatch(
+        /NemoClaw provider state|Hermes chat route|provider=|endpoint=|not used by the configured chat route/,
+      );
+      expect(report.info).toMatchObject({ model: "nvidia/nemotron-3-nano" });
+      expect(report.status).toContain("Model:    nvidia/nemotron-3-nano");
+    },
+  );
+
+  it.each([
+    { label: "agent.model is None", liveModel: null },
+    { label: "the caller omits model", liveModel: undefined },
+  ])("falls back to the configured route in runtime context when $label", ({ liveModel }) => {
+    const report = reportHermesRoute(
+      {
+        ...ONBOARDED_CONFIG,
+        model: LAB_MODEL,
+        providers: {
+          ...ONBOARDED_CONFIG.providers,
+          "my-lab": { name: "My Lab", api: LAB_ENDPOINT },
+        },
+      },
+      liveModel,
+    );
+
+    expect(report.context).toContain(
+      `- Hermes chat route: model=qwen/qwen3-32b, provider=custom:My Lab, endpoint=${LAB_ENDPOINT}, gateway=stopped.`,
+    );
+    expect(report.context).toContain(
+      "- NemoClaw-managed inference route (not used by the configured chat route): model=nvidia/nemotron-3-nano, provider=vllm-local, endpoint=https://inference.local/v1.",
+    );
+    expect(report.context).not.toContain("Hermes chat model:");
+  });
+
+  it.each([
+    {
+      label: "exits 0 when agent.turn_context forwards agent.model to pre_llm_call",
+      modelArg: "model=agent.model,",
+      expectedStatus: 0,
+    },
+    {
+      label: "exits 1 when agent.turn_context omits model from pre_llm_call",
+      modelArg: "",
+      expectedStatus: 1,
+    },
+  ])("runs the build-time turn-context hook probe and $label", ({ modelArg, expectedStatus }) => {
+    const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-runtime-probe-"));
+    try {
+      fs.mkdirSync(path.join(runtimeDir, "hermes_cli"));
+      fs.mkdirSync(path.join(runtimeDir, "agent"));
+      fs.writeFileSync(
+        path.join(runtimeDir, "hermes_cli", "config.py"),
+        `
+import os, re
+def _expand_env_vars(value):
+    if isinstance(value, str):
+        return re.sub(r"\\$\\{([^}]+)\\}", lambda m: os.environ.get(m.group(1), m.group(0)), value)
+    if isinstance(value, dict):
+        return {k: _expand_env_vars(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env_vars(v) for v in value]
+    return value
+`,
+      );
+      fs.writeFileSync(
+        path.join(runtimeDir, "hermes_cli", "plugins.py"),
+        `
+import importlib.util, os, types
+from pathlib import Path
+
+_manager = None
+
+class _Context:
+    def __init__(self, hooks):
+        self._hooks = hooks
+    def register_tool(self, **_kwargs):
+        pass
+    def register_hook(self, name, callback, **_kwargs):
+        self._hooks.setdefault(name, []).append(callback)
+
+def _reset_plugin_managers_for_tests():
+    global _manager
+    _manager = types.SimpleNamespace(_plugins={}, _hooks={})
+
+def get_plugin_manager():
+    if _manager is None:
+        _reset_plugin_managers_for_tests()
+    return _manager
+
+def discover_plugins(force=False):
+    mgr = get_plugin_manager()
+    if force:
+        mgr._plugins.clear()
+        mgr._hooks.clear()
+    plugin_path = Path(os.environ["HERMES_BUNDLED_PLUGINS"]) / "nemoclaw" / "__init__.py"
+    spec = importlib.util.spec_from_file_location("nemoclaw_plugin", plugin_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.register(_Context(mgr._hooks))
+    mgr._plugins["nemoclaw"] = types.SimpleNamespace(module=module)
+
+def invoke_hook(hook_name, **kwargs):
+    return [cb(**kwargs) for cb in get_plugin_manager()._hooks.get(hook_name, [])]
+`,
+      );
+      fs.writeFileSync(
+        path.join(runtimeDir, "hermes_cli", "lifecycle.py"),
+        `
+from hermes_cli import plugins
+def invoke_hook(hook_name, **kwargs):
+    return plugins.invoke_hook(hook_name, **kwargs)
+`,
+      );
+      fs.writeFileSync(
+        path.join(runtimeDir, "agent", "turn_context.py"),
+        `
+from hermes_cli.lifecycle import invoke_hook as _invoke_hook
+
+def compose_user_api_content(content, ext_prefetch_cache, plugin_user_context):
+    if not isinstance(content, str):
+        return None
+    injections = [part for part in (ext_prefetch_cache, plugin_user_context) if part]
+    if not injections:
+        return None
+    return content + "\\n\\n" + "\\n\\n".join(injections)
+
+def _collect_pre_llm_call_context(
+    agent, *, effective_task_id, turn_id, original_user_message,
+    messages, conversation_history,
+):
+    if getattr(agent, "_persist_disabled", False):
+        return ""
+    _pre_results = _invoke_hook(
+        "pre_llm_call",
+        session_id=agent.session_id,
+        task_id=effective_task_id,
+        turn_id=turn_id,
+        user_message=original_user_message,
+        conversation_history=list(messages),
+        is_first_turn=(not bool(conversation_history)),
+        ${modelArg}
+        platform=getattr(agent, "platform", None) or "",
+        parent_session_id=getattr(agent, "_parent_session_id", None) or "",
+        sender_id=getattr(agent, "_user_id", None) or "",
+    )
+    return "\\n\\n".join(
+        str(r["context"]) for r in _pre_results if isinstance(r, dict) and r.get("context")
+    )
+`,
+      );
+
+      const probe = spawnSync(
+        process.execPath,
+        [CHECK_NATIVE_CREDENTIALS_PATH, runtimeDir, "python3", PLUGIN_DIR],
+        { encoding: "utf-8", timeout: 15_000 },
+      );
+
+      expect(probe.status, probe.stderr).toBe(expectedStatus);
+    } finally {
+      fs.rmSync(runtimeDir, { recursive: true, force: true });
+    }
   });
 
   it("patches Hermes managed-tool modules for NemoClaw broker mode", () => {
