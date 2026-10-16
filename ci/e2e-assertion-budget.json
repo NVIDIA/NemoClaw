@@ -1,5 +1,5 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nInitial no-growth baseline for issue #10934 and Epic #10920. The epic reference remains fixed at fe18b2f004e2304c52db33cf7bb5895828197f9a. Current main is lower because #10722 removed the live Shields assertion suites before this ratchet landed. PR #10341 adds the accepted public deferred-install and same-home credential continuation boundary for Hermes and Deep Agents Code; existing per-file budgets remain unchanged. PR #13055 adds five explicitly approved assertions for the native Deep Agents Code OpenRouter request in the existing hosted OpenRouter target. PR #13293 adds five assertions that bind an existing live OpenClaw llama.cpp agent turn to its sandbox-owned native local attachment. PR #13293 also adds the authenticated and credentialless OpenClaw native-local live consumer checks in the existing inference-routing target, including rebuild/restart, sibling denial and credential isolation.",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nInitial no-growth baseline for issue #10934 and Epic #10920. The epic reference remains fixed at fe18b2f004e2304c52db33cf7bb5895828197f9a. Current main is lower because #10722 removed the live Shields assertion suites before this ratchet landed. PR #10341 adds the accepted public deferred-install and same-home credential continuation boundary for Hermes and Deep Agents Code; existing per-file budgets remain unchanged. PR #13055 adds five explicitly approved assertions for the native Deep Agents Code OpenRouter request in the existing hosted OpenRouter target. PR #13293 adds the authenticated and credentialless OpenClaw native-local live consumer checks in the existing inference-routing target, including rebuild/restart, sibling denial and credential isolation.",
   "schemaVersion": 1,
   "issue": 10934,
   "epic": 10920,
@@ -17,24 +17,24 @@
     "direct": {
       "expectCalls": 1288,
       "matcherAssertions": 1267,
-      "nodeAssertions": 109,
+      "nodeAssertions": 104,
       "namedAssertionHelpers": 425,
       "failCalls": 0,
       "throwGuards": 50,
       "objectFieldAssertions": 189,
-      "assertionPoints": 2040,
+      "assertionPoints": 2035,
       "generatedProbeBlocks": 86,
       "generatedProbeConditions": 215
     },
     "unique": {
       "expectCalls": 1710,
       "matcherAssertions": 1684,
-      "nodeAssertions": 132,
+      "nodeAssertions": 127,
       "namedAssertionHelpers": 669,
       "failCalls": 1,
       "throwGuards": 526,
       "objectFieldAssertions": 266,
-      "assertionPoints": 3278,
+      "assertionPoints": 3273,
       "generatedProbeBlocks": 208,
       "generatedProbeConditions": 720
     },
@@ -286,9 +286,9 @@
       ],
       "test/e2e/live/llama-cpp-generic-gpu.test.ts": [
         17,
-        40,
+        35,
         33,
-        66,
+        61,
         2
       ],
       "test/e2e/live/managed-image-activation-e2e.test.ts": [
