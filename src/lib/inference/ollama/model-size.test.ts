@@ -132,6 +132,18 @@ describe("formatBytes", () => {
     expect(formatBytes(4_683_073_184)).toBe("4.36 GB");
   });
 
+  it("renders one byte under a mebibyte as 1.00 MB", () => {
+    expect(formatBytes(1_048_575)).toBe("1.00 MB");
+  });
+
+  it("renders one byte under a gibibyte as 1.00 GB", () => {
+    expect(formatBytes(1_073_741_823)).toBe("1.00 GB");
+  });
+
+  it("keeps a value that still rounds below 1024 in that unit", () => {
+    expect(formatBytes(1_048_570)).toBe("1023.99 KB");
+  });
+
   it("returns the unknown sentinel for negative values", () => {
     expect(formatBytes(-1)).toBe("size unknown");
   });
