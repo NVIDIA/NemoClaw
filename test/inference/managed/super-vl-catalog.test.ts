@@ -57,7 +57,7 @@ const SCHEMAS = {
   recipe: recipeSchema,
 };
 
-/** Compile the candidate documents through the production consumer without enabling selection. */
+/** Compile the release documents through the production consumer. */
 function candidateCatalog() {
   return managedInferenceCatalogFromServingCatalog(
     compileTrustedServingCatalog({
@@ -73,8 +73,8 @@ function candidateCatalog() {
   );
 }
 
-describe("Super VL release preparation", () => {
-  it("lists the disabled release candidate and rejects the retired Cobalt profile", () => {
+describe("Super VL Station selection", () => {
+  it("lists the experimental release and rejects the retired Cobalt profile", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-super-vl-catalog-"));
     try {
       const outputPath = generateServingCatalog({
@@ -89,13 +89,11 @@ describe("Super VL release preparation", () => {
       expect(profiles.length).toBeGreaterThan(0);
       expect(profiles.find(({ id }) => id === PRESET_ID)).toMatchObject({
         model: "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
-        supportState: "disabled",
-        selectionMode: "disabled",
+        supportState: "experimental",
+        selectionMode: "automatic",
         compatible: false,
-        incompatibilityReason: "Profile is disabled.",
       });
       expect(profiles.some(({ id }) => id === "vllm.dgx-station-gb300.single.cobalt")).toBe(false);
-      expect(() => resolveServingProfileSelection(PRESET_ID, { catalog })).toThrow("is disabled");
       expect(
         resolveManagedInferenceServing(
           { readinessReports: [], topologyQualifications: [], intent: { preset: PRESET_ID } },
@@ -110,9 +108,9 @@ describe("Super VL release preparation", () => {
     }
   });
 
-  it("compiles the candidate but reports it unavailable for onboarding", () => {
+  it("requires qualified Station hardware before automatic selection", () => {
     expect(listServingProfiles(candidateCatalog(), { readinessReports: [] })).toMatchObject([
-      { id: PRESET_ID, compatible: false, incompatibilityReason: "Profile is disabled." },
+      { id: PRESET_ID, compatible: false },
     ]);
   });
 
@@ -202,19 +200,36 @@ describe("Super VL release preparation", () => {
   });
 
   it.each([PRESET_ID, "NVIDIA Nemotron 3.5 Super VL NVFP4 on one DGX Station"])(
-    "rejects explicit selection by %s while release fields are unresolved",
+    "resolves explicit selection by %s",
     (candidate) => {
-      expect(() =>
-        resolveServingProfileSelection(candidate, { catalog: candidateCatalog() }),
-      ).toThrow(`Serving profile '${PRESET_ID}' is disabled.`);
+      const catalog = candidateCatalog();
+      expect(
+        resolveServingProfileSelection(candidate, {
+          catalog,
+          listProfiles: (source) =>
+            listServingProfiles(source, {
+              readinessReports: [
+                { nodeId: "station", report: readinessReportForPreset(catalog.presets[0]!) },
+              ],
+            }),
+        }),
+      ).toBe(PRESET_ID);
     },
   );
 
-  it("rejects the disabled preset before evaluating hardware requirements", () => {
+  it("rejects a disabled preset before evaluating hardware requirements", () => {
+    const catalog = candidateCatalog();
+    const disabled = {
+      ...catalog,
+      presets: catalog.presets.map((preset) => ({
+        ...preset,
+        spec: { ...preset.spec, selection: "disabled" as const },
+      })),
+    };
     expect(
       resolveManagedInferenceServing(
         { readinessReports: [], topologyQualifications: [], intent: { preset: PRESET_ID } },
-        candidateCatalog(),
+        disabled,
       ),
     ).toMatchObject({
       outcome: "rejected",
@@ -223,7 +238,7 @@ describe("Super VL release preparation", () => {
     });
   });
 
-  it("rejects inactive selection and materializes an enabled test copy with its receipt", () => {
+  it("selects Super VL automatically on Station and retains catalog provenance", () => {
     const catalog = candidateCatalog();
     const input = {
       readinessReports: [
@@ -231,17 +246,15 @@ describe("Super VL release preparation", () => {
       ],
       topologyQualifications: [],
     };
-    expect(resolveManagedInferenceServing(input, catalog)).toMatchObject({ outcome: "no-match" });
+    expect(resolveManagedInferenceServing(input, catalog)).toMatchObject({ outcome: "selected" });
     expect(
       resolveManagedInferenceServing({ ...input, intent: { vllmModel: MODEL_ALIAS } }, catalog),
     ).toMatchObject({
-      outcome: "rejected",
-      code: "requirements-not-met",
-      message: `No managed vLLM profile defines model ${MODEL_ALIAS}.`,
+      outcome: "selected",
     });
 
-    // A synthetic enabled copy proves the rejection above is not caused by missing hardware evidence.
-    const enabled = {
+    // Explicit-only profiles stay available without becoming automatic defaults.
+    const explicitOnly = {
       ...catalog,
       presets: catalog.presets.map((preset) => ({
         ...preset,
@@ -249,19 +262,21 @@ describe("Super VL release preparation", () => {
         spec: { ...preset.spec, selection: "explicit-only" as const },
       })),
     };
-    expect(resolveManagedInferenceServing(input, enabled)).toMatchObject({ outcome: "no-match" });
+    expect(resolveManagedInferenceServing(input, explicitOnly)).toMatchObject({
+      outcome: "no-match",
+    });
     expect(
       resolveManagedInferenceServing(
         { readinessReports: [], topologyQualifications: [], intent: { preset: PRESET_ID } },
-        enabled,
+        catalog,
       ),
     ).toMatchObject({ outcome: "rejected", code: "requirements-not-met" });
 
     const selection = resolveManagedInferenceServing(
       { ...input, intent: { preset: PRESET_ID } },
-      enabled,
+      catalog,
     );
-    assert.ok(selection.outcome === "selected", "Expected the enabled test preset to resolve");
+    assert.ok(selection.outcome === "selected", "Expected the release preset to resolve");
     assert.ok(isHostLocalInferenceServingRecipe(selection.recipe));
     const baseProfile = detectVllmProfile({ platform: "station" });
     assert.ok(baseProfile);
@@ -285,8 +300,8 @@ describe("Super VL release preparation", () => {
       maxModelLen: 49152,
     });
     expect(buildVllmServeCommand(materialized.model)).toContain("--spec-method mtp");
-    expect(detectVllmProfile({ platform: "station" })?.defaultModel.envValue).not.toBe(MODEL_ALIAS);
-    expect(VLLM_MODELS.some(({ envValue }) => envValue === MODEL_ALIAS)).toBe(false);
+    expect(detectVllmProfile({ platform: "station" })?.defaultModel.envValue).toBe(MODEL_ALIAS);
+    expect(VLLM_MODELS.some(({ envValue }) => envValue === MODEL_ALIAS)).toBe(true);
     expect(VLLM_MODELS.some(({ envValue }) => envValue === "nemotron-3-ultra-550b-a55b")).toBe(
       true,
     );

@@ -329,65 +329,56 @@ describe("fixed catalog vLLM installs", () => {
     expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
   });
 
-  it("carries the reviewed model guard through native installation and receipt publication", async () => {
-    process.env.HF_TOKEN = "hf_fixture_download_only";
-    mocks.getGpuIndicesByName.mockReturnValue([0]);
-    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
-    const catalog = loadManagedInferenceCatalog();
-    const presetId = "vllm.dgx-station-gb300.single.nemotron-3.5-super-vl-120b-a12b-nvfp4";
-    const readinessReports = vllmInstallTestReadiness(profile, "nemotron-3.5-super-vl-120b");
-    // Enable only the in-memory fixture; the shipped preset remains disabled.
-    const enabled = {
-      ...catalog,
-      presets: catalog.presets.map((preset) =>
-        preset.metadata.id !== presetId
-          ? preset
-          : {
-              ...preset,
-              metadata: { ...preset.metadata, supportState: "experimental" as const },
-              spec: { ...preset.spec, selection: "explicit-only" as const },
-            },
-      ),
-    };
-    const resolved = resolveManagedInferenceServing(
-      { readinessReports, topologyQualifications: [], intent: { preset: presetId } },
-      enabled,
-    );
-    assert.ok(resolved.outcome === "selected", "Expected enabled test recipe to resolve");
-    assert.ok(isHostLocalInferenceServingRecipe(resolved.recipe));
-    const selected = materializeHostLocalVllmSelection(
-      { ...resolved, recipe: resolved.recipe },
-      profile,
-    );
-    mocks.resolveHostLocalVllmSelection.mockReturnValue({ kind: "selected", ...selected });
-    mockSuccessfulVllmInstall(mocks, selected.profile.containerName);
-    mockSuccessfulAuthenticatedReadiness(selected.model.servedModelId!);
-    const result = await installVllm(profile, {
-      hasImage: true,
-      nonInteractive: true,
-      promptFn: vi.fn(),
-      readinessReports,
-      resolveManagedBridgeHost: () => "172.18.0.1",
-    });
-    expect(result, spies.errSpy.mock.calls.flat().join("\n")).toEqual({ ok: true });
-    const [args, options] = mocks.dockerRunDetached.mock.calls[0]!;
-    expect(args.at(-1)).toBe(buildVllmServeCommand(selected.model));
-    expect(args).toContainEqual(
-      expect.stringMatching(/target=\/root\/\.cache\/huggingface\/hub,readonly$/),
-    );
-    expect(args).toContain("34359738368b");
-    expect(args).toContain("device=0");
-    expect(args).not.toContainEqual(
-      expect.stringMatching(/huggingface:\/root\/\.cache\/huggingface$/),
-    );
-    expect(args.join("\n")).not.toContain("b".repeat(64));
-    expect(args.join("\n")).not.toContain("hf_fixture_download_only");
-    expect(options.env.VLLM_API_KEY).toBe("b".repeat(64));
-    expect(options.env).not.toHaveProperty("HF_TOKEN");
-    expect(mocks.persistHostLocalVllmRuntimeReceipt).toHaveBeenCalledWith(
-      expect.objectContaining({ serving: selected.profile.servingCatalog }),
-    );
-  });
+  it.each(["", "nemotron-3.5-super-vl-120b"])(
+    "carries the reviewed model guard through native installation with model intent '%s'",
+    async (modelIntent) => {
+      process.env.NEMOCLAW_VLLM_MODEL = modelIntent;
+      process.env.HF_TOKEN = "hf_fixture_download_only";
+      mocks.getGpuIndicesByName.mockReturnValue([0]);
+      const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+      const catalog = loadManagedInferenceCatalog();
+      const presetId = "vllm.dgx-station-gb300.single.nemotron-3.5-super-vl-120b-a12b-nvfp4";
+      const readinessReports = vllmInstallTestReadiness(profile, "nemotron-3.5-super-vl-120b");
+      const resolved = resolveManagedInferenceServing(
+        { readinessReports, topologyQualifications: [], intent: { preset: presetId } },
+        catalog,
+      );
+      assert.ok(resolved.outcome === "selected", "Expected enabled test recipe to resolve");
+      assert.ok(isHostLocalInferenceServingRecipe(resolved.recipe));
+      const selected = materializeHostLocalVllmSelection(
+        { ...resolved, recipe: resolved.recipe },
+        profile,
+      );
+      mocks.resolveHostLocalVllmSelection.mockReturnValue({ kind: "selected", ...selected });
+      mockSuccessfulVllmInstall(mocks, selected.profile.containerName);
+      mockSuccessfulAuthenticatedReadiness(selected.model.servedModelId!);
+      const result = await installVllm(profile, {
+        hasImage: true,
+        nonInteractive: true,
+        promptFn: vi.fn(),
+        readinessReports,
+        resolveManagedBridgeHost: () => "172.18.0.1",
+      });
+      expect(result, spies.errSpy.mock.calls.flat().join("\n")).toEqual({ ok: true });
+      const [args, options] = mocks.dockerRunDetached.mock.calls[0]!;
+      expect(args.at(-1)).toBe(buildVllmServeCommand(selected.model));
+      expect(args).toContainEqual(
+        expect.stringMatching(/target=\/root\/\.cache\/huggingface\/hub,readonly$/),
+      );
+      expect(args).toContain("34359738368b");
+      expect(args).toContain("device=0");
+      expect(args).not.toContainEqual(
+        expect.stringMatching(/huggingface:\/root\/\.cache\/huggingface$/),
+      );
+      expect(args.join("\n")).not.toContain("b".repeat(64));
+      expect(args.join("\n")).not.toContain("hf_fixture_download_only");
+      expect(options.env.VLLM_API_KEY).toBe("b".repeat(64));
+      expect(options.env).not.toHaveProperty("HF_TOKEN");
+      expect(mocks.persistHostLocalVllmRuntimeReceipt).toHaveBeenCalledWith(
+        expect.objectContaining({ serving: selected.profile.servingCatalog }),
+      );
+    },
+  );
 
   /**
    * Resume replays NemoClaw's own checkpoint, so the preset-driven install

@@ -604,7 +604,7 @@ export function resolveVllmModelAlias(value: string): VllmModelDef | null {
 /**
  * Look up the requested express-vLLM model from `NEMOCLAW_VLLM_MODEL`.
  * Returns `null` when the env var is empty so the caller can fall back to
- * the per-platform profile default (Station prefers DeepSeek V4 Flash, Spark
+ * the per-platform profile default (Station prefers Nemotron 3.5 Super VL, Spark
  * the Qwen3.6-35B-A3B NVFP4 checkpoint, and the generic Linux profile prefers
  * Nemotron-Nano-4B for VRAM headroom).
  *
