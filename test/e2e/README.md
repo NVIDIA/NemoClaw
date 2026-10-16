@@ -250,6 +250,10 @@ Manual PR E2E does not fall back to local Dockerfile builds.
 
 PR image publication builds each shipped agent on native AMD64 and ARM64 runners.
 Each platform retains its own digest contract and runs the direct startup checks.
+For OpenClaw, those checks also run the shared agent-reload proof against the image's generated
+gateway policy and installed distribution. The proof checks live named-agent discovery, gateway
+health, and a nonzero exit after a restart-class bind failure. Google Chat's reload-off exception
+is tracked separately in #13274.
 Docker activation selects the matching platform catalog and runs the existing all-agent lifecycle test.
 Rootless Podman activation remains AMD64. The catalog reader accepts only one platform per catalog;
 it rejects missing agents, mixed platforms, revisions, releases, and cohorts.
