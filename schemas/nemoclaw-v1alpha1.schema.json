@@ -588,10 +588,10 @@
                 "default": "unix:///var/run/docker.sock"
               },
               "image": {
-                "default": "ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6",
+                "default": "ghcr.io/nvidia/openshell/gateway@sha256:bdb4fe248070032c88be78f029dad9325cb698480e90486e1413a674a5d8edc8",
                 "enum": [
                   "",
-                  "ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6"
+                  "ghcr.io/nvidia/openshell/gateway@sha256:bdb4fe248070032c88be78f029dad9325cb698480e90486e1413a674a5d8edc8"
                 ]
               },
               "networkCIDR": {
@@ -616,7 +616,7 @@
           "properties": {
             "endpoint": {
               "default": "http://127.0.0.1:17681",
-              "description": "Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; commands forward that local port to the owned gateway.",
+              "description": "Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; providers forward free local ports of their own to the owned gateway, so this port is not bound.",
               "type": "string",
               "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS loopback endpoint and port."
             },
@@ -627,7 +627,7 @@
               "x-nemoclaw-default-rule": "With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes."
             },
             "image": {
-              "default": "ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6",
+              "default": "ghcr.io/nvidia/openshell/gateway@sha256:bdb4fe248070032c88be78f029dad9325cb698480e90486e1413a674a5d8edc8",
               "description": "Managed local gateway image pinned by the SDK. Excluded by kubernetes, whose component images are also SDK-pinned.",
               "type": "string",
               "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the SDK default. Excluded by kubernetes."
@@ -2415,7 +2415,7 @@
       "type": "string"
     },
     "ServiceAuthentication": {
-      "description": "Generated bearer authentication for a managed inference service.",
+      "description": "Bearer authentication for a managed inference service.",
       "enum": [
         "bearer"
       ],
@@ -2838,7 +2838,7 @@
           "properties": {
             "authentication": {
               "$ref": "#/$defs/ServiceAuthentication",
-              "description": "Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving."
+              "description": "Optional native bearer authentication. The runtime uses a key supplied in NEMOCLAW_INFERENCE_KEY, or generates and retains one in its credential storage; omission preserves unauthenticated serving."
             },
             "container": {
               "$ref": "#/$defs/ServiceContainer",
@@ -2945,7 +2945,7 @@
               "additionalProperties": {
                 "type": "string"
               },
-              "description": "Literal non-secret application settings. Credentials must not be supplied here.",
+              "description": "Literal application settings, visible in configuration, plans/state, exports, and Docker inspection. No host-variable expansion or protected credential delivery.",
               "propertyNames": {
                 "pattern": "^[A-Z_][A-Z0-9_]{0,127}$"
               },
@@ -3929,7 +3929,7 @@
   "type": "object",
   "x-nemoclaw-parser-checks": [
     "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
-    "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
+    "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
     "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and development authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",

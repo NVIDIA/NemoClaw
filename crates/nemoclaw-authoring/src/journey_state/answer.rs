@@ -58,7 +58,7 @@ impl JourneyState {
             }
         ) && let Some(endpoint) = value.as_ref().and_then(Value::as_str)
         {
-            nemoclaw_sdk::config::validate_endpoint(endpoint, false)
+            nemoclaw_sdk::config::validate_endpoint_url(endpoint)
                 .map_err(|error| diagnostic("journey", &error.to_string()))?;
         }
         let mut candidate = self.clone();

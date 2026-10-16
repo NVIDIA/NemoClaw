@@ -19,7 +19,7 @@ use http_fixture as transport;
 pub use nemoclaw_test_fixtures::{openshell, tofu};
 
 mod capabilities;
-mod external_inference;
+mod driver_config;
 // Gateway installation: Docker gateway reads, the Podman gateway and its
 // storage, and the Kubernetes gateway types.
 // A managed gateway needs a local engine, which only Unix clients reach.
@@ -33,6 +33,7 @@ mod gateway_storage;
 mod inference;
 mod kubernetes_hcl;
 mod kubernetes_lifecycle;
+mod sandbox_providers;
 mod standalone;
 mod web_search;
 
@@ -196,7 +197,6 @@ fn every_type_has_a_contract_test() {
         .collect();
     let mut sources = [
         include_str!("capabilities.rs"),
-        include_str!("external_inference.rs"),
         include_str!("gateway_installation.rs"),
         include_str!("gateway_readiness.rs"),
         include_str!("gateway_storage.rs"),

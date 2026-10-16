@@ -72,11 +72,12 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
     let result: serde_json::Value = serde_json::from_slice(&planned.stdout).unwrap();
     assert_eq!(result["complete"], true);
     assert!(result.get("deferred").is_none());
-    assert!(!result["unverified"].as_array().unwrap().is_empty());
+    // Plans read no inference catalogs; OpenShell carries inference traffic.
+    assert!(result.get("unverified").is_none());
     let planned = invoke("plan", "text");
     let preview = String::from_utf8(planned.stdout).unwrap();
     assert!(preview.contains("No resource changes planned."));
-    assert!(preview.contains("Unverified checks:"));
+    assert!(!preview.contains("Unverified checks:"));
     assert!(
         !result["discovery"]["targets"]
             .as_object()
@@ -315,15 +316,9 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     assert!(deployment.plan_destroy(&cancel).await.is_err());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert_apply_unfinished(&deployment, &cancel).await;
+    // The lost reply was the inference registration's: its target cannot change.
     let mut changed = document.clone();
-    changed.spec.sandboxes[0]
-        .agent
-        .inference
-        .as_mut()
-        .unwrap()
-        .routes[0]
-        .overrides
-        .model = "changed".into();
+    changed.spec.inference_providers[0].endpoint = "http://172.20.0.1:11437/v1".into();
     let error = deployment.apply(&changed, &cancel).await.unwrap_err();
     assert!(
         error

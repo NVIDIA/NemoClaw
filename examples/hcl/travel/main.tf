@@ -56,9 +56,9 @@ variable "model_endpoint" {
   default     = "http://127.0.0.1:11434/v1"
 }
 variable "sandbox_model_endpoint" {
-  description = "Ollama's OpenAI-compatible URL from the gateway and sandboxes, ending in /v1; over HTTP its host must currently be a literal loopback or private IP address (#13232). Defaults to model_endpoint."
+  description = "Ollama's OpenAI-compatible URL from the gateway and sandboxes, ending in /v1. The default reaches a server on the gateway's host through OpenShell's alias; OpenShell checks the destination."
   type        = string
-  default     = null
+  default     = "http://host.openshell.internal:11434/v1"
 }
 variable "destroy" {
   description = "Permit deleting provider-owned objects; set for tofu destroy."
@@ -158,8 +158,8 @@ locals {
   model_url   = regex("^https?://(?P<host>[^:/]+):(?P<port>[0-9]+)", data.ollama_readiness.nemotron.ref.endpoint)
 }
 
-# Workspaces are retained, so tofu destroy cannot tear this configuration
-# down yet (#13230).
+# Tear the configuration down with tofu destroy -var destroy=true. To keep the
+# workspace instead, add lifecycle { prevent_destroy = true } to it.
 resource "openshell_workspace" "travel" {
   gateway = local.gateway
   name    = "travel"

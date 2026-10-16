@@ -30,8 +30,6 @@ mod health;
 mod helm_recovery;
 #[path = "hosted_parity.rs"]
 mod hosted_parity;
-#[path = "inference_discovery.rs"]
-mod inference_discovery;
 #[cfg(unix)]
 #[path = "../../test-support/kube_api.rs"]
 mod kube_api;

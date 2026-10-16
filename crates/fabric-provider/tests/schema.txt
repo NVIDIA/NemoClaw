@@ -13,7 +13,7 @@ provider fabric (version 0)
 resource fabric_agent (version 0)
   config_sha256: string, computed
   description: string, optional, computed
-  gateway: object({ credential_env = string, endpoint = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
+  gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   harness: object({ adapter_id = string, catalog_json = string, image = string, type = string }), required
   id: string, computed
   name: string, required
@@ -337,7 +337,7 @@ resource fabric_agent (version 0)
 data fabric_agent_readiness (version 0)
   agent: object({ config_sha256 = string, generation = string, name = string, owner = string, sandbox = string, sandbox_id = string, type = string, workspace = string }), required
   error_message: string, computed
-  gateway: object({ credential_env = string, endpoint = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
+  gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   health_json: string, computed
   read_trigger: string, optional
   ready: bool, computed

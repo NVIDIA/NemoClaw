@@ -125,7 +125,7 @@ The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `
 
 Live tests use real Docker engines, kind clusters, images, or remote hosts, and touch only resources they own.
 The `live-docker` profile selects the Docker tests in `nemoclaw-runtime`, `nemoclaw-build`, `nemoclaw-e2e`, `nemoclaw-sdk`, and `nemoclaw-provider`; the `live-kind` profile selects `nemoclaw-e2e`'s `kubernetes_live` and `kubernetes_chart` tests.
-The `live-docker` profile's `managed_gateway` test in `nemoclaw-e2e` runs a managed gateway's runtime stage with real Docker; [Docker Gateway Recovery](live-tests.md#docker-gateway-recovery) gives its inputs.
+The `live-docker` profile's `managed_gateway` test in `nemoclaw-e2e` plans and applies only a managed gateway's runtime resources with real Docker; [Docker Gateway Recovery](live-tests.md#docker-gateway-recovery) gives its inputs.
 Other ignored tests, such as the Brev, Spark, and hosted-model tests, run only when selected by hand or by the Live / Brev workflow.
 [Run live tests](live-tests.md) gives each test's prerequisites and the state it retains.
 

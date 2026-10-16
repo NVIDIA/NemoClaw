@@ -130,7 +130,7 @@ async fn teardown_does_not_resume_incomplete_retained_kubernetes_storage() {
 async fn omitted_optional_computed_values_get_defaults_when_the_proposed_value_is_unknown() {
     let resource = ResourceAdapter::new(
         support::definition(
-            "provider",
+            "inference",
             &["name", "endpoint", "credential_env"],
             &["endpoint", "credential_env"],
         ),
@@ -202,13 +202,7 @@ async fn failed_and_partial_observations_retain_protocol_state() {
     partial.remove("id");
     let mut foreign = row();
     foreign.insert("owner".into(), "someone-else".into());
-    for kind in [
-        "workspace",
-        "provider_profile",
-        "provider",
-        "sandbox",
-        "agent",
-    ] {
+    for kind in ["workspace", "inference", "web_search", "sandbox", "agent"] {
         for observation in [
             Err(ObservationError::Transport),
             Ok(Some(partial.clone())),
@@ -231,13 +225,7 @@ async fn failed_and_partial_observations_retain_protocol_state() {
 
 #[tokio::test]
 async fn confirmed_absence_reconciles_registrations_but_preserves_stateful_bindings() {
-    for kind in [
-        "workspace",
-        "provider_profile",
-        "provider",
-        "sandbox",
-        "agent",
-    ] {
+    for kind in ["workspace", "inference", "web_search", "sandbox", "agent"] {
         for destroying in [false, true] {
             let resource = ResourceAdapter::new(
                 support::definition(kind, &["name", "owner", "generation"], &[]),
@@ -251,8 +239,9 @@ async fn confirmed_absence_reconciles_registrations_but_preserves_stateful_bindi
             let result = resource
                 .read(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
                 .await;
-            if matches!(kind, "provider_profile" | "provider" | "agent")
-                || (destroying && kind == "sandbox")
+            // Explicit teardown accepts a confirmed-absent sandbox or workspace.
+            if matches!(kind, "inference" | "web_search" | "agent")
+                || (destroying && matches!(kind, "sandbox" | "workspace"))
             {
                 assert!(result.is_none());
                 assert!(diagnostics.errors.is_empty());
@@ -384,13 +373,7 @@ async fn immediate_exit_establishes_state_and_restart_preserves_identity() {
 
 #[tokio::test]
 async fn reconstructible_resources_plan_replacement_and_deletion_without_teardown_mode() {
-    for kind in [
-        "workspace",
-        "provider_profile",
-        "provider",
-        "sandbox",
-        "agent",
-    ] {
+    for kind in ["workspace", "inference", "web_search", "sandbox", "agent"] {
         let resource = ResourceAdapter::new(
             support::definition(kind, &["name", "owner", "generation"], &[]),
             Arc::new(Fixture(Ok(None))),
@@ -409,7 +392,7 @@ async fn reconstructible_resources_plan_replacement_and_deletion_without_teardow
                 Value::Null,
             )
             .await;
-        let reconstructible = matches!(kind, "provider_profile" | "provider" | "agent");
+        let reconstructible = matches!(kind, "inference" | "web_search" | "agent");
         assert_eq!(result.is_some(), reconstructible, "{kind}");
         assert_eq!(diagnostics.errors.is_empty(), reconstructible, "{kind}");
         if let Some((_, _, replacements)) = result {
@@ -423,7 +406,9 @@ async fn reconstructible_resources_plan_replacement_and_deletion_without_teardow
             let result = resource
                 .plan_destroy(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
                 .await;
-            let allowed = reconstructible || (destroying && kind == "sandbox");
+            // Explicit teardown may delete sandboxes and workspaces.
+            let allowed =
+                reconstructible || (destroying && matches!(kind, "sandbox" | "workspace"));
             assert_eq!(result.is_some(), allowed, "{kind}, destroy={destroying}");
             assert_eq!(
                 diagnostics.errors.is_empty(),
@@ -476,45 +461,9 @@ async fn retained_replacement_refusal_names_the_resource_and_changed_fields() {
 }
 
 #[tokio::test]
-async fn profile_refresh_preserves_the_bound_cluster_source() {
-    let prior: Row = [
-        ("id", "profile/1"),
-        ("name", "model"),
-        ("workspace", "owned"),
-        ("cluster_source", "bound-service"),
-    ]
-    .map(|(key, value)| (key.into(), value.into()))
-    .into();
-    for source in ["bound-service", "substituted-service", ""] {
-        let mut observed = prior.clone();
-        observed.insert("cluster_source".into(), source.into());
-        let resource = ResourceAdapter::new(
-            support::definition(
-                "provider_profile",
-                &["name", "workspace", "cluster_source"],
-                &[],
-            ),
-            Arc::new(Fixture(Ok(Some(observed)))),
-        );
-        let mut diagnostics = Diagnostics::default();
-        let result = resource
-            .read(
-                &mut diagnostics,
-                state(prior.clone()),
-                Value::Null,
-                Value::Null,
-            )
-            .await
-            .unwrap();
-        assert_eq!(result.0, state(prior.clone()));
-        assert_eq!(diagnostics.errors.is_empty(), source == "bound-service");
-    }
-}
-
-#[tokio::test]
 async fn changing_from_cluster_to_external_inference_replaces_the_owned_profile() {
     let resource = ResourceAdapter::new(
-        support::definition("provider_profile", &["endpoint", "cluster_source"], &[]),
+        support::definition("inference", &["endpoint", "cluster_source"], &[]),
         Arc::new(Fixture(Ok(None))),
     );
     let prior = state(Row::from([
@@ -567,6 +516,9 @@ async fn changing_from_cluster_to_external_inference_replaces_the_owned_profile(
         .await
         .unwrap();
     assert!(diagnostics.errors.is_empty(), "{diagnostics:?}");
+    // The derived registration name is computed, not configured.
+    let mut planned = planned;
+    planned.remove("registration");
     assert_eq!(
         planned, prior,
         "an explicit unchanged cluster source remains bound"
@@ -578,7 +530,7 @@ async fn changing_from_cluster_to_external_inference_replaces_the_owned_profile(
 async fn removing_credential_reference_plans_unauthenticated_replacement() {
     let resource = ResourceAdapter::new(
         support::definition(
-            "provider",
+            "inference",
             &["credential_env", "credential_source"],
             &["credential_env"],
         ),

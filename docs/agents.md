@@ -20,9 +20,8 @@ For public Fabric configuration such as MCP, telemetry, or a workflow, use `harn
 Deployment-owned fields, including metadata, adapter identity, and resolved model connections, cannot be overridden through that object.
 See [the SDK configuration projection](../crates/nemoclaw-sdk/src/fabric_config.rs) for the deployment boundary.
 
-Plan invokes Fabric's planner against the selected image's canonical descriptor snapshot.
-A missing descriptor contract or mismatched Fabric revision leaves compatibility unknown; a schema rejection is unsupported.
-Runtime startup validates the same public configuration through the installed Fabric API.
+Plan checks that the selected image provides the harness at NemoClaw's Fabric revision; a mismatched revision leaves compatibility unknown.
+Fabric validates the configuration through its installed API when the agent is configured, so a configuration the harness rejects fails during apply ([#13319](https://github.com/NVIDIA/NemoClaw/issues/13319)).
 Neither check establishes successful model inference.
 
 ## Choose Native Access
@@ -128,6 +127,34 @@ The managed binding does not enable a native search tool.
 Declare its native plugin or public Fabric MCP configuration separately and validate it against the selected adapter.
 A deployment credential grant is not a native capability claim.
 
+## Skills on a Mounted Volume
+
+Fabric reads skills from the paths in `fabric_agent`'s `skills` block.
+To give an agent skills that outlive its sandbox, mount a volume into the sandbox with `openshell_sandbox`'s [`driver_config`](provider.md#openshell-resources-and-data-sources) and point `skills` at the mount.
+This is available in HCL only, with a gateway configured to allow driver configuration.
+
+```hcl
+resource "openshell_sandbox" "assistant" {
+  # ...
+  driver_config = jsonencode({
+    docker = {
+      mounts = [{ type = "volume", source = "assistant-skills", target = "/sandbox/skills" }]
+    }
+  })
+}
+
+resource "fabric_agent" "assistant" {
+  # ...
+  skills {
+    paths = ["/sandbox/skills"]
+  }
+}
+```
+
+OpenShell's mount settings decide whether the agent can write to the volume, and the sandbox's filesystem policy decides which paths its process may read or write.
+The volume's contents persist when the sandbox is replaced, including anything the agent writes there.
+How the volume gets its contents is up to the platform; OpenShell's documentation describes the volume labels it requires.
+
 ## Brave Web Search
 
 Declare the credential reference and attach the definition to the intended agent:
@@ -197,7 +224,7 @@ Deployment identity and ownership checks protect retained sandboxes, provider re
 
 The runtime host validates public Fabric configuration before starting a runtime.
 Apply calls configure after OpenTofu establishes the required dependencies.
-Configure preserves an unchanged runtime or stops it before starting the replacement; prepare is a separate explicit operation.
+Configure preserves an unchanged runtime or stops it before starting the replacement; removing `fabric_agent` calls prepare, which stops the runtime and clears the applied configuration.
 OpenTofu retains desired configuration; the host remembers only its active configuration in memory and waits for apply after a host restart.
 Unchanged configuration does not request inference or restart the runtime.
 The host reports its active runtime identity and remembered public configuration.

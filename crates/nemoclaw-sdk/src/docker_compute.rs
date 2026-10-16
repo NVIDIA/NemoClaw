@@ -231,7 +231,7 @@ fn container(target: &Target) -> Result<Value, Error> {
             .port()
             .ok_or(Error::State("missing gateway port"))?;
         return Ok(
-            json!({"name":spec.name,"user":"0:0","labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"networks_advanced":[{"name":spec.network(),"ipv4_address":spec.gateway_address()?}],"ports":[{"internal":port,"external":port,"ip":endpoint.host_str().ok_or(Error::State("missing gateway host"))?,"protocol":"tcp"}],"mounts":[{"type":"volume","source":spec.volume(),"target":"/NEMOCLAW_GATEWAY_DATA"},{"type":"bind","source":spec.gateway.engine.strip_prefix("unix://").ok_or(Error::State("gateway requires Unix engine"))?,"target":"/var/run/docker.sock"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"no","log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60}),
+            json!({"name":spec.name,"user":"0:0","labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"networks_advanced":[{"name":spec.network(),"ipv4_address":spec.gateway_address()?}],"ports":[{"internal":port,"external":port,"ip":endpoint.host_str().ok_or(Error::State("missing gateway host"))?,"protocol":"tcp"}],"mounts":[{"type":"volume","source":spec.volume(),"target":"/NEMOCLAW_GATEWAY_DATA"},{"type":"bind","source":spec.gateway.engine.strip_prefix("unix://").ok_or(Error::State("gateway requires Unix engine"))?,"target":"/var/run/docker.sock"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"unless-stopped","log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60}),
         );
     }
     let process = spec
@@ -711,7 +711,9 @@ mod tests {
         );
         assert_eq!(gateway["mounts"][1]["target"], "/var/run/docker.sock");
         assert_eq!(gateway["wait"], false);
-        assert_eq!(gateway["restart"], "no");
+        // The engine brings the gateway back after it or the host restarts;
+        // an explicit stop keeps it stopped.
+        assert_eq!(gateway["restart"], "unless-stopped");
         assert_eq!(
             gateway["depends_on"],
             json!([

@@ -312,6 +312,9 @@ impl tower::Service<http::Request<Body>> for Service {
                 "/openshell.v1.OpenShell/UpdateProvider" => {
                     unary(request, state, update_provider).await
                 }
+                "/openshell.v1.OpenShell/DeleteWorkspace" => {
+                    unary(request, state, delete_workspace).await
+                }
                 "/openshell.v1.OpenShell/DeleteProvider" => {
                     unary(request, state, |state, request| {
                         delete_provider(state, &request)
@@ -467,6 +470,26 @@ fn update_provider(
     Ok(p::ProviderResponse {
         provider: Some(provider),
         ..Default::default()
+    })
+}
+/// Delete an empty workspace, as OpenShell refuses one that still holds objects.
+fn delete_workspace(
+    state: &mut State,
+    q: p::DeleteWorkspaceRequest,
+) -> Result<p::DeleteWorkspaceResponse, Status> {
+    if !state.workspaces.contains_key(&q.name) {
+        return Err(Status::not_found("absent"));
+    }
+    let prefix = format!("{}/", q.name);
+    if state.sandboxes.keys().any(|key| key.starts_with(&prefix))
+        || state.providers.keys().any(|key| key.starts_with(&prefix))
+        || state.profiles.keys().any(|key| key.starts_with(&prefix))
+    {
+        return Err(Status::failed_precondition("workspace is not empty"));
+    }
+    state.workspaces.remove(&q.name);
+    Ok(p::DeleteWorkspaceResponse {
+        outcome: p::DeletionOutcome::Completed.into(),
     })
 }
 fn delete_provider(
@@ -1005,14 +1028,7 @@ pub fn contract_rows(
     // Inference and web search resources expand to the profile and
     // registration they own; registrations follow every profile.
     let mut registrations = Vec::new();
-    for kind in [
-        "workspace",
-        "provider_profile",
-        "provider",
-        "inference",
-        "web_search",
-        "sandbox",
-    ] {
+    for kind in ["workspace", "inference", "web_search", "sandbox"] {
         if kind == "sandbox" {
             rows.append(&mut registrations);
         }
@@ -1057,10 +1073,9 @@ pub fn contract_rows(
                     // These rows reach a gateway client directly, which never
                     // sees the connection the resource adapter carries.
                     if reference.kind == nemoclaw_openshell::GATEWAY_TYPE {
-                        assert!(
-                            value
-                                .as_str()
-                                .is_some_and(|text| text.starts_with("${data.openshell_gateway.")),
+                        assert_eq!(
+                            value["type"],
+                            nemoclaw_openshell::GATEWAY_TYPE,
                             "{name}: {value} is not a gateway ref"
                         );
                         continue;

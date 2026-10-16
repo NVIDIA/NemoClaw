@@ -95,7 +95,28 @@ fn fixture(mut document: Document) -> Option<String> {
         }
         resources.insert(kind.clone(), bodies);
     }
-    let resources = Value::Object(resources);
+    // Objects carry the gateway's ref literally; they reach the same fake
+    // gateway, which takes no credentials.
+    let mut resources = Value::Object(resources);
+    for bodies in resources.as_object_mut().unwrap().values_mut() {
+        for body in bodies.as_object_mut().unwrap().values_mut() {
+            if let Some(gateway) = body
+                .get_mut("gateway")
+                .filter(|gateway| gateway["type"] == "openshell_gateway")
+            {
+                for attribute in [
+                    "credential_env",
+                    "tls_ca_env",
+                    "tls_certificate_env",
+                    "tls_key_env",
+                    "kubernetes",
+                ] {
+                    gateway[attribute] = json!("");
+                }
+                gateway["endpoint"] = json!("${var.endpoint}");
+            }
+        }
+    }
     let text = resources.to_string();
     assert!(
         !text.contains("data.fabric_") && !text.contains("nemoclaw_"),
@@ -111,6 +132,7 @@ fn fixture(mut document: Document) -> Option<String> {
             "tls_ca_env",
             "tls_certificate_env",
             "tls_key_env",
+            "kubernetes",
         ] {
             read.remove(attribute);
         }

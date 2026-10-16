@@ -34,6 +34,7 @@ pub(super) fn create_sandbox_request(
         spec: Some(proto::SandboxSpec {
             template: Some(proto::SandboxTemplate {
                 image: value(want, "image").into(),
+                driver_config: crate::driver_config::request(value(want, "driver_config_json"))?,
                 ..Default::default()
             }),
             command: launch.command,
@@ -325,6 +326,16 @@ impl ConnectedOpenShellGateway {
                     allow_missing: false,
                     id: name.into(),
                     workspace_scope: Some(proto::workspace_selector(workspace)),
+                    ..Default::default()
+                }))
+                .await
+                .map(|_| ()),
+            "workspace" => self
+                .client
+                .raw_grpc()
+                .delete_workspace(self.request(proto::DeleteWorkspaceRequest {
+                    allow_missing: false,
+                    name: name.into(),
                     ..Default::default()
                 }))
                 .await

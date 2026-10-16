@@ -10,8 +10,7 @@ pub mod agent;
 mod client;
 mod composite;
 mod connected;
-#[cfg(feature = "installation")]
-mod external_inference;
+mod driver_config;
 mod gateway_source;
 mod network;
 mod profile;
@@ -25,7 +24,10 @@ mod gateway;
 mod transport;
 use nemoclaw_backend::{ObservationError, Row};
 
-pub use client::{GatewayClient, GatewayConfig, GatewaySettings, OpenShellBackend};
+pub use client::{
+    GatewayClient, GatewayConfig, GatewayConnection, GatewaySettings, KubernetesConnection,
+    KubernetesConnector, OpenShellBackend,
+};
 pub use gateway_source::{GatewayDataSource, GatewayState, observe_with_wait};
 pub use nemoclaw_backend::{EnvironmentSecrets, Secrets};
 use nemoclaw_openshell::credential_metadata;
@@ -233,7 +235,9 @@ fn sandbox_row(
         .as_ref()
         .ok_or(ObservationError::Incomplete)?;
     let spec = sandbox.spec.ok_or(ObservationError::Incomplete)?;
-    let image = spec.template.ok_or(ObservationError::Incomplete)?.image;
+    let template = spec.template.ok_or(ObservationError::Incomplete)?;
+    let driver_config = driver_config::observed(template.driver_config.as_ref());
+    let image = template.image;
     let environment: Row = spec.environment.into_iter().collect();
     let inference = environment.get(PROVIDERS_ENV).cloned().unwrap_or_default();
     let launch_json = meta
@@ -274,6 +278,7 @@ fn sandbox_row(
     let mut row = base(sandbox.metadata.clone(), name, removing)?;
     row.insert("provider_names_json".into(), inference);
     row.insert("image".into(), image);
+    row.insert("driver_config_json".into(), driver_config);
     row.insert("policy_json".into(), policy_input);
     row.insert("launch_json".into(), launch_json);
     // Phase is used by active checks, but is not a Terraform schema attribute.
@@ -335,6 +340,50 @@ pub fn verify_identity(expected: &Row, observed: &Row) -> Result<(), Observation
     Ok(())
 }
 
+/// A profile's executables change in place only when its observation reported
+/// them empty: the profile was missing, and recreating it leaves the
+/// registration a sandbox attaches in place. Any other change replaces the
+/// resource.
+fn binaries_changes(field: &str, prior: &nemoclaw_tofu::State, _: &nemoclaw_tofu::State) -> bool {
+    use tf_provider::value::Value;
+    field == "binaries_json"
+        && !matches!(prior.get(field), Some(Value::Null) | None)
+        && !matches!(prior.get(field), Some(Value::Value(value)) if value.is_empty() || value == "[]")
+}
+
+/// An inference resource's replacement rule: authentication mode, then
+/// executables.
+fn inference_changes(
+    field: &str,
+    prior: &nemoclaw_tofu::State,
+    proposed: &nemoclaw_tofu::State,
+) -> bool {
+    authentication_mode_changes(field, prior, proposed) || binaries_changes(field, prior, proposed)
+}
+
+/// Credential references rotate in place; adding or removing authentication
+/// requires replacement.
+fn authentication_mode_changes(
+    field: &str,
+    prior: &nemoclaw_tofu::State,
+    proposed: &nemoclaw_tofu::State,
+) -> bool {
+    field == "credential_env" && authentication_mode(prior) != authentication_mode(proposed)
+}
+
+fn authentication_mode(state: &nemoclaw_tofu::State) -> Option<bool> {
+    use tf_provider::value::Value;
+    let mut authenticated = false;
+    for field in ["credential_env", "credential_source"] {
+        match state.get(field) {
+            Some(Value::Unknown) => return None,
+            Some(Value::Value(value)) => authenticated |= !value.is_empty(),
+            Some(Value::Null) | None => {}
+        }
+    }
+    Some(authenticated)
+}
+
 /// The registration a provider row registers: its name.
 fn provider_registration(known: &Row, unknown: &[&str]) -> Option<String> {
     (!unknown.contains(&"name")).then(|| known.get("name").cloned().unwrap_or_default())
@@ -353,38 +402,10 @@ fn web_search_registration(known: &Row, unknown: &[&str]) -> Option<String> {
 }
 
 /// OpenShell objects and their planning rules.
-pub fn definitions() -> [nemoclaw_tofu::Definition; 6] {
+pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
     use nemoclaw_tofu::Definition;
     [
         Definition::new("workspace", &["name", "owner", "generation"], &[]),
-        Definition::new(
-            "provider",
-            &[
-                "workspace",
-                "name",
-                "owner",
-                "generation",
-                "endpoint",
-                "credential_env",
-                "provider_type",
-                "credential_source",
-                "profile_name",
-            ],
-            // Endpoint and authentication-mode changes also replace the
-            // imported profile. Delete the registration first so the API
-            // permits profile deletion; ordinary key rotation stays mutable.
-            &["credential_env"],
-        )
-        .optional(&[
-            "credential_env",
-            "provider_type",
-            "credential_source",
-            "profile_name",
-        ])
-        // Omission selects the default, not the previous selection.
-        .reset_when_omitted(&["credential_env", "credential_source", "provider_type"])
-        .replaces(authentication_mode_changes)
-        .derived("registration", provider_registration),
         // A web search provider's profile and registration, as one resource
         // whose owner is its workspace's. Every input names them, so changes
         // replace. `credential_env` and `binaries` are required by plans,
@@ -401,14 +422,19 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 6] {
                 "credential_env",
                 "binaries_json",
             ],
-            &[],
+            &["binaries_json"],
         )
         .optional(&["credential_env", "binaries_json"])
+        // Omission selects the default, not the previous value.
+        .reset_when_omitted(&["credential_env", "binaries_json"])
+        .replaces(binaries_changes)
         .derived("registration", web_search_registration),
         // An inference server's profile and registration, as one resource
         // whose owner is its workspace's and whose endpoint and credential
-        // come from the server's ref. Every input names them, so changes
-        // replace. The schema lists the server's fields and `binaries` as
+        // come from the server's ref. A rotated credential reference updates
+        // in place, since OpenShell refuses to delete a registration a sandbox
+        // attaches; adding or removing authentication, or any other change,
+        // replaces them. The schema lists the server's fields and `binaries` as
         // optional, and plans require them, for the same reason as web
         // search's.
         Definition::new(
@@ -425,7 +451,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 6] {
                 "binaries_json",
                 "cluster_source",
             ],
-            &[],
+            &["credential_env", "binaries_json"],
         )
         .optional(&[
             "endpoint",
@@ -434,30 +460,15 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 6] {
             "binaries_json",
             "cluster_source",
         ])
-        .derived("registration", provider_registration),
-        Definition::new(
-            "provider_profile",
-            &[
-                "workspace",
-                "name",
-                "owner",
-                "generation",
-                "endpoint",
-                "provider_type",
-                "authenticated",
-                "binaries_json",
-                "cluster_source",
-            ],
-            &[],
-        )
-        .optional(&[
-            "endpoint",
-            "provider_type",
-            "authenticated",
+        // Omission selects the default, not the previous value.
+        .reset_when_omitted(&[
+            "credential_env",
+            "credential_source",
+            "binaries_json",
             "cluster_source",
         ])
-        .reset_when_omitted(&["provider_type", "cluster_source"])
-        .bound_fields(&["cluster_source"]),
+        .replaces(inference_changes)
+        .derived("registration", provider_registration),
         Definition::new(
             "sandbox",
             &[
@@ -469,10 +480,11 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 6] {
                 "launch_json",
                 "policy_json",
                 "provider_names_json",
+                "driver_config_json",
             ],
             &[],
         )
-        .optional(&["policy_json", "provider_names_json"]),
+        .optional(&["policy_json", "provider_names_json", "driver_config_json"]),
     ]
     .map(lifecycle_rules)
     .map(|mut definition| {
@@ -502,35 +514,15 @@ fn lifecycle_rules(definition: nemoclaw_tofu::Definition) -> nemoclaw_tofu::Defi
     use nemoclaw_openshell::{OpenShellLifecycle, openshell_lifecycle};
     use nemoclaw_tofu::Protection;
     match openshell_lifecycle(definition.kind) {
-        Some(OpenShellLifecycle::Retained) => {
-            definition.protect(Protection::Always).refuse_replacement()
-        }
+        // OpenTofu's prevent_destroy retains a workspace; generated graphs set
+        // it. Without it, explicit teardown may delete the workspace, as it may
+        // a sandbox.
+        Some(OpenShellLifecycle::Retained) => definition
+            .protect(Protection::UnlessDestroying)
+            .refuse_replacement(),
         Some(OpenShellLifecycle::Stateful) => definition
             .protect(Protection::UnlessDestroying)
             .refuse_replacement(),
         Some(OpenShellLifecycle::Reconstructible) | None => definition,
     }
-}
-
-/// Credential references rotate in place; adding or removing authentication
-/// requires replacement.
-fn authentication_mode_changes(
-    field: &str,
-    prior: &nemoclaw_tofu::State,
-    proposed: &nemoclaw_tofu::State,
-) -> bool {
-    field == "credential_env" && authentication_mode(prior) != authentication_mode(proposed)
-}
-
-fn authentication_mode(state: &nemoclaw_tofu::State) -> Option<bool> {
-    use tf_provider::value::Value;
-    let mut authenticated = false;
-    for field in ["credential_env", "credential_source"] {
-        match state.get(field) {
-            Some(Value::Unknown) => return None,
-            Some(Value::Value(value)) => authenticated |= !value.is_empty(),
-            Some(Value::Null) | None => {}
-        }
-    }
-    Some(authenticated)
 }

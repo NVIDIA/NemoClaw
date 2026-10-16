@@ -175,6 +175,7 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
         "tls_ca_env",
         "tls_certificate_env",
         "tls_key_env",
+        "kubernetes",
     ] {
         gateway[attribute] = json!(current[attribute].as_str().unwrap_or_default());
     }

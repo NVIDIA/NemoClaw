@@ -142,7 +142,6 @@ fn container_service_runs_on_the_gateway_network_with_disposable_data_and_fresh_
         &container_generations(),
         "0.1.0",
         &["docker_volume.container_storage_voice".into()].into(),
-        false,
     )
     .unwrap();
     assert!(

@@ -26,7 +26,14 @@ fn placement(spec: &str) -> Option<(serde_json::Value, serde_json::Value)> {
         RUNTIME_DATA_PATH, RUNTIME_ENTRYPOINT, RUNTIME_SPEC_ENV, RUNTIME_ULIMITS,
         default_shared_memory_bytes,
     };
-    let port = serde_json::from_str::<serde_json::Value>(spec).ok()?["serving"]["port"].as_u64()?;
+    let parsed = serde_json::from_str::<serde_json::Value>(spec).ok()?;
+    let port = parsed["serving"]["port"].as_u64()?;
+    // An authenticated server takes a platform's key from this variable.
+    let key_env = if parsed["authentication"].is_null() {
+        ""
+    } else {
+        nemoclaw_runtime::INFERENCE_KEY_ENV
+    };
     let ulimits: serde_json::Map<String, serde_json::Value> = RUNTIME_ULIMITS
         .iter()
         .map(|(name, limit)| ((*name).to_owned(), serde_json::json!(limit)))
@@ -38,6 +45,7 @@ fn placement(spec: &str) -> Option<(serde_json::Value, serde_json::Value)> {
             "environment": {RUNTIME_SPEC_ENV: spec},
             "port": port,
             "data_path": RUNTIME_DATA_PATH,
+            "key_env": key_env,
         }),
         serde_json::json!({
             "gpu": true,
@@ -81,8 +89,9 @@ fn placement_types() -> [(&'static str, AttributeType, &'static str); 2] {
                 ("environment".into(), Map(Box::new(String))),
                 ("port".into(), Number),
                 ("data_path".into(), String),
+                ("key_env".into(), String),
             ])),
-            "What any platform runs: entrypoint, command, environment (including the contract), the port the server listens on, and the path for its data. Place it with any container platform.",
+            "What any platform runs: entrypoint, command, environment (including the contract), the port the server listens on, the path for its data, and key_env, the variable an authenticated server reads a supplied API key from (empty without authentication). Place it with any container platform.",
         ),
         (
             REQUIREMENTS,
@@ -468,5 +477,15 @@ mod tests {
             AttributePath::new("serving").index(0).attribute("port")
         );
         assert!(detail.starts_with("serving.port: "), "{detail}");
+    }
+
+    #[test]
+    fn the_launch_names_the_key_variable_only_for_authenticated_servers() {
+        let authenticated = r#"{"serving":{"port":8000},"authentication":"bearer"}"#;
+        let (launch, _) = placement(authenticated).unwrap();
+        assert_eq!(launch["key_env"], nemoclaw_runtime::INFERENCE_KEY_ENV);
+        let open = r#"{"serving":{"port":8000}}"#;
+        let (launch, _) = placement(open).unwrap();
+        assert_eq!(launch["key_env"], "");
     }
 }

@@ -506,9 +506,12 @@ impl Resource for ResourceAdapter {
         _: ValueEmpty,
     ) -> Option<ValueEmpty> {
         if self.protected_binding() {
-            diags.root_error_short(
-                "Sandbox deletion requires destroy = true because files and history are removed; workspaces must be retained",
-            );
+            diags.root_error_short(match self.definition.protection {
+                Protection::Always => "This resource is retained and cannot be deleted",
+                _ => {
+                    "Deletion requires the provider's destroy = true, because it removes data such as sandbox files and history"
+                }
+            });
             return None;
         }
         Some(private)

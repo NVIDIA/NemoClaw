@@ -438,11 +438,14 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
             &generations,
             &tofu.bundle.manifest.version,
             &tofu.addresses().await,
-            true,
         )
         .unwrap();
         assert_eq!(teardown.retained, storage);
+        // The teardown graph comes from the deployment's whole graph, so it
+        // can require more providers than the runtime graph; the SDK
+        // initializes before every plan, and so does this test.
         tofu.graph(&teardown.graph);
+        tofu.success(&["init", "-input=false", "-no-color"]).await;
         tofu.plan(&actions(workloads, "delete")).await;
         tofu.apply().await;
         assert_eq!(tofu.addresses().await, storage);
@@ -465,6 +468,7 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
         );
         if cycle == 0 {
             tofu.graph(&graph);
+            tofu.success(&["init", "-input=false", "-no-color"]).await;
             tofu.plan(&actions(workloads, "create")).await;
             tofu.apply().await;
             tofu.plan(&BTreeMap::new()).await;

@@ -7,7 +7,6 @@ use std::collections::BTreeMap;
 
 #[test]
 fn gateway_capabilities_gate_deployment_and_follow_bootstrap_reconciliation() {
-    use nemoclaw_sdk::compile::compile_runtime;
     let document = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
     let generations = [
         "workspace",
@@ -23,7 +22,12 @@ fn gateway_capabilities_gate_deployment_and_follow_bootstrap_reconciliation() {
         graph["data"]["openshell_gateway"]["current"]["required_compute_drivers"],
         serde_json::json!(["docker"])
     );
-    for resources in graph["resource"].as_object().unwrap().values() {
+    for (kind, resources) in graph["resource"].as_object().unwrap() {
+        if !(kind.starts_with("openshell_") && !kind.contains("gateway")
+            || kind.starts_with("fabric_"))
+        {
+            continue;
+        }
         for resource in resources.as_object().unwrap().values() {
             assert_eq!(
                 resource["lifecycle"]["precondition"][0]["condition"],
@@ -31,9 +35,15 @@ fn gateway_capabilities_gate_deployment_and_follow_bootstrap_reconciliation() {
             );
         }
     }
-    let bootstrap = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    let apply = &graph["data"]["openshell_gateway"]["apply"]["depends_on"];
+    assert!(
+        apply.as_array().unwrap().contains(&serde_json::json!(
+            "docker_container.managed_gateway_runtime"
+        )),
+        "objects change only after the gateway they use settles"
+    );
     assert_eq!(
-        bootstrap["data"]["openshell_gateway"]["current"]["depends_on"],
+        graph["data"]["openshell_gateway"]["current"]["depends_on"],
         serde_json::json!([
             "docker_container.managed_gateway_runtime",
             "data.openshell_docker_gateway_readiness.current"
@@ -225,6 +235,22 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
             "${openshell_workspace.deployment.ref}"
         );
     }
+    // Objects take a literal gateway ref, known while planning, equal to
+    // what the gateway data source exports; that read gates the resources.
+    let read = &graph["data"]["openshell_gateway"]["current"];
+    for resource in [
+        workspace,
+        provider,
+        sandbox,
+        &resources["fabric_agent"]["worker"],
+    ] {
+        assert!(
+            resource["depends_on"].as_array().is_some_and(
+                |dependencies| dependencies.contains(&json!("data.openshell_gateway.apply"))
+            ),
+            "the gateway read gates {resource}"
+        );
+    }
     for resource in [
         workspace,
         provider,
@@ -233,15 +259,23 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
         &graph["data"]["fabric_agent_readiness"]["worker"],
     ] {
         assert_eq!(
-            resource["gateway"], "${data.openshell_gateway.current.ref}",
+            resource["gateway"]["type"], "openshell_gateway",
             "{resource}"
         );
+        for (attribute, _) in nemoclaw_openshell::GATEWAY_FIELDS {
+            assert_eq!(
+                resource["gateway"][attribute],
+                read.get(attribute).cloned().unwrap_or(json!("")),
+                "{attribute}: {resource}"
+            );
+        }
         for field in [
             "gateway_endpoint",
             "gateway_credential_env",
             "gateway_tls_ca_env",
             "gateway_tls_certificate_env",
             "gateway_tls_key_env",
+            "gateway_kubernetes",
         ] {
             assert!(resource.get(field).is_none(), "{field}: {resource}");
         }

@@ -39,9 +39,15 @@ fn explicit_proxy_engine_works_with_an_external_gateway() {
         Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
         document
     );
-    let generations: Generations = ["workspace", "provider", "sandbox", "ollama_proxy"]
-        .map(|key| (key.into(), "a".repeat(32)))
-        .into();
+    let generations: Generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "ollama_proxy",
+        "managed_gateway",
+    ]
+    .map(|key| (key.into(), "a".repeat(32)))
+    .into();
     let targets = nemoclaw_sdk::compile::targets(&document, &generations).unwrap();
     let proxy_targets: Vec<_> = targets
         .iter()
@@ -88,9 +94,15 @@ fn proxy_readiness_is_fresh_and_orders_only_its_selected_consumer() {
         .unwrap()
         .push(second);
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
-    let generations: Generations = ["workspace", "provider", "sandbox", "ollama_proxy"]
-        .map(|key| (key.into(), "a".repeat(32)))
-        .into();
+    let generations: Generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "ollama_proxy",
+        "managed_gateway",
+    ]
+    .map(|key| (key.into(), "a".repeat(32)))
+    .into();
     let graph = compile(&document, &generations, "0.1.0").unwrap();
     let readiness = &graph["data"]["ollama_proxy_readiness"]["ollama_proxy_ollama-auth"];
     assert_eq!(
@@ -150,9 +162,15 @@ fn explicit_proxy_engine_must_be_a_valid_local_socket() {
 }
 #[test]
 fn proxy_pull_policy_preserves_credentials_and_other_resource_settings() {
-    let gens: Generations = ["workspace", "provider", "sandbox", "ollama_proxy"]
-        .map(|key| (key.into(), "a".repeat(32)))
-        .into();
+    let gens: Generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "ollama_proxy",
+        "managed_gateway",
+    ]
+    .map(|key| (key.into(), "a".repeat(32)))
+    .into();
     let mut value = input();
     let original = Document::parse(value.to_string().as_bytes()).unwrap();
     let before = compile(&original, &gens, "0.1.0").unwrap();
@@ -245,9 +263,15 @@ fn external_ollama_compiles_only_the_proxy_and_its_model_check() {
         "http://172.20.0.1:11435/v1"
     );
     assert!(doc.credential_names().is_empty());
-    let gens: Generations = ["workspace", "provider", "sandbox", "ollama_proxy"]
-        .map(|k| (k.into(), "a".repeat(32)))
-        .into();
+    let gens: Generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "ollama_proxy",
+        "managed_gateway",
+    ]
+    .map(|k| (k.into(), "a".repeat(32)))
+    .into();
     let graph = compile(&doc, &gens, "0.1.0").unwrap();
     let resources = &graph["resource"];
     assert!(resources.get("nemoclaw_ollama").is_none());
@@ -320,9 +344,15 @@ fn deep_agents_and_pi_use_authenticated_ollama_proxy_connections() {
                 .unwrap()
                 .is_valid(&value)
         );
-        let gens: Generations = ["workspace", "provider", "sandbox", "ollama_proxy"]
-            .map(|k| (k.into(), "a".repeat(32)))
-            .into();
+        let gens: Generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "ollama_proxy",
+            "managed_gateway",
+        ]
+        .map(|k| (k.into(), "a".repeat(32)))
+        .into();
         let graph = compile(&doc, &gens, "0.1.0").unwrap();
         assert!(graph["resource"]["docker_container"]["ollama_proxy_ollama-auth"].is_object());
         assert!(
@@ -349,9 +379,15 @@ fn named_proxies_have_distinct_containers_storage_and_credentials() {
         .unwrap()
         .push(provider);
     let doc = Document::parse(value.to_string().as_bytes()).unwrap();
-    let gens: Generations = ["workspace", "provider", "sandbox", "ollama_proxy"]
-        .map(|key| (key.into(), "a".repeat(32)))
-        .into();
+    let gens: Generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "ollama_proxy",
+        "managed_gateway",
+    ]
+    .map(|key| (key.into(), "a".repeat(32)))
+    .into();
     let graph = compile(&doc, &gens, "0.1.0").unwrap();
     for (kind, first, second) in [
         (
@@ -382,9 +418,15 @@ fn proxy_requires_a_managed_docker_gateway_and_uses_its_engine() {
     let mut value = input();
     value["spec"]["gateway"]["engine"] = json!("unix:///tmp/proxy-engine.sock");
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
-    let generations = ["workspace", "provider", "sandbox", "ollama_proxy"]
-        .map(|kind| (kind.into(), "a".repeat(32)))
-        .into();
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "ollama_proxy",
+        "managed_gateway",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
     let graph = compile(&document, &generations, "test").unwrap();
     assert_eq!(
         graph["provider"]["docker"][0]["host"],

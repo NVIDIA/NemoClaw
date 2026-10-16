@@ -88,7 +88,7 @@ fn bindings(directory: &Path) -> (Value, Row) {
     (Value::Object(ids), sandbox.unwrap())
 }
 fn managed_bindings(directory: &Path) -> Value {
-    let path = directory.join("runtime/terraform.tfstate");
+    let path = directory.join("terraform.tfstate");
     if !path.exists() {
         return json!({});
     }

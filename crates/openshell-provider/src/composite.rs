@@ -114,7 +114,18 @@ pub(crate) async fn read(
     let registration = backend.read("provider", &registration, removing).await?;
     match (profile, registration) {
         (Some(profile), Some(registration)) => {
+            // Both halves must be the same incarnation; the resource reports
+            // its registration's identity so OpenTofu checks it.
+            if ["owner", "generation"]
+                .iter()
+                .any(|field| value(&profile, field) != value(&registration, field))
+            {
+                return Err(ObservationError::BindingMismatch);
+            }
             let mut observed = prior.clone();
+            for field in ["owner", "generation"] {
+                observed.insert(field.into(), value(&registration, field).into());
+            }
             observed.insert(
                 "binaries_json".into(),
                 value(&profile, "binaries_json").into(),

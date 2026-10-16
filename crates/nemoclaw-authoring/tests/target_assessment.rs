@@ -108,7 +108,11 @@ fn an_unsupported_check_is_a_conflict_that_gives_its_reason() {
         &mut observed,
         Support::Unsupported,
         &[
-            ("fabric_plan", Support::Supported, "the plan is valid"),
+            (
+                "fabric_adapter",
+                Support::Supported,
+                "the image provides the selected adapter",
+            ),
             (
                 "image_platform",
                 Support::Unsupported,
@@ -122,7 +126,7 @@ fn an_unsupported_check_is_a_conflict_that_gives_its_reason() {
         &assessment,
         "image_platform: image is amd64, engine is arm64.",
     );
-    assert_silent(&assessment, "fabric_plan");
+    assert_silent(&assessment, "fabric_adapter");
 }
 
 #[test]

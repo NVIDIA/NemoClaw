@@ -26,6 +26,7 @@ locals {
     tls_ca_env          = ""
     tls_certificate_env = ""
     tls_key_env         = ""
+    kubernetes          = ""
   }
 }
 resource "openshell_workspace" "example" {

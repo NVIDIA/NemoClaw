@@ -179,31 +179,6 @@ impl DiscoveryReport {
             })
             .collect()
     }
-    /// Record the SDK's model catalog reads under their `endpoint_N` names.
-    pub(super) fn endpoints(
-        &mut self,
-        observed: Vec<(
-            String,
-            crate::inference_discovery::EndpointRequest,
-            crate::inference_discovery::EndpointObservation,
-        )>,
-    ) {
-        for (name, request, observation) in observed {
-            self.targets.insert(
-                name.clone(),
-                DiscoveryTarget {
-                    endpoint: Some(request.endpoint),
-                    api: Some(request.api),
-                    credential_env: request.credential_env,
-                    ..DiscoveryTarget::default()
-                },
-            );
-            self.observations.insert(
-                name,
-                ReportedObservation::Discovery(DiscoveryObservation::Inference(observation)),
-            );
-        }
-    }
     pub(super) fn gateway_target(&mut self, document: &Document) {
         if self.observations.contains_key("gateway") {
             self.targets.insert(
@@ -219,12 +194,6 @@ impl DiscoveryReport {
                 },
             );
         }
-    }
-    pub(super) fn extend(&mut self, other: Self) {
-        self.targets.extend(other.targets);
-        self.observations.extend(other.observations);
-        self.resources.extend(other.resources);
-        self.credentials.extend(other.credentials);
     }
 }
 /// The prerequisite read's observation name, for its address.
@@ -350,7 +319,7 @@ impl Plan {
     /// Called only after the existing ownership, drift and transition checks pass.
     pub(super) fn discovery_report(
         &self,
-        scope: DiscoveryScope,
+        runtime: &BTreeSet<String>,
         bindings: &BTreeMap<String, StateBinding>,
         retained: &BTreeSet<String>,
     ) -> Result<DiscoveryReport, Error> {
@@ -425,7 +394,11 @@ impl Plan {
                 .any(|drift| drift.address == change.address && drift.change.actions != ["no-op"]);
             report.resources.push(ResourceInventoryEntry {
                 address: change.address.clone(),
-                scope,
+                scope: if runtime.contains(&change.address) {
+                    DiscoveryScope::Runtime
+                } else {
+                    DiscoveryScope::Deployment
+                },
                 existed,
                 planned_actions: change.change.actions.clone(),
                 drifted,
@@ -545,11 +518,7 @@ mod tests {
     fn query_provenance_copies_only_safe_inputs_not_provider_payloads() {
         let plan:Plan=serde_json::from_value(json!({"planned_values":{"root_module":{"resources":[{"address":"data.host_engine.target_0","values":{"engine":"unix:///var/run/docker.sock","credential":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL","observation_json":null}}]}}})).unwrap();
         let report = plan
-            .discovery_report(
-                DiscoveryScope::Deployment,
-                &BTreeMap::new(),
-                &BTreeSet::new(),
-            )
+            .discovery_report(&BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new())
             .unwrap();
         assert_eq!(
             report.targets["target_0"].engine.as_deref(),
@@ -560,26 +529,6 @@ mod tests {
                 .unwrap()
                 .contains("PRIVATE_SENTINEL")
         );
-    }
-
-    #[test]
-    fn catalog_reads_name_their_endpoint_and_only_leave_plans_unverified() {
-        use crate::inference_discovery::{EndpointObservation, EndpointRequest};
-        let mut report = DiscoveryReport::default();
-        report.endpoints(vec![(
-            "endpoint_0".into(),
-            EndpointRequest {
-                endpoint: "https://example.com/v1".into(),
-                api: crate::config::InferenceApi::OpenaiCompletions,
-                credential_env: Some("API_KEY".into()),
-            },
-            EndpointObservation::unknown("inference catalog observation timed out"),
-        )]);
-        let target = &report.targets["endpoint_0"];
-        assert_eq!(target.endpoint.as_deref(), Some("https://example.com/v1"));
-        assert_eq!(target.credential_env.as_deref(), Some("API_KEY"));
-        assert_eq!(report.unverified().len(), 1);
-        assert!(report.deferred().is_empty());
     }
 }
 
@@ -593,12 +542,8 @@ mod prerequisite_tests {
             json!({"planned_values":{"outputs":{"discovery":{"value":discovery}}}}),
         )
         .unwrap();
-        plan.discovery_report(
-            DiscoveryScope::Deployment,
-            &BTreeMap::new(),
-            &BTreeSet::new(),
-        )
-        .unwrap()
+        plan.discovery_report(&BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new())
+            .unwrap()
     }
 
     fn facts() -> String {
@@ -682,36 +627,5 @@ mod encoding_tests {
         }});
         let report: DiscoveryReport = serde_json::from_value(expected.clone()).unwrap();
         assert_eq!(serde_json::to_value(&report).unwrap(), expected);
-    }
-}
-
-#[cfg(test)]
-mod freshness_tests {
-    use super::*;
-    #[test]
-    fn newer_observation_replaces_an_earlier_unverified_fact_and_its_deferral() {
-        let mut earlier = DiscoveryReport::default();
-        earlier.observations.insert(
-            "gateway".into(),
-            ReportedObservation::Plan(PlanObservation::Unresolved {
-                category: "gateway".into(),
-            }),
-        );
-        assert_eq!(earlier.deferred().len(), 1);
-        let mut later = DiscoveryReport::default();
-        later.observations.insert(
-            "gateway".into(),
-            ReportedObservation::Discovery(DiscoveryObservation::Gateway(
-                crate::discovery::GatewayObservation {
-                    status: crate::discovery::ObservationStatus::Available,
-                    reason: None,
-                    source: "openshell_gateway_info".into(),
-                    capabilities: None,
-                    compatible: Some(true),
-                },
-            )),
-        );
-        earlier.extend(later);
-        assert!(earlier.deferred().is_empty());
     }
 }

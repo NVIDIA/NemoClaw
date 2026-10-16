@@ -130,7 +130,7 @@ fn a_completed_destroy_or_reapply_cannot_replay_the_recovery_checkpoint() {
             .validate(BUNDLE_VERSION, &record, &checkpoint.state)
             .is_err()
     );
-    record.begin_runtime_apply(&record.document.clone());
+    record.begin_apply(&record.document.clone(), BTreeMap::new());
     assert!(
         checkpoint
             .validate(BUNDLE_VERSION, &record, &checkpoint.state)

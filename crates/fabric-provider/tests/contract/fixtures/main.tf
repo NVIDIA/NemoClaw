@@ -27,6 +27,7 @@ locals {
     tls_ca_env          = ""
     tls_certificate_env = ""
     tls_key_env         = ""
+    kubernetes          = ""
   }
 }
 resource "openshell_workspace" "example" {
@@ -36,25 +37,21 @@ resource "openshell_workspace" "example" {
   generation = "workspace-generation"
   lifecycle { prevent_destroy = true }
 }
-resource "openshell_provider_profile" "inference" {
-  gateway = local.gateway
-  count         = var.enabled ? 1 : 0
-  workspace     = openshell_workspace.example.ref
-  name          = "nemoclaw-inference-local"
-  owner         = openshell_workspace.example.owner
-  generation    = "provider-generation"
-  endpoint      = "http://127.0.0.1:11434/v1"
-  authenticated = "false"
-  binaries      = var.binaries
-}
-resource "openshell_provider_registration" "inference" {
+resource "openshell_inference" "inference" {
   gateway = local.gateway
   count      = var.enabled ? 1 : 0
   workspace  = openshell_workspace.example.ref
   name       = "local"
-  owner      = openshell_workspace.example.owner
   generation = "provider-generation"
-  endpoint   = openshell_provider_profile.inference[0].endpoint
+  server = {
+    type              = "inference_server"
+    endpoint          = "http://127.0.0.1:11434/v1"
+    model             = ""
+    credential_env    = ""
+    credential_source = ""
+  }
+  api      = "openai-completions"
+  binaries = var.binaries
 }
 resource "openshell_sandbox" "agent" {
   gateway = local.gateway
@@ -65,7 +62,7 @@ resource "openshell_sandbox" "agent" {
   generation          = "sandbox-generation"
   image               = var.image
   launch_json         = var.launch_json
-  providers      = [openshell_provider_registration.inference[0].ref]
+  providers      = [openshell_inference.inference[0].ref]
   policy {
     managed "nemoclaw-inference-local-fcb7b1f1af3733764900def4" {
       endpoints {

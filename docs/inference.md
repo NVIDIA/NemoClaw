@@ -153,7 +153,7 @@ Before writing its provider declaration, obtain the base URL, API, exact model I
 Confirm that the selected image's Fabric descriptor accepts that API.
 Catalog metadata and `/models` responses do not establish successful inference.
 For a credentialed endpoint, declare an HTTPS URL and an environment reference; [credential ownership](security.md#credentials-and-authentication) describes where the resolved key persists.
-Uncredentialed HTTP inference endpoints must use literal private or loopback addresses.
+OpenShell decides which inference destinations a sandbox can reach.
 
 The endpoint must be reachable from the sandbox's OpenShell proxy, not just from your client terminal.
 A loopback URL refers to the network namespace making the request.
@@ -163,6 +163,17 @@ Use the route's `overrides.model` for the upstream model ID.
 Native agents send the configured model ID to the native endpoint using an OpenShell placeholder credential; they do not need the real upstream key in their YAML or sandbox environment.
 Confirm a native agent reply after apply using [verification levels](#verify-the-result).
 Guides for named hosted providers are tracked in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038).
+
+### Trust a Custom Certificate Authority
+
+An endpoint whose certificate comes from an internal certificate authority, such as an organization's LiteLLM proxy, needs that CA trusted in two places:
+
+- **The machine running NemoClaw** reads the endpoint's model catalog during onboarding, using its system trust store.
+  Add the CA there, or set `SSL_CERT_FILE` to a PEM bundle that includes it in the environment that runs `nemoclaw`.
+- **The OpenShell gateway and sandboxes** carry the inference traffic, so their images must trust the CA too.
+  NemoClaw does not configure that trust; OpenShell uses its images' own trust stores.
+
+If the machine running NemoClaw does not trust the certificate, onboarding reports that the server's certificate is not trusted rather than that the endpoint is unreachable.
 
 ## Use an Image Built from This Revision
 
@@ -305,6 +316,29 @@ A missing key after initialization or invalid key metadata stops startup and ret
 Retire model data and credentials separately; removing the model volume does not erase the credential.
 To retire both with the deployment, see [Remove Retained Resources](usage.md#remove-retained-resources).
 Changing an existing service to enable authentication follows the normal runtime replacement rules; YAML does not reconfigure a running server in place.
+
+### Supply the Key on Other Platforms
+
+The generated key lives in a Docker volume, so NemoClaw generates keys only for services it places on Docker.
+On another platform, such as Kubernetes or Podman, supply the key yourself and keep it in the platform's secret store.
+With `authentication` set, `vllm_runtime`'s `launch.key_env` names the variable to set, `NEMOCLAW_INFERENCE_KEY`.
+When it is set, the runtime uses that key instead of generating one, needs no credential volume, and passes the key to vLLM only as `VLLM_API_KEY`.
+The key must be 16 to 4096 printable characters without whitespace.
+A supplied key without `authentication` stops startup, so the server never runs unauthenticated by mistake.
+
+On Kubernetes, for example, store the key in a Secret and set the variable from it:
+
+```yaml
+env:
+  - name: NEMOCLAW_INFERENCE_KEY
+    valueFrom:
+      secretKeyRef:
+        name: vllm-inference-key
+        key: key
+```
+
+Register the server with OpenShell using the same key: give `openshell_inference` a `server` object whose `credential_env` names a variable holding the key where OpenTofu runs.
+Readiness on those platforms is the platform's job; point its readiness probe at `GET /health`, which needs no key.
 
 ## Use External Ollama through a Managed Proxy
 

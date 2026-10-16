@@ -170,7 +170,7 @@ impl DataSource for AgentReadinessDataSource {
                     "agent readiness read trigger is not yet known",
                 ));
             }
-            let client = self.0.client_for(&gateway_row(&config)?)?;
+            let client = self.0.client_for(&gateway_row(&config)?).await?;
             let mut binding = crate::configuration::bound_sandbox(&client, &agent).await?;
             // The sandbox launches one agent; readiness is about that one.
             if binding.get("agent_name") != agent.get("agent") {

@@ -127,7 +127,7 @@ pub(crate) fn runtime_graph(
         generations,
         crate::services::InstallStage::Runtime,
     )?;
-    let mut graph = graph_base(document, version)?;
+    let mut graph = graph_base(document, generations, version)?;
     if document.spec.gateway.as_kubernetes().is_some() {
         // Platform resources must be plannable before the gateway exists. The
         // openshell provider installs it here; the fabric provider only

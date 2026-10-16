@@ -39,7 +39,7 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
     if output.status.success() != success {
         let shown = tokio::process::Command::new(bundle.join("libexec/tofu"))
             .args(["show", "-json", "apply.plan"])
-            .current_dir(root.join("deployment/runtime"))
+            .current_dir(root.join("deployment"))
             .output()
             .await
             .unwrap();
@@ -212,7 +212,7 @@ impl Scenario {
     }
 
     fn runtime_state(&self) -> Vec<u8> {
-        fs::read(self.root.join("deployment/runtime/terraform.tfstate")).unwrap()
+        fs::read(self.root.join("deployment/terraform.tfstate")).unwrap()
     }
 }
 
@@ -446,9 +446,9 @@ async fn partial_destroy_retains_storage(s: &Scenario) {
     // compute or deleting retained data after a failed runtime operation.
     // Recovery uses current bindings and a fresh teardown plan even when
     // the failed operation's plan artifact is no longer available.
-    fs::remove_file(root.join("deployment/runtime/apply.plan")).unwrap();
+    fs::remove_file(root.join("deployment/apply.plan")).unwrap();
     let result: Value = serde_json::from_slice(&s.run("destroy", "", true).await).unwrap();
-    let graph = read(root, "deployment/runtime/main.tf.json");
+    let graph = read(root, "deployment/main.tf.json");
     let mut retained: Vec<String> = graph["resource"]
         .as_object()
         .unwrap()
@@ -492,9 +492,14 @@ async fn recover_failed_creation_and_startup(s: &Scenario) -> Value {
     save(root, "control.json", &json!({"startup_failure":true}));
     s.run("apply", "config.yaml", false).await;
     assert_eq!(read(root, "engine.json")["creates"], 1);
+    // The failed apply never reached an object whose creation reply could be
+    // lost, so nothing is pending; export still refuses the unbound resources.
     let refusal = s.export_refusal().await;
-    assert!(refusal.contains("apply is unfinished"), "{refusal}");
-    let runtime_state = read(root, "deployment/runtime/terraform.tfstate");
+    assert!(
+        refusal.contains("export requires all declared resource bindings"),
+        "{refusal}"
+    );
+    let runtime_state = read(root, "deployment/terraform.tfstate");
     let resources = runtime_state["resources"].as_array().unwrap();
     for expected in ["docker_container", "docker_network"] {
         assert!(
@@ -532,7 +537,7 @@ fn bearer_is_registered_once_outside_state(s: &Scenario) {
         );
     }
     for name in [
-        "deployment/runtime/terraform.tfstate",
+        "deployment/terraform.tfstate",
         "deployment/terraform.tfstate",
         "config.yaml",
     ] {
@@ -814,7 +819,7 @@ async fn removed_pull_policy_reapplies_without_pulling(s: &Scenario, stable: &Va
     );
     let shown = tokio::process::Command::new(s.bundle.join("libexec/tofu"))
         .args(["show", "-json", "apply.plan"])
-        .current_dir(root.join("deployment/runtime"))
+        .current_dir(root.join("deployment"))
         .output()
         .await
         .unwrap();
@@ -904,7 +909,7 @@ async fn destroy_retains_storage(s: &Scenario, volume: &Value) {
 // its current object but fails to delete the old one. Only this owned fixture
 // writes the private state format; the SDK must consume OpenTofu's public JSON.
 fn interrupt_cleanup(root: &Path, old_present: bool) {
-    let mut state = read(root, "deployment/runtime/terraform.tfstate");
+    let mut state = read(root, "deployment/terraform.tfstate");
     let container = state["resources"]
         .as_array_mut()
         .unwrap()
@@ -916,7 +921,7 @@ fn interrupt_cleanup(root: &Path, old_present: bool) {
     old["attributes"]["id"] = json!("old-container");
     old["attributes"]["name"] = json!("old-container");
     container["instances"].as_array_mut().unwrap().push(old);
-    save(root, "deployment/runtime/terraform.tfstate", &state);
+    save(root, "deployment/terraform.tfstate", &state);
     let mut engine = read(root, "engine.json");
     let mut old = engine["container"].clone();
     old["Id"] = json!("old-container");
@@ -932,7 +937,7 @@ async fn replacement_cleanup(root: &Path, bundle: &Path) {
     save(root, "control.json", &json!({"cleanup_failure":true}));
     run(root, bundle, "apply", "config.yaml", false).await;
     assert!(read(root, "engine.json")["deposed_container"].is_object());
-    let state = read(root, "deployment/runtime/terraform.tfstate");
+    let state = read(root, "deployment/terraform.tfstate");
     assert!(
         state["resources"]
             .as_array()
@@ -973,12 +978,8 @@ async fn refused_sandbox_changes_preserve_retained_intent(
         .push(reviewer);
     save(root, "config.yaml", &original);
     run(root, bundle, "apply", "config.yaml", true).await;
-    let before = [
-        "intent.json",
-        "terraform.tfstate",
-        "runtime/terraform.tfstate",
-    ]
-    .map(|path| fs::read(root.join("deployment").join(path)).unwrap());
+    let before = ["intent.json", "terraform.tfstate"]
+        .map(|path| fs::read(root.join("deployment").join(path)).unwrap());
     let engine = read(root, "engine.json");
     let effects = gateway.state.lock().unwrap().effects;
     for change in ["remove", "image", "policy", "image-with-runtime-change"] {
@@ -1005,14 +1006,7 @@ async fn refused_sandbox_changes_preserve_retained_intent(
             let result: Value =
                 serde_json::from_slice(&run(root, bundle, operation, "rejected.yaml", false).await)
                     .unwrap();
-            for (path, saved) in [
-                "intent.json",
-                "terraform.tfstate",
-                "runtime/terraform.tfstate",
-            ]
-            .iter()
-            .zip(&before)
-            {
+            for (path, saved) in ["intent.json", "terraform.tfstate"].iter().zip(&before) {
                 assert_eq!(
                     fs::read(root.join("deployment").join(path)).unwrap(),
                     *saved,

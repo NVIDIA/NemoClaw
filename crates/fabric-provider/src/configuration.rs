@@ -229,9 +229,32 @@ pub(crate) async fn remove(
     prior: &Row,
     _destroying: bool,
 ) -> Result<(), ObservationError> {
-    read(client, prior, true).await?;
-    // The sandbox owns this runtime. Forgetting its configuration binding
-    // must not mutate or delete a runtime independently of that sandbox.
+    // A sandbox that is already gone took its agent with it.
+    let Some(parent) = configuration_parent(client, prior, true).await? else {
+        return Ok(());
+    };
+    if value(prior, "id") != value(&parent, "id") {
+        return Err(ObservationError::BindingMismatch);
+    }
+    // Removing the agent stops it, as removing an attachment does: Fabric stops
+    // its runtime and the host forgets the configuration. The sandbox stays.
+    let snapshot = client
+        .agent_snapshot(&parent)
+        .await
+        .map_err(Error::into_observation)?;
+    if snapshot.runtime_state == "stopped" && snapshot.applied_config.is_none() {
+        return Ok(());
+    }
+    let generation = snapshot.generation.ok_or(ObservationError::Incomplete)?;
+    let config: Value =
+        serde_json::from_str(value(prior, "config_json")).map_err(|_| ObservationError::Query)?;
+    let response =
+        crate::bridge::bridge_input(client, &parent, "prepare", &config, Some(&generation))
+            .await
+            .map_err(Error::into_observation)?;
+    if response.status != "succeeded" {
+        return Err(ObservationError::Incomplete);
+    }
     Ok(())
 }
 pub(crate) async fn configure_agent(client: &OpenShell, binding: &Row) -> Result<(), Error> {

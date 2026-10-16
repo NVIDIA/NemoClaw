@@ -16,7 +16,7 @@ use std::{
 
 const NAME: &str = "nc-0123456789abcdef-gateway";
 const OWNER: &str = "302ff5e1-088d-42ce-959f-4ff4c3570c13";
-const IMAGE: &str = "ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6";
+const IMAGE: &str = "ghcr.io/nvidia/openshell/gateway@sha256:bdb4fe248070032c88be78f029dad9325cb698480e90486e1413a674a5d8edc8";
 const DATA_ROOT: &str = "/var/lib/docker";
 
 #[derive(Default)]

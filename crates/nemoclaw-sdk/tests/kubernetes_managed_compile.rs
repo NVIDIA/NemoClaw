@@ -207,26 +207,38 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
         assert!(resource.get("environment").is_none(), "{kind}");
     }
     let agents = compile(&document, &generations, "0.1.0").unwrap();
-    // The managed gateway's credentials reach the gateway data source, whose
-    // ref every object takes.
-    for (field, expected) in [
-        ("credential_env", "NEMOCLAW_MANAGED_K8S_TOKEN"),
-        ("tls_ca_env", "NEMOCLAW_MANAGED_K8S_CA"),
-        ("tls_certificate_env", "NEMOCLAW_MANAGED_K8S_CERT"),
-        ("tls_key_env", "NEMOCLAW_MANAGED_K8S_KEY"),
+    // The gateway data source, whose ref every object takes, carries the
+    // managed gateway's specification. Providers connect to the gateway with
+    // it, so no connection variables are named.
+    let gateway = &agents["data"]["openshell_gateway"]["current"];
+    for field in [
+        "credential_env",
+        "tls_ca_env",
+        "tls_certificate_env",
+        "tls_key_env",
     ] {
-        assert_eq!(
-            agents["data"]["openshell_gateway"]["current"][field], expected,
-            "{field}"
-        );
+        assert!(gateway.get(field).is_none(), "{field}");
     }
+    let spec: nemoclaw_sdk::kubernetes::Spec =
+        serde_json::from_str(gateway["kubernetes"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        Some(spec),
+        nemoclaw_sdk::kubernetes::gateway_spec(&document, &generations).unwrap()
+    );
     for provider in ["openshell", "fabric"] {
         assert_eq!(agents["provider"][provider], json!({}), "{provider}");
     }
+    // One graph installs the gateway and creates the objects it serves; the
+    // gateway read waits for the installation.
+    assert_eq!(
+        gateway["depends_on"],
+        json!(["openshell_kubernetes_gateway.runtime"])
+    );
     assert!(
-        agents["resource"]
-            .get("openshell_kubernetes_gateway")
-            .is_none()
+        agents["data"]["openshell_gateway"]["apply"]["depends_on"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("openshell_kubernetes_gateway.runtime"))
     );
     assert!(agents["provider"].get("docker").is_none());
 }

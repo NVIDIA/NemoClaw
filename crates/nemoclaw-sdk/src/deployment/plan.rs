@@ -648,7 +648,7 @@ mod kubernetes_replacement_tests {
                 .collect();
             serde_json::from_value(json!({"resource_changes": changes})).unwrap()
         };
-        let accepted = runtime::check_runtime_plan(&planned(None), &expected, &bindings);
+        let accepted = crate::deployment::plan::check_plan(&planned(None), &expected, &bindings);
         assert!(
             accepted.as_ref().is_ok_and(Vec::is_empty),
             "a plan with no changes must be accepted: {accepted:?}"
@@ -656,7 +656,7 @@ mod kubernetes_replacement_tests {
         for target in &targets {
             for actions in [["delete", "create"], ["create", "delete"]] {
                 let plan = planned(Some((&target.address, actions)));
-                let result = runtime::check_runtime_plan(&plan, &expected, &bindings);
+                let result = crate::deployment::plan::check_plan(&plan, &expected, &bindings);
                 assert!(
                     matches!(
                         result,
@@ -682,11 +682,7 @@ pub(super) mod discovery_tests {
     /// The deferrals a plan reports, as `plan` and `apply` compute them.
     pub(in crate::deployment) fn deferred(plan: &Plan) -> Vec<String> {
         let report = plan
-            .discovery_report(
-                DiscoveryScope::Deployment,
-                &BTreeMap::new(),
-                &BTreeSet::new(),
-            )
+            .discovery_report(&BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new())
             .unwrap();
         plan.discovery_deferred(&report)
     }
@@ -748,7 +744,7 @@ mod reporting_tests {
         let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"mode":"managed","address":"openshell_gateway_storage.runtime","change":{"actions":["no-op"],"before":{"id":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL"},"after":{"id":"PRIVATE_SENTINEL"}}}],"resource_drift":[{"mode":"managed","address":"openshell_gateway_storage.runtime","change":{"actions":["update"],"before":{},"after":{}}}]})).unwrap();
         let report = plan
             .discovery_report(
-                super::super::DiscoveryScope::Runtime,
+                &BTreeSet::from(["openshell_gateway_storage.runtime".into()]),
                 &BTreeMap::new(),
                 &BTreeSet::from(["openshell_gateway_storage.runtime".into()]),
             )

@@ -181,5 +181,22 @@ async fn travel_example_applies_as_plain_hcl_against_the_shipped_providers() {
         String::from_utf8_lossy(&plan.stdout),
         String::from_utf8_lossy(&plan.stderr)
     );
-    // Teardown of hand-written configurations is #13230.
+    // Teardown: deleting the sandbox needs the provider's destroy = true;
+    // with it, tofu destroy removes everything, the workspace included.
+    run(&["destroy", "-auto-approve", "-input=false"], false);
+    assert_eq!(gateway.state.lock().unwrap().sandboxes.len(), 1);
+    run(
+        &[
+            "destroy",
+            "-auto-approve",
+            "-input=false",
+            "-var=destroy=true",
+        ],
+        true,
+    );
+    let state = gateway.state.lock().unwrap();
+    assert!(state.sandboxes.is_empty());
+    assert!(state.providers.is_empty());
+    assert!(state.profiles.is_empty());
+    assert!(state.workspaces.is_empty());
 }

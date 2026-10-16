@@ -102,10 +102,10 @@ Run it explicitly for candidate dependency upgrades, outside the default build; 
 
 ## Retained Storage Observations
 
-The read-only live storage test requires an explicit OpenTofu runtime state file containing the test deployment's retained inference credential-volume binding from an authenticated vLLM service:
+The read-only live storage test requires an explicit OpenTofu state file containing the test deployment's retained inference credential-volume binding from an authenticated vLLM service:
 
 ```sh
-NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/runtime/terraform.tfstate \
+NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/deployment-state/terraform.tfstate \
   cargo test -p nemoclaw-sdk --test integration \
   managed_live::retained_inference_credentials_preserve_their_reference_binding -- --ignored
 ```
@@ -408,8 +408,8 @@ To remove the retained storage after a manual run, follow [Remove Retained Resou
 
 ## Docker Gateway Recovery
 
-nemoclaw-e2e's `managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu` test exercises only the managed runtime stage with a real gateway, Docker, both providers, and OpenTofu.
-It reaches that stage through the SDK's `test-scenarios` setup, which only nemoclaw-e2e enables, then destroys through the public API.
+nemoclaw-e2e's `managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu` test exercises only the managed gateway's runtime resources with a real gateway, Docker, both providers, and OpenTofu.
+It plans and applies them through the SDK's `test-scenarios` setup, which only nemoclaw-e2e enables, then destroys through the public API.
 Supply a verified bundle and an owned configuration with a fresh UID, free gateway port/subnet, Docker sandboxes, external inference, and no managed services.
 The test does not create sandboxes or request inference.
 It removes its gateway process on completion but retains the database, keys, initializer, bridge, and state.

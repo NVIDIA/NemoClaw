@@ -49,7 +49,7 @@ pub struct Service {
     /// Numeric UID:GID. Omission selects 65532:65532; root requires an explicit 0:0 for images that need it.
     #[serde(default = "default_user")]
     pub user: String,
-    /// Literal non-secret application settings. Credentials must not be supplied here.
+    /// Literal application settings, visible in configuration, plans/state, exports, and Docker inspection. No host-variable expansion or protected credential delivery.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub environment: BTreeMap<String, String>,
     /// Optional loopback or private IPv4 TCP publication. Omission publishes no port.

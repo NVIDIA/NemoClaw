@@ -27,10 +27,13 @@ pub fn structured_inputs(kind: &str) -> Vec<Structured> {
         shape,
     };
     match kind {
-        "provider_profile" | "web_search" | "inference" => {
+        "web_search" | "inference" => {
             vec![input("binaries", "binaries_json", strings())]
         }
-        "sandbox" => vec![input("policy", "policy_json", policy_input())],
+        "sandbox" => vec![
+            input("policy", "policy_json", policy_input()),
+            input("driver_config", "driver_config_json", Shape::Json),
+        ],
         _ => Vec::new(),
     }
 }
@@ -40,7 +43,7 @@ pub fn export(kind: &str) -> Option<Export> {
     let fields: &[&'static str] = match kind {
         "workspace" => &["name", "owner", "generation", "id"],
         // Registrations name what sandboxes attach: `registration`.
-        "provider" | "web_search" | "inference" => &[
+        "web_search" | "inference" => &[
             "workspace",
             "name",
             "registration",
@@ -48,7 +51,7 @@ pub fn export(kind: &str) -> Option<Export> {
             "generation",
             "id",
         ],
-        "provider_profile" | "sandbox" => &["workspace", "name", "owner", "generation", "id"],
+        "sandbox" => &["workspace", "name", "owner", "generation", "id"],
         _ => return None,
     };
     Some(Export {
@@ -65,13 +68,16 @@ pub const GATEWAY_TYPE: &str = "openshell_gateway";
 pub const INFERENCE_SERVER_TYPE: &str = "inference_server";
 
 /// How to reach a gateway: `(ref attribute, row field)` for each part of
-/// its `ref`. Rows carry them without the gateway observing them.
-pub const GATEWAY_FIELDS: [(&str, &str); 5] = [
+/// its `ref`. Rows carry them without the gateway observing them. A managed
+/// Kubernetes gateway's `kubernetes` specification replaces the credential
+/// variables: providers connect to it themselves.
+pub const GATEWAY_FIELDS: [(&str, &str); 6] = [
     ("endpoint", "gateway_endpoint"),
     ("credential_env", "gateway_credential_env"),
     ("tls_ca_env", "gateway_tls_ca_env"),
     ("tls_certificate_env", "gateway_tls_certificate_env"),
     ("tls_key_env", "gateway_tls_key_env"),
+    ("kubernetes", "gateway_kubernetes"),
 ];
 
 /// A row without the gateway connection it carries. Gateways never observe
@@ -113,7 +119,6 @@ fn object_references(kind: &str) -> Vec<Reference> {
         list: false,
     };
     match kind {
-        "provider_profile" => vec![workspace],
         // A web search registration belongs to its workspace's owner.
         "web_search" => vec![Reference {
             attribute: "workspace",
@@ -138,15 +143,6 @@ fn object_references(kind: &str) -> Vec<Reference> {
                     ("credential_env", "credential_env"),
                     ("credential_source", "credential_source"),
                 ],
-                list: false,
-            },
-        ],
-        "provider" => vec![
-            workspace,
-            Reference {
-                attribute: "profile",
-                kind: "openshell_provider_profile",
-                fields: vec![("name", "profile_name")],
                 list: false,
             },
         ],

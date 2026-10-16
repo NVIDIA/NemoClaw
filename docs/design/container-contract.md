@@ -8,14 +8,17 @@ It also defines the container base shared by managed Ollama and vLLM.
 
 Decision: **Accept**, authorized by San Dang in the container-contract discussion.
 Reason: share container deployment without removing managed inference safeguards or teaching the SDK every application's configuration.
-Placement: the SDK container installer and existing Docker/OpenTofu resource compiler; protected-file delivery stays in its provider.
+Placement: the SDK container installer and existing Docker/OpenTofu resource compiler.
+Scope update: San Dang deferred protected-file delivery and accepted literal application environment values as a temporary approach.
+This approach does not protect credentials from configuration, state, or Docker inspection.
 Accountable NemoClaw maintainer: San Dang.
 Validation: focused compiler and provider tests, existing inference lifecycle tests, and separate VoiceClaw qualification under [#12570](https://github.com/NVIDIA/NemoClaw/issues/12570).
 This decision does not authorize image publication, live deployment, or a claim of VoiceClaw support.
 
 ## Status
 
-[PR #13093](https://github.com/NVIDIA/NemoClaw/pull/13093) implements the container base; [PR #12619](https://github.com/NVIDIA/NemoClaw/pull/12619) implements protected inputs.
+[PR #13093](https://github.com/NVIDIA/NemoClaw/pull/13093) implements the container base without a protected-input dependency.
+[PR #12619](https://github.com/NVIDIA/NemoClaw/pull/12619) is closed; generic credential-file delivery is deferred.
 Use the generated [field reference](../reference/configuration.md) for YAML fields and defaults.
 Compiler tests compare explicit `kind: container` configurations with the existing managed Ollama and vLLM launch settings.
 These tests are not Linux GPU or VoiceClaw qualification.
@@ -31,7 +34,7 @@ NemoClaw deploys the container and supplies its declared inputs; it does not int
 |---|---|
 | `image` | Immutable OCI image reference; choose an image compatible with the selected host. |
 | `command` | Optional argument list passed to the image entrypoint; no implicit shell or secret substitution. |
-| `environment` | Literal nonsecret strings. No expression resolver or implicit connection injection. |
+| `environment` | Literal application strings, visible in configuration, plans/state, exports, and Docker inspection. No host-variable expansion or implicit connection injection. |
 | `files` | Nonsecret application configuration uploaded before startup with mode 0444. Contents enter plans and state. These are files in the container, not immutable mounts; root can change them. |
 | `container` | CPU, memory, GPU access, shared memory, IPC, and process limits supported by the selected placement. These are not model-memory budgets. |
 | `user` | Numeric UID:GID; default 65532:65532. An image that requires root must explicitly request 0:0. GPU access and root are never inferred from the image name. |
@@ -39,7 +42,6 @@ NemoClaw deploys the container and supplies its declared inputs; it does not int
 | `publication` | Optional host address and port; omission does not publish a host listener. |
 | `readiness` | Choose HTTP `path` or managed `runtimeStatus`, with `timeoutSeconds`; omission uses Docker HEALTHCHECK. It never generates a model response or starts an agent task. |
 | `data` | Disposable writable volume at `mountPath`, default /data. The typed model kinds retain their existing storage policy. |
-| `secrets` | Credential references delivered as private files, never secret values in container configuration. |
 
 The initial generic application placement is the managed local Docker gateway's engine and network.
 Podman and Kubernetes service placement require separate implementation and qualification; a gateway using either does not imply service support there.
@@ -63,30 +65,28 @@ An application whose agent is unavailable must return a bounded, actionable fail
 With manual connection settings, the operator creates and verifies the gateway and agent before deploying the application.
 The generic container does not automatically wait for an agent named only in an environment variable.
 
-## Credential Files
+## Application Environment
 
-Declare credential references separately from `environment` and ordinary `files`:
+This phase supplies application settings through literal container environment values:
 
 ```yaml
-secrets:
-  speech:
-    env: NVIDIA_API_KEY
+environment:
+  APP_API_KEY: "REPLACE_AT_DEPLOY_TIME"
 ```
 
-The caller supplies that environment variable to NemoClaw.
-The application reads its value from `/run/nemoclaw/secrets/speech`.
-Names are application-defined; the same rule applies to a gateway token named `gateway`.
+The application reads `APP_API_KEY` directly from its process environment.
+NemoClaw does not resolve `${APP_API_KEY}` from the caller's environment or accept `env` reference objects in this map.
+There is no generic `secrets` field, credential publisher, or protected-file mount in this phase.
 
-NemoClaw delivers files owned by the application's UID:GID, with private modes, on an application read-only mount.
-Values must not enter Docker environment variables, arguments, plans, state, exports, or diagnostics.
-The application must not log values or copy them into browser code, responses, or persistent diagnostics.
-Files remain until their owned storage is removed; destroy does not revoke externally issued credentials.
-Rotation behind an unchanged reference is not detected automatically; do not claim that replacing only the application necessarily republishes a separately owned secret resource.
-The explicit rotation procedure must be qualified with the protected-input lifecycle before being documented as supported.
+Putting a credential here is a temporary plaintext approach, not secret storage.
+The value enters YAML, compiled plans/state, exports, and Docker container configuration; the application and engine administrators can read it.
+Literal values are not automatically registered as protected credential references, so do not rely on diagnostic redaction.
+Replace placeholders only in private local configuration; never commit real values or share resulting plans, state, exports, or logs.
+The application must not copy credentials into browser code or responses.
+Removing a container does not erase retained configuration, state history, backups, or logs, and does not revoke an upstream credential.
+The operator owns those copies and upstream revocation; no credential rotation service is provided.
 
-This phase does not check default host ACLs on Docker's volume directory.
-It relies on fresh owned input storage and an application read-only mount, under the accepted archive-delivery design.
-Foreign resources, incomplete writes, and cleanup errors must retain enough identity for explicit recovery.
+This decision does not change credential references for gateways and inference providers or the private storage of typed managed-model credentials.
 
 ## Manual VoiceClaw Connection
 
@@ -101,8 +101,8 @@ VoiceClaw implements these environment settings; they are not reserved SDK field
 | `VOICECLAW_SANDBOX_ID` | The expected physical sandbox identity. |
 | `VOICECLAW_AGENT_NAME` | The agent to invoke in that sandbox. |
 | `VOICECLAW_AUTH_MODE` | Explicit `none` for trusted local development, or `oidcBearer` for HTTPS with a service token. |
-| `VOICECLAW_GATEWAY_TOKEN_FILE` | Required for `oidcBearer`; path to the application service token, normally `/run/nemoclaw/secrets/gateway`. |
-| `VOICECLAW_SPEECH_KEY_FILE` | Path to the speech credential, normally `/run/nemoclaw/secrets/speech`. |
+| `VOICECLAW_GATEWAY_TOKEN` | Required for `oidcBearer`; the application's service token supplied as a literal environment value, with the exposure described above. |
+| `VOICECLAW_SPEECH_KEY` | Speech credential supplied as a literal environment value, with the exposure described above. |
 
 VoiceClaw verifies the selected workspace, sandbox identity, and agent before invocation.
 If identity changes or cannot be established, it stops that request rather than invoking another sandbox by name.
@@ -126,10 +126,7 @@ environment:
   VOICECLAW_SANDBOX_ID: "ACTUAL_SANDBOX_ID"
   VOICECLAW_AGENT_NAME: main
   VOICECLAW_AUTH_MODE: none
-  VOICECLAW_SPEECH_KEY_FILE: /run/nemoclaw/secrets/speech
-secrets:
-  speech:
-    env: NVIDIA_API_KEY
+  VOICECLAW_SPEECH_KEY: "REPLACE_AT_DEPLOY_TIME"
 ```
 
 There is no `agentConnection`, environment `from`, or generated connection descriptor in the target contract.
@@ -187,7 +184,7 @@ The initial generic path does not add persistence policy or migrate any existing
 Disposable application storage can be lost on replacement or destroy; model downloads in disposable storage may need repeating.
 Existing managed Ollama/vLLM caches and credential storage retain their established lifetimes.
 
-After implementing the VoiceClaw interface, report its source revision, image digest, platform, accepted settings, and file paths.
+After implementing the VoiceClaw interface, report its source revision, image digest, platform, and accepted settings.
 Qualification under #12570 must prove a post-apply turn reaches the selected agent and returns its response.
 It must also cover unavailable or replaced agents, authentication failures, interruption/retry, and owned cleanup.
 A healthy container, parser fixture, or successful HTTP probe alone is not that qualification.

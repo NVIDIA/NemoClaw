@@ -42,6 +42,7 @@ Use the owning guide for the selected credential type:
 | Credential or connection | Storage, access, and retirement | Owning procedure |
 |---|---|---|
 | Gateway bearer credential and mTLS files | Caller supplies environment values and local files; SDK/provider need access; gateway operator owns revocation, while the caller removes local values/files when no longer needed | [Configuration and credentials](usage.md#configuration-and-credentials) |
+| Literal application-container environment key | Caller places the value in private YAML; it enters plans/state, exports, and Docker configuration; the application and engine administrators can read it; caller owns artifact cleanup and upstream revocation | [Application environment](design/container-contract.md#application-environment) |
 | External inference key, including Hermes provider authentication | Caller resolves the reference; OpenShell retains the installed value for routing; destroy removes the provider registration, not the upstream account/key | [Inference authentication](inference.md#authenticate-hermes-through-the-provider) |
 | Generated managed vLLM key | Private file in a separate retained credential volume, available to runtime root and engine administrators; recreation reuses it; retiring the container does not erase the key | [Managed service authentication](inference.md#authenticate-a-managed-vllm-service) |
 | Generated external-Ollama proxy key | Private credential volume, available to proxy root and engine administrators; retained across destroy/recreation and never forwarded to Ollama | [Ollama proxy](inference.md#use-external-ollama-through-a-managed-proxy) |
@@ -55,7 +56,9 @@ Managed private HTTP endpoints with bearer authentication do not provide TLS.
 Corporate CA provisioning across the client, images, gateway and native runtimes, and a rotation runbook for every credential type, are tracked in [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643).
 Use each existing guide's current lifecycle constraints; do not infer a rotation command.
 
-Keep credential values out of YAML, shell arguments, shared URLs, and published diagnostics.
+Keep credential values out of committed or shared YAML, shell arguments, shared URLs, and published diagnostics.
+Generic application containers currently have no protected credential delivery; their temporary literal-environment approach exposes values in configuration and state.
+Use credential references where the selected provider supports them, rather than copying that plaintext approach into gateway or inference settings.
 The example authoring TUI saves credential references and never resolves their values.
 Authoring and lifecycle operations are separate commands; accepting an authored document does not authorize apply.
 Inspect a secret-free plan before invoking apply.
@@ -67,7 +70,8 @@ Retiring a deployment requires separate decisions about upstream revocation, ret
 
 ### Diagnostic Disclosure
 
-The SDK keeps credentials out of its own error construction and filters child-process errors and progress as a backstop.
+The SDK keeps resolved credential-reference values out of its own error construction and filters child-process errors and progress as a backstop.
+Arbitrary literal container environment values are not automatically registered for this protection; treat resulting diagnostics as potentially sensitive.
 For values of at least eight Unicode characters, the filter replaces matching spans in one pass, merging overlaps without rescanning `[redacted]` markers.
 This exact-value filter does not cover encoded or transformed secrets; providers must still avoid putting credentials in diagnostics.
 

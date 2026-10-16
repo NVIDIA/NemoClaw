@@ -228,7 +228,7 @@ fn targets_with_plans(
         }
     }
     // OpenShell objects and Fabric configurations name their gateway.
-    let gateway = gateway_values(&document.spec.gateway);
+    let gateway = gateway_values(document, generations)?;
     for target in &mut result {
         if nemoclaw_openshell::references(&target.kind)
             .iter()
@@ -287,11 +287,137 @@ pub fn compile(
     document: &Document,
     generations: &Generations,
     version: &str,
-) -> Result<Value, ConfigError> {
-    deployment_graph(document, generations, version).map(|(graph, _)| graph)
+) -> Result<Value, crate::Error> {
+    deployment_graph(document, generations, version).map(|compiled| compiled.graph)
+}
+
+/// One deployment's graph: the runtime NemoClaw manages and the OpenShell and
+/// Fabric objects it serves, planned and applied together.
+pub(crate) struct Compiled {
+    pub graph: Value,
+    /// OpenShell and Fabric objects, and the containers that serve them.
+    pub objects: Vec<Target>,
+    /// The managed gateway, model servers, and their storage.
+    pub runtime: Vec<Target>,
 }
 
 pub(crate) fn deployment_graph(
+    document: &Document,
+    generations: &Generations,
+    version: &str,
+) -> Result<Compiled, crate::Error> {
+    let (mut graph, objects) = objects_graph(document, generations, version)?;
+    let runtime = if document.has_runtime() {
+        let (runtime_graph, runtime) = compiled_runtime(document, generations, version)?;
+        join(&mut graph, runtime_graph)?;
+        runtime
+    } else {
+        Vec::new()
+    };
+    Ok(Compiled {
+        graph,
+        objects,
+        runtime,
+    })
+}
+
+/// Add the runtime graph to the objects graph. Objects change only after the
+/// runtime settles: each waits on the apply-time gateway read, which waits on
+/// every runtime resource and readiness read.
+fn join(graph: &mut Value, mut runtime: Value) -> Result<(), crate::Error> {
+    let conflict =
+        || crate::Error::State("runtime and objects graphs declare the same address differently");
+    // The runtime graph's gateway read waits for the gateway it installs, so it
+    // replaces the plan-time read of the same gateway.
+    let current = runtime["data"]["openshell_gateway"]
+        .as_object_mut()
+        .and_then(|reads| reads.remove("current"));
+    let mut gates: Vec<Value> = Vec::new();
+    for section in ["resource", "data"] {
+        for (kind, instances) in runtime[section].as_object().into_iter().flatten() {
+            for (name, value) in instances.as_object().into_iter().flatten() {
+                let slot = &mut graph[section][kind][name];
+                if !slot.is_null() && slot != value {
+                    return Err(conflict());
+                }
+                *slot = value.clone();
+                let prefix = if section == "data" { "data." } else { "" };
+                gates.push(json!(format!("{prefix}{kind}.{name}")));
+            }
+        }
+    }
+    for (name, value) in runtime["terraform"]["required_providers"]
+        .as_object()
+        .into_iter()
+        .flatten()
+    {
+        let slot = &mut graph["terraform"]["required_providers"][name];
+        if !slot.is_null() && slot != value {
+            return Err(conflict());
+        }
+        *slot = value.clone();
+    }
+    for (name, value) in runtime["provider"].as_object().into_iter().flatten() {
+        let slot = &mut graph["provider"][name];
+        // Docker providers are aliased per engine; both graphs may reach one.
+        if let (true, Some(added)) = (slot.is_array(), value.as_array()) {
+            let existing = slot.as_array_mut().expect("provider list");
+            for provider in added {
+                if !existing.contains(provider) {
+                    existing.push(provider.clone());
+                }
+            }
+        } else if slot.is_null() || slot == value {
+            *slot = value.clone();
+        } else {
+            return Err(conflict());
+        }
+    }
+    // Variables, locals, outputs, and checks are maps of named blocks.
+    for (block, entries) in runtime.as_object().into_iter().flatten() {
+        if matches!(
+            block.as_str(),
+            "resource" | "data" | "terraform" | "provider"
+        ) {
+            continue;
+        }
+        for (name, value) in entries.as_object().into_iter().flatten() {
+            let slot = &mut graph[block.as_str()][name];
+            if !slot.is_null() && slot != value {
+                return Err(conflict());
+            }
+            *slot = value.clone();
+        }
+    }
+    let reads = &mut graph["data"]["openshell_gateway"];
+    if let Some(current) = current {
+        reads["current"] = current;
+    } else {
+        // A Kubernetes gateway's read waits for its installation instead.
+        let installed: Vec<Value> = gates
+            .iter()
+            .filter(|gate| {
+                gate.as_str().is_some_and(|address| {
+                    address.starts_with(&format!(
+                        "{}.",
+                        resource_type(crate::kubernetes::GATEWAY_KIND)
+                    ))
+                })
+            })
+            .cloned()
+            .collect();
+        if !installed.is_empty() {
+            reads["current"]["depends_on"] = json!(installed);
+        }
+    }
+    let apply = &mut reads["apply"];
+    let mut dependencies = apply["depends_on"].as_array().cloned().unwrap_or_default();
+    dependencies.extend(gates);
+    apply["depends_on"] = json!(dependencies);
+    Ok(())
+}
+
+fn objects_graph(
     document: &Document,
     generations: &Generations,
     version: &str,
@@ -303,7 +429,7 @@ pub(crate) fn deployment_graph(
         crate::services::InstallStage::Deployment,
     )?;
     let raw = targets_with_plans(document, generations, &service_plans)?;
-    let mut graph = compile_with_plans(document, version, &service_plans, &raw)?;
+    let mut graph = compile_with_plans(document, generations, version, &service_plans, &raw)?;
     crate::docker_compute::configure(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid Docker compute graph"))?;
     crate::services::configure_readiness(&mut graph, &raw)
@@ -350,9 +476,12 @@ fn gateway_data(connection: &Value, drivers: Value) -> Value {
 }
 
 /// The gateway connection a deployment's objects carry in their rows.
-fn gateway_values(gateway: &crate::config::Gateway) -> BTreeMap<String, String> {
-    let connection = gateway_provider(gateway);
-    nemoclaw_openshell::GATEWAY_FIELDS
+fn gateway_values(
+    document: &Document,
+    generations: &Generations,
+) -> Result<BTreeMap<String, String>, ConfigError> {
+    let connection = gateway_connection(document, generations)?;
+    Ok(nemoclaw_openshell::GATEWAY_FIELDS
         .iter()
         .map(|(attribute, field)| {
             (
@@ -363,11 +492,25 @@ fn gateway_values(gateway: &crate::config::Gateway) -> BTreeMap<String, String> 
                     .to_owned(),
             )
         })
-        .collect()
+        .collect())
 }
 
-pub(crate) fn gateway_provider(gateway: &crate::config::Gateway) -> Value {
+/// How a deployment's objects reach its gateway: an endpoint and the
+/// variables naming its credentials, or a managed Kubernetes gateway's
+/// specification, from which providers connect themselves.
+pub(crate) fn gateway_connection(
+    document: &Document,
+    generations: &Generations,
+) -> Result<Value, ConfigError> {
+    let gateway = &document.spec.gateway;
     let mut provider = json!({"endpoint":gateway.endpoint()});
+    let invalid = || ConfigError::new("invalid managed Kubernetes gateway");
+    if let Some(spec) =
+        crate::kubernetes::gateway_spec(document, generations).map_err(|_| invalid())?
+    {
+        provider["kubernetes"] = json!(serde_json::to_string(&spec).map_err(|_| invalid())?);
+        return Ok(provider);
+    }
     if let Some(c) = gateway.credential() {
         provider["credential_env"] = json!(c.env);
     }
@@ -376,18 +519,17 @@ pub(crate) fn gateway_provider(gateway: &crate::config::Gateway) -> Value {
         provider["tls_certificate_env"] = json!(tls.certificate.env);
         provider["tls_key_env"] = json!(tls.key.env);
     }
-    if gateway.as_kubernetes().is_some() {
-        provider["credential_env"] = json!("NEMOCLAW_MANAGED_K8S_TOKEN");
-        provider["tls_ca_env"] = json!("NEMOCLAW_MANAGED_K8S_CA");
-        provider["tls_certificate_env"] = json!("NEMOCLAW_MANAGED_K8S_CERT");
-        provider["tls_key_env"] = json!("NEMOCLAW_MANAGED_K8S_KEY");
-    }
-    provider
+    Ok(provider)
 }
 
-/// The gateway's `ref` as a literal object, for graphs without its data source.
-pub(crate) fn gateway_ref(gateway: &crate::config::Gateway) -> Value {
-    let connection = gateway_provider(gateway);
+/// The gateway's `ref` as a literal object, equal to what the gateway data
+/// source exports. Objects take it so their gateway is known while planning,
+/// even when the read waits for apply.
+pub(crate) fn gateway_ref(
+    document: &Document,
+    generations: &Generations,
+) -> Result<Value, ConfigError> {
+    let connection = gateway_connection(document, generations)?;
     let mut reference = serde_json::Map::new();
     reference.insert(
         nemoclaw_tofu::REF_TYPE.into(),
@@ -399,16 +541,15 @@ pub(crate) fn gateway_ref(gateway: &crate::config::Gateway) -> Value {
             json!(connection[attribute].as_str().unwrap_or_default()),
         );
     }
-    Value::Object(reference)
+    Ok(Value::Object(reference))
 }
 
-/// The expression every OpenShell object and Fabric configuration takes as `gateway`.
-pub(crate) fn gateway_ref_expression() -> String {
-    format!("${{{GATEWAY_CAPABILITIES_ADDRESS}.ref}}")
-}
-
-fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> {
-    let connection = gateway_provider(&document.spec.gateway);
+fn graph_base(
+    document: &Document,
+    generations: &Generations,
+    version: &str,
+) -> Result<Value, ConfigError> {
+    let connection = gateway_connection(document, generations)?;
     let drivers = [document.spec.gateway.runtime().provider.openshell_driver()];
     let mut graph = json!({
         "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{
@@ -429,13 +570,17 @@ fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> 
 
 fn compile_with_plans(
     document: &Document,
+    generations: &Generations,
     version: &str,
     service_plans: &crate::services::InstallPlans,
     targets: &[Target],
 ) -> Result<Value, ConfigError> {
     let providers = document.selected_providers()?;
-    let mut graph = graph_base(document, version)?;
+    let mut graph = graph_base(document, generations, version)?;
     let mut resources = json!({});
+    // Objects take the gateway's ref as a literal, known while planning; the
+    // gateway reads gate them through depends_on and a precondition.
+    let gateway = gateway_ref(document, generations)?;
     let provider_dependencies: BTreeMap<_, _> = targets
         .iter()
         .filter_map(|target| {
@@ -519,7 +664,7 @@ fn compile_with_plans(
                 .filter_map(|(_, field)| object.remove(*field))
                 .collect();
             if reference.kind == nemoclaw_openshell::GATEWAY_TYPE {
-                attributes[reference.attribute] = json!(gateway_ref_expression());
+                attributes[reference.attribute] = gateway.clone();
                 continue;
             }
             // The server a registration reaches, as the ref a readiness read
@@ -665,7 +810,7 @@ fn compile_with_plans(
     // timestamp() is unknown while planning. Its nonempty test becomes a
     // stable true at apply, forcing a fresh read without perpetual state drift.
     let mut apply_readiness = gateway_data(
-        &gateway_provider(&document.spec.gateway),
+        &gateway_connection(document, generations)?,
         graph["data"]["openshell_gateway"]["current"]["required_compute_drivers"].clone(),
     );
     apply_readiness["read_trigger"] = json!("${timestamp() != \"\"}");
@@ -680,7 +825,7 @@ fn compile_with_plans(
         .map(|sandbox| {
             // The agent's ref names its sandbox and the document it applied.
             let readiness = json!({
-                "gateway": gateway_ref_expression(),
+                "gateway": gateway.clone(),
                 "agent": format!("${{{}.{}.ref}}", nemoclaw_fabric::agent::RESOURCE_TYPE, sandbox.name),
                 // uuid() is unknown in a saved plan and records a unique observation
                 // token, so failed applies cannot report stale health as a new result.

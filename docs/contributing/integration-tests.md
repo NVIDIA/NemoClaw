@@ -230,7 +230,7 @@ The fixture checks that the supervisor runs independently of the CLI; it does no
 
 The image `unit-tests` stage installs Fabric's `tests/fixtures/discovery` adapter beside the pinned Fabric runtime.
 Its tests package that adapter's installed discovery output and deliver its settings to Fabric's installed runner through the bridge host.
-The SDK's [planner tests](../../crates/nemoclaw-sdk/tests/fabric_planner.rs) plan the same unknown adapter's settings from an image catalog.
+The SDK's [compatibility tests](../../crates/nemoclaw-sdk/tests/fabric_compatibility.rs) check an image catalog's adapters, revision and filesystem requirements; NemoClaw doesn't plan adapter settings.
 
 
 ### Inference API Fixtures

@@ -22,7 +22,7 @@ pub(super) fn destroy_environment(document: &Document) -> Document {
 }
 
 impl Deployment {
-    pub(in crate::deployment) async fn teardown_stages(
+    pub(in crate::deployment) async fn teardown_deployment(
         &self,
         cancel: &CancellationToken,
         preview: bool,
@@ -31,167 +31,96 @@ impl Deployment {
         let mut record = store.load()?.ok_or(Error::Conflict(
             "destroy requires existing deployment state",
         ))?;
+        let runtime = record.document.has_runtime();
+        if runtime {
+            self.recover_helm_binding(&bundle, &store, &record, preview, cancel)
+                .await?;
+        }
         let bindings = self
             .state_bindings(
                 &bundle,
                 &store,
                 &record.document,
                 &record.generations,
-                false,
                 cancel,
             )
             .await?;
-        let runtime = if record.document.has_runtime() {
-            Some(Store::open(&store.directory.join("runtime"))?)
-        } else {
-            None
-        };
-        if let Some(stage) = &runtime {
-            self.recover_helm_binding(&bundle, stage, &record, preview, cancel)
-                .await?;
-        }
-        let runtime_bindings = if let Some(stage) = &runtime {
-            self.state_bindings(
-                &bundle,
-                stage,
-                &record.document,
-                &record.generations,
-                true,
-                cancel,
-            )
-            .await?
-        } else {
-            BTreeMap::new()
-        };
         record.reconcile_pending_creations(&bindings);
-        validate_teardown_state(&record, &bindings, &runtime_bindings)?;
-        let root_graph = compile::compile_teardown(
+        validate_teardown_state(&record, &bindings)?;
+        let compiled = compile::compile_teardown(
             &record.document,
             &record.generations,
             &bundle.manifest.version,
             &bindings.keys().cloned().collect(),
-            false,
         )?;
-        let runtime_graph = runtime
-            .as_ref()
-            .map(|_| {
-                compile::compile_teardown(
-                    &record.document,
-                    &record.generations,
-                    &bundle.manifest.version,
-                    &runtime_bindings.keys().cloned().collect(),
-                    true,
-                )
-            })
-            .transpose()?;
         let mut result = OperationResult::planned(Vec::new());
         result.describe_sources(&record.document)?;
-        result.retained.extend(root_graph.retained.iter().cloned());
-        if let Some(graph) = &runtime_graph {
-            result.retained.extend(graph.retained.iter().cloned());
-        }
+        result.retained.extend(compiled.retained.iter().cloned());
         if record.destroyed() {
             if !preview {
                 result.outcome = Outcome::Destroyed;
             }
             return Ok(result);
         }
-        // Observe and validate both complete saved plans before the first delete.
-        let (operation, _connection) = if !record.root_destroyed() && !bindings.is_empty() {
-            self.connected(&record.document, &record.generations, cancel)
-                .await?
-        } else {
-            (self.clone(), None)
-        };
-        let mut stages = Vec::new();
-        if !record.root_destroyed() {
-            let (changes, planned) = operation
-                .plan_teardown_stage(
-                    &bundle,
-                    &store,
-                    &record,
-                    (false, &bindings),
-                    &root_graph,
-                    cancel,
-                )
-                .await?;
-            result.changes.extend(changes);
-            stages.push((&store, false, planned));
-        }
-        if let Some((stage, graph)) = runtime.as_ref().zip(runtime_graph.as_ref()) {
-            let (changes, planned) = operation
-                .plan_teardown_stage(
-                    &bundle,
-                    stage,
-                    &record,
-                    (true, &runtime_bindings),
-                    graph,
-                    cancel,
-                )
-                .await?;
-            result.changes.extend(changes);
-            stages.push((stage, true, planned));
-        }
+        // Observe and validate the complete saved plan before the first delete.
+        let (changes, planned) = self
+            .plan_teardown(&bundle, &store, &record, &bindings, &compiled, cancel)
+            .await?;
+        result.changes = changes;
         if preview {
             return Ok(result);
         }
-        // Both teardown graphs now account for every saved identity, so destroy
-        // owns recovery from this point and can resume at its recorded boundary.
+        // The teardown plan now accounts for every saved identity, so destroy
+        // owns recovery from this point.
         record.begin_destroy();
         store.save(&record)?;
         (self.progress)(Progress::Destroying);
-        for (stage, is_runtime, planned) in stages {
-            if planned {
-                if is_runtime {
-                    operation
-                        .checkpoint_helm_binding(&bundle, stage, &record, cancel)
-                        .await?;
-                }
-                let applied = operation
-                    .tofu(
-                        &bundle,
-                        stage,
-                        &destroy_environment(&record.document),
-                        &["apply", "-input=false", "-no-color", "destroy.plan"],
-                        cancel,
-                    )
-                    .await;
-                // Cancellation keeps the durable checkpoint for the next
-                // destroy. Otherwise repair lost state before returning the
-                // original error, without retrying any remote mutation.
-                if is_runtime {
-                    if cancel.is_cancelled() {
-                        return Err(Error::Cancelled);
-                    }
-                    let restored = operation
-                        .recover_helm_binding(&bundle, stage, &record, false, cancel)
-                        .await?;
-                    if restored && applied.is_ok() {
-                        return Err(Error::Conflict(
-                            "Helm release deletion was not confirmed; its binding was restored, rerun destroy",
-                        ));
-                    }
-                }
-                applied?;
+        if planned {
+            if runtime {
+                self.checkpoint_helm_binding(&bundle, &store, &record, cancel)
+                    .await?;
             }
-            if !is_runtime {
-                record.finish_root_destroy();
-                store.save(&record)?;
+            let applied = self
+                .tofu(
+                    &bundle,
+                    &store,
+                    &destroy_environment(&record.document),
+                    &["apply", "-input=false", "-no-color", "destroy.plan"],
+                    cancel,
+                )
+                .await;
+            // Cancellation keeps the durable checkpoint for the next destroy.
+            // Otherwise repair lost state before returning the original error,
+            // without retrying any remote mutation.
+            if runtime {
+                if cancel.is_cancelled() {
+                    return Err(Error::Cancelled);
+                }
+                let restored = self
+                    .recover_helm_binding(&bundle, &store, &record, false, cancel)
+                    .await?;
+                if restored && applied.is_ok() {
+                    return Err(Error::Conflict(
+                        "Helm release deletion was not confirmed; its binding was restored, rerun destroy",
+                    ));
+                }
             }
+            applied?;
         }
         record.finish_destroy();
         store.save(&record)?;
         result.outcome = Outcome::Destroyed;
         Ok(result)
     }
-    /// Plan one stage's teardown from the bindings already read from its state;
-    /// nothing has changed that state since.
-    async fn plan_teardown_stage(
+
+    /// Plan teardown from the bindings already read from state; nothing has
+    /// changed that state since.
+    async fn plan_teardown(
         &self,
         bundle: &Bundle,
         store: &Store,
         record: &Record,
-        (runtime, bindings): (bool, &BTreeMap<String, StateBinding>),
+        bindings: &BTreeMap<String, StateBinding>,
         compiled: &compile::CompiledTeardown,
         cancel: &CancellationToken,
     ) -> Result<(Vec<Change>, bool), Error> {
@@ -204,7 +133,7 @@ impl Deployment {
             return Ok((Vec::new(), false));
         }
         let expected = with_observations(
-            &teardown_expected(record, bindings, runtime)?,
+            &teardown_expected(record, bindings)?,
             &compiled.observations,
         );
         self.initialize(bundle, store, &compiled.graph, cancel)
@@ -228,21 +157,32 @@ impl Deployment {
 fn teardown_expected(
     record: &Record,
     bindings: &BTreeMap<String, StateBinding>,
-    runtime: bool,
 ) -> Result<BTreeMap<String, Row>, Error> {
-    let mut targets = if runtime {
+    let objects = compile::targets(&record.document, &record.generations)?;
+    let mut runtime = if record.document.has_runtime() {
         compile::runtime_targets(&record.document, &record.generations)?
     } else {
-        compile::targets(&record.document, &record.generations)?
+        Vec::new()
     };
-    if runtime {
-        bind_teardown_processes(record, &mut targets, bindings)?;
-    } else if !bindings.contains_key("openshell_workspace.deployment") {
+    bind_teardown_processes(record, &mut runtime, bindings)?;
+    let object_addresses: BTreeSet<&str> = objects
+        .iter()
+        .map(|target| target.address.as_str())
+        .collect();
+    if bindings.keys().any(|address| {
+        object_addresses.contains(address.as_str()) || plan::reconstructible(address)
+    }) && !bindings.contains_key("openshell_workspace.deployment")
+    {
         return Err(Error::Conflict(
             "destroy requires the retained workspace binding",
         ));
     }
-    let mut expected = allowed(&targets);
+    let runtime_addresses: BTreeSet<String> = runtime
+        .iter()
+        .map(|target| target.address.clone())
+        .collect();
+    let mut expected = allowed(&objects);
+    expected.extend(allowed(&runtime));
     for (address, binding) in bindings {
         if plan::disposable(address) || plan::reconstructible(address) {
             expected.entry(address.clone()).or_default();
@@ -251,16 +191,13 @@ fn teardown_expected(
         let want = expected.get(address).ok_or(Error::Conflict(
             "destroy encountered an undeclared resource binding",
         ))?;
-        if runtime
-            && address != crate::kubernetes::gateway::ADDRESS
-            && !plan::disposable(address)
-            && binding.differs(want)
-        {
-            return Err(Error::Conflict(
-                "destroy storage configuration disagrees with retained intent",
-            ));
-        }
-        if !runtime && !binding.spec.is_empty() {
+        if runtime_addresses.contains(address) {
+            if address != crate::kubernetes::gateway::ADDRESS && binding.differs(want) {
+                return Err(Error::Conflict(
+                    "destroy storage configuration disagrees with retained intent",
+                ));
+            }
+        } else if !binding.spec.is_empty() {
             return Err(Error::Conflict(
                 "unexpected specification in OpenShell state",
             ));
@@ -323,17 +260,11 @@ fn bind_teardown_processes(
 fn validate_teardown_state(
     record: &Record,
     bindings: &BTreeMap<String, StateBinding>,
-    runtime_bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<(), Error> {
     if record.pending() {
-        let applicable_state_is_safe = record.runtime_pending()
-            && record.document.has_runtime()
-            && runtime_bindings_safe(record, runtime_bindings)?;
-        if !applicable_state_is_safe {
-            return Err(Error::Conflict(
-                "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy",
-            ));
-        }
+        return Err(Error::Conflict(
+            "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy",
+        ));
     }
     for (service, storage) in crate::services::remove_plans(&record.document, &record.generations)?
         .into_iter()
@@ -348,17 +279,6 @@ fn validate_teardown_state(
         }
     }
     Ok(())
-}
-
-fn runtime_bindings_safe(
-    record: &Record,
-    bindings: &BTreeMap<String, StateBinding>,
-) -> Result<bool, Error> {
-    if bindings.is_empty() {
-        return Ok(false);
-    }
-    teardown_expected(record, bindings, true)?;
-    Ok(true)
 }
 
 #[cfg(test)]
@@ -383,8 +303,7 @@ mod tests {
             }
         }
         let (document, _) = crate::deployment::tests::kubernetes_context();
-        let mut record = Record::new(document).unwrap();
-        record.begin_runtime_apply(&record.document.clone());
+        let record = Record::new(document).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let store = Store::open(directory.path()).unwrap();
         let bundle = Bundle {
@@ -403,15 +322,14 @@ mod tests {
             &record.generations,
             &bundle.manifest.version,
             &BTreeSet::new(),
-            false,
         )
         .unwrap();
         let (changes, planned) = deployment
-            .plan_teardown_stage(
+            .plan_teardown(
                 &bundle,
                 &store,
                 &record,
-                (false, &BTreeMap::new()),
+                &BTreeMap::new(),
                 &compiled,
                 &CancellationToken::new(),
             )
@@ -442,13 +360,12 @@ mod tests {
                 )
             })
             .collect();
-        teardown_expected(&record, &bindings, true).unwrap();
+        teardown_expected(&record, &bindings).unwrap();
         let compiled = compile::compile_teardown(
             &record.document,
             &record.generations,
             "0.1.0",
             &bindings.keys().cloned().collect(),
-            true,
         )
         .unwrap();
         assert_eq!(
@@ -457,7 +374,6 @@ mod tests {
         );
         let graph = compiled.graph;
         assert_eq!(graph["provider"]["openshell"], json!({"destroy": true}));
-        assert!(graph["provider"].get("fabric").is_none());
         assert_eq!(graph["resource"].as_object().unwrap().len(), 1);
         assert_eq!(
             graph["resource"]["openshell_kubernetes_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
@@ -466,7 +382,7 @@ mod tests {
         assert!(graph.get("data").is_none());
         let mut invalid = bindings;
         invalid.remove(KUBERNETES_STORAGE);
-        assert!(teardown_expected(&record, &invalid, true).is_err());
+        assert!(teardown_expected(&record, &invalid).is_err());
     }
 
     #[test]
@@ -477,7 +393,7 @@ mod tests {
         .unwrap();
         let mut record = Record::new(document).unwrap();
         let bindings = BTreeMap::new();
-        validate_teardown_state(&record, &bindings, &bindings).unwrap();
+        validate_teardown_state(&record, &bindings).unwrap();
         let target = compile::targets(&record.document, &record.generations)
             .unwrap()
             .remove(0);
@@ -486,7 +402,7 @@ mod tests {
             [(target.address, target.values)].into(),
         );
         assert_eq!(
-            validate_teardown_state(&record, &bindings, &bindings)
+            validate_teardown_state(&record, &bindings)
                 .unwrap_err()
                 .to_string(),
             "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy"
@@ -510,7 +426,7 @@ mod tests {
                 },
             ),
             (
-                "openshell_provider_registration.removed".into(),
+                "openshell_inference.removed".into(),
                 StateBinding {
                     id: "provider".into(),
                     ..Default::default()
@@ -518,11 +434,11 @@ mod tests {
             ),
         ]
         .into();
-        validate_teardown_state(&record, &bindings, &BTreeMap::new()).unwrap();
+        validate_teardown_state(&record, &bindings).unwrap();
         assert!(
-            teardown_expected(&record, &bindings, false)
+            teardown_expected(&record, &bindings)
                 .unwrap()
-                .contains_key("openshell_provider_registration.removed")
+                .contains_key("openshell_inference.removed")
         );
     }
 
@@ -588,58 +504,6 @@ mod tests {
         })
     }
 
-    #[test]
-    fn runtime_recovery_uses_current_bindings_without_the_failed_apply_plan() {
-        let (mut record, runtime_bindings) = runtime_state();
-        record.begin_runtime_apply(&record.document.clone());
-        // A preview can replace apply.plan after a failed apply. Current resource
-        // bindings and a fresh teardown plan must determine the next operation.
-        validate_teardown_state(&record, &BTreeMap::new(), &runtime_bindings)
-            .expect("an obsolete or missing apply plan cannot veto bound-resource recovery");
-    }
-
-    #[test]
-    fn unfinished_runtime_apply_can_destroy_only_its_safe_saved_bindings() {
-        let (mut record, runtime_bindings) = runtime_state();
-        record.begin_runtime_apply(&record.document.clone());
-        let bindings = BTreeMap::new();
-        validate_teardown_state(&record, &bindings, &runtime_bindings).unwrap();
-
-        assert!(
-            validate_teardown_state(&record, &bindings, &BTreeMap::new()).is_err(),
-            "an empty state cannot prove that a successful mutation was recorded"
-        );
-
-        let storage = service_storage(&record);
-        let partial = BTreeMap::from([(
-            storage.clone(),
-            runtime_bindings.get(&storage).unwrap().clone(),
-        )]);
-        validate_teardown_state(&record, &bindings, &partial)
-            .expect("a recorded retained volume is a safe partial runtime state");
-
-        let process = service_process(&record);
-        let missing_storage = BTreeMap::from([(
-            process.clone(),
-            runtime_bindings.get(&process).unwrap().clone(),
-        )]);
-        assert!(
-            validate_teardown_state(&record, &bindings, &missing_storage).is_err(),
-            "a process cannot be removed without its independent storage binding"
-        );
-
-        let mut root_bindings = bindings;
-        root_bindings.insert(
-            "openshell_workspace.deployment".into(),
-            StateBinding {
-                id: "possibly-partial-root-resource".into(),
-                ..Default::default()
-            },
-        );
-        validate_teardown_state(&record, &root_bindings, &runtime_bindings)
-            .expect("root bindings predate a pending runtime-stage apply");
-    }
-
     fn update_service(
         definition: &mut crate::services::ServiceDefinition,
         pointer: &str,
@@ -677,7 +541,7 @@ mod tests {
                 .filter(|target| !target.address.starts_with("data."))
                 .map(|target| (target.address.clone(), bound(&target)))
                 .collect();
-        teardown_expected(&record, &bindings, true).unwrap();
+        teardown_expected(&record, &bindings).unwrap();
         let storage_kind = service_storage(&record)
             .split_once('.')
             .unwrap()
@@ -693,7 +557,6 @@ mod tests {
             &record.generations,
             "0.1.0",
             &bindings.keys().cloned().collect(),
-            true,
         )
         .unwrap();
         let graph = compiled.graph;
@@ -710,10 +573,7 @@ mod tests {
         {
             let mut missing = bindings.clone();
             missing.remove(&address);
-            assert!(
-                teardown_expected(&record, &missing, true).is_err(),
-                "{address}"
-            );
+            assert!(teardown_expected(&record, &missing).is_err(), "{address}");
         }
     }
 
@@ -725,11 +585,26 @@ mod tests {
             let mut incomplete = bindings.clone();
             incomplete.remove(missing);
             assert!(
-                teardown_expected(&record, &incomplete, true).is_err(),
+                teardown_expected(&record, &incomplete).is_err(),
                 "{missing}"
             );
         }
-        assert!(teardown_expected(&record, &BTreeMap::new(), false).is_err());
+        let sandbox = compile::targets(&record.document, &record.generations)
+            .unwrap()
+            .into_iter()
+            .find(|target| target.kind == "sandbox")
+            .unwrap();
+        let objects = BTreeMap::from([(
+            sandbox.address,
+            StateBinding {
+                id: "sandbox".into(),
+                ..Default::default()
+            },
+        )]);
+        assert!(
+            teardown_expected(&record, &objects).is_err(),
+            "bound objects require the retained workspace"
+        );
     }
 
     #[test]
@@ -740,7 +615,7 @@ mod tests {
             "/image",
             |image| *image = serde_json::json!(format!("local@sha256:{}", "a".repeat(64))),
         );
-        let expected = teardown_expected(&record, &bindings, true).unwrap();
+        let expected = teardown_expected(&record, &bindings).unwrap();
         let process = service_process(&record);
         let retained_storage = service_storage(&record);
         assert!(bindings[&process].spec.is_empty());
@@ -750,7 +625,6 @@ mod tests {
             &record.generations,
             "0.1.0",
             &bindings.keys().cloned().collect(),
-            true,
         )
         .unwrap();
         let graph = compiled.graph;
@@ -778,19 +652,19 @@ mod tests {
         let (record, bindings) = runtime_state();
         let mut undeclared = bindings.clone();
         undeclared.insert("foreign.resource".into(), StateBinding::default());
-        assert!(teardown_expected(&record, &undeclared, true).is_err());
+        assert!(teardown_expected(&record, &undeclared).is_err());
         let mut changed_storage = bindings.clone();
         let retained_storage = service_storage(&record);
         changed_storage
             .get_mut(&retained_storage)
             .unwrap()
             .generation = "c".repeat(32);
-        assert!(teardown_expected(&record, &changed_storage, true).is_err());
+        assert!(teardown_expected(&record, &changed_storage).is_err());
         let mut changed_compute = bindings;
         changed_compute
             .get_mut(&service_process(&record))
             .unwrap()
             .id = "replacement-provider-id".into();
-        assert!(teardown_expected(&record, &changed_compute, true).is_ok());
+        assert!(teardown_expected(&record, &changed_compute).is_ok());
     }
 }

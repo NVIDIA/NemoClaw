@@ -24,22 +24,19 @@ impl Deployment {
         bundle: &Bundle,
         store: &Store,
         record: &Record,
-        runtime: bool,
         cancel: &CancellationToken,
     ) -> Result<BTreeMap<String, Value>, Error> {
-        let (graph, targets) = if runtime {
-            compile::compiled_runtime(
-                &record.document,
-                &record.generations,
-                &bundle.manifest.version,
-            )?
-        } else {
-            compile::deployment_graph(
-                &record.document,
-                &record.generations,
-                &bundle.manifest.version,
-            )?
-        };
+        let compiled = compile::deployment_graph(
+            &record.document,
+            &record.generations,
+            &bundle.manifest.version,
+        )?;
+        let graph = compiled.graph;
+        let targets: Vec<_> = compiled
+            .objects
+            .into_iter()
+            .chain(compiled.runtime)
+            .collect();
         let temporary = tempfile::Builder::new()
             .prefix(".export-")
             .tempdir_in(&store.directory)
@@ -161,15 +158,9 @@ impl Deployment {
             ));
         }
 
-        let (operation, _connection) = self
-            .connected(&record.document, &record.generations, cancel)
-            .await?;
-        operation
-            .export_runtime(&bundle, &store, &record, cancel)
-            .await?;
         (self.progress)(Progress::Exporting);
-        let observations = operation
-            .export_observations(&bundle, &store, &record, false, cancel)
+        let observations = self
+            .export_observations(&bundle, &store, &record, cancel)
             .await?;
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);

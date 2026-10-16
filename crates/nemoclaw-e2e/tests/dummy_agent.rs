@@ -143,12 +143,13 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
 
     let plan = deployment.plan(&document, &cancel).await.unwrap();
     assert_eq!(plan.outcome, Outcome::Planned);
-    // Before the managed gateway exists, plan creates its runtime stage and
-    // defers the sandbox, which needs the gateway.
+    // One plan creates the managed gateway and the sandbox it will serve.
     assert!(
-        plan.deferred_resources.contains(&resource),
-        "plan must defer the sandbox: {:?}",
-        plan.deferred_resources
+        plan.changes
+            .iter()
+            .any(|change| change.resource == resource),
+        "plan must create the sandbox: {:?}",
+        plan.changes
     );
     assert!(
         plan.changes
