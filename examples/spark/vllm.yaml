@@ -14,7 +14,7 @@ spec:
     endpoint: http://127.0.0.1:17695
     engine: unix:///var/run/docker.sock
     image:
-      ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6
+      ghcr.io/nvidia/openshell/gateway@sha256:bdb4fe248070032c88be78f029dad9325cb698480e90486e1413a674a5d8edc8
     networkCIDR: 172.30.121.0/24
   services:
     qwen:
