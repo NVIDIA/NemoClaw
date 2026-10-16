@@ -13,6 +13,24 @@ import { DEEP_AGENTS_CODE_SANDBOX_USER } from "../../agent/deep-agents-code-runt
 import type { SandboxEntry } from "../../state/registry";
 import { executeSandboxDestroy, wipeAgentNativeHome } from "./destroy-execution";
 
+const unavailablePrivilegedExecutions = [
+  {
+    transport: "a returned command failure",
+    execute: () => ({
+      status: 1,
+      signal: null,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from("container is not running"),
+    }),
+  },
+  {
+    transport: "a thrown runtime refusal",
+    execute: () => {
+      throw new Error("container is not running");
+    },
+  },
+];
+
 describe("native-home destroy fallback", () => {
   it.each([
     {
@@ -100,33 +118,54 @@ describe("native-home destroy fallback", () => {
     expect(runAsSandboxUser).toHaveBeenCalledOnce();
   });
 
-  it("uses provider-owned stopped-volume cleanup when neither live transport can execute", () => {
-    const runOpenshell = vi.fn(() => ({
-      status: 1,
-      stdout: "",
-      stderr: "sandbox is not running",
-    }));
-    const runPrivileged = vi.fn(() => ({
-      status: 1,
-      signal: null,
-      stdout: Buffer.alloc(0),
-      stderr: Buffer.from("container is not running"),
-    }));
-    const clearStoppedNativeHome = vi.fn(() => ({ cleared: true as const }));
+  it.each(unavailablePrivilegedExecutions)(
+    "uses stopped-volume cleanup after $transport",
+    ({ execute }) => {
+      const runOpenshell = vi.fn(() => ({
+        status: 1,
+        stdout: "",
+        stderr: "sandbox is not running",
+      }));
+      const runPrivileged = vi.fn(execute);
+      const clearStoppedNativeHome = vi.fn(() => ({ cleared: true as const }));
 
-    expect(() =>
-      wipeAgentNativeHome(
-        "alpha",
-        "openclaw",
-        runOpenshell,
-        undefined,
-        runPrivileged,
-        clearStoppedNativeHome,
-      ),
-    ).not.toThrow();
-    expect(runPrivileged).toHaveBeenCalledOnce();
-    expect(clearStoppedNativeHome).toHaveBeenCalledWith("/sandbox/.openclaw", []);
-  });
+      expect(() =>
+        wipeAgentNativeHome(
+          "alpha",
+          "openclaw",
+          runOpenshell,
+          undefined,
+          runPrivileged,
+          clearStoppedNativeHome,
+        ),
+      ).not.toThrow();
+      expect(runPrivileged).toHaveBeenCalledOnce();
+      expect(clearStoppedNativeHome).toHaveBeenCalledWith("/sandbox/.openclaw", []);
+    },
+  );
+
+  it.each(unavailablePrivilegedExecutions)(
+    "reports stopped cleanup failure after $transport",
+    ({ execute }) => {
+      const clearStoppedNativeHome = vi.fn(() => ({
+        cleared: false as const,
+        failure: "cleanup-helper-image-unavailable" as const,
+      }));
+      expect(() =>
+        wipeAgentNativeHome(
+          "alpha",
+          "openclaw",
+          () => ({ status: 255, stdout: "", stderr: "sandbox is not running" }),
+          undefined,
+          execute,
+          clearStoppedNativeHome,
+        ),
+      ).toThrow(
+        "Stopped native-home cleanup failed (cleanup-helper-image-unavailable). container is not running",
+      );
+      expect(clearStoppedNativeHome).toHaveBeenCalledExactlyOnceWith("/sandbox/.openclaw", []);
+    },
+  );
 
   it("does not bypass an unsafe native-tree refusal", () => {
     const runOpenshell = vi.fn(() => ({

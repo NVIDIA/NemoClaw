@@ -227,6 +227,15 @@ async function cleanupDoubleOnboardResources(
         timeoutMs: 60_000,
       }),
     );
+    // Reconcile a retained registry entry after fallback deletion without hiding
+    // the original public destroy failure from final verification.
+    await ignoreCleanupError(() =>
+      host.cleanupSandbox(name, {
+        artifactName: `${phase}-nemoclaw-reconcile-${name}`,
+        env: commandEnv(),
+        timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
+      }),
+    );
   }
   return destroyError;
 }
