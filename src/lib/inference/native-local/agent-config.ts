@@ -46,7 +46,12 @@ export function nativeLocalCredentialReference(
     )
   )
     return null;
-  return qualifiedNativeLocalEndpointUrl(endpointUrl)
+  const qualified = qualifiedNativeLocalEndpointUrl(endpointUrl);
+  // Canonical custom-hosted selection includes private IP endpoints. Dedicated
+  // local providers still use private bridge IPs; compatible local routes use
+  // the managed host aliases admitted by the existing endpoint qualifier.
+  return qualified &&
+    (provider !== "compatible-endpoint" || isIP(new URL(qualified).hostname) !== 4)
     ? `openshell:resolve:env:${NATIVE_LOCAL_CREDENTIAL_ENV}`
     : null;
 }

@@ -508,6 +508,13 @@ describe("Hermes config export live evidence", () => {
       diagnostics: "Config export failed (drifted).\nV1 export does not support messaging.",
     },
     {
+      name: "policy category without unsupported messaging category",
+      scheme: "https",
+      driver: "docker",
+      diagnostics:
+        "Config export failed (policy-not-representable).\nV1 export does not support messaging.",
+    },
+    {
       name: "vague messaging detail",
       scheme: "https",
       driver: "docker",

@@ -124,6 +124,16 @@ it.each(["jobs", "targets"] as const)(
     expect(plan.matrix).toEqual([]);
     expect(plan.testMatrix).toEqual([]);
     expect(plan.runtimeProvidersByJob).toEqual({ "dgx-station-express": ["none"] });
+    expect(plan.coverageMatrix).toEqual([
+      expect.objectContaining({
+        id: "dgx-station-express",
+        agentRuntime: "openclaw",
+        observableOutcome:
+          "Station Express installs managed Super VL vLLM and NemoClaw, serves sandbox inference, and removes job runtime",
+        environmentOrInferenceEndpoint:
+          "Dedicated DGX Station GB300 with cached Nemotron 3.5 Super VL 120B",
+      }),
+    ]);
     expect(plan.explicitOnlyJobs).toEqual([
       "llama-cpp-dgx-spark-qualification",
       "staging-brev-launchable-identity",

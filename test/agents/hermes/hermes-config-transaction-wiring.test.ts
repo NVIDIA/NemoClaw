@@ -18,6 +18,14 @@ describe("Hermes host config transaction wiring", () => {
   it.each([
     { update: "model", expected: { model: { default: "trusted-model-v2" } } },
     {
+      update: "restored-native-local",
+      expected: {
+        model: { default: "trusted-model-v2", api_key: handle },
+        providers: { "vllm-local": { api_key: handle } },
+        custom_providers: [{ api_key: handle }],
+      },
+    },
+    {
       update: "native-local",
       expected: {
         model: { default: "trusted-model-v2", api_key: handle },
@@ -78,7 +86,7 @@ const config = require(source("sandbox", "config.js"));
 const target = config.resolveAgentConfig("alpha");
 const parsed = config.readSandboxConfig("alpha", target);
 parsed.model.default = "trusted-model-v2";
-if (${JSON.stringify(update)} === "native-local") {
+if (${JSON.stringify(update)} !== "model") {
   const { applyHermesManagedRoute } = require(source("hermes-managed-route.js"));
   applyHermesManagedRoute(parsed, {
     model: "trusted-model-v2",
@@ -88,7 +96,7 @@ if (${JSON.stringify(update)} === "native-local") {
     nativeCredentialHandle: "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
   });
 }
-config.writeSandboxConfig("alpha", target, parsed);
+config.writeSandboxConfig("alpha", target, parsed, ${JSON.stringify(update === "restored-native-local" ? { restoreNativeLocalCredential: true } : {})});
 process.stdout.write(JSON.stringify({ ...captured, privilegedExec: capturedPrivilegedExec }));
 `;
 
@@ -106,6 +114,9 @@ process.stdout.write(JSON.stringify({ ...captured, privilegedExec: capturedPrivi
         privilegedExec: { command: string[]; sanitizeEnvironment: boolean };
       };
       const digestFlag = captured.argv.indexOf("--expected-config-sha256");
+      expect(captured.argv.includes("--restore-native-local-credential")).toBe(
+        update === "restored-native-local",
+      );
       expect(captured.argv).toEqual(
         expect.arrayContaining([
           "timeout",

@@ -536,6 +536,7 @@ function writeSandboxConfig(
   sandboxName: string,
   target: AgentConfigTarget,
   config: ConfigObject,
+  options: { restoreNativeLocalCredential?: true } = {},
 ): void {
   if (target.agentName === "openclaw") {
     throw new Error(
@@ -572,6 +573,7 @@ function writeSandboxConfig(
           HERMES_RESTART_SEAL_STATE,
           "--expected-config-sha256",
           expectedConfigSha256,
+          ...(options.restoreNativeLocalCredential ? ["--restore-native-local-credential"] : []),
         ],
         { input: content, timeout: HERMES_CONFIG_GUARD_TIMEOUT_MS },
       );

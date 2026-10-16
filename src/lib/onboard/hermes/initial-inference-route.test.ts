@@ -557,6 +557,9 @@ describe("restored Hermes native route projection", () => {
         example: { command: "example-mcp" },
       });
       expect(f.events).toEqual(["lock", "read", "write", "unlock"]);
+      expect(f.deps.writeSandboxConfig).toHaveBeenLastCalledWith("alpha", f.target, f.config, {
+        restoreNativeLocalCredential: true,
+      });
       expect(f.deps.restartGateway).not.toHaveBeenCalled();
     },
   );

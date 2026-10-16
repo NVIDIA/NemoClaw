@@ -109,6 +109,7 @@ describe("onboard helpers", () => {
       }));
       const setupBedrockRuntimeInference = bedrockRuntimeOnboard.setupBedrockRuntimeInference;
       const harness = createDirectSetupInferenceHarness({
+        legacyCustomRoute: true,
         runOpenshell: (args) =>
           args.join(" ") === "provider get -g nemoclaw compatible-anthropic-endpoint"
             ? { status: 1, stdout: "", stderr: "" }
@@ -957,6 +958,7 @@ const { isOpenclawReady } = require(${onboardPath});
   it("updates OpenAI-compatible providers without passing an unsupported --type flag", async () => {
     await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
       const harness = createDirectSetupInferenceHarness({
+        legacyCustomRoute: true,
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
             ? { status: 0, stdout: COMPATIBLE_PROVIDER_METADATA, stderr: "" }
@@ -997,6 +999,7 @@ const { isOpenclawReady } = require(${onboardPath});
         },
       ]);
       const harness = createDirectSetupInferenceHarness({
+        legacyCustomRoute: true,
         runOpenshell: commandRouter.runOpenshell,
         overrides: {
           promptValidationRecovery: async () => {
@@ -1042,6 +1045,7 @@ const { isOpenclawReady } = require(${onboardPath});
         },
       ]);
       const harness = createDirectSetupInferenceHarness({
+        legacyCustomRoute: true,
         runOpenshell: commandRouter.runOpenshell,
         overrides: { promptValidationRecovery: async () => "selection" },
       });
@@ -1426,15 +1430,20 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     }
     // A serialized re-onboard can neither replace the row under the read nor
     // select the captured model before this cleanup runs.
-    expect(events).toEqual([
+    expect(events.filter((event) => event !== "read-prior-route")).toEqual([
       "lock-enter",
-      "read-prior-route",
       "ownership-lock-enter",
       "peer-scan",
       "unload",
       "ownership-lock-exit",
       "lock-exit",
     ]);
+    const priorReads = events.flatMap((event, index) =>
+      event === "read-prior-route" ? [index] : [],
+    );
+    expect(priorReads.length).toBeGreaterThan(0);
+    expect(Math.min(...priorReads)).toBeGreaterThan(events.indexOf("lock-enter"));
+    expect(Math.max(...priorReads)).toBeLessThan(events.indexOf("ownership-lock-enter"));
   });
 
   it("skips the release when the route returns to selection (#9110)", async () => {

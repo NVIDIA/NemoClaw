@@ -201,6 +201,7 @@ async function readProviderEvidence(
       ? {
           nativeHostedEndpoint: nativeReceipt.endpointUrl,
           nativeHostedAllowedIps: nativeReceipt.allowedIps,
+          nativeHostedCustom: nativeReceipt.custom,
         }
       : {}),
     configKeys: [configKey],

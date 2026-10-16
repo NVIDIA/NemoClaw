@@ -98,3 +98,17 @@ it("reports the last cleanup failure when verification and both cleanup steps fa
     withNativeModelCleanup(fail(errors[0]), fail(errors[1]), fail(errors[2])),
   ).rejects.toBe(errors[2]);
 });
+
+it("retains a custom native endpoint and opaque credential reference through a model edit", () => {
+  const fixture = buildNativeModelRestartFixture(
+    "team/model",
+    "compatible-endpoint",
+    "https://custom.example/team/v1",
+  );
+  expect(JSON.parse(fixture.patch).models.providers[fixture.provider]).toMatchObject({
+    baseUrl: "https://custom.example/team/v1",
+    apiKey: "${COMPATIBLE_API_KEY}",
+    api: "openai-completions",
+    models: [{ id: "team/model", name: "team/model" }],
+  });
+});

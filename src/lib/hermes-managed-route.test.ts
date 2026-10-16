@@ -25,6 +25,57 @@ describe("Hermes native local credential projection", () => {
     },
   );
 
+  it.each([
+    {
+      provider: "compatible-endpoint",
+      baseUrl: "http://10.20.30.40:8080/v1",
+      credential: "COMPATIBLE_API_KEY",
+    },
+    {
+      provider: "compatible-endpoint",
+      baseUrl: "https://hosted.example/v1",
+      credential: "COMPATIBLE_API_KEY",
+    },
+    {
+      provider: "compatible-endpoint",
+      baseUrl: "https://integrate.api.nvidia.com/v1",
+      credential: "COMPATIBLE_API_KEY",
+    },
+    {
+      provider: "compatible-endpoint",
+      baseUrl: "http://host.openshell.internal:8000/v1",
+      credential: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    },
+    {
+      provider: "vllm-local",
+      baseUrl: "http://10.20.30.40:8080/v1",
+      credential: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    },
+  ])("writes all managed slots for $provider at $baseUrl", ({ provider, baseUrl, credential }) => {
+    const config: Record<string, unknown> = {};
+    applyHermesManagedRoute(config, { ...route, upstreamProvider: provider, baseUrl });
+    const expected = `\${${credential}}`;
+    expect(config.model.api_key).toBe(expected);
+    expect(config.providers[provider].api_key).toBe(expected);
+    expect(config.custom_providers[0].api_key).toBe(expected);
+  });
+
+  it.each(["http://10.20.30.40:8080/v1", "https://hosted.example/v1"])(
+    "rejects a local handle on a custom-hosted route at %s without mutation",
+    (baseUrl) => {
+      const config = { keep: true };
+      expect(() =>
+        applyHermesManagedRoute(config, {
+          ...route,
+          upstreamProvider: "compatible-endpoint",
+          baseUrl,
+          nativeCredentialHandle: handle,
+        }),
+      ).toThrow();
+      expect(config).toEqual({ keep: true });
+    },
+  );
+
   it("replaces every managed slot on a model switch and preserves unrelated providers and MCP state", () => {
     const unrelated = { name: "user-provider", api_key: "${USER_PROVIDER_KEY}" };
     const mcp = { example: { command: "example-mcp" } };

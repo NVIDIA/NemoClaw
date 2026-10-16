@@ -26,7 +26,12 @@ export interface InitialHermesInferenceRouteDeps {
     gatewayName: string,
   ): ConfigObject;
   patchHermesInferenceConfig: typeof import("../../actions/inference-set").patchHermesInferenceConfig;
-  writeSandboxConfig(sandboxName: string, target: AgentConfigTarget, config: ConfigObject): void;
+  writeSandboxConfig(
+    sandboxName: string,
+    target: AgentConfigTarget,
+    config: ConfigObject,
+    options?: { restoreNativeLocalCredential?: true },
+  ): void;
   restartGateway(sandboxName: string, gatewayName: string): Promise<{ ok: boolean }>;
 }
 
@@ -144,7 +149,15 @@ export function createInitialHermesInferenceRoute(
         });
       }
       assertCurrent(`apply initial Hermes inference route in sandbox '${sandboxName}'`);
-      deps.writeSandboxConfig(sandboxName, target, config);
+      if (options.projection === "credential") {
+        // Restored state belongs to the archived generation. The guard permits
+        // only this verified credential replacement while sealing those inputs.
+        deps.writeSandboxConfig(sandboxName, target, config, {
+          restoreNativeLocalCredential: true,
+        });
+      } else {
+        deps.writeSandboxConfig(sandboxName, target, config);
+      }
       assertCurrent(`restart initial Hermes gateway in sandbox '${sandboxName}'`);
       // Restart even on a repeated projection: a prior write may have committed
       // before activation failed. The existing restart owner verifies health.

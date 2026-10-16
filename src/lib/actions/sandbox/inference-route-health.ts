@@ -9,6 +9,7 @@ import { verifyNativeLocalProviderAttachment } from "../../inference/native-loca
 import type { SandboxEntry } from "../../state/registry/types";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { hostedNativeProvider } from "../../inference/native-provider/hosted";
+import { hostedNativeProviderForAttachment } from "../../inference/native-provider/hosted-attachment";
 import {
   fixedNativeProvider,
   fixedNativeProviderForAttachment,
@@ -451,7 +452,13 @@ export function buildSandboxInferenceRouteHealth(
       subprobes: providerHealthDiagnostics(providerHealth, invocation?.ok === true),
     };
   }
-  const definition = fixedNativeProvider(context.provider);
+  const definition =
+    fixedNativeProvider(context.provider) ??
+    (context.nativeProvider &&
+    (context.provider === "compatible-endpoint" ||
+      context.provider === "compatible-anthropic-endpoint")
+      ? { logicalProvider: context.provider, label: "custom hosted" }
+      : undefined);
   if ((context.nativeProvider || context.nativeNvidia) && definition) {
     const endpoint =
       invocation && !invocation.ok && invocation.endpoint
@@ -535,6 +542,13 @@ export function buildSandboxInferenceRouteHealth(
       detail: `Could not probe ${endpoint} from inside the sandbox.`,
     };
   }
+  if (
+    !routeHealth.ok &&
+    gateway?.httpStatus === 0 &&
+    new URL(endpoint).hostname === "inference.local"
+  )
+    routeHealth.detail +=
+      " If this legacy route is no longer available, recreate the sandbox to use native inference.";
   const subprobes = [...(routeHealth.subprobes ?? []), ...diagnostics];
   return subprobes.length > 0 ? { ...routeHealth, subprobes } : routeHealth;
 }
@@ -576,7 +590,11 @@ export function readNativeStatusSelection(entry: SandboxEntry | null | undefined
     failure = "Recorded native provider ownership is invalid; no inference request was sent.";
   }
   const local = entry?.nativeLocalProviderAttachment !== undefined;
-  const definition = local ? null : hostedNativeProvider(entry?.provider, attachment?.endpointUrl);
+  const definition = local
+    ? null
+    : attachment
+      ? hostedNativeProviderForAttachment(attachment)
+      : hostedNativeProvider(entry?.provider);
   return {
     attachment,
     failure,

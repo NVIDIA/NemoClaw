@@ -251,9 +251,9 @@ Managed profiles and model-specific recipes use immutable image digests:
   It pins Hugging Face revision `d35cb79050f419c457611b1cee5c5d15b176f285` for the approximately `25.45 GB` model download.
 - The DGX Spark Nemotron 3.5 Lightning recipe uses the `linux/arm64` digest `sha256:3af90144a0926e5c5fe46ee16e5201e763dd854538b9d7ce433755f11dadaf78` with a compressed layer size of approximately `12.69 GB` under `vllm/vllm-openai`.
   It pins Hugging Face revision `0dcd680e5585c791728c83342b311d0a0026dbeb` for the approximately `21.56 GB` model download.
-- The DGX Station Nemotron 3.5 Super VL recipe uses the ARM64 digest `sha256:fd33bec1578f312a01547cc6b9691a5154c3e8bcfb76d2b35acb657bfc4eee8f` under `vllm/vllm-openai`; its compressed image layers are approximately `10.69 GB`.
-  It pins Hugging Face revision `82d93699acd3be9e4617c53360fe5b3f5dbeb1b3` for an approximately `75.06 GB` model download.
-- The DGX Station Nemotron 3 Ultra recipe uses the multi-platform index digest `sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416` under `vllm/vllm-openai:v0.22.0`; on DGX Station, that index selects a `linux/arm64` manifest with a compressed layer size of `10.67 GB`.
+- The DGX Station Nemotron 3.5 Super VL recipe uses the published `linux/arm64` vLLM nightly digest `sha256:fd33bec1578f312a01547cc6b9691a5154c3e8bcfb76d2b35acb657bfc4eee8f` with approximately `10.69 GB` of compressed image layers.
+  It pins Hugging Face revision `82d93699acd3be9e4617c53360fe5b3f5dbeb1b3` for the approximately `75.06 GB` model download.
+- The optional single-Station Nemotron 3 Ultra recipe uses the multi-platform index digest `sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416` under `vllm/vllm-openai:v0.22.0`; on DGX Station, that index selects a `linux/arm64` manifest with a compressed layer size of `10.67 GB`.
   It also pins Hugging Face revision `183968f87ae4cedce3039313cac1fd43d112c578` for the approximately `352.38 GB` model download.
 - Generic Linux `arm64` hosts use `sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4` with a compressed layer size of `9.28 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
 - Generic Linux `amd64` hosts use `sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773` with a compressed layer size of `8.93 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
@@ -321,8 +321,8 @@ When `nvidia-smi` reports no compute capability, NemoClaw continues and leaves t
 For a cold managed-vLLM install, NemoClaw estimates local storage before the watched image pull starts.
 The estimate adds the pinned image's compressed layer size, the digest catalog's pre-measured unpacked layer size when available, the selected model's Hugging Face file size, a `3 GiB` model-download staging reserve, and a writable allowance.
 
-The required space depends on the selected Station recipe and Docker image store.
-Review the estimate that NemoClaw prints before the image pull, especially when selecting the larger Ultra model explicitly.
+The single-Station Super VL default downloads approximately `75.06 GB` of model files, compared with approximately `352.38 GB` for Ultra.
+These model sizes exclude image storage and working space; use the selected recipe's preflight estimate for the full requirement.
 
 For Docker's classic image store, NemoClaw checks the absolute `DockerRootDir` reported by `docker info`.
 For Docker's containerd image store, it checks the top-level `root` from `/etc/containerd/config.toml`, or `/var/lib/containerd` when that configuration file is absent, and also checks `DockerRootDir` for pull staging.
@@ -382,7 +382,7 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 |---|---|
 | DGX Spark | `nvidia/Qwen3.6-35B-A3B-NVFP4` |
 | N1x | `nvidia/Qwen3.6-35B-A3B-NVFP4` |
-| DGX Station | `deepseek-ai/DeepSeek-V4-Flash` |
+| DGX Station | `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4` |
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
 For the managed one-host DGX Spark and N1x `nvidia/Qwen3.6-35B-A3B-NVFP4` profiles, NemoClaw enables async scheduling and does not enable multi-token prediction (MTP) speculative decoding.
@@ -592,12 +592,18 @@ The full NemoClaw Express E2E test is still pending, so the N1x platform status 
 Do not claim this path as supported until [Platform Support](../../reference/platform-support) reports a promoted status.
 </Warning>
 
-On a new single DGX Station, accepting the installer express prompt selects the experimental `NEMOCLAW_VLLM_MODEL=nemotron-3.5-super-vl-120b` recipe.
-When automatic Express selection finds a qualified trusted reciprocal pair, it selects distributed Nemotron Ultra instead.
+On DGX Station, accepting the installer Express prompt keeps model selection automatic unless you explicitly select a model.
+A new single-Station installation uses the catalog default, Nemotron 3.5 Super VL NVFP4.
+A trusted reciprocal pair selects distributed Ultra, and an existing legacy single-Station Ultra workload retains Ultra.
+An explicit `NEMOCLAW_VLLM_MODEL` remains authoritative.
 An explicit Super VL selection skips pair discovery; an explicit peer retains the Ultra path.
-If automatic pair discovery finds an existing legacy single-Station Ultra workload but no qualified pair, Express preserves that workload and its Ultra selection.
-Existing installations are not migrated to Super VL.
 Refer to [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for pair qualification, lifecycle receipts, runtime topology, and network controls.
+
+The single-Station Super VL recipe configures a 49,152-token context window, one concurrent sequence, an 8,192-token batch limit, 0.85 GPU-memory utilization, and three-token MTP speculative decoding.
+It serves text, images, reasoning, and structured tool calls through a pinned vLLM image and a chat template packaged with NemoClaw.
+The recipe remains Experimental; selecting it by default does not expand its qualification to other hardware, runtime images, or agent configurations.
+The fixed recipe rejects serving-argument overrides.
+Run `$$nemoclaw profiles list` to inspect compatibility and support status before explicitly selecting another profile.
 
 On DGX Spark, Express keeps automatic managed-vLLM serving-profile selection as option 1, the default.
 It offers the fixed local vLLM profile as option 2.
@@ -665,7 +671,7 @@ On N1x, that setting is explicit preview intent and waives only the pending phys
 Add `NEMOCLAW_EXPERIMENTAL=1` on a generic Linux NVIDIA GPU host.
 Non-interactive runs use the profile default unless you set `NEMOCLAW_VLLM_MODEL`.
 
-The commands above invoke `$$nemoclaw onboard` directly, so a DGX Station run with no model or peer selects the `deepseek-v4-flash` profile default.
+The commands above invoke `$$nemoclaw onboard` directly, so a DGX Station run with no model or peer selects the `nemotron-3.5-super-vl-120b` catalog default.
 Supplying `NEMOCLAW_PROVIDER=install-vllm` to the shell installer enters the Station host-preparation boundary while retaining that profile default.
 For paired non-interactive setup, follow [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations).
 
@@ -710,9 +716,9 @@ NemoClaw applies the registered `vllm serve` arguments, including the reasoning 
 | `muse-glimmer-30b` | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` | DGX Spark, Linux x86_64 with an NVIDIA GPU | `12.0` on Linux; `12.1` on DGX Spark | Experimental choice for text, reasoning, and structured tool calls. NemoClaw does not enable or support DFlash for this profile. |
 | `nemotron-3.5-lightning-30b` | `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` | DGX Spark, Linux x86_64 with an NVIDIA GPU | `9.0` on Linux; `12.1` on DGX Spark | Experimental reasoning and tool-calling choice. |
 | `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | `8.9` | Generic Linux NVIDIA GPU default. |
-| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station | `10.0` | DGX Station profile default outside express install. |
-| `nemotron-3.5-super-vl-120b` | `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4` | DGX Station | `10.0` | Experimental default for a new single-Station Express install, with image input and a fixed recipe. |
-| `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station | `10.0` | Explicit single-Station choice or automatic distributed choice after trusted pair qualification. |
+| `nemotron-3.5-super-vl-120b` | `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4` | DGX Station | `10.0` | Experimental single-Station default for Express and managed onboarding. |
+| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station | `10.0` | Explicit alternative. |
+| `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station | `10.0` | Explicit single-Station alternative; automatic selection for a qualified two-Station pair. |
 | `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | None | Gated and requires license acceptance. |
 
 Slugs are case-insensitive, and NemoClaw also accepts the full Hugging Face model ID or a registered served model name.

@@ -278,7 +278,12 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       provider: string | null | undefined,
       credentialEnv: string | null | undefined,
       revalidateSandboxIdentity?: (operation: string) => void,
-    ): Promise<{ forceInferenceSetup: boolean; credentialEnv: string | null }>;
+      selection?: { sandboxName: string | null; endpointUrl: string | null },
+    ): Promise<{
+      forceInferenceSetup: boolean;
+      credentialEnv: string | null;
+      nativeCustomSetup?: boolean;
+    }>;
     ensureManagedLlamaCppResumeReady(
       provider: string | null | undefined,
       sandboxName: string | null | undefined,
@@ -970,8 +975,10 @@ function shouldRefreshCompatibleEndpointRouteForMessaging(
   selectedMessagingChannels: string[],
   session: Session | null,
   agent: unknown,
+  nativeCustomSetup: boolean | undefined,
 ): boolean {
   return (
+    !nativeCustomSetup &&
     provider === "compatible-endpoint" &&
     agentName(agent) === "openclaw" &&
     hasActiveMessagingChannels(selectedMessagingChannels, session)
@@ -1566,7 +1573,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         sandboxName,
         deps.ensureManagedLlamaCppResumeReady,
       );
-      const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
+      const recovery = await deps.ensureResumeProviderReady(
+        gatewayName,
+        provider,
+        credentialEnv,
+        undefined,
+        { sandboxName: reusableResumeSandboxName, endpointUrl },
+      );
       forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       // Rebuild may be resuming a legacy session whose step marker was never
@@ -1624,6 +1637,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           selectedMessagingChannels,
           session,
           agent,
+          recovery.nativeCustomSetup,
         )
       ) {
         if (!hydratedCredential) {

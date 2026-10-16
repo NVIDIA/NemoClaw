@@ -491,6 +491,7 @@
         "test/e2e/fixtures/admin-approval-connect.sh"
       ],
       "fast": [
+        "src/lib/inference/native-provider/custom.test.ts",
         "test/e2e/support/bedrock-runtime-compatible-anthropic-leaks.test.ts",
         "test/e2e/support/bedrock-runtime-compatible-anthropic-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",

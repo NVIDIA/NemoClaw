@@ -28,7 +28,7 @@ With `NEMOCLAW_LLAMACPP_RECIPE` unset, onboarding selects Qwen 3.6; a compatible
 <AgentOnly variant="openclaw,hermes">
 | Option | When to use it | Availability | Runtime API |
 |---|---|---|---|
-| Ollama | You want the default local option and want NemoClaw to install, start, or use Ollama on supported hosts. | Appears when Ollama is installed or running, and the wizard can offer installation on supported hosts. | Ollama through the managed local route. |
+| Ollama | You want the default local option and want NemoClaw to install, start, or use Ollama on supported hosts. | Appears when Ollama is installed or running, and the wizard can offer installation on supported hosts. | `/v1/chat/completions`. Hermes uses an attached provider; OpenClaw uses `inference.local`. |
 | Existing vLLM | You already run vLLM on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`. | Appears when NemoClaw detects the server. Native N1x requires explicit standard-onboarding intent, and this route remains unvalidated there. | `/v1/chat/completions`. |
 | Managed vLLM | You want NemoClaw to pull an image, download model weights, and manage the server container. | Requires Docker on `PATH`. Appears by default on DGX Spark and DGX Station. Native N1x Linux offers this route through a Deferred preview. Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. Attaching an already-running local vLLM server is separate. | `/v1/chat/completions`. |
 | Fixed vLLM profile | You need the fixed catalog-selected vLLM model and serving configuration. | Appears as option 2 in DGX Spark Express. Direct installation can use the dedicated installer flag. The profile does not appear in the provider menu. | `/v1/chat/completions`. |

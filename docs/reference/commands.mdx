@@ -4381,14 +4381,18 @@ requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer sets this value from
 registered served model name | Selects the model the managed-vLLM install path serves and remains
 authoritative during DGX Station installer setup. Slugs, full model IDs, and registered served model
 names are case-insensitive. Recognized slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`,
-`muse-glimmer-30b`, `nemotron-3.5-lightning-30b`, `nemotron-3.5-super-vl-120b`, `nemotron-3-nano-4b`, `deepseek-v4-flash`,
-`nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. The `muse-glimmer-30b` and
+`muse-glimmer-30b`, `nemotron-3.5-lightning-30b`, `nemotron-3-nano-4b`, `deepseek-v4-flash`,
+`nemotron-3.5-super-vl-120b`, `nemotron-3-ultra-550b-a55b`,
+`deepseek-r1-distill-70b`. The `muse-glimmer-30b` and
 `nemotron-3.5-lightning-30b` profiles are Experimental on DGX Spark and Linux x86_64 with a
 qualifying NVIDIA GPU. NemoClaw does not enable vision or DFlash speculative decoding for Muse
-Glimmer. New single-Station Express installs select `nemotron-3.5-super-vl-120b`; a qualified reciprocal pair uses distributed Ultra.
-An existing legacy single-Station Ultra workload keeps Ultra when automatic pair discovery finds no qualified pair. Outside
-Station Express, unset uses the per-platform profile default. Gated models (for example,
-`deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. | |
+Glimmer. When unset, managed vLLM uses the serving catalog's per-platform default. For a new single
+DGX Station, that default is the Experimental `nemotron-3.5-super-vl-120b` NVFP4 profile.
+Station Express first checks for a qualified reciprocal pair and selects distributed Ultra when
+one qualifies. Without a qualifying pair, a new installation uses the single-Station catalog
+default; an existing Ultra workload retains Ultra. Explicit model choices remain authoritative.
+Gated models (for example, `deepseek-r1-distill-70b`) require `HF_TOKEN` or
+`HUGGING_FACE_HUB_TOKEN`. | |
 `NEMOCLAW_DGX_STATION_PEER` | SSH host or `user@host` | Selects one exact, already-trusted DGX
 Station peer for Nemotron 3 Ultra pair qualification. The peer must match the reciprocal private
 `/30` rail and hardware checks; an explicit peer failure stops setup instead of falling back.

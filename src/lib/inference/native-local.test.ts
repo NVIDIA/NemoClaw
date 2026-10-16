@@ -225,6 +225,27 @@ describe("native local inference", () => {
   });
 
   it.each([
+    [
+      "http://host.openshell.internal:8000/v1",
+      "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    ],
+    [
+      "http://host.docker.internal:11434/v1",
+      "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    ],
+    ["http://10.20.30.40:8080/v1", null],
+    ["http://172.16.0.2:1024/custom/v1/", null],
+    ["http://192.168.0.2:65535/v1", null],
+    ["https://hosted.example/v1", null],
+    ["http://127.0.0.1:8000/v1", null],
+  ])(
+    "keeps compatible endpoint credentials in their route family at %s",
+    (endpointUrl, expected) => {
+      expect(nativeLocalCredentialReference("compatible-endpoint", endpointUrl!)).toBe(expected);
+    },
+  );
+
+  it.each([
     "http://host.openshell.internal/v1",
     "http://host.openshell.internal:80/v1",
     "http://host.openshell.internal:11435/v1?key=hidden",
