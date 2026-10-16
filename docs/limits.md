@@ -43,7 +43,6 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Managed llama.cpp, Model Router and Gemini | [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035) |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous | [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038) |
 | Managed NVIDIA NIM service | [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649) |
-| Vendor model catalogs during onboarding | [#12650](https://github.com/NVIDIA/NemoClaw/issues/12650) |
 
 ## Agents and Integrations
 

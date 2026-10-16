@@ -518,6 +518,44 @@ fn existing_model_metadata_is_offered_as_an_editable_suggestion() {
 }
 
 #[test]
+fn offline_vendor_menu_selects_a_catalog_alternative() {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    for _ in 0..12 {
+        if wizard
+            .question()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|question| question.kind() == JourneyQuestionKind::InferenceModel)
+        {
+            break;
+        }
+        wizard.advance();
+    }
+    let question = wizard.question().unwrap().unwrap();
+    let model = serde_json::json!("nvidia/nemotron-3-ultra-550b-a55b");
+    wizard.selected = question
+        .choices()
+        .iter()
+        .position(|choice| choice == &model)
+        .unwrap();
+    wizard.selection_changed = true;
+    wizard.started = true;
+    let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    let screen = terminal.backend().to_string();
+    assert!(
+        screen.contains("nvidia/nemotron-3-ultra-550b-a55b"),
+        "{screen}"
+    );
+    assert!(screen.contains("Type another model"), "{screen}");
+    wizard.advance();
+    assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    assert_eq!(wizard.state().values().pointer(question.id()), Some(&model));
+}
+
+#[test]
 fn discovered_model_menu_keeps_a_custom_text_answer() {
     use nemoclaw_sdk::{
         discovery::ObservationStatus,

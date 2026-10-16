@@ -560,11 +560,28 @@ Use [change constraints](usage.md#choose-the-change-path) before changing the AP
 The lifecycle fixture exercises apply, CLI export, unchanged reapply, drift rejection, and destroy.
 The [offline harness fixture](contributing/integration-tests.md#inference-api-fixtures) checks actual request paths with local protocol servers; it does not qualify a public endpoint, model quality, or live Nous authentication.
 
+## Onboarding Model Catalogs
+
+Guided onboarding offers curated models for NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and Nous Research.
+The [provider presets](../crates/nemoclaw-authoring/src/provider_presets.rs) own these reviewed lists; they are available without credentials or endpoint discovery.
+The selected model is checked for catalog membership.
+An unlisted identifier remains a custom model and produces an informational notice rather than a deployment restriction.
+SDK and Fabric validation still apply.
+
+The menu keeps an authored model selected, including a custom identifier.
+You can choose **Type another model**; generic OpenAI-compatible and Anthropic-compatible endpoints have no vendor catalog.
+Changing a vendor or endpoint recomputes the recommendations and membership check for the selected route.
+
+Endpoint discovery can add advertised identifiers without changing the curated list.
+A missing catalog credential leaves offline recommendations available and reports the missing credential; it does not allow bulk acceptance without the existing target and endpoint evidence.
+Catalog membership does not verify account access, current availability, API compatibility, tool support, or successful inference.
+Use an explicit request to qualify inference.
+
 ## Additional Inference Workflows
 
 The documented service paths are external API endpoints, managed Ollama, [external Ollama through a managed proxy](#use-external-ollama-through-a-managed-proxy), and [managed vLLM](models.md).
 Use [inline recipes](recipes.md) for declared model preparation and [SSH placement](remote-service.md) for the implemented remote-engine contract.
 
 Managed llama.cpp, Model Router and Gemini are tracked in [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035), hosted-provider guides in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038), and distributed inference, separate inference hosts and other model formats in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
-A managed NVIDIA NIM service is tracked in [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649), and vendor model catalogs in [#12650](https://github.com/NVIDIA/NemoClaw/issues/12650).
+A managed NVIDIA NIM service is tracked in [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649).
 None of these limits prevents using a separately verified external endpoint with an accepted API.

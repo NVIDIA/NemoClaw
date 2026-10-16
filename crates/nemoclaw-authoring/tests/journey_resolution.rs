@@ -1856,7 +1856,7 @@ fn missing_credentials_are_informational_and_do_not_block_delegation() {
 }
 
 #[test]
-fn missing_catalog_key_offers_information_without_model_suggestions() {
+fn missing_catalog_key_keeps_curated_suggestions_without_allowing_delegation() {
     use nemoclaw_sdk::{discovery::ObservationStatus, inference_discovery::AuthenticationStatus};
     let capabilities = Capabilities::available();
     let mut facts = delegation_facts(&capabilities);
@@ -1887,8 +1887,12 @@ fn missing_catalog_key_offers_information_without_model_suggestions() {
         .iter()
         .find(|q| q.kind() == nemoclaw_authoring::JourneyQuestionKind::InferenceModel)
         .unwrap();
-    assert!(model.choices().is_empty());
-    assert!(model.suggestion().is_none());
+    assert!(
+        model
+            .choices()
+            .contains(&json!("nvidia/nemotron-3-super-120b-a12b"))
+    );
+    assert!(model.suggestion().is_some());
     // Without the catalog, bulk acceptance cannot establish model compatibility.
     // The frontend can keep this separate from actual compatibility errors.
     let diagnostics = facts
