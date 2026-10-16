@@ -137,8 +137,8 @@ async function waitForDashboardReachability(
     );
     output = resultText(result);
     reachable = result.exitCode === 0 && !result.timedOut;
-    if (reachable === expectedReachable) break;
-    if (attempt < PROBE_ATTEMPTS) await sleep(PROBE_DELAY_MS);
+    if (reachable === expectedReachable || attempt === PROBE_ATTEMPTS) break;
+    await sleep(PROBE_DELAY_MS);
   }
   return { reachable, output };
 }
@@ -192,11 +192,12 @@ async function cleanupDoubleOnboardResources(
   host: HostCliClient,
   sandbox: SandboxClient,
   forwardTargets: readonly ForwardCleanupTarget[],
+  phase: "pre-cleanup" | "verify-cleanup",
 ): Promise<void> {
   for (const { port, sandboxName } of forwardTargets) {
     await ignoreCleanupError(() =>
       host.cleanupForward(Number(port), {
-        artifactName: `cleanup-openshell-forward-stop-${sandboxName}-${port}`,
+        artifactName: `${phase}-openshell-forward-stop-${sandboxName}-${port}`,
         env: commandEnv(),
         gatewayName: "nemoclaw",
         sandboxName,
@@ -206,18 +207,24 @@ async function cleanupDoubleOnboardResources(
   }
   const names = [INSTALL_SANDBOX_NAME, SANDBOX_A, SANDBOX_B].filter(Boolean);
   for (const name of names) {
-    await ignoreCleanupError(() =>
-      command(host, [name, "destroy", "--yes"], {
-        artifactName: `cleanup-nemoclaw-destroy-${name}`,
+    const destroy = () =>
+      host.cleanupSandbox(name, {
+        artifactName: `${phase}-nemoclaw-destroy-${name}`,
         env: commandEnv(),
         timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
-      }),
-    );
+      });
+    if (phase === "pre-cleanup") {
+      await ignoreCleanupError(destroy);
+    } else {
+      // Report the public destroy failure before fallback deletion hides its cause.
+      // Registered teardown still attempts every resource and keeps separate artifacts.
+      await destroy();
+    }
   }
   for (const name of names) {
     await ignoreCleanupError(() =>
       sandbox.cleanupSandbox(name, {
-        artifactName: `cleanup-openshell-sandbox-delete-${name}`,
+        artifactName: `${phase}-openshell-sandbox-delete-${name}`,
         env: commandEnv(),
         timeoutMs: 60_000,
       }),
@@ -403,11 +410,11 @@ test(
       ],
     });
 
-    await cleanupDoubleOnboardResources(host, sandbox, forwardTargets);
+    await cleanupDoubleOnboardResources(host, sandbox, forwardTargets, "pre-cleanup");
     await lifecycle.stopGatewayRuntime();
     await ignoreCleanupError(() =>
       host.cleanupGatewayRegistration("nemoclaw", {
-        artifactName: "cleanup-openshell-gateway-destroy-nemoclaw",
+        artifactName: "pre-cleanup-openshell-gateway-destroy-nemoclaw",
         env: commandEnv(),
         timeoutMs: 60_000,
       }),
@@ -678,7 +685,7 @@ test(
     expect(registryHas(SANDBOX_A), "replacement did not register sandbox A").toBe(true);
 
     progress.phase("remove double-onboard resources");
-    await cleanupDoubleOnboardResources(host, sandbox, forwardTargets);
+    await cleanupDoubleOnboardResources(host, sandbox, forwardTargets, "verify-cleanup");
     await waitForSandboxAbsent(sandbox, SANDBOX_A, 60_000);
     await waitForSandboxAbsent(sandbox, SANDBOX_B, 60_000);
     expect(
