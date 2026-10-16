@@ -54,6 +54,8 @@ export interface FakeOpenAiCompatibleServerOptions {
   readonly progress: Pick<TestProgress, "activity" | "event" | "onOutput"> & TestProgressCapability;
   readonly publicHost?: string;
   readonly requireAuth?: boolean;
+  /** Permit credentialless host preflight but validate any supplied bearer token. */
+  readonly allowMissingAuth?: boolean;
   readonly requireAuthModels?: boolean;
   readonly responseText?: string;
   readonly toolCallOnCanary?: { readonly name: string; readonly arguments: string };
@@ -201,6 +203,7 @@ export async function startFakeOpenAiCompatibleServer(
           NEMOCLAW_FAKE_OPENAI_REQUEST_CANARY_MARKER: options.requestCanaryMarker ?? "",
           NEMOCLAW_FAKE_OPENAI_REQUESTS_FILE: requestsFile,
           NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH: options.requireAuth ? "1" : "0",
+          NEMOCLAW_FAKE_OPENAI_ALLOW_MISSING_AUTH: options.allowMissingAuth ? "1" : "0",
           NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH_MODELS: options.requireAuthModels ? "1" : "0",
           NEMOCLAW_FAKE_OPENAI_RESPONSE_TEXT: options.responseText ?? options.chatContent ?? "ok",
           NEMOCLAW_FAKE_OPENAI_TOOL_CALL_ON_CANARY: JSON.stringify(
