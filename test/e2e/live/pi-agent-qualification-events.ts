@@ -83,7 +83,7 @@ export function buildPiReadTask(
       "read",
       "--name",
       taskName,
-      `Use the read tool exactly once to read ${remotePath}. Reply with exactly the file contents and no other text.`,
+      `Use the read tool exactly once to read ${remotePath}. Reply with exactly the file contents as plain text. Do not add Markdown, code fences, backticks, explanations, or any other text.`,
     ],
   };
 }

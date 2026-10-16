@@ -42,7 +42,7 @@ import {
 const GATEWAY = "nemoclaw";
 const MODEL = "nvidia/nemotron-3-super-120b-a12b";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-pi-qual";
-const TASK_VERSION = "pi-read-v2";
+const TASK_VERSION = "pi-read-v3";
 const LIVE_TIMEOUT_MS = PI_QUALIFICATION_TEST_TIMEOUT_MS;
 const PI_COMMAND_TIMEOUT_MS = 5 * 60_000;
 const PI_PROVIDER_MAX_ATTEMPTS = 2;
@@ -781,7 +781,7 @@ test(
         interactive: true,
         nativeDefaultProjectTrustPreservedAcrossRebuild: true,
         nativeSettingsPreservedAcrossRebuild: true,
-        perPathTrustExcludedAcrossRebuild: true,
+        perPathTrustPreservedAcrossRebuild: true,
         sessionStatePreservedAcrossRebuild: true,
       },
       lifecycle: ["onboard", "interactive", "rebuild", "gateway-recovery", "destroy"],
