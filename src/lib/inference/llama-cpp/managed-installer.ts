@@ -20,11 +20,12 @@ import {
   createPersistedEngineAuthority,
 } from "../../onboard/runtime-provider/persisted-engine-authority";
 import { requireRuntimeProviderHostLocalInferenceOperation } from "../../onboard/runtime-provider/registry";
-import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
 import { isDgxStationGb300GpuName } from "../dgx-station-identity";
 import type { GpuDetection } from "../nim";
+import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
+import { servingCatalogDigest } from "../serving/catalog";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
-import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
+import type { LlamaCppServingRecipe, ResolvedLlamaCppInferenceSelection } from "../serving/types";
 import { buildVllmDockerEnv } from "../vllm-docker-env";
 import { formatStorageBytes } from "../vllm-storage";
 import { LLAMA_CPP_CREDENTIAL_ENV } from "./contract";
@@ -54,6 +55,32 @@ export const MANAGED_LLAMA_CPP_OWNER_VALUE = "true" as const;
 
 const IMAGE_PULL_TIMEOUT_MS = 30 * 60 * 1000;
 const DOCKER_INSPECT_TIMEOUT_MS = 15_000;
+const HISTORIC_WSL_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
+const HISTORIC_WSL_RECIPE_DIGEST =
+  "sha256:b1032bb63f7f0772ddc96576219269fe42a086814eca561d1b28d69394dc72e1";
+// Bind the retained native fields separately from the unchanged recorded owner digest.
+const HISTORIC_WSL_NATIVE_FIELDS_DIGEST =
+  "sha256:b95c26fc6299831763be6bbd85b7735229dba91ed91f977fb3af9dff10f6a2ae";
+const HISTORIC_WSL_IMAGE =
+  "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675";
+const HISTORIC_WSL_IMAGE_DOWNLOAD_SIZE_BYTES = 1_827_478_485;
+
+/** Reconstruct only the prior published WSL recipe, without changing its runtime identity. */
+function historicalWslRecipe(recipe: LlamaCppServingRecipe): LlamaCppServingRecipe | null {
+  if (recipe.metadata.id !== HISTORIC_WSL_RECIPE_ID) return null;
+  const historical: LlamaCppServingRecipe = {
+    ...recipe,
+    spec: {
+      ...recipe.spec,
+      runtime: {
+        ...recipe.spec.runtime,
+        image: HISTORIC_WSL_IMAGE,
+        imageDownloadSizeBytes: HISTORIC_WSL_IMAGE_DOWNLOAD_SIZE_BYTES,
+      },
+    },
+  };
+  return servingCatalogDigest(historical) === HISTORIC_WSL_NATIVE_FIELDS_DIGEST ? historical : null;
+}
 
 export interface ManagedLlamaCppInstallOptions {
   readonly sandboxName: string;
@@ -378,14 +405,7 @@ function launchContract(
       idleSleepSeconds: recipe.spec.serve.idleSleepSeconds,
       kvCache: recipe.spec.serve.kvCache,
       limits: {
-        maxRequestBodyBytes: recipe.spec.serve.limits.maxRequestBodyBytes,
-        maxRequestHeaderBytes: recipe.spec.serve.limits.maxRequestHeaderBytes,
-        maxOutputTokens: recipe.spec.serve.limits.maxOutputTokens,
         requestTimeoutSeconds: recipe.spec.serve.limits.requestTimeoutSeconds,
-        shutdownTimeoutSeconds: recipe.spec.serve.limits.shutdownTimeoutSeconds,
-      },
-      requestGuard: {
-        upstreamPort: recipe.spec.serve.requestGuard.upstreamPort,
       },
       microBatchSize: recipe.spec.serve.microBatchSize,
       port: recipe.spec.serve.port,
@@ -439,9 +459,6 @@ export function resolveManagedLlamaCppOwnerSelection(
   owner: NonNullable<ReturnType<typeof loadManagedLlamaCppOwner>>,
 ): ResolvedLlamaCppInferenceSelection {
   const catalog = loadManagedInferenceCatalog();
-  if (catalog.catalogDigest !== owner.catalogDigest) {
-    throw new Error("Managed llama.cpp catalog authority changed; rerun onboarding.");
-  }
   const recipe = catalog.recipes.find(({ metadata }) => metadata.id === owner.recipeId);
   const candidatePresets = catalog.presets.filter(
     ({ spec }) =>
@@ -468,18 +485,35 @@ export function resolveManagedLlamaCppOwnerSelection(
   const presetDigest = catalog.sources.find(
     ({ kind, id }) => kind === "ServingPreset" && id === preset.metadata.id,
   )?.digest;
-  if (recipeDigest !== owner.recipeDigest || presetDigest !== owner.presetDigest) {
+  if (presetDigest !== owner.presetDigest) {
+    throw new Error("Managed llama.cpp recipe authority changed; rerun onboarding.");
+  }
+  const current =
+    catalog.catalogDigest === owner.catalogDigest && recipeDigest === owner.recipeDigest;
+  const historical =
+    owner.recipeDigest === HISTORIC_WSL_RECIPE_DIGEST ? historicalWslRecipe(recipe) : null;
+  if (!current && historical === null) {
     throw new Error("Managed llama.cpp recipe authority changed; rerun onboarding.");
   }
   return {
     outcome: "selected",
     selection: "explicit",
-    catalogDigest: catalog.catalogDigest,
-    recipeDigest,
+    catalogDigest: current ? catalog.catalogDigest : owner.catalogDigest,
+    recipeDigest: current ? recipeDigest : owner.recipeDigest,
     presetDigest,
-    recipe,
+    recipe: historical ?? recipe,
     preset,
   };
+}
+
+export function assertManagedLlamaCppResumeSupported(
+  selection: ResolvedLlamaCppInferenceSelection,
+): void {
+  if (selection.recipeDigest === HISTORIC_WSL_RECIPE_DIGEST) {
+    throw new Error(
+      "The former WSL managed llama.cpp image cannot resume. Remove the exact owned runtime, then onboard with a qualified native image.",
+    );
+  }
 }
 
 function lifecycleFor(input: {
@@ -928,6 +962,7 @@ export async function resumeManagedLlamaCppRuntime(
   }
 
   const selection = resolveManagedLlamaCppOwnerSelection(owner);
+  assertManagedLlamaCppResumeSupported(selection);
   requireStationGb300StartupGpuAuthority(owner, selection);
   const operation = requireRuntimeProviderHostLocalInferenceOperation(
     options.runtimeProvider,

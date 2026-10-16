@@ -27,14 +27,14 @@
       "generatedProbeConditions": 215
     },
     "unique": {
-      "expectCalls": 1683,
-      "matcherAssertions": 1657,
+      "expectCalls": 1682,
+      "matcherAssertions": 1656,
       "nodeAssertions": 127,
       "namedAssertionHelpers": 661,
       "failCalls": 1,
       "throwGuards": 526,
       "objectFieldAssertions": 254,
-      "assertionPoints": 3226,
+      "assertionPoints": 3225,
       "generatedProbeBlocks": 208,
       "generatedProbeConditions": 720
     },
@@ -83,7 +83,7 @@
       "test/e2e/live/llama-cpp-generic-gpu.test.ts": [17,35,33,61,2],
       "test/e2e/live/managed-image-activation-e2e.test.ts": [0,0,13,28,0],
       "test/e2e/live/managed-image-multiarch-startup.test.ts": [1,1,1,7,0],
-      "test/e2e/live/managed-image-protected-runtime.test.ts": [0,0,40,77,15],
+      "test/e2e/live/managed-image-protected-runtime.test.ts": [0,0,39,76,15],
       "test/e2e/live/mcp-bridge.test.ts": [39,138,193,518,46],
       "test/e2e/live/messaging-compatible-endpoint.test.ts": [13,19,13,28,2],
       "test/e2e/live/messaging-providers.test.ts": [0,11,6,51,11],

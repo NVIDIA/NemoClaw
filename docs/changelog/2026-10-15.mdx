@@ -41,9 +41,9 @@ It also updates managed inference and OpenClaw behavior for qualified local mode
 - OpenClaw guidance treats a proxy `CONNECT` 403 as a refusal that may involve OpenShell policy.
   Operators can match the destination and time with sandbox logs before changing policy.
   Related change: [PR #13192](https://github.com/NVIDIA/NemoClaw/pull/13192).
-- Closing a llama.cpp forwarding client's input closes its guarded upstream connection.
-  The one-request forwarder exits without leaving generation active until its deadline.
-  Related change: [PR #13204](https://github.com/NVIDIA/NemoClaw/pull/13204).
+- Managed llama.cpp sends each request through an owned native curl client.
+  On cancellation, deadline expiry, or bridge shutdown, NemoClaw verifies that the remote request stops before it accepts another request.
+  Related changes: [PR #13204](https://github.com/NVIDIA/NemoClaw/pull/13204) and [PR #12664](https://github.com/NVIDIA/NemoClaw/pull/12664).
 - Managed image builds use a curl package revision compatible with the current Debian security libraries on AMD64 and ARM64.
   Related change: [PR #13158](https://github.com/NVIDIA/NemoClaw/pull/13158).
 - If a pre-delete backup fails during OpenClaw recreation, the original sandbox remains registered, connectable, and selected.

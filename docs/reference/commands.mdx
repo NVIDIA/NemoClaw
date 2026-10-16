@@ -1765,6 +1765,10 @@ For a sandbox that owns managed llama.cpp, text output also reports the recipe I
 
 The managed llama.cpp check forces a nonzero exit for `absent`, `conflict`, or `unknown`. Other sandbox and inference checks can also make the command fail. Rerun the same `NEMOCLAW_PROVIDER=install-llama-cpp` and `NEMOCLAW_LLAMACPP_RECIPE` onboarding selection to recover a stopped or interrupted runtime. Inspect and correct an identity conflict before retrying.
 
+An existing Windows WSL Qwen runtime with the former pinned image cannot start or resume.
+After a qualified native image is pinned, save any sandbox files you need, run `$$nemoclaw <sandbox-name> destroy` to remove the owning sandbox and its managed runtime, and onboard again.
+The shared model cache is preserved. See [Upgrade or Roll Back](../inference/local-inference/set-up-llama-cpp#upgrade-or-roll-back).
+
 <AgentOnly variant="deepagents">
 
 For a Deep Agents sandbox, text output includes `DCode auto-approval capability: disabled` or `DCode auto-approval capability: thread-opt-in`. JSON output reports the same configured value in `dcodeAutoApprovalMode`. This value does not attest that auto-approval is active in any live TUI thread.
