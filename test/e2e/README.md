@@ -477,6 +477,8 @@ the Linux AMD64 and Linux ARM64 receipts to identify one source revision, releas
 cohort.
 
 The gateway restart fixture restarts the user service it stopped. If no service was selected, the candidate CLI startup code starts the registered gateway.
+
+Pi qualification preserves its hosted onboarding, rebuild, recovery, policy, and credential checks. After destroying that sandbox, the same target onboards a fresh Pi sandbox against an authenticated local compatible endpoint. A fresh Pi process must send the selected model to that endpoint. The target then rebuilds Pi and requires another authenticated request for the recorded model. The upstream credential must stay outside the sandbox, and public destroy must leave the sandbox absent. The hosted lifecycle retains its 90-minute allowance; the native phase adds 60 minutes for onboarding, two requests, a rebuild, isolation, and cleanup. The job adds 10 minutes of headroom. Operation deadlines and the target selector stay unchanged.
 A selected service that cannot restart remains selected for cleanup; recovery does not switch to another startup path.
 Restart inputs are checked before stopping the gateway. A failed start ends the test before health polling. Sandbox readiness, retained state, and agent turns remain separate assertions.
 
@@ -826,9 +828,9 @@ The target requires onboarding to create the selected model without those limits
 The OpenClaw native NVIDIA and mock Anthropic switch variants start with an authenticated local OpenAI-compatible fixture.
 The native NVIDIA destination uses the public endpoint and its public credential only after switching.
 Route assertions use JSON fields so terminal column alignment does not affect the result.
-Hermes native installation uses the public NVIDIA provider before its same-provider model switch.
-The Hermes native switch derives its baseline model expectation from the environment passed to installation.
-Its later proxy-resolution probe pairs the public NVIDIA credential with the public endpoint.
+Hermes inference-switch installation uses an authenticated local fixture before its model-only switch.
+The baseline model expectation comes from the environment passed to installation.
+The native NVIDIA variant then switches to the public endpoint with its public credential.
 
 Most entries use one ID for catalogue selection, evidence, and artifacts.
 Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.
@@ -1277,8 +1279,24 @@ completed onboarding session remains unchanged as historical onboarding
 evidence. Deterministic startup and action tests own the corresponding launch
 environment and session non-rewrite checks.
 
-The native switch must restart the gateway to refresh provider credentials;
-the compatible fixture preserves its gateway process. The live lane requires
+The local baseline uses an authenticated fixture on port 11434. Real Hermes gateway requests
+must reach that endpoint with the selected model at fresh startup and after a model-only switch.
+The existing `double-onboard-hermes` lane proves that a sibling sandbox cannot access the
+native local endpoint while its owner can make authenticated requests. Deterministic startup,
+consumer, and selection tests own reference rotation, schema validation, guarded writes,
+and failure compensation.
+
+The Hermes lane replaces seven redundant live assertions with the native-local request proof.
+Four model-field projection checks already belong to `inference-set-patch-hermes.test.ts`
+and `generate-hermes-config.test.ts`; live dashboard, API, and CLI checks retain the selected-route
+behavior. The top-level `models` absence check is unnecessary: Hermes routing owns `model`,
+`providers`, and `custom_providers`, while the patch tests explicitly preserve unrelated `models`
+state. Two checksum `OK` text checks duplicate the retained exit-status assertions for
+`sha256sum -c ... --status && echo OK`. Both checksum validations and permission checks remain live.
+The Hermes file's transitive assertion budget stays at 75 points.
+
+Entering or leaving native routing must restart the gateway to refresh provider credentials.
+Both switch fixtures start from native local routing. The live lane requires
 successful probes that each identify one gateway PID before comparing its lifecycle.
 Support tests reject failed, empty, and ambiguous PID probes.
 
@@ -2388,6 +2406,10 @@ The explicit `dgx-station-express` target runs the local Station Express install
 `managed-image-activation` owns real OpenClaw and DCode agent turns before and after restart. Its authenticated compatible-server fixture listens on native-local port 8000, so those turns exercise sandbox-attached providers and the server's selected-model request ledger. A second DCode sandbox uses the existing credentialless vLLM selection against a separate fixture port. Its real agent turns before and after restart must reach that endpoint and model, and its recorded attachment must declare `authMode: sentinel`. Each case keeps separate artifacts and verifies sandbox removal. Hermes uses its shared route. `double-onboard` owns two real OpenShell sandboxes; its sibling uses a native provider on port 11434, and the first sandbox must receive a policy denial when it requests that endpoint. Existing GPU qualification owns Ollama, vLLM, llama.cpp, startup, and cleanup.
 
 Profile rules, ownership collisions, credential custody, mutation reconciliation, gateway prerequisites, and generated request behavior belong to the native-local, provider-policy, gateway bootstrap, and compatible-endpoint-smoke source tests. Sibling denial remains live because a source test cannot prove OpenShell composes provider policy per sandbox. No assertion about terminal formatting is added.
+
+The existing cases also remove redundant checks. Managed-image cleanup relies on its retained poll, which rejects failed inventory commands and returns only when both the sandbox and its containers are absent; four assertions repeated those exact results. Double-onboard retains registration after both stale status and connect calls, replacing the two intermediate registration checks. Its initial registration check is covered by onboarding source tests and the retained managed-workload receipt and reuse checks.
+
+Pi qualification removes six checks: two checks of fixed catalogue mode/model inputs, a seed exit check already proved by reading the fresh random canary, a pipeline exit check that only reported `sort` success, a configuration-read exit check already covered by strict parsing and route validation, and a diagnostic version-command exit check. The selected model and endpoint, persistent-state contents, command lifecycle, credential isolation, and cleanup remain checked. The polling, Pi evidence parser, managed-image diagnostics, and stale-sandbox source tests cover these retained owners.
 
 `gpu-e2e` and `gpu-double-onboard` retain their existing live chat assertions against the qualified Ollama proxy endpoint with the attached provider placeholder. They protect native routing after GPU startup and recreation. Request construction and credential reference selection remain in source and generator tests; these live assertions prove the real OpenShell proxy boundary. Their assertion counts are unchanged.
 

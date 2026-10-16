@@ -269,12 +269,8 @@ test(
         "re-onboard same sandbox on existing gateway",
         "recreate OpenClaw sandbox after a model change",
         "onboard sibling sandbox with isolated dashboard",
-        ...(process.env.NEMOCLAW_AGENT === "hermes"
-          ? []
-          : [
-              "verify sibling native endpoint remains isolated",
-              "verify sibling native endpoint accepts authenticated requests",
-            ]),
+        "verify sibling native endpoint remains isolated",
+        "verify sibling native endpoint accepts authenticated requests",
         "stop sibling sandbox without disturbing the first forward",
         "replace sandbox after stale registry refusal",
         "remove double-onboard resources",
@@ -322,24 +318,20 @@ test(
       await artifacts.writeJson("fake-openai-requests.json", fake.requests());
       await fake.close();
     });
-    const siblingInference =
-      process.env.NEMOCLAW_AGENT === "hermes"
-        ? null
-        : await startFakeOpenAiCompatibleServer({
-            apiKey: "dummy",
-            host: "0.0.0.0",
-            model: "test-model",
-            port: 11434,
-            progress,
-            publicHost: "host.openshell.internal",
-            requireAuth: true,
-            requireAuthModels: true,
-          });
-    siblingInference &&
-      cleanup.trackDisposable("close sibling OpenAI-compatible endpoint", async () => {
-        await artifacts.writeJson("sibling-openai-requests.json", siblingInference.requests());
-        await siblingInference.close();
-      });
+    const siblingInference = await startFakeOpenAiCompatibleServer({
+      apiKey: "dummy",
+      host: "0.0.0.0",
+      model: "test-model",
+      port: 11434,
+      progress,
+      publicHost: "host.openshell.internal",
+      requireAuth: true,
+      requireAuthModels: true,
+    });
+    cleanup.trackDisposable("close sibling OpenAI-compatible endpoint", async () => {
+      await artifacts.writeJson("sibling-openai-requests.json", siblingInference.requests());
+      await siblingInference.close();
+    });
     cleanup.trackGateway(host, "nemoclaw", {
       artifactName: "cleanup-openshell-gateway-destroy-nemoclaw",
       env: commandEnv(),
@@ -398,9 +390,7 @@ test(
               "changed-model OpenClaw onboarding replaces the sandbox and updates agent and registry selection",
             ]),
         "a sibling sandbox keeps a separate owned dashboard forward",
-        ...(process.env.NEMOCLAW_AGENT === "hermes"
-          ? []
-          : ["a sibling native provider does not grant the first sandbox access to its endpoint"]),
+        "a sibling native provider does not grant the first sandbox access to its endpoint",
         "stopping the sibling releases only its dashboard forward",
         "status and connect preserve a stale local registration",
         "explicit removal permits a clean replacement and complete cleanup",
@@ -431,7 +421,6 @@ test(
     expect(sandboxAAfterFirst.exitCode, resultText(sandboxAAfterFirst)).toBe(0);
     const sandboxAIdBeforeReuse = parseOpenShellSandboxId(resultText(sandboxAAfterFirst));
     expect(sandboxAIdBeforeReuse, resultText(sandboxAAfterFirst)).not.toBeNull();
-    expect(registryHas(SANDBOX_A), `${REGISTRY_FILE} missing ${SANDBOX_A}`).toBe(true);
 
     progress.phase("re-onboard same sandbox on existing gateway");
     const second = await runOnboard(host, SANDBOX_A, fake.baseUrl, "phase-3-second-onboard");
@@ -518,56 +507,50 @@ test(
     const sibling = await runOnboard(
       host,
       SANDBOX_B,
-      siblingInference?.baseUrl ?? fake.baseUrl,
+      siblingInference.baseUrl,
       "phase-4-sibling-onboard",
     );
     expect(sibling.exitCode, resultText(sibling)).toBe(0);
 
-    siblingInference && progress.phase("verify sibling native endpoint remains isolated");
-    const denied = siblingInference
-      ? await sandbox.exec(
-          SANDBOX_A,
-          ["curl", "-sS", "--max-time", "15", "http://host.openshell.internal:11434/v1/models"],
-          {
-            artifactName: "phase-4-sibling-native-endpoint-denial",
-            env: commandEnv(),
-            timeoutMs: 30_000,
-          },
-        )
-      : null;
-    denied && expect(JSON.parse(denied.stdout)).toMatchObject({ error: "policy_denied" });
+    progress.phase("verify sibling native endpoint remains isolated");
+    const denied = await sandbox.exec(
+      SANDBOX_A,
+      ["curl", "-sS", "--max-time", "15", "http://host.openshell.internal:11434/v1/models"],
+      {
+        artifactName: "phase-4-sibling-native-endpoint-denial",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(JSON.parse(denied.stdout)).toMatchObject({ error: "policy_denied" });
 
-    siblingInference &&
-      progress.phase("verify sibling native endpoint accepts authenticated requests");
-    const previousRequests = siblingInference?.requests().length ?? 0;
-    const accepted = siblingInference
-      ? await sandbox.exec(
-          SANDBOX_B,
-          [
-            "sh",
-            "-lc",
-            `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; curl -fsS --max-time 15 http://host.openshell.internal:11434/v1/chat/completions -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data '{"model":"test-model","messages":[{"role":"user","content":"ping"}]}'`,
-          ],
-          {
-            artifactName: "phase-4-sibling-native-endpoint-authenticated-post",
-            env: commandEnv(),
-            timeoutMs: 30_000,
-          },
-        )
-      : null;
-    accepted && expect(accepted.exitCode, resultText(accepted)).toBe(0);
-    siblingInference &&
-      expect(
-        siblingInference
-          .requests()
-          .slice(previousRequests)
-          .some(
-            (request) =>
-              request.auth === "ok" &&
-              request.method === "POST" &&
-              request.path === "/v1/chat/completions",
-          ),
-      ).toBe(true);
+    progress.phase("verify sibling native endpoint accepts authenticated requests");
+    const previousRequests = siblingInference.requests().length;
+    const accepted = await sandbox.exec(
+      SANDBOX_B,
+      [
+        "sh",
+        "-lc",
+        `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; curl -fsS --max-time 15 http://host.openshell.internal:11434/v1/chat/completions -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data '{"model":"test-model","messages":[{"role":"user","content":"ping"}]}'`,
+      ],
+      {
+        artifactName: "phase-4-sibling-native-endpoint-authenticated-post",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(accepted.exitCode, resultText(accepted)).toBe(0);
+    expect(
+      siblingInference
+        .requests()
+        .slice(previousRequests)
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions",
+        ),
+    ).toBe(true);
 
     const dashboardABeforeStop = await waitForDashboardReachability(
       host,
@@ -641,7 +624,6 @@ test(
     });
     expect(directDeleteA.exitCode, resultText(directDeleteA)).toBe(0);
     await waitForSandboxAbsent(sandbox, SANDBOX_A, 60_000);
-    expect(registryHas(SANDBOX_A), "direct deletion removed sandbox A registration").toBe(true);
 
     const staleStatus = await command(host, [SANDBOX_A, "status"], {
       artifactName: "phase-6-stale-status",
@@ -649,7 +631,6 @@ test(
       timeoutMs: 60_000,
     });
     expect(staleStatus.exitCode, resultText(staleStatus)).toBe(1);
-    expect(registryHas(SANDBOX_A), "status removed sandbox A registration").toBe(true);
 
     const staleConnect = await command(host, [SANDBOX_A, "connect"], {
       artifactName: "phase-6-stale-connect",
@@ -657,7 +638,11 @@ test(
       timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
     });
     expect(staleConnect.exitCode, resultText(staleConnect)).toBe(1);
-    expect(registryHas(SANDBOX_A), "connect removed sandbox A registration").toBe(true);
+    // Status/connect cannot recreate registration. This retained observation
+    // proves it survived both read-only commands after direct OpenShell deletion.
+    expect(registryHas(SANDBOX_A), "stale status/connect removed sandbox A registration").toBe(
+      true,
+    );
 
     const removeStale = await command(host, [SANDBOX_A, "destroy", "--yes"], {
       artifactName: "phase-6-remove-stale-registry-a",

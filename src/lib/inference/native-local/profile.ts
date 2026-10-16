@@ -70,9 +70,13 @@ export function prepareNativeLocalProfile(input: NativeLocalBinding) {
       ],
       binaries: [
         "/usr/local/bin/openclaw",
+        "/usr/local/bin/pi",
         "/usr/local/bin/node",
         "/usr/bin/node",
         "/usr/bin/python3",
+        ...(binding.agent === "hermes"
+          ? ["/opt/hermes/.venv/bin/python", "/opt/hermes/.venv/bin/python3"]
+          : []),
         "/opt/venv/bin/python3",
         "/usr/local/bin/curl",
         "/usr/bin/curl",

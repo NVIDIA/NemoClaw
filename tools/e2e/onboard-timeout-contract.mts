@@ -7,6 +7,11 @@ import { testTimeout } from "../../test/helpers/timeouts.ts";
 const MINUTE_MS = 60_000;
 const ONBOARD_TEST_HEADROOM_MS = 10 * MINUTE_MS;
 const ONBOARD_JOB_HEADROOM_MS = 20 * MINUTE_MS;
+// Preserve the 90-minute hosted Pi lifecycle and allow a separate native
+// onboarding, two agent requests around a bounded rebuild, isolation probe,
+// destroy, and final listing.
+export const PI_QUALIFICATION_TEST_TIMEOUT_MS = 150 * MINUTE_MS;
+export const PI_QUALIFICATION_TARGET_TIMEOUT_MINUTES = 160;
 export const LIVE_TARGET_BASE_TEST_TIMEOUT_MS = 30 * MINUTE_MS;
 export const CONFIG_EXPORT_COMMAND_TIMEOUT_MS = 2 * MINUTE_MS;
 export const CONFIG_EXPORT_POLICY_TIMEOUT_MS = MINUTE_MS;

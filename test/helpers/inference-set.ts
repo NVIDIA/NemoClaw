@@ -464,9 +464,14 @@ export function createDeps(options: {
     );
   return {
     requireNativeProviderPolicy: async () => {},
+    readNativeLocalCredentialHandle: vi.fn(
+      async () => "openshell:resolve:env:v1_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    ),
+    verifyNativeLocalProviderAttachment: vi.fn(async (input) => input.expected),
     prepareNativeLocalSwitch: async (input) => {
       const binding: NativeLocalBinding = {
         provider: input.provider as NativeLocalBinding["provider"],
+        ...(input.agentName === "hermes" ? { agent: "hermes" as const } : {}),
         sandboxName: input.sandboxName,
         gatewayName: input.gatewayName,
         endpointUrl: input.binding?.baseUrl ?? "http://host.openshell.internal:11435/v1",

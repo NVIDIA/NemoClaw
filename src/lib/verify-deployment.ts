@@ -34,6 +34,7 @@ import { retryUntilAsync } from "./core/retry";
 import { isNativeNvidiaProvider } from "./inference/native-nvidia";
 import { requireHostedProviderAttachment } from "./inference/native-provider/hosted-attachment";
 import {
+  isPersistedPiSharedLocalInferenceRoute,
   normalizeNativeLocalBinding,
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInferenceForAgent,
@@ -984,15 +985,16 @@ export function onboardInferenceVerificationContext(
         "nativeLocalProviderAttachment" | "nativeHostedProviderAttachment"
       > &
         Partial<Pick<InferenceInvocationContext, "provider" | "model" | "endpointUrl">> & {
+          agent?: string | null;
+          createdAt?: string | null;
+          pendingRouteReservation?: boolean;
           hostLocalInferenceReceipt?: string | null;
         })
     | null,
 ): { route: InferenceRouteContext; invocation: InferenceInvocationContext } {
-  const nativeLocalExpected = usesNativeLocalInferenceForAgent(
-    agentName,
-    flow.provider,
-    flow.endpointUrl,
-  );
+  const nativeLocalExpected =
+    usesNativeLocalInferenceForAgent(agentName, flow.provider, flow.endpointUrl) &&
+    !isPersistedPiSharedLocalInferenceRoute(attachment, flow);
   const nativeLocalProviderAttachment = attachment?.nativeLocalProviderAttachment;
   const nativeHostedProviderAttachment = attachment?.nativeHostedProviderAttachment;
   const recordedHostLocalRouteMatchesAttachment =

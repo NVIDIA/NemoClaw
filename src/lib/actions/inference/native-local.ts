@@ -29,6 +29,7 @@ export async function prepareNativeLocalSwitch(input: {
     "getLocalProviderBaseUrl" | "getManagedVllmProviderBinding" | "shouldFrontOllamaWithProxy"
   >;
   provider: string;
+  agentName?: string;
   gatewayName: string;
   sandboxName: string;
   previous?: NativeLocalProviderAttachment;
@@ -75,6 +76,7 @@ export async function prepareNativeLocalSwitch(input: {
       gatewayName: input.gatewayName,
       sandboxName: input.sandboxName,
       endpointUrl,
+      ...(input.agentName === "hermes" ? { agent: "hermes" as const } : {}),
       authMode:
         !input.binding && !vllm && !proxy && input.provider !== "llama-cpp-local"
           ? "sentinel"
@@ -188,6 +190,12 @@ export async function prepareNativeLocalSelectionBoundary(input: {
   const previous = normalizeNativeLocalProviderAttachment(
     input.entry.nativeLocalProviderAttachment,
   );
+  if (input.entry.agent === "hermes" && previous && previous.agent !== "hermes") {
+    throw new InferenceSetError(
+      "The recorded local provider does not authorize Hermes. Recreate this beta sandbox before changing its inference selection.",
+      2,
+    );
+  }
   if (
     input.selectingNativeLocal &&
     usesNativeLocalInference(input.entry.provider, input.entry.endpointUrl) &&

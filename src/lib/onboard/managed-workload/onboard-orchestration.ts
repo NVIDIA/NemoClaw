@@ -4,7 +4,7 @@
 import { isCandidateAgent, readCandidateQualificationReceipt } from "../../agent/candidate";
 import type { AgentDefinition } from "../../agent/defs";
 import { getVersion } from "../../core/version";
-import { usesNativeLocalInference } from "../../inference/config";
+import { usesNativeLocalInference, usesNativeLocalInferenceForAgent } from "../../inference/config";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import type { ToolDisclosure } from "../../tool-disclosure";
@@ -397,12 +397,15 @@ export function createManagedWorkloadOnboardRuntime(
       return input.managedWorkloadRebuild.replacementProfile;
     }
     if (preparedProfile) return preparedProfile;
-    const nativeLocalProviderAttachment =
-      input.agentName === "openclaw" || input.agentName === "langchain-deepagents-code"
-        ? input.nativeLocalProviderAttachment
-        : undefined;
     const selectedModel = input.model?.trim() || "";
     const selectedProvider = input.provider?.trim() || null;
+    const nativeLocalProviderAttachment = usesNativeLocalInferenceForAgent(
+      input.agentName,
+      selectedProvider,
+      input.endpointUrl ?? input.nativeLocalProviderAttachment?.endpointUrl,
+    )
+      ? input.nativeLocalProviderAttachment
+      : undefined;
     const endpointUrl =
       nativeLocalProviderAttachment?.endpointUrl ??
       (usesNativeLocalInference(selectedProvider, input.endpointUrl) ? null : input.endpointUrl);

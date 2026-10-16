@@ -23,6 +23,7 @@ import {
   ONBOARD_REPAIR_TARGET_TIMEOUT_MINUTES,
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
+  PI_QUALIFICATION_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
 import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import {
@@ -314,6 +315,8 @@ const PI_IMAGE_SOURCE_OWNING_PATHS = [
   "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
   "scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch",
   "scripts/upgrade-bundled-npm.mts",
+  "src/lib/core/endpoint-url-safety.ts",
+  "src/lib/inference/native-local/agent-config.ts",
   "src/lib/inference/native-provider/agent-config.ts",
   "src/lib/inference/native-nvidia/contract.ts",
   "src/lib/inference/native-provider/contract.ts",
@@ -1330,10 +1333,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     targetId: "pi-agent-qualification",
     displayName: "Pi: qualifies managed runtime on Linux AMD64",
     agentRuntime: "pi",
-    environmentOrInferenceEndpoint: "Linux AMD64 Docker; NVIDIA hosted inference",
+    environmentOrInferenceEndpoint: "Linux AMD64 Docker; NVIDIA hosted and native-local inference",
     profile: "nvidia-api",
     testFile: "test/e2e/live/pi-agent-qualification.test.ts",
-    timeoutMinutes: 100,
+    timeoutMinutes: PI_QUALIFICATION_TARGET_TIMEOUT_MINUTES,
     installMode: "authenticated",
     installNonInteractive: true,
     restoreCli: true,

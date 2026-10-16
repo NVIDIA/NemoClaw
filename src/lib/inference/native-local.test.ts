@@ -146,8 +146,8 @@ describe("native local inference", () => {
   it.each([
     ["openclaw", true],
     ["langchain-deepagents-code", true],
-    ["pi", false],
-    ["hermes", false],
+    ["pi", true],
+    ["hermes", true],
   ])("selects native local routing only for migrated %s", (agent, expected) => {
     expect(usesNativeLocalInferenceForAgent(agent, binding.provider, binding.endpointUrl)).toBe(
       expected,
@@ -157,7 +157,9 @@ describe("native local inference", () => {
   it("restricts the selected bridge to models and chat requests (#12558)", () => {
     const profile = prepareNativeLocalProfile(binding);
     expect(profile.document.binaries).toContain("/usr/local/bin/openclaw");
+    expect(profile.document.binaries).toContain("/usr/local/bin/pi");
     expect(profile.document.binaries).not.toContain("/opt/hermes/.venv/bin/python");
+    expect(profile.document.binaries).not.toContain("/opt/hermes/.venv/bin/python3");
     expect(profile.document.endpoints).toEqual([
       {
         host: "host.openshell.internal",
@@ -179,6 +181,19 @@ describe("native local inference", () => {
     expect(sentinel.profileId).not.toBe(identity.profileId);
     expect(otherSandbox.profileId).toBe(identity.profileId);
     expect(otherSandbox.providerName).not.toBe(identity.providerName);
+  });
+
+  it("gives Hermes interpreter permissions a distinct immutable profile without changing existing profiles", () => {
+    const existing = prepareNativeLocalProfile(binding);
+    const hermes = prepareNativeLocalProfile({ ...binding, agent: "hermes" });
+    expect(hermes.profileId).not.toBe(existing.profileId);
+    expect(hermes.providerName).not.toBe(existing.providerName);
+    expect(hermes.document.binaries).toEqual(
+      expect.arrayContaining(["/opt/hermes/.venv/bin/python", "/opt/hermes/.venv/bin/python3"]),
+    );
+    expect(hermes.document.endpoints).toEqual(existing.document.endpoints);
+    expect(hermes.document.credentials).toEqual(existing.document.credentials);
+    expect(normalizeNativeLocalBinding({ ...binding, agent: "unsupported" })).toBeUndefined();
   });
   it("keeps runtime publication transactions distinct without changing endpoint permissions (#12558)", () => {
     const first = nativeLocalIdentity({ ...binding, transactionId: "a".repeat(64) });

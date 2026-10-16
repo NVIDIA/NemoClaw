@@ -77,4 +77,20 @@ describe("rebuild legacy local route preflight", () => {
     ).toBe(false);
     expect(bail).not.toHaveBeenCalled();
   });
+
+  it("keeps a published Pi shared local selection eligible for rebuild", () => {
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+    const entry = {
+      name: "alpha",
+      createdAt: "2026-09-01T00:00:00Z",
+      agent: "pi",
+      provider: "ollama-local",
+      model: "local-model",
+    } as RebuildSandboxEntry;
+
+    expect(blockRebuildOnLegacySharedLocalRoute("alpha", entry, bail)).toBe(false);
+    expect(bail).not.toHaveBeenCalled();
+  });
 });

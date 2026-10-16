@@ -22,6 +22,8 @@ export type NativeLocalBinding = Readonly<{
   authMode: "authenticated" | "sentinel";
   gatewayName: string;
   sandboxName: string;
+  /** Hermes requires its interpreter paths without changing existing immutable profiles. */
+  agent?: "hermes";
   /** Existing runtime publication transaction, when that owner requires one. */
   transactionId?: string;
 }>;
@@ -46,6 +48,7 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
     !isValidName(input.gatewayName) ||
     typeof input.sandboxName !== "string" ||
     !isValidName(input.sandboxName) ||
+    (input.agent !== undefined && input.agent !== "hermes") ||
     (input.transactionId !== undefined &&
       (typeof input.transactionId !== "string" || !/^[a-f0-9]{64}$/.test(input.transactionId)))
   )
@@ -59,6 +62,7 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
     authMode: input.authMode,
     gatewayName: input.gatewayName,
     sandboxName: input.sandboxName,
+    ...(input.agent === "hermes" ? { agent: "hermes" as const } : {}),
     ...(typeof input.transactionId === "string" ? { transactionId: input.transactionId } : {}),
   };
 }
@@ -73,6 +77,7 @@ export function nativeLocalIdentity(binding: NativeLocalBinding) {
         normalized.endpointUrl,
         normalized.credentialEnv,
         normalized.authMode,
+        ...(normalized.agent ? [normalized.agent] : []),
       ]),
     )
     .digest("hex")
@@ -161,7 +166,39 @@ export function usesNativeLocalInferenceForAgent(
   endpointUrl?: string | null,
 ): boolean {
   return (
-    (agentName === "openclaw" || agentName === "langchain-deepagents-code") &&
+    (agentName === "openclaw" ||
+      agentName === "langchain-deepagents-code" ||
+      agentName === "pi" ||
+      agentName === "hermes") &&
     usesNativeLocalInference(provider, endpointUrl)
+  );
+}
+
+/** Preserve only a published Pi selection that still uses its recorded shared route. */
+export function isPersistedPiSharedLocalInferenceRoute(
+  recorded:
+    | {
+        agent?: string | null;
+        provider?: string | null;
+        model?: string | null;
+        endpointUrl?: string | null;
+        createdAt?: string | null;
+        pendingRouteReservation?: boolean;
+        nativeLocalProviderAttachment?: unknown;
+      }
+    | null
+    | undefined,
+  selected?: { provider?: string | null; model?: string | null; endpointUrl?: string | null },
+): boolean {
+  return Boolean(
+    recorded?.agent === "pi" &&
+    typeof recorded.createdAt === "string" &&
+    recorded.pendingRouteReservation !== true &&
+    recorded.nativeLocalProviderAttachment === undefined &&
+    usesNativeLocalInferenceForAgent("pi", recorded.provider, recorded.endpointUrl) &&
+    (!selected ||
+      (recorded.provider === selected.provider &&
+        recorded.model === selected.model &&
+        (recorded.endpointUrl ?? null) === (selected.endpointUrl ?? null))),
   );
 }

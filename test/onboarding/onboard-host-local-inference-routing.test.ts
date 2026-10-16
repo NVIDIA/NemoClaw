@@ -39,7 +39,7 @@ const NETWORK_AUTHORITY = "3".repeat(64);
 const MODEL = "qwen3.5-9b";
 const SANDBOX = "host-local-agent";
 const APPLICATIONS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
-const NATIVE_APPLICATIONS = ["openclaw", "langchain-deepagents-code"] as const;
+const NATIVE_APPLICATIONS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 const PUBLISHED_RESUME_ROLLBACK_CASES = APPLICATIONS.flatMap((application) =>
   (["running", "stopped"] as const).map((stateAtEntry) => ({ application, stateAtEntry })),
 );
@@ -631,7 +631,7 @@ describe("onboard host-local inference routing", () => {
     expect(genericUpsertProvider).not.toHaveBeenCalled();
   });
 
-  it("keeps Hermes host-local setup on its transaction-owned shared route", async () => {
+  it("registers Hermes native access inside its existing host-local transaction", async () => {
     const sharedUpsert = vi.fn(() => ({ ok: true }));
     const route = fixture("hermes", "ollama", { gatewayUpsertProvider: sharedUpsert });
     const harness = createHarness({ overrides: { applyLocalInferenceRoute: undefined } });
@@ -643,11 +643,13 @@ describe("onboard host-local inference routing", () => {
       }),
     ).resolves.toEqual({ ok: true });
 
-    expect(sharedUpsert).toHaveBeenCalledOnce();
-    expect(harness.native.adapter.createProvider).not.toHaveBeenCalled();
-    expect(harness.updateSandbox).not.toHaveBeenCalledWith(
+    expect(sharedUpsert).not.toHaveBeenCalled();
+    expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(harness.updateSandbox).toHaveBeenCalledWith(
       SANDBOX,
-      expect.objectContaining({ nativeLocalProviderAttachment: expect.anything() }),
+      expect.objectContaining({
+        nativeLocalProviderAttachment: expect.objectContaining({ agent: "hermes" }),
+      }),
     );
   });
 
@@ -856,7 +858,7 @@ describe("onboard host-local inference routing", () => {
         (value) => value,
         (error: Error) => error.message,
       );
-      expect(outcome).toEqual(application === "hermes" ? { retry: "selection" } : "EXIT_CALLED:1");
+      expect(outcome).toBe("EXIT_CALLED:1");
 
       const preparedStartup = route.preparedStartups[0];
       expect(route.providerRuntime.resumeManaged).toHaveBeenCalledOnce();
@@ -897,7 +899,7 @@ describe("onboard host-local inference routing", () => {
         (value) => value,
         (error: Error) => error.message,
       );
-      expect(outcome).toEqual(application === "hermes" ? { retry: "selection" } : "EXIT_CALLED:1");
+      expect(outcome).toBe("EXIT_CALLED:1");
 
       expect(route.events.slice(-3)).toEqual([
         "redacted-evidence",

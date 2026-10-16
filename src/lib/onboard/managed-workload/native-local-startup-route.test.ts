@@ -20,6 +20,13 @@ const nativeAttachment = {
   schemaVersion: 1 as const,
   providerId: "fixture-provider",
 };
+const hermesBinding = { ...nativeBinding, agent: "hermes" as const };
+const attachments = {
+  openclaw: nativeAttachment,
+  hermes: { ...nativeAttachment, ...hermesBinding, ...nativeLocalIdentity(hermesBinding) },
+  "langchain-deepagents-code": nativeAttachment,
+  pi: nativeAttachment,
+};
 const routes = [
   {
     name: "resolved native attachment",
@@ -37,14 +44,20 @@ const routes = [
     endpointUrl: "http://host.openshell.internal:8000/v1",
     expected: "https://inference.local/v1",
   },
+  {
+    name: "hosted endpoint with stale native attachment",
+    endpointUrl: "https://example.com/v1",
+    attachment: nativeAttachment,
+    expected: "https://inference.local/v1",
+  },
 ] as const;
 
-describe.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+describe.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const)(
   "%s managed startup inference",
   (agentName) => {
     it.each(routes)("keeps $name on its selected transport (#12558)", (route) => {
       const { endpointUrl } = route;
-      const expected = agentName === "hermes" ? "https://inference.local/v1" : route.expected;
+      const expected = route.expected;
       const runtime = createManagedWorkloadOnboardRuntime(
         {
           computePlan: { driverName: "docker", gatewayLauncher: "nemoclaw" },
@@ -60,12 +73,14 @@ describe.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
           provider: "compatible-endpoint",
           preferredInferenceApi: "openai-completions",
           endpointUrl,
-          ...("attachment" in route ? { nativeLocalProviderAttachment: route.attachment } : {}),
+          ...("attachment" in route
+            ? { nativeLocalProviderAttachment: attachments[agentName] }
+            : {}),
           startupProfile: {
             chatUiUrl: "http://localhost:18789",
             effectiveDashboardPort: 18789,
             dashboardBindAddress: undefined,
-            manageDashboard: agentName !== "langchain-deepagents-code",
+            manageDashboard: agentName !== "langchain-deepagents-code" && agentName !== "pi",
             wslExposure: false,
             hermesDashboardState: {
               config: { enabled: false, port: 19189, internalPort: 29189, tuiEnabled: false },

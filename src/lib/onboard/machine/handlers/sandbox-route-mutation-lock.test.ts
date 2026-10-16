@@ -95,7 +95,7 @@ describe("sandbox registration route transaction", () => {
     expect(calls.error).not.toHaveBeenCalled();
   });
 
-  it.each(["openclaw", "langchain-deepagents-code"])(
+  it.each(["openclaw", "langchain-deepagents-code", "pi"])(
     "accepts %s exact native local reservation before sandbox creation (#12975)",
     async (agentName) => {
       const startRecordedStep = vi.fn(async () => {
@@ -188,7 +188,6 @@ describe("sandbox registration route transaction", () => {
   });
 
   it.each([
-    ["pi", nativeEndpoint],
     ["hermes", nativeEndpoint],
     ["openclaw", "https://hosted.example.test/v1"],
   ])("keeps %s at %s on the shared route guard (#12975)", async (agentName, endpointUrl) => {

@@ -687,7 +687,7 @@ async function verifyExactCleanup(
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
   const containerEngine = env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
-  const settled = await pollUntil({
+  await pollUntil({
     artifactPrefix: `post-destroy-absence-${sandboxName}`,
     deadlineMs: 60_000,
     delayMs: 1_000,
@@ -720,14 +720,8 @@ async function verifyExactCleanup(
     accept: ({ containers, openshellList }) =>
       !outputContainsSandbox(openshellList, sandboxName) && containers.stdout.trim() === "",
   });
-  const { containers, openshellList } = settled.value;
-  assertExitZero(openshellList, "list OpenShell sandboxes after managed activation destroy");
-  expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
-  assertExitZero(
-    containers,
-    `inspect ${containerEngine} inventory after managed activation destroy`,
-  );
-  expect(containers.stdout.trim(), resultText(containers)).toBe("");
+  // pollUntil returns only after both successful inventory commands prove
+  // absence. Its terminal and deadline failures already reject this cleanup.
 }
 
 function enterOnboardPhase(

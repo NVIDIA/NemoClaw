@@ -25,6 +25,7 @@ import {
   NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN,
   NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT,
 } from "../inference-credential";
+import { verifyNativeLocalProviderAttachment } from "../inference/native-local/profile";
 import { NVIDIA_HOSTED_LOGICAL_PROVIDER } from "../inference/native-nvidia/contract";
 import {
   NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN,
@@ -84,6 +85,30 @@ export async function readNativeLocalCredentialHandle(
     providerLabel: "local inference",
     sleep: deps.sleep,
   });
+}
+
+/** Read a fresh Hermes reference and validate its attachment before publication. */
+export async function readHermesNativeLocalCredentialHandleIfNeeded(
+  options: Parameters<typeof verifyNativeLocalProviderAttachment>[0] & {
+    agentName: string;
+    gatewayName: string;
+    read?: typeof readNativeLocalCredentialHandle;
+    verify?: typeof verifyNativeLocalProviderAttachment;
+  },
+): Promise<string | undefined> {
+  if (options.agentName !== "hermes") return undefined;
+  const handle = await (options.read ?? readNativeLocalCredentialHandle)(
+    options.sandboxName,
+    options.gatewayName,
+  );
+  // Re-observe ownership after the fresh exec; a concurrent attachment change
+  // must fail through the caller's compensation before registry/config writes.
+  await (options.verify ?? verifyNativeLocalProviderAttachment)({
+    adapter: options.adapter,
+    sandboxName: options.sandboxName,
+    expected: options.expected,
+  });
+  return handle;
 }
 
 async function readNativeCredentialHandle(
@@ -741,6 +766,7 @@ export {
 export {
   detachNativeLocalProvider,
   ensureNativeLocalProviderAttached,
+  verifyNativeLocalProviderAttachment,
 } from "../inference/native-local/profile";
 
 /** Restore only a distinct observed shared route; native providers own their compensation. */

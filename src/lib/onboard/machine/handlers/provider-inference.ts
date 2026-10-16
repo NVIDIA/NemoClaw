@@ -5,6 +5,7 @@ import type { ModelSelectionProvenance } from "../../../domain/telemetry/provena
 import { clearAutoDetectedCompatibleContextWindow } from "../../../inference/compatible-endpoint-context";
 import {
   hasLegacySharedLocalInferenceRoute,
+  isPersistedPiSharedLocalInferenceRoute,
   resolveAgentProviderInferenceApi,
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
@@ -90,6 +91,8 @@ function selectedNativeInference(
 
 export interface ProviderInferenceSetupOptions {
   agentName?: string;
+  /** Resume the exact published Pi shared route without selecting a new native provider. */
+  preserveLegacyPiSharedLocalRoute?: boolean;
   gatewayName?: string;
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
@@ -653,6 +656,9 @@ function hostLocalInferenceSetupOptions(
     (candidate): candidate is HostLocalInferenceApplication => candidate === input.application,
   );
   if (!application) {
+    // Pi's local route is selected by the provider path, not the managed
+    // host-local runtime selector used by OpenClaw, DCode, and Hermes.
+    if (input.application === "pi") return {};
     if (!isHostLocalInferenceProvider(input.provider)) return {};
     throw new Error(`Unsupported host-local inference application '${input.application}'.`);
   }
@@ -1284,12 +1290,30 @@ function assertNoLegacySharedLocalResume(
   if (
     recorded &&
     recorded.pendingRouteReservation !== true &&
-    hasLegacySharedLocalInferenceRoute(recorded)
+    hasLegacySharedLocalInferenceRoute(recorded) &&
+    recorded.agent !== "pi"
   ) {
     throw new Error(
       `Sandbox ${sandboxName} uses a legacy shared local inference route. Resume is unavailable for this route. Back up the sandbox, then re-onboard it with --fresh --name ${sandboxName} --recreate-sandbox to attach a native provider before upgrading OpenShell.`,
     );
   }
+}
+
+function createPersistedPiRouteSelector(
+  getRecorded: ((name: string) => Partial<SandboxEntry> | null) | undefined,
+  effectiveResume: boolean,
+) {
+  return (
+    name: string | null,
+    selection: { provider: string | null; model: string | null; endpointUrl: string | null },
+  ) =>
+    effectiveResume &&
+    Boolean(name) &&
+    isPersistedPiSharedLocalInferenceRoute(name ? getRecorded?.(name) : null, selection);
+}
+
+function preservedPiRouteSetupOption(preserve: boolean) {
+  return preserve ? { preserveLegacyPiSharedLocalRoute: true } : {};
 }
 
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
@@ -1366,6 +1390,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
   let vllmModelIdentity: string | undefined;
   const effectiveResume = resume && !fresh;
+  const preservesLegacyPiRoute = createPersistedPiRouteSelector(
+    deps.getSandboxRegistryEntry,
+    effectiveResume,
+  );
   let hostLocalInferenceRouteOnly = false;
   let hostLocalInferenceProofAuthority: HostLocalInferenceSandboxProofAuthority | null = null;
   let deferredInferenceRoute: ((reserve: () => void) => Promise<void>) | undefined;
@@ -1517,7 +1545,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         gatewayName,
         sandboxName,
         { provider, model, endpointUrl, credentialEnv, preferredInferenceApi },
-        usesNativeLocalInferenceForAgent(agentName(agent), provider, endpointUrl),
+        usesNativeLocalInferenceForAgent(agentName(agent), provider, endpointUrl) &&
+          !preservesLegacyPiRoute(sandboxName, { provider, model, endpointUrl }),
       );
       // A completed provider-selection checkpoint is not proof that a managed
       // host runtime survived a process or gateway restart. Recover the exact
@@ -1757,7 +1786,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         gatewayName,
         sandboxName,
         { provider, model, endpointUrl, credentialEnv, preferredInferenceApi },
-        usesNativeLocalInferenceForAgent(agentName(agent), provider, endpointUrl),
+        usesNativeLocalInferenceForAgent(agentName(agent), provider, endpointUrl) &&
+          !preservesLegacyPiRoute(sandboxName, { provider, model, endpointUrl }),
       );
     }
     if (
@@ -1982,7 +2012,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
                 credentialEnv,
                 preferredInferenceApi,
               },
-              usesNativeLocalInferenceForAgent(agentName(agent), selectedProvider, endpointUrl),
+              usesNativeLocalInferenceForAgent(agentName(agent), selectedProvider, endpointUrl) &&
+                !preservesLegacyPiRoute(sandboxName, {
+                  provider: selectedProvider,
+                  model: selectedModel,
+                  endpointUrl,
+                }),
             );
             try {
               await deps.reconcileModelRouter();
@@ -2051,7 +2086,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
               credentialEnv,
               preferredInferenceApi,
             },
-            usesNativeLocalInferenceForAgent(agentName(agent), selectedProvider, endpointUrl),
+            usesNativeLocalInferenceForAgent(agentName(agent), selectedProvider, endpointUrl) &&
+              !preservesLegacyPiRoute(resumeReservationName, {
+                provider: selectedProvider,
+                model: selectedModel,
+                endpointUrl,
+              }),
           );
           return reserveRecoveredSandboxInferenceRoute(
             deps.reserveSandboxInferenceRoute,
@@ -2198,6 +2238,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       );
       const inferenceOptions = {
         ...nativeLocalAgentOptions(agent, selectedProvider, endpointUrl),
+        ...preservedPiRouteSetupOption(
+          preservesLegacyPiRoute(confirmedSandboxName, {
+            provider: selectedProvider,
+            model: selectedModel,
+            endpointUrl,
+          }),
+        ),
         gatewayName,
         allowToolsIncompatible,
         ...legacyRecordedNoAuthEndpointSetupOptions({

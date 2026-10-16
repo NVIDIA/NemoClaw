@@ -9,6 +9,7 @@ import {
 import {
   requireNativeProviderPolicy,
   prepareNativeLocalSwitch,
+  verifyNativeLocalProviderAttachment,
   rollbackNativeLocalSelection,
   restoreSharedInferenceSelection,
   prepareNativeLocalSelectionBoundary,
@@ -115,7 +116,9 @@ import {
   probeInferenceSetSandboxRouteUntilConverged,
   providerCommitMayHaveChangedBinding,
   readHermesNativeNvidiaCredentialHandleIfNeeded,
+  readHermesNativeLocalCredentialHandleIfNeeded,
   readNativeNvidiaCredentialHandle,
+  readNativeLocalCredentialHandle,
   type RuntimeProviderBundleRegistry,
   RuntimeProviderSelectionError,
   requireInferenceSetRuntimeAuthority,
@@ -212,6 +215,8 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
     defaultSandbox: string | null;
   };
   prepareNativeLocalSwitch?: typeof prepareNativeLocalSwitch;
+  readNativeLocalCredentialHandle?: typeof readNativeLocalCredentialHandle;
+  verifyNativeLocalProviderAttachment?: typeof verifyNativeLocalProviderAttachment;
   getNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").getNativeLocalProviderAuthority;
   setNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").setNativeLocalProviderAuthority;
   listNativeLocalProviderAuthorities?: typeof import("../state/registry/native-local-provider-authority").listNativeLocalProviderAuthorities;
@@ -1518,7 +1523,7 @@ async function runInferenceSetWithoutHostLock(
   let nativeLocalRegistryCommitted = false;
   let previousNativeLocalDetached = false;
   let previousNativeLocalDetachCommitted = false;
-  let nativeNvidiaCredentialHandle: string | undefined;
+  let nativeCredentialHandle: string | undefined;
   let nativeProviderAttachment: NativeProviderAttachment | undefined;
   let nativeAttachmentChanged = false;
   let nativeRegistryCommitted = false;
@@ -1547,7 +1552,7 @@ async function runInferenceSetWithoutHostLock(
     });
     nativeProviderAttachment = nativeSelection.attachment;
     nativeAttachmentChanged = nativeSelection.attachmentChanged;
-    nativeNvidiaCredentialHandle = await readHermesNativeNvidiaCredentialHandleIfNeeded({
+    nativeCredentialHandle = await readHermesNativeNvidiaCredentialHandleIfNeeded({
       agentName,
       provider,
       sandboxName,
@@ -1557,6 +1562,7 @@ async function runInferenceSetWithoutHostLock(
     const providerBinding = httpsPinProviderBinding ?? directProviderBinding;
     if (selectingNativeLocal) {
       const selected = await (deps.prepareNativeLocalSwitch ?? prepareNativeLocalSwitch)({
+        agentName,
         local: {
           getLocalProviderBaseUrl,
           getManagedVllmProviderBinding,
@@ -1575,6 +1581,15 @@ async function runInferenceSetWithoutHostLock(
       nativeLocalProviderAttachment = selected.receipt;
       nativeLocalAttachmentChanged = selected.changed;
       previousNativeLocalDetached = selected.previousDetached;
+      nativeCredentialHandle = await readHermesNativeLocalCredentialHandleIfNeeded({
+        agentName,
+        sandboxName,
+        gatewayName: preparedRoute.gatewayName,
+        adapter: deps.providerAdapter,
+        expected: nativeLocalProviderAttachment,
+        read: deps.readNativeLocalCredentialHandle,
+        verify: deps.verifyNativeLocalProviderAttachment,
+      });
     } else if (providerBinding) {
       providerMutation = await prepareInferenceSetProviderBinding({
         gatewayName: preparedRoute.gatewayName,
@@ -1858,7 +1873,7 @@ async function runInferenceSetWithoutHostLock(
         contextWindow,
         nativeLocalProviderAttachment?.endpointUrl ?? nativeSelection.endpointUrl,
         selectingNative,
-        nativeNvidiaCredentialHandle,
+        nativeCredentialHandle,
       );
     } else {
       // Recompute the context window for the model being switched to, so it does
@@ -1952,7 +1967,8 @@ async function runInferenceSetWithoutHostLock(
         // A new native attachment refreshes credentials for new processes only.
         // Restart on retries too: an earlier attempt may have committed the config.
         hermesGatewayRestart:
-          agentName === "hermes" && (selectingNative || previousNativeAttachment)
+          agentName === "hermes" &&
+          (selectingNative || previousNativeAttachment || previousNativeLocalAttachment)
             ? { gatewayName: expectedGatewayName }
             : undefined,
         openClawPairingTarget:

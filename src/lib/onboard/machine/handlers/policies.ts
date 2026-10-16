@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  isPersistedPiSharedLocalInferenceRoute,
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInferenceForAgent,
   type NativeLocalProviderAttachment,
@@ -24,6 +25,12 @@ export interface PolicyPresetEntry {
 }
 
 export interface ActiveSandboxPolicyState {
+  agent?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  endpointUrl?: string | null;
+  createdAt?: string | null;
+  pendingRouteReservation?: boolean;
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   messaging?: { plan: SandboxMessagingPlan } | null;
 }
@@ -161,11 +168,16 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   const recordedNativeLocal = normalizeNativeLocalProviderAttachment(
     activeSandbox?.nativeLocalProviderAttachment,
   );
-  const nativeLocalSelected = usesNativeLocalInferenceForAgent(
-    normalizeAgentNameForResumeState((agent as { name?: string } | null)?.name),
-    provider,
-    endpointUrl,
-  );
+  const nativeLocalSelected =
+    usesNativeLocalInferenceForAgent(
+      normalizeAgentNameForResumeState((agent as { name?: string } | null)?.name),
+      provider,
+      endpointUrl,
+    ) &&
+    !(
+      resume &&
+      isPersistedPiSharedLocalInferenceRoute(activeSandbox, { provider, model, endpointUrl })
+    );
   const nativeLocal = nativeLocalSelected ? recordedNativeLocal : undefined;
   if (nativeLocalSelected && !nativeLocal)
     throw new Error(

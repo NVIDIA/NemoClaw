@@ -10,8 +10,8 @@ content:
   type: "how_to"
 ---
 
-These rules apply to providers that still use the shared route, including user-supplied compatible endpoints outside the qualified host-local OpenClaw and Deep Agents Code route, Hermes local selections, Model Router, and existing local sandboxes while OpenShell 0.0.116 is pinned. OpenClaw and Deep Agents Code local sandboxes without a native attachment must be backed up and freshly re-onboarded before resume, rebuild, or an OpenShell upgrade.
-NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, Hermes Provider, and new OpenClaw or Deep Agents Code local selections use sandbox-attached native providers instead. Changing their selected model or provider does not re-point the shared route.
+These rules apply to providers that still use the shared route, including user-supplied compatible endpoints outside the qualified host-local OpenClaw, Deep Agents Code, and Pi routes, Hermes local selections, Model Router, and published Pi local selections without a native attachment while OpenShell 0.0.116 is pinned. Those published Pi selections retain their recorded shared route during resume and rebuild. OpenClaw and Deep Agents Code local sandboxes without a native attachment must be backed up and freshly re-onboarded before resume, rebuild, or an OpenShell upgrade.
+NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, Hermes Provider, and new OpenClaw, Deep Agents Code, or Pi local selections use sandbox-attached native providers instead. Changing their selected model or provider does not re-point the shared route.
 
 OpenShell exposes one shared inference route per gateway.
 NemoClaw records each sandbox's intended provider and model so compatible sandboxes can take turns using that route.
