@@ -228,7 +228,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   getNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").getNativeLocalProviderAuthority;
   setNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").setNativeLocalProviderAuthority;
   listNativeLocalProviderAuthorities?: typeof import("../state/registry/native-local-provider-authority").listNativeLocalProviderAuthorities;
-  clearNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").clearNativeLocalProviderAuthority;
+  clearNativeLocalProviderAuthority: typeof import("../state/registry/native-local-provider-authority").clearNativeLocalProviderAuthority;
   getNativeHostedProviderAuthority?: typeof registry.getNativeHostedProviderAuthority;
   setNativeHostedProviderAuthority?: typeof registry.setNativeHostedProviderAuthority;
   getNativeNvidiaProviderAuthority?: typeof registry.getNativeNvidiaProviderAuthority;
