@@ -30,21 +30,46 @@ State records carry a format version; the SDK rejects a different version withou
 
 These paths are inside the sandbox, not the client's deployment state directory.
 Use authenticated [native access](interfaces.md) for the selected deployment.
+The [SDK's Fabric configuration](../crates/nemoclaw-sdk/src/fabric_config.rs) sets the working directory to `/sandbox/workspace` and the artifact root to `/sandbox/artifacts`.
+The [image runtime environment](../image/fabric/runtime.json) sets `HOME=/sandbox`.
+Native settings can select other locations; inspect the selected harness configuration before collecting files.
 
 | Agent data | Location and lifetime |
 |---|---|
 | OpenClaw configuration and state | `/sandbox/.openclaw`; includes `openclaw.json` and, when a dashboard is declared, `interface-token` |
 | Declared OpenClaw agent’s working files | `/sandbox/workspaces/<agent-name>` |
+| Claude adapter files | `/sandbox/artifacts/.fabric/claude`; generated MCP configuration and skill plugins, not a conversation backup |
+| Codex adapter files | `/sandbox/artifacts/.fabric/codex`; for a non-OpenAI model provider, the adapter sets `CODEX_HOME` to its `custom-provider-home` subdirectory |
+| Deep Agents conversation checkpoints | `/sandbox/artifacts/.fabric/deepagents/runtimes/<key>.sqlite`, where `<key>` is the SHA-256 hexadecimal digest of the Fabric runtime ID |
 | Hermes service mode API and agent state | `/sandbox/.hermes`; includes the API `interface-token` |
 | Hermes service mode dashboard and browser-chat state | `/sandbox/.hermes/profiles/dashboard-home`; separate from the API conversation |
 | Hermes Relay traces | `/sandbox/artifacts/relay`; per-session event/trajectory files; deleted with the sandbox |
 | Hermes session mode home | `.fabric/hermes/runtimes/<runtime-id>` under the configured Fabric artifact root; distinct from the local Hermes API/dashboard homes |
 | Pi conversation | Held in the running Pi process; switching declared choices preserves it, while applying configuration changes or restarting the runtime loses it |
+| mini-SWE-agent conversation | Held by the live runtime; discarded when that runtime stops |
+| OO Agents (`nooa`) and BenchAgent (`nooa-bench`) | Working files use the configured workspace; persistence beyond those files belongs to the selected native target, with no common backup path defined by these adapters |
+| Remote agent | Conversation history is held by the live Fabric adapter and discarded when it stops; server-side data remains under the remote service's control and is not backed up by collecting sandbox files |
 
-The [OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw) and [interface guide](interfaces.md) define these locations.
+The [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python) and [interface guide](interfaces.md) define these locations and lifetimes.
+The table covers the harness targets in the [image build matrix](../docker-bake.hcl); a descriptor in the image catalog alone does not establish that a harness is installed or qualified on a platform.
 Agent state can survive a process restart while its files remain; deleting the sandbox deletes its files.
 Each declared agent runs in its own OpenShell sandbox; workspace directories do not further isolate processes within that sandbox.
-File locations for the other harnesses are tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
+
+### Conversation and Credential Boundaries
+
+Claude and Codex reuse one native client or thread within a started Fabric runtime.
+The pinned adapters start a new client or thread on runtime start; NemoClaw has no procedure to reattach a restarted runtime to a saved native conversation.
+Claude's adapter directory contains generated integration files; it does not inventory the native SDK's conversation or login storage.
+For Codex's OpenAI provider, the adapter does not set a separate `CODEX_HOME`; the native client's storage rules apply.
+Do not assume the adapter directories contain every native credential or conversation file.
+
+Deep Agents opens its SQLite checkpointer at runtime start and closes it at stop, but the live runtime owns the LangGraph thread identity.
+Preserving the SQLite file alone does not establish that a new runtime resumes the same conversation.
+Relay traces are telemetry artifacts, not an import format for restoring native conversations.
+
+Treat collected native homes, checkpoints, workspaces, and traces as sensitive: they can contain credentials, prompts, tool output, and conversation data.
+Keep them separate from public diagnostics; see [credential ownership](security.md#credentials-and-authentication).
+Complete native-storage inventories, tested backup and restore procedures, and version compatibility remain tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
 
 ## Configuration Export and Agent Data
 
