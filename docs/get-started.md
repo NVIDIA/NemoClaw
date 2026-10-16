@@ -6,6 +6,7 @@
 Create one OpenClaw sandbox using an existing OpenShell gateway and inference endpoint, then send its agent a request.
 This development procedure uses a source-built bundle and agent image.
 This guide builds NemoClaw from source because there are no releases yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)); its access steps have not been rehearsed end to end ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
+With the pinned Fabric, OpenClaw can't start in an OpenShell sandbox, so apply stops at the agent until [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) is fixed.
 
 ## 1. Prepare the Hosts and Bundle
 
