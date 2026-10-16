@@ -842,29 +842,19 @@ mod tests {
         assert_eq!(row["names_json"], r#"["b","a"]"#);
     }
 
-    /// An observation the backend reports as a JSON map, such as the URLs a
-    /// gateway assigns, is a typed computed map that other resources read.
-    fn reporter(backend: Arc<Recorder>) -> StructuredAdapter {
-        fn urls(_: &str, prior: &State, proposed: &State) -> Option<Value<String>> {
-            Some(if prior.get("ports_json") == proposed.get("ports_json") {
-                prior.get("urls_json").cloned().unwrap_or(Value::Unknown)
-            } else {
-                Value::Unknown
-            })
-        }
-        let definition = Definition::new("sandbox", &["name", "ports_json"], &["ports_json"])
-            .optional(&["ports_json"])
-            .computed("urls_json", urls)
-            .structured("ports", "ports_json", Shape::Map(Box::new(Shape::Number)))
-            .structured("urls", "urls_json", Shape::Map(Box::new(Shape::String)));
-        StructuredAdapter(ResourceAdapter::new(definition, backend))
-    }
-
+    /// A computed field with a shape, such as URLs a gateway assigns, is a
+    /// typed computed attribute that other resources read.
     #[test]
     fn a_typed_observation_is_a_computed_attribute() {
-        let schema = reporter(Arc::default())
-            .schema(&mut Diagnostics::default())
-            .unwrap();
+        let definition = Definition::new("sandbox", &["name"], &[])
+            .computed("urls_json", crate::carry_prior)
+            .structured("urls", "urls_json", Shape::Map(Box::new(Shape::String)));
+        let schema = StructuredAdapter(ResourceAdapter::new(
+            definition,
+            Arc::new(Recorder::default()),
+        ))
+        .schema(&mut Diagnostics::default())
+        .unwrap();
         let urls = &schema.block.attributes["urls"];
         assert_eq!(
             urls.attr_type,
@@ -872,75 +862,6 @@ mod tests {
         );
         assert!(matches!(urls.constraint, AttributeConstraint::Computed));
         assert!(!schema.block.attributes.contains_key("urls_json"));
-    }
-
-    #[tokio::test]
-    async fn refresh_reports_a_typed_observation() {
-        let backend = Arc::new(Recorder::default());
-        *backend.observed.lock().unwrap() = Some(Row::from([
-            ("name".into(), "coder".into()),
-            ("id".into(), "sandbox-id".into()),
-            ("ports_json".into(), r#"{"web":8080}"#.into()),
-            ("urls_json".into(), r#"{"web":"http://web.test/"}"#.into()),
-        ]));
-        let prior = StructuredState::from([
-            ("name".into(), value(json!("coder"))),
-            ("id".into(), value(json!("sandbox-id"))),
-            ("ports".into(), value(json!({"web": 8080}))),
-            ("urls".into(), Value::Null),
-        ]);
-        let mut diags = Diagnostics::default();
-        let (state, _) = reporter(backend)
-            .read(
-                &mut diags,
-                prior,
-                ValueEmpty::default(),
-                ValueEmpty::default(),
-            )
-            .await
-            .unwrap();
-        assert!(diags.errors.is_empty(), "{diags:?}");
-        assert_eq!(state["urls"], value(json!({"web": "http://web.test/"})));
-    }
-
-    #[tokio::test]
-    async fn a_typed_observation_is_unknown_only_while_what_it_observes_changes() {
-        let prior = StructuredState::from([
-            ("name".into(), value(json!("coder"))),
-            ("id".into(), value(json!("sandbox-id"))),
-            ("ports".into(), value(json!({"web": 8080}))),
-            ("urls".into(), value(json!({"web": "http://web.test/"}))),
-        ]);
-        let plan = |ports: Json| {
-            let prior = prior.clone();
-            async move {
-                let mut proposed = prior.clone();
-                proposed.insert("ports".into(), value(ports));
-                let mut config = proposed.clone();
-                config.insert("urls".into(), Value::Null);
-                config.insert("id".into(), Value::Null);
-                let mut diags = Diagnostics::default();
-                let (planned, _, replacements) = reporter(Arc::default())
-                    .plan_update(
-                        &mut diags,
-                        prior,
-                        proposed,
-                        config,
-                        ValueEmpty::default(),
-                        ValueEmpty::default(),
-                    )
-                    .await
-                    .unwrap();
-                assert!(diags.errors.is_empty(), "{diags:?}");
-                assert!(replacements.is_empty());
-                planned["urls"].clone()
-            }
-        };
-        assert_eq!(
-            plan(json!({"web": 8080})).await,
-            value(json!({"web": "http://web.test/"}))
-        );
-        assert_eq!(plan(json!({"web": 9090})).await, Value::Unknown);
     }
 
     #[tokio::test]

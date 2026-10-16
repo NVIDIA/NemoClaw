@@ -222,102 +222,24 @@ impl ConnectedOpenShellGateway {
         Ok(row["id"].clone())
     }
 
-    /// Every page of the bound sandbox's endpoints. Pages are bounded; a
-    /// listing that does not finish is incomplete, never an empty one.
-    pub(crate) async fn services(
+    pub(crate) async fn service(
         &self,
         workspace: &str,
         sandbox: &Row,
-    ) -> Result<Vec<crate::services::Endpoint>, ObservationError> {
-        const PAGES: usize = 20;
-        let mut endpoints: Vec<crate::services::Endpoint> = Vec::new();
-        let mut token = String::new();
-        for _ in 0..PAGES {
-            let page = self
-                .client
+        name: &str,
+    ) -> Result<Option<crate::services::Endpoint>, ObservationError> {
+        authoritative(
+            self.client
                 .raw_grpc()
-                .list_services(self.request(proto::ListServicesRequest {
+                .get_service(self.request(proto::GetServiceRequest {
                     workspace_scope: Some(proto::workspace_selector(workspace)),
-                    page_size: 100,
-                    page_token: token.clone(),
                     sandbox: value(sandbox, "name").into(),
-                }))
-                .await
-                .map_err(|error| remote_error(&error))?
-                .into_inner();
-            for response in page.services {
-                let endpoint = crate::services::endpoint(response, workspace, sandbox)?;
-                if endpoints.iter().any(|seen| seen.name == endpoint.name) {
-                    return Err(ObservationError::Incomplete);
-                }
-                endpoints.push(endpoint);
-            }
-            if page.next_page_token.is_empty() {
-                return Ok(endpoints);
-            }
-            if page.next_page_token == token {
-                return Err(ObservationError::Incomplete);
-            }
-            token = page.next_page_token;
-        }
-        Err(ObservationError::Incomplete)
-    }
-
-    pub(crate) async fn expose_service(
-        &self,
-        workspace: &str,
-        sandbox: &Row,
-        name: &str,
-        exposure: &crate::services::Exposure,
-    ) -> Result<(), ObservationError> {
-        let response = self
-            .client
-            .raw_grpc()
-            .expose_service(
-                self.request(proto::ExposeServiceRequest {
-                    workspace_scope: Some(proto::workspace_selector(workspace)),
                     name: name.into(),
-                    target_port: exposure.target_port,
-                    // OpenShell routes every created endpoint by domain.
-                    domain: true,
-                    sandbox: value(sandbox, "name").into(),
-                    request_id: String::new(),
-                    authorization_mode: exposure
-                        .mode
-                        .unwrap_or(proto::ServiceAuthorizationMode::Unspecified)
-                        as i32,
-                }),
-            )
-            .await
-            .map_err(|error| remote_error(&error))?
-            .into_inner();
-        // The written endpoint must be this sandbox's.
-        crate::services::endpoint(response, workspace, sandbox).map(|_| ())
-    }
-
-    pub(crate) async fn delete_service(
-        &self,
-        workspace: &str,
-        sandbox: &Row,
-        name: &str,
-    ) -> Result<(), ObservationError> {
-        let response = self
-            .client
-            .raw_grpc()
-            .delete_service(self.request(proto::DeleteServiceRequest {
-                workspace_scope: Some(proto::workspace_selector(workspace)),
-                name: name.into(),
-                sandbox: value(sandbox, "name").into(),
-                allow_missing: true,
-                request_id: String::new(),
-            }))
-            .await
-            .map_err(|error| remote_error(&error))?
-            .into_inner();
-        match proto::DeletionOutcome::try_from(response.outcome) {
-            Ok(proto::DeletionOutcome::Completed | proto::DeletionOutcome::AlreadyAbsent) => Ok(()),
-            _ => Err(ObservationError::Incomplete),
-        }
+                }))
+                .await,
+        )?
+        .map(|response| crate::services::endpoint(response, workspace, sandbox))
+        .transpose()
     }
 
     pub(crate) async fn update_provider(

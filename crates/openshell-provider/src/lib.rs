@@ -402,24 +402,6 @@ fn web_search_registration(known: &Row, unknown: &[&str]) -> Option<String> {
     nemoclaw_openshell::registration_name(composite::WEB_SEARCH, known)
 }
 
-/// The gateway reports service URLs only once their endpoints exist: they are
-/// unknown while the endpoints change, and otherwise the last observation.
-fn service_urls(
-    name: &str,
-    prior: &nemoclaw_tofu::State,
-    proposed: &nemoclaw_tofu::State,
-) -> Option<tf_provider::value::Value<String>> {
-    use tf_provider::value::Value;
-    Some(match prior.get(name) {
-        Some(Value::Value(urls))
-            if !urls.is_empty() && prior.get(services::FIELD) == proposed.get(services::FIELD) =>
-        {
-            Value::Value(urls.clone())
-        }
-        _ => Value::Unknown,
-    })
-}
-
 /// OpenShell objects and their planning rules.
 pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
     use nemoclaw_tofu::Definition;
@@ -502,8 +484,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
                 "driver_config_json",
                 services::FIELD,
             ],
-            // Service endpoints change in place; OpenShell keeps the sandbox.
-            &[services::FIELD],
+            &[],
         )
         .optional(&[
             "policy_json",
@@ -511,14 +492,8 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
             "driver_config_json",
             services::FIELD,
         ])
-        .computed(services::URLS, service_urls)
-        .validate_attribute(|attribute, value| {
-            if attribute == services::FIELD {
-                services::check(value)
-            } else {
-                Ok(())
-            }
-        }),
+        // The URLs of the sandbox's exposures, which are part of its creation.
+        .computed(services::URLS, nemoclaw_tofu::carry_prior),
     ]
     .map(lifecycle_rules)
     .map(|mut definition| {

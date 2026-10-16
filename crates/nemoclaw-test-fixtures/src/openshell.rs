@@ -74,10 +74,6 @@ pub struct State {
     pub rejected_rpcs: Vec<String>,
     /// Sandbox service endpoints by workspace, sandbox, and service name.
     pub services: std::collections::BTreeMap<(String, String, String), p::ServiceEndpoint>,
-    /// The gateway has no service routing domain, so it reports no URLs.
-    pub service_urls_unavailable: bool,
-    /// Endpoint mutations, as `expose NAME` and `delete NAME`.
-    pub service_mutations: Vec<String>,
     /// The exposures each CreateSandbox request carried, as sent.
     pub sandbox_exposures: Vec<Vec<p::SandboxServiceExposure>>,
 }
@@ -323,15 +319,7 @@ impl tower::Service<http::Request<Body>> for Service {
                 "/openshell.v1.OpenShell/DeleteWorkspace" => {
                     unary(request, state, delete_workspace).await
                 }
-                "/openshell.v1.OpenShell/ListServices" => {
-                    unary(request, state, list_services).await
-                }
-                "/openshell.v1.OpenShell/ExposeService" => {
-                    unary(request, state, expose_service).await
-                }
-                "/openshell.v1.OpenShell/DeleteService" => {
-                    unary(request, state, delete_service).await
-                }
+                "/openshell.v1.OpenShell/GetService" => unary(request, state, get_service).await,
                 "/openshell.v1.OpenShell/DeleteProvider" => {
                     unary(request, state, |state, request| {
                         delete_provider(state, &request)
@@ -599,26 +587,6 @@ fn create_sandbox(
         return Err(Status::already_exists("collision"));
     }
     state.sandbox_exposures.push(q.service_exposures.clone());
-    // Exposures are validated before the sandbox exists; one that fails
-    // leaves no sandbox, as the gateway rolls it back.
-    let mut exposures = Vec::new();
-    for exposure in &q.service_exposures {
-        let mode = validate_service(
-            &exposure.service,
-            exposure.target_port,
-            exposure.authorization_mode,
-        )?;
-        if exposures
-            .iter()
-            .any(|(name, _, _): &(String, u32, i32)| *name == exposure.service)
-        {
-            return Err(Status::invalid_argument("duplicate service exposure name"));
-        }
-        exposures.push((exposure.service.clone(), exposure.target_port, mode));
-    }
-    if exposures.len() > 32 {
-        return Err(Status::invalid_argument("too many service exposures"));
-    }
     let sandbox = p::Sandbox {
         metadata: Some(p::ObjectMeta {
             annotations: q.annotations,
@@ -660,18 +628,38 @@ fn create_sandbox(
         }
     }
     state.created("sandbox");
-    let sandbox_workspace = workspace(&q.workspace_scope)?;
+    // The gateway stores each exposure as an endpoint, resolving an omitted
+    // authorization mode to STRIP, and reports each endpoint's URL.
     let mut service_urls = HashMap::new();
-    for (service, target_port, mode) in exposures {
-        let response = put_service(
-            state,
-            &sandbox_workspace,
-            &sandbox,
-            &service,
-            target_port,
-            mode,
+    for exposure in q.service_exposures {
+        let meta = sandbox.metadata.as_ref().unwrap();
+        let mode = match p::ServiceAuthorizationMode::try_from(exposure.authorization_mode) {
+            Ok(p::ServiceAuthorizationMode::Unspecified) => p::ServiceAuthorizationMode::Strip,
+            Ok(mode) => mode,
+            Err(_) => return Err(Status::invalid_argument("authorization_mode is invalid")),
+        };
+        let endpoint = p::ServiceEndpoint {
+            metadata: Some(state.metadata(
+                format!("{}--{}", meta.name, exposure.service),
+                meta.workspace.clone(),
+                HashMap::from([("sandbox".into(), meta.name.clone())]),
+            )),
+            sandbox_id: meta.id.clone(),
+            sandbox: meta.name.clone(),
+            name: exposure.service.clone(),
+            target_port: exposure.target_port,
+            domain: true,
+            authorization_mode: mode as i32,
+        };
+        service_urls.insert(exposure.service, service_response(endpoint.clone()).url);
+        state.services.insert(
+            (
+                meta.workspace.clone(),
+                meta.name.clone(),
+                endpoint.name.clone(),
+            ),
+            endpoint,
         );
-        service_urls.insert(service, response.url);
     }
     Ok(p::SandboxResponse {
         sandbox: Some(sandbox),
@@ -718,29 +706,7 @@ fn delete_sandbox(
         sandbox_id: sandbox.metadata.unwrap().id,
     })
 }
-/// The pinned gateway's service validation: an optional routable name, a TCP
-/// port, and an authorization mode where omission resolves to STRIP.
-fn validate_service(name: &str, target_port: u32, mode: i32) -> Result<i32, Status> {
-    if name.len() > 28
-        || name.contains("--")
-        || name
-            .chars()
-            .any(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
-    {
-        return Err(Status::invalid_argument("service name is invalid"));
-    }
-    if target_port == 0 || target_port > 65535 {
-        return Err(Status::invalid_argument("target_port must be in 1..=65535"));
-    }
-    match p::ServiceAuthorizationMode::try_from(mode) {
-        Ok(p::ServiceAuthorizationMode::Unspecified | p::ServiceAuthorizationMode::Strip) => {
-            Ok(p::ServiceAuthorizationMode::Strip as i32)
-        }
-        Ok(p::ServiceAuthorizationMode::BearerPassthrough) => Ok(mode),
-        Err(_) => Err(Status::invalid_argument("authorization_mode is invalid")),
-    }
-}
-fn service_response(state: &State, endpoint: p::ServiceEndpoint) -> p::ServiceEndpointResponse {
+fn service_response(endpoint: p::ServiceEndpoint) -> p::ServiceEndpointResponse {
     let workspace = endpoint
         .metadata
         .as_ref()
@@ -751,119 +717,16 @@ fn service_response(state: &State, endpoint: p::ServiceEndpoint) -> p::ServiceEn
     } else {
         format!("{workspace}--{}--{}", endpoint.sandbox, endpoint.name)
     };
-    let url = if state.service_urls_unavailable {
-        String::new()
-    } else {
-        format!("http://{host}.services.fixture.test/")
-    };
     p::ServiceEndpointResponse {
         endpoint: Some(endpoint),
-        url,
+        url: format!("http://{host}.services.fixture.test/"),
     }
 }
-fn put_service(
+fn get_service(
     state: &mut State,
-    workspace: &str,
-    sandbox: &p::Sandbox,
-    name: &str,
-    target_port: u32,
-    authorization_mode: i32,
-) -> p::ServiceEndpointResponse {
-    let meta = sandbox.metadata.as_ref().unwrap();
-    let key = (workspace.to_owned(), meta.name.clone(), name.to_owned());
-    let metadata = match state.services.get(&key) {
-        Some(existing) => existing.metadata.clone(),
-        None => Some(state.metadata(
-            format!("{}--{name}", meta.name),
-            workspace.to_owned(),
-            HashMap::from([("sandbox".into(), meta.name.clone())]),
-        )),
-    };
-    let endpoint = p::ServiceEndpoint {
-        metadata,
-        sandbox_id: meta.id.clone(),
-        sandbox: meta.name.clone(),
-        name: name.to_owned(),
-        target_port,
-        domain: true,
-        authorization_mode,
-    };
-    state.services.insert(key, endpoint.clone());
-    service_response(state, endpoint)
-}
-fn expose_service(
-    state: &mut State,
-    q: p::ExposeServiceRequest,
+    q: p::GetServiceRequest,
 ) -> Result<p::ServiceEndpointResponse, Status> {
-    let workspace = workspace(&q.workspace_scope)?;
-    let sandbox = state
-        .sandboxes
-        .get(&format!("{workspace}/{}", q.sandbox))
-        .ok_or_else(|| Status::not_found("sandbox not found"))?
-        .clone();
-    let mode = validate_service(&q.name, q.target_port, q.authorization_mode)?;
-    state.service_mutations.push(format!("expose {}", q.name));
-    Ok(put_service(
-        state,
-        &workspace,
-        &sandbox,
-        &q.name,
-        q.target_port,
-        mode,
-    ))
-}
-fn list_services(
-    state: &mut State,
-    q: p::ListServicesRequest,
-) -> Result<p::ListServicesResponse, Status> {
     state.read("service")?;
-    let workspace = workspace(&q.workspace_scope)?;
-    if !q.sandbox.is_empty()
-        && !state
-            .sandboxes
-            .contains_key(&format!("{workspace}/{}", q.sandbox))
-    {
-        return Err(Status::not_found("sandbox not found"));
-    }
-    let page_size = match q.page_size {
-        0 => 100,
-        size if size < 0 => return Err(Status::invalid_argument("page_size is negative")),
-        size => size.min(1000) as usize,
-    };
-    let start: usize = if q.page_token.is_empty() {
-        0
-    } else {
-        q.page_token
-            .parse()
-            .map_err(|_| Status::invalid_argument("page_token is invalid"))?
-    };
-    let matching: Vec<p::ServiceEndpoint> = state
-        .services
-        .iter()
-        .filter(|((ws, sandbox, _), _)| {
-            *ws == workspace && (q.sandbox.is_empty() || *sandbox == q.sandbox)
-        })
-        .map(|(_, endpoint)| endpoint.clone())
-        .collect();
-    let end = (start + page_size).min(matching.len());
-    let services = matching[start.min(end)..end]
-        .iter()
-        .cloned()
-        .map(|endpoint| service_response(state, endpoint))
-        .collect();
-    Ok(p::ListServicesResponse {
-        services,
-        next_page_token: if end < matching.len() {
-            end.to_string()
-        } else {
-            String::new()
-        },
-    })
-}
-fn delete_service(
-    state: &mut State,
-    q: p::DeleteServiceRequest,
-) -> Result<p::DeleteServiceResponse, Status> {
     let workspace = workspace(&q.workspace_scope)?;
     if !state
         .sandboxes
@@ -871,21 +734,12 @@ fn delete_service(
     {
         return Err(Status::not_found("sandbox not found"));
     }
-    state.service_mutations.push(format!("delete {}", q.name));
-    let removed = state
+    let endpoint = state
         .services
-        .remove(&(workspace, q.sandbox.clone(), q.name.clone()))
-        .is_some();
-    let outcome = if removed {
-        p::DeletionOutcome::Completed
-    } else if q.allow_missing {
-        p::DeletionOutcome::AlreadyAbsent
-    } else {
-        return Err(Status::not_found("service endpoint not found"));
-    };
-    Ok(p::DeleteServiceResponse {
-        outcome: outcome.into(),
-    })
+        .get(&(workspace, q.sandbox, q.name))
+        .ok_or_else(|| Status::not_found("service endpoint not found"))?
+        .clone();
+    Ok(service_response(endpoint))
 }
 fn policy_status(
     state: &mut State,

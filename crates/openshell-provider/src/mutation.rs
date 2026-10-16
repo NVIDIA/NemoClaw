@@ -11,9 +11,9 @@ fn value<'a>(row: &'a Row, field: &str) -> &'a str {
     row.get(field).map(String::as_str).unwrap_or("")
 }
 impl OpenShell {
-    /// Add a sandbox's endpoints and their URLs to its observation, written as
-    /// the reference row writes them. A sandbox being removed keeps the
-    /// reference's: its endpoints go with it.
+    /// Add a sandbox's declared service endpoints and their URLs to its
+    /// observation, written as the reference row writes them. A sandbox being
+    /// removed keeps the reference's: its endpoints go with it.
     async fn observe_services(
         &self,
         row: &mut Row,
@@ -29,7 +29,16 @@ impl OpenShell {
                     .to_owned(),
             )
         } else {
-            let endpoints = self.gateway.services(value(row, "workspace"), row).await?;
+            let mut endpoints = Vec::new();
+            for name in services::names(value(reference, services::FIELD))? {
+                if let Some(endpoint) = self
+                    .gateway
+                    .service(value(row, "workspace"), row, &name)
+                    .await?
+                {
+                    endpoints.push(endpoint);
+                }
+            }
             (
                 services::observed(&endpoints, value(reference, services::FIELD))?,
                 services::urls(&endpoints),
@@ -37,23 +46,6 @@ impl OpenShell {
         };
         row.insert(services::FIELD.into(), services);
         row.insert(services::URLS.into(), urls);
-        Ok(())
-    }
-    /// Make a bound sandbox's endpoints the desired ones: expose first, so a
-    /// rejected exposure deletes nothing, then delete undeclared endpoints.
-    async fn reconcile_services(&self, want: &Row, live: &Row) -> Result<(), ObservationError> {
-        let desired = services::desired(value(want, services::FIELD))?;
-        let workspace = value(live, "workspace");
-        let observed = self.gateway.services(workspace, live).await?;
-        let (expose, delete) = services::changes(&desired, &observed);
-        for (name, exposure) in expose {
-            self.gateway
-                .expose_service(workspace, live, &name, &exposure)
-                .await?;
-        }
-        for name in delete {
-            self.gateway.delete_service(workspace, live, &name).await?;
-        }
         Ok(())
     }
     async fn reconcile(&self, kind: &str, want: &Row) -> Result<Mutation, ObservationError> {
@@ -78,9 +70,6 @@ impl OpenShell {
             Some(row) => {
                 if kind == "provider" {
                     self.gateway.update_provider(want, &row).await?;
-                }
-                if kind == "sandbox" {
-                    self.reconcile_services(want, &row).await?;
                 }
                 row
             }
@@ -213,10 +202,7 @@ impl Backend for OpenShell {
         {
             return Mutation::failed(ObservationError::Incomplete);
         }
-        if kind == "sandbox"
-            && (validate_row_policy(desired).is_err()
-                || services::desired(value(desired, services::FIELD)).is_err())
-        {
+        if kind == "sandbox" && validate_row_policy(desired).is_err() {
             return Mutation::failed(ObservationError::Query);
         }
         self.reconcile(kind, desired)

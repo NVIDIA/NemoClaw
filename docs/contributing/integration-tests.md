@@ -88,7 +88,6 @@ The fixtures are the OpenShell resources the SDK compiles for each example with 
 
 The `capabilities` tests check gateway preconditions, saved-plan rechecks, and capability reads deferred until bootstrap inputs are known.
 The `standalone` tests apply the authored resources in `tests/contract/standalone` through lost create and delete replies, foreign or missing objects, failed observations, deferred bootstrap endpoints, and registration replacement and rotation.
-The `services` tests apply sandbox service endpoints: creation, reported URLs, unchanged refresh, in-place changes and removal, drift, failed reads and mutations, and state recorded before the `service` block existed. The fake gateway reports URLs only from its service records, as the pinned API does, not from GetSandbox.
 The fake gateway refuses to delete a referenced profile or an attached provider, as the pinned API does.
 `every_fixture_runs_and_every_type_is_covered` requires a test for every fixture and a fixture for every OpenShell type.
 

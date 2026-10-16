@@ -206,7 +206,6 @@ pub(crate) fn definitions() -> [crate::Definition; 3] {
 fn prepared_gateway_values(
     name: &str,
     prior: &crate::State,
-    _: &crate::State,
 ) -> Option<tf_provider::value::Value<String>> {
     use tf_provider::value::Value;
     let prepared = matches!(prior.get("running"), Some(Value::Value(value)) if value == "true");
