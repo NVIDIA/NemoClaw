@@ -5,11 +5,57 @@ import { describe, expect, it } from "vitest";
 
 import {
   catalogueTarget,
+  catalogueTargetsForChangedFiles,
   E2E_TARGET_CATALOGUE,
   validateE2eTargetCatalogue,
 } from "../../../tools/e2e/target-catalogue.mts";
+import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 
 describe("inference-switch catalogue boundary", () => {
+  it.each([
+    "src/lib/inference/native-provider/contract.ts",
+    "src/lib/inference/native-provider/custom-setup.ts",
+    "src/lib/inference/native-provider/custom.ts",
+    "src/lib/inference/native-provider/hosted.ts",
+    "src/lib/onboard/setup-inference.ts",
+    "src/lib/actions/inference-set/native.ts",
+    "src/lib/actions/inference-set.ts",
+    "test/e2e/live/openclaw-inference-switch-helpers.ts",
+    "test/e2e/live/openclaw-inference-switch.test.ts",
+  ])("selects native Anthropic switch coverage when %s changes (#13195)", (changedFile) => {
+    const targetId = "openclaw-compatible-anthropic-inference-switch";
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      targetId,
+    );
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: [changedFile], gatewayRuntimes: ["docker", "podman"] },
+    );
+    expect(
+      plan.catalogueMatrices.standard
+        .filter((row) => row.id === targetId)
+        .map((row) => row.execution_id)
+        .sort(),
+    ).toEqual([
+      "openclaw-compatible-anthropic-inference-switch-anthropic-docker",
+      "openclaw-compatible-anthropic-inference-switch-anthropic-podman",
+    ]);
+  });
+
+  it("omits native Anthropic switch coverage for unrelated changes (#13195)", () => {
+    const changedFiles = ["src/lib/cli/public-display-defaults.ts"];
+    const targetId = "openclaw-compatible-anthropic-inference-switch";
+    expect(catalogueTargetsForChangedFiles(changedFiles).map((target) => target.id)).not.toContain(
+      targetId,
+    );
+    const plan = buildE2eWorkflowPlan({}, { changedFiles, gatewayRuntimes: ["docker", "podman"] });
+    expect(
+      Object.values(plan.catalogueMatrices)
+        .flat()
+        .map((row) => row.id),
+    ).not.toContain(targetId);
+  });
+
   it.each([{ scenario: "OpenClaw" }, { scenario: "Hermes" }])(
     "keeps both agents on their reviewed provider-switch contracts [$scenario]",
     ({ scenario }) => {

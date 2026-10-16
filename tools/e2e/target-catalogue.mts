@@ -1294,6 +1294,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     shard: "anthropic",
     owningPaths: [
       "src/lib/actions/inference-set.ts",
+      "src/lib/actions/inference-set/native.ts",
+      "src/lib/inference/native-provider/",
+      "src/lib/onboard/setup-inference.ts",
       "test/e2e/live/openclaw-inference-switch-helpers.ts",
     ],
     environment: {
