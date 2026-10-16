@@ -651,7 +651,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
-  it("skips credential hydration for local inference", async () => {
+  it("blocks legacy local inference before credential hydration", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: { provider: "ollama-local", model: MODEL, credentialEnv: null },
       hydrateCredentialEnv: () => {
@@ -662,14 +662,14 @@ describe("rebuildSandbox flow: credential preflight", () => {
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("Legacy shared local inference cannot be rebuilt safely");
 
     expect(harness.hydrateCredentialEnvSpy).not.toHaveBeenCalled();
-    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
   });
 
   it.each(["ollama-local", "vllm-local"])(
-    "migrates a legacy %s target away from OPENAI_API_KEY (#2519)",
+    "blocks a legacy %s target before backup (#2519)",
     async (provider) => {
       const harness = createRebuildFlowHarness({
         sandboxEntry: { provider, model: MODEL, credentialEnv: "OPENAI_API_KEY" },
@@ -678,13 +678,10 @@ describe("rebuildSandbox flow: credential preflight", () => {
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).resolves.toBeUndefined();
+      ).rejects.toThrow("Legacy shared local inference cannot be rebuilt safely");
 
-      const output = harness.logSpy.mock.calls.flat().map(String).join("\n");
-      expect(output).toContain("GH #2519");
-      expect(output).toContain(provider);
-      expect(harness.session.credentialEnv).toBeNull();
-      expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+      expect(harness.session.credentialEnv).toBe("OPENAI_API_KEY");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
     },
   );
 

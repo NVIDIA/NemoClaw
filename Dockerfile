@@ -668,18 +668,11 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 
 FROM scratch AS openclaw-patch-payload
 
-COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts
+COPY scripts/patch-openclaw-tool-catalog.mts scripts/patch-openclaw-mcp-npx.mts scripts/patch-openclaw-mcp-reliability.mts scripts/patch-openclaw-mcp-tools-list-timeout.mts scripts/patch-openclaw-issue-4434-diagnostics.mts scripts/patch-openclaw-managed-transport-diagnostics.mts scripts/patch-openclaw-device-self-approval.mts scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/
 COPY scripts/lib/patch-openclaw-npm12-pack-json.mts /usr/local/lib/nemoclaw/npm12.mts
 COPY scripts/lib/patch-openclaw-container-restart.mts /usr/local/lib/nemoclaw/patch-openclaw-container-restart.mts
-COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
-COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts
-COPY scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts
-COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts
-COPY scripts/patch-openclaw-managed-transport-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts
-COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts
 COPY scripts/lib/patch-openclaw-secondary-main-session-delete.mts /usr/local/lib/nemoclaw/patch-openclaw-secondary-main-session-delete.mts
 COPY scripts/extract-semver.sh /usr/local/lib/nemoclaw/extract-semver
-COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts
 COPY scripts/verify-wechat-runtime-lock.mts /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
 
 FROM scratch AS openclaw-runtime-payload
@@ -699,6 +692,8 @@ COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.mts scripts/validate-openclaw-tool-search.mts /scripts/
 COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
 COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts src/lib/providerless-inference.ts src/lib/inference-credential.ts /src/lib/
+COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/
+COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
 COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
