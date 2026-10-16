@@ -122,7 +122,7 @@ describe("DGX Station documentation ownership", () => {
     expect(stationPreparation).toContain("## Next Step\n");
     expect(stationPreparation).not.toContain("## Next Steps\n");
     expect(stationPreparation).not.toContain(
-      "Station Express selects `nemotron-3-ultra-550b-a55b`",
+      "selects `nemotron-3-ultra-550b-a55b` for distributed serving",
     );
     expect(stationPreparation).not.toContain("owner-only pair state");
     expect(stationPreparation).not.toContain("Trusted Pair Boundary");
@@ -131,7 +131,15 @@ describe("DGX Station documentation ownership", () => {
     expect(dualStationVllmSetup).not.toContain(
       "Configure SSH host-key trust and non-interactive authentication",
     );
-    expect(dualStationVllmSetup).toContain("Station Express selects `nemotron-3-ultra-550b-a55b`");
+    expect(dualStationVllmSetup).toContain(
+      "selects `nemotron-3-ultra-550b-a55b` for distributed serving",
+    );
+    expect(dualStationVllmSetup).toContain(
+      "If no trusted pair qualifies, a new installation uses the catalog's single-Station default, Nemotron 3.5 Super VL NVFP4.",
+    );
+    expect(dualStationVllmSetup).toContain(
+      "An existing legacy single-Station Ultra workload retains Ultra instead of switching models.",
+    );
     expect(dualStationVllmSetup).toContain(
       "preparation binds the preparing non-root account's UID",
     );
