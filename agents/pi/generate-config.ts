@@ -185,7 +185,8 @@ function syncManagedDefaults(configDir: string, model: string, nativeLocal: bool
   const defaults = { defaultProvider: MANAGED_PROVIDER_ID, defaultModel: model };
   let existing: Record<string, unknown>;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(settingsPath, "utf8"));
+    const content = readFileSync(settingsPath, "utf8");
+    const parsed: unknown = content.length === 0 ? {} : JSON.parse(content);
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new Error("Pi settings.json must contain an object.");
     }

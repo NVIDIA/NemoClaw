@@ -130,12 +130,16 @@ describe("Pi candidate contract validation", () => {
 });
 
 describe("Pi managed model catalog generation", () => {
-  function generate(env: Record<string, string>): {
+  function generate(
+    env: Record<string, string>,
+    initialize: (home: string) => void = () => undefined,
+  ): {
     home: string;
     status: number | null;
     stderr: string;
   } {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-config-"));
+    initialize(home);
     const result = spawnSync(process.execPath, [path.join(root, "agents/pi/generate-config.ts")], {
       cwd: root,
       encoding: "utf8",
@@ -202,6 +206,59 @@ describe("Pi managed model catalog generation", () => {
     expect(header.stdout).toBe("");
     expect(header.stderr).toBe("");
   });
+
+  it.each(["http://host.openshell.internal:11434/v1", "https://inference.local/v1"])(
+    "initializes managed defaults from empty Pi settings at %s",
+    (endpoint) => {
+      const { home, status, stderr } = generate(
+        {
+          NEMOCLAW_MODEL: "selected-model",
+          NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+          NEMOCLAW_INFERENCE_BASE_URL: endpoint,
+        },
+        (home) => {
+          const configDir = path.join(home, ".pi/agent");
+          fs.mkdirSync(configDir, { recursive: true });
+          fs.writeFileSync(path.join(configDir, "settings.json"), "");
+        },
+      );
+      try {
+        expect(status, stderr).toBe(0);
+        const settingsPath = path.join(home, ".pi/agent/settings.json");
+        expect(JSON.parse(fs.readFileSync(settingsPath, "utf8"))).toEqual({
+          defaultProvider: "openshell",
+          defaultModel: "selected-model",
+        });
+        expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o600);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([" ", "{broken", "null", "[]", "42"])(
+    "rejects invalid nonempty Pi settings %j without overwriting them",
+    (settings) => {
+      const { home, status } = generate(
+        {
+          NEMOCLAW_MODEL: "selected-model",
+          NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+          NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+        },
+        (home) => {
+          const configDir = path.join(home, ".pi/agent");
+          fs.mkdirSync(configDir, { recursive: true });
+          fs.writeFileSync(path.join(configDir, "settings.json"), settings);
+        },
+      );
+      try {
+        expect(status).not.toBe(0);
+        expect(fs.readFileSync(path.join(home, ".pi/agent/settings.json"), "utf8")).toBe(settings);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("updates Pi's managed defaults when the native-local model changes and preserves other settings", () => {
     const selected = {
