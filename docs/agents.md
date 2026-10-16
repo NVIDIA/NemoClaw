@@ -197,7 +197,7 @@ Deployment identity and ownership checks protect retained sandboxes, provider re
 
 The runtime host validates public Fabric configuration before starting a runtime.
 Apply calls configure after OpenTofu establishes the required dependencies.
-Configure preserves an unchanged runtime or stops it before starting the replacement; prepare is a separate explicit operation.
+Configure preserves an unchanged runtime or stops it before starting the replacement; removing `fabric_agent` calls prepare, which stops the runtime and clears the applied configuration.
 OpenTofu retains desired configuration; the host remembers only its active configuration in memory and waits for apply after a host restart.
 Unchanged configuration does not request inference or restart the runtime.
 The host reports its active runtime identity and remembered public configuration.

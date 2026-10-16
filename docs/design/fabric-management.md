@@ -51,7 +51,7 @@ A timeout, malformed response, or disconnection leaves the outcome unconfirmed; 
 Prepare and configure compare a generation token atomically before changing the runtime.
 Lifecycle attempts invalidate the token even when they fail; rejected requests and confirmed no-ops preserve it.
 Snapshot reads remain available during invocation and stop.
-Apply uses configure directly; prepare is a separate bridge operation.
+Apply uses configure directly; removing an agent uses prepare to stop its runtime.
 OpenTofu orders dependency changes before agent configuration through its resource graph.
 The protocol adds no separate maintenance gate, consumer inventory, or requirement to stop agents before dependency updates.
 The deployment’s existing apply lock and resource ownership checks still apply.

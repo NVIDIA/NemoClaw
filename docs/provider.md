@@ -234,7 +234,7 @@ The storage volume, bridge network, and initialization labels derive from `name`
 | `fabric_harness` data source | One harness in an image, selected by `adapter_id`: the `launch_json` that starts it for `agent_name`, and a `ref` naming the harness (`type`, `adapter_id`, `image`, and `catalog_json`, the image catalog's records for the adapter); fails when the image installs no runtime for the adapter |
 
 The `fabric` provider also takes only `destroy`; `fabric_agent` and `fabric_agent_readiness` take the same `gateway` ref as the sandbox they configure.
-It also accepts `destroy`, but no Fabric type requires it: removing an agent releases its binding without changing the sandbox.
+It also accepts `destroy`, but no Fabric type requires it: removing an agent stops it and leaves its sandbox.
 It reaches each sandbox's Fabric host by running commands in the sandbox through the gateway; `fabric_harnesses` instead reads the container engine named on it.
 
 #### Fabric Agents
@@ -277,7 +277,8 @@ Planning rejects a configuration Fabric cannot parse, naming the field but not i
 It also rejects one the harness does not accept, using the catalog records in the harness ref: Pi, for example, replaces system instructions and cannot append to them.
 Once the sandbox is known, planning refuses a `name` or harness other than the agent and harness the sandbox launches.
 Changing the sandbox, harness, or `name` replaces the agent; any other change reconfigures it through the sandbox's Fabric host without replacing the sandbox.
-Removing the resource releases its binding without changing the sandbox.
+Removing the resource stops the agent, as removing an attachment does: Fabric stops its runtime through the host's `prepare` operation and the host forgets the configuration, while the sandbox stays.
+If the sandbox is already gone, removal succeeds; if stopping fails, the binding is kept so the next apply or destroy retries.
 
 `fabric_agent` exports a `ref` with its sandbox's `workspace`, `sandbox` name, `sandbox_id`, `owner`, and `generation`, its own `name`, and `config_sha256`.
 `config_sha256` is `sha256:<hex>` over the composed document's JSON with object keys sorted; it is known while planning once the agent's inputs are.
@@ -380,7 +381,7 @@ Endpoint and policy changes that also change a sandbox's launch specification re
 
 The provider's `destroy` setting authorizes explicit teardown of sandboxes and workspaces; reconstructible registrations and configuration do not require it.
 It never authorizes deleting the workspace or bypassing identity checks.
-Removing Fabric configuration releases its resource binding without deleting or stopping the sandbox-owned runtime.
+Removing Fabric configuration stops the agent and leaves the sandbox-owned runtime host and its sandbox in place.
 The SDK's destroy operation still retains durable storage and the workspace.
 See [deletion and retention](state.md#deletion-and-retention) before removing workloads.
 

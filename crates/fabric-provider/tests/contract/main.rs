@@ -266,6 +266,7 @@ async fn pi_configuration_updates_without_replacing_the_sandbox() {
     assert_eq!(tofu.state(), prior);
     assert_eq!(writes(), 4);
     assert!(!fixture.state.lock().unwrap().lose_configure_reply);
+    fixture.state.lock().unwrap().exec_truncated = false;
     tofu.run(
         &[
             "apply",
@@ -277,5 +278,71 @@ async fn pi_configuration_updates_without_replacing_the_sandbox() {
         true,
     );
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
-    assert_eq!(writes(), 4, "destroy must not reconfigure Pi");
+    assert_eq!(
+        writes(),
+        5,
+        "destroy stops Pi once before removing its sandbox, and never reconfigures it"
+    );
+}
+
+/// The only sandbox's ID in the fake gateway.
+fn sandbox_id(fixture: &Fixture) -> String {
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .values()
+        .next()
+        .unwrap()
+        .metadata
+        .as_ref()
+        .unwrap()
+        .id
+        .clone()
+}
+
+/// Removing an agent stops it and clears its configuration, as removing an
+/// attachment does, and leaves its sandbox. A sandbox that is already gone
+/// took its agent with it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
+async fn removing_an_agent_stops_it_and_keeps_its_sandbox() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint, &[]);
+    tofu.apply();
+    let sandbox = sandbox_id(&fixture);
+    assert!(
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .fabric_configurations
+            .contains_key(&sandbox)
+    );
+    let remove_agent = [
+        "apply",
+        "-auto-approve",
+        "-input=false",
+        "-destroy",
+        "-target=fabric_agent.agent[0]",
+    ];
+    tofu.run(&remove_agent, true);
+    {
+        let state = fixture.state.lock().unwrap();
+        assert!(
+            state.fabric_stopped.contains(&sandbox),
+            "removal stops the agent"
+        );
+        assert!(
+            !state.fabric_configurations.contains_key(&sandbox),
+            "removal clears the agent's configuration"
+        );
+        assert_eq!(state.sandboxes.len(), 1, "the sandbox stays");
+    }
+    // The sandbox's own provider refuses a vanished stateful sandbox when it
+    // refreshes; skip refresh so the removal itself meets the missing sandbox.
+    tofu.apply();
+    fixture.state.lock().unwrap().sandboxes.clear();
+    tofu.run(&[&remove_agent[..], &["-refresh=false"]].concat(), true);
 }
