@@ -240,6 +240,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       ) as typeof import("../inference/native-local/contract");
       const endpointUrl = "http://host.openshell.internal:11434/v1";
       const binding = {
+        ...(agentName === "hermes" ? { agent: "hermes" as const } : {}),
         provider: "compatible-endpoint",
         endpointUrl,
         credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
@@ -270,10 +271,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
           endpointUrl,
         },
       };
-      const expectedAttachment =
-        agentName === "openclaw" || agentName === "langchain-deepagents-code"
-          ? attachment
-          : undefined;
+      const expectedAttachment = attachment;
       const createIntent = nativeInferenceCreateIntentFields({
         agentName,
         provider: "compatible-endpoint",
@@ -285,6 +283,27 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         expectedAttachment?.providerName ?? "compatible-endpoint",
       );
       expect(createIntent.nativeLocalProviderAttachment).toEqual(expectedAttachment);
+
+      const wrongAgentBinding = {
+        ...binding,
+        agent: agentName === "hermes" ? undefined : ("hermes" as const),
+      };
+      expect(
+        nativeInferenceCreateIntentFields({
+          agentName,
+          provider: "compatible-endpoint",
+          endpointUrl,
+          gatewayName: "nemoclaw",
+          entry: {
+            ...registry.getSandbox("demo")!,
+            nativeLocalProviderAttachment: {
+              ...attachment,
+              ...wrongAgentBinding,
+              ...nativeLocalIdentity(wrongAgentBinding),
+            },
+          },
+        }).nativeLocalProviderAttachment,
+      ).toBeUndefined();
 
       expect(prepareCreatedSandboxRegistration(input).nativeLocalProviderAttachment).toEqual(
         expectedAttachment,

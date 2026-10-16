@@ -1029,7 +1029,9 @@ export function createSetupInference(
       options.agentName ??
       options.hostLocalInference?.request.application ??
       (sandboxName ? deps.getSandbox?.(sandboxName)?.agent : undefined);
-    const nativeLocalRequested = usesNativeLocalInferenceForAgent(agentName, provider, endpointUrl);
+    const nativeLocalRequested =
+      !options.hostLocalInference?.sharedInferenceRoute &&
+      usesNativeLocalInferenceForAgent(agentName, provider, endpointUrl);
     const preservingLegacyPiRoute =
       options.preserveLegacyPiSharedLocalRoute === true &&
       isPersistedPiSharedLocalInferenceRoute(sandboxName ? deps.getSandbox?.(sandboxName) : null, {

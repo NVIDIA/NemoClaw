@@ -230,6 +230,7 @@ function nativeLocalAttachmentMatchesSelection(
       selection.provider,
       selection.endpointUrl,
     ) &&
+    (attachment.agent === "hermes") === (selection.agentName === "hermes") &&
     attachment.sandboxName === selection.sandboxName &&
     attachment.gatewayName === selection.gatewayName &&
     attachment.provider === selection.provider &&

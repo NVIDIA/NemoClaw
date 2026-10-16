@@ -95,7 +95,7 @@ describe("sandbox registration route transaction", () => {
     expect(calls.error).not.toHaveBeenCalled();
   });
 
-  it.each(["openclaw", "langchain-deepagents-code", "pi"])(
+  it.each(["openclaw", "langchain-deepagents-code", "pi", "hermes"])(
     "accepts %s exact native local reservation before sandbox creation (#12975)",
     async (agentName) => {
       const startRecordedStep = vi.fn(async () => {
@@ -110,7 +110,20 @@ describe("sandbox registration route transaction", () => {
       }));
       const { calls, deps } = createDeps({
         checkGatewayRouteCompatibility,
-        getSandboxRegistryEntry: () => ({ ...nativeEntry }),
+        getSandboxRegistryEntry: () => {
+          const binding = {
+            ...nativeBinding,
+            ...(agentName === "hermes" ? { agent: "hermes" as const } : {}),
+          };
+          return {
+            ...nativeEntry,
+            nativeLocalProviderAttachment: {
+              ...nativeAttachment,
+              ...binding,
+              ...nativeLocalIdentity(binding),
+            },
+          };
+        },
         startRecordedStep,
       });
 
@@ -188,7 +201,7 @@ describe("sandbox registration route transaction", () => {
   });
 
   it.each([
-    ["hermes", nativeEndpoint],
+    ["hermes", "https://hosted.example.test/v1"],
     ["openclaw", "https://hosted.example.test/v1"],
   ])("keeps %s at %s on the shared route guard (#12975)", async (agentName, endpointUrl) => {
     const checkGatewayRouteCompatibility = vi.fn(() => ({
@@ -219,7 +232,7 @@ describe("sandbox registration route transaction", () => {
     expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 
-  it.each(["pi", "hermes"])(
+  it.each(["hermes"])(
     "does not carry OpenClaw's native local provider into %s sandbox creation (#12975)",
     async (agentName) => {
       vi.spyOn(registry, "getSandbox").mockReturnValue(null);
@@ -227,20 +240,22 @@ describe("sandbox registration route transaction", () => {
         getSandboxRegistryEntry: () => ({ ...nativeEntry }),
       });
 
-      await handleSandboxState({
-        ...baseOptions(deps),
-        agent: { name: agentName },
-        provider: "compatible-endpoint",
-        model: "test-model",
-        endpointUrl: nativeEndpoint,
-        endpointSource: "onboard",
-        credentialEnv: "COMPATIBLE_API_KEY",
-      });
+      await expect(
+        handleSandboxState({
+          ...baseOptions(deps),
+          agent: { name: agentName },
+          provider: "compatible-endpoint",
+          model: "test-model",
+          endpointUrl: nativeEndpoint,
+          endpointSource: "onboard",
+          credentialEnv: "COMPATIBLE_API_KEY",
+        }),
+      ).rejects.toThrow("exit 1");
 
       const createIntent = calls.resolveCreateIntent.mock.calls[0]?.[0];
       expect(createIntent?.inferenceProvider).toBe("compatible-endpoint");
       expect(createIntent).not.toHaveProperty("nativeLocalProviderAttachment");
-      expect(createIntent).toMatchObject({ hostLocalInferenceRouteOnly: false });
+      expect(calls.createSandbox).not.toHaveBeenCalled();
     },
   );
 

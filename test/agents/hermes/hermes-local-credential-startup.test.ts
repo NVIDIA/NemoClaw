@@ -48,6 +48,15 @@ describe.skipIf(process.platform === "win32")("Hermes native local startup refre
     fs.writeFileSync(fixture.compatHashPath, hashes);
   }
 
+  function readConfigSnapshot() {
+    const fd = fs.openSync(fixture.configPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      return { contents: fs.readFileSync(fd, "utf8"), inode: fs.fstatSync(fd).ino };
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
   function refresh(reference: string, args: string[] = ["--refresh-native-local"]) {
     return spawnSync(
       "python3",
@@ -78,12 +87,13 @@ describe.skipIf(process.platform === "win32")("Hermes native local startup refre
     "materializes %s at fresh startup with schema and integrity validation",
     (scope) => {
       persistConfig();
-      const priorInode = fs.statSync(fixture.configPath).ino;
+      const priorInode = readConfigSnapshot().inode;
       const result = refresh(issued(scope));
       expect(result.status, result.stderr).toBe(0);
       applyHermesManagedRoute(config, { ...route, nativeCredentialHandle: issued(scope) });
-      expect(yaml.load(fs.readFileSync(fixture.configPath, "utf8"))).toEqual(config);
-      expect(fs.statSync(fixture.configPath).ino).not.toBe(priorInode);
+      const written = readConfigSnapshot();
+      expect(yaml.load(written.contents)).toEqual(config);
+      expect(written.inode).not.toBe(priorInode);
       expect(mode(fixture.configPath)).toBe(0o640);
       expect(mode(fixture.envPath)).toBe(0o600);
       expect(fs.readFileSync(fixture.envPath, "utf8")).toBe(fixture.trustedEnv);
@@ -123,12 +133,12 @@ describe.skipIf(process.platform === "win32")("Hermes native local startup refre
   it("preserves the host-written newer reference on an internal gateway restart", () => {
     applyHermesManagedRoute(config, { ...route, nativeCredentialHandle: issued("v8") });
     persistConfig();
-    const original = fs.readFileSync(fixture.configPath, "utf8");
-    const inode = fs.statSync(fixture.configPath).ino;
+    const original = readConfigSnapshot();
     const result = refresh(issued("v7"), []);
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.readFileSync(fixture.configPath, "utf8")).toBe(original);
-    expect(fs.statSync(fixture.configPath).ino).toBe(inode);
+    const written = readConfigSnapshot();
+    expect(written.contents).toBe(original.contents);
+    expect(written.inode).toBe(original.inode);
     expect(strictHashIsValid(fixture)).toBe(true);
   });
 

@@ -338,7 +338,7 @@ describe("provider route containment", () => {
     expect(calls.checkGatewayRouteCompatibility).toHaveBeenCalledOnce();
   });
 
-  it.each(["openclaw", "langchain-deepagents-code", "pi"])(
+  it.each(["openclaw", "langchain-deepagents-code", "pi", "hermes"])(
     "carries %s native local selection through the early route guard (#12975)",
     async (agent) => {
       const { calls, run } = freshLocalSelection(agent);
@@ -386,19 +386,6 @@ describe("provider route containment", () => {
     expect(calls.setupInference).not.toHaveBeenCalled();
     expect(calls.checkGatewayRouteCompatibility).not.toHaveBeenCalled();
   });
-
-  it.each(["hermes"])(
-    "keeps %s shared route conflicts in the early guard (#12975)",
-    async (agent) => {
-      const { calls, run } = freshLocalSelection(agent);
-      await expect(run()).rejects.toThrow("exit 1");
-      expect(calls.preflightGatewayRouteDiscovery.mock.calls.at(-1)?.[0]).not.toHaveProperty(
-        "nativeLocalSelection",
-      );
-      expect(calls.checkGatewayRouteCompatibility).toHaveBeenCalledOnce();
-      expect(calls.setupInference).not.toHaveBeenCalled();
-    },
-  );
 
   it.each(["openclaw", "langchain-deepagents-code", "pi"])(
     "resumes %s native local inference beside a shared route (#12975)",
