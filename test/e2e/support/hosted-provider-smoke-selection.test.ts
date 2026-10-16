@@ -7,6 +7,7 @@ import YAML from "yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   OPENROUTER_SMOKE,
+  configureOpenRouterSmokeEnvironment,
   openRouterSmokeEnvironment,
 } from "../../../tools/e2e/hosted-provider-smoke.mts";
 import {
@@ -59,6 +60,24 @@ describe("OpenRouter qualification selection", () => {
     expect(() =>
       openRouterSmokeEnvironment({ HOSTED_INFERENCE_API_KEY: "selected-canary" }),
     ).toThrow("requires");
+  });
+  it("removes inherited retired provider credentials before the OpenRouter smoke", () => {
+    const environment: NodeJS.ProcessEnv = {
+      HOSTED_INFERENCE_API_KEY: "selected-canary",
+      HOSTED_INFERENCE_MODEL: "approved-model",
+      OPENAI_API_KEY: "retired-openai-canary",
+      ANTHROPIC_API_KEY: "retired-anthropic-canary",
+      GEMINI_API_KEY: "retired-gemini-canary",
+      NOUS_API_KEY: "retired-hermes-canary",
+      KEEP: "unrelated",
+    };
+    configureOpenRouterSmokeEnvironment(environment);
+    expect(environment).toEqual({
+      HOSTED_INFERENCE_MODEL: "approved-model",
+      OPENROUTER_API_KEY: "selected-canary",
+      NEMOCLAW_OPENROUTER_MODEL: "approved-model",
+      KEEP: "unrelated",
+    });
   });
 });
 

@@ -32,7 +32,7 @@ import {
 import { SANDBOX_SURVIVAL_TARGET_TIMEOUT_MINUTES } from "./sandbox-survival-timeout-contract.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
-import { OPENROUTER_SMOKE, openRouterSmokeEnvironment } from "./hosted-provider-smoke.mts";
+import { OPENROUTER_SMOKE, configureOpenRouterSmokeEnvironment } from "./hosted-provider-smoke.mts";
 
 export const E2E_EXECUTION_PROFILES = [
   "standard",
@@ -1938,10 +1938,7 @@ export async function runCatalogueTarget(id: string, testFile: string): Promise<
   }
   Object.assign(process.env, entry.environment);
   if (entry.profile === "hosted-inference") {
-    const selectedEnvironment = openRouterSmokeEnvironment(process.env);
-    delete process.env.OPENROUTER_API_KEY;
-    delete process.env.HOSTED_INFERENCE_API_KEY;
-    Object.assign(process.env, selectedEnvironment);
+    configureOpenRouterSmokeEnvironment(process.env);
   }
   if (entry.exposeCliBin) {
     process.env.NEMOCLAW_CLI_BIN = path.join(process.cwd(), "bin", "nemoclaw.js");

@@ -2402,12 +2402,9 @@ the native TOML route, and one fresh `dcode -n --json` response.
 The OpenClaw case checks the native endpoint, credential placeholder,
 selected adapter, response model, and nonempty answer.
 The OpenRouter case switches the running sandbox to a second model and back.
-It requires a fresh agent response with that model after each switch and checks that the return route is readable.
-Each `nemoclaw inference set` switch also verifies its selected model with a sandbox-side inference request.
+After each successful switch, it requires a fresh OpenClaw response whose reported model matches the selection.
 An unavailable or rate-limited intermediate model fails the first switch.
-The alternate route read and return-route model assertion were removed from this live case:
-agent responses prove the effective model after each restart, while the recorded-model behavior
-belongs to the `inference get` source tests. Both switch exit checks and the return route read remain.
+The case does not read either route. The `inference get` source tests cover recorded-model behavior.
 After onboarding, the OpenRouter case runs one sandbox probe before its first native agent request.
 The OpenRouter model-switch requests and follow-up agent responses do not repeat that scan.
 The probe checks the raw environment and a bounded file sample for a salted fingerprint of the selected credential.
