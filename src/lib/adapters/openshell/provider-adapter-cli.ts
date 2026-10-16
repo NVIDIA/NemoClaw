@@ -37,6 +37,7 @@ import {
   reportsExactProviderNotFound,
   reportsExactSandboxNotFound,
   reportsProviderNotAttached,
+  reportsUnqualifiedSandboxNotFound,
 } from "./provider-diagnostic-cli";
 import {
   isValidCliOpenShellProviderIdentifier,
@@ -476,6 +477,7 @@ function parseProviderAttachmentNames(output: string): string[] | null {
   return names;
 }
 
+/** Create a provider adapter that scopes CLI commands to the requested gateway and classifies their results. */
 export function createCliOpenShellProviderAdapter(
   deps: CliOpenShellProviderAdapterDeps = {},
 ): CliOpenShellProviderAdapter {
@@ -885,6 +887,7 @@ export function createCliOpenShellProviderAdapter(
       : mutationSuccess();
   };
 
+  /** Detach a provider, distinguishing confirmed non-attachment and sandbox absence from other failures. */
   const detachProvider: OpenShellProviderAdapter["detachProvider"] = async (
     request: DetachOpenShellProviderRequest,
   ) => {
@@ -912,7 +915,11 @@ export function createCliOpenShellProviderAdapter(
       !result.signal &&
       result.status !== null &&
       error?.kind === "command" &&
-      reportsExactSandboxNotFound(output, request.sandboxName, PROVIDER_GET_DIAGNOSTIC_LIMIT)
+      (reportsExactSandboxNotFound(output, request.sandboxName, PROVIDER_GET_DIAGNOSTIC_LIMIT) ||
+        // The detach command itself binds this exact, strictly structured
+        // NotFound response to its sandbox operand even when the gateway omits
+        // the sandbox name from the human-readable message.
+        reportsUnqualifiedSandboxNotFound(output, PROVIDER_GET_DIAGNOSTIC_LIMIT))
     ) {
       return failure({
         kind: "command",
