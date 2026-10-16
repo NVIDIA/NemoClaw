@@ -128,6 +128,34 @@ The managed binding does not enable a native search tool.
 Declare its native plugin or public Fabric MCP configuration separately and validate it against the selected adapter.
 A deployment credential grant is not a native capability claim.
 
+## Skills on a Mounted Volume
+
+Fabric reads skills from the paths in `fabric_agent`'s `skills` block.
+To give an agent skills that outlive its sandbox, mount a volume into the sandbox with `openshell_sandbox`'s [`driver_config`](provider.md#openshell-resources-and-data-sources) and point `skills` at the mount.
+This is available in HCL only, with a gateway configured to allow driver configuration.
+
+```hcl
+resource "openshell_sandbox" "assistant" {
+  # ...
+  driver_config = jsonencode({
+    docker = {
+      mounts = [{ type = "volume", source = "assistant-skills", target = "/sandbox/skills" }]
+    }
+  })
+}
+
+resource "fabric_agent" "assistant" {
+  # ...
+  skills {
+    paths = ["/sandbox/skills"]
+  }
+}
+```
+
+OpenShell's mount settings decide whether the agent can write to the volume, and the sandbox's filesystem policy decides which paths its process may read or write.
+The volume's contents persist when the sandbox is replaced, including anything the agent writes there.
+How the volume gets its contents is up to the platform; OpenShell's documentation describes the volume labels it requires.
+
 ## Brave Web Search
 
 Declare the credential reference and attach the definition to the intended agent:

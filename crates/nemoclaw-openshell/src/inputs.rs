@@ -30,7 +30,10 @@ pub fn structured_inputs(kind: &str) -> Vec<Structured> {
         "web_search" | "inference" => {
             vec![input("binaries", "binaries_json", strings())]
         }
-        "sandbox" => vec![input("policy", "policy_json", policy_input())],
+        "sandbox" => vec![
+            input("policy", "policy_json", policy_input()),
+            input("driver_config", "driver_config_json", Shape::Json),
+        ],
         _ => Vec::new(),
     }
 }

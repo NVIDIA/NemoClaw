@@ -10,6 +10,7 @@ pub mod agent;
 mod client;
 mod composite;
 mod connected;
+mod driver_config;
 mod gateway_source;
 mod network;
 mod profile;
@@ -234,7 +235,9 @@ fn sandbox_row(
         .as_ref()
         .ok_or(ObservationError::Incomplete)?;
     let spec = sandbox.spec.ok_or(ObservationError::Incomplete)?;
-    let image = spec.template.ok_or(ObservationError::Incomplete)?.image;
+    let template = spec.template.ok_or(ObservationError::Incomplete)?;
+    let driver_config = driver_config::observed(template.driver_config.as_ref());
+    let image = template.image;
     let environment: Row = spec.environment.into_iter().collect();
     let inference = environment.get(PROVIDERS_ENV).cloned().unwrap_or_default();
     let launch_json = meta
@@ -275,6 +278,7 @@ fn sandbox_row(
     let mut row = base(sandbox.metadata.clone(), name, removing)?;
     row.insert("provider_names_json".into(), inference);
     row.insert("image".into(), image);
+    row.insert("driver_config_json".into(), driver_config);
     row.insert("policy_json".into(), policy_input);
     row.insert("launch_json".into(), launch_json);
     // Phase is used by active checks, but is not a Terraform schema attribute.
@@ -476,10 +480,11 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
                 "launch_json",
                 "policy_json",
                 "provider_names_json",
+                "driver_config_json",
             ],
             &[],
         )
-        .optional(&["policy_json", "provider_names_json"]),
+        .optional(&["policy_json", "provider_names_json", "driver_config_json"]),
     ]
     .map(lifecycle_rules)
     .map(|mut definition| {

@@ -56,6 +56,7 @@ openshell-sdk = { git = "https://github.com/NVIDIA/OpenShell", rev = "5a7728c304
 openshell-policy = { git = "https://github.com/NVIDIA/OpenShell", rev = "5a7728c304b5528e954e9ae900cf21f84e1a12b1", default-features = false }
 tonic = { version = "0.14", features = ["tls-ring", "tls-native-roots"] }
 prost = "0.14"
+prost-types = "0.14"
 tonic-prost = "0.14"
 tower = "0.5"
 http = "1"

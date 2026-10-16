@@ -19,6 +19,7 @@ use http_fixture as transport;
 pub use nemoclaw_test_fixtures::{openshell, tofu};
 
 mod capabilities;
+mod driver_config;
 // Gateway installation: Docker gateway reads, the Podman gateway and its
 // storage, and the Kubernetes gateway types.
 // A managed gateway needs a local engine, which only Unix clients reach.
