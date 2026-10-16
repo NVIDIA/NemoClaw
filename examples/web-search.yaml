@@ -2,13 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
 
-# Set your own deployment UID, image digests, endpoints, and model before applying.
-# See docs/agents.md#tavily-web-search.
+# Two agents share one inference provider and one Brave search definition.
+# OpenShell holds the search key and allows each agent's harness to reach the
+# search API; the agent's own tools make the requests. Set your own deployment
+# UID, endpoints, and model; see docs/agents.md#web-search.
+
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
-  name: tavily-web-search
-  uid: b126fc24-2c7e-4431-9726-29d2abc8597c
+  name: web-search
+  uid: 7f0b6d2e-5c1a-4e8f-9d3b-2a6c4e1f8b90
 spec:
   gateway:
     management: external
@@ -20,31 +23,16 @@ spec:
   integrations:
     search:
       kind: webSearch
-      provider: tavily
+      provider: brave
       credential:
-        env: TAVILY_API_KEY
+        env: BRAVE_API_KEY
   sandboxes:
     - name: researcher
       image:
-        # Use the digest from an OpenClaw image built from this revision.
+        # Replace with the digest from a current Hermes image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
-        kind: nvidia.fabric.openclaw
-        settings:
-          native_config:
-            plugins:
-              allow: [tavily]
-              entries:
-                tavily:
-                  enabled: true
-                  config:
-                    webSearch:
-                      apiKey: ${TAVILY_API_KEY}
-            tools:
-              web:
-                search:
-                  enabled: true
-                  provider: tavily
+        kind: nvidia.fabric.hermes
       agent:
         name: researcher
         integrationRefs: [search]
@@ -54,23 +42,14 @@ spec:
               providerRef: local
               overrides:
                 model: qwen3:4b
-    - name: hermes
+    - name: writer
       image:
-        # Use the digest from a Hermes image built from this revision.
+        # Replace with the digest from a current Hermes image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
         kind: nvidia.fabric.hermes
-        settings:
-          mode: service
-          plugins_enabled: [web/tavily]
-          native_config:
-            web:
-              backend: tavily
-              search_backend: tavily
-              extract_backend: tavily
-              keyless_fallback: false
       agent:
-        name: hermes
+        name: writer
         integrationRefs: [search]
         inference:
           routes:

@@ -222,36 +222,19 @@ fn managed_podman_with_an_explicit_gateway_port_should_work() {
 }
 
 #[test]
-fn openclaw_dashboard_should_work() {
-    let yaml = include_bytes!("../../../examples/openclaw-dashboard.yaml");
+fn openclaw_should_work() {
+    let yaml = include_bytes!("../../../examples/openclaw.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
-    assert_eq!(
-        desired["spec"]["sandboxes"][0]["harness"]["settings"]["native_config"]["gateway"]["port"],
-        18800
-    );
-}
-
-#[test]
-fn hermes_api_dashboard_and_tui_should_work() {
-    let yaml = include_bytes!("../../../examples/hermes-interfaces.yaml");
-    let document = Document::parse(yaml.as_slice()).unwrap();
-    let desired = normalized(&document);
-    let interfaces = &desired["spec"]["sandboxes"][0]["harness"]["settings"]["interfaces"];
     assert_eq!(
         desired["spec"]["sandboxes"][0]["harness"]["kind"],
-        "nvidia.fabric.hermes"
+        "nvidia.fabric.openclaw"
     );
-    assert_eq!(interfaces["api"]["port"], 8643);
-    assert_eq!(interfaces["dashboard"]["enabled"], true);
-    assert_eq!(interfaces["dashboard"]["port"], 18800);
-    assert_eq!(interfaces["dashboard"]["internalPort"], 19120);
-    assert_eq!(interfaces["dashboard"]["tui"]["enabled"], true);
 }
 
 #[test]
 fn brave_web_search_should_work() {
-    let yaml = include_bytes!("../../../examples/openclaw-web-search.yaml");
+    let yaml = include_bytes!("../../../examples/web-search.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
@@ -378,9 +361,8 @@ fn trusted_private_hosts_are_not_supported_yet() {
 
 #[test]
 fn tavily_search_preserves_the_selected_provider_and_credential_reference() {
-    let desired =
-        DesiredState::from_yaml(include_bytes!("../../../examples/openclaw-web-search.yaml"))
-            .search_provider("tavily", "TAVILY_API_KEY");
+    let desired = DesiredState::from_yaml(include_bytes!("../../../examples/web-search.yaml"))
+        .search_provider("tavily", "TAVILY_API_KEY");
     let document = Document::parse(desired.yaml().as_bytes()).expect("Tavily intent must parse");
     assert!(document.credential_names().contains(&"TAVILY_API_KEY"));
     let normalized = serde_json::to_value(&document).unwrap();

@@ -98,45 +98,18 @@ FROM interactive AS openclaw
 # Upstream owns /app as its own user; the sandbox only reads it.
 COPY --from=openclaw-upstream --chown=0:0 /app /app
 RUN ln -s /app/openclaw.mjs /usr/local/bin/openclaw
-ADD --chown=node:node --checksum=sha256:2b403a4b2d2be7a793235a458e2d376f38588fd913f41b92e208e8421a2a1617 https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.4.tgz /tmp/brave.tgz
-ADD --chown=node:node --checksum=sha256:9b250b5ed8660247947701c4df3fb8b1c6b32fd7e30b7a186c7ae763e30c29e8 https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.4.tgz /tmp/tavily.tgz
 # catalog.py publishes this declaration: the files the adapter reads, which
 # explicit filesystem grants must allow, and the executables it runs.
 RUN printf '%s\n' '{"nvidia.fabric.openclaw": {"files": ["/app"], "binaries": ["node"]}}' > /opt/nemoclaw/adapters.json
 USER node
-# Native installation owns extraction and peer dependencies; package its output
-# in OpenClaw's bundled-plugin directory so each runtime discovers it naturally.
-RUN --network=none OPENCLAW_STATE_DIR=/tmp/plugin-build OPENCLAW_CONFIG_PATH=/tmp/plugin-build/config.json \
-    node /app/openclaw.mjs plugins install --force --accept-capabilities /tmp/brave.tgz \
-    && OPENCLAW_STATE_DIR=/tmp/plugin-build OPENCLAW_CONFIG_PATH=/tmp/plugin-build/config.json \
-    node /app/openclaw.mjs plugins install --force --accept-capabilities /tmp/tavily.tgz \
-    && rm -f /tmp/brave.tgz /tmp/tavily.tgz
-USER root
-RUN mv /tmp/plugin-build/extensions/brave /tmp/plugin-build/extensions/tavily /app/dist/extensions/ \
-    && chown -R 0:0 /app/dist/extensions/brave /app/dist/extensions/tavily \
-    && chmod -R u+rwX,go+rX,go-w /app/dist/extensions/brave /app/dist/extensions/tavily \
-    && rm -rf /tmp/plugin-build
-COPY image/fabric/BRAVE-LICENSE /app/dist/extensions/brave/LICENSE
-COPY image/fabric/BRAVE-NOTICE.md /app/dist/extensions/brave/NOTICE.md
-COPY image/fabric/TAVILY-LICENSE /app/dist/extensions/tavily/LICENSE
-COPY image/fabric/TAVILY-NOTICE.md /app/dist/extensions/tavily/NOTICE.md
-USER node
 
 FROM base AS hermes-assets
-COPY --from=node /node/ /
 ARG HERMES_REVISION=29112bef099274229cadff79cdff7bf7b99c4b77
 ARG HERMES_SHA256=76b99a8be9b77d66833c3cfe2b35c6d6f6a58e4ff9637ef8effcfc1f420ab35a
 ADD --checksum=sha256:${HERMES_SHA256} https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${HERMES_REVISION} /sources/hermes.tar.gz
-COPY --from=common-wheels /src/fabric/adapters/python/hermes/metadata-propagate.patch /sources/metadata-propagate.patch
 COPY image/fabric/HERMES-NOTICE.md /sources/HERMES-NOTICE.md
-RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1 \
-    && patch --batch --fuzz=0 -d /opt/hermes -p1 < /sources/metadata-propagate.patch \
+RUN mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && cp /sources/HERMES-NOTICE.md /opt/hermes/NEMOCLAW-NOTICE.md
-RUN --mount=type=cache,target=/root/.npm \
-    npm install --global npm@11.17.0 \
-    && cd /opt/hermes/web && npm ci --ignore-scripts && npm run build \
-    && cd /opt/hermes/ui-tui && npm ci --ignore-scripts && npm run build:ink && npm run build
 
 FROM interactive AS hermes
 COPY --from=hermes-assets /opt/hermes /opt/hermes
@@ -144,7 +117,6 @@ COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/sour
 # Hermes resolves bundled assets relative to its source checkout.
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     uv pip install --python /opt/fabric/bin/python --offline --no-deps --no-build-isolation -e /opt/hermes --config-settings editable_mode=compat
-COPY --from=common-wheels /src/fabric/adapters/python/hermes/src/nemo_fabric_adapters/hermes/plugins/tavily/ /opt/hermes/plugins/web/tavily/
 ENV HERMES_DISABLE_LAZY_INSTALLS=1
 RUN printf '%s\n' '{"nvidia.fabric.hermes": {"files": ["/opt/hermes"], "binaries": []}}' > /opt/nemoclaw/adapters.json
 USER node
