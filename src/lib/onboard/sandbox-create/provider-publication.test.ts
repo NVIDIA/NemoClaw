@@ -105,9 +105,16 @@ async function prepareProviders(
 }
 
 describe("sandbox provider preparation", () => {
-  it.each(["brave", "google-chat-bridge", "generic"])(
+  it.each([
+    ["brave", true],
+    ["google-chat-bridge", true],
+    ["langfuse-hermes-v1", true],
+    ["nemoclaw-nvidia-inference-v1", true],
+    ["generic", false],
+    ["operator-custom-v1", false],
+  ] as const)(
     "checks an attached %s provider only when its profile is NemoClaw-owned",
-    async (type) => {
+    async (type, owned) => {
       const warningCheck = vi.fn();
       const adapter = Object.assign(
         typedProviderAdapter({
@@ -150,11 +157,63 @@ describe("sandbox provider preparation", () => {
         route: "none",
         revalidateSandboxIdentity: vi.fn(),
       });
-      expect(adapter.importProviderProfile).toHaveBeenCalledTimes(type === "generic" ? 0 : 1);
-      expect(warningCheck).toHaveBeenCalledTimes(type === "generic" ? 0 : 1);
-      expect(warningCheck.mock.calls[0] ?? null).toEqual(
-        type === "generic" ? null : [{ target }, [type]],
+      expect(adapter.importProviderProfile).toHaveBeenCalledTimes(owned ? 1 : 0);
+      expect(warningCheck).toHaveBeenCalledTimes(owned ? 1 : 0);
+      expect(warningCheck.mock.calls[0] ?? null).toEqual(owned ? [{ target }, [type]] : null);
+    },
+  );
+
+  it.each(
+    ["langfuse-hermes-v1", "nemoclaw-nvidia-inference-v1"].flatMap((type) =>
+      (["profile_incompatible", "not_found", "failed"] as const).map((reason) => ({
+        type,
+        reason,
+      })),
+    ),
+  )(
+    "blocks $type on $reason and verifies the profile on retry (#13345)",
+    async ({ type, reason }) => {
+      const adapter = typedProviderAdapter({
+        getProvider: vi.fn(async () => ({
+          ok: true as const,
+          value: { name: "extra-provider", type, credentialKeys: ["TOKEN"], configKeys: [] },
+        })),
+        importProviderProfile: vi
+          .fn<OpenShellProviderAdapter["importProviderProfile"]>()
+          .mockResolvedValueOnce({
+            ok: false,
+            error: { kind: "command", reason, message: "profile check failed" },
+          })
+          .mockResolvedValue({ ok: true }),
+      });
+      const harness = createHarness(adapter);
+      const boundary = createProviderEffectBoundary({
+        deferred: false,
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        preparationInput: publicationInput({
+          messagingProviders: [],
+          messagingProviderRequests: [],
+          extraProviders: ["extra-provider"],
+          directCreateProviderNames: ["extra-provider"],
+        }),
+        preparationDeps: harness.deps,
+        runVerifiedSandboxCreateEffects: null,
+        activateDeferredProviderEffects: null,
+        revalidateSandboxIdentityBeforeCreate: vi.fn(),
+      });
+
+      await expect(boundary.validateBeforeCreate()).rejects.toThrow(
+        `Could not verify provider profile '${type}' before sandbox creation.`,
       );
+      expect(harness.cleanupCreateSources).toHaveBeenCalledOnce();
+      expect(adapter.createProvider).not.toHaveBeenCalled();
+      expect(adapter.updateProvider).not.toHaveBeenCalled();
+      expect(adapter.attachProvider).not.toHaveBeenCalled();
+      expect(harness.runOpenshell).not.toHaveBeenCalled();
+
+      await expect(boundary.validateBeforeCreate()).resolves.toBeUndefined();
+      expect(adapter.importProviderProfile).toHaveBeenCalledTimes(2);
     },
   );
 

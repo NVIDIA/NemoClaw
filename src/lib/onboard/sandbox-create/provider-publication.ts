@@ -23,6 +23,8 @@ import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { messagingProviderProfileForType } from "../../messaging/applier/provider-application";
 import {
   ensureNativeNvidiaProviderAttached,
+  nativeNvidiaProviderProfilePath,
+  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
   requireNativeNvidiaProviderProfileBoundary,
 } from "../../inference/native-nvidia";
@@ -77,7 +79,7 @@ function expectedMessagingBindings(input: ProviderPreparationInput) {
   );
 }
 
-/** Recheck only profiles already owned by messaging or web-search setup. */
+/** Recheck known owned profiles before binding previously registered providers. */
 export async function validateAttachedOwnedProfilesBeforeSandboxCreation(
   input: ProviderPreparationInput,
   deps: ProviderPreparationDeps,
@@ -109,11 +111,28 @@ export async function validateAttachedOwnedProfilesBeforeSandboxCreation(
       );
     }
     if (observed.value.type === "generic") continue;
-    const directProfile = messagingProviderProfileForType(
+    let directProfile = messagingProviderProfileForType(
       REPOSITORY_ROOT,
       observed.value.type,
       undefined,
     );
+    if (observed.value.type === "langfuse-hermes-v1") {
+      directProfile = {
+        profileType: observed.value.type,
+        profilePath: path.join(
+          REPOSITORY_ROOT,
+          "nemoclaw-blueprint",
+          "provider-profiles",
+          "langfuse-hermes-v1.yaml",
+        ),
+      };
+    }
+    if (observed.value.type === NVIDIA_HOSTED_NATIVE_PROFILE_ID) {
+      directProfile = {
+        profileType: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+        profilePath: nativeNvidiaProviderProfilePath(),
+      };
+    }
     if (!directProfile) {
       bridgeProfiles ??= new Map(
         listMessagingBridgeProfiles({ root: REPOSITORY_ROOT }).map((entry) => [
