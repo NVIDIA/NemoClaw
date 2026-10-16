@@ -1,5 +1,5 @@
 {
-  "harness": {"kind": "nvidia.fabric.hermes", "settings": {"mode": "service"}},
+  "harness": {"kind": "nvidia.fabric.hermes"},
   "invocation": "Reply with service-fixture-ok.",
   "expected_reply": "service-fixture-ok",
   "expects_inference": true
