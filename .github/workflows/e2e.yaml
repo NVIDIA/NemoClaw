@@ -4167,6 +4167,25 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/install-openshell.sh
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          node --input-type=module - "$(command -v openshell)" <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync } from 'node:fs';
+          import { dirname, join } from 'node:path';
+          const directory = dirname(process.argv[2]);
+          const expected = JSON.parse(process.env.OPENSHELL_RUNTIME_PROVENANCE);
+          for (const [role, binary] of [
+            ['cli', 'openshell'],
+            ['gateway', 'openshell-gateway'],
+            ['standaloneSandbox', 'openshell-sandbox'],
+          ]) {
+            const bytes = readFileSync(join(directory, binary));
+            const actual = createHash('sha256').update(bytes).digest('hex');
+            if (actual !== expected.artifacts?.[role]?.binarySha256) {
+              throw new Error(`Installed OpenShell ${role} differs from reviewed provenance`);
+            }
+          }
+          NODE
           if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "deepagents" ]]; then
             mkdir -p "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents"
             printf '%s\n' "$OPENSHELL_RUNTIME_PROVENANCE" > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
@@ -4305,6 +4324,25 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/install-openshell.sh
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          node --input-type=module - "$(command -v openshell)" <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync } from 'node:fs';
+          import { dirname, join } from 'node:path';
+          const directory = dirname(process.argv[2]);
+          const expected = JSON.parse(process.env.OPENSHELL_RUNTIME_PROVENANCE);
+          for (const [role, binary] of [
+            ['cli', 'openshell'],
+            ['gateway', 'openshell-gateway'],
+            ['standaloneSandbox', 'openshell-sandbox'],
+          ]) {
+            const bytes = readFileSync(join(directory, binary));
+            const actual = createHash('sha256').update(bytes).digest('hex');
+            if (actual !== expected.artifacts?.[role]?.binarySha256) {
+              throw new Error(`Installed OpenShell ${role} differs from reviewed provenance`);
+            }
+          }
+          NODE
           mkdir -p "$E2E_ARTIFACT_DIR/openshell-credential-generation-window"
           printf '%s\n' "$OPENSHELL_RUNTIME_PROVENANCE" > "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
 

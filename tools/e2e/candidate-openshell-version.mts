@@ -45,7 +45,7 @@ export async function candidateOpenShellVersion(
   return validateInstallerSources(sources).releaseVersion;
 }
 
-/** Fixed upstream binary identities for the two releases used by the MCP qualification jobs. */
+/** Fixed upstream binary identities for the reviewed releases used by the MCP qualification jobs. */
 export function reviewedOpenShellMcpRuntime(version: string) {
   let sourceSha: string;
   let supervisorDigest: string;
@@ -59,6 +59,13 @@ export function reviewedOpenShellMcpRuntime(version: string) {
       cli = "24e85062073d512d1951c76cd3890b7bce1ab01cc36a08f88b3b43c067a402da";
       gateway = "780fc7ad871e2163f3fb866a2d0254ee682fc0d83e6261a84b350c8dcdd9f47b";
       standaloneSandbox = "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40";
+      break;
+    case "0.1.2":
+      sourceSha = "6648bd0c290efbc41ba131ee9831ee45cd431f94";
+      supervisorDigest = "d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a";
+      cli = "f334da80f867776dde9034e0ca3c2406d48ba77b0d0abe64b5aa610490a34fca";
+      gateway = "37c3d29f6305b42df349407ddc946b8c4755e464aaf875bdf2eb5af833b5de45";
+      standaloneSandbox = "5b2178f3b64a6c96eff9ed61bd7feeada4b4a4b3c68f3664e3b8f4f2b264a9b1";
       break;
     case "0.1.3":
       sourceSha = "e1f3c82caa3ed3b65de22889ae7ef32a774878ef";

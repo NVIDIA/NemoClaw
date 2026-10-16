@@ -753,7 +753,7 @@ Successful-export schema, secret, and pinned-consumer checks remain on Docker be
 The fixture contract and runtime refusal are covered in `support/e2e-phase-config-export-validation.test.ts`.
 
 The OpenClaw shard of the pinned Docker `mcp-bridge` target also owns Error-state recovery for
-OpenShell 0.0.116. After its healthy-source rebuild checks, it kills only the runtime bound to the
+the candidate's reviewed OpenShell release. After its healthy-source rebuild checks, it kills only the runtime bound to the
 test-created native sandbox ID, observes Error, and rebuilds without reintroducing the MCP host
 secret. A different container must preserve a workspace marker and complete the authenticated MCP
 tool call with the existing denial rule. The Podman and explicit-only development-runtime targets

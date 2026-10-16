@@ -93,9 +93,9 @@ const REVIEWED_SUPERVISOR_IMAGE = "${{ needs.generate-matrix.outputs.openshell_s
 const REVIEWED_RUNTIME_PROVENANCE =
   "${{ needs.generate-matrix.outputs.openshell_runtime_provenance }}";
 const STABLE_MCP_INSTALL_CONTENT_SHA256 =
-  "6bec62a12c79d35e18293514fb5488a7e7ea59806f364b4a2991f50377c99fb9";
+  "1c788c6e37535f5be504f954d2acbea8ddddd3d8d1e46ebdc1bdcd67a19e492f";
 const CREDENTIAL_WINDOW_INSTALL_CONTENT_SHA256 =
-  "382f7b143c9688e933e73de79b5155b0a4b0aef469632194682342275d644912";
+  "2fc2e4166b63c99c8e048f43f0da18864a1b997cb6aaeb13e066046d443c2bc4";
 const DEV_COMPATIBILITY_RUN = [
   "set -euo pipefail",
   'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"',
