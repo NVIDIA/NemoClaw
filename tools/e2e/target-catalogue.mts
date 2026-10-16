@@ -1071,6 +1071,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: false,
     owningPaths: [
       "src/lib/actions/inference-set/native-local.ts",
+      "src/lib/actions/inference-set/local-runtime.ts",
       "src/lib/inference/native-local/",
       "src/lib/onboard/openclaw/initial-inference-route.ts",
       "src/lib/onboard/setup-inference.ts",

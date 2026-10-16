@@ -2,61 +2,44 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { nativeLocalIdentity } from "../inference/native-local/contract";
-import type { ConfigObject } from "../security/credential-filter";
-import { createDeps } from "../../../test/helpers/inference-set";
+import {
+  attachment,
+  fixture,
+  switchingFixture,
+} from "../../../test/helpers/inference-set-openclaw-native-local";
+import { resolveOpenClawLocalSwitch } from "./inference-set/native-local";
 import { runInferenceSet } from "./inference-set";
 
 vi.mock("../adapters/openshell/provider-policy", () => ({
   requireNativeProviderPolicy: vi.fn(async () => {}),
 }));
 
-const binding = {
-  agent: "openclaw" as const,
-  provider: "ollama-local" as const,
-  endpointUrl: "http://host.openshell.internal:11435/v1",
-  credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-  authMode: "sentinel" as const,
-  gatewayName: "nemoclaw",
-  sandboxName: "alpha",
-};
-const attachment = {
-  ...binding,
-  ...nativeLocalIdentity(binding),
-  schemaVersion: 1 as const,
-  providerId: "owned-local-provider",
-};
-
-function fixture() {
-  const config: ConfigObject = {
-    agents: { defaults: { model: { primary: "inference/old-model" } } },
-    models: {
-      providers: {
-        inference: {
-          baseUrl: binding.endpointUrl,
-          apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-          api: "openai-completions",
-          models: [{ id: "old-model" }],
-        },
-      },
-    },
-  };
-  return createDeps({
-    config,
-    entry: {
-      name: "alpha",
-      agent: "openclaw",
-      gatewayName: "nemoclaw",
-      provider: binding.provider,
-      model: "old-model",
-      endpointUrl: binding.endpointUrl,
-      preferredInferenceApi: "openai-completions",
-      nativeLocalProviderAttachment: attachment,
-    },
-  });
-}
-
 describe("OpenClaw native local live selection", () => {
+  it.each([
+    { provider: "vllm-local", expected: {} },
+    { provider: "ollama-local", expected: { prepare: true } },
+  ])(
+    "keeps owned NIM shared only when selecting $provider still uses NIM",
+    async ({ provider, expected }) => {
+      const deps = fixture();
+      await expect(
+        resolveOpenClawLocalSwitch({
+          agentName: "openclaw",
+          provider,
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          deps,
+          entry: {
+            name: "alpha",
+            agent: "openclaw",
+            provider: "vllm-local",
+            nimContainer: "owned-nim",
+          },
+        }),
+      ).resolves.toEqual(expected);
+    },
+  );
+
   it("detaches and retires local authority before publishing a shared selection", async () => {
     const deps = fixture();
     const detach = vi.spyOn(deps.providerAdapter, "detachProvider");
@@ -100,6 +83,77 @@ describe("OpenClaw native local live selection", () => {
       ),
     ).rejects.toThrow(/Failed to update NemoClaw registry.*restoring.*reattach rejected/s);
     expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalled();
+  });
+
+  it("switches from Ollama to another local provider without changing the shared route", async () => {
+    const { deps } = switchingFixture();
+    await expect(
+      runInferenceSet(
+        {
+          provider: "vllm-local",
+          model: "new-model",
+          sandboxName: "alpha",
+        },
+        deps,
+      ),
+    ).resolves.toMatchObject({ provider: "vllm-local" });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "vllm-local",
+        nativeLocalProviderAttachment: expect.objectContaining({
+          agent: "openclaw",
+          provider: "vllm-local",
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+        }),
+      }),
+    );
+    expect(deps.calls.clearNativeLocalProviderAuthority).toHaveBeenCalledWith(attachment);
+    expect(
+      deps.calls.captureOpenshell.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "inference" && args[1] === "set",
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    {
+      stage: "attachment",
+      arrange: ({ deps, next }: ReturnType<typeof switchingFixture>) => {
+        const attach = deps.providerAdapter.attachProvider;
+        deps.providerAdapter.attachProvider = async (request) =>
+          request.providerName === next.providerName
+            ? {
+                ok: false,
+                error: { kind: "command", reason: "failed", message: "attachment rejected" },
+              }
+            : attach(request);
+      },
+    },
+    {
+      stage: "registry",
+      arrange: ({ deps }: ReturnType<typeof switchingFixture>) => {
+        deps.calls.updateSandbox.mockReturnValue(false);
+      },
+    },
+  ])("restores the prior local route after $stage failure", async ({ stage, arrange }) => {
+    const state = switchingFixture();
+    const { deps, isPresent, isAttached } = state;
+    arrange(state);
+    await expect(
+      runInferenceSet({ provider: "vllm-local", model: "new-model", sandboxName: "alpha" }, deps),
+    ).rejects.toThrow(
+      stage === "attachment" ? /attachment rejected/ : /Failed to update NemoClaw registry/,
+    );
+    expect(isPresent()).toBe(false);
+    expect(isAttached()).toBe(false);
+    const current = await deps.providerAdapter.listProviderAttachments({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      sandboxName: "alpha",
+    });
+    expect(current).toMatchObject({ ok: true, value: { names: [attachment.providerName] } });
+    expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalledWith(attachment);
   });
 
   it("changes the selected model without touching the shared gateway route", async () => {

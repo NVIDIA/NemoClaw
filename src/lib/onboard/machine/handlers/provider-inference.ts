@@ -1306,18 +1306,6 @@ function nativeLocalAgentOptions(
     : {};
 }
 
-function usesNativeLocalInferenceForNimSetup(
-  agent: string | null | undefined,
-  provider: string | null | undefined,
-  endpointUrl?: string | null,
-  localNimSelected = false,
-) {
-  return (
-    agent !== "openclaw" &&
-    usesNativeLocalInferenceForAgent(agent, provider, endpointUrl, localNimSelected)
-  );
-}
-
 function assertNoLegacySharedLocalResume(
   deps: Pick<
     ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
@@ -1714,7 +1702,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
                 deps,
                 gatewayName,
                 sandboxName,
-                usesNativeLocalInferenceForNimSetup(
+                usesNativeLocalInferenceForAgent(
                   agentName(agent),
                   route.provider,
                   route.endpointUrl,

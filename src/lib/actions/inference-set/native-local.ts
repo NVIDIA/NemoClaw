@@ -12,9 +12,16 @@ import {
   type NativeLocalProviderAttachment,
   verifyNativeLocalProviderAttachment,
 } from "../../inference/native-local/profile";
+import { prepareNativeLocalSelection } from "../../inference/native-local/selection";
 import type { SandboxEntry } from "../../state/registry";
 
-/** A live switch can reuse only the sandbox's own recorded local provider. */
+export type OpenClawLocalSwitch = {
+  selected?: NativeLocalProviderAttachment;
+  previous?: NativeLocalProviderAttachment;
+  prepare?: boolean;
+};
+
+/** Reuse a matching attachment or prepare a new sandbox-owned local selection. */
 export async function resolveOpenClawLocalSwitch(input: {
   agentName: string;
   entry: SandboxEntry;
@@ -22,10 +29,7 @@ export async function resolveOpenClawLocalSwitch(input: {
   sandboxName: string;
   gatewayName: string;
   deps: InferenceSetDeps;
-}): Promise<{
-  selected?: NativeLocalProviderAttachment;
-  previous?: NativeLocalProviderAttachment;
-}> {
+}): Promise<OpenClawLocalSwitch> {
   if (input.agentName !== "openclaw") return {};
   const { entry, provider, sandboxName, gatewayName, deps } = input;
   const previous = normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
@@ -53,16 +57,89 @@ export async function resolveOpenClawLocalSwitch(input: {
       expected: previous,
     });
   }
-  if (!isLocalInferenceProvider(provider) || entry.nimContainer) return { previous };
+  if (!isLocalInferenceProvider(provider) || (provider === "vllm-local" && entry.nimContainer))
+    return { previous };
   // A retained OpenClaw row may still own the historical shared route.
   if (!previous && entry.provider === provider) return {};
-  if (!previous || entry.provider !== provider) {
+  if (!previous || entry.provider !== provider) return { previous, prepare: true };
+  return { selected: previous, previous };
+}
+
+export async function prepareOpenClawLocalSwitch(input: {
+  selection: OpenClawLocalSwitch;
+  provider: string;
+  sandboxName: string;
+  gatewayName: string;
+  deps: InferenceSetDeps;
+  beforeAttach: () => Promise<void>;
+}) {
+  if (!input.selection.prepare) return;
+  const { deps } = input;
+  if (
+    !deps.resolveLocalSwitchRuntime ||
+    !deps.getNativeLocalProviderAuthority ||
+    !deps.setNativeLocalProviderAuthority
+  )
+    throw new InferenceSetError("Native local provider ownership storage is unavailable.");
+  const runtime = deps.resolveLocalSwitchRuntime(input.provider, deps.resolveCredentialValue);
+  if (!runtime.endpointUrl)
+    throw new InferenceSetError("The local runtime endpoint is unavailable.");
+  input.selection.selected = await prepareNativeLocalSelection({
+    adapter: deps.providerAdapter,
+    binding: {
+      agent: "openclaw",
+      provider: input.provider as NativeLocalProviderAttachment["provider"],
+      endpointUrl: runtime.endpointUrl,
+      authMode: runtime.authMode,
+      gatewayName: input.gatewayName,
+      sandboxName: input.sandboxName,
+    },
+    credentialValue: runtime.credentialValue,
+    ownedProxy: runtime.ownedProxy,
+    readAuthority: deps.getNativeLocalProviderAuthority,
+    writeAuthority: deps.setNativeLocalProviderAuthority,
+  });
+  // Local providers use the same injected credential name. Prepare first, then
+  // remove old access before attaching the new provider to avoid a collision.
+  await input.beforeAttach();
+  await ensureNativeLocalProviderAttached({
+    adapter: deps.providerAdapter,
+    sandboxName: input.sandboxName,
+    expected: input.selection.selected,
+  });
+}
+
+export async function rollbackOpenClawLocalSwitch(input: {
+  selection: OpenClawLocalSwitch;
+  committed: boolean;
+  sandboxName: string;
+  gatewayName: string;
+  deps: InferenceSetDeps;
+  error: unknown;
+}) {
+  if (!input.selection.prepare || input.committed || !input.selection.selected) return;
+  try {
+    await detachNativeLocalProvider({
+      adapter: input.deps.providerAdapter,
+      sandboxName: input.sandboxName,
+      expected: input.selection.selected,
+    });
+    const result = await retireNativeLocalProvider({
+      adapter: input.deps.providerAdapter,
+      expected: input.selection.selected,
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      clearAuthority: input.deps.clearNativeLocalProviderAuthority,
+    });
+    if (result.status === "attached")
+      throw new Error(
+        "The failed local selection remains attached; retain its authority for repair.",
+      );
+  } catch (cleanupError) {
     throw new InferenceSetError(
-      `Cannot switch '${sandboxName}' to native local '${provider}' without a matching sandbox-owned provider attachment. Back up the sandbox and create a fresh one with that local selection. The shared gateway route was not changed.`,
-      2,
+      `${input.error instanceof Error ? input.error.message : String(input.error)}\nLocal selection rollback failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
     );
   }
-  return { selected: previous, previous };
 }
 
 export function openClawLocalProbeFields(
