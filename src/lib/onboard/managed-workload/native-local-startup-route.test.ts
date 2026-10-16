@@ -38,7 +38,13 @@ type AgentName = "openclaw" | "hermes" | "langchain-deepagents-code";
 
 function prepareProfile(
   agentName: AgentName,
-  route: { endpointUrl: string | null; attachment?: typeof nativeAttachment },
+  route: {
+    endpointUrl: string | null;
+    attachment?: typeof nativeAttachment;
+    provider?: string;
+    localNimSelected?: boolean;
+    nativeProvider?: boolean;
+  },
 ) {
   const runtime = createManagedWorkloadOnboardRuntime(
     {
@@ -52,9 +58,11 @@ function prepareProfile(
       customDockerfilePath: null,
       rootDir: process.cwd(),
       model: "fixture-model",
-      provider: "compatible-endpoint",
+      provider: route.provider ?? "compatible-endpoint",
       preferredInferenceApi: "openai-completions",
       endpointUrl: route.endpointUrl,
+      localNimSelected: route.localNimSelected,
+      nativeProvider: route.nativeProvider ?? Boolean(route.attachment),
       ...("attachment" in route ? { nativeLocalProviderAttachment: route.attachment } : {}),
       startupProfile: {
         chatUiUrl: "http://localhost:18789",
@@ -112,4 +120,17 @@ it("rejects unattached Deep Agents Code native inference (#13197)", () => {
   expect(() =>
     prepareProfile("langchain-deepagents-code", { endpointUrl: nativeBinding.endpointUrl }),
   ).toThrow("requires its native provider attachment");
+});
+
+it("keeps owned Local NIM on the Deep Agents Code shared route without an attachment (#13116)", () => {
+  const prepared = prepareProfile("langchain-deepagents-code", {
+    provider: "vllm-local",
+    endpointUrl: "http://127.0.0.1:8000/v1",
+    localNimSelected: true,
+    nativeProvider: false,
+  });
+  expect(prepared?.profile.inference).toMatchObject({
+    upstreamProvider: "vllm-local",
+    routedBaseUrl: "https://inference.local/v1",
+  });
 });

@@ -74,6 +74,36 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     expect(context.invocation.nativeLocalExpected).toBe(expected);
   });
 
+  it("verifies owned Local NIM through the shared route while expecting native standalone vLLM", () => {
+    const flow = {
+      provider: "vllm-local",
+      model: "test-model",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      preferredInferenceApi: "openai-completions",
+    };
+    const binding = {
+      ...localBinding,
+      provider: "vllm-local" as const,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+    };
+    const staleAttachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "stale-provider",
+    };
+    const nim = onboardInferenceVerificationContext("my-sandbox", "my-gateway", DCODE_AGENT, flow, {
+      nimContainer: "nemoclaw-nim-owned",
+      nativeLocalProviderAttachment: staleAttachment,
+    });
+    const vllm = onboardInferenceVerificationContext("my-sandbox", "my-gateway", DCODE_AGENT, flow);
+    expect(nim.route.nativeLocalExpected).toBe(false);
+    expect(nim.invocation.nativeLocalExpected).toBe(false);
+    expect(nim.route.nativeLocalProviderAttachment).toBeUndefined();
+    expect(nim.invocation.nativeLocalProviderAttachment).toBeUndefined();
+    expect(vllm.route.nativeLocalExpected).toBe(true);
+  });
+
   it("uses the recorded native local attachment instead of the shared models route", async () => {
     const scripts: string[] = [];
     const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
@@ -111,7 +141,10 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       makeModelsRouteDeps("200", { probeInferenceInvocation }),
       {
         ...NO_RETRY,
-        inferenceRouteContext: { provider: "ollama-local", nativeLocalExpected: true },
+        inferenceRouteContext: {
+          provider: "ollama-local",
+          nativeLocalExpected: true,
+        },
       },
     );
 
@@ -337,7 +370,11 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       makeModelsRouteDeps("200", {
         executeSandboxCommand: async (_name: string, script: string) =>
           script.includes("inference.local")
-            ? { status: 1, stdout: "200", stderr: "curl: (6) could not resolve host" }
+            ? {
+                status: 1,
+                stdout: "200",
+                stderr: "curl: (6) could not resolve host",
+              }
             : { status: 0, stdout: "200", stderr: "" },
       }),
       NO_RETRY,
@@ -350,7 +387,9 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     const result = await verifyDeployment(
       "my-sandbox",
       buildChain(),
-      makeModelsRouteDeps("404", { probeInferenceInvocation: async () => ({ ok: true }) }),
+      makeModelsRouteDeps("404", {
+        probeInferenceInvocation: async () => ({ ok: true }),
+      }),
       {
         ...NO_RETRY,
         inferenceRouteContext: { provider: "openrouter-api" },
@@ -366,7 +405,10 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       "my-sandbox",
       buildChain(),
       makeModelsRouteDeps("404", {
-        probeInferenceInvocation: async () => ({ ok: false, detail: "HTTP 401" }),
+        probeInferenceInvocation: async () => ({
+          ok: false,
+          detail: "HTTP 401",
+        }),
       }),
       {
         ...NO_RETRY,
@@ -391,7 +433,10 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       "my-sandbox",
       buildChain(),
       makeModelsRouteDeps("404", {
-        probeInferenceInvocation: async () => ({ ok: false, detail: "HTTP 401" }),
+        probeInferenceInvocation: async () => ({
+          ok: false,
+          detail: "HTTP 401",
+        }),
       }),
       {
         ...NO_RETRY,
@@ -445,7 +490,11 @@ describe("verifyDeployment inference route model-catalog validation", () => {
         const isModelsRoute = script.includes("inference.local");
         modelsRouteCalls += isModelsRoute ? 1 : 0;
         return isModelsRoute
-          ? { status: 0, stdout: responses[modelsRouteCalls - 1] ?? "200", stderr: "" }
+          ? {
+              status: 0,
+              stdout: responses[modelsRouteCalls - 1] ?? "200",
+              stderr: "",
+            }
           : { status: 0, stdout: "200", stderr: "" };
       },
     });

@@ -75,7 +75,11 @@ function fixture(selectedBinding: NativeLocalBinding = binding) {
           }
         : {
             ok: false as const,
-            error: { kind: "command" as const, reason: "not_found" as const, message: "absent" },
+            error: {
+              kind: "command" as const,
+              reason: "not_found" as const,
+              message: "absent",
+            },
           },
     ),
     createProvider: vi.fn(async () => {
@@ -244,6 +248,20 @@ describe("native local inference", () => {
     );
   });
 
+  it("keeps an owned Local NIM selection on the shared route while standalone vLLM is native", () => {
+    expect(usesNativeLocalInferenceForAgent("openclaw", "vllm-local", null)).toBe(false);
+    expect(usesNativeLocalInferenceForAgent("langchain-deepagents-code", "vllm-local", null)).toBe(
+      true,
+    );
+    expect(usesNativeLocalInferenceForAgent("openclaw", "vllm-local", null, true)).toBe(false);
+    expect(
+      usesNativeLocalInferenceForAgent("langchain-deepagents-code", "vllm-local", null, true),
+    ).toBe(false);
+    expect(
+      usesNativeLocalInferenceForAgent("langchain-deepagents-code", "llama-cpp-local", null, true),
+    ).toBe(true);
+  });
+
   it("restricts the selected bridge to models and chat requests (#12558)", () => {
     const profile = prepareNativeLocalProfile(binding);
     expect(profile.document.binaries).toContain("/usr/bin/python3");
@@ -266,14 +284,23 @@ describe("native local inference", () => {
   });
   it("separates authentication modes and sandbox instances without credential-derived names (#12558)", () => {
     const sentinel = nativeLocalIdentity({ ...binding, authMode: "sentinel" });
-    const otherSandbox = nativeLocalIdentity({ ...binding, sandboxName: "bob" });
+    const otherSandbox = nativeLocalIdentity({
+      ...binding,
+      sandboxName: "bob",
+    });
     expect(sentinel.profileId).not.toBe(identity.profileId);
     expect(otherSandbox.profileId).toBe(identity.profileId);
     expect(otherSandbox.providerName).not.toBe(identity.providerName);
   });
   it("keeps runtime publication transactions distinct without changing endpoint permissions (#12558)", () => {
-    const first = nativeLocalIdentity({ ...binding, transactionId: "a".repeat(64) });
-    const second = nativeLocalIdentity({ ...binding, transactionId: "b".repeat(64) });
+    const first = nativeLocalIdentity({
+      ...binding,
+      transactionId: "a".repeat(64),
+    });
+    const second = nativeLocalIdentity({
+      ...binding,
+      transactionId: "b".repeat(64),
+    });
     expect(first.profileId).toBe(second.profileId);
     expect(first.providerName).not.toBe(second.providerName);
   });
@@ -291,7 +318,10 @@ describe("native local inference", () => {
     async (endpointUrl) => {
       const f = fixture();
       await expect(
-        ensureNativeLocalProvider({ ...f.input, binding: { ...binding, endpointUrl } }),
+        ensureNativeLocalProvider({
+          ...f.input,
+          binding: { ...binding, endpointUrl },
+        }),
       ).rejects.toThrow("boundary");
       expect(f.adapter.importProviderProfile).not.toHaveBeenCalled();
       expect(f.adapter.createProvider).not.toHaveBeenCalled();
@@ -325,7 +355,11 @@ describe("native local inference", () => {
     const f = fixture();
     f.adapter.importProviderProfile.mockResolvedValue({
       ok: false,
-      error: { kind: "command", reason: "profile_incompatible", message: "collision" },
+      error: {
+        kind: "command",
+        reason: "profile_incompatible",
+        message: "collision",
+      },
     } as never);
     await expect(ensureNativeLocalProvider(f.input)).rejects.toThrow("conflicts");
     expect(f.adapter.getProvider).not.toHaveBeenCalled();
@@ -336,7 +370,10 @@ describe("native local inference", () => {
     const create = f.adapter.createProvider.getMockImplementation()!;
     f.adapter.createProvider.mockImplementation(async () => {
       await create();
-      return { ok: false, error: { kind: "timeout", message: "lost response" } } as never;
+      return {
+        ok: false,
+        error: { kind: "timeout", message: "lost response" },
+      } as never;
     });
     expect(await ensureNativeLocalProvider(f.input)).toEqual(receipt);
     expect(f.adapter.createProvider).toHaveBeenCalledTimes(1);
@@ -361,14 +398,26 @@ describe("native local inference", () => {
     const f = fixture();
     const expected = await ensureNativeLocalProvider(f.input);
     await expect(
-      ensureNativeLocalProviderAttached({ adapter: f.adapter, expected, sandboxName: "bob" }),
+      ensureNativeLocalProviderAttached({
+        adapter: f.adapter,
+        expected,
+        sandboxName: "bob",
+      }),
     ).rejects.toThrow("selected sandbox");
     expect(f.adapter.attachProvider).not.toHaveBeenCalled();
     await expect(
-      ensureNativeLocalProviderAttached({ adapter: f.adapter, expected, sandboxName: "alice" }),
+      ensureNativeLocalProviderAttached({
+        adapter: f.adapter,
+        expected,
+        sandboxName: "alice",
+      }),
     ).resolves.toEqual({ receipt, changed: true });
     await expect(
-      verifyNativeLocalProviderAttachment({ adapter: f.adapter, expected, sandboxName: "alice" }),
+      verifyNativeLocalProviderAttachment({
+        adapter: f.adapter,
+        expected,
+        sandboxName: "alice",
+      }),
     ).resolves.toEqual(receipt);
   });
   it("rejects receipts changed to another endpoint or provider instance (#12558)", () => {
@@ -379,7 +428,10 @@ describe("native local inference", () => {
       }),
     ).toBeUndefined();
     expect(
-      normalizeNativeLocalProviderAttachment({ ...receipt, sandboxName: "bob" }),
+      normalizeNativeLocalProviderAttachment({
+        ...receipt,
+        sandboxName: "bob",
+      }),
     ).toBeUndefined();
   });
   it("refuses another sandbox's attachment before looking up or mutating access (#12558)", async () => {
@@ -399,7 +451,11 @@ describe("native local inference", () => {
     await ensureNativeLocalProvider(f.input);
     f.adapter.inspectProviderProfile.mockResolvedValue({
       ok: false,
-      error: { kind: "command", reason: "profile_incompatible", message: "changed" },
+      error: {
+        kind: "command",
+        reason: "profile_incompatible",
+        message: "changed",
+      },
     } as never);
     await expect(
       ensureNativeLocalProviderAttached({
@@ -487,7 +543,12 @@ describe("local inference endpoint port reservations", () => {
       options: { ownedProxy: true },
       protected: true,
     },
-    { name: "unowned proxy", port: OLLAMA_PROXY_PORT, options: {}, protected: true },
+    {
+      name: "unowned proxy",
+      port: OLLAMA_PROXY_PORT,
+      options: {},
+      protected: true,
+    },
     {
       name: "owned proxy",
       port: OLLAMA_PROXY_PORT,

@@ -314,7 +314,10 @@ export function buildCreatedSandboxRegistryEntry(
     workload,
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
-    ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
+    ...(nativeLocalProviderAttachment &&
+    !(input.inferenceSelection.provider === "vllm-local" && input.inferenceSelection.nimContainer)
+      ? { nativeLocalProviderAttachment }
+      : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted: true as const } : {}),
@@ -425,7 +428,9 @@ export function prepareCreatedSandboxRegistration(
       : {}),
     ...(pendingNativeNvidiaProviderAttachment === undefined
       ? {}
-      : { nativeNvidiaProviderAttachment: pendingNativeNvidiaProviderAttachment }),
+      : {
+          nativeNvidiaProviderAttachment: pendingNativeNvidiaProviderAttachment,
+        }),
   });
   if (input.portableLifecycle === true) {
     if (getRequestedSandboxAgentName(input.agent) !== "openclaw") {
@@ -520,7 +525,14 @@ export function nativeLocalReservationStatus(input: {
   credentialEnv: string | null;
   preferredInferenceApi: string | null;
 }): "shared" | "exact" | "changed" {
-  if (!usesNativeLocalInferenceForAgent(input.agentName, input.provider, input.endpointUrl)) {
+  if (
+    !usesNativeLocalInferenceForAgent(
+      input.agentName,
+      input.provider,
+      input.endpointUrl,
+      input.provider === "vllm-local" && Boolean(input.entry.nimContainer),
+    )
+  ) {
     return "shared";
   }
   const attachment = normalizeNativeLocalProviderAttachment(
@@ -543,15 +555,18 @@ export function nativeLocalReservationStatus(input: {
 export function nativeInferenceCreateIntentFields(
   provider: string | null | undefined,
   entry: SandboxEntry | null,
+  localNimSelected = false,
 ): {
   inferenceProvider: string | null;
   nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
 } {
-  const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
-    entry?.nativeLocalProviderAttachment,
-  );
+  // Local NIM keeps its shared route even if a stale vLLM attachment exists.
+  const nativeLocalProviderAttachment =
+    provider === "vllm-local" && (localNimSelected || entry?.nimContainer)
+      ? undefined
+      : normalizeNativeLocalProviderAttachment(entry?.nativeLocalProviderAttachment);
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
     entry?.nativeNvidiaProviderAttachment,
   );

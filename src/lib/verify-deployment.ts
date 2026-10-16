@@ -232,13 +232,21 @@ async function probeGatewayInSandboxOnce(
     `http://127.0.0.1:${port}${endpoint} 2>/dev/null || echo 000`;
   const result = await deps.executeSandboxCommand(sandboxName, script);
   if (!result) {
-    return { reachable: false, httpCode: 0, detail: "sandbox unreachable (SSH failed)" };
+    return {
+      reachable: false,
+      httpCode: 0,
+      detail: "sandbox unreachable (SSH failed)",
+    };
   }
   const code = parseInt(result.stdout.trim(), 10) || 0;
   if (GATEWAY_ALIVE_CODES.has(code)) {
     return { reachable: true, httpCode: code, detail: `HTTP ${code}` };
   }
-  return { reachable: false, httpCode: code, detail: `HTTP ${code} (gateway not responding)` };
+  return {
+    reachable: false,
+    httpCode: code,
+    detail: `HTTP ${code} (gateway not responding)`,
+  };
 }
 
 async function verifyGatewayInSandbox(
@@ -305,7 +313,11 @@ async function probeInferenceRouteOnce(
     `https://inference.local/v1/models 2>/dev/null || echo 000); echo $HTTP_CODE`;
   const result = await deps.executeSandboxCommand(sandboxName, script);
   if (!result) {
-    return { status: "unreachable", detail: "sandbox unreachable", httpCode: 0 };
+    return {
+      status: "unreachable",
+      detail: "sandbox unreachable",
+      httpCode: 0,
+    };
   }
   // curl writes exactly three digits and the script echoes `000` when it fails,
   // so any other token means the probe carries no status worth trusting.
@@ -342,7 +354,11 @@ async function probeInferenceRouteOnce(
       httpCode: code,
     };
   }
-  return { status: "ok", detail: `inference.local responded HTTP ${code}`, httpCode: code };
+  return {
+    status: "ok",
+    detail: `inference.local responded HTTP ${code}`,
+    httpCode: code,
+  };
 }
 
 /**
@@ -420,7 +436,10 @@ function matchesNativeLocalVerificationRoute(
     context.endpointUrl === HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL
   )
     return true;
-  const selected = normalizeNativeLocalBinding({ ...attachment, endpointUrl: context.endpointUrl });
+  const selected = normalizeNativeLocalBinding({
+    ...attachment,
+    endpointUrl: context.endpointUrl,
+  });
   return selected?.endpointUrl === attachment.endpointUrl;
 }
 
@@ -518,7 +537,10 @@ function probeDashboardFromHostOnce(
   if (code > 0) {
     return { reachable: false, detail: `host probe HTTP ${code} (unexpected)` };
   }
-  return { reachable: false, detail: "port forward not working (connection refused)" };
+  return {
+    reachable: false,
+    detail: "port forward not working (connection refused)",
+  };
 }
 
 async function verifyDashboardFromHost(
@@ -571,7 +593,10 @@ function probeAgentApiFromHostOnce(
   if (code > 0) {
     return { reachable: false, detail: `host probe HTTP ${code} (unexpected)` };
   }
-  return { reachable: false, detail: "port forward not working (connection refused)" };
+  return {
+    reachable: false,
+    detail: "port forward not working (connection refused)",
+  };
 }
 
 async function verifyAgentApiFromHost(
@@ -977,17 +1002,25 @@ export function onboardInferenceVerificationContext(
   flow: Pick<InferenceInvocationContext, "model" | "provider" | "preferredInferenceApi"> & {
     endpointUrl?: string | null;
   },
-  attachment?: Pick<
-    InferenceRouteContext,
-    "nativeLocalProviderAttachment" | "nativeHostedProviderAttachment"
-  > | null,
+  attachment?:
+    | (Pick<
+        InferenceRouteContext,
+        "nativeLocalProviderAttachment" | "nativeHostedProviderAttachment"
+      > & {
+        nimContainer?: string | null;
+      })
+    | null,
 ): { route: InferenceRouteContext; invocation: InferenceInvocationContext } {
   const nativeLocalExpected = usesNativeLocalInferenceForAgent(
     agentName,
     flow.provider,
     flow.endpointUrl,
+    flow.provider === "vllm-local" && Boolean(attachment?.nimContainer),
   );
-  const nativeLocalProviderAttachment = attachment?.nativeLocalProviderAttachment;
+  const nativeLocalProviderAttachment =
+    flow.provider === "vllm-local" && attachment?.nimContainer
+      ? undefined
+      : attachment?.nativeLocalProviderAttachment;
   const nativeHostedProviderAttachment = attachment?.nativeHostedProviderAttachment;
   return {
     route: {
@@ -1026,13 +1059,19 @@ export async function probeOnboardInferenceInvocation(
 ): Promise<{ ok: boolean; detail?: string }> {
   const { model, provider } = context;
   if (!model || !provider) {
-    return { ok: false, detail: "no provider and model were recorded for this sandbox" };
+    return {
+      ok: false,
+      detail: "no provider and model were recorded for this sandbox",
+    };
   }
   if (
     (context.nativeLocalExpected || context.nativeLocalProviderAttachment !== undefined) &&
     !matchesNativeLocalVerificationRoute(context, context.sandboxName)
   ) {
-    return { ok: false, detail: "native local provider attachment is missing or invalid" };
+    return {
+      ok: false,
+      detail: "native local provider attachment is missing or invalid",
+    };
   }
   let hostedAttachment;
   try {
