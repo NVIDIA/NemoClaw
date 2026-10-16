@@ -17,6 +17,9 @@ It also updates managed inference and OpenClaw behavior for qualified local mode
 - During an OpenClaw rebuild, NemoClaw refreshes restored scoped credential references for native NVIDIA and OpenRouter routes when the endpoint and credential key match the current runtime binding.
   It leaves user-managed credentials unchanged.
   Related change: [PR #13050](https://github.com/NVIDIA/NemoClaw/pull/13050).
+- Initial Deep Agents Code onboarding accepts `--dcode-auto-approval disabled|thread-opt-in` for managed images.
+  `thread-opt-in` grants the capability without activating auto-approval; resume preserves explicit pending and registered choices, including a recorded revocation.
+  Related change: [PR #13277](https://github.com/NVIDIA/NemoClaw/pull/13277).
 - OpenClaw stores the attached provider's scoped credential reference in native configuration when switching NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, or Hermes Provider routes.
   The reference does not expose the raw provider credential.
   Related change: [PR #13064](https://github.com/NVIDIA/NemoClaw/pull/13064).
