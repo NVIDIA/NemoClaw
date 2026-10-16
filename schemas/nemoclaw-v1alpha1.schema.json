@@ -1660,6 +1660,11 @@
       "additionalProperties": false,
       "description": "Model settings for one named inference choice.",
       "properties": {
+        "extensions": {
+          "additionalProperties": true,
+          "description": "Model fields the selected adapter declares as extensions, such as Pi's context_window; Fabric validates them.",
+          "type": "object"
+        },
         "maxTokens": {
           "description": "Maximum output tokens requested from the native adapter.",
           "format": "uint32",

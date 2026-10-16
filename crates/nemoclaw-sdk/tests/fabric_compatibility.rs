@@ -283,3 +283,35 @@ fn generated_base_urls_go_only_to_adapters_that_accept_them() {
         "https://inference.example.com/v1"
     );
 }
+
+#[test]
+fn declared_model_extensions_get_the_provider_api_and_authored_fields() {
+    // Pi declares `api`, `context_window`, and `max_tokens` as model extensions.
+    let pi = nemoclaw_sdk::config::Document::parse(
+        include_bytes!("../../../examples/fabric-pi.yaml").as_slice(),
+    )
+    .unwrap();
+    let model = &nemoclaw_sdk::fabric_config::for_sandbox(&pi, &pi.spec.sandboxes[0]).unwrap()["models"]
+        ["default"];
+    assert_eq!(model["api"], "openai-completions", "{model}");
+    assert_eq!(model["context_window"], 32768, "{model}");
+    assert_eq!(model["max_tokens"], 4096, "{model}");
+
+    // OpenClaw declares no model `api`, so none is sent.
+    let text = include_str!("../../../examples/openclaw.yaml");
+    let openclaw = nemoclaw_sdk::config::Document::parse(text.as_bytes()).unwrap();
+    let config =
+        nemoclaw_sdk::fabric_config::for_sandbox(&openclaw, &openclaw.spec.sandboxes[0]).unwrap();
+    assert!(config["models"]["default"].get("api").is_none(), "{config}");
+
+    // Extensions cannot replace a field the deployment sets.
+    let reserved = text.replace(
+        "                maxTokens: 8192\n",
+        "                maxTokens: 8192\n                extensions:\n                  base_url: https://elsewhere.example.com/v1\n",
+    );
+    assert_ne!(reserved, text);
+    let reserved = nemoclaw_sdk::config::Document::parse(reserved.as_bytes()).unwrap();
+    assert!(
+        nemoclaw_sdk::fabric_config::for_sandbox(&reserved, &reserved.spec.sandboxes[0]).is_err()
+    );
+}

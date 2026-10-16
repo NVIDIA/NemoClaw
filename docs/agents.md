@@ -179,7 +179,19 @@ The [managed search tests](../crates/nemoclaw-sdk/tests/web_search.rs) cover pro
 
 ## Pi Model Selection
 
-The [Pi example](../examples/fabric-pi.yaml) selects a model by name; Fabric's Pi adapter resolves gateway-served models without requiring them in Pi's built-in registry.
+The [Pi example](../examples/fabric-pi.yaml) selects a model by name.
+For a model Pi does not ship, which includes every model served through OpenShell's inference gateway, Pi needs the model's API, context window, and output limit:
+
+```yaml
+overrides:
+  model: qwen3:4b
+  maxTokens: 4096
+  extensions:
+    context_window: 32768
+```
+
+NemoClaw sends the provider's API to any adapter whose Fabric descriptor declares a model `api`; set it in `extensions` only to override that.
+`extensions` holds the model fields the selected adapter declares, and Fabric validates them; it cannot set a field the deployment already sets.
 The SDK preserves each named route plus the `default` role.
 
 Model and settings updates reconcile a reconstructible agent-configuration resource for every adapter.

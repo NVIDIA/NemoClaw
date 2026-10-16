@@ -47,6 +47,11 @@ class AgentContract(unittest.TestCase):
                 }
             },
         }
+        if PROFILE == "pi":
+            # Pi needs its wire protocol and limits for a model it does not ship.
+            config["models"]["default"].update(
+                {"api": "openai-completions", "context_window": 32768, "max_tokens": 1024}
+            )
         # Fabric's adapters take the prompt as plain text.
         return config, "Say hello.", "fabric-native-ok", inference
 

@@ -392,6 +392,10 @@ pub struct Overrides {
     #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
     /// Opaque native model settings validated by Fabric's selected model schema.
     pub settings: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
+    /// Model fields the selected adapter declares as extensions, such as Pi's context_window; Fabric validates them.
+    pub extensions: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

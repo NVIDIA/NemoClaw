@@ -39,18 +39,28 @@ pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, Conf
             "model role default conflicts with the selected Fabric default role",
         ));
     }
-    // Fabric rejects a normalized field an adapter doesn't accept, so a base URL
-    // the deployment generates goes only to adapters whose descriptor accepts
-    // one. Adapters outside the bundled catalog keep receiving it.
-    let accepts_base_url = crate::fabric_catalog::FabricCatalog::bundled()
+    // Fabric rejects a model field an adapter doesn't accept, so values the
+    // deployment generates follow the adapter's descriptor. A base URL also goes
+    // to adapters outside the bundled catalog; an API goes only where declared.
+    let catalog = crate::fabric_catalog::FabricCatalog::bundled();
+    let descriptor = catalog
         .adapters
         .iter()
         .find(|adapter| adapter.adapter_id() == harness.kind.as_str())
-        .is_none_or(|adapter| {
-            adapter.descriptor["config"]["accepts"]
-                .as_array()
-                .is_some_and(|fields| fields.iter().any(|field| field == "models.base_url"))
-        });
+        .map(|adapter| &adapter.descriptor);
+    let accepts_base_url = descriptor.is_none_or(|descriptor| {
+        descriptor["config"]["accepts"]
+            .as_array()
+            .is_some_and(|fields| fields.iter().any(|field| field == "models.base_url"))
+    });
+    let declares_api = descriptor.is_some_and(|descriptor| {
+        [
+            &descriptor["model_schema"],
+            &descriptor["extension_schemas"]["model"],
+        ]
+        .iter()
+        .any(|schema| schema["properties"].get("api").is_some())
+    });
     for route in &selection.inference.routes {
         let provider = document.sandbox_route_registration(sandbox, route)?;
         let definition = provider.definition;
@@ -68,8 +78,27 @@ pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, Conf
         if !accepts_base_url {
             projected.as_object_mut().unwrap().remove("base_url");
         }
+        if declares_api {
+            projected["api"] = serde_json::to_value(definition.api.unwrap_or(
+                crate::config::InferenceApi::for_provider(definition.provider),
+            ))
+            .map_err(|_| ConfigError::new("invalid inference API"))?;
+        }
         if let Some(limit) = route.overrides.tuning.max_tokens {
             projected["max_tokens"] = limit.into();
+        }
+        // Authored extensions may set an API explicitly, but not a field the
+        // deployment owns or already sets.
+        for (field, value) in route.overrides.extensions.iter().flatten() {
+            let owned = ["provider", "model", "base_url", "api_key_env", "settings"]
+                .contains(&field.as_str())
+                || (field != "api" && projected.get(field).is_some());
+            if owned {
+                return Err(ConfigError::new(
+                    "model extensions cannot set a field the deployment sets",
+                ));
+            }
+            projected[field] = value.clone();
         }
         result["models"][&route.name] = projected.clone();
         if route.name == selected.name {
