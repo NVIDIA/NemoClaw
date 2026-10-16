@@ -259,6 +259,19 @@ export class SandboxClient {
     }
   }
 
+  /** Onboarding aborts remove the gateway registration; no sandbox can outlive it. */
+  async cleanupSandboxWhileGatewayRegistered(
+    name: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<void> {
+    validateSandboxName(name);
+    const gatewayName = options.env?.OPENSHELL_GATEWAY ?? "nemoclaw";
+    const gatewayOptions = { ...options, artifactName: options.artifactName ?? "cleanup" };
+    if (await this.hasGatewayForInitialCleanup(gatewayName, gatewayOptions)) {
+      await this.cleanupSandbox(name, options);
+    }
+  }
+
   async cleanupSandbox(name: string, options: ShellProbeRunOptions = {}): Promise<void> {
     validateSandboxName(name);
     const result = await this.openshell(["sandbox", "delete", name], {

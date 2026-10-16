@@ -20,7 +20,8 @@
         "src/lib/actions/installer/deferred-onboarding.test.ts",
         "test/install/install-onboard-yes.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
-        "src/lib/actions/sandbox/destroy-native-home-fallback.test.ts"
+        "src/lib/actions/sandbox/destroy-native-home-fallback.test.ts",
+        "test/e2e/support/e2e-clients-abort-cleanup.test.ts"
       ]
     },
     {

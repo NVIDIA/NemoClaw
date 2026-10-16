@@ -71,7 +71,7 @@ test(
     );
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
       cleanupWhenOpenShellAvailable(host, commandOptions, () =>
-        sandbox.cleanupSandbox(SANDBOX_NAME, commandOptions),
+        sandbox.cleanupSandboxWhileGatewayRegistered(SANDBOX_NAME, commandOptions),
       ),
     );
     cleanup.trackDisposable(`destroy deferred sandbox ${SANDBOX_NAME}`, () =>
