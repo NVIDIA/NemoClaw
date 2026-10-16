@@ -349,7 +349,6 @@ Ollama must listen only on a loopback address.
 NemoClaw observes its model inventory and never installs, stops, or deletes the daemon or model.
 The proxy exposes `openai-completions`; its service contract does not restrict the harness identifier.
 The selected adapter must accept that protocol and model configuration.
-For Pi models absent from its native registry, supply `overrides.settings.model_metadata` as shown in the [Pi example](../examples/fabric-pi.yaml).
 
 Use a Docker image store that records a repository digest for locally built images, as described in the [image build prerequisites](build.md#build-agent-images).
 Build the proxy image from the repository root, explicitly selecting the native host platform (`linux/arm64` below, or `linux/amd64`):
@@ -405,49 +404,31 @@ When retiring the deployment, remove the retained credential volume with [Remove
 
 ## Tune OpenClaw's Primary Route
 
-Set the public model output limit with `maxTokens`; put native model settings in `overrides.settings`.
+Set the public model output limit with `maxTokens`.
 The [tuning example](../examples/inference-tuning.yaml) uses:
 
 ```yaml
 overrides:
   model: example-reasoning-model
   maxTokens: 8192
-  settings:
-    model_metadata:
-      contextWindow: 65536
-      reasoning: true
-    reasoning_effort: high
 ```
 
-The SDK forwards `settings` unchanged into the public Fabric model configuration.
+The pinned OpenClaw adapter takes no native model settings, so its routes leave `overrides.settings` unset.
+For adapters that take them, the SDK forwards `settings` unchanged into the public Fabric model configuration, keeping nested null values intact.
 The selected adapter's model schema and implementation own the meanings, accepted values, and defaults.
 These settings do not resize a managed inference server; configure that service's limits separately.
 The SDK does not infer native support from an adapter name or from accepting the YAML structure.
 
-The managed Ollama examples set both the service's `serving.contextTokens` and the route's `overrides.settings.model_metadata.contextWindow` to `32768`.
+The managed Ollama examples set the service's `serving.contextTokens` to `32768`.
 That suits OpenClaw; [Hermes needs at least `64000`](#size-the-context-for-hermes).
-An operator-reported prompt used 19,947 tokens in one setup, before allowing space for a reply.
-Keep the two limits aligned and size the model, KV cache, and GPU memory for the selected context.
-
-For an OpenClaw route to managed vLLM or Ollama, plan and apply compare the smaller of the service context and the effective route context window with `20000` plus the effective reply allowance.
-At the pinned adapter revision, omitted route context defaults to `32768`; `overrides.settings.model_metadata.contextWindow` replaces that default.
-The reply allowance defaults to `4096`; `overrides.maxTokens` replaces that default, and `overrides.settings.model_metadata.maxTokens` takes precedence over both.
-A smaller available context produces a budget warning; explicit token metadata that cannot be assessed instead produces a warning without substituting defaults.
-The `20000`-token prompt allowance is an estimate from the report; longer prompts and conversations need more.
-Plan and apply also warn whenever the effective route context window exceeds the managed service's `serving.contextTokens`, even when the initial prompt and reply allowance fit.
-For example, a service context of `24576` with the default route window of `32768` can permit longer conversations to exceed the server limit.
-Set `overrides.settings.model_metadata.contextWindow` no higher than the service context, or increase the service context and size memory for it.
-This mismatch warning can appear alongside the budget warning, or alongside the cannot-assess warning when the route window is valid but the reply allowance is not.
-The advisories appear in text output and the JSON result's `warnings` field; they neither reject the configuration nor measure the current prompt or available memory.
-These budgets do not qualify a model, GPU, or deployment path.
-
-Pi's native model metadata likewise belongs in `overrides.settings.model_metadata`; see the [Pi example](../examples/fabric-pi.yaml).
-Nested null values remain intact in opaque native settings.
+An operator-reported OpenClaw prompt used 19,947 tokens in one setup, before allowing space for a reply.
+Size the model, KV cache, and GPU memory for the selected context.
+The OpenClaw adapter owns how it uses the context window; NemoClaw does not assess an OpenClaw route's context budget.
 
 ## Size the Context for Hermes
 
 The pinned Hermes Agent requires a model context window of at least 64,000 tokens.
-It reads the window from the model server; route settings such as `overrides.settings.model_metadata` do not change it.
+It reads the window from the model server; route settings do not change it.
 For a Hermes route to managed vLLM or Ollama, set `serving.contextTokens` between `64000` and the schema maximum, `65536`, and choose a model that supports that context.
 The models in the managed Ollama examples and the [Spark vLLM example](../examples/spark/vllm.yaml), `qwen3:0.6b` and `Qwen/Qwen3-4B`, have 40,960-token native context windows and cannot serve Hermes.
 In one operator test, Hermes answered a request through cluster vLLM serving `Qwen/Qwen3-4B-Instruct-2507` with `serving.contextTokens: 65536`; that test does not qualify the model.

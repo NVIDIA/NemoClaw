@@ -45,8 +45,7 @@ Use the owning guide for the selected credential type:
 | External inference key, including Hermes provider authentication | Caller resolves the reference; OpenShell retains the installed value for routing; destroy removes the provider registration, not the upstream account/key | [Inference authentication](inference.md#authenticate-hermes-through-the-provider) |
 | Generated managed vLLM key | Private file in a separate retained credential volume, available to runtime root and engine administrators; recreation reuses it; retiring the container does not erase the key | [Managed service authentication](inference.md#authenticate-a-managed-vllm-service) |
 | Generated external-Ollama proxy key | Private credential volume, available to proxy root and engine administrators; retained across destroy/recreation and never forwarded to Ollama | [Ollama proxy](inference.md#use-external-ollama-through-a-managed-proxy) |
-| Brave or Tavily search key | Caller supplies the value; OpenShell holds it and replaces the agent's placeholder; destroy removes managed registrations but does not revoke the upstream key | [Brave web search](agents.md#brave-web-search), [Tavily web search](agents.md#tavily-web-search) |
-| Native OpenClaw/local Hermes interface tokens | Sandbox-user-readable native files; retained across process restarts, deleted with sandbox data; replace compromised credentials through a fresh deployment | [Agent interfaces](interfaces.md) |
+| Brave or Tavily search key | Caller supplies the value; OpenShell holds it and replaces the agent's placeholder; destroy removes managed registrations but does not revoke the upstream key | [Web search](agents.md#web-search) |
 
 Removing a caller's environment variable does not revoke an upstream key or erase a credential retained by a gateway.
 Unchanged apply does not automatically detect changed values behind the same reference.
@@ -96,7 +95,7 @@ Those layers need their own corporate-CA procedure ([#12643](https://github.com/
 ## Retained Data and Telemetry
 
 Read [state and retention](state.md) before deleting a deployment or disposing of its storage.
-For tracing, review the [existing collector requirement](agents.md#openclaw-tracing) and the collector operator's data access and retention policy.
+For tracing, review [Hermes Relay tracing](agents.md#hermes-relay-tracing) and, for any collector, its operator's data access and retention policy.
 Before enabling export, identify who can read the collector's stored data and how long it is retained.
 The current integration selects an existing collector; it does not provision or manage that retention policy.
 Experimental [Hermes Relay tracing](agents.md#hermes-relay-tracing) instead writes local sandbox artifacts without adding a collector or egress rule.

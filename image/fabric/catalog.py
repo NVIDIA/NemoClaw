@@ -90,7 +90,9 @@ def main():
     parser.add_argument("--source-sha256")
     parser.add_argument("--provenance", type=Path)
     parser.add_argument("--installed", action="store_true")
-    parser.add_argument("--adapter", action="append", default=[], help="bundled snapshot: an adapter ID to include")
+    parser.add_argument(
+        "--adapter", action="append", default=[], help="bundled snapshot: an adapter ID to include"
+    )
     parser.add_argument("--adapters", type=Path, default=ADAPTERS)
     parser.add_argument("--runtime-manifest", type=Path, default=RUNTIME_MANIFEST)
     parser.add_argument("--output", type=Path)
@@ -106,7 +108,12 @@ def main():
     if args.installed == bool(args.adapter):
         parser.error("provide either --installed or at least one --adapter")
     catalog = (
-        installed(args.revision, args.source_sha256, adapters=args.adapters, runtime_manifest=args.runtime_manifest)
+        installed(
+            args.revision,
+            args.source_sha256,
+            adapters=args.adapters,
+            runtime_manifest=args.runtime_manifest,
+        )
         if args.installed
         else snapshot(args.revision, args.source_sha256, args.adapter)
     )

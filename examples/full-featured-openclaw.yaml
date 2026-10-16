@@ -4,8 +4,8 @@
 
 # Broad compatible feature example, not an all-fields template or a live-qualified deployment.
 # Replace the UID, image placeholders, SSH alias, addresses, and model settings for your hosts.
-# Requires local Docker/OpenShell, a compatible remote NVIDIA GPU, an existing proxy and OTLP collector,
-# and BRAVE_API_KEY on the applying host. Apply provisions resources and checks readiness without inference.
+# Requires local Docker/OpenShell, a compatible remote NVIDIA GPU, and an existing proxy.
+# Apply provisions resources and checks readiness without inference.
 # See docs/configuration-references.md#combine-supported-features for alternatives and limits.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
@@ -69,12 +69,6 @@ spec:
       provider: openai
       api: openai-completions
       serviceRef: nemotron
-  integrations:
-    search:
-      kind: webSearch
-      provider: brave
-      credential:
-        env: BRAVE_API_KEY
   sandboxes:
     - name: researcher
       image:
@@ -82,7 +76,7 @@ spec:
         ref:
           nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
-        # Explicit policy replaces the tier preset. Search and tracing add their own reserved rules.
+        # Explicit policy replaces the tier preset.
         policy:
           explicit:
             version: 1
@@ -110,27 +104,9 @@ spec:
                           path: /docs/**
                 binaries:
                   - path: /usr/local/bin/node
-              tracing:
-                name: tracing
-                endpoints:
-                  - host: host.openshell.internal
-                    port: 4318
-                    protocol: rest
-                    enforcement: enforce
-                    rules:
-                      - allow:
-                          method: POST
-                          path: /v1/traces
-                    allowed_ips:
-                      - 10.0.0.0/8
-                      - 172.16.0.0/12
-                      - 192.168.0.0/16
-                binaries:
-                  - path: /usr/local/bin/node
       harnessRef: assistant
       agent:
         name: researcher
-        integrationRefs: [search]
         inference:
           routes:
             - name: primary
@@ -144,7 +120,7 @@ spec:
         ref:
           nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
-        # Explicit policy replaces the tier preset. Search and tracing add their own reserved rules.
+        # Explicit policy replaces the tier preset.
         policy:
           explicit:
             version: 1
@@ -172,27 +148,9 @@ spec:
                           path: /docs/**
                 binaries:
                   - path: /usr/local/bin/node
-              tracing:
-                name: tracing
-                endpoints:
-                  - host: host.openshell.internal
-                    port: 4318
-                    protocol: rest
-                    enforcement: enforce
-                    rules:
-                      - allow:
-                          method: POST
-                          path: /v1/traces
-                    allowed_ips:
-                      - 10.0.0.0/8
-                      - 172.16.0.0/12
-                      - 192.168.0.0/16
-                binaries:
-                  - path: /usr/local/bin/node
       harnessRef: assistant
       agent:
         name: writer
-        integrationRefs: [search]
         inference:
           routes:
             - name: primary
@@ -206,7 +164,7 @@ spec:
         ref:
           nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
-        # Explicit policy replaces the tier preset. Search and tracing add their own reserved rules.
+        # Explicit policy replaces the tier preset.
         policy:
           explicit:
             version: 1
@@ -232,23 +190,6 @@ spec:
                       - allow:
                           method: GET
                           path: /docs/**
-                binaries:
-                  - path: /usr/local/bin/node
-              tracing:
-                name: tracing
-                endpoints:
-                  - host: host.openshell.internal
-                    port: 4318
-                    protocol: rest
-                    enforcement: enforce
-                    rules:
-                      - allow:
-                          method: POST
-                          path: /v1/traces
-                    allowed_ips:
-                      - 10.0.0.0/8
-                      - 172.16.0.0/12
-                      - 192.168.0.0/16
                 binaries:
                   - path: /usr/local/bin/node
       harnessRef: assistant

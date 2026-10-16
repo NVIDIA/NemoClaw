@@ -26,7 +26,7 @@ The evaluation steps below create a separate deployment; they do not provide an 
 | Snapshot, restore, upload/download, or transfer history | No v1 equivalent yet ([#12639](https://github.com/NVIDIA/NemoClaw/issues/12639)); see [agent-data preservation](state.md#configuration-export-and-agent-data) |
 | Manage messaging, MCP servers, or arbitrary plugins | Messaging: [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037); MCP servers: [#12137](https://github.com/NVIDIA/NemoClaw/issues/12137); see [additional agent integrations](agents.md#additional-agent-integrations) |
 | Provision a model router, managed NIM/llama.cpp, or distributed inference | Model Router and llama.cpp: [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035); distributed inference: [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641); managed NIM: [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649) |
-| Install a telemetry collector or reuse Deep Agents trace-export setup | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144); [OpenClaw tracing](agents.md#openclaw-tracing) selects an existing collector |
+| Install a telemetry collector or reuse Deep Agents trace-export setup | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144); [Hermes Relay tracing](agents.md#hermes-relay-tracing) writes trace artifacts in the sandbox |
 
 ## Keep Deployment Identities Separate
 

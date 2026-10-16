@@ -37,7 +37,7 @@ These guides describe the v1 development branch.
 | Select inference APIs, OpenClaw limits, and Hermes authentication | [Inference configuration](inference.md) |
 | Configure and access native dashboards | [Agent interfaces](interfaces.md) |
 | Choose an agent and access its native runtime | [Agent runtimes](agents.md) |
-| Enable tracing or selected-agent web search | [OpenClaw OTLP](agents.md#openclaw-tracing), experimental [Hermes Relay](agents.md#hermes-relay-tracing), and [Brave search](agents.md#brave-web-search) |
+| Enable tracing or selected-agent web search | experimental [Hermes Relay](agents.md#hermes-relay-tracing) and [web search](agents.md#web-search) |
 | Choose a public model for managed vLLM | [Select a managed model](models.md) |
 | Package model-specific preparation | [Inline model recipes](recipes.md) |
 | Place inference on an SSH-selected Docker engine | [Configure an SSH model service](remote-service.md) |

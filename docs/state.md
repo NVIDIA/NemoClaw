@@ -33,15 +33,12 @@ Use authenticated [native access](interfaces.md) for the selected deployment.
 
 | Agent data | Location and lifetime |
 |---|---|
-| OpenClaw configuration and state | `/sandbox/.openclaw`; includes `openclaw.json` and, when a dashboard is declared, `interface-token` |
-| Declared OpenClaw agent’s working files | `/sandbox/workspaces/<agent-name>` |
-| Hermes service mode API and agent state | `/sandbox/.hermes`; includes the API `interface-token` |
-| Hermes service mode dashboard and browser-chat state | `/sandbox/.hermes/profiles/dashboard-home`; separate from the API conversation |
-| Hermes Relay traces | `/sandbox/artifacts/relay`; per-session event/trajectory files; deleted with the sandbox |
-| Hermes session mode home | `.fabric/hermes/runtimes/<runtime-id>` under the configured Fabric artifact root; distinct from the local Hermes API/dashboard homes |
+| Agent working files | `/sandbox/workspace`, the Fabric environment workspace NemoClaw configures |
+| Agent artifacts | `/sandbox/artifacts`; Hermes Relay traces go under `relay/`; deleted with the sandbox |
+| Harness configuration, history, and caches | Owned by the selected Fabric adapter, under its own home or temporary directories; see the adapter's documentation |
 | Pi conversation | Held in the running Pi process; switching declared choices preserves it, while applying configuration changes or restarting the runtime loses it |
 
-The [OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw) and [interface guide](interfaces.md) define these locations.
+NemoClaw sets the workspace and artifact locations in the agent's Fabric configuration; the [Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python) define the rest.
 Agent state can survive a process restart while its files remain; deleting the sandbox deletes its files.
 Each declared agent runs in its own OpenShell sandbox; workspace directories do not further isolate processes within that sandbox.
 File locations for the other harnesses are tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
