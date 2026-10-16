@@ -83,6 +83,377 @@ describe.skipIf(process.platform === "win32")("Hermes native local startup refre
     );
   }
 
+  function managedGuard(script: string, candidate = "", reference = issued("v7")) {
+    const wrapper = String.raw`
+import contextlib, hashlib, importlib.util, io, os, sys
+source, python_root, home, strict, state = sys.argv[1:]
+sys.path.insert(0, python_root)
+spec = importlib.util.spec_from_file_location("hermes_startup_write_fixture", source)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+module._managed_nonroot_reconciliation_is_allowed = lambda: True
+module._sandbox_identity = lambda: (os.geteuid(), os.getegid())
+`;
+    return spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        wrapper + script,
+        RUNTIME_CONFIG_GUARD,
+        gatewayConfigStubRoot(fixture.root),
+        fixture.hermesDir,
+        fixture.hashPath,
+        fixture.statePath,
+      ],
+      {
+        encoding: "utf8",
+        input: candidate,
+        timeout: 10_000,
+        env: { PATH: process.env.PATH, NEMOCLAW_LOCAL_INFERENCE_TOKEN: reference },
+      },
+    );
+  }
+
+  function compatStartup(reference = issued("v7")) {
+    return managedGuard(
+      `with contextlib.redirect_stdout(io.StringIO()):
+    module.ensure_api_key(home, strict, "compat")
+    module.provider_placeholders(home, strict, "compat", None, None, True)
+    module.refresh_hashes(home, strict, "compat")
+`,
+      "",
+      reference,
+    );
+  }
+
+  function managedWrite(candidate: string, injection = "") {
+    return managedGuard(
+      injection +
+        `with open(os.path.join(home, "config.yaml"), "rb") as stream:
+    expected = hashlib.sha256(stream.read()).hexdigest()
+module.write_config_transaction(home, strict, state, expected, sys.stdin.buffer.read())
+`,
+      candidate,
+    );
+  }
+
+  function expectCompatStartup(reference = issued("v7")): void {
+    const result = compatStartup(reference);
+    expect(result.status, result.stderr).toBe(0);
+  }
+
+  function prepareMutableConfig(): void {
+    persistConfig();
+    fs.chmodSync(fixture.hermesDir, 0o700);
+  }
+
+  const startupWitness = () => `${fixture.hermesDir}/.native-local-startup-config`;
+
+  function changedModelCandidate(reference = issued("v7")): string {
+    applyHermesManagedRoute(config, {
+      ...route,
+      model: "changed-model",
+      nativeCredentialHandle: reference,
+    });
+    return yaml.dump(config);
+  }
+
+  it.each([
+    {
+      name: "initial template",
+      prepare: () => prepareMutableConfig(),
+      start: () => expectCompatStartup(),
+      reference: issued("v7"),
+    },
+    {
+      name: "previous issued reference",
+      prepare: () => {
+        applyHermesManagedRoute(config, { ...route, nativeCredentialHandle: issued("v6") });
+        prepareMutableConfig();
+      },
+      start: () => expectCompatStartup(),
+      reference: issued("v7"),
+    },
+    {
+      name: "repeated fresh entrypoints before the first host write",
+      prepare: () => prepareMutableConfig(),
+      start: () => {
+        expectCompatStartup();
+        const originalWitness = fs.readFileSync(startupWitness());
+        expectCompatStartup(issued(`s${"a".repeat(64)}`));
+        expect(fs.readFileSync(startupWitness())).toEqual(originalWitness);
+      },
+      reference: issued(`s${"a".repeat(64)}`),
+    },
+    {
+      name: "aliased unrelated mappings across two fresh rotations",
+      prepare: () => {
+        config.providers.user = config.providers[route.upstreamProvider];
+        config.mcp_servers = { example: config.model };
+        prepareMutableConfig();
+      },
+      start: () => {
+        expectCompatStartup();
+        expectCompatStartup(issued("v8"));
+      },
+      reference: issued("v8"),
+    },
+    {
+      name: "existing API bearer key",
+      prepare: () => {
+        fs.appendFileSync(fixture.envPath, `API_SERVER_KEY=${"a".repeat(64)}\n`);
+        prepareMutableConfig();
+      },
+      start: () => expectCompatStartup(),
+      reference: issued("v7"),
+    },
+    {
+      name: "fresh entrypoint after a completed host write",
+      prepare: () => prepareMutableConfig(),
+      start: () => {
+        expectCompatStartup();
+        const first = managedWrite(changedModelCandidate());
+        expect(first.status, first.stderr).toBe(0);
+        const trustedConfig = fs.readFileSync(fixture.configPath);
+        expectCompatStartup(issued("v8"));
+        expect(fs.readFileSync(startupWitness())).toEqual(trustedConfig);
+      },
+      reference: issued("v8"),
+    },
+  ])(
+    "allows an ordinary model write after compat startup: $name",
+    ({ prepare, start, reference }) => {
+      prepare();
+      start();
+      const startupEnv = fs.readFileSync(fixture.envPath);
+
+      const result = managedWrite(changedModelCandidate(reference));
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(yaml.load(fs.readFileSync(fixture.configPath, "utf8"))).toEqual(config);
+      expect(fs.readFileSync(fixture.envPath)).toEqual(startupEnv);
+      expect(strictHashIsValid(fixture)).toBe(true);
+      expect(fs.readFileSync(fixture.hashPath, "utf8")).toBe(
+        fs.readFileSync(fixture.compatHashPath, "utf8"),
+      );
+      expect(fs.existsSync(fixture.statePath)).toBe(false);
+      expect(fs.existsSync(`${fixture.root}/hermes-config-mutation.lock`)).toBe(false);
+      expect(result.stdout + result.stderr).not.toContain(reference);
+      expect(fs.existsSync(startupWitness())).toBe(false);
+    },
+  );
+
+  function protectedInputs(): Buffer[] {
+    return [fixture.configPath, fixture.envPath, fixture.compatHashPath, fixture.hashPath].map(
+      (pathname) => fs.readFileSync(pathname),
+    );
+  }
+
+  it.each([
+    {
+      name: "unrelated config change with matching host and compatibility digests",
+      mutate: () => fs.appendFileSync(fixture.configPath, "unrelated_setting: untrusted\n"),
+    },
+    {
+      name: "unrelated env change with matching compatibility digest",
+      mutate: () => fs.appendFileSync(fixture.envPath, "SAFE_SETTING=untrusted\n"),
+    },
+    {
+      name: "missing witness",
+      mutate: () => fs.unlinkSync(startupWitness()),
+    },
+    {
+      name: "malformed witness",
+      mutate: () => fs.writeFileSync(startupWitness(), "[\n"),
+    },
+    {
+      name: "witness with a different strict digest",
+      mutate: () => fs.appendFileSync(startupWitness(), "\n"),
+    },
+    {
+      name: "symlinked witness",
+      diagnostic: /OSError:.*Too many levels of symbolic links/,
+      mutate: () => {
+        fs.renameSync(startupWitness(), `${startupWitness()}.target`);
+        fs.symlinkSync(`${startupWitness()}.target`, startupWitness());
+      },
+    },
+    {
+      name: "multiply linked witness",
+      mutate: () => fs.linkSync(startupWitness(), `${startupWitness()}.alias`),
+    },
+  ])(
+    "refuses ordinary model write after compat startup with $name",
+    ({ mutate, diagnostic = /UnsafePathError|SECURITY/ }) => {
+      prepareMutableConfig();
+      expectCompatStartup();
+      mutate();
+      fs.writeFileSync(fixture.compatHashPath, hashInputs(fixture.configPath, fixture.envPath));
+      const before = protectedInputs();
+      const originalDirectoryMode = mode(fixture.hermesDir);
+
+      const result = managedWrite(changedModelCandidate());
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(diagnostic);
+      expect(protectedInputs()).toEqual(before);
+      expect(mode(fixture.hermesDir)).toBe(originalDirectoryMode);
+      expect(fs.existsSync(fixture.statePath)).toBe(false);
+      expect(fs.existsSync(`${fixture.root}/hermes-config-mutation.lock`)).toBe(false);
+      expect(result.stdout + result.stderr).not.toContain(issued("v7"));
+    },
+  );
+
+  it("preserves mutable startup edits without granting them strict host-write authority", () => {
+    fs.appendFileSync(fixture.envPath, `API_SERVER_KEY=${"a".repeat(64)}\n`);
+    prepareMutableConfig();
+    expectCompatStartup();
+    const originalWitness = fs.readFileSync(startupWitness());
+    config = yaml.load(fs.readFileSync(fixture.configPath, "utf8")) as typeof config;
+    config.temperature = 0.2;
+    config.mcp_servers = { example: { command: "example-mcp", args: ["--tuned"] } };
+    fs.writeFileSync(fixture.configPath, yaml.dump(config));
+    fs.writeFileSync(fixture.compatHashPath, hashInputs(fixture.configPath, fixture.envPath));
+
+    expectCompatStartup(issued("v8"));
+
+    const refreshed = yaml.load(fs.readFileSync(fixture.configPath, "utf8")) as typeof config;
+    expect(refreshed.temperature).toBe(0.2);
+    expect(refreshed.mcp_servers).toEqual(config.mcp_servers);
+    expect(refreshed.model.api_key).toBe(issued("v8"));
+    expect(refreshed.providers[route.upstreamProvider].api_key).toBe(issued("v8"));
+    expect(
+      refreshed.custom_providers.find((provider) => provider.name === route.upstreamProvider)
+        ?.api_key,
+    ).toBe(issued("v8"));
+    expect(fs.readFileSync(startupWitness())).toEqual(originalWitness);
+    const before = protectedInputs();
+    const originalDirectoryMode = mode(fixture.hermesDir);
+    const result = managedWrite(changedModelCandidate(issued("v8")));
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "refusing config drift during non-root strict hash reconciliation",
+    );
+    expect(protectedInputs()).toEqual(before);
+    expect(mode(fixture.hermesDir)).toBe(originalDirectoryMode);
+    expect(fs.existsSync(fixture.statePath)).toBe(false);
+    expect(fs.existsSync(`${fixture.root}/hermes-config-mutation.lock`)).toBe(false);
+  });
+
+  it("refuses a startup witness changed after proof and before strict commit", () => {
+    prepareMutableConfig();
+    expectCompatStartup();
+    const before = protectedInputs();
+    const originalDirectoryMode = mode(fixture.hermesDir);
+    const result = managedWrite(
+      changedModelCandidate(),
+      `original_prove = module._prove_native_local_startup_config
+def race_witness(path, *args):
+    proof = original_prove(path, *args)
+    with open(path, "ab") as retained:
+        retained.write(b"\\n")
+    return proof
+module._prove_native_local_startup_config = race_witness
+`,
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "refusing raced Hermes inputs during strict hash reconciliation",
+    );
+    expect(protectedInputs()).toEqual(before);
+    expect(mode(fixture.hermesDir)).toBe(originalDirectoryMode);
+    expect(fs.existsSync(fixture.statePath)).toBe(false);
+    expect(fs.existsSync(`${fixture.root}/hermes-config-mutation.lock`)).toBe(false);
+  });
+
+  it("retains the original strict anchor when startup reconciliation cannot commit", () => {
+    prepareMutableConfig();
+    expectCompatStartup();
+    const before = protectedInputs();
+    const witness = fs.readFileSync(startupWitness());
+    const result = managedWrite(
+      changedModelCandidate(),
+      `def reject_commit(path, text):
+    raise RuntimeError("injected strict commit failure")
+module._write_hash = reject_commit
+`,
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("injected strict commit failure");
+    expect(protectedInputs()).toEqual(before);
+    expect(fs.readFileSync(startupWitness())).toEqual(witness);
+    expect(fs.existsSync(fixture.statePath)).toBe(false);
+    expect(fs.existsSync(`${fixture.root}/hermes-config-mutation.lock`)).toBe(false);
+    const retry = managedWrite(changedModelCandidate());
+    expect(retry.status, retry.stderr).toBe(0);
+    expect(strictHashIsValid(fixture)).toBe(true);
+  });
+
+  it("keeps committed strict trust when stale startup witness cleanup fails", () => {
+    prepareMutableConfig();
+    expectCompatStartup();
+    const result = managedWrite(
+      changedModelCandidate(),
+      `original_unlink = module.os.unlink
+def reject_witness_cleanup(path, *args, **kwargs):
+    if path == ".native-local-startup-config":
+        raise PermissionError("injected witness cleanup failure")
+    return original_unlink(path, *args, **kwargs)
+module.os.unlink = reject_witness_cleanup
+`,
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toContain(
+      "Retained stale native local startup witness after strict commit",
+    );
+    expect(yaml.load(fs.readFileSync(fixture.configPath, "utf8"))).toEqual(config);
+    expect(strictHashIsValid(fixture)).toBe(true);
+    expect(fs.existsSync(startupWitness())).toBe(true);
+    expect(result.stdout + result.stderr).not.toContain(issued("v7"));
+    const retry = managedWrite(changedModelCandidate());
+    expect(retry.status, retry.stderr).toBe(0);
+    expect(strictHashIsValid(fixture)).toBe(true);
+    const currentBaseline = fs.readFileSync(fixture.configPath);
+    expectCompatStartup(issued("v8"));
+    expect(fs.readFileSync(startupWitness())).toEqual(currentBaseline);
+    const rotated = managedWrite(changedModelCandidate(issued("v8")));
+    expect(rotated.status, rotated.stderr).toBe(0);
+    expect(strictHashIsValid(fixture)).toBe(true);
+    expect(fs.existsSync(startupWitness())).toBe(false);
+    expect(fs.existsSync(fixture.statePath)).toBe(false);
+    expect(fs.existsSync(`${fixture.root}/hermes-config-mutation.lock`)).toBe(false);
+  });
+
+  it("rolls a failed model write back to the authenticated startup configuration", () => {
+    prepareMutableConfig();
+    expectCompatStartup();
+    const startupConfig = fs.readFileSync(fixture.configPath);
+    const startupEnv = fs.readFileSync(fixture.envPath);
+    const result = managedWrite(
+      changedModelCandidate(),
+      `import json
+original_replace = module._atomic_replace
+fail_write = [True]
+def reject_model_write(path, data, **kwargs):
+    if path == os.path.join(home, "config.yaml") and os.path.exists(state) and json.load(open(state)).get("phase") == "config-write-prepared" and fail_write[0]:
+        fail_write[0] = False
+        raise RuntimeError("injected model write failure")
+    return original_replace(path, data, **kwargs)
+module._atomic_replace = reject_model_write
+`,
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("injected model write failure");
+    expect(fs.readFileSync(fixture.configPath)).toEqual(startupConfig);
+    expect(fs.readFileSync(fixture.envPath)).toEqual(startupEnv);
+    expect(strictHashIsValid(fixture)).toBe(true);
+    expect(fs.readFileSync(fixture.hashPath)).toEqual(fs.readFileSync(fixture.compatHashPath));
+    expect(fs.existsSync(fixture.statePath)).toBe(false);
+    expect(fs.existsSync(`${fixture.root}/hermes-config-mutation.lock`)).toBe(false);
+  });
+
   it.each(["v7", "v8", `s${"a".repeat(64)}`])(
     "materializes %s at fresh startup with schema and integrity validation",
     (scope) => {
