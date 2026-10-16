@@ -649,3 +649,22 @@ describe("formatInferenceRouteDriftForDisplay", () => {
     });
   });
 });
+
+it.each([
+  ["openclaw", true, "https://inference.local/v1"],
+  ["hermes", true, "https://inference.local/v1"],
+  ["pi", true, "https://inference.local/v1"],
+  ["langchain-deepagents-code", false, "https://inference.local/v1"],
+  ["langchain-deepagents-code", true, "http://host.openshell.internal:8000/v1"],
+] as const)("routes %s with native attachment %s to %s (#13197)", (agent, attached, expected) => {
+  expect(
+    getSandboxInferenceConfig(
+      "fixture-model",
+      "compatible-endpoint",
+      "openai-completions",
+      attached,
+      "http://host.openshell.internal:8000/v1",
+      agent,
+    ).inferenceBaseUrl,
+  ).toBe(expected);
+});

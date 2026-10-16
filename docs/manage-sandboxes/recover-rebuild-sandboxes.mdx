@@ -197,7 +197,7 @@ This check is stricter than the HTTP 200–499 reachability diagnostic used by o
 </AgentOnly>
 <AgentOnly variant="deepagents">
 Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
-For retained legacy, custom, and local shared routes, the models probe must return HTTP 2xx, except that a legacy `openrouter-api` route can return HTTP 404 for `GET /v1/models` when the model request succeeds. NVIDIA Endpoints and supported fixed hosted selections instead verify the recorded native attachment and request the model through its native endpoint.
+For new Deep Agents Code standalone local selections, NemoClaw verifies the recorded sandbox-attached provider and requests the model through its qualified host-local endpoint. Older Deep Agents Code standalone local shared routes without an attachment stop before resume or rebuild; back up and recreate the sandbox with `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NVIDIA NIM retains its shared route and does not require a native attachment to resume or rebuild. For retained legacy and custom shared routes, the models probe must return HTTP 2xx, except that a legacy `openrouter-api` route can return HTTP 404 for `GET /v1/models` when the model request succeeds. NVIDIA Endpoints and supported fixed hosted selections instead verify the recorded native attachment and request the model through its native endpoint.
 A failed request rejects launch readiness and identifies the inference request as the failed check.
 </AgentOnly>
 <AgentOnly variant="openclaw">

@@ -32,7 +32,15 @@ Do not expose the port to your LAN or the internet.
 
 An authenticated fixed profile publishes the configured host port on exactly two host addresses: `127.0.0.1` and the private IPv4 gateway of the `openshell-docker` bridge. The container continues to listen on its recipe-owned internal port `8000`.
 It never publishes that host port on `0.0.0.0` or `::`.
-The provider route remains `https://inference.local` inside the sandbox, and OpenShell reaches the server through the private bridge binding.
+OpenShell reaches the server through the private bridge binding.
+<AgentOnly variant="openclaw,hermes">
+The provider route remains `https://inference.local` inside the sandbox.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+New Deep Agents Code vLLM selections use the recorded local endpoint through a sandbox-attached OpenShell provider.
+OpenShell supplies the credential at egress; the sandbox receives only a credential reference.
+Refer to [How Inference Routing Works](../about-inference-routing) for qualification and existing-sandbox boundaries.
+</AgentOnly>
 The managed Muse Glimmer profile uses the same bearer-protected listener and two-address publication boundary.
 
 The qualified two-DGX Spark and two-DGX Station paths use bearer-protected `/v1` routes and Docker host networking on both runtime containers; network isolation remains required for other endpoints and distributed traffic.
@@ -585,6 +593,7 @@ On DGX Station, accepting the installer Express prompt keeps model selection aut
 A new single-Station installation uses the catalog default, Nemotron 3.5 Super VL NVFP4.
 A trusted reciprocal pair selects distributed Ultra, and an existing legacy single-Station Ultra workload retains Ultra.
 An explicit `NEMOCLAW_VLLM_MODEL` remains authoritative.
+An explicit Super VL selection skips pair discovery; an explicit peer retains the Ultra path.
 Refer to [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for pair qualification, lifecycle receipts, runtime topology, and network controls.
 
 The single-Station Super VL recipe configures a 49,152-token context window, one concurrent sequence, an 8,192-token batch limit, 0.85 GPU-memory utilization, and three-token MTP speculative decoding.

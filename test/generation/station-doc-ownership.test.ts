@@ -135,11 +135,9 @@ describe("DGX Station documentation ownership", () => {
       "selects `nemotron-3-ultra-550b-a55b` for distributed serving",
     );
     expect(dualStationVllmSetup).toContain(
-      "If no trusted pair qualifies, a new installation uses the catalog's single-Station default, Nemotron 3.5 Super VL NVFP4.",
+      "catalog's single-Station default, Nemotron 3.5 Super VL NVFP4",
     );
-    expect(dualStationVllmSetup).toContain(
-      "An existing legacy single-Station Ultra workload retains Ultra instead of switching models.",
-    );
+    expect(dualStationVllmSetup).toContain("legacy single-Station Ultra workload retains Ultra");
     expect(dualStationVllmSetup).toContain(
       "preparation binds the preparing non-root account's UID",
     );

@@ -146,6 +146,28 @@ async function setup(port = 19260, dockerHost?: string, captureAuthority = false
   };
 }
 
+async function setupNativeLocalRecovery() {
+  const h = await setup();
+  const { nativeLocalIdentity } = await import("../../../inference/native-local/contract");
+  const { setNativeLocalProviderAuthority } =
+    await import("../../../state/registry/native-local-provider-authority");
+  const binding = {
+    provider: "vllm-local",
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "sentinel",
+    gatewayName: h.route.gatewayName,
+    sandboxName: "alpha",
+  } as const;
+  const receipt = {
+    ...binding,
+    ...nativeLocalIdentity(binding),
+    schemaVersion: 1 as const,
+    providerId: "owned-native-provider",
+  };
+  return { ...h, receipt, recordAuthority: () => setNativeLocalProviderAuthority(receipt) };
+}
+
 async function setupDestroy(port = 19260) {
   const h = await setup(port);
   const preflight = await import("../destroy-preflight");
@@ -486,6 +508,41 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     });
     const before = h.snapshot();
     expect(h.run).toThrow(/sandbox-scoped resources/u);
+    expect(h.snapshot()).toEqual(before);
+  });
+
+  it("preserves attached native local provider ownership during forced recovery (#13197)", async () => {
+    const h = await setupNativeLocalRecovery();
+    expect(
+      h.registry.updateSandbox("alpha", {
+        provider: h.receipt.provider,
+        endpointUrl: h.receipt.endpointUrl,
+        credentialEnv: h.receipt.credentialEnv,
+        nativeLocalProviderAttachment: h.receipt,
+      }),
+    ).toBe(true);
+    const before = h.snapshot();
+
+    expect(() => h.run(true)).toThrow(/native local provider cleanup authority/u);
+    expect(h.snapshot()).toEqual(before);
+  });
+
+  it("preserves independent native local authority during forced recovery (#13197)", async () => {
+    const h = await setupNativeLocalRecovery();
+    h.recordAuthority();
+    const before = h.snapshot();
+
+    expect(() => h.run(true)).toThrow(/native local provider cleanup authority/u);
+    expect(h.snapshot()).toEqual(before);
+  });
+
+  it("preserves native local authority without a reservation during forced recovery (#13197)", async () => {
+    const h = await setupNativeLocalRecovery();
+    h.recordAuthority();
+    h.registry.removeSandboxRouteReservationIfCurrent(h.registry.getSandbox("alpha")!);
+    const before = h.snapshot();
+
+    expect(() => h.run(true)).toThrow(/native local provider cleanup authority/u);
     expect(h.snapshot()).toEqual(before);
   });
 

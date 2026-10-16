@@ -17,6 +17,16 @@ Fixes and regression coverage for those behaviors belong upstream.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
+The DCode Auto-mode check captures bounded, redacted per-thread debug logs before
+failure recovery. Its cleanup removes those logs from the disposable sandbox.
+The authenticated native-local routing scenario uses a serial timeout contract
+for both onboarding calls, rebuild, restart, consumer, credential scan and sibling
+denial. Its catalogue job adds both DCode scenario budgets to the existing
+75-minute routing allowance, for a total of 243 minutes. This preserves the
+inherited suite's overall limit instead of summing every per-test failure guard.
+Manual PR runs use the catalogue from the trusted workflow commit on `main`, so
+a candidate's job-timeout change applies only after it reaches that commit.
+
 On disposable GitHub runners, the `full-e2e` OpenClaw launch segment uses the
 final host user's home at mode `0775` with `umask 0002`. It removes only that
 test sandbox's persistent readiness receipt before the existing probe and two
@@ -2381,7 +2391,22 @@ test, and makes `full-e2e` the source of truth for the hard cold-path contract.
 
 ## DGX Station Express
 
-The explicit `dgx-station-express` target runs the local Station Express installer with cached Ultra weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
+The explicit `dgx-station-express` target runs the local Station Express installer with cached Nemotron 3.5 Super VL weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
+
+## DCode Native Local Inference
+
+The credential-free `inference-routing` job owns the real OpenShell boundary for
+DCode local inference in `live/inference-routing.test.ts`.
+TC-INF-15 rebuilds and restarts the authenticated owner, then runs DCode against
+the recorded endpoint. It checks a bounded credential scan and denies an
+unattached sibling access to that endpoint. TC-INF-16 runs DCode against a
+credentialless endpoint and checks that upstream requests omit authorization.
+Both cases use synthetic credentials and register cleanup before onboarding.
+OpenShell commands use the fixture's explicit gateway environment because the
+child environment does not inherit the active gateway selection.
+Source tests own receipt validation, endpoint selection, configuration, and
+lifecycle handoffs. The live cases own consumer execution, credential
+substitution, and sandbox isolation.
 
 ## Fixed hosted provider qualification
 

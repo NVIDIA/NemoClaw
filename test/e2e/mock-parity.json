@@ -187,6 +187,8 @@
         "test/e2e/fixtures/admin-approval-connect.sh"
       ],
       "fast": [
+        "src/lib/inference/native-local.test.ts",
+        "test/agents/deepagents/langchain-deepagents-code-config.test.ts",
         "nemoclaw/src/shared/openshell-gateway-health-sdk.test.ts",
         "nemoclaw/src/blueprint/runner.test.ts",
         "nemoclaw/src/blueprint/runner-identity.test.ts",

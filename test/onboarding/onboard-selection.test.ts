@@ -3454,7 +3454,7 @@ const nimMod = require(${nimPath});
 nimMod.getNimModelOptions = () => ({ models: [{ name: "nvidia/nemotron-3-nano", image: "fake", minGpuMemoryMB: 8000 }], usableMemoryMB: 16000 });
 nimMod.pullNimImage = () => {};
 nimMod.containerName = () => "nemoclaw-nim-test";
-nimMod.startNimContainerByName = () => "container-123";
+nimMod.startNimContainerByName = () => ({ name: "container-123", id: "a".repeat(64) });
 nimMod.waitForNimHealth = () => true;
 nimMod.isNgcLoggedIn = () => true;
 

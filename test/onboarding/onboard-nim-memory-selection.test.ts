@@ -15,6 +15,9 @@ const credentialsPath = JSON.stringify(
   path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
 );
 const nimPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "nim.ts"));
+const onboardProbesPath = JSON.stringify(
+  path.join(repoRoot, "src", "lib", "inference", "onboard-probes.ts"),
+);
 const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
 const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 const unifiedGpu = JSON.stringify({
@@ -55,7 +58,7 @@ const nimMod = require(${nimPath});
 let selectedNimModel = null;
 nimMod.pullNimImage = (model) => { selectedNimModel = model; };
 nimMod.containerName = () => "nemoclaw-nim-test";
-nimMod.startNimContainerByName = () => "container-123";
+nimMod.startNimContainerByName = () => ({ name: "container-123", id: "a".repeat(64) });
 nimMod.waitForNimHealth = () => true;
 nimMod.isNgcLoggedIn = () => true;
 nimMod.adoptServedModelId = () => "nvidia/nemotron-3-nano";
@@ -90,27 +93,40 @@ reportChildScenario(async () => {
     }
   });
 
-  it("removes the NIM container before selecting cloud inference after a health failure", () => {
+  it("stops the production Local NIM handler before model adoption after a health failure", () => {
     const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-nim-health-fallback-");
     const script = String.raw`
 ${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const nimMod = require(${nimPath});
+const onboardProbes = require(${onboardProbesPath});
 let stoppedContainer = null;
+let adoptedModel = false;
+let validationProbes = 0;
+onboardProbes.probeOpenAiLikeEndpointOptimized = async () => {
+  validationProbes++;
+  throw new Error("unexpected provider validation after failed NIM health check");
+};
 nimMod.pullNimImage = () => {};
 nimMod.containerName = () => "nemoclaw-nim-test";
-nimMod.startNimContainerByName = () => "container-123";
+nimMod.startNimContainerByName = () => ({ name: "container-returned-by-start", id: "b".repeat(64) });
 nimMod.waitForNimHealth = () => false;
-nimMod.stopNimContainerByNameOrThrow = (name) => { stoppedContainer = name; };
+nimMod.stopNimContainerByIdOrThrow = (id) => { stoppedContainer = id; };
+nimMod.adoptServedModelId = () => { adoptedModel = true; return "unexpected-model"; };
 nimMod.isNgcLoggedIn = () => true;
 installPromptQueue(credentials, ["8", "1", "ngc-test"]);
 credentials.ensureApiKey = async () => {};
 runner.runCapture = () => "";
 const { setupNim } = require(${onboardPath});
 reportChildScenario(async () => {
-  const result = await setupNim(${unifiedGpu});
-  return { result, stoppedContainer };
+  let failure = null;
+  try {
+    await setupNim(${unifiedGpu});
+  } catch (error) {
+    failure = String(error);
+  }
+  return { failure, stoppedContainer, adoptedModel, validationProbes };
 });
 `;
 
@@ -122,9 +138,10 @@ reportChildScenario(async () => {
       });
       assert.equal(result.status, 0, result.stderr);
       const payload = JSON.parse(result.stdout.trim());
-      assert.equal(payload.stoppedContainer, "nemoclaw-nim-test");
-      assert.notEqual(payload.result.provider, "vllm-local");
-      assert.equal(payload.result.nimContainer, null);
+      assert.equal(payload.stoppedContainer, "b".repeat(64));
+      assert.match(payload.failure, /Local NVIDIA NIM failed to become healthy/);
+      assert.equal(payload.adoptedModel, false);
+      assert.equal(payload.validationProbes, 0);
     } finally {
       workspace.remove();
     }
@@ -139,10 +156,10 @@ const runner = require(${runnerPath});
 const nimMod = require(${nimPath});
 nimMod.pullNimImage = () => {};
 nimMod.containerName = () => "nemoclaw-nim-test";
-nimMod.startNimContainerByName = () => "nemoclaw-nim-test";
+nimMod.startNimContainerByName = () => ({ name: "nemoclaw-nim-test", id: "c".repeat(64) });
 nimMod.waitForNimHealth = () => false;
-nimMod.stopNimContainerByNameOrThrow = () => {
-  throw new Error("Could not remove NIM container 'nemoclaw-nim-test'. Refusing to continue because it may still own its credentials and port.");
+nimMod.stopNimContainerByIdOrThrow = () => {
+  throw new Error("Could not remove owned NIM container after failed health check.");
 };
 nimMod.isNgcLoggedIn = () => true;
 installPromptQueue(credentials, ["8", "1", "ngc-test"]);
@@ -162,10 +179,7 @@ setupNim(${unifiedGpu}).then(() => {
         env: workspace.environment({ NEMOCLAW_EXPERIMENTAL: "1" }),
       });
       assert.equal(result.status, 1, result.stderr);
-      assert.match(
-        result.stderr,
-        /Refusing to continue because it may still own its credentials and port/,
-      );
+      assert.match(result.stderr, /Could not remove owned NIM container after failed health check/);
       assert.doesNotMatch(result.stderr, /unexpected cloud fallback/);
     } finally {
       workspace.remove();

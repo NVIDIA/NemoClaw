@@ -213,13 +213,19 @@ describe("provider route containment", () => {
     };
 
     expect(
-      guardProviderInferenceRouteSelection(containmentDeps, "nemoclaw-9090", "target-sandbox", {
-        provider: "llama-cpp-local",
-        model: "team/model-alias",
-        endpointUrl: null,
-        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
-        preferredInferenceApi: null,
-      }),
+      guardProviderInferenceRouteSelection(
+        containmentDeps,
+        "nemoclaw-9090",
+        "target-sandbox",
+        false,
+        {
+          provider: "llama-cpp-local",
+          model: "team/model-alias",
+          endpointUrl: null,
+          credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+          preferredInferenceApi: null,
+        },
+      ),
     ).toEqual({
       requiredModel: null,
       requiredEndpointUrl: null,
@@ -539,5 +545,62 @@ describe("provider route containment", () => {
 
     expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("broken-sandbox"));
     expect(calls.setupInference).not.toHaveBeenCalled();
+  });
+});
+
+it.each([undefined, "2026-10-01T00:00:00Z"])(
+  "blocks published legacy DCode resume with timestamp %s before mutation (#13197)",
+  async (createdAt) => {
+    const { deps, calls } = createDeps();
+    deps.getSandboxRegistryEntry = () => ({
+      name: "target-sandbox",
+      agent: "langchain-deepagents-code",
+      provider: "vllm-local",
+      model: "fixture-model",
+      createdAt,
+      endpointUrl: "https://inference.local/v1",
+      gatewayName: "nemoclaw-9090",
+    });
+    const session = createSession();
+    await expect(handleProviderInferenceState(resumeOptions(deps, session))).rejects.toThrow(
+      "legacy shared local inference route",
+    );
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.reserveRoute).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
+  },
+);
+
+it("resumes an owned Local NIM DCode shared route without requiring a native attachment", async () => {
+  const { deps, calls } = createDeps();
+  deps.getSandboxRegistryEntry = () => ({
+    name: "target-sandbox",
+    agent: "langchain-deepagents-code",
+    provider: "vllm-local",
+    model: "fixture-model",
+    endpointUrl: "https://inference.local/v1",
+    gatewayName: "nemoclaw-9090",
+    nimContainer: "nemoclaw-nim-owned",
+  });
+  const session = createSession();
+  session.provider = "vllm-local";
+  session.model = "fixture-model";
+  session.endpointUrl = "https://inference.local/v1";
+  session.nimContainer = "nemoclaw-nim-owned";
+  session.steps.provider_selection.status = "complete";
+
+  const options = resumeOptions(deps, session);
+  options.agent = { name: "langchain-deepagents-code" } as never;
+  options.forceInferenceSetup = true;
+  await expect(handleProviderInferenceState(options)).resolves.toMatchObject({
+    provider: "vllm-local",
+    model: "fixture-model",
+  });
+  expect(calls.error).not.toHaveBeenCalled();
+  expect(calls.setupNim).not.toHaveBeenCalled();
+  expect(calls.setupInference).toHaveBeenCalledOnce();
+  expect(calls.setupInference.mock.calls[0]?.at(-1)).toMatchObject({
+    agentName: "langchain-deepagents-code",
+    localNimSelected: true,
   });
 });
