@@ -1,0 +1,43 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<UserControl x:Class="Nvidia.NemoClaw.Bootstrapper.DownstreamOptions"
+  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Border Margin="0,20,0,0" BorderBrush="#35402B" BorderThickness="1" Padding="15" CornerRadius="5">
+    <Expander x:Name="OptionsExpander" Header="Search and messaging (optional)" Foreground="#F2F4EF" AutomationProperties.AutomationId="DownstreamOptions">
+      <StackPanel Margin="0,15,0,0">
+        <StackPanel x:Name="SearchSection">
+          <CheckBox x:Name="SearchEnabled" Checked="SelectionChanged" Unchecked="SelectionChanged" Content="Enable web search" AutomationProperties.AutomationId="EnableSearch" />
+          <StackPanel x:Name="SearchFields" Visibility="Collapsed" Margin="0,10,0,15">
+            <Label Target="{Binding ElementName=SearchProvider}" Content="Search provider" /><ComboBox x:Name="SearchProvider" SelectionChanged="SearchProviderChanged" AutomationProperties.AutomationId="SearchProvider" />
+            <Label Margin="0,10,0,0" Target="{Binding ElementName=SearchKey}" Content="Search API key" /><PasswordBox x:Name="SearchKey" MaxLength="2048" AutomationProperties.AutomationId="SearchApiKey" />
+            <TextBlock Margin="0,7,0,0" FontSize="12" Foreground="#A8AEA4" TextWrapping="Wrap"><Hyperlink x:Name="SearchHelp" Click="OpenHelp" Foreground="#A9DF54">Get a search API key</Hyperlink></TextBlock>
+          </StackPanel>
+        </StackPanel>
+        <StackPanel x:Name="MessagingSection" Margin="0,8,0,0">
+          <TextBlock Foreground="#A8AEA4" FontSize="12" TextWrapping="Wrap" Text="Connect your own bot. Leave allowed-user IDs empty to require manual pairing." Margin="0,0,0,13" />
+          <CheckBox x:Name="TelegramEnabled" Checked="SelectionChanged" Unchecked="SelectionChanged" Content="Telegram" AutomationProperties.AutomationId="EnableTelegram" />
+          <StackPanel x:Name="TelegramFields" Visibility="Collapsed" Margin="0,10,0,16">
+            <Label Target="{Binding ElementName=TelegramKey}" Content="Telegram bot token" /><PasswordBox x:Name="TelegramKey" MaxLength="2048" AutomationProperties.AutomationId="TelegramBotToken" />
+            <TextBlock Margin="0,7,0,0" FontSize="12" Foreground="#A8AEA4" TextWrapping="Wrap">Create a bot with <Hyperlink NavigateUri="https://t.me/BotFather" Click="OpenHelp" Foreground="#A9DF54">BotFather</Hyperlink>, then paste its token.</TextBlock>
+            <Label Margin="0,10,0,0" Target="{Binding ElementName=TelegramUsers}" Content="Allowed user IDs (optional)" /><TextBox x:Name="TelegramUsers" MaxLength="2048" AutomationProperties.AutomationId="TelegramAllowedUsers" />
+          </StackPanel>
+          <CheckBox x:Name="DiscordEnabled" Checked="SelectionChanged" Unchecked="SelectionChanged" Content="Discord" AutomationProperties.AutomationId="EnableDiscord" Margin="0,8,0,0" />
+          <StackPanel x:Name="DiscordFields" Visibility="Collapsed" Margin="0,10,0,16">
+            <Label Target="{Binding ElementName=DiscordKey}" Content="Discord bot token" /><PasswordBox x:Name="DiscordKey" MaxLength="2048" AutomationProperties.AutomationId="DiscordBotToken" />
+            <TextBlock Margin="0,7,0,0" FontSize="12" Foreground="#A8AEA4" TextWrapping="Wrap">Create an application and bot in the <Hyperlink NavigateUri="https://discord.com/developers/applications" Click="OpenHelp" Foreground="#A9DF54">Discord Developer Portal</Hyperlink>. Enable Message Content Intent.</TextBlock>
+            <Label Margin="0,10,0,0" Target="{Binding ElementName=DiscordUsers}" Content="Allowed user IDs (optional)" /><TextBox x:Name="DiscordUsers" MaxLength="2048" AutomationProperties.AutomationId="DiscordAllowedUsers" />
+          </StackPanel>
+          <CheckBox x:Name="SlackEnabled" Checked="SelectionChanged" Unchecked="SelectionChanged" Content="Slack" AutomationProperties.AutomationId="EnableSlack" Margin="0,8,0,0" />
+          <StackPanel x:Name="SlackFields" Visibility="Collapsed" Margin="0,10,0,0">
+            <Label Target="{Binding ElementName=SlackBotKey}" Content="Slack bot token (xoxb-)" /><PasswordBox x:Name="SlackBotKey" MaxLength="2048" AutomationProperties.AutomationId="SlackBotToken" />
+            <Label Margin="0,10,0,0" Target="{Binding ElementName=SlackAppKey}" Content="Slack app token (xapp-)" /><PasswordBox x:Name="SlackAppKey" MaxLength="2048" AutomationProperties.AutomationId="SlackAppToken" />
+            <TextBlock Margin="0,7,0,0" FontSize="12" Foreground="#A8AEA4" TextWrapping="Wrap">Use your <Hyperlink NavigateUri="https://api.slack.com/apps" Click="OpenHelp" Foreground="#A9DF54">Slack app settings</Hyperlink>. Enable Socket Mode and give the app token connections:write.</TextBlock>
+            <Label Margin="0,10,0,0" Target="{Binding ElementName=SlackUsers}" Content="Allowed member IDs (optional)" /><TextBox x:Name="SlackUsers" MaxLength="2048" AutomationProperties.AutomationId="SlackAllowedUsers" />
+          </StackPanel>
+        </StackPanel>
+        <TextBlock x:Name="HelpError" Visibility="Collapsed" Margin="0,12,0,0" Foreground="#F5C6AD" TextWrapping="Wrap" />
+      </StackPanel>
+    </Expander>
+  </Border>
+</UserControl>
