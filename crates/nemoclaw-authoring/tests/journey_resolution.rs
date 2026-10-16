@@ -75,11 +75,14 @@ fn omitted_optional_sdk_field_stays_absent_even_when_its_scope_is_asked() {
         .ask([JourneyScope::InferenceApi])
         .omit([
             path,
-            "adapter:nvidia.fabric.openclaw:/agent_name",
-            "adapter:nvidia.fabric.openclaw:/cli",
-            "adapter:nvidia.fabric.openclaw:/home",
-            "adapter:nvidia.fabric.openclaw:/native_config",
-            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            "adapter:nvidia.fabric.openclaw:/port_range",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
         ])
         .start(&capabilities)
         .unwrap();
@@ -227,7 +230,7 @@ fn adapter_settings_scope_omit_leaves_absent_optional_settings_unset_for_any_har
     assert!(
         resolution
             .omitted()
-            .contains(&"adapter:nvidia.fabric.openclaw:/cli".to_owned())
+            .contains(&"adapter:nvidia.fabric.openclaw:/openclaw_command".to_owned())
     );
 
     let mut hermes = base.supplied().clone();
@@ -250,7 +253,7 @@ fn adapter_settings_scope_omit_leaves_absent_optional_settings_unset_for_any_har
 
     let resolution = JourneyDefinition::new("express-with-home", base.clone())
         .omit([JourneyScope::ActiveAdapterSettings])
-        .ask(["adapter:nvidia.fabric.openclaw:/home"])
+        .ask(["adapter:nvidia.fabric.openclaw:/agent_id"])
         .start(&capabilities)
         .unwrap()
         .resolve(&capabilities)
@@ -261,7 +264,7 @@ fn adapter_settings_scope_omit_leaves_absent_optional_settings_unset_for_any_har
             .iter()
             .map(|question| question.id())
             .collect::<Vec<_>>(),
-        ["adapter:nvidia.fabric.openclaw:/home"]
+        ["adapter:nvidia.fabric.openclaw:/agent_id"]
     );
 
     assert!(
@@ -1171,11 +1174,11 @@ fn exact_native_guidance_uses_active_fabric_fields_without_asking_the_whole_scop
 }
 
 /// An OpenClaw configuration whose native settings break the adapter's schema:
-/// agent names are lowercase.
+/// startup timeouts must be positive.
 fn invalid_openclaw_settings() -> PartialDocument {
     let mut value: serde_json::Value =
         serde_saphyr::from_str(include_str!("../../../examples/onboarding/openclaw.yaml")).unwrap();
-    value["spec"]["sandboxes"][0]["harness"]["settings"]["agent_name"] = json!("Not A Name");
+    value["spec"]["sandboxes"][0]["harness"]["settings"]["startup_timeout_seconds"] = json!(0);
     PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap()
 }
 
@@ -1185,10 +1188,13 @@ fn invalid_complete_native_settings_cannot_reach_review() {
     let result = JourneyDefinition::new("native-validation", invalid_openclaw_settings())
         .ask([JourneyScope::NativeSettings])
         .omit([
-            "adapter:nvidia.fabric.openclaw:/cli",
-            "adapter:nvidia.fabric.openclaw:/home",
-            "adapter:nvidia.fabric.openclaw:/native_config",
-            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            "adapter:nvidia.fabric.openclaw:/port_range",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
         ])
         .start(&capabilities)
         .unwrap()
@@ -1197,7 +1203,7 @@ fn invalid_complete_native_settings_cannot_reach_review() {
     assert!(
         !result.unverified().is_empty()
             || result
-                .question("adapter:nvidia.fabric.openclaw:/agent_name")
+                .question("adapter:nvidia.fabric.openclaw:/startup_timeout_seconds")
                 .is_some(),
         "invalid native settings must be reported"
     );
@@ -1209,10 +1215,13 @@ fn invalid_native_settings_block_review_without_native_prompt_guidance() {
     let capabilities = Capabilities::available();
     let resolution = JourneyDefinition::new("express-invalid-native", invalid_openclaw_settings())
         .omit([
-            "adapter:nvidia.fabric.openclaw:/cli",
-            "adapter:nvidia.fabric.openclaw:/home",
-            "adapter:nvidia.fabric.openclaw:/native_config",
-            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            "adapter:nvidia.fabric.openclaw:/port_range",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
         ])
         .start(&capabilities)
         .unwrap()
@@ -1223,7 +1232,7 @@ fn invalid_native_settings_block_review_without_native_prompt_guidance() {
     assert!(resolution.materialized_document().is_none());
     assert!(
         resolution
-            .question("adapter:nvidia.fabric.openclaw:/agent_name")
+            .question("adapter:nvidia.fabric.openclaw:/startup_timeout_seconds")
             .is_some()
             || !resolution.unverified().is_empty(),
         "invalid native settings must remain visible without prompt guidance"
@@ -1963,11 +1972,14 @@ fn sparse_journey_visits_each_route_and_keeps_its_model_answers_separate() {
     let mut state = JourneyDefinition::new("routes", base)
         .ask([JourneyScope::RouteModels])
         .omit([
-            "adapter:nvidia.fabric.openclaw:/agent_name",
-            "adapter:nvidia.fabric.openclaw:/cli",
-            "adapter:nvidia.fabric.openclaw:/home",
-            "adapter:nvidia.fabric.openclaw:/native_config",
-            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            "adapter:nvidia.fabric.openclaw:/port_range",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
         ])
         .start(&capabilities)
         .unwrap();
@@ -2119,7 +2131,7 @@ fn referenced_harness_settings_are_owned_by_the_referenced_definition() {
         .ask([JourneyScope::ActiveAdapterSettings])
         .start(&capabilities)
         .unwrap();
-    let field = "adapter:nvidia.fabric.openclaw:/timeout_seconds";
+    let field = "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds";
     assert!(
         state
             .resolve(&capabilities)
@@ -2133,7 +2145,7 @@ fn referenced_harness_settings_are_owned_by_the_referenced_definition() {
     assert_eq!(
         state
             .values()
-            .pointer("/spec/harnesses/assistant/settings/timeout_seconds"),
+            .pointer("/spec/harnesses/assistant/settings/startup_timeout_seconds"),
         Some(&json!(301))
     );
     assert!(
@@ -2185,8 +2197,10 @@ fn referenced_model_settings_are_written_to_the_selected_route() {
     )
     .unwrap();
     document.spec.sandboxes.truncate(1);
-    let base =
-        PartialDocument::from_yaml(serde_json::to_vec(&document).unwrap().as_slice()).unwrap();
+    // nooa is a bundled adapter whose models take native settings.
+    let mut document = serde_json::to_value(&document).unwrap();
+    document["spec"]["harnesses"]["assistant"]["kind"] = json!("nvidia.fabric.nooa");
+    let base = PartialDocument::from_yaml(document.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("referenced-model", base)
         .ask([JourneyScope::RouteModels])
         .ask([JourneyScope::NativeSettings])
@@ -2195,7 +2209,7 @@ fn referenced_model_settings_are_written_to_the_selected_route() {
     state
         .answer(&capabilities, "route:selection", Some(json!("fast")))
         .unwrap();
-    let field = "model:/reasoning_effort";
+    let field = "model:/client_type";
     assert!(
         state
             .resolve(&capabilities)
@@ -2204,13 +2218,13 @@ fn referenced_model_settings_are_written_to_the_selected_route() {
             .is_some()
     );
     state
-        .answer(&capabilities, field, Some(json!("low")))
+        .answer(&capabilities, field, Some(json!("responses")))
         .unwrap();
     assert_eq!(
-        state.values().pointer(
-            "/spec/inferences/smart-and-fast/routes/1/overrides/settings/reasoning_effort"
-        ),
-        Some(&json!("low"))
+        state
+            .values()
+            .pointer("/spec/inferences/smart-and-fast/routes/1/overrides/settings/client_type"),
+        Some(&json!("responses"))
     );
     assert!(
         state
@@ -2311,7 +2325,7 @@ fn absent_optional_adapter_settings_remain_unsupplied_until_answered() {
         .ask([JourneyScope::ActiveAdapterSettings])
         .start(&capabilities)
         .unwrap();
-    let field = "adapter:nvidia.fabric.openclaw:/cli";
+    let field = "adapter:nvidia.fabric.openclaw:/openclaw_command";
     let question = state
         .resolve(&capabilities)
         .unwrap()
@@ -2443,7 +2457,7 @@ fn partial_journey_recomputes_questions_after_answers_and_omissions() {
     );
     assert!(
         questions
-            .question("adapter:nvidia.fabric.openclaw:/cli")
+            .question("adapter:nvidia.fabric.openclaw:/openclaw_command")
             .is_none()
     );
 
@@ -2472,23 +2486,27 @@ fn partial_journey_recomputes_questions_after_answers_and_omissions() {
     assert!(questions.question("/metadata/name").is_none());
     assert!(
         questions
-            .question("adapter:nvidia.fabric.openclaw:/cli")
+            .question("adapter:nvidia.fabric.openclaw:/openclaw_command")
             .is_some()
     );
 
     state
-        .answer(&capabilities, "adapter:nvidia.fabric.openclaw:/cli", None)
+        .answer(
+            &capabilities,
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            None,
+        )
         .unwrap();
     let questions = state.resolve(&capabilities).unwrap();
     assert!(
         questions
-            .question("adapter:nvidia.fabric.openclaw:/cli")
+            .question("adapter:nvidia.fabric.openclaw:/openclaw_command")
             .is_none()
     );
     assert!(
         questions
             .omitted()
-            .contains(&"adapter:nvidia.fabric.openclaw:/cli".to_owned())
+            .contains(&"adapter:nvidia.fabric.openclaw:/openclaw_command".to_owned())
     );
     assert!(questions.assessment().document().is_none());
 }
@@ -2544,11 +2562,14 @@ fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
         "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
     ];
     let definition = JourneyDefinition::new("guided", base).ask(fields).omit([
-        "adapter:nvidia.fabric.openclaw:/agent_name",
-        "adapter:nvidia.fabric.openclaw:/cli",
-        "adapter:nvidia.fabric.openclaw:/home",
-        "adapter:nvidia.fabric.openclaw:/native_config",
-        "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/agent_id",
+        "adapter:nvidia.fabric.openclaw:/channel_config",
+        "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/openclaw_command",
+        "adapter:nvidia.fabric.openclaw:/port_range",
+        "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
     ]);
     let mut state = definition.start(&capabilities).unwrap();
     assert!(
@@ -2638,11 +2659,14 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
     let mut state = JourneyDefinition::new("preset", base)
         .ask([name, preset, api, model, provider_name])
         .omit([
-            "adapter:nvidia.fabric.openclaw:/agent_name",
-            "adapter:nvidia.fabric.openclaw:/cli",
-            "adapter:nvidia.fabric.openclaw:/home",
-            "adapter:nvidia.fabric.openclaw:/native_config",
-            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            "adapter:nvidia.fabric.openclaw:/port_range",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
         ])
         .start(&capabilities)
         .unwrap();
@@ -2990,11 +3014,14 @@ fn optional_sdk_question_can_be_deliberately_omitted() {
     let mut state = JourneyDefinition::new("optional-api", base)
         .ask(["/spec/inferenceProviders/0/api"])
         .omit([
-            "adapter:nvidia.fabric.openclaw:/agent_name",
-            "adapter:nvidia.fabric.openclaw:/cli",
-            "adapter:nvidia.fabric.openclaw:/home",
-            "adapter:nvidia.fabric.openclaw:/native_config",
-            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            "adapter:nvidia.fabric.openclaw:/port_range",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
         ])
         .start(&capabilities)
         .unwrap();
@@ -3049,7 +3076,7 @@ fn switching_harness_reopens_the_active_adapter_without_losing_its_values() {
     state
         .answer(
             &capabilities,
-            "adapter:nvidia.fabric.openclaw:/agent_name",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
             Some(json!("kept-agent")),
         )
         .unwrap();
@@ -3064,7 +3091,7 @@ fn switching_harness_reopens_the_active_adapter_without_losing_its_values() {
         state
             .resolve(&capabilities)
             .unwrap()
-            .question("adapter:nvidia.fabric.hermes:/mode")
+            .question("adapter:nvidia.fabric.hermes:/terminal_timeout")
             .is_some()
     );
     state
@@ -3077,7 +3104,7 @@ fn switching_harness_reopens_the_active_adapter_without_losing_its_values() {
     assert_eq!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/harness/settings/agent_name"),
+            .pointer("/spec/sandboxes/0/harness/settings/agent_id"),
         Some(&json!("kept-agent"))
     );
 }
@@ -3111,14 +3138,14 @@ fn accepted_answers_can_be_revisited_without_losing_other_values() {
     state
         .answer(
             &capabilities,
-            "adapter:nvidia.fabric.openclaw:/agent_name",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
             Some(json!("alpha")),
         )
         .unwrap();
     state
         .answer(
             &capabilities,
-            "adapter:nvidia.fabric.openclaw:/agent_name",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
             Some(json!("beta")),
         )
         .unwrap();
@@ -3130,7 +3157,7 @@ fn accepted_answers_can_be_revisited_without_losing_other_values() {
     assert_eq!(
         state
             .values()
-            .pointer("/spec/sandboxes/0/harness/settings/agent_name"),
+            .pointer("/spec/sandboxes/0/harness/settings/agent_id"),
         Some(&json!("beta"))
     );
 }
@@ -3141,7 +3168,7 @@ fn fabric_invalid_value_reopens_a_question_even_when_sdk_document_is_valid() {
     let mut base: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    base["spec"]["sandboxes"][0]["harness"]["settings"] = json!({"cli": 42});
+    base["spec"]["sandboxes"][0]["harness"]["settings"] = json!({"openclaw_command": 42});
     let base = PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("fabric-invalid", base)
         .start(&capabilities)
@@ -3150,7 +3177,7 @@ fn fabric_invalid_value_reopens_a_question_even_when_sdk_document_is_valid() {
     assert!(resolved.assessment().document().is_some());
     assert_eq!(
         resolved
-            .question("adapter:nvidia.fabric.openclaw:/cli")
+            .question("adapter:nvidia.fabric.openclaw:/openclaw_command")
             .unwrap()
             .reason(),
         JourneyQuestionReason::InvalidSupplied
@@ -3159,7 +3186,7 @@ fn fabric_invalid_value_reopens_a_question_even_when_sdk_document_is_valid() {
     state
         .answer(
             &capabilities,
-            "adapter:nvidia.fabric.openclaw:/cli",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
             Some(json!("openclaw")),
         )
         .unwrap();
@@ -3167,7 +3194,7 @@ fn fabric_invalid_value_reopens_a_question_even_when_sdk_document_is_valid() {
         state
             .resolve(&capabilities)
             .unwrap()
-            .question("adapter:nvidia.fabric.openclaw:/cli")
+            .question("adapter:nvidia.fabric.openclaw:/openclaw_command")
             .is_none()
     );
 }
@@ -3179,11 +3206,14 @@ fn fully_supplied_express_definition_has_no_current_questions() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let definition = JourneyDefinition::new("express", base).omit([
-        "adapter:nvidia.fabric.openclaw:/agent_name",
-        "adapter:nvidia.fabric.openclaw:/cli",
-        "adapter:nvidia.fabric.openclaw:/home",
-        "adapter:nvidia.fabric.openclaw:/native_config",
-        "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/agent_id",
+        "adapter:nvidia.fabric.openclaw:/channel_config",
+        "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/openclaw_command",
+        "adapter:nvidia.fabric.openclaw:/port_range",
+        "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
     ]);
 
     let resolved = definition
@@ -3228,11 +3258,14 @@ fn supplied_template_can_finish_a_guided_journey_through_one_resolver() {
     let definition = JourneyDefinition::new("guided-complete", base)
         .ask(["/metadata/name", "/spec/sandboxes/0/harness/kind"])
         .omit([
-            "adapter:nvidia.fabric.openclaw:/agent_name",
-            "adapter:nvidia.fabric.openclaw:/cli",
-            "adapter:nvidia.fabric.openclaw:/home",
-            "adapter:nvidia.fabric.openclaw:/native_config",
-            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            "adapter:nvidia.fabric.openclaw:/port_range",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
         ]);
     let mut state = definition.start(&capabilities).unwrap();
     assert_eq!(state.resolve(&capabilities).unwrap().questions().len(), 2);
@@ -3354,11 +3387,14 @@ fn external_gateway_choice_reveals_its_required_endpoint() {
     let capabilities = Capabilities::available();
     let mut journey = JourneyDefinition::new("external-gateway", base)
         .omit([
-            "adapter:nvidia.fabric.openclaw:/agent_name",
-            "adapter:nvidia.fabric.openclaw:/cli",
-            "adapter:nvidia.fabric.openclaw:/home",
-            "adapter:nvidia.fabric.openclaw:/native_config",
-            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            "adapter:nvidia.fabric.openclaw:/port_range",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
         ])
         .start(&capabilities)
         .unwrap();
@@ -3549,11 +3585,14 @@ fn switching_gateway_management_drops_fields_from_the_previous_branch() {
     let mut journey = JourneyDefinition::new("switch-gateway", base)
         .ask(["/spec/gateway/runtime/provider", "/spec/gateway/management"])
         .omit([
-            "adapter:nvidia.fabric.openclaw:/agent_name",
-            "adapter:nvidia.fabric.openclaw:/cli",
-            "adapter:nvidia.fabric.openclaw:/home",
-            "adapter:nvidia.fabric.openclaw:/native_config",
-            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            "adapter:nvidia.fabric.openclaw:/port_range",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
         ])
         .start(&capabilities)
         .unwrap();
@@ -3650,24 +3689,29 @@ fn adapter_setting_questions_carry_fabric_descriptions() {
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let capabilities = Capabilities::available();
     let resolution = JourneyDefinition::new("described-settings", base)
-        .ask([
-            "adapter:nvidia.fabric.hermes:/api_mode",
-            "adapter:nvidia.fabric.hermes:/mode",
-        ])
+        .ask(["adapter:nvidia.fabric.hermes:/terminal_timeout"])
         .start(&capabilities)
         .unwrap()
         .resolve(&capabilities)
         .unwrap();
     let described = resolution
-        .question("adapter:nvidia.fabric.hermes:/api_mode")
+        .question("adapter:nvidia.fabric.hermes:/terminal_timeout")
         .expect("described setting");
     assert_eq!(
         described.description(),
-        Some("Explicit native Hermes wire protocol.")
+        Some("Maximum number of seconds for a Hermes terminal operation.")
     );
-    // Fabric does not describe `mode`; no generic text stands in for it.
+    // Fabric does not describe Pi's `extensions`; no generic text stands in for it.
+    values["spec"]["sandboxes"][0]["harness"] = json!({"kind": "nvidia.fabric.pi"});
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
+    let resolution = JourneyDefinition::new("undescribed-settings", base)
+        .ask(["adapter:nvidia.fabric.pi:/extensions"])
+        .start(&capabilities)
+        .unwrap()
+        .resolve(&capabilities)
+        .unwrap();
     let undescribed = resolution
-        .question("adapter:nvidia.fabric.hermes:/mode")
+        .question("adapter:nvidia.fabric.pi:/extensions")
         .expect("undescribed setting");
     assert_eq!(undescribed.title(), None);
     assert_eq!(undescribed.description(), None);
@@ -3715,11 +3759,14 @@ fn minimally_supplied_inline_envelope_materializes_through_one_resolver() {
     let capabilities = Capabilities::available();
     let mut journey = JourneyDefinition::new("minimum-inline", base)
         .omit([
-            "adapter:nvidia.fabric.openclaw:/agent_name",
-            "adapter:nvidia.fabric.openclaw:/cli",
-            "adapter:nvidia.fabric.openclaw:/home",
-            "adapter:nvidia.fabric.openclaw:/native_config",
-            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            "adapter:nvidia.fabric.openclaw:/port_range",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
         ])
         .start(&capabilities)
         .unwrap();

@@ -252,3 +252,34 @@ fn whether_a_harness_accepts_a_configuration_is_left_to_fabric() {
         report.checks
     );
 }
+
+#[test]
+fn generated_base_urls_go_only_to_adapters_that_accept_them() {
+    // Fabric rejects a normalized field an adapter does not accept, so the SDK
+    // sends its generated base URL only where the descriptor accepts one.
+    let remote = nemoclaw_sdk::config::Document::parse(
+        include_bytes!("../../../examples/fabric-remote-agent.yaml").as_slice(),
+    )
+    .unwrap();
+    let config =
+        nemoclaw_sdk::fabric_config::for_sandbox(&remote, &remote.spec.sandboxes[0]).unwrap();
+    assert!(
+        config["models"]["default"].get("base_url").is_none(),
+        "{config}"
+    );
+    assert!(
+        config["models"]["default"]["api_key_env"].is_string(),
+        "{config}"
+    );
+
+    let openclaw = nemoclaw_sdk::config::Document::parse(
+        include_bytes!("../../../examples/openclaw.yaml").as_slice(),
+    )
+    .unwrap();
+    let config =
+        nemoclaw_sdk::fabric_config::for_sandbox(&openclaw, &openclaw.spec.sandboxes[0]).unwrap();
+    assert_eq!(
+        config["models"]["default"]["base_url"],
+        "https://inference.example.com/v1"
+    );
+}

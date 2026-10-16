@@ -27,6 +27,9 @@ spec:
         tier: isolated
       harness:
         kind: nvidia.fabric.remote-agent
+        settings:
+          # The remote agent's API root.
+          base_url: http://172.20.0.1:11446/v1
       agent:
         name: main
         inference:

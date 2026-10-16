@@ -65,13 +65,7 @@ fn openai_compatible_endpoint_with_tuning_should_work() {
         "https://inference.example.com/v1"
     );
     assert_eq!(document.credential_names(), ["COMPATIBLE_API_KEY"]);
-    assert_eq!(overrides["settings"]["reasoning_effort"], "high");
-    assert_eq!(
-        overrides["settings"]["model_metadata"]["contextWindow"],
-        65536
-    );
     assert_eq!(overrides["maxTokens"], 8192);
-    assert_eq!(overrides["settings"]["model_metadata"]["reasoning"], true);
 }
 
 #[test]
@@ -127,34 +121,19 @@ fn multiple_openclaw_sandboxes_with_policy_tools_and_observability_should_work()
     assert_eq!(sandboxes[2]["agent"]["name"], "reader");
     assert_eq!(sandboxes[2]["agent"]["tools"]["allow"], json!(["read"]));
     assert_eq!(
-        desired["spec"]["harnesses"]["assistant"]["settings"]["native_config"]["tools"]["toolSearch"]
-            ["mode"],
-        "tools"
-    );
-    assert_eq!(
-        desired["spec"]["harnesses"]["assistant"]["settings"]["native_config"]["diagnostics"]["otel"]
-            ["enabled"],
-        true
-    );
-    assert_eq!(
         desired["spec"]["harnesses"]["assistant"]["execution"]["timeoutSeconds"],
         900
     );
 }
 
 #[test]
-fn pi_with_native_model_metadata_should_work() {
+fn pi_should_work() {
     let yaml = include_bytes!("../../../examples/fabric-pi.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
         desired["spec"]["sandboxes"][0]["harness"]["kind"],
         "nvidia.fabric.pi"
-    );
-    assert_eq!(
-        desired["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["settings"]
-            ["model_metadata"]["api"],
-        "openai-completions"
     );
 }
 

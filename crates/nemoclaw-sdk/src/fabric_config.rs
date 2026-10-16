@@ -39,6 +39,18 @@ pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, Conf
             "model role default conflicts with the selected Fabric default role",
         ));
     }
+    // Fabric rejects a normalized field an adapter doesn't accept, so a base URL
+    // the deployment generates goes only to adapters whose descriptor accepts
+    // one. Adapters outside the bundled catalog keep receiving it.
+    let accepts_base_url = crate::fabric_catalog::FabricCatalog::bundled()
+        .adapters
+        .iter()
+        .find(|adapter| adapter.adapter_id() == harness.kind.as_str())
+        .is_none_or(|adapter| {
+            adapter.descriptor["config"]["accepts"]
+                .as_array()
+                .is_some_and(|fields| fields.iter().any(|field| field == "models.base_url"))
+        });
     for route in &selection.inference.routes {
         let provider = document.sandbox_route_registration(sandbox, route)?;
         let definition = provider.definition;
@@ -53,6 +65,9 @@ pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, Conf
         let mut projected = json!({"provider":definition.provider,"model":route.overrides.model,
             "base_url":connection.endpoint,"api_key_env":profile.credentials.first().map(|credential|credential.name.as_str()).unwrap_or("NEMOCLAW_ANONYMOUS_API_KEY"),
             "settings":route.overrides.settings.clone().unwrap_or_default()});
+        if !accepts_base_url {
+            projected.as_object_mut().unwrap().remove("base_url");
+        }
         if let Some(limit) = route.overrides.tuning.max_tokens {
             projected["max_tokens"] = limit.into();
         }
