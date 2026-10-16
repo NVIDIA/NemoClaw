@@ -24,7 +24,7 @@ Some changes apply at runtime, while image and filesystem changes require a rebu
 | --- | --- | --- |
 | Inference provider | Runtime route and config update; rebuild only if you need to recreate the image | Run `$$nemoclaw inference set` |
 | Inference model on the current provider | Runtime route and config update | Run `$$nemoclaw inference set` |
-| Sub-agent | Re-onboard required because the sub-agent and workspace are baked at onboard | `$$nemoclaw onboard --recreate-sandbox` |
+| Agent and workspace layout configured during NemoClaw onboarding | Re-onboard to replace the initial layout; native agent roster changes follow the `agents.list` row below | `$$nemoclaw onboard --recreate-sandbox` |
 | Network policy preset | Runtime on the next request; rebuild only if the preset adds bind-mounted secrets | `$$nemoclaw <name> policy add <preset>` or `policy remove <preset>` |
 | Network allowlist | Runtime on the next request | `openshell policy set` or the interactive approval prompt at the gateway |
 | Channel tokens | Rebuild required because the channel configuration and credential attachment are created during onboarding or rebuild | `$$nemoclaw <name> channels add <channel>`, then accept the rebuild prompt |
