@@ -5,7 +5,6 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
@@ -59,13 +58,16 @@ import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import { retryUntil } from "../../../src/lib/core/retry.ts";
 import { streamSandboxCreate } from "../../../src/lib/sandbox/create-stream.ts";
 import { test } from "../fixtures/e2e-test.ts";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
+import { collectPortableRegistryReadinessFailure } from "../fixtures/portable-registry-readiness.ts";
 import {
   cleanupPortableHostGatewayAlias,
   cleanupPortableProfileRootlessFixture,
   installPortableProfileSystemctlShim,
 } from "../fixtures/portable-profile-systemctl.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
+import type { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
   getSandboxConfigRequest,
   mintSandboxJwt,
@@ -335,24 +337,12 @@ function parseOnePodmanRecord(raw: string, label: string): Record<string, unknow
   return record as Record<string, unknown>;
 }
 
-async function waitForRegistry(attempt = 0): Promise<void> {
-  assert.ok(attempt < 60, "The managed local registry did not become ready.");
-  const ready = await new Promise<boolean>((resolve) => {
-    const request = http.get("http://127.0.0.1:5000/v2/", (response) => {
-      response.resume();
-      response.once("end", () => resolve(response.statusCode === 200));
-    });
-    request.once("error", () => resolve(false));
-    request.setTimeout(500, () => {
-      request.destroy();
-      resolve(false);
-    });
-  });
-  return ready
-    ? undefined
-    : new Promise<void>((resolve) => setTimeout(resolve, 250)).then(() =>
-        waitForRegistry(attempt + 1),
-      );
+async function waitForRegistry(artifacts: ArtifactSink, shellProbe: ShellProbe): Promise<void> {
+  assert.equal(
+    await collectPortableRegistryReadinessFailure({ artifacts, shellProbe }),
+    undefined,
+    "The managed local registry did not become ready. See the bounded registry readiness artifacts.",
+  );
 }
 
 function selectInstallerPodmanRuntime(repoRoot: string): string {
@@ -919,7 +909,11 @@ async function proveHistoricalHermesPortableLifecycle(input: {
   return primaryFailed || cleanupFailed ? Promise.reject(failure) : lifecycleEvidence!;
 }
 
-async function main(progress: TestProgress): Promise<void> {
+async function main(
+  progress: TestProgress,
+  artifacts: ArtifactSink,
+  shellProbe: ShellProbe,
+): Promise<void> {
   assert.equal(process.platform, "linux", "portable profile E2E requires Linux");
   assert.notEqual(process.getuid?.(), 0, "portable profile E2E must run without root privileges");
   const sourceRevision = process.env.E2E_SOURCE_REVISION ?? "";
@@ -997,7 +991,7 @@ async function main(progress: TestProgress): Promise<void> {
     const podmanInfo = JSON.parse(run("podman", ["info", "--format", "json"]));
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
     run("docker", ["version"]);
-    await waitForRegistry();
+    await waitForRegistry(artifacts, shellProbe);
 
     progress.phase("verify immutable non-force network removal");
     const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
@@ -1457,7 +1451,7 @@ test(
     meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
     timeout: 900_000,
   },
-  async ({ progress }) => {
-    await main(progress);
+  async ({ artifacts, progress, shellProbe }) => {
+    await main(progress, artifacts, shellProbe);
   },
 );

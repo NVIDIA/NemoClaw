@@ -69,6 +69,10 @@ The install refuses package removals, preserving the runner's Docker and contain
   `jobs=portable-hermes-finalization`; the job selects Podman 5.7 regardless of
   gateway-runtime inputs. The live scenario also runs the receipt-bound Hermes
   build, registry publication, and OpenShell create transaction against those services.
+  Its managed-registry HTTP readiness check uses a bounded read-only policy with
+  attempt evidence. A failure attempts to retain redacted container state, the
+  published port mapping, and a bounded registry log tail before cleanup.
+  Unavailable diagnostics do not suppress the readiness failure.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
