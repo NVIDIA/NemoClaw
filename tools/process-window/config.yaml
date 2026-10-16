@@ -1,0 +1,163 @@
+repository:
+  path: ../../../source
+  url: https://github.com/NVIDIA/NemoClaw
+  forge: github
+mapping: ../../../state/mapping.yaml
+output: ../../../result/site
+stages:
+  - id: before-coding
+    name: Before coding
+    description: Understand the change, repository rules, design constraints, and
+      relevant interfaces before implementation.
+  - id: authoring
+    name: Authoring
+    description: Agent-assisted implementation during preparation of a repository
+      change. Not internal file-writing steps of post-merge or release
+      automation.
+  - id: local-feedback
+    name: Local feedback
+    description: Evaluate a candidate change through local tests, diagnostics, and
+      reviews before PR submission. Excludes internal review steps in
+      post-merge, PR-triggered, or release automation.
+  - id: pull-request
+    name: Pull request
+    description: Prepare, submit, review, and revise a pull request.
+  - id: integration
+    name: Integration
+    description: Evaluate a proposed repository change through
+      integration/end-to-end qualification or combined-change validation.
+      Requires an explicit testing or qualification procedure, not a description
+      of how product components interact.
+  - id: merge
+    name: Merge
+    description: Decide whether and how to merge repository changes.
+  - id: release
+    name: Release
+    description: Prepare, version, publish, and verify a software release. Not
+      starting a deployed application.
+  - id: after-merge
+    name: After merge
+    description: "Follow up on merged changes: documentation drift, regressions,
+      announcements, or maintenance. Includes internal writing and review steps
+      of post-merge automation; do not reclassify those as Authoring or Local
+      feedback. Not routine product operations."
+categories:
+  - id: repository-instructions
+    name: Repository instructions
+    description: Standing agent instruction entry points that apply to the
+      repository or a scoped directory, including mandatory style rules.
+      Contributor how-to documents are reference-documents even when written as
+      instructions.
+  - id: reference-documents
+    name: Reference documents
+    description: Documents consulted to understand requirements, interfaces, design
+      constraints, contribution procedures, or implementation. Design documents
+      belong here unless they prescribe reusable coding patterns.
+  - id: task-skills
+    name: Task skills
+    description: Reusable task workflows presented as skills for contributors or
+      coding agents.
+  - id: architecture-patterns
+    name: Architecture patterns
+    description: Reusable implementation patterns and code-level responsibility or
+      boundary rules; not every architecture design document.
+  - id: agent-prompts
+    name: Agent prompts
+    description: Specific instructions supplied to an agent through a prompt or
+      invocation setting, including prompts embedded in source/configuration.
+  - id: reports-feedback
+    name: Agent context and assessments
+    description: Context, assessments, or findings explicitly supplied to coding
+      agents or inference sessions. Excludes machine-only reports, test routing,
+      coverage thresholds, and gate results without an agent consumption path.
+origins:
+  - id: skills
+    name: Repository skills
+    paths:
+      - .agents/skills/
+  - id: coderabbit
+    name: CodeRabbit
+    paths:
+      - .coderabbit.yaml
+  - id: advisor
+    name: PR Review Advisor
+    paths:
+      - tools/pr-review-advisor/
+      - tools/advisors/
+  - id: instructions
+    name: Repository instructions
+    paths:
+      - AGENTS.md
+      - CONTRIBUTING.md
+      - WRITING.md
+      - SECURITY.md
+      - CODE_OF_CONDUCT.md
+      - README.md
+  - id: agent-references
+    name: Agent reference guides
+    paths:
+      - .agents/references/
+  - id: dsh
+    name: DSH agent tools
+    paths:
+      - .dsh/tools/
+  - id: documentation
+    name: Documentation guidance
+    paths:
+      - docs/
+      - fern/
+  - id: documentation-agents
+    name: Documentation agents
+    paths:
+      - tools/post-merge-docs/
+  - id: conflict-agent
+    name: Merge-conflict agent
+    paths:
+      - tools/pr-merge-conflict-fixer/
+  - id: testing-guidance
+    name: Testing guidance
+    paths:
+      - test/
+      - scripts/bench/
+  - id: components
+    name: Component guidance
+    paths:
+      - src/
+      - crates/
+      - agents/
+      - image/
+      - runtimes/
+      - nemoclaw-blueprint/
+      - managed-inference/
+      - scripts/vendor/
+      - skills/
+  - id: github
+    name: GitHub contribution guidance
+    paths:
+      - .github/
+branches:
+  - id: main
+    name: NemoClaw main
+    ref: refs/remotes/origin/main
+    color: "#3475ad"
+    refresh:
+      mode: release
+      tags: v*
+  - id: v1
+    name: NemoClaw v1
+    ref: refs/remotes/origin/v1
+    color: "#669c20"
+    refresh:
+      mode: branch
+inference:
+  provider: openai-compatible
+  baseUrl: https://inference-api.nvidia.com/v1
+  api: responses
+  model: openai/openai/gpt-6-astra
+  reasoningEffort: high
+  timeoutSeconds: 1800
+  apiKeyEnv: PROCESS_WINDOW_API_KEY
+  maxTurns: 80
+  maxOutputTokens: 65536
+excludePaths:
+  - tools/process-window/

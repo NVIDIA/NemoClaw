@@ -35,6 +35,7 @@
     "nemoclaw",
     "test/e2e/fixtures/plugins/weather",
     "tools/mcp-tool-discovery-runtime/mcp-tool-discovery.ts",
-    "tools/mcp-tool-discovery-runtime/streamable-http-client.test.ts"
+    "tools/mcp-tool-discovery-runtime/streamable-http-client.test.ts",
+    "tools/process-window"
   ]
 }
