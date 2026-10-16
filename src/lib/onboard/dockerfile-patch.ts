@@ -129,7 +129,7 @@ export function renderHermesPortableDockerfileBuildSettings(
     input.model,
     input.provider,
     input.preferredInferenceApi,
-    true,
+    input.nativeEndpointUrl ? true : undefined,
     input.nativeEndpointUrl,
     "hermes",
   );

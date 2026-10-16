@@ -8,8 +8,7 @@ import { usesNativeLocalInferenceForAgent } from "../../inference/native-local/e
 import type { SandboxEntry } from "../../state/registry";
 import type { AgentConfigTarget } from "../../sandbox/config";
 import type { ConfigObject } from "../../security/credential-filter";
-import { qualifiedNativeLocalEndpointUrl } from "../../inference/native-local/agent-config";
-import { nativeLocalAttachmentMatchesHostLocalReceipt } from "../../state/registry/host-local-inference";
+import { nativeLocalAttachmentMatchesSelectedEndpoint } from "../../state/registry/host-local-inference";
 
 export interface InitialHermesInferenceRouteDeps {
   getSandbox(sandboxName: string): SandboxEntry | null | undefined;
@@ -94,12 +93,12 @@ export function createInitialHermesInferenceRoute(
         receipt.sandboxName !== sandboxName ||
         receipt.gatewayName !== gatewayName ||
         receipt.provider !== provider ||
-        (receipt.endpointUrl !== qualifiedNativeLocalEndpointUrl(entry.endpointUrl ?? "") &&
-          !nativeLocalAttachmentMatchesHostLocalReceipt(
-            entry.endpointUrl,
-            receipt.endpointUrl,
-            entry.hostLocalInferenceReceipt,
-          ))
+        !nativeLocalAttachmentMatchesSelectedEndpoint(
+          entry.provider,
+          entry.endpointUrl,
+          receipt.endpointUrl,
+          entry.hostLocalInferenceReceipt,
+        )
       )
         throw mismatch();
       return {

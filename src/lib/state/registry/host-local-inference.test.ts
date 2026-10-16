@@ -7,6 +7,7 @@ import { serializedHostLocalInferenceReceipt } from "../../../../test/helpers/ho
 import {
   cloneSandboxHostLocalInferenceReceipt,
   nativeLocalAttachmentMatchesHostLocalReceipt,
+  nativeLocalAttachmentMatchesSelectedEndpoint,
 } from "./host-local-inference";
 
 describe("sandbox host-local inference receipt transport", () => {
@@ -68,4 +69,79 @@ it.each([
   expect(nativeLocalAttachmentMatchesHostLocalReceipt(application, endpoint, receipt)).toBe(
     expected,
   );
+  expect(
+    nativeLocalAttachmentMatchesSelectedEndpoint("vllm-local", application, endpoint, receipt),
+  ).toBe(expected);
+});
+
+it.each([
+  {
+    name: "canonical endpoint",
+    provider: "compatible-endpoint",
+    selected: "http://host.openshell.internal:11434/v1",
+    expected: true,
+  },
+  {
+    name: "canonical trailing slash",
+    provider: "compatible-endpoint",
+    selected: "http://host.openshell.internal:11434/v1/",
+    expected: true,
+  },
+  {
+    name: "loopback gateway mapping",
+    provider: "compatible-endpoint",
+    selected: "http://127.0.0.1:11434/v1/",
+    expected: true,
+  },
+  {
+    name: "wrong provider mapping",
+    provider: "ollama-local",
+    selected: "http://127.0.0.1:11434/v1",
+    expected: false,
+  },
+  {
+    name: "unsupported loopback port",
+    provider: "compatible-endpoint",
+    selected: "http://localhost:11436/v1",
+    expected: false,
+  },
+  {
+    name: "wrong route path",
+    provider: "compatible-endpoint",
+    selected: "http://localhost:11434/other",
+    expected: false,
+  },
+  {
+    name: "endpoint credentials",
+    provider: "compatible-endpoint",
+    selected: "http://secret@host.openshell.internal:11434/v1",
+    expected: false,
+  },
+  {
+    name: "endpoint query",
+    provider: "compatible-endpoint",
+    selected: "http://host.openshell.internal:11434/v1?token=secret",
+    expected: false,
+  },
+  {
+    name: "endpoint fragment",
+    provider: "compatible-endpoint",
+    selected: "http://host.openshell.internal:11434/v1#fragment",
+    expected: false,
+  },
+  {
+    name: "missing selection",
+    provider: "compatible-endpoint",
+    selected: undefined,
+    expected: false,
+  },
+])("matches selected native endpoint only for $name", ({ provider, selected, expected }) => {
+  expect(
+    nativeLocalAttachmentMatchesSelectedEndpoint(
+      provider,
+      selected,
+      "http://host.openshell.internal:11434/v1",
+      undefined,
+    ),
+  ).toBe(expected);
 });

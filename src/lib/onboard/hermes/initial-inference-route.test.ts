@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { patchHermesInferenceConfig } from "../../actions/inference-set";
 import { applyHermesManagedRoute } from "../../hermes-managed-route";
 import { nativeLocalIdentity } from "../../inference/native-local/contract";
+import { gatewayReachableCompatibleEndpointUrl } from "../inference-providers/compatible-endpoint-gateway-route";
 import { hostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
 import { serializeHostLocalInferenceReceipt } from "../runtime-provider/host-local-inference";
 import type { ConfigObject } from "../../security/credential-filter";
@@ -29,10 +30,11 @@ function fixture(
     | "vllm-local"
     | "ollama-local"
     | "llama-cpp-local" = "compatible-endpoint",
+  endpointUrl = "http://host.openshell.internal:8000/v1",
 ) {
   const binding = {
     provider,
-    endpointUrl: "http://host.openshell.internal:8000/v1",
+    endpointUrl,
     credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
     authMode: "authenticated" as const,
     agent: "hermes" as const,
@@ -151,6 +153,56 @@ function bridgeFixture() {
 }
 
 describe("external Hermes initial native-local route", () => {
+  it.each(["localhost", "127.0.0.1", "[::1]"])(
+    "projects a compatible %s endpoint using the producer's gateway mapping",
+    async (host) => {
+      const rawEndpoint = `http://${host}:11434/v1/`;
+      const mapped = gatewayReachableCompatibleEndpointUrl("compatible-endpoint", rawEndpoint);
+      expect(mapped).toBe("http://host.openshell.internal:11434/v1");
+      const f = fixture("compatible-endpoint", mapped as string);
+      f.entry.endpointUrl = rawEndpoint;
+      await f.run();
+      expect(f.deps.readCredentialHandle).toHaveBeenCalledWith("alpha", "gateway-a", f.receipt);
+      expect(f.config.model).toMatchObject({ base_url: mapped, api_key: issued("v7") });
+      expect(f.config.providers["compatible-endpoint"]).toMatchObject({
+        api: mapped,
+        api_key: issued("v7"),
+      });
+      expect(f.config.custom_providers).toEqual([
+        expect.objectContaining({ base_url: mapped, api_key: issued("v7") }),
+      ]);
+      expect(f.entry.endpointUrl).toBe(rawEndpoint);
+      expect(f.events).toEqual(["lock", "credential", "read", "write", "restart", "unlock"]);
+    },
+  );
+
+  it.each(["http://localhost:11436/v1", "http://localhost:11434/other"])(
+    "refuses a gateway attachment that does not map from %s",
+    async (endpoint) => {
+      const f = fixture("compatible-endpoint", "http://host.openshell.internal:11434/v1");
+      f.entry.endpointUrl = endpoint;
+      await expect(f.run()).rejects.toThrow("does not match");
+      expect(f.events).toEqual([]);
+      expect(f.deps.readCredentialHandle).not.toHaveBeenCalled();
+      expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();
+      expect(f.deps.restartGateway).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses a loopback route changed while reading the issued credential", async () => {
+    const f = fixture("compatible-endpoint", "http://host.openshell.internal:11434/v1");
+    f.entry.endpointUrl = "http://localhost:11434/v1";
+    vi.mocked(f.deps.readCredentialHandle).mockImplementation(async () => {
+      f.entry.endpointUrl = "http://localhost:11435/v1";
+      return issued("v7");
+    });
+    await expect(f.run()).rejects.toThrow("does not match");
+    expect(f.deps.readCredentialHandle).toHaveBeenCalledOnce();
+    expect(f.deps.readSandboxConfig).not.toHaveBeenCalled();
+    expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(f.deps.restartGateway).not.toHaveBeenCalled();
+  });
+
   it("projects the exact receipt-bound host endpoint from a published application route", async () => {
     const f = bridgeFixture();
     const registered = structuredClone(f.entry);

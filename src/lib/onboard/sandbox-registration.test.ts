@@ -20,6 +20,7 @@ import {
   type ManagedImageAgent,
 } from "./managed-image/contract";
 import { encodeManagedStartupProfile } from "./managed-startup/profile";
+import { gatewayReachableCompatibleEndpointUrl } from "./inference-providers/compatible-endpoint-gateway-route";
 
 const requireDist = createRequire(import.meta.url);
 const onboardSession = requireDist("../state/onboard-session.js");
@@ -921,13 +922,17 @@ describe("registerCreatedSandbox", () => {
 });
 
 describe("Hermes native attachment registration", () => {
-  const makeInput = (attachmentAgent?: "hermes", sandboxName = "demo") => {
+  const makeInput = (
+    attachmentAgent?: "hermes",
+    sandboxName = "demo",
+    endpointUrl = "http://host.openshell.internal:8000/v1",
+  ) => {
     const { nativeLocalIdentity } = requireDist(
       "../inference/native-local/contract.ts",
     ) as typeof import("../inference/native-local/contract");
     const binding = {
       provider: "compatible-endpoint" as const,
-      endpointUrl: "http://host.openshell.internal:8000/v1",
+      endpointUrl,
       credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
       authMode: "authenticated" as const,
       gatewayName: "nemoclaw",
@@ -951,6 +956,39 @@ describe("Hermes native attachment registration", () => {
       },
     });
   };
+  it.each(["localhost", "127.0.0.1", "[::1]"])(
+    "retains the raw %s selection and its gateway-mapped Hermes attachment",
+    (host) => {
+      const rawEndpoint = `http://${host}:11434/v1/`;
+      const mapped = gatewayReachableCompatibleEndpointUrl("compatible-endpoint", rawEndpoint);
+      expect(mapped).toBe("http://host.openshell.internal:11434/v1");
+      const input = makeInput("hermes", "demo", mapped as string);
+      input.inferenceSelection = { ...input.inferenceSelection, endpointUrl: rawEndpoint };
+      const registered = buildCreatedSandboxRegistryEntry(input);
+      expect(registered.endpointUrl).toBe(rawEndpoint);
+      expect(registered.nativeLocalProviderAttachment).toEqual(input.nativeLocalProviderAttachment);
+    },
+  );
+  it.each(["http://localhost:11436/v1", "http://localhost:11434/other"])(
+    "rejects an attachment that does not map from %s",
+    (endpointUrl) => {
+      const input = makeInput("hermes", "demo", "http://host.openshell.internal:11434/v1");
+      input.inferenceSelection = { ...input.inferenceSelection, endpointUrl };
+      expect(() => buildCreatedSandboxRegistryEntry(input)).toThrow(
+        "does not match the selected Hermes sandbox",
+      );
+    },
+  );
+  it("accepts the existing qualifier's canonical trailing slash while preserving the selection", () => {
+    const input = makeInput("hermes");
+    input.inferenceSelection = {
+      ...input.inferenceSelection,
+      endpointUrl: "http://host.openshell.internal:8000/v1/",
+    };
+    const registered = buildCreatedSandboxRegistryEntry(input);
+    expect(registered.endpointUrl).toBe(input.inferenceSelection.endpointUrl);
+    expect(registered.nativeLocalProviderAttachment).toEqual(input.nativeLocalProviderAttachment);
+  });
   it("retains its exact Hermes provider receipt", () => {
     const input = makeInput("hermes");
     expect(buildCreatedSandboxRegistryEntry(input).nativeLocalProviderAttachment).toEqual(

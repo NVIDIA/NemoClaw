@@ -31,7 +31,7 @@ import {
   cloneSandboxHostLocalInferenceProvenance,
   cloneSandboxHostLocalInferenceReceipt,
   requireSandboxHostLocalInferenceProvenance,
-  nativeLocalAttachmentMatchesHostLocalReceipt,
+  nativeLocalAttachmentMatchesSelectedEndpoint,
 } from "../state/registry/host-local-inference";
 import { cloneSandboxHostMounts } from "../state/registry/host-mount";
 import {
@@ -263,12 +263,12 @@ export function buildCreatedSandboxRegistryEntry(
       nativeLocalProviderAttachment.sandboxName === input.sandboxName &&
       nativeLocalProviderAttachment.gatewayName === input.gatewayName &&
       nativeLocalProviderAttachment.provider === input.inferenceSelection.provider &&
-      (nativeLocalProviderAttachment.endpointUrl === input.inferenceSelection.endpointUrl ||
-        nativeLocalAttachmentMatchesHostLocalReceipt(
-          input.inferenceSelection.endpointUrl,
-          nativeLocalProviderAttachment.endpointUrl,
-          hostLocalInferenceReceipt,
-        ))
+      nativeLocalAttachmentMatchesSelectedEndpoint(
+        input.inferenceSelection.provider,
+        input.inferenceSelection.endpointUrl,
+        nativeLocalProviderAttachment.endpointUrl,
+        hostLocalInferenceReceipt,
+      )
     )
   ) {
     throw new Error("Native local provider attachment does not match the selected Hermes sandbox.");

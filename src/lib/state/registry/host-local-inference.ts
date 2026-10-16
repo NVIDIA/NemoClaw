@@ -10,6 +10,8 @@ import {
 } from "../../onboard/runtime-provider/host-local-inference";
 import { HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL } from "../../onboard/runtime-provider/host-local-inference-routing";
 import type { SandboxHostLocalInferenceProvenance } from "./types";
+import { gatewayReachableCompatibleEndpointUrl } from "../../inference/native-local/eligibility";
+import { qualifiedNativeLocalEndpointUrl } from "../../inference/native-local/agent-config";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_SANDBOX_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
@@ -31,6 +33,24 @@ export function nativeLocalAttachmentMatchesHostLocalReceipt(
   } catch {
     return false;
   }
+}
+
+/** Match a normalized native attachment to its selected route using the existing endpoint owners. */
+export function nativeLocalAttachmentMatchesSelectedEndpoint(
+  provider: string,
+  selectedEndpointUrl: string | null | undefined,
+  attachmentEndpointUrl: string,
+  serializedReceipt: string | null | undefined,
+): boolean {
+  const gatewayEndpoint = gatewayReachableCompatibleEndpointUrl(provider, selectedEndpointUrl);
+  return (
+    attachmentEndpointUrl === qualifiedNativeLocalEndpointUrl(gatewayEndpoint ?? "") ||
+    nativeLocalAttachmentMatchesHostLocalReceipt(
+      selectedEndpointUrl,
+      attachmentEndpointUrl,
+      serializedReceipt,
+    )
+  );
 }
 
 function receiptTransactionId(receipt: HostLocalInferenceReceipt): string | null {
