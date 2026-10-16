@@ -346,10 +346,7 @@ export function createCliOpenShellSandboxLogs(
         child = spawnChild(binary, buildCliOpenShellSandboxLogArgs(request, true), {
           cwd: hostCwd,
           env: environment,
-          stdio:
-            request.source === "gateway"
-              ? ["inherit", "pipe", "pipe"]
-              : ["inherit", "inherit", "pipe"],
+          stdio: ["inherit", "pipe", "pipe"],
         });
       } catch (error) {
         return immediateFailure(
