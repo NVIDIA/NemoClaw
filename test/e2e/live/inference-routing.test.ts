@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
+import { assertAgentExecutionSucceeded } from "./gpu-e2e-helpers.ts";
 import fs from "node:fs";
 import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
@@ -47,6 +48,10 @@ import {
 } from "./inference-routing-helpers.ts";
 import { startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
 import { startRuntimeIdentityOAuthServer } from "./runtime-identity-oauth-server.ts";
+import {
+  onboardNativeOpenClaw,
+  requestNativeOpenClaw,
+} from "../fixtures/inference-routing-openclaw-native.ts";
 // This is the PR-required inference-routing lane. Credential-backed provider
 // smokes live in inference-routing-provider-smoke.test.ts and are never selected
 // by the PR-safe workflow job.
@@ -1327,5 +1332,167 @@ test(
         .slice(requestOffset)
         .find((request) => request.model === model)?.authorizationSent,
     ).toBe(false);
+  },
+);
+
+test(
+  "TC-INF-17 OpenClaw uses authenticated native local inference after rebuild and restart (#12975)",
+  {
+    timeout: DCODE_NATIVE_LOCAL_TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm live inference prerequisites",
+        "onboard native OpenClaw owner",
+        "rebuild native OpenClaw owner",
+        "restart native OpenClaw owner",
+        "request inference through OpenClaw",
+        "check credential isolation",
+        "onboard shared-route sibling",
+        "verify sibling denial",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("onboard native OpenClaw owner");
+    const selected = await onboardNativeOpenClaw(true, {
+      artifacts,
+      cleanup,
+      host,
+      progress,
+      runtimeProvider,
+      sandbox,
+    });
+    const { owner, model, apiKey, fake, onboard, attachment } = selected;
+    expectOnboardSuccess(onboard, `${owner} onboard`);
+    expect(attachment).toMatchObject({
+      agent: "openclaw",
+      provider: "llama-cpp-local",
+      authMode: "authenticated",
+    });
+    progress.phase("rebuild native OpenClaw owner");
+    const rebuild = await host.nemoclaw([owner, "rebuild", "--yes", "--verbose"], {
+      artifactName: `${owner}-rebuild`,
+      env: { ...buildAvailabilityProbeEnv(), NEMOCLAW_LLAMACPP_LOCAL_TOKEN: apiKey },
+      redactionValues: [apiKey],
+      timeoutMs: 20 * 60_000,
+    });
+    expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
+    progress.phase("restart native OpenClaw owner");
+    const stop = await host.nemoclaw([owner, "stop"], {
+      artifactName: `${owner}-stop`,
+      env: sandboxAccessEnv(),
+      timeoutMs: 120_000,
+    });
+    expect(stop.exitCode, resultText(stop)).toBe(0);
+    const start = await host.nemoclaw([owner, "start"], {
+      artifactName: `${owner}-start`,
+      env: sandboxAccessEnv(),
+      timeoutMs: 120_000,
+    });
+    expect(start.exitCode, resultText(start)).toBe(0);
+    progress.phase("request inference through OpenClaw");
+    const { turn, requests } = await requestNativeOpenClaw(owner, apiKey, fake, host);
+    expect(turn.exitCode, resultText(turn)).toBe(0);
+    assertAgentExecutionSucceeded(turn.stdout, "inference", model);
+    expect(requests.length).toBeGreaterThan(0);
+    expect(
+      requests.some((request) => request.path === "/v1/chat/completions" && request.auth === "ok"),
+    ).toBe(true);
+    expect(requests.some((request) => request.authorizationSent)).toBe(true);
+    progress.phase("check credential isolation");
+    const scan = await sandbox.exec(owner, hostedCredentialScanCommand(apiKey), {
+      artifactName: `${owner}-credential-scan`,
+      env: sandboxAccessEnv(),
+      timeoutMs: 60_000,
+      redactionValues: [apiKey],
+    });
+    expect({ exitCode: scan.exitCode, ...JSON.parse(scan.stdout) }).toMatchObject({
+      exitCode: 0,
+      environmentClean: true,
+      processesClean: true,
+      sampledFilesClean: true,
+      canaryDetected: true,
+    });
+    progress.phase("onboard shared-route sibling");
+    const sibling = inferenceSandboxName("e2e-oc-peer");
+    const peerEndpoint = await startFakeOpenAiCompatibleServer({
+      apiKey,
+      model,
+      host: "0.0.0.0",
+      publicHost: "host.openshell.internal",
+      requireAuth: true,
+      progress,
+    });
+    cleanup.add(`close ${sibling} endpoint`, () => peerEndpoint.close());
+    cleanup.add(`remove ${sibling}`, () =>
+      cleanupSandbox(host, sandbox, sibling, { strict: true }),
+    );
+    await cleanupSandbox(host, sandbox, sibling);
+    const peer = await onboardSandbox(
+      artifacts,
+      sibling,
+      {
+        NEMOCLAW_AGENT: "openclaw",
+        NEMOCLAW_PROVIDER: "custom",
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_ENDPOINT_URL: peerEndpoint.baseUrl,
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+        COMPATIBLE_API_KEY: apiKey,
+      },
+      [apiKey],
+      `${sibling}-onboard`,
+      progress,
+      ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+    );
+    expectOnboardSuccess(peer, `${sibling} onboard`);
+    progress.phase("verify sibling denial");
+    const beforeDenied = fake.requests().length;
+    const denied = await sandbox.exec(
+      sibling,
+      ["curl", "--fail", "--max-time", "15", `${attachment!.endpointUrl}/models`],
+      { artifactName: `${sibling}-owner-denial`, env: sandboxAccessEnv(), timeoutMs: 30_000 },
+    );
+    expect(denied.exitCode).not.toBe(0);
+    expect(fake.requests()).toHaveLength(beforeDenied);
+  },
+);
+
+test(
+  "TC-INF-18 OpenClaw uses a credentialless native local vLLM endpoint (#12975)",
+  {
+    timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm live inference prerequisites",
+        "onboard native OpenClaw owner",
+        "request inference through OpenClaw",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("onboard native OpenClaw owner");
+    const { owner, apiKey, fake, onboard, attachment } = await onboardNativeOpenClaw(false, {
+      artifacts,
+      cleanup,
+      host,
+      progress,
+      runtimeProvider,
+      sandbox,
+    });
+    expectOnboardSuccess(onboard, `${owner} onboard`);
+    expect(attachment).toMatchObject({
+      agent: "openclaw",
+      provider: "vllm-local",
+      authMode: "sentinel",
+    });
+    progress.phase("request inference through OpenClaw");
+    const { turn, requests } = await requestNativeOpenClaw(owner, apiKey, fake, host);
+    expect(turn.exitCode, resultText(turn)).toBe(0);
+    assertAgentExecutionSucceeded(turn.stdout, "inference", "nemoclaw-openclaw-native-local");
+    expect(requests.length).toBeGreaterThan(0);
+    expect(
+      requests.some((request) => request.path === "/v1/chat/completions" && request.auth === "ok"),
+    ).toBe(true);
+    expect(requests.every((request) => request.auth === "ok")).toBe(true);
   },
 );

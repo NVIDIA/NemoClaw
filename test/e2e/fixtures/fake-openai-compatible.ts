@@ -46,6 +46,8 @@ export interface FakeOpenAiCompatibleServerOptions {
   readonly requestCanaryMarker?: string;
   readonly host?: string;
   readonly maxModelLen?: number;
+  /** Advertise the bounded native fingerprint used by existing-server llama.cpp attachment. */
+  readonly llamaCppFingerprint?: boolean;
   readonly model?: string;
   readonly port?: number;
   readonly progress: Pick<TestProgress, "activity" | "event" | "onOutput"> & TestProgressCapability;
@@ -190,6 +192,7 @@ export async function startFakeOpenAiCompatibleServer(
           NEMOCLAW_FAKE_OPENAI_REPLY_FROM_PROMPT: options.replyFromPrompt ? "1" : "0",
           NEMOCLAW_FAKE_OPENAI_MAX_MODEL_LEN:
             options.maxModelLen !== undefined ? String(options.maxModelLen) : "",
+          NEMOCLAW_FAKE_OPENAI_LLAMA_CPP_FINGERPRINT: options.llamaCppFingerprint ? "1" : "0",
           NEMOCLAW_FAKE_OPENAI_MODEL: options.model ?? "test-model",
           NEMOCLAW_FAKE_OPENAI_PORT: String(options.port ?? 0),
           NEMOCLAW_FAKE_OPENAI_PORT_FILE: portFile,

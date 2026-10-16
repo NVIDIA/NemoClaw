@@ -183,12 +183,14 @@
       "live": "test/e2e/live/inference-routing.test.ts",
       "liveSources": [
         "test/e2e/live/inference-routing-helpers.ts",
+        "test/e2e/fixtures/inference-routing-openclaw-native.ts",
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/fixtures/admin-approval-connect.ts",
         "test/e2e/fixtures/admin-approval-connect.sh"
       ],
       "fast": [
         "src/lib/inference/native-local.test.ts",
+        "test/onboarding/onboard-host-local-inference-routing.test.ts",
         "test/agents/deepagents/langchain-deepagents-code-config.test.ts",
         "nemoclaw/src/shared/openshell-gateway-health-sdk.test.ts",
         "nemoclaw/src/blueprint/runner.test.ts",

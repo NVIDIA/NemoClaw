@@ -26,6 +26,7 @@ const requireAuth = process.env.NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH === "1";
 // with --api-key gates it). Separate from requireAuth so existing tests, whose
 // readiness probe hits /v1/models unauthenticated, keep working. See #6177.
 const requireAuthModels = process.env.NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH_MODELS === "1";
+const llamaCppFingerprint = process.env.NEMOCLAW_FAKE_OPENAI_LLAMA_CPP_FINGERPRINT === "1";
 const chatContent = process.env.NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT || "ok";
 const responseText = process.env.NEMOCLAW_FAKE_OPENAI_RESPONSE_TEXT || chatContent;
 const replyFromPrompt = process.env.NEMOCLAW_FAKE_OPENAI_REPLY_FROM_PROMPT === "1";
@@ -229,6 +230,36 @@ function requestedCanaryToolCall(payload: JsonObject, raw: Buffer): JsonObject |
 const server = createServer(async (req, res) => {
   const path = requestPath(req);
 
+  if (
+    llamaCppFingerprint &&
+    req.method === "GET" &&
+    ["/health", "/props", "/metrics"].includes(path)
+  ) {
+    const authorized = isAuthOk(req);
+    recordRequest({
+      method: "GET",
+      path,
+      bodyBytes: 0,
+      auth: authorized ? "ok" : "missing",
+      authorizationSent: Boolean(req.headers.authorization),
+    });
+    if (!authorized) {
+      sendJson(res, 401, { error: { message: "missing bearer credential" } });
+    } else if (path === "/health") {
+      sendJson(res, 200, { status: "ok" });
+    } else if (path === "/props") {
+      sendJson(res, 200, {
+        model_path: "/models/fake.gguf",
+        model_alias: model,
+        total_slots: 1,
+        default_generation_settings: { params: {} },
+      });
+    } else {
+      sendJson(res, 501, { error: { type: "not_supported_error" } });
+    }
+    return;
+  }
+
   if (req.method === "GET" && ["/v1/models", "/models"].includes(path)) {
     const modelsAuthOk = !requireAuthModels || req.headers.authorization === `Bearer ${apiKey}`;
     log(`GET ${path} auth=${modelsAuthOk ? "ok" : "missing"}`);
@@ -249,6 +280,15 @@ const server = createServer(async (req, res) => {
       return;
     }
     const modelEntry: JsonObject = { id: model, object: "model" };
+    if (llamaCppFingerprint) {
+      modelEntry.owned_by = "llamacpp";
+      modelEntry.meta = {
+        n_vocab: 32000,
+        n_ctx: maxModelLen ?? 8192,
+        n_ctx_train: 8192,
+        n_embd: 4096,
+      };
+    }
     if (maxModelLen !== null) modelEntry.max_model_len = maxModelLen;
     sendJson(res, 200, { object: "list", data: [modelEntry] });
     return;
