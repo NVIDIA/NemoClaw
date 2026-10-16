@@ -13,7 +13,7 @@ function captureConsoleLog(): { lines: () => string; restore: () => void } {
   return { lines: () => out.join("\n"), restore: () => spy.mockRestore() };
 }
 
-async function printGuidance({
+function printGuidance({
   phase,
   dockerRuntime,
   openshellDriver = "docker",
@@ -29,8 +29,8 @@ async function printGuidance({
     containerName: string | null;
     containerAbsenceConfirmed?: boolean;
   } | null;
-}): Promise<void> {
-  await printSandboxGatewayLookupStatus({
+}): Promise<1 | undefined> {
+  return printSandboxGatewayLookupStatus({
     sandboxName: "beta",
     registered: true,
     lookup: { state: "present", output: `Sandbox:\n  Name: beta\n  Phase: ${phase}` },
@@ -81,17 +81,19 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("stopped container");
   });
 
-  it("reports an owned stopped container without crash guidance (#8695)", async () => {
+  it("returns exit code 1 for an owned stopped container without crash guidance (#8695, #12746)", async () => {
     const cap = captureConsoleLog();
-    await printGuidance({
-      phase: "Provisioning",
-      dockerRuntime: {
-        health: "none",
-        paused: false,
-        running: false,
-        containerName: "openshell-beta-abc",
-      },
-    });
+    await expect(
+      printGuidance({
+        phase: "Provisioning",
+        dockerRuntime: {
+          health: "none",
+          paused: false,
+          running: false,
+          containerName: "openshell-beta-abc",
+        },
+      }),
+    ).resolves.toBe(1);
     const text = cap.lines();
     cap.restore();
 
@@ -103,12 +105,14 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("rebuild --yes");
   });
 
-  it("renders Phase: Stopped and clean stopped guidance when phase is Stopped (#11025)", async () => {
+  it("returns exit code 1 with clean stopped guidance when phase is Stopped (#11025, #12746)", async () => {
     const cap = captureConsoleLog();
-    await printGuidance({
-      phase: "Stopped",
-      dockerRuntime: null,
-    });
+    await expect(
+      printGuidance({
+        phase: "Stopped",
+        dockerRuntime: null,
+      }),
+    ).resolves.toBe(1);
     const text = cap.lines();
     cap.restore();
 
@@ -120,24 +124,26 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("rebuild --yes");
   });
 
-  it("renders a missing provider-confirmed intentional stop as cleanly stopped (#11025)", async () => {
+  it("returns exit code 1 for a missing provider-confirmed intentional stop with clean guidance (#11025, #12746)", async () => {
     const cap = captureConsoleLog();
-    await printSandboxGatewayLookupStatus({
-      sandboxName: "beta",
-      registered: true,
-      lookup: { state: "missing", output: "sandbox beta not found" },
-      phase: "Stopped",
-      openshellDriver: "docker",
-      dockerRuntime: null,
-      dockerRuntimeDown: false,
-      effectivePreflight: {
-        failure: null,
-        failureLayer: null,
-        intentionalStopConfirmed: true,
-        suppressInferenceProbe: true,
-        exitCode: 0,
-      },
-    });
+    await expect(
+      printSandboxGatewayLookupStatus({
+        sandboxName: "beta",
+        registered: true,
+        lookup: { state: "missing", output: "sandbox beta not found" },
+        phase: "Stopped",
+        openshellDriver: "docker",
+        dockerRuntime: null,
+        dockerRuntimeDown: false,
+        effectivePreflight: {
+          failure: null,
+          failureLayer: null,
+          intentionalStopConfirmed: true,
+          suppressInferenceProbe: true,
+          exitCode: 0,
+        },
+      }),
+    ).resolves.toBe(1);
     const text = cap.lines();
     cap.restore();
 
