@@ -391,10 +391,17 @@ DGX Spark automatically selects its Qwen recipe from the detected unified-memory
 | At least 64 GB | 262,144 | 4 | 8,192 | 0.4 |
 
 The smaller recipe admits a nominal 64 GB DGX Spark that reports about 61.6 GB of usable unified memory.
+The admission floor uses detected total unified-memory capacity, not currently available memory.
+The separate GPU-memory preflight still checks available memory when `nvidia-smi` reports numeric values.
 It loads weights with vLLM's lazy `safetensors` strategy instead of `fastsafetensors`.
-It remains Experimental with software validation; physical 64 GB Spark qualification is pending.
+The profile remains Experimental.
+Hosted-installer and sustained-workload qualification remain pending.
 Unknown capacity or less than 60 GB does not qualify for either Qwen recipe.
 Before installation, NemoClaw displays the selected hardware profile and context limit.
+
+For Express installation on a nominal 64 GB DGX Spark, keep automatic serving-profile selection (option 1).
+The fixed profile (option 2) retains its 64 GB detected-capacity floor.
+
 The Deferred N1x profile uses `--gpu-memory-utilization 0.6`, a `32768`-token context window, `2` concurrent sequences, and a `4096`-token batch limit.
 The two-sequence limit permits vLLM to schedule a compaction summary while an agent response uses the other sequence.
 Both profiles retain chunked prefill, prefix caching, and their registered parsers and acceleration backends.
