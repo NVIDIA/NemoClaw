@@ -43,6 +43,7 @@ Use the owning guide for the selected credential type:
 |---|---|---|
 | Gateway bearer credential and mTLS files | Caller supplies environment values and local files; SDK/provider need access; gateway operator owns revocation, while the caller removes local values/files when no longer needed | [Configuration and credentials](usage.md#configuration-and-credentials) |
 | External inference key, including Hermes provider authentication | Caller resolves the reference; OpenShell retains the installed value for routing; destroy removes the provider registration, not the upstream account/key | [Inference authentication](inference.md#authenticate-hermes-through-the-provider) |
+| Key for a model server you run in a Kubernetes or OpenShift cluster | Caller supplies the value where `nemoclaw` runs, and a Kubernetes Secret supplies it to the server; principals who can read Secrets or create Pods in the server's namespace, or exec into the server's Pod, and node administrators can read it; OpenShell retains the installed value for routing; destroy removes the provider registration, not the Secret or the server's key | [In-cluster model server](kubernetes.md#use-a-model-server-in-the-cluster) |
 | Generated managed vLLM key | Private file in a separate retained credential volume, available to runtime root and engine administrators; recreation reuses it; retiring the container does not erase the key | [Managed service authentication](inference.md#authenticate-a-managed-vllm-service) |
 | Generated external-Ollama proxy key | Private credential volume, available to proxy root and engine administrators; retained across destroy/recreation and never forwarded to Ollama | [Ollama proxy](inference.md#use-external-ollama-through-a-managed-proxy) |
 | Brave or Tavily search key | Caller supplies the value; OpenShell holds it and replaces the agent's placeholder; destroy removes managed registrations but does not revoke the upstream key | [Brave web search](agents.md#brave-web-search), [Tavily web search](agents.md#tavily-web-search) |
@@ -86,7 +87,7 @@ The [subprocess tests](../crates/nemoclaw-sdk/src/process.rs) and [bundled CLI f
 | Connection | Current configuration boundary |
 |---|---|
 | Client to OpenShell gateway | HTTPS uses trust verification; optional `gateway.tls` selects CA, client certificate, and key through environment references to file paths |
-| OpenShell to external inference | Caller-provided inference keys require HTTPS; an accepted URL does not configure a corporate CA across all containers |
+| OpenShell to external inference | Caller-provided inference keys require HTTPS, except to an in-cluster Service endpoint, where the key crosses the cluster network over plain HTTP; an accepted URL does not configure a corporate CA across all containers |
 | Managed vLLM or Ollama proxy private endpoint | Optional/generated bearer authentication does not add TLS to the private HTTP transport |
 | Client to native dashboard | Authenticated OpenShell forwarding carries the connection to the sandbox-local listener; keep the local bind on loopback |
 

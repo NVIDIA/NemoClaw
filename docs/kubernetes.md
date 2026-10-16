@@ -23,7 +23,7 @@ OpenShift's security policy admitting these pods is untested; [current limits](l
   - [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox), with its controller running in `agent-sandbox-system`; CI tests version 0.5.0.
   - Exactly one default StorageClass.
 - **Agent images:** pushed to a registry the cluster can pull from, and referenced by digest.
-- **Inference:** an endpoint reachable from inside the sandboxes.
+- **Inference:** an endpoint reachable from inside the sandboxes, such as a [model server you run in the cluster](#use-a-model-server-in-the-cluster).
   Managed model services under `spec.services` are not supported on Kubernetes ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 NemoClaw installs nothing cluster-wide and never selects a context for you.
@@ -103,6 +103,210 @@ To use an OpenShell gateway someone else runs on the cluster, set `gateway.manag
 Give its endpoint, credential and TLS material as environment references, as in [the external gateway example](../examples/kubernetes/external-gateway.yaml).
 NemoClaw then manages only the sandboxes; it neither installs nor removes the gateway.
 Sandboxes still need `image.metadata`.
+
+## Use a Model Server in the Cluster
+
+Sandboxes can use a model server that you run in the gateway's cluster.
+NemoClaw creates nothing for it; you deploy the server, and the sandboxes reach it through its Service.
+Name the Service by its cluster DNS name and port:
+
+```yaml
+spec:
+  inferenceProviders:
+    - name: qwen
+      provider: openai
+      api: openai-completions
+      endpoint: http://qwen.models.svc.cluster.local:8000/v1
+      credential: {env: QWEN_INFERENCE_KEY}
+```
+
+- **Form:** `http://<service>.<namespace>.svc.cluster.local:<port>`, with an optional path such as `/v1`, and `gateway.runtime.provider` set to `kubernetes` or `openshift`.
+  Only the `cluster.local` domain is accepted, and the short `<service>.<namespace>` form is not.
+- **No catalog read:** cluster names resolve only inside the cluster, so plan and onboarding do not read the server's model catalog.
+  A successful plan does not show that the server is running or serves the route's model.
+- **Destination:** OpenShell decides which address the name may reach when sandboxes connect; NemoClaw grants no address.
+- **Key:** `credential` is optional.
+  It names the variable that holds the server's key where you run `nemoclaw`; OpenShell stores the key and adds it to sandbox requests.
+  The key crosses the cluster network over plain HTTP unless your network plugin or a service mesh encrypts Pod traffic.
+
+Start from [the in-cluster vLLM example](../examples/kubernetes/in-cluster-vllm.yaml), or from [the in-cluster Ollama example](../examples/kubernetes/in-cluster-ollama.yaml) for a server without a key.
+
+### Run NemoClaw's vLLM Runtime in the Cluster
+
+The steps below run NemoClaw's vLLM runtime as a Deployment in the namespace `models`, protected by a key.
+They are a starting point, not a qualified configuration; choose the GPU, storage and limits for your cluster.
+You need:
+
+- A GPU node with the NVIDIA device plugin.
+- A network plugin that enforces NetworkPolicies.
+- The [vLLM runtime image](build.md#build-a-runtime-image) for the node's architecture, pushed to a registry the cluster can pull from and referenced by digest.
+
+Run `kubectl` against the gateway's cluster, for example with `--context my-cluster`.
+
+1. Compute the runtime's settings with `vllm_runtime`, in an OpenTofu configuration of its own that installs the bundle's `vllm` provider as [Direct OpenTofu Usage](provider.md#direct-opentofu-usage) describes.
+   Set `hardware` to the node's [hardware profile](models.md#choose-a-hardware-profile):
+
+   ```hcl
+   data "vllm_runtime" "qwen" {
+     authentication = "bearer"
+     hardware {
+       profile      = "l40s"
+       architecture = "amd64"
+     }
+     model {
+       repository = "Qwen/Qwen3-4B"
+       revision   = "1cfa9a7208912126459214e8b04321603b3df60c"
+     }
+     serving {
+       port = 8000
+     }
+   }
+
+   output "spec" {
+     value = data.vllm_runtime.qwen.spec
+   }
+   ```
+
+   ```sh
+   tofu init
+   tofu apply
+   tofu output -raw spec > runtime-spec.json
+   ```
+
+   The Deployment below follows the rest of its [`launch` and `requirements`](provider.md#vllm-runtime-contract): the entrypoint, the spec in `NEMOCLAW_RUNTIME_SPEC`, the key in `NEMOCLAW_INFERENCE_KEY`, port 8000, the model cache at `/data`, one GPU, and 8 GiB of shared memory.
+   Kubernetes cannot set the `memlock` and `stack` limits, so the node's limits apply.
+
+2. Create the namespace, the key and the settings.
+   The key must be 16 to 4096 printable characters without whitespace; keep it in your secret manager.
+
+   ```sh
+   export QWEN_INFERENCE_KEY="$(openssl rand -hex 32)"
+   kubectl create namespace models
+   printf %s "$QWEN_INFERENCE_KEY" |
+     kubectl -n models create secret generic qwen-inference-key --from-file=key=/dev/stdin
+   kubectl -n models create configmap qwen-runtime --from-file=spec=runtime-spec.json
+   ```
+
+3. Create the server's storage, Deployment, Service and NetworkPolicy.
+   Replace the image digest, and the sandbox namespace in the NetworkPolicy; a managed gateway runs sandboxes in `gateway.kubernetes.namespace`.
+
+   ```sh
+   kubectl apply -f - <<'EOF'
+   apiVersion: v1
+   kind: PersistentVolumeClaim
+   metadata:
+     name: qwen-data
+     namespace: models
+   spec:
+     accessModes: [ReadWriteOnce]
+     resources:
+       requests:
+         storage: 100Gi
+   ---
+   apiVersion: apps/v1
+   kind: Deployment
+   metadata:
+     name: qwen
+     namespace: models
+   spec:
+     replicas: 1
+     # The runtime locks its storage, so the old Pod must stop before a new one starts.
+     strategy:
+       type: Recreate
+     selector:
+       matchLabels: {app: qwen}
+     template:
+       metadata:
+         labels: {app: qwen}
+       spec:
+         automountServiceAccountToken: false
+         containers:
+           - name: vllm
+             image: registry.example.com/nemoclaw/vllm-amd64@sha256:REPLACE_WITH_DIGEST
+             command: [/usr/local/bin/nemoclaw-runtime]
+             env:
+               - name: NEMOCLAW_RUNTIME_SPEC
+                 valueFrom:
+                   configMapKeyRef: {name: qwen-runtime, key: spec}
+               - name: NEMOCLAW_INFERENCE_KEY
+                 valueFrom:
+                   secretKeyRef: {name: qwen-inference-key, key: key}
+             ports:
+               - containerPort: 8000
+             resources:
+               limits:
+                 nvidia.com/gpu: 1
+             securityContext:
+               allowPrivilegeEscalation: false
+               capabilities:
+                 drop: [ALL]
+             volumeMounts:
+               - {name: data, mountPath: /data}
+               - {name: shm, mountPath: /dev/shm}
+             # GET /health needs no key. Downloading and loading may take hours.
+             startupProbe:
+               httpGet: {path: /health, port: 8000}
+               periodSeconds: 10
+               failureThreshold: 3240
+             readinessProbe:
+               httpGet: {path: /health, port: 8000}
+               periodSeconds: 10
+         volumes:
+           - name: data
+             persistentVolumeClaim: {claimName: qwen-data}
+           - name: shm
+             emptyDir: {medium: Memory, sizeLimit: 8Gi}
+   ---
+   apiVersion: v1
+   kind: Service
+   metadata:
+     name: qwen
+     namespace: models
+   spec:
+     selector: {app: qwen}
+     ports:
+       - port: 8000
+         targetPort: 8000
+   ---
+   # Admits only OpenShell's sandbox supervisors in the sandbox namespace.
+   apiVersion: networking.k8s.io/v1
+   kind: NetworkPolicy
+   metadata:
+     name: qwen
+     namespace: models
+   spec:
+     podSelector:
+       matchLabels: {app: qwen}
+     policyTypes: [Ingress]
+     ingress:
+       - from:
+           - namespaceSelector:
+               matchLabels:
+                 kubernetes.io/metadata.name: nemoclaw-in-cluster-vllm
+             podSelector:
+               matchLabels:
+                 openshell.ai/managed-by: openshell
+                 openshell.ai/boundary-role: supervisor
+         ports:
+           - port: 8000
+   EOF
+   ```
+
+4. Wait until the server is ready.
+   Apply does not check the server, so a deployment applied earlier fails its requests until then:
+
+   ```sh
+   kubectl -n models rollout status deployment/qwen --timeout=9h
+   ```
+
+5. With `QWEN_INFERENCE_KEY` still set, [plan and apply](#deploy-with-a-managed-gateway) the deployment.
+
+Each sandbox's OpenShell supervisor Pod makes the sandbox's network connections, so the NetworkPolicy admits only those Pods.
+Its selector uses OpenShell's own Pod labels, which OpenShell does not document as a stable interface ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
+Without a network plugin that enforces it, every Pod in the cluster can reach the server; an Ollama server, which has no key, is then open to all of them.
+For Ollama, compute `ollama_runtime` instead and leave out the Secret and `NEMOCLAW_INFERENCE_KEY`.
+
+NemoClaw's destroy leaves the server, its storage and its Secret in place; delete them yourself.
 
 ## Destroy a Deployment
 

@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# An agent on a managed Kubernetes gateway uses a vLLM server that you run in
+# the same cluster: the Service qwen in the namespace models, protected by a key.
+# NemoClaw creates nothing for the server. Deploy it and wait for its rollout
+# first; see "Use a Model Server in the Cluster" in docs/kubernetes.md.
+# Replace the deployment UID, the context, and the image digest before applying.
+# Set QWEN_INFERENCE_KEY to the server's key where you run nemoclaw.
+# Write the image's metadata bundle with `cargo images export-metadata` and set
+# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build.md.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: kubernetes-in-cluster-vllm
+  uid: 9154bae2-ebff-40bb-9df8-a1498d2a4c8c
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: kubernetes
+    endpoint: https://127.0.0.1:17671
+    kubernetes:
+      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+      context: replace-with-explicit-context
+      namespace: nemoclaw-in-cluster-vllm
+      authentication:
+        profile: development
+  inferenceProviders:
+    - name: qwen
+      provider: openai
+      api: openai-completions
+      # http://<service>.<namespace>.svc.cluster.local:<port>, resolved in the cluster.
+      endpoint: http://qwen.models.svc.cluster.local:8000/v1
+      credential: {env: QWEN_INFERENCE_KEY}
+  sandboxes:
+    - name: assistant
+      harness:
+        kind: nvidia.fabric.openclaw
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: qwen
+              overrides:
+                # vLLM serves the model under its Hugging Face repository name.
+                model: Qwen/Qwen3-4B
