@@ -1,14 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/**
- * Preserve the script's real user-visible boundary: install.sh onboards an
- * OpenClaw sandbox, `nemoclaw inference set` switches the running route, then
- * NemoClaw route state, native OpenClaw config state, registry/session state,
- * sandbox inference, and a real OpenClaw gateway model run are checked from the live
- * host/sandbox boundary. Target-specific helpers stay local; shared shell
- * primitives come from the fixture layer's production-backed helper.
- */
+// Hosted switching and native local routing share the OpenClaw live contract.
 
 import fs from "node:fs";
 import http, { type Server } from "node:http";
@@ -26,6 +19,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
+  sandboxAccessEnv,
   type SandboxClient,
   trustedSandboxShellScript,
   validateSandboxName,
@@ -38,10 +32,12 @@ import {
   requireCompatibleAnthropicProviderAbsent,
 } from "../fixtures/compatible-anthropic-switch.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import type { FakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import {
+  startFakeOpenAiCompatibleServer,
+  type FakeOpenAiCompatibleServer,
+} from "../fixtures/fake-openai-compatible.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { selectedE2eManagedImageReference } from "../fixtures/managed-image-receipt.ts";
-import type { TestProgress } from "../fixtures/progress.ts";
 import {
   inferenceResponseModel,
   inferenceSetAttemptCount,
@@ -60,7 +56,6 @@ import {
   classifyExhaustedPostSwitchEvidence,
   classifyOpenClawPostSwitchInferenceAttempt,
   classifyUnavailableInitialProviderEvidence,
-  MOCK_BASELINE_MODEL,
   mockBaselineInference,
   parseOpenClawGatewayModelRun,
   startMockOpenClawBaselineProvider,
@@ -72,6 +67,26 @@ import {
   readPublicNvidiaSwitchAttachmentEvidence,
   requirePublicNvidiaSwitchKey,
 } from "./public-nvidia-switch-provider.ts";
+
+import {
+  ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+  ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+  OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS,
+} from "../../../tools/e2e/onboard-timeout-contract.mts";
+import {
+  onboardNativeOpenClaw,
+  requestNativeOpenClaw,
+} from "../fixtures/inference-routing-openclaw-native.ts";
+import { assertAgentExecutionSucceeded } from "./gpu-e2e-helpers.ts";
+import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
+import {
+  cleanupSandbox,
+  expectOnboardSuccess,
+  inferenceSandboxName,
+  onboardSandbox,
+} from "./inference-routing-helpers.ts";
+
+process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-inf-switch";
 const SWITCH_PROVIDER = process.env.NEMOCLAW_SWITCH_PROVIDER ?? PUBLIC_NVIDIA_SWITCH_PROVIDER;
@@ -103,57 +118,13 @@ interface AnthropicResponse {
   content?: Array<{ text?: unknown }>;
 }
 
-interface OpenClawModelConfig {
-  id?: unknown;
-  name?: unknown;
-  contextWindow?: unknown;
-  maxTokens?: unknown;
-}
-
-interface OpenClawConfig {
-  agents?: {
-    defaults?: {
-      model?: {
-        primary?: unknown;
-      };
-    };
-  };
-  models?: {
-    providers?: Record<
-      string,
-      {
-        baseUrl?: unknown;
-        apiKey?: unknown;
-        api?: unknown;
-        models?: OpenClawModelConfig[];
-      }
-    >;
-  };
-}
-
 interface SandboxRegistry {
   sandboxes?: Record<
     string,
     {
-      provider?: unknown;
-      model?: unknown;
-      endpointUrl?: unknown;
-      credentialEnv?: unknown;
-      preferredInferenceApi?: unknown;
-      nimContainer?: unknown;
       nativeNvidiaProviderAttachment?: unknown;
     }
   >;
-}
-
-interface OnboardSession {
-  sandboxName?: unknown;
-  provider?: unknown;
-  model?: unknown;
-  endpointUrl?: unknown;
-  credentialEnv?: unknown;
-  preferredInferenceApi?: unknown;
-  nimContainer?: unknown;
 }
 
 interface MockAnthropicProvider {
@@ -168,70 +139,6 @@ interface MockAnthropicRequest {
   path: string;
   stream: boolean;
   toolCount: number | null;
-}
-
-function proveMockBaselineAuthentication(
-  baseline: Pick<FakeOpenAiCompatibleServer, "requests" | "baseUrl"> | undefined,
-  sandbox: SandboxClient,
-  home: string,
-  artifacts: { writeJson(path: string, value: unknown): Promise<string> },
-): Promise<void> {
-  return baseline
-    ? proveSelectedMockBaselineAuthentication(baseline, sandbox, home, artifacts)
-    : Promise.resolve(expect(baseline).toBeUndefined());
-}
-
-async function proveSelectedMockBaselineAuthentication(
-  baseline: Pick<FakeOpenAiCompatibleServer, "requests" | "baseUrl">,
-  sandbox: SandboxClient,
-  home: string,
-  artifacts: { writeJson(path: string, value: unknown): Promise<string> },
-): Promise<void> {
-  // Ignore incidental onboarding traffic. The fixture appends its ledger row
-  // before responding, so this awaited POST is the publication barrier for the
-  // requests sliced from this offset.
-  const requestOffset = baseline.requests().length;
-  const payload = {
-    model: MOCK_BASELINE_MODEL,
-    messages: [{ role: "user", content: "reply with OK" }],
-    max_tokens: 8,
-  };
-  const probe = await sandboxShell(
-    sandbox,
-    home,
-    SWITCH_NATIVE_CUSTOM
-      ? `${nativeHostedAuthHeaderScript({ credentialEnv: "COMPATIBLE_API_KEY", api: "openai-completions" })}; curl -fsS --max-time 60 ${shellQuote(`${baseline.baseUrl}/chat/completions`)} -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data ${shellQuote(JSON.stringify(payload))} >/dev/null`
-      : `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data ${shellQuote(JSON.stringify(payload))} >/dev/null`,
-    {
-      artifactName: "baseline-explicit-authenticated-inference-post",
-      timeoutMs: 90_000,
-    },
-  );
-  const requests = baseline.requests().slice(requestOffset);
-  const artifactName = "baseline-explicit-authenticated-inference-requests.json";
-  const phase = "install and onboard baseline OpenClaw";
-  const requestEvidence = requests
-    .slice(0, 20)
-    .map(({ auth, method, model, path }) => ({ auth, method, model, path }));
-  await artifacts.writeJson(artifactName, {
-    phase,
-    requestCount: requests.length,
-    requests: requestEvidence,
-    truncated: requests.length > requestEvidence.length,
-  });
-  expect(probe.exitCode, `${phase}: explicit baseline inference failed; see ${artifactName}`).toBe(
-    0,
-  );
-  const expectedRequest = expect.objectContaining({
-    auth: "ok",
-    method: "POST",
-    model: MOCK_BASELINE_MODEL,
-    path: "/v1/chat/completions",
-  });
-  expect(
-    requests,
-    `${phase}: explicit verification probe did not reach the authenticated fixture; see ${artifactName}`,
-  ).toContainEqual(expectedRequest);
 }
 
 function parsePortEnv(name: string, fallback: number): number {
@@ -432,7 +339,6 @@ async function startMockAnthropicProvider(host: HostCliClient): Promise<MockAnth
       let payload: { model?: unknown; stream?: unknown; tools?: unknown } = {};
       try {
         payload = JSON.parse(raw || "{}") as {
-          model?: unknown;
           stream?: unknown;
           tools?: unknown;
         };
@@ -551,77 +457,31 @@ async function openclawGatewayPid(sandbox: SandboxClient, home: string): Promise
   return result.stdout.trim();
 }
 
-async function assertRegistryAndSession(
+async function verifyNativeNvidiaAttachmentAfterSwitch(
   home: string,
-  options: { mockProvider?: MockAnthropicProvider; sandbox: SandboxClient },
+  sandbox: SandboxClient,
 ): Promise<void> {
-  const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
-  const registry = JSON.parse(fs.readFileSync(registryPath, "utf8")) as SandboxRegistry;
-  const sandbox = registry.sandboxes?.[SANDBOX_NAME];
-  expect(sandbox?.provider).toBe(SWITCH_PROVIDER);
-  expect(sandbox?.model).toBe(SWITCH_MODEL);
-  expect(sandbox?.nimContainer).toBeNull();
   switch (SWITCH_PROVIDER) {
-    case "compatible-endpoint":
-      expect(sandbox?.endpointUrl).toBeNull();
-      expect(sandbox?.credentialEnv).toBeNull();
-      expect(sandbox?.preferredInferenceApi).toBe("openai-completions");
-      break;
-    case "compatible-anthropic-endpoint":
-      expect(sandbox?.endpointUrl).toBe(
-        process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? options.mockProvider?.endpointUrl,
-      );
-      expect(sandbox?.credentialEnv).toBe("COMPATIBLE_ANTHROPIC_API_KEY");
-      expect(sandbox?.preferredInferenceApi).toBe("anthropic-messages");
-      break;
-    default:
-      expect(sandbox?.endpointUrl).toBeNull();
-      expect(sandbox?.credentialEnv).toBe(sandbox?.provider === SWITCH_PROVIDER ? null : undefined);
-      expect(sandbox?.preferredInferenceApi).toBeNull();
-  }
-
-  const sessionPath = path.join(home, ".nemoclaw", "onboard-session.json");
-  const session = JSON.parse(fs.readFileSync(sessionPath, "utf8")) as OnboardSession;
-  expect(Object.keys(session).length, "onboard session is empty").toBeGreaterThan(0);
-  expect(session.sandboxName).toBe(SANDBOX_NAME);
-  expect(session.provider).toBe(SWITCH_PROVIDER);
-  expect(session.model).toBe(SWITCH_MODEL);
-  expect(session.nimContainer).toBeNull();
-  switch (SWITCH_PROVIDER) {
-    case "compatible-endpoint":
-      expect(session.preferredInferenceApi).toBe("openai-completions");
-      break;
-    case "compatible-anthropic-endpoint":
-      expect(session.preferredInferenceApi).toBe("anthropic-messages");
-      break;
-    case PUBLIC_NVIDIA_SWITCH_PROVIDER:
+    case PUBLIC_NVIDIA_SWITCH_PROVIDER: {
+      const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
+      const registry = JSON.parse(fs.readFileSync(registryPath, "utf8")) as SandboxRegistry;
       expect(
-        [
-          session.endpointUrl,
-          session.credentialEnv,
-          session.preferredInferenceApi,
-          await readPublicNvidiaSwitchAttachmentEvidence({
-            artifactName: "native-nvidia-provider-attachment-after-switch",
-            env: commandEnv(home),
-            logicalProvider: SWITCH_PROVIDER,
-            receipt: sandbox?.nativeNvidiaProviderAttachment,
-            sandbox: options.sandbox,
-            sandboxName: SANDBOX_NAME,
-          }),
-        ].join("\n"),
-      ).toBe(
-        [
-          NVIDIA_HOSTED_NATIVE_ENDPOINT,
-          "NVIDIA_INFERENCE_API_KEY",
-          "openai-completions",
-          PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
-        ].join("\n"),
-      );
-      break;
+        await readPublicNvidiaSwitchAttachmentEvidence({
+          artifactName: "native-nvidia-provider-attachment-after-switch",
+          env: commandEnv(home),
+          logicalProvider: SWITCH_PROVIDER,
+          receipt: registry.sandboxes?.[SANDBOX_NAME]?.nativeNvidiaProviderAttachment,
+          sandbox,
+          sandboxName: SANDBOX_NAME,
+        }),
+      ).toBe(PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE);
+    }
   }
 }
 
-async function readAndAssertOpenClawConfig(
+// Source tests own serialized config and registry/session field values. This
+// live owner retains the actual configuration read and real gateway requests.
+async function recordOpenClawConfig(
   sandbox: SandboxClient,
   home: string,
   expected: {
@@ -631,7 +491,7 @@ async function readAndAssertOpenClawConfig(
     nativeNvidia?: boolean;
     nativeCustomEndpoint?: string;
   },
-): Promise<OpenClawModelConfig | undefined> {
+): Promise<void> {
   const configResult = await readOpenClawConfig(sandbox, SANDBOX_NAME, {
     nativeNvidia: expected.nativeNvidia,
     nativeCustomApi: expected.nativeCustomEndpoint ? expected.inferenceApi : undefined,
@@ -640,63 +500,6 @@ async function readAndAssertOpenClawConfig(
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
   expect(configResult.exitCode, resultText(configResult)).toBe(0);
-  const config = JSON.parse(configResult.stdout) as OpenClawConfig;
-  const expectedProviderKey =
-    expected.inferenceApi === "anthropic-messages" ? "anthropic" : "inference";
-  const expectedPrimary = `${expectedProviderKey}/${expected.model}`;
-  const provider = config.models?.providers?.[expectedProviderKey];
-  const selectedModel = provider?.models?.find((entry) => entry.id === expected.model);
-
-  expect(config.agents?.defaults?.model?.primary).toBe(expectedPrimary);
-  expect(provider?.baseUrl).toBe(
-    expected.nativeCustomEndpoint ??
-      (expected.nativeNvidia
-        ? NVIDIA_HOSTED_NATIVE_ENDPOINT
-        : expected.inferenceApi === "anthropic-messages"
-          ? "https://inference.local"
-          : "https://inference.local/v1"),
-  );
-  expect(provider?.apiKey).toBe(
-    expected.nativeNvidia || expected.nativeCustomEndpoint ? undefined : "unused",
-  );
-  expect(provider?.api).toBe(expected.inferenceApi);
-  expect(selectedModel?.name).toBe(expectedPrimary);
-  return selectedModel;
-}
-
-async function assertOpenClawConfig(
-  sandbox: SandboxClient,
-  home: string,
-  expected: {
-    model: string;
-    inferenceApi: string;
-    artifactName: string;
-    nativeNvidia?: boolean;
-    nativeCustomEndpoint?: string;
-  },
-): Promise<void> {
-  const selectedModel = await readAndAssertOpenClawConfig(sandbox, home, expected);
-  expect(
-    expected.inferenceApi === "anthropic-messages"
-      ? typeof selectedModel?.maxTokens === "number" && selectedModel.maxTokens > 0
-      : selectedModel?.maxTokens === undefined,
-  ).toBe(true);
-}
-
-async function assertInitialOpenClawConfig(
-  sandbox: SandboxClient,
-  home: string,
-  expected: {
-    model: string;
-    inferenceApi: string;
-    artifactName: string;
-    nativeNvidia?: boolean;
-    nativeCustomEndpoint?: string;
-  },
-): Promise<void> {
-  const selectedModel = await readAndAssertOpenClawConfig(sandbox, home, expected);
-  expect(selectedModel?.contextWindow).toBeUndefined();
-  expect(selectedModel?.maxTokens).toBeUndefined();
 }
 
 function httpStatusFromResponse(response: string): string {
@@ -996,66 +799,6 @@ exit "$rc"
   );
 }
 
-async function runInitialRouteLifecycle(options: {
-  nativeCustomEndpoint?: string;
-  artifacts: ArtifactSink;
-  baselineProvider?: Pick<FakeOpenAiCompatibleServer, "requests">;
-  home: string;
-  host: HostCliClient;
-  model: string;
-  progress: Pick<TestProgress, "phase">;
-  redactionValues: string[];
-  sandbox: SandboxClient;
-}): Promise<void> {
-  const verify = async (artifactSuffix: string): Promise<void> => {
-    await assertInitialOpenClawConfig(options.sandbox, options.home, {
-      model: options.model,
-      inferenceApi: "openai-completions",
-      artifactName: `read-openclaw-initial-route-${artifactSuffix}`,
-      nativeCustomEndpoint: options.nativeCustomEndpoint,
-    });
-    await checkOpenClawGatewayInference(
-      options.host,
-      options.home,
-      options.artifacts,
-      {
-        model: options.model,
-        inferenceApi: "openai-completions",
-        artifactName: `openclaw-gateway-inference-initial-route-${artifactSuffix}`,
-        phase: `prove initial custom-image route ${artifactSuffix}`,
-      },
-      undefined,
-      options.baselineProvider,
-    );
-  };
-  const requireLifecycleSuccess = (result: ShellProbeResult): void => {
-    expect(result.exitCode, resultText(result)).toBe(0);
-  };
-
-  options.progress.phase("prove the selected route after custom-image onboarding");
-  await verify("after-onboard");
-
-  options.progress.phase("prove the selected route after gateway restart");
-  const restart = await options.host.nemoclaw([SANDBOX_NAME, "gateway", "restart"], {
-    artifactName: "restart-openclaw-initial-custom-route",
-    env: commandEnv(options.home),
-    redactionValues: options.redactionValues,
-    timeoutMs: COMMAND_TIMEOUT_MS,
-  });
-  requireLifecycleSuccess(restart);
-  await verify("after-restart");
-
-  options.progress.phase("prove the selected route after rebuild");
-  const rebuild = await options.host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes", "--verbose"], {
-    artifactName: "rebuild-openclaw-initial-custom-route",
-    env: commandEnv(options.home),
-    redactionValues: options.redactionValues,
-    timeoutMs: INSTALL_TIMEOUT_MS,
-  });
-  requireLifecycleSuccess(rebuild);
-  await verify("after-rebuild");
-}
-
 // The pure reply-matching and mock-baseline-config assertions that previously
 // lived here as test(...) blocks (which only run under the opt-in live lane)
 // are covered in the fast e2e-support project instead:
@@ -1163,24 +906,15 @@ test(
         "the selected runtime is available and an authenticated compatible baseline endpoint is staged",
         "nemoclaw onboard --non-interactive --from onboards an OpenClaw sandbox from a custom Dockerfile",
         "fresh custom-image onboarding replaces the baked primary route with the selected model",
-        "stale baked context-window and output-token limits are absent after gateway restart and rebuild",
         "the selected route completes real OpenClaw gateway inference before and after both lifecycle operations",
         "when staged, the authenticated baseline fixture receives each selected-model OpenClaw gateway request",
-        "when selected, the mock baseline route completes one explicit authenticated fixture request",
         "nemoclaw inference set switches the running sandbox route",
         "OpenClaw gateway is supervisor-restarted after every changed inference configuration",
         "NemoClaw reports the switched provider/model",
-        "OpenClaw config reflects the switched inference API/model",
-        "registry and onboard session record the switched provider/model",
         "sandbox inference returns PONG from the switched model",
         "OpenClaw gateway model inference answers through the switched route without agent tools",
       ],
     });
-
-    expect(
-      fs.existsSync(CLI_ENTRYPOINT),
-      "run `npm run build:cli` before live repo CLI targets",
-    ).toBe(true);
 
     await runtimeProvider.requireAvailable({
       artifactName: "prereq-runtime-info-openclaw-inference-switch",
@@ -1281,7 +1015,6 @@ test(
       skip(unavailable.reason);
     }
     expect(onboard.exitCode, onboardText).toBe(0);
-    await proveMockBaselineAuthentication(baselineProvider, sandbox, home, artifacts);
 
     await approveOpenClawAdminScope(
       host,
@@ -1291,17 +1024,53 @@ test(
       redactionValues,
       false,
     );
-    await runInitialRouteLifecycle({
-      nativeCustomEndpoint: nativeBaselineHost ? baseline.endpointUrl : undefined,
-      artifacts,
-      baselineProvider,
-      home,
-      host,
-      model: baseline.model,
-      progress,
-      redactionValues,
-      sandbox,
+    const verifyInitialRoute = async (artifactSuffix: string): Promise<void> => {
+      await recordOpenClawConfig(sandbox, home, {
+        model: baseline.model,
+        inferenceApi: "openai-completions",
+        artifactName: `read-openclaw-initial-route-${artifactSuffix}`,
+        nativeCustomEndpoint: nativeBaselineHost ? baseline.endpointUrl : undefined,
+      });
+      await checkOpenClawGatewayInference(
+        host,
+        home,
+        artifacts,
+        {
+          model: baseline.model,
+          inferenceApi: "openai-completions",
+          artifactName: `openclaw-gateway-inference-initial-route-${artifactSuffix}`,
+          phase: `prove initial custom-image route ${artifactSuffix}`,
+        },
+        undefined,
+        baselineProvider,
+      );
+    };
+    const requireLifecycleSuccess = (result: ShellProbeResult): void => {
+      expect(result.exitCode, resultText(result)).toBe(0);
+    };
+
+    progress.phase("prove the selected route after custom-image onboarding");
+    await verifyInitialRoute("after-onboard");
+
+    progress.phase("prove the selected route after gateway restart");
+    const restart = await host.nemoclaw([SANDBOX_NAME, "gateway", "restart"], {
+      artifactName: "restart-openclaw-initial-custom-route",
+      env: commandEnv(home),
+      redactionValues: redactionValues,
+      timeoutMs: COMMAND_TIMEOUT_MS,
     });
+    requireLifecycleSuccess(restart);
+    await verifyInitialRoute("after-restart");
+
+    progress.phase("prove the selected route after rebuild");
+    const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes", "--verbose"], {
+      artifactName: "rebuild-openclaw-initial-custom-route",
+      env: commandEnv(home),
+      redactionValues: redactionValues,
+      timeoutMs: INSTALL_TIMEOUT_MS,
+    });
+    requireLifecycleSuccess(rebuild);
+    await verifyInitialRoute("after-rebuild");
 
     progress.phase("prepare the switched provider and endpoint");
     if (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1") {
@@ -1328,10 +1097,6 @@ test(
       redactionValues,
       false,
     );
-    const apiFamilyChanges = SWITCH_MOCK_ANTHROPIC === "1";
-    expect(SWITCH_INFERENCE_API).toBe(
-      apiFamilyChanges ? "anthropic-messages" : "openai-completions",
-    );
     const pidBefore = await openclawGatewayPid(sandbox, home);
     const switchResult = await runOpenClawInferenceSetWithRetry(
       host,
@@ -1342,12 +1107,6 @@ test(
       artifacts,
     );
     expect(switchResult.exitCode, resultText(switchResult)).toBe(0);
-    expect(
-      resultText(switchResult).includes(
-        `Restarting the OpenClaw gateway in '${SANDBOX_NAME}' to apply the updated inference configuration`,
-      ),
-      `managed config restart marker mismatch: ${resultText(switchResult)}`,
-    ).toBe(true);
 
     const pidAfter = await openclawGatewayPid(sandbox, home);
     const gatewayPidStable = pidBefore && pidAfter ? pidBefore === pidAfter : null;
@@ -1367,14 +1126,14 @@ test(
     const routeState = JSON.parse(route.stdout) as { provider?: unknown; model?: unknown };
     expect(routeState.provider).toBe(SWITCH_PROVIDER);
     expect(routeState.model).toBe(SWITCH_MODEL);
-    await assertOpenClawConfig(sandbox, home, {
+    await recordOpenClawConfig(sandbox, home, {
       model: SWITCH_MODEL,
       inferenceApi: SWITCH_INFERENCE_API,
       artifactName: "read-openclaw-config-after-inference-switch",
       nativeNvidia: SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER,
       nativeCustomEndpoint: SWITCH_NATIVE_CUSTOM ? switchBinding!.endpointUrl : undefined,
     });
-    await assertRegistryAndSession(home, { mockProvider, sandbox });
+    await verifyNativeNvidiaAttachmentAfterSwitch(home, sandbox);
 
     progress.phase("prove sandbox and OpenClaw gateway inference");
     const inference = await checkSandboxInference(
@@ -1430,7 +1189,6 @@ test(
         runtimeProviderAvailable: true,
         customImageOnboardingCompleted: onboard.exitCode === 0,
         customImageInitialRouteSelected: true,
-        customImageModelMetadataPreserved: true,
         customImageRouteSurvivedGatewayRestart: true,
         customImageRouteSurvivedRebuild: true,
         customImageGatewayReachedBaselineFixture: baselineProvider ? true : null,
@@ -1438,12 +1196,240 @@ test(
         gatewayRestartExpected: true,
         gatewayPidStable,
         routeChecked: true,
-        configChecked: true,
-        registryAndSessionChecked: true,
         inferenceLocalPong: true,
         inferenceLocalModelMatched: true,
         openClawGatewayInferencePong: true,
       },
     });
+  },
+);
+
+test(
+  "TC-INF-17 OpenClaw uses authenticated native local inference after rebuild and restart (#12975)",
+  {
+    timeout: OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm live inference prerequisites",
+        "onboard native OpenClaw owner",
+        "rebuild native OpenClaw owner",
+        "restart native OpenClaw owner",
+        "onboard shared-route sibling",
+        "record shared route before model switch",
+        "switch native OpenClaw model",
+        "verify shared route unchanged",
+        "request inference through OpenClaw",
+        "check credential isolation",
+        "verify owner reachability",
+        "verify sibling denial",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("onboard native OpenClaw owner");
+    const selected = await onboardNativeOpenClaw(true, {
+      artifacts,
+      cleanup,
+      host,
+      progress,
+      runtimeProvider,
+      sandbox,
+    });
+    const { owner, model, switchedModel, apiKey, fake, onboard, attachment } = selected;
+    expectOnboardSuccess(onboard, `${owner} onboard`);
+    progress.phase("rebuild native OpenClaw owner");
+    const rebuild = await host.nemoclaw([owner, "rebuild", "--yes", "--verbose"], {
+      artifactName: `${owner}-rebuild`,
+      env: { ...buildAvailabilityProbeEnv(), NEMOCLAW_LLAMACPP_LOCAL_TOKEN: apiKey },
+      redactionValues: [apiKey],
+      timeoutMs: 20 * 60_000,
+    });
+    expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
+    progress.phase("restart native OpenClaw owner");
+    const stop = await host.nemoclaw([owner, "stop"], {
+      artifactName: `${owner}-stop`,
+      env: sandboxAccessEnv(),
+      timeoutMs: 120_000,
+    });
+    expect(stop.exitCode, resultText(stop)).toBe(0);
+    const start = await host.nemoclaw([owner, "start"], {
+      artifactName: `${owner}-start`,
+      env: sandboxAccessEnv(),
+      timeoutMs: 120_000,
+    });
+    expect(start.exitCode, resultText(start)).toBe(0);
+    progress.phase("onboard shared-route sibling");
+    const sibling = inferenceSandboxName("e2e-oc-peer");
+    const peerEndpoint = await startFakeOpenAiCompatibleServer({
+      apiKey,
+      model,
+      host: "0.0.0.0",
+      publicHost: "host.openshell.internal",
+      requireAuth: true,
+      progress,
+    });
+    cleanup.add(`close ${sibling} endpoint`, () => peerEndpoint.close());
+    cleanup.add(`remove ${sibling}`, () =>
+      cleanupSandbox(host, sandbox, sibling, { strict: true }),
+    );
+    await cleanupSandbox(host, sandbox, sibling);
+    const peer = await onboardSandbox(
+      artifacts,
+      sibling,
+      {
+        NEMOCLAW_AGENT: "openclaw",
+        NEMOCLAW_PROVIDER: "custom",
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_ENDPOINT_URL: peerEndpoint.baseUrl,
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+        COMPATIBLE_API_KEY: apiKey,
+      },
+      [apiKey],
+      `${sibling}-onboard`,
+      progress,
+      ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+    );
+    expectOnboardSuccess(peer, `${sibling} onboard`);
+    progress.phase("record shared route before model switch");
+    const sharedBefore = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
+      artifactName: `${owner}-shared-route-before-switch`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    expect(sharedBefore.exitCode, resultText(sharedBefore)).toBe(0);
+    progress.phase("switch native OpenClaw model");
+    const switched = await host.nemoclaw(
+      ["inference", "set", "--provider", "llama-cpp", "--model", switchedModel, "--sandbox", owner],
+      {
+        artifactName: `${owner}-model-switch`,
+        env: { ...buildAvailabilityProbeEnv(), NEMOCLAW_LLAMACPP_LOCAL_TOKEN: apiKey },
+        redactionValues: [apiKey],
+        timeoutMs: 5 * 60_000,
+      },
+    );
+    expect(switched.exitCode, resultText(switched)).toBe(0);
+    progress.phase("verify shared route unchanged");
+    const sharedAfter = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
+      artifactName: `${owner}-shared-route-after-switch`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    expect(sharedAfter.exitCode).toBe(sharedBefore.exitCode);
+    expect(sharedAfter.stdout).toBe(sharedBefore.stdout);
+    progress.phase("request inference through OpenClaw");
+    const { turn, requests } = await requestNativeOpenClaw(
+      owner,
+      apiKey,
+      fake,
+      host,
+      switchedModel,
+    );
+    expect(turn.exitCode, resultText(turn)).toBe(0);
+    assertAgentExecutionSucceeded(turn.stdout, "inference", switchedModel);
+    expect(
+      requests.some((request) => request.path === "/v1/chat/completions" && request.auth === "ok"),
+    ).toBe(true);
+    progress.phase("check credential isolation");
+    const scan = await sandbox.exec(owner, hostedCredentialScanCommand(apiKey), {
+      artifactName: `${owner}-credential-scan`,
+      env: sandboxAccessEnv(),
+      timeoutMs: 60_000,
+      redactionValues: [apiKey],
+    });
+    expect(scan.exitCode, resultText(scan)).toBe(0);
+    expect(JSON.parse(scan.stdout)).toMatchObject({
+      environmentClean: true,
+      processesClean: true,
+      sampledFilesClean: true,
+      canaryDetected: true,
+    });
+    progress.phase("verify owner reachability");
+    const beforeOwnerProbe = fake.requests().length;
+    const ownerProbe = await sandbox.exec(
+      owner,
+      [
+        "curl",
+        "--fail",
+        "--max-time",
+        "15",
+        "--header",
+        `Authorization: Bearer ${apiKey}`,
+        `${attachment!.endpointUrl}/models`,
+      ],
+      {
+        artifactName: `${owner}-owner-reachability`,
+        env: sandboxAccessEnv(),
+        timeoutMs: 30_000,
+        redactionValues: [apiKey],
+      },
+    );
+    expect(ownerProbe.exitCode, resultText(ownerProbe)).toBe(0);
+    expect(
+      fake
+        .requests()
+        .slice(beforeOwnerProbe)
+        .some((request) => request.path.endsWith("/models") && request.auth === "ok"),
+    ).toBe(true);
+    progress.phase("verify sibling denial");
+    const beforeDenied = fake.requests().length;
+    const denied = await sandbox.exec(
+      sibling,
+      [
+        "curl",
+        "--fail",
+        "--max-time",
+        "15",
+        "--header",
+        `Authorization: Bearer ${apiKey}`,
+        `${attachment!.endpointUrl}/models`,
+      ],
+      {
+        artifactName: `${sibling}-owner-denial`,
+        env: sandboxAccessEnv(),
+        timeoutMs: 30_000,
+        redactionValues: [apiKey],
+      },
+    );
+    expect(denied.exitCode).not.toBe(0);
+    expect(fake.requests()).toHaveLength(beforeDenied);
+  },
+);
+
+test(
+  "TC-INF-18 OpenClaw uses a credentialless native local vLLM endpoint (#12975)",
+  {
+    timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm live inference prerequisites",
+        "onboard native OpenClaw owner",
+        "request inference through OpenClaw",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("onboard native OpenClaw owner");
+    const { owner, apiKey, fake, onboard } = await onboardNativeOpenClaw(false, {
+      artifacts,
+      cleanup,
+      host,
+      progress,
+      runtimeProvider,
+      sandbox,
+    });
+    expectOnboardSuccess(onboard, `${owner} onboard`);
+    progress.phase("request inference through OpenClaw");
+    const { turn, requests } = await requestNativeOpenClaw(owner, apiKey, fake, host);
+    expect(turn.exitCode, resultText(turn)).toBe(0);
+    assertAgentExecutionSucceeded(turn.stdout, "inference", "nemoclaw-openclaw-native-local");
+    expect(
+      requests.some(
+        (request) =>
+          request.path === "/v1/chat/completions" &&
+          request.auth === "ok" &&
+          request.authorizationSent === true,
+      ),
+    ).toBe(true);
+    expect(requests.every((request) => request.auth === "ok")).toBe(true);
   },
 );

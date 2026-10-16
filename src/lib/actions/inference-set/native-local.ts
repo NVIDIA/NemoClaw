@@ -104,14 +104,26 @@ export async function restorePreviousOpenClawLocal(input: {
   detached: boolean;
   committed: boolean;
   sandboxName: string;
+  error: unknown;
   deps: InferenceSetDeps;
-}): Promise<void> {
-  if (!input.detached || input.committed || !input.previous) return;
-  await ensureNativeLocalProviderAttached({
-    adapter: input.deps.providerAdapter,
-    sandboxName: input.sandboxName,
-    expected: input.previous,
-  });
+}): Promise<unknown> {
+  if (!input.detached || input.committed || !input.previous) return input.error;
+  try {
+    await ensureNativeLocalProviderAttached({
+      adapter: input.deps.providerAdapter,
+      sandboxName: input.sandboxName,
+      expected: input.previous,
+    });
+  } catch (reattachError) {
+    const detail = input.error instanceof Error ? input.error.message : String(input.error);
+    const recoveryDetail =
+      reattachError instanceof Error ? reattachError.message : String(reattachError);
+    return new InferenceSetError(
+      `${detail}\n  Native local provider access was detached before the failed switch, but restoring the attachment failed: ${recoveryDetail}. Retain this sandbox and its provider authority for repair.`,
+      input.error instanceof InferenceSetError ? input.error.exitCode : 1,
+    );
+  }
+  return input.error;
 }
 
 export async function retirePreviousOpenClawLocal(input: {

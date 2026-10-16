@@ -434,7 +434,7 @@ describe("sandbox route publication", () => {
   });
 });
 
-function nativeRecreationHarness(agent = "langchain-deepagents-code") {
+function nativeRecreationHarness(agent: "langchain-deepagents-code" | "openclaw" | "pi") {
   const session = createSession({ sandboxName: "saved" });
   const row: SandboxEntry = {
     name: "saved",
@@ -447,7 +447,7 @@ function nativeRecreationHarness(agent = "langchain-deepagents-code") {
   };
   const source = structuredClone(row);
   const attachment = nativeLocalSetupReceipt({
-    ...(agent === "pi" ? { agent: "pi" as const } : {}),
+    ...(agent === "langchain-deepagents-code" ? {} : { agent }),
     provider: "vllm-local",
     sandboxName: "saved",
     gatewayName: "nemoclaw",
@@ -483,49 +483,53 @@ function nativeRecreationHarness(agent = "langchain-deepagents-code") {
   return { row, source, attachment, session, reserve, deps, calls, run };
 }
 
-describe.each(["langchain-deepagents-code", "pi"])("legacy %s recreation publication", (agent) => {
-  it("publishes the native attachment only at the post-backup replacement seam (#13197)", async () => {
-    const { row, source, attachment, session, reserve, deps, run } = nativeRecreationHarness(agent);
-    deps.createSandbox = async (...args: unknown[]) => {
-      expect(row).toEqual(source);
-      expect(reserve).not.toHaveBeenCalled();
-      const intent = args.at(-2) as {
-        resolved: { inferenceProvider: string; nativeLocalProviderAttachment: unknown };
-        reservePublishedRouteAfterBackup: () => Promise<void>;
+describe.each(["langchain-deepagents-code", "openclaw", "pi"] as const)(
+  "legacy %s recreation publication",
+  (agent) => {
+    it("publishes the native attachment only at the post-backup replacement seam (#13197)", async () => {
+      const { row, source, attachment, session, reserve, deps, run } =
+        nativeRecreationHarness(agent);
+      deps.createSandbox = async (...args: unknown[]) => {
+        expect(row).toEqual(source);
+        expect(reserve).not.toHaveBeenCalled();
+        const intent = args.at(-2) as {
+          resolved: { inferenceProvider: string; nativeLocalProviderAttachment: unknown };
+          reservePublishedRouteAfterBackup: () => Promise<void>;
+        };
+        expect(intent.resolved).toMatchObject({
+          inferenceProvider: attachment.providerName,
+          nativeLocalProviderAttachment: attachment,
+        });
+        await intent.reservePublishedRouteAfterBackup();
+        expect(row.nativeLocalProviderAttachment).toEqual(attachment);
+        return "saved";
       };
-      expect(intent.resolved).toMatchObject({
-        inferenceProvider: attachment.providerName,
-        nativeLocalProviderAttachment: attachment,
-      });
-      await intent.reservePublishedRouteAfterBackup();
-      expect(row.nativeLocalProviderAttachment).toEqual(attachment);
-      return "saved";
-    };
-    await run();
-    expect(reserve).toHaveBeenCalledExactlyOnceWith(
-      "saved",
-      expect.objectContaining({
-        nativeLocalProviderAttachment: attachment,
-        reservationSessionId: session.sessionId,
-      }),
-    );
-  });
+      await run();
+      expect(reserve).toHaveBeenCalledExactlyOnceWith(
+        "saved",
+        expect.objectContaining({
+          nativeLocalProviderAttachment: attachment,
+          reservationSessionId: session.sessionId,
+        }),
+      );
+    });
 
-  it("preserves the legacy source when backup rejects recreation (#13197)", async () => {
-    const { row, source, reserve, deps, run } = nativeRecreationHarness(agent);
-    deps.createSandbox = async () => {
-      throw new Error("backup refused");
-    };
-    await expect(run()).rejects.toThrow("backup refused");
-    expect(reserve).not.toHaveBeenCalled();
-    expect(row).toEqual(source);
-  });
+    it("preserves the legacy source when backup rejects recreation (#13197)", async () => {
+      const { row, source, reserve, deps, run } = nativeRecreationHarness(agent);
+      deps.createSandbox = async () => {
+        throw new Error("backup refused");
+      };
+      await expect(run()).rejects.toThrow("backup refused");
+      expect(reserve).not.toHaveBeenCalled();
+      expect(row).toEqual(source);
+    });
 
-  it("rejects a changed legacy source before starting recreation (#13197)", async () => {
-    const { row, reserve, calls, run } = nativeRecreationHarness(agent);
-    row.model = "another-model";
-    await expect(run()).rejects.toThrow("legacy route ownership changed");
-    expect(reserve).not.toHaveBeenCalled();
-    expect(calls.createSandbox).not.toHaveBeenCalled();
-  });
-});
+    it("rejects a changed legacy source before starting recreation (#13197)", async () => {
+      const { row, reserve, calls, run } = nativeRecreationHarness(agent);
+      row.model = "another-model";
+      await expect(run()).rejects.toThrow("legacy route ownership changed");
+      expect(reserve).not.toHaveBeenCalled();
+      expect(calls.createSandbox).not.toHaveBeenCalled();
+    });
+  },
+);

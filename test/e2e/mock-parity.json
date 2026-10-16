@@ -205,16 +205,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/inference-routing-openclaw-native.test.ts",
-      "liveSources": ["test/e2e/fixtures/inference-routing-openclaw-native.ts"],
-      "fast": [
-        "src/lib/inference/native-local.test.ts",
-        "src/lib/actions/inference-set-openclaw-native-local.test.ts",
-        "test/onboarding/onboard-host-local-inference-routing.test.ts",
-        "test/e2e/support/onboard-timeout-contract.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/inference-routing-provider-smoke.test.ts",
       "liveSources": [
         "test/e2e/live/inference-routing-credential-scan.ts",
@@ -862,6 +852,7 @@
     {
       "live": "test/e2e/live/openclaw-inference-switch.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/inference-routing-openclaw-native.ts",
         "test/e2e/live/openclaw-inference-switch-helpers.ts",
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/live/public-nvidia-switch-provider.ts",
@@ -871,6 +862,11 @@
         "test/e2e/fixtures/managed-image-receipt.ts"
       ],
       "fast": [
+        "src/lib/inference/native-local.test.ts",
+        "src/lib/actions/inference-set-openclaw-native-local.test.ts",
+        "src/lib/actions/inference-set-openclaw-run.test.ts",
+        "test/onboarding/onboard-host-local-inference-routing.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts",
         "src/lib/actions/inference-get.test.ts",
         "src/lib/actions/inference-set-patch-openclaw.test.ts",
         "src/lib/actions/inference-set-compatible-provider.test.ts",

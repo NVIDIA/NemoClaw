@@ -2027,11 +2027,12 @@ async function runInferenceSetWithoutHostLock(
       error,
       deps,
     });
-    await restorePreviousOpenClawLocal({
+    const failure = await restorePreviousOpenClawLocal({
       previous: localSwitch.previous,
       detached: previousLocalDetached,
       committed: previousLocalDetachCommitted,
       sandboxName,
+      error,
       deps,
     });
     await restorePreviousNativeAfterFailedPublish({
@@ -2040,14 +2041,14 @@ async function runInferenceSetWithoutHostLock(
       previousAttachment: previousNativeAttachment,
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
-      error,
+      error: failure,
       deps,
     });
-    if (!providerMutation) throw error;
-    if (ambiguousInferenceSelection) throw error;
-    if (restoredSelectionAfterProviderFailure) throw error;
-    const detail = error instanceof Error ? error.message : String(error);
-    const exitCode = error instanceof InferenceSetError ? error.exitCode : 1;
+    if (!providerMutation) throw failure;
+    if (ambiguousInferenceSelection) throw failure;
+    if (restoredSelectionAfterProviderFailure) throw failure;
+    const detail = failure instanceof Error ? failure.message : String(failure);
+    const exitCode = failure instanceof InferenceSetError ? failure.exitCode : 1;
     if (!appliedInferenceSelection) {
       if (providerMutation.action === "create") {
         try {
