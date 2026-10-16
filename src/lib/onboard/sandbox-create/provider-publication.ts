@@ -18,6 +18,7 @@ import {
   type CliOpenShellProviderAdapter,
 } from "../../adapters/openshell/provider-adapter-cli";
 import type { OpenShellGatewayEndpointEnvironment } from "../../adapters/openshell/gateway-scope";
+import { endpointlessProviderProfilePath } from "../../adapters/openshell/provider-profile";
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { messagingProviderProfileForType } from "../../messaging/applier/provider-application";
@@ -119,12 +120,7 @@ export async function validateAttachedOwnedProfilesBeforeSandboxCreation(
     if (observed.value.type === "langfuse-hermes-v1") {
       directProfile = {
         profileType: observed.value.type,
-        profilePath: path.join(
-          REPOSITORY_ROOT,
-          "nemoclaw-blueprint",
-          "provider-profiles",
-          "langfuse-hermes-v1.yaml",
-        ),
+        profilePath: endpointlessProviderProfilePath(REPOSITORY_ROOT, observed.value.type),
       };
     }
     if (observed.value.type === NVIDIA_HOSTED_NATIVE_PROFILE_ID) {

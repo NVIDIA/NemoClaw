@@ -4,7 +4,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
+import { endpointlessProviderProfilePath } from "../../adapters/openshell/provider-profile";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
+import { nativeNvidiaProviderProfilePath } from "../../inference/native-nvidia";
 import {
   messagingCredentialProviderProfilePath,
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
@@ -106,15 +108,26 @@ async function prepareProviders(
 
 describe("sandbox provider preparation", () => {
   it.each([
-    ["brave", true],
-    ["google-chat-bridge", true],
-    ["langfuse-hermes-v1", true],
-    ["nemoclaw-nvidia-inference-v1", true],
-    ["generic", false],
-    ["operator-custom-v1", false],
+    ["brave", true, expect.anything()],
+    ["google-chat-bridge", true, expect.anything()],
+    [
+      "langfuse-hermes-v1",
+      true,
+      {
+        target,
+        profilePath: endpointlessProviderProfilePath(REPOSITORY_ROOT, "langfuse-hermes-v1"),
+      },
+    ],
+    [
+      "nemoclaw-nvidia-inference-v1",
+      true,
+      { target, profilePath: nativeNvidiaProviderProfilePath() },
+    ],
+    ["generic", false, undefined],
+    ["operator-custom-v1", false, undefined],
   ] as const)(
     "checks an attached %s provider only when its profile is NemoClaw-owned",
-    async (type, owned) => {
+    async (type, owned, profileImport) => {
       const warningCheck = vi.fn();
       const adapter = Object.assign(
         typedProviderAdapter({
@@ -157,7 +170,9 @@ describe("sandbox provider preparation", () => {
         route: "none",
         revalidateSandboxIdentity: vi.fn(),
       });
-      expect(adapter.importProviderProfile).toHaveBeenCalledTimes(owned ? 1 : 0);
+      expect(vi.mocked(adapter.importProviderProfile).mock.calls).toEqual(
+        owned ? [[profileImport]] : [],
+      );
       expect(warningCheck).toHaveBeenCalledTimes(owned ? 1 : 0);
       expect(warningCheck.mock.calls[0] ?? null).toEqual(owned ? [{ target }, [type]] : null);
     },
