@@ -12,7 +12,7 @@ content:
 NemoClaw supports operator-run servers and NemoClaw-managed runtime profiles for local inference.
 Choose the option that matches your host, model, and operational needs.
 
-New Deep Agents Code and OpenClaw sandboxes use sandbox-attached OpenShell providers for Ollama, standalone vLLM, and llama.cpp. Local NVIDIA NIM, Pi, and Hermes continue to use `inference.local`. Existing OpenClaw sandboxes without an attachment retain their supported shared route; back up and recreate them before an unsafe resume or rebuild.
+New Deep Agents Code and OpenClaw sandboxes use sandbox-attached OpenShell providers for Ollama, standalone vLLM, and llama.cpp. Local NVIDIA NIM, Pi, and Hermes continue to use `inference.local`. Existing OpenClaw local sandboxes without an attachment retain supported shared-route model switches, but cannot resume or rebuild. Back them up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`.
 
 <Warning>
 On native N1x Linux, use the Deferred managed-vLLM preview or enter standard onboarding explicitly.

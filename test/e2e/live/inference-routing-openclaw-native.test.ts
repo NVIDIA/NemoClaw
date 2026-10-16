@@ -132,8 +132,8 @@ test(
       timeoutMs: 60_000,
       redactionValues: [apiKey],
     });
-    expect({ exitCode: scan.exitCode, ...JSON.parse(scan.stdout) }).toMatchObject({
-      exitCode: 0,
+    expect(scan.exitCode, resultText(scan)).toBe(0);
+    expect(JSON.parse(scan.stdout)).toMatchObject({
       environmentClean: true,
       processesClean: true,
       sampledFilesClean: true,
