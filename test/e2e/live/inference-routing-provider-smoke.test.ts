@@ -6,8 +6,8 @@ import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
 import { parse as parseToml } from "smol-toml";
 import {
-  HOSTED_PROVIDER_SMOKE_CASES as hostedCases,
-  hostedProviderSmokeEnvironment,
+  OPENROUTER_SMOKE,
+  openRouterSmokeEnvironment,
 } from "../../../tools/e2e/hosted-provider-smoke.mts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { isObjectRecord } from "../../../src/lib/core/json-types.ts";
@@ -147,7 +147,7 @@ test(
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
     progress.phase("confirm hosted OpenRouter prerequisites");
     requireProviderSmokeSelected("openrouter", skip);
-    const environment = hostedProviderSmokeEnvironment("hosted-inference-openrouter", {
+    const environment = openRouterSmokeEnvironment({
       OPENROUTER_API_KEY: secrets.optional("OPENROUTER_API_KEY"),
       NEMOCLAW_OPENROUTER_MODEL: process.env.NEMOCLAW_OPENROUTER_MODEL,
     });
@@ -236,8 +236,8 @@ test(
   },
 );
 
-test.for(hostedCases)(
-  "$id $label answers through its native provider",
+test(
+  "TC-INF-07 OpenRouter answers through its native provider",
   {
     timeout: 35 * 60_000,
     meta: {
@@ -253,12 +253,10 @@ test.for(hostedCases)(
       ],
     },
   },
-  async (
-    selected,
-    { artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip },
-  ) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    const selected = OPENROUTER_SMOKE;
     requireProviderSmokeSelected(selected.selector, skip);
-    const environment = hostedProviderSmokeEnvironment(`hosted-inference-${selected.selector}`, {
+    const environment = openRouterSmokeEnvironment({
       [selected.credential]: secrets.optional(selected.credential),
       [selected.modelEnv]: process.env[selected.modelEnv],
     });
