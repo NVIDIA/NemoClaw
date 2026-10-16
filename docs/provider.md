@@ -251,7 +251,7 @@ Every section of Fabric's agent configuration is an input with Fabric's name: `i
 Their types come from Fabric's published configuration schema, with snake_case names.
 Named objects, such as model roles, are labeled blocks: `models "default" { ... }`.
 A value Fabric leaves open, such as `settings`, is JSON text; write it with `jsonencode`.
-Fields an object accepts beyond those Fabric's schema declares, such as a model's `api`, go in that object's `extensions` attribute, also as JSON text.
+Fields an object accepts beyond those Fabric's schema declares, such as one an adapter documents for its models, go in that object's `extensions` attribute, also as JSON text.
 Fabric requires a `runtime` section, so omitting `runtime` sends an empty one.
 
 ```hcl

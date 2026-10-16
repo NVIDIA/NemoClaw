@@ -1170,34 +1170,36 @@ fn exact_native_guidance_uses_active_fabric_fields_without_asking_the_whole_scop
     );
 }
 
+/// An OpenClaw configuration whose native settings break the adapter's schema:
+/// agent names are lowercase.
+fn invalid_openclaw_settings() -> PartialDocument {
+    let mut value: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/onboarding/openclaw.yaml")).unwrap();
+    value["spec"]["sandboxes"][0]["harness"]["settings"]["agent_name"] = json!("Not A Name");
+    PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap()
+}
+
 #[test]
-fn invalid_complete_native_model_settings_cannot_reach_review() {
+fn invalid_complete_native_settings_cannot_reach_review() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
-    let mut state = JourneyDefinition::new("native-validation", base)
+    let result = JourneyDefinition::new("native-validation", invalid_openclaw_settings())
         .ask([JourneyScope::NativeSettings])
         .omit([
-            "adapter:nvidia.fabric.openclaw:/agent_name",
             "adapter:nvidia.fabric.openclaw:/cli",
             "adapter:nvidia.fabric.openclaw:/home",
             "adapter:nvidia.fabric.openclaw:/native_config",
             "adapter:nvidia.fabric.openclaw:/timeout_seconds",
         ])
         .start(&capabilities)
+        .unwrap()
+        .resolve(&capabilities)
         .unwrap();
-    state
-        .answer(
-            &capabilities,
-            "model:/api",
-            Some(json!("openai-completions")),
-        )
-        .unwrap();
-    let result = state.resolve(&capabilities).unwrap();
     assert!(
-        !result.unverified().is_empty(),
-        "invalid native model config must be reported"
+        !result.unverified().is_empty()
+            || result
+                .question("adapter:nvidia.fabric.openclaw:/agent_name")
+                .is_some(),
+        "invalid native settings must be reported"
     );
     assert!(result.materialized_document().is_none());
 }
@@ -1205,24 +1207,8 @@ fn invalid_complete_native_model_settings_cannot_reach_review() {
 #[test]
 fn invalid_native_settings_block_review_without_native_prompt_guidance() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
-    let mut guided = JourneyDefinition::new("make-invalid-native", base)
-        .ask([JourneyScope::NativeSettings])
-        .start(&capabilities)
-        .unwrap();
-    guided
-        .answer(
-            &capabilities,
-            "model:/api",
-            Some(json!("openai-completions")),
-        )
-        .unwrap();
-    let invalid_base = PartialDocument::from_yaml(guided.values().to_string().as_bytes()).unwrap();
-    let resolution = JourneyDefinition::new("express-invalid-native", invalid_base)
+    let resolution = JourneyDefinition::new("express-invalid-native", invalid_openclaw_settings())
         .omit([
-            "adapter:nvidia.fabric.openclaw:/agent_name",
             "adapter:nvidia.fabric.openclaw:/cli",
             "adapter:nvidia.fabric.openclaw:/home",
             "adapter:nvidia.fabric.openclaw:/native_config",
@@ -1236,8 +1222,11 @@ fn invalid_native_settings_block_review_without_native_prompt_guidance() {
     assert!(resolution.assessment().document().is_some());
     assert!(resolution.materialized_document().is_none());
     assert!(
-        resolution.question("model:/api").is_some() || !resolution.unverified().is_empty(),
-        "invalid Fabric configuration must remain visible without prompt guidance"
+        resolution
+            .question("adapter:nvidia.fabric.openclaw:/agent_name")
+            .is_some()
+            || !resolution.unverified().is_empty(),
+        "invalid native settings must remain visible without prompt guidance"
     );
 }
 

@@ -136,12 +136,12 @@ OpenShell authorizes native endpoint access and substitutes the provider credent
 | `anthropic` | `anthropic-messages` |
 
 An explicit `api` can select `openai-completions`, `openai-responses`, or `anthropic-messages` with the matching provider transport.
-For example, configure `api: openai-responses` explicitly when an adapter expects the Responses protocol.
+NemoClaw uses it to read the endpoint's model catalog.
 The harness name does not change these defaults.
-The selected image's Fabric metadata supplies adapter capabilities; known conflicts stop planning, and missing metadata leaves compatibility unverified.
-Fabric validates its own configuration against the installed descriptor.
-The SDK forwards the selected protocol as the public model `api` extension.
-Fabric validates that extension against its canonical descriptor; a missing extension contract remains unknown, while an explicitly excluded protocol is unsupported.
+
+Agents use the protocol their harness's adapter selects for the provider transport.
+Fabric v0.5.0 has no per-model API setting, so an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent ([#13320](https://github.com/NVIDIA/NemoClaw/issues/13320)).
+Fabric validates the rest of its configuration when the agent is configured.
 
 Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with either OpenAI API.
 The provider name is the local reference used by routes; it does not select a vendor.

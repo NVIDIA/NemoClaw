@@ -194,7 +194,7 @@ pub struct InferenceProvider {
     pub provider: super::InferenceProviderKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::InferenceApi")]
-    /// Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers; explicit values are preserved for Fabric validation.
+    /// Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers. NemoClaw uses it to read the endpoint's model catalog; agents use the protocol their adapter selects for the provider.
     pub api: Option<super::InferenceApi>,
     #[serde(default, rename = "endpoint", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]

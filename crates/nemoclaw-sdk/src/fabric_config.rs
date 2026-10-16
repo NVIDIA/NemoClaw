@@ -52,7 +52,6 @@ pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, Conf
         .map_err(|_| ConfigError::new("invalid inference transport"))?;
         let mut projected = json!({"provider":definition.provider,"model":route.overrides.model,
             "base_url":connection.endpoint,"api_key_env":profile.credentials.first().map(|credential|credential.name.as_str()).unwrap_or("NEMOCLAW_ANONYMOUS_API_KEY"),
-            "api":definition.api.unwrap_or(crate::config::InferenceApi::for_provider(definition.provider)),
             "settings":route.overrides.settings.clone().unwrap_or_default()});
         if let Some(limit) = route.overrides.tuning.max_tokens {
             projected["max_tokens"] = limit.into();
