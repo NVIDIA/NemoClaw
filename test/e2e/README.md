@@ -287,7 +287,8 @@ identities for a release already recorded on the base. Later upgrades must
 retain prior records and revocations. Revoked hashes cannot authorize execution,
 even when retained in a historical record.
 
-This manifest cannot approve itself. A different human with current repository
+The PR author may be a GitHub App bot on this repository. This manifest cannot
+approve itself. A different human with current repository
 `maintain` or `admin` permission must review the exact source and post one whole
 comment: `NemoClaw-Upgrade-E2E: approve <head-sha> <base-sha>`. The corresponding
 `revoke` command withdraws that decision. The latest eligible decision wins;
@@ -2173,6 +2174,8 @@ For `managed-image-protected-runtime`, the workflow supplies the long-lived `NVI
 
 Before the NIM image pull, the trusted fixture attempts to record root, workspace, and Docker-root capacity plus aggregate Docker usage. During readiness and on failure, `wait-nim` also attempts to record the `/opt/nim/.cache` mount and size. Probe command failures do not gate NIM qualification, but artifact write failures can still fail the fixture. `wait-nim` writes its captured output when the command finishes, so a full runner disk can prevent its samples from reaching the uploaded artifact. The probe does not inspect the container environment, which holds the NGC key. Manual PR E2E uses trusted `main`, so this probe runs only after merge.
 
+When `docker run` reports that it could not find the digest-pinned vLLM image locally, this run pulled the image. After the vLLM container is removed, the fixture removes that image. When the Docker image store and the NIM model cache share a filesystem, this frees space for the NIM model download. The `nim-storage-*` probe output shows the filesystems that a run used. The `remove-run-pulled-vllm-image` artifact records the removal result. A removal failure does not fail the test by itself; NIM readiness remains the gate. The fixture leaves a pre-existing vLLM image in place.
+
 Before you dispatch `native-runtime-qualification-producer`, review the `NVIDIA_API_KEY` boundary below.
 The host-side preparation step receives the long-lived repository secret and uses it to create runner-local registry authentication and pull pinned GPU images.
 The step deletes the registry authentication file and unsets the variable before candidate execution.
@@ -2393,16 +2396,30 @@ OpenRouter agent cases; `all` runs all six cases.
 Use an approved disposable environment and credentials from its approved source.
 These tests are outside the credential-free `inference-routing` PR lane.
 A skipped provider is missing qualification evidence.
+TC-INF-05 uses the same probe for NVIDIA credential isolation.
+Its separate environment, process, filesystem, and canary checks are replaced by the probe results;
+support tests cover leak detection and control cleanup.
 
 OpenAI, Anthropic, Gemini, and OpenRouter onboard OpenClaw and start a fresh agent process.
 Hermes Provider onboards Hermes and submits a fresh request to its managed API.
 The `hosted-inference-openrouter` target also onboards Deep Agents Code with the same
 OpenRouter key and model. Its six-assertion case checks onboarding, credential isolation,
 the native TOML route, and one fresh `dcode -n --json` response.
-The five existing cases check the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer.
-Before each of those requests, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
-for a salted fingerprint of the selected credential. Only the fingerprint enters the probe; reports contain
-booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
+The five OpenClaw and Hermes cases check the native endpoint, credential placeholder,
+selected adapter, response model, and nonempty answer.
+The OpenRouter case switches the running sandbox to a second model and back.
+It requires a fresh agent response with that model after each switch and checks that the return route is readable.
+Each `nemoclaw inference set` switch also verifies its selected model with a sandbox-side inference request.
+An unavailable or rate-limited intermediate model fails the first switch.
+The alternate route read and return-route model assertion were removed from this live case:
+agent responses prove the effective model after each restart, while the recorded-model behavior
+belongs to the `inference get` source tests. Both switch exit checks and the return route read remain.
+After onboarding, each hosted-provider case runs one sandbox probe before its first native agent request.
+The OpenRouter model-switch requests and follow-up agent responses do not repeat that scan.
+The probe checks the raw environment and a bounded file sample for a salted fingerprint of the selected credential.
+The probe tries `ps aux`, then `ps -ef`, to check process arguments.
+If neither command returns process output, the case fails. Only the fingerprint enters the probe;
+reports contain booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
 The sample inspects up to 200 files smaller than 1 MiB, taking the first 64 KiB of each readable file.
 This is not an exhaustive filesystem scan. The scan checks only sandbox environment variables, process arguments, and sampled files.
 It does not prove credential isolation in host processes or upstream requests.

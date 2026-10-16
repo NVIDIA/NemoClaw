@@ -27,6 +27,17 @@ export function fixedNativeProvider(
     : hostedNativeProvider(provider);
 }
 
+/** OpenClaw provider key for an attached fixed native provider. */
+export function nativeOpenClawProviderKey(
+  provider: string | null | undefined,
+): "openai" | "anthropic" | "inference" | undefined {
+  const definition = fixedNativeProvider(provider);
+  if (!definition) return undefined;
+  if (definition.logicalProvider === "openai-api") return "openai";
+  if (definition.logicalProvider === "anthropic-prod") return "anthropic";
+  return "inference";
+}
+
 export function fixedNativeProviderForAttachment(
   receipt: NativeProviderAttachment,
 ): NativeProviderDefinition {

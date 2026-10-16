@@ -14,6 +14,8 @@ const REPOSITORY = "NVIDIA/NemoClaw";
 const PREFIX = `/repos/${REPOSITORY}`;
 const SHA = /^[a-f0-9]{40}$/u;
 const LOGIN = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,38}$/u;
+// GitHub adds [bot] to app authors; approval still requires a human LOGIN.
+const PR_AUTHOR_LOGIN = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,38}(?:\[bot\])?$/u;
 const MAX_PAGES = 100;
 const MAX_SOURCE_BYTES = 1024 * 1024;
 
@@ -54,7 +56,7 @@ function assertPullRequest(
     record(head.repo).full_name !== REPOSITORY ||
     record(base.repo).full_name !== REPOSITORY ||
     typeof author.login !== "string" ||
-    !LOGIN.test(author.login)
+    !PR_AUTHOR_LOGIN.test(author.login)
   )
     throw new Error("Upgrade admission no longer matches the open upstream PR");
   return author.login.toLowerCase();

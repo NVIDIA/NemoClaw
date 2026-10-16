@@ -80,6 +80,11 @@ export interface ServingTopologyBinding {
   readonly outputSchema: string;
 }
 
+export interface ReviewedModelCode {
+  readonly revision: string;
+  readonly files: readonly { readonly path: string; readonly digest: string }[];
+}
+
 export type ServingModelPreparation =
   | { readonly ref: "none/v1" }
   | {
@@ -144,6 +149,7 @@ export interface ManagedInferenceServingRecipe {
       readonly gated: boolean;
       readonly installFastSafetensors: boolean;
       readonly preparation: ServingModelPreparation;
+      readonly reviewedCode?: ReviewedModelCode;
       readonly capabilities?: ServingModelCapabilities;
       readonly probePolicyRef?: string;
     };
@@ -256,6 +262,7 @@ interface GenericServingRecipe extends ServingRecipeEnvelope {
       readonly gated?: boolean;
       readonly installFastSafetensors?: boolean;
       readonly preparation?: ServingModelPreparation;
+      readonly reviewedCode?: ReviewedModelCode;
       readonly capabilities?: ServingModelCapabilities;
       readonly probePolicyRef?: string;
     };

@@ -2105,6 +2105,8 @@ Onboarding ends with:
 
 This is a separate budget from `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`. It covers the readiness wait that follows sandbox creation, including in-sandbox boot, OpenClaw start, and policy load. It does not cover the inference probe.
 
+When sandbox startup fails, NemoClaw can print the last redacted lines from the failed Docker sandbox container. It saves captured output as `sandbox-container.log` in the reported diagnostics directory. This output is available only when NemoClaw can identify and inspect the container. Inspect the diagnostic file before you share it.
+
 <AgentOnly variant="openclaw,hermes">
 
 For a newly created OpenClaw or Hermes sandbox, `Ready` is not the final acceptance signal. Within this same budget, NemoClaw also requires OpenShell to return a durable sandbox ID and accept `openshell sandbox exec --name <sandbox> -- true`. NemoClaw keeps waiting when OpenShell returns its exact `sandbox is not ready` response or a completed nonzero executable probe returns no output. A missing or malformed ID, an executable probe with a nonempty terminal diagnostic, or another probe failure stops the wait and preserves the sandbox. Inspect the gateway, then run `$$nemoclaw <sandbox-name> destroy` to check whether authoritative absence permits cleanup. Do not retry same-name onboarding while the retained sandbox exists.
@@ -2324,7 +2326,9 @@ openclaw config unset <dotpath>
 ```
 
 Restart and reconnect preserve the current native configuration.
-Rebuild transfers the complete native configuration captured immediately before replacement.
+Rebuild transfers the native configuration captured immediately before replacement.
+Before gateway startup, NemoClaw refreshes the scoped inference credential handle when its endpoint and credential key match the native NVIDIA or OpenRouter provider.
+Refer to [Understand Runtime Changes](../manage-sandboxes/configure-sandboxes/understand-runtime-changes) for the reconciliation rules.
 The retired selective snapshot restore flow is not available; roll back by explicitly reapplying reviewed files from an independent trusted backup.
 The host command `$$nemoclaw <sandbox> config set` returns guidance to use the native OpenClaw command.
 

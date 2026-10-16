@@ -5,12 +5,13 @@ apiVersion: nemoclaw.nvidia.com/managed-inference/v1
 kind: ServingPreset
 
 metadata:
-  id: vllm.dgx-station-gb300.single.cobalt
-  displayName: Cobalt on one DGX Station
+  id: vllm.dgx-station-gb300.single.nemotron-3.5-super-vl-120b-a12b-nvfp4
+  displayName: NVIDIA Nemotron 3.5 Super VL NVFP4 on one DGX Station
+  # Activation candidate: image is pinned; complete qualification and activation review remain.
   supportState: disabled
   validation:
     level: schema
-    evidence: cobalt-schema-only
+    evidence: super-vl-release-bindings-pending
 
 spec:
   selection: disabled
@@ -108,4 +109,4 @@ spec:
     backend: vllm
     platform: station
     interactive: true
-    recipeRef: vllm.cobalt.station-arm64-single.v1
+    recipeRef: vllm.nemotron-3.5-super-vl-120b-a12b-nvfp4.station-arm64-single.v1

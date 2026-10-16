@@ -8,7 +8,9 @@ import os from "node:os";
 import path from "node:path";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { NVIDIA_INFERENCE_PLACEHOLDER } from "../inference-credential";
+import { getSandboxInferenceConfig } from "../inference/config";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../inference/native-nvidia/contract";
+import { HOSTED_NATIVE_PROVIDERS } from "../inference/native-provider/hosted";
 import YAML from "yaml";
 
 const {
@@ -42,7 +44,7 @@ const {
   ) => string;
   hermesConfigAllowsPrivateUrls: (config: Record<string, unknown>) => boolean;
   runOpenClawNativeConfigBatchUntilHandleReady: (
-    nativeNvidiaUpdate: boolean,
+    nativeHandleUpdate: boolean,
     run: () => { status: number; stderr: string; error?: Error; signal?: string },
     wait?: (ms: number) => void,
     warn?: (message: string) => void,
@@ -210,28 +212,17 @@ describe("composeSandboxConfigBody", () => {
       expect(invocation.input).toContain(NVIDIA_INFERENCE_PLACEHOLDER);
       expect(invocation.input).toContain(NVIDIA_HOSTED_NATIVE_ENDPOINT);
 
-      const wrongEndpoint = buildOpenClawNativeConfigBatchInvocation("alpha", [
-        {
-          dotpath: "models.providers.inference",
-          value: {
-            baseUrl: "https://other.example/v1",
-            apiKey: NVIDIA_INFERENCE_PLACEHOLDER,
+      expect(() =>
+        buildOpenClawNativeConfigBatchInvocation("alpha", [
+          {
+            dotpath: "models.providers.inference",
+            value: {
+              baseUrl: "https://other.example/v1",
+              apiKey: NVIDIA_INFERENCE_PLACEHOLDER,
+            },
           },
-        },
-      ]);
-      const wrongCommand = wrongEndpoint.args.slice(wrongEndpoint.args.indexOf("--") + 1);
-      const refused = spawnSync(wrongCommand[0]!, wrongCommand.slice(1), {
-        input: wrongEndpoint.input,
-        encoding: "utf8",
-        timeout: 5_000,
-        env: {
-          ...process.env,
-          PATH: `${directory}:${process.env.PATH ?? ""}`,
-          NVIDIA_INFERENCE_API_KEY: handle,
-        },
-      });
-      expect(refused.status).not.toBe(0);
-      expect(refused.stdout).toBe("");
+        ]),
+      ).toThrow("Native provider endpoint does not match");
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
@@ -275,6 +266,280 @@ describe("composeSandboxConfigBody", () => {
     },
   );
 
+  it.each(HOSTED_NATIVE_PROVIDERS)(
+    "pins the scoped $label handle before OpenClaw applies the native config batch (#13040)",
+    (provider) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-config-"));
+      try {
+        fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
+          mode: 0o700,
+        });
+        const placeholder = `openshell:resolve:env:${provider.credentialEnv}`;
+        const handle = `openshell:resolve:env:v42_${provider.credentialEnv}`;
+        const route = getSandboxInferenceConfig("model-a", provider.logicalProvider);
+        const providerPath = `models.providers.${route.providerKey}`;
+        const primary = route.primaryModelRef;
+        const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [
+          { dotpath: "agents.defaults.model.primary", value: primary },
+          {
+            dotpath: providerPath,
+            value: {
+              baseUrl: provider.endpoint,
+              apiKey: placeholder,
+              headers: { "X-NemoClaw-Upstream-Provider": provider.logicalProvider },
+            },
+          },
+        ]);
+        const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
+        const result = spawnSync(command[0]!, command.slice(1), {
+          input: invocation.input,
+          encoding: "utf8",
+          timeout: 5_000,
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH ?? ""}`,
+            [provider.credentialEnv]: handle,
+          },
+        });
+        expect(result.status, `${result.error?.message ?? ""} ${result.stderr}`).toBe(0);
+        expect(JSON.parse(result.stdout)).toEqual([
+          { path: "agents.defaults.model.primary", value: primary },
+          {
+            path: providerPath,
+            value: {
+              baseUrl: provider.endpoint,
+              apiKey: handle,
+              headers: { "X-NemoClaw-Upstream-Provider": provider.logicalProvider },
+            },
+          },
+        ]);
+        expect(invocation.input).not.toContain(handle);
+        expect(invocation.args.join(" ")).not.toContain(handle);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
+    { value: undefined, expectedStatus: 75 },
+    { value: "raw-provider-secret", expectedStatus: 1 },
+    { value: "openshell:resolve:env:OPENROUTER_API_KEY", expectedStatus: 1 },
+    { value: "openshell:resolve:env:v42_OPENAI_API_KEY", expectedStatus: 1 },
+  ])(
+    "refuses an unavailable or invalid OpenRouter handle $value before config mutation (#13040)",
+    ({ value, expectedStatus }) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-config-"));
+      try {
+        fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
+          mode: 0o700,
+        });
+        const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [
+          {
+            dotpath: "models.providers.inference",
+            value: {
+              baseUrl: "https://openrouter.ai/api/v1",
+              apiKey: "openshell:resolve:env:OPENROUTER_API_KEY",
+              headers: { "X-NemoClaw-Upstream-Provider": "openrouter-api" },
+            },
+          },
+        ]);
+        const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
+        const failed = spawnSync(command[0]!, command.slice(1), {
+          input: invocation.input,
+          encoding: "utf8",
+          timeout: 5_000,
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH ?? ""}`,
+            OPENROUTER_API_KEY: value,
+          },
+        });
+        expect(failed.status).toBe(expectedStatus);
+        expect(failed.stdout).toBe("");
+        expect(failed.stderr).not.toContain("raw-provider-secret");
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("rejects a hosted handle with the wrong provider or endpoint before config mutation (#13040)", () => {
+    const update = {
+      dotpath: "models.providers.inference",
+      value: {
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKey: "openshell:resolve:env:OPENROUTER_API_KEY",
+        headers: { "X-NemoClaw-Upstream-Provider": "openrouter-api" },
+      },
+    };
+    expect(() =>
+      buildOpenClawNativeConfigBatchInvocation("alpha", [
+        { ...update, value: { ...update.value, baseUrl: "https://other.example/v1" } },
+      ]),
+    ).toThrow("Native OpenRouter configuration does not match its attached provider endpoint");
+    expect(() =>
+      buildOpenClawNativeConfigBatchInvocation("alpha", [
+        {
+          ...update,
+          value: {
+            ...update.value,
+            headers: { "X-NemoClaw-Upstream-Provider": "openai-api" },
+          },
+        },
+      ]),
+    ).toThrow("Native OpenAI configuration does not match its attached provider endpoint");
+    expect(() =>
+      buildOpenClawNativeConfigBatchInvocation("alpha", [
+        {
+          dotpath: "models.providers.inference",
+          value: {
+            baseUrl: "https://api.openai.com/v1",
+            apiKey: "openshell:resolve:env:OPENAI_API_KEY",
+            headers: { "X-NemoClaw-Upstream-Provider": "openai-api" },
+          },
+        },
+      ]),
+    ).toThrow("Native provider config path does not match its identity");
+  });
+
+  it("keeps compatible endpoint resolver placeholders outside hosted handle pinning (#13040)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compatible-config-"));
+    try {
+      fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
+        mode: 0o700,
+      });
+      const updates = [
+        {
+          dotpath: "models.providers.inference",
+          value: {
+            baseUrl: "https://compatible.example/v1",
+            apiKey: "openshell:resolve:env:COMPATIBLE_API_KEY",
+            headers: { "X-NemoClaw-Upstream-Provider": "compatible-endpoint" },
+          },
+        },
+      ];
+      const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", updates);
+      const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
+      const result = spawnSync(command[0]!, command.slice(1), {
+        input: invocation.input,
+        encoding: "utf8",
+        timeout: 5_000,
+        env: { ...process.env, PATH: `${directory}:${process.env.PATH ?? ""}` },
+      });
+      expect(result.status, `${result.error?.message ?? ""} ${result.stderr}`).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([
+        { path: updates[0]!.dotpath, value: updates[0]!.value },
+      ]);
+      expect(invocation.args.join(" ")).not.toContain("COMPATIBLE_API_KEY");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      label: "custom endpoint",
+      baseUrl: "https://user.example/v1",
+      apiKey: "openshell:resolve:env:USER_API_KEY",
+    },
+    {
+      label: "hosted endpoint without a provider marker",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "openshell:resolve:env:OPENROUTER_API_KEY",
+    },
+  ])(
+    "keeps an unmarked $label placeholder unchanged in the OpenClaw batch (#13040)",
+    ({ baseUrl, apiKey }) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unmarked-config-"));
+      try {
+        fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
+          mode: 0o700,
+        });
+        const update = {
+          dotpath: "models.providers.inference",
+          value: {
+            baseUrl,
+            apiKey,
+          },
+        };
+        const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [update]);
+        const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
+        const result = spawnSync(command[0]!, command.slice(1), {
+          input: invocation.input,
+          encoding: "utf8",
+          timeout: 5_000,
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH ?? ""}`,
+            USER_API_KEY: undefined,
+            OPENROUTER_API_KEY: undefined,
+          },
+        });
+        expect(result.status, `${result.error?.message ?? ""} ${result.stderr}`).toBe(0);
+        expect(JSON.parse(result.stdout)).toEqual([{ path: update.dotpath, value: update.value }]);
+        expect(invocation.args.join(" ")).not.toContain(apiKey);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("rejects a mismatched NVIDIA provider marker before handle pinning (#13040)", () => {
+    expect(() =>
+      buildOpenClawNativeConfigBatchInvocation("alpha", [
+        {
+          dotpath: "models.providers.openai",
+          value: {
+            baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+            apiKey: NVIDIA_INFERENCE_PLACEHOLDER,
+            headers: { "X-NemoClaw-Upstream-Provider": "openai-api" },
+          },
+        },
+      ]),
+    ).toThrow("Native NVIDIA provider identity does not match its credential placeholder");
+  });
+
+  it("pins a scoped handle for an authenticated Hermes endpoint (#13040)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-config-"));
+    try {
+      fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
+        mode: 0o700,
+      });
+      const endpoint = "https://hermes.example/v1/";
+      const handle = "openshell:resolve:env:s" + "a".repeat(64) + "_OPENAI_API_KEY";
+      const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [
+        {
+          dotpath: "models.providers.inference",
+          value: {
+            baseUrl: endpoint,
+            apiKey: "openshell:resolve:env:OPENAI_API_KEY",
+            headers: { "X-NemoClaw-Upstream-Provider": "hermes-provider" },
+          },
+        },
+      ]);
+      const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
+      const result = spawnSync(command[0]!, command.slice(1), {
+        input: invocation.input,
+        encoding: "utf8",
+        timeout: 5_000,
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH ?? ""}`,
+          OPENAI_API_KEY: handle,
+        },
+      });
+      expect(result.status, `${result.error?.message ?? ""} ${result.stderr}`).toBe(0);
+      expect(JSON.parse(result.stdout)[0].value).toMatchObject({
+        baseUrl: endpoint,
+        apiKey: handle,
+      });
+      expect(invocation.input).not.toContain(handle);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("retries only a missing newly attached handle before OpenClaw mutates config", () => {
     const pending = { status: 75, stderr: "NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING\n" };
     const succeeded = { status: 0, stderr: "" };
@@ -286,7 +551,7 @@ describe("composeSandboxConfigBody", () => {
     expect(run).toHaveBeenCalledTimes(2);
     expect(wait).toHaveBeenCalledExactlyOnceWith(2_000);
     expect(warn).toHaveBeenCalledExactlyOnceWith(
-      "Native NVIDIA provider handle pending; config attempt 1/10",
+      "Native provider handle pending; config attempt 1/10",
     );
 
     const exhaustedRun = vi.fn().mockReturnValue(pending);
@@ -301,7 +566,7 @@ describe("composeSandboxConfigBody", () => {
   it.each([
     { status: 75, stderr: "unrelated failure" },
     { status: 1, stderr: "NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING" },
-    { status: 1, stderr: "Native NVIDIA provider handle is unavailable or invalid" },
+    { status: 1, stderr: "Native provider handle is unavailable or invalid" },
   ])("does not retry other native config failures: $status $stderr", (result) => {
     const failedRun = vi.fn().mockReturnValue(result);
     const wait = vi.fn();
