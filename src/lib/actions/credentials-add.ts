@@ -529,17 +529,19 @@ export async function runCredentialsAddAction(
   );
   if (providerProfileFailure) return providerProfileFailure;
 
-  if (fromExisting) {
+  if (!profile || fromExisting) {
     const inspection = await providerAdapter.inspectProviderProfile({
       target,
       profileType: providerType,
       timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+      ...(!profile
+        ? { registrationCredentials: fromExisting ? ("from-existing" as const) : credentials }
+        : {}),
     });
     if (!inspection.ok) {
       return fail([
-        `  Could not inspect credential keys for provider profile '${type}'.`,
-        "  Refusing --from-existing because the provider profile credential keys could not be compared with managed MCP reservations.",
-        ...(inspection.error.message ? [`  ${inspection.error.message}`] : []),
+        `  Could not verify provider profile '${providerType}' for credential registration.`,
+        "  Ask the gateway operator to inspect or import this profile and confirm its credential names, then retry.",
       ]);
     }
   }

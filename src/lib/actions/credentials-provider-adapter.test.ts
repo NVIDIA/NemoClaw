@@ -105,6 +105,126 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(JSON.stringify(result)).not.toContain("credential-value");
   });
 
+  it.each([false, true])(
+    "inspects an operator profile before registration with fromExisting=%s (#13343)",
+    async (fromExisting) => {
+      vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
+      const events: string[] = [];
+      const profile = {
+        id: "custom-profile",
+        credentials: [{ env_vars: ["CUSTOM_TOKEN", "CUSTOM_TOKEN_ALIAS"], required: true }],
+        endpoints: [{ host: "api.example.test", port: 443 }],
+        binaries: ["/usr/bin/curl"],
+        inference_capable: false,
+      };
+      const run = vi.fn((args: string[]) => {
+        events.push(args.includes("export") ? "inspect" : "create");
+        return { status: 0, stdout: args.includes("export") ? JSON.stringify(profile) : "" };
+      });
+      const recordExtraProvider = vi.fn(() => {
+        events.push("reserve");
+        return true;
+      });
+      setGlobalCliActionRuntimeHooksForTest({
+        recoverNamedGatewayRuntime: async () => ({ recovered: true }),
+        recordExtraProvider,
+        forgetExtraProvider: () => true,
+      });
+      const adapter = createCliOpenShellProviderAdapter({ run, warn: vi.fn() });
+
+      const result = await runCredentialsAddAction(
+        {
+          provider: "custom-provider",
+          type: profile.id,
+          credentials: fromExisting ? [] : ["CUSTOM_TOKEN"],
+          configPairs: [],
+          fromExisting,
+        },
+        { providerAdapter: adapter },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(events).toEqual(["inspect", "reserve", "create", "inspect"]);
+      expect(run.mock.calls.some(([args]) => args.includes("import"))).toBe(false);
+      expect(run.mock.calls.find(([args]) => args.includes("create"))?.[0]).toContain(
+        fromExisting ? "--from-existing" : "--credential",
+      );
+      expect(JSON.stringify(result)).not.toContain("host-only-value");
+    },
+  );
+
+  describe.each([false, true])("custom credentials fromExisting=%s", (fromExisting) => {
+    it.each([
+      ["missing", { status: 1, stderr: "profile not found" }],
+      ["malformed", { status: 0, stdout: "not JSON" }],
+      ["wrong identity", { status: 0, stdout: '{"id":"other","credentials":[]}' }],
+      ["failed inspection", { status: 1, stderr: "host-only-value" }],
+      [
+        "timed-out inspection",
+        { status: null, error: Object.assign(new Error(), { code: "ETIMEDOUT" }) },
+      ],
+    ])(
+      "rejects a %s custom profile before reserving or creating (#13343)",
+      async (_case, exported) => {
+        vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
+        const recordExtraProvider = vi.fn(() => true);
+        const forgetExtraProvider = vi.fn(() => true);
+        setGlobalCliActionRuntimeHooksForTest({
+          recoverNamedGatewayRuntime: async () => ({ recovered: true }),
+          recordExtraProvider,
+          forgetExtraProvider,
+        });
+        const run = vi.fn((args: string[]) => (args.includes("export") ? exported : { status: 0 }));
+        const adapter = createCliOpenShellProviderAdapter({ run });
+
+        const result = await runCredentialsAddAction(
+          {
+            provider: "custom-provider",
+            type: "custom-profile",
+            credentials: fromExisting ? [] : ["CUSTOM_TOKEN"],
+            configPairs: [],
+            fromExisting,
+          },
+          { providerAdapter: adapter },
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(recordExtraProvider).not.toHaveBeenCalled();
+        expect(forgetExtraProvider).not.toHaveBeenCalled();
+        expect(run).toHaveBeenCalledOnce();
+        expect(run.mock.calls[0]?.[0]).toContain("export");
+        expect(result.failureLines.join("\n")).toContain("gateway operator");
+        expect(JSON.stringify(result)).not.toContain("host-only-value");
+      },
+    );
+  });
+
+  it("reinspects the gateway profile on each registration without replacing it (#13343)", async () => {
+    vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
+    let credentialKey = "CUSTOM_TOKEN";
+    const run = vi.fn((args: string[]) => ({
+      status: 0,
+      stdout: args.includes("export")
+        ? JSON.stringify({ id: "custom-profile", credentials: [{ env_vars: [credentialKey] }] })
+        : "",
+    }));
+    const adapter = createCliOpenShellProviderAdapter({ run });
+    const options = {
+      provider: "custom-provider",
+      type: "custom-profile",
+      credentials: ["CUSTOM_TOKEN"],
+      configPairs: [],
+      fromExisting: false,
+    };
+
+    expect((await runCredentialsAddAction(options, { providerAdapter: adapter })).exitCode).toBe(0);
+    credentialKey = "CHANGED_TOKEN";
+    expect((await runCredentialsAddAction(options, { providerAdapter: adapter })).exitCode).toBe(1);
+    expect(run.mock.calls.filter(([args]) => args.includes("create"))).toHaveLength(1);
+    expect(run.mock.calls.filter(([args]) => args.includes("export"))).toHaveLength(3);
+    expect(run.mock.calls.some(([args]) => args.includes("import"))).toBe(false);
+  });
+
   it("maps the NVIDIA credential alias to the internal native provider", async () => {
     vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "host-only-nvidia-value");
     const recordExtraProvider = vi.fn(() => true);
@@ -472,6 +592,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       target: { kind: "named", gatewayName: "nemoclaw" },
       profileType: "openai",
       timeoutMs: 30_000,
+      registrationCredentials: "from-existing",
     });
     expect(adapter.createProvider).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -634,13 +755,13 @@ describe("credential actions use typed OpenShell provider results", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.failureLines).toContain(
-      "  Refusing --from-existing because the provider profile credential keys could not be compared with managed MCP reservations.",
+      "  Ask the gateway operator to inspect or import this profile and confirm its credential names, then retry.",
     );
-    expect(result.failureLines).toContain("  OpenShell returned an invalid provider profile.");
     expect(adapter.inspectProviderProfile).toHaveBeenCalledWith({
       target: { kind: "named", gatewayName: "nemoclaw" },
       profileType: "generic",
       timeoutMs: 30_000,
+      registrationCredentials: "from-existing",
     });
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });

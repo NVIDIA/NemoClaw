@@ -63,7 +63,7 @@ function createProviderRequest() {
   };
 }
 
-describe("provider profile warnings after a binding mutation (#12940)", () => {
+describe("provider profile inspection and binding warnings (#12940, #13343)", () => {
   it.each([
     ["matching export", captured(0, JSON.stringify(PROFILE)), null],
     [
@@ -190,6 +190,68 @@ describe("provider profile warnings after a binding mutation (#12940)", () => {
     expect(warn.mock.calls[0]?.[0]).toContain("gateway operator");
     expect(warn.mock.calls[0]?.[0]).not.toContain(SECRET);
   });
+
+  it("rejects registration credential names absent from the operator profile (#13343)", async () => {
+    const run = vi.fn().mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify({
+        id: "custom-profile",
+        credentials: [{ env_vars: ["OTHER_TOKEN"] }],
+      }),
+    });
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
+    const result = await adapter.inspectProviderProfile({
+      target: namedOpenShellGateway("nemoclaw"),
+      profileType: "custom-profile",
+      registrationCredentials: ["CUSTOM_TOKEN"],
+    });
+
+    expect(result).toMatchObject({ ok: false, error: { reason: "profile_incompatible" } });
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0]?.[0]).toEqual([
+      "provider",
+      "profile",
+      "-g",
+      "nemoclaw",
+      "export",
+      "custom-profile",
+      "--output",
+      "json",
+    ]);
+  });
+
+  it.each([
+    ["changed", captured(0, JSON.stringify({ ...PROFILE, binaries: ["changed"] }))],
+    ["unreadable", captured(1, "", SECRET)],
+    ["invalid", captured(0, "not JSON")],
+    ["timed out", captured(null, "", SECRET, Object.assign(new Error(), { code: "ETIMEDOUT" }))],
+  ])(
+    "preserves custom registration when post-create inspection is %s (#13343)",
+    async (_case, after) => {
+      const warn = vi.fn();
+      const run = vi
+        .fn<RunProviderCommand>()
+        .mockReturnValueOnce(captured(0, JSON.stringify(PROFILE)))
+        .mockReturnValueOnce(captured(0))
+        .mockReturnValueOnce(after);
+      const adapter = createCliOpenShellProviderAdapter({ run, warn });
+
+      await expect(
+        adapter.inspectProviderProfile({
+          target: TARGET,
+          profileType: PROFILE.id,
+          registrationCredentials: ["TEST_TOKEN"],
+        }),
+      ).resolves.toEqual({ ok: true, value: { credentialKeys: ["TEST_TOKEN"] } });
+      await expect(adapter.createProvider(createProviderRequest())).resolves.toEqual({ ok: true });
+      expect(run.mock.calls.map(([args]) => args[1])).toEqual(["profile", "create", "profile"]);
+      expect(run.mock.calls[2]?.[0]).toEqual(PROFILE_EXPORT_ARGS);
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0]?.[0]).toContain("gateway operator");
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(SECRET);
+    },
+  );
 
   it("re-exports the verified profile after attach and warns on export failure", async () => {
     const warn = vi.fn();
