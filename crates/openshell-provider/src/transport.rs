@@ -47,6 +47,27 @@ pub(super) trait OpenShellGateway: Send + Sync {
     async fn create(&self, kind: &str, want: &Row) -> Result<String, ObservationError>;
     async fn update_provider(&self, want: &Row, live: &Row) -> Result<(), ObservationError>;
     async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError>;
+    /// Every service endpoint of the bound sandbox, each verified to belong to it.
+    async fn services(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+    ) -> Result<Vec<crate::services::Endpoint>, ObservationError>;
+    /// Create or update one endpoint of the bound sandbox.
+    async fn expose_service(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+        name: &str,
+        exposure: &crate::services::Exposure,
+    ) -> Result<(), ObservationError>;
+    /// Delete one endpoint of the bound sandbox; a missing one is deleted.
+    async fn delete_service(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+        name: &str,
+    ) -> Result<(), ObservationError>;
     async fn delete(&self, kind: &str, workspace: &str, name: &str)
     -> Result<(), ObservationError>;
     async fn gateway_capabilities(&self) -> Result<GatewayCapabilities, ObservationError>;
@@ -275,6 +296,33 @@ impl OpenShellGateway for ConnectedOpenShellGateway {
 
     async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError> {
         ConnectedOpenShellGateway::delete_bound_sandbox(self, want).await
+    }
+
+    async fn services(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+    ) -> Result<Vec<crate::services::Endpoint>, ObservationError> {
+        ConnectedOpenShellGateway::services(self, workspace, sandbox).await
+    }
+
+    async fn expose_service(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+        name: &str,
+        exposure: &crate::services::Exposure,
+    ) -> Result<(), ObservationError> {
+        ConnectedOpenShellGateway::expose_service(self, workspace, sandbox, name, exposure).await
+    }
+
+    async fn delete_service(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+        name: &str,
+    ) -> Result<(), ObservationError> {
+        ConnectedOpenShellGateway::delete_service(self, workspace, sandbox, name).await
     }
 
     async fn delete(
@@ -529,6 +577,33 @@ mod tests {
         }
 
         async fn delete_bound_sandbox(&self, _want: &Row) -> Result<(), ObservationError> {
+            unreachable!()
+        }
+
+        async fn services(
+            &self,
+            _workspace: &str,
+            _sandbox: &Row,
+        ) -> Result<Vec<crate::services::Endpoint>, ObservationError> {
+            Ok(Vec::new())
+        }
+
+        async fn expose_service(
+            &self,
+            _workspace: &str,
+            _sandbox: &Row,
+            _name: &str,
+            _exposure: &crate::services::Exposure,
+        ) -> Result<(), ObservationError> {
+            unreachable!()
+        }
+
+        async fn delete_service(
+            &self,
+            _workspace: &str,
+            _sandbox: &Row,
+            _name: &str,
+        ) -> Result<(), ObservationError> {
             unreachable!()
         }
 

@@ -10,8 +10,9 @@ use tf_provider::value::Value;
 /// OpenTofu string attributes, including distinct null and unknown values.
 pub type State = BTreeMap<String, Value<String>>;
 
-/// Plans a computed attribute's update value from prior state; `None` keeps the proposal.
-pub type PlanComputed = fn(name: &str, prior: &State) -> Option<Value<String>>;
+/// Plans a computed attribute's update value from prior state and the proposed
+/// inputs; `None` keeps the proposal.
+pub type PlanComputed = fn(name: &str, prior: &State, proposed: &State) -> Option<Value<String>>;
 
 /// Whether a change to a mutable field still requires replacement.
 pub type Replaces = fn(field: &str, prior: &State, proposed: &State) -> bool;
@@ -273,13 +274,13 @@ impl Definition {
 }
 
 /// Carry the prior observation forward, or plan it as unknown before one exists.
-pub fn carry_prior(name: &str, prior: &State) -> Option<Value<String>> {
+pub fn carry_prior(name: &str, prior: &State, _: &State) -> Option<Value<String>> {
     Some(prior.get(name).cloned().unwrap_or(Value::Unknown))
 }
 
 /// Carry a running observation forward, but plan another installation attempt
 /// when the prior observation found the process stopped.
-pub fn rerun_when_stopped(name: &str, prior: &State) -> Option<Value<String>> {
+pub fn rerun_when_stopped(name: &str, prior: &State, _: &State) -> Option<Value<String>> {
     match prior.get(name) {
         Some(Value::Value(value)) if value == "false" => Some(Value::Unknown),
         other => other.cloned(),
@@ -301,7 +302,7 @@ pub fn plan_update(
         proposed.insert("id".into(), id.clone());
     }
     for (name, plan) in &definition.computed {
-        if let Some(value) = plan(name, prior) {
+        if let Some(value) = plan(name, prior, &proposed) {
             proposed.insert((*name).into(), value);
         }
     }

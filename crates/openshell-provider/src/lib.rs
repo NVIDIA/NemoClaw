@@ -15,6 +15,7 @@ mod gateway_source;
 mod network;
 mod profile;
 mod provider;
+mod services;
 pub use nemoclaw_openshell::pairs::{inference_rows, web_search_rows};
 pub use nemoclaw_openshell::{policy::policy_json, profile::definition as inference_profile};
 mod inference;
@@ -401,6 +402,24 @@ fn web_search_registration(known: &Row, unknown: &[&str]) -> Option<String> {
     nemoclaw_openshell::registration_name(composite::WEB_SEARCH, known)
 }
 
+/// The gateway reports service URLs only once their endpoints exist: they are
+/// unknown while the endpoints change, and otherwise the last observation.
+fn service_urls(
+    name: &str,
+    prior: &nemoclaw_tofu::State,
+    proposed: &nemoclaw_tofu::State,
+) -> Option<tf_provider::value::Value<String>> {
+    use tf_provider::value::Value;
+    Some(match prior.get(name) {
+        Some(Value::Value(urls))
+            if !urls.is_empty() && prior.get(services::FIELD) == proposed.get(services::FIELD) =>
+        {
+            Value::Value(urls.clone())
+        }
+        _ => Value::Unknown,
+    })
+}
+
 /// OpenShell objects and their planning rules.
 pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
     use nemoclaw_tofu::Definition;
@@ -481,10 +500,25 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
                 "policy_json",
                 "provider_names_json",
                 "driver_config_json",
+                services::FIELD,
             ],
-            &[],
+            // Service endpoints change in place; OpenShell keeps the sandbox.
+            &[services::FIELD],
         )
-        .optional(&["policy_json", "provider_names_json", "driver_config_json"]),
+        .optional(&[
+            "policy_json",
+            "provider_names_json",
+            "driver_config_json",
+            services::FIELD,
+        ])
+        .computed(services::URLS, service_urls)
+        .validate_attribute(|attribute, value| {
+            if attribute == services::FIELD {
+                services::check(value)
+            } else {
+                Ok(())
+            }
+        }),
     ]
     .map(lifecycle_rules)
     .map(|mut definition| {

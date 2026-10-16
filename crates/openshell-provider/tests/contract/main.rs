@@ -34,6 +34,7 @@ mod inference;
 mod kubernetes_hcl;
 mod kubernetes_lifecycle;
 mod sandbox_providers;
+mod services;
 mod standalone;
 mod web_search;
 

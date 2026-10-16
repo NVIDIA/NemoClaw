@@ -118,6 +118,21 @@ Other inputs are typed too:
   It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/sandboxes/runtimes.mdx).
   The gateway accepts it only when its driver allows driver configuration, which OpenShell disables by default, NemoClaw-installed gateways included.
   It is part of the sandbox's immutable specification: changing it, or a different configuration observed on the gateway, would replace the sandbox, which apply refuses, as for the image; see [change paths](usage.md#choose-the-change-path).
+- `openshell_sandbox`'s optional `service` blocks expose HTTP services listening on loopback inside the sandbox through OpenShell's gateway service routing, in OpenShell's terms: `name`, `target_port`, and optional `authorization_mode`.
+  An empty `name` is OpenShell's unnamed endpoint.
+  `authorization_mode` is `STRIP`, which removes the caller's `Authorization` header before forwarding, or `BEARER_PASSTHROUGH`, which forwards one valid bearer header.
+  When it is omitted, the provider sends no mode and OpenShell applies `STRIP`; an endpoint observed with `STRIP` plans no change.
+  The mode controls header forwarding only; it does not grant callers access or authenticate them.
+  Exposing a port does not start a listener: the sandbox's process must serve on that port.
+- The computed `service_urls` maps each service name to the URL the gateway reports for it, such as `openshell_sandbox.researcher.service_urls["research"]`.
+  A service the gateway reports without a URL, because the gateway has no service routing domain, has no entry; the provider never constructs a URL.
+  The URLs are unknown during planning while the sandbox's endpoints change, and known after apply, so resources in the same apply can use them.
+- The sandbox owns every endpoint on it.
+  Apply creates and updates the declared endpoints, then deletes endpoints that are not declared, including ones created outside OpenTofu; removing every `service` block deletes them all.
+  Endpoint changes update the sandbox in place, keeping its ID and files.
+  Refresh lists the sandbox's endpoints from the gateway and checks that each belongs to the bound sandbox ID; a failed or incomplete listing, or an endpoint recorded for another sandbox, stops planning without changing anything.
+  An endpoint mutation that fails leaves the sandbox binding in state, and the next apply converges; mutations are not retried.
+  Deleting the sandbox deletes its endpoints.
 - `owner` and `generation` are optional; when omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [credential storage](#vllm-and-ollama-types).
 
 ```hcl
@@ -128,6 +143,10 @@ resource "openshell_sandbox" "assistant" {
   image        = var.image
   launch_json  = data.fabric_harnesses.assistant.launch_json
   providers    = [openshell_inference.local.ref]
+  service {
+    name        = "research"
+    target_port = 8080
+  }
   policy {
     explicit {
       version = 1
