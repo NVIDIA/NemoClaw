@@ -4342,7 +4342,7 @@ The following variables let you tune onboarding without editing the Dockerfile o
 
 <AgentOnly variant="openclaw">
   | `NEMOCLAW_INFERENCE_INPUTS` | comma-separated list of `text` and/or `image` | OpenClaw only.
-  Declares model input modalities. Unsupported or duplicate values are rejected. | |
+  Declares model input modalities. Unsupported or duplicate values are rejected. An explicit valid value takes precedence; unattended onboarding defaults to `text,image` for registered multimodal managed-vLLM models such as Super VL. | |
   `NEMOCLAW_OPENCLAW_OTEL` | `1` to enable | Enables OpenClaw conversation diagnostics export
   through the `diagnostics-otel` plugin. Disabled by default. | | `NEMOCLAW_OPENCLAW_OTEL_ENDPOINT`
   | OTLP/HTTP URL | Sets the OpenTelemetry collector endpoint for OpenClaw diagnostics. Defaults to
@@ -4373,12 +4373,12 @@ requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer sets this value from
 registered served model name | Selects the model the managed-vLLM install path serves and remains
 authoritative during DGX Station installer setup. Slugs, full model IDs, and registered served model
 names are case-insensitive. Recognized slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`,
-`muse-glimmer-30b`, `nemotron-3.5-lightning-30b`, `nemotron-3-nano-4b`, `deepseek-v4-flash`,
+`muse-glimmer-30b`, `nemotron-3.5-lightning-30b`, `nemotron-3.5-super-vl-120b`, `nemotron-3-nano-4b`, `deepseek-v4-flash`,
 `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. The `muse-glimmer-30b` and
 `nemotron-3.5-lightning-30b` profiles are Experimental on DGX Spark and Linux x86_64 with a
 qualifying NVIDIA GPU. NemoClaw does not enable vision or DFlash speculative decoding for Muse
-Glimmer. Station Express selects `nemotron-3-ultra-550b-a55b`; a qualified reciprocal pair uses the
-distributed topology, while no qualifying pair retains the single-Station Ultra topology. Outside
+Glimmer. New single-Station Express installs select `nemotron-3.5-super-vl-120b`; a qualified reciprocal pair uses distributed Ultra.
+An existing legacy single-Station Ultra workload keeps Ultra when automatic pair discovery finds no qualified pair. Outside
 Station Express, unset uses the per-platform profile default. Gated models (for example,
 `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. | |
 `NEMOCLAW_DGX_STATION_PEER` | SSH host or `user@host` | Selects one exact, already-trusted DGX

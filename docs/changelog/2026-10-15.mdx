@@ -26,9 +26,13 @@ It also updates managed inference and OpenClaw behavior for qualified local mode
 - Fresh OpenClaw sandboxes using the accepted N1x Qwen managed-vLLM preview default to progressive tool disclosure.
   Explicit and recorded choices still take precedence.
   Related change: [PR #13173](https://github.com/NVIDIA/NemoClaw/pull/13173).
-- Serving profiles list a disabled NVIDIA Nemotron 3.5 Super VL candidate for a single DGX Station.
-  The profile cannot be selected and does not change the Station default.
-  Related change: [PR #13279](https://github.com/NVIDIA/NemoClaw/pull/13279).
+- New single-DGX-Station Express installs default to the experimental NVIDIA Nemotron 3.5 Super VL profile.
+  Unattended OpenClaw onboarding enables image input for this registered multimodal model.
+  Automatic Express selection uses distributed Ultra when a trusted reciprocal pair qualifies; explicit Ultra and DeepSeek choices remain available, and existing installations are not migrated.
+  Related changes: [PR #13279](https://github.com/NVIDIA/NemoClaw/pull/13279) and [PR #13295](https://github.com/NVIDIA/NemoClaw/pull/13295).
+- OpenClaw now applies named-agent list changes to a live gateway without restarting it.
+  Google Chat remains an explicit reload-off exception.
+  Related change: [PR #13271](https://github.com/NVIDIA/NemoClaw/pull/13271).
 - Direct sandbox creation warns when an attached NemoClaw-owned provider profile cannot be confirmed unchanged.
   After Docker GPU reconnect, onboarding also requires OpenShell to report the sandbox as `Ready` or `Running`.
   Related changes: [PR #13189](https://github.com/NVIDIA/NemoClaw/pull/13189) and [PR #13123](https://github.com/NVIDIA/NemoClaw/pull/13123).
