@@ -67,13 +67,17 @@ function slashHelp(): PluginCommandResult {
 
 function slashStatus(api: OpenClawPluginApi): PluginCommandResult {
   const onboardConfig = loadOnboardConfig();
-  const { sandboxName } = getPluginConfig(api);
 
   if (!onboardConfig) {
     return {
       text: "**NemoClaw**: No onboard configuration found. Run `nemoclaw onboard` to get started.",
     };
   }
+
+  const state = loadState();
+  const pluginConfig = getPluginConfig(api);
+  // Prefer persisted sandbox name from state over plugin config default
+  const sandboxName = state.sandboxName ?? pluginConfig.sandboxName;
 
   const lines = [
     "**NemoClaw Status**",
@@ -85,7 +89,6 @@ function slashStatus(api: OpenClawPluginApi): PluginCommandResult {
     `Onboarded: ${onboardConfig.onboardedAt}`,
   ];
 
-  const state = loadState();
   if (state.migrationSnapshot) {
     lines.push("", `Rollback snapshot: ${state.migrationSnapshot}`);
   }

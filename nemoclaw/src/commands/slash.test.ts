@@ -148,12 +148,27 @@ describe("commands/slash", () => {
       expect(result.text).not.toContain("No operations performed yet");
     });
 
-    it("falls back to default sandbox name when pluginConfig is empty", () => {
+    it("falls back to default sandbox name when state and pluginConfig are empty", () => {
       mockedLoadOnboardConfig.mockReturnValue(onboardConfig);
       mockedDescribeOnboardEndpoint.mockReturnValue("build (...)");
       mockedDescribeOnboardProvider.mockReturnValue("NVIDIA Endpoints");
       const result = handleSlashCommand(makeCtx("status"), makeApi());
       expect(result.text).toContain("Sandbox: openclaw");
+    });
+
+    it("prefers sandbox name from state over plugin config", () => {
+      mockedLoadOnboardConfig.mockReturnValue(onboardConfig);
+      mockedDescribeOnboardEndpoint.mockReturnValue("build (...)");
+      mockedDescribeOnboardProvider.mockReturnValue("NVIDIA Endpoints");
+      mockedLoadState.mockReturnValue({
+        ...blankState(),
+        sandboxName: "status-check-sandbox",
+      });
+      const api = makeApi();
+      api.pluginConfig = { sandboxName: "wrong-sandbox" };
+      const result = handleSlashCommand(makeCtx("status"), api);
+      expect(result.text).toContain("Sandbox: status-check-sandbox");
+      expect(result.text).not.toContain("wrong-sandbox");
     });
 
     it("includes rebuild info when present", () => {
