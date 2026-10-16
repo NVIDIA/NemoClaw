@@ -141,7 +141,10 @@ RUN mkdir -p /opt/pi/adapters/typescript \
         && (cd "/opt/fabric-source/$package" && npm pack --ignore-scripts --pack-destination "/opt/pi/$package") \
         && tar -xzf /opt/pi/$package/*.tgz -C "/opt/pi/$package" --strip-components=1 \
         && rm /opt/pi/$package/*.tgz || exit 1; \
-    done
+    done \
+    # npm nests the Pi harness Fabric's lock pins (pi-coding-agent) under the
+    # adapter package, which packing drops; keep it beside the packed adapter.
+    && cp -a /opt/fabric-source/adapters/typescript/pi/node_modules /opt/pi/adapters/typescript/pi/
 
 FROM runtime-base AS pi
 COPY --from=node /node/ /
