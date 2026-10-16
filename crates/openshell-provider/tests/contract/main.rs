@@ -33,6 +33,7 @@ mod gateway_storage;
 mod inference;
 mod kubernetes_hcl;
 mod kubernetes_lifecycle;
+mod sandbox_providers;
 mod standalone;
 mod web_search;
 
