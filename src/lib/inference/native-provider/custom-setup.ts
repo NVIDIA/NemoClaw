@@ -42,6 +42,21 @@ export function usesCustomNativeOnboarding(
   );
 }
 
+/** Recover the recorded host credential binding only for the selected custom endpoint. */
+export function recordedCustomCredentialEnv(
+  provider: string,
+  endpointUrl: string | null,
+  attachment: NativeProviderAttachment | undefined,
+): string | null {
+  if (!attachment?.custom || attachment.custom.provider !== provider || !endpointUrl) return null;
+  const validated = requireHostedProviderAttachment(attachment, provider);
+  const endpoint = normalizeProviderBaseUrl(
+    endpointUrl,
+    provider === "compatible-anthropic-endpoint" ? "anthropic" : "openai",
+  );
+  return validated?.custom?.endpointUrl === endpoint ? validated.custom.credentialEnv : null;
+}
+
 /** Admit a custom endpoint before creating or reusing its endpoint-bound provider. */
 export async function prepareCustomNativeProvider(input: {
   gatewayName: string;

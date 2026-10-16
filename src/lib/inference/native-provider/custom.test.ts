@@ -14,6 +14,7 @@ import { buildNativeHostedSandboxPolicy } from "./network-policy";
 import { nativeProviderLifecycle } from "./index";
 import { getSandboxInferenceConfig } from "../config";
 import { nativeHostedAgentConfig } from "./agent-config";
+import { createResumeProviderShim } from "../../onboard/machine/resume-provider-shim";
 import { BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } from "../bedrock-runtime";
 
 const binding = {
@@ -270,6 +271,39 @@ describe("custom native endpoint ownership", () => {
       }),
     ).rejects.toThrow("A new credential is required");
     expect(h.adapter.createProvider).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses recorded authority after resume without a session credential (#13195)", async () => {
+    const h = harness();
+    const first = await prepareCustomNativeProvider(h.input);
+    const replaceNamedCredential = vi.fn(async () => "unexpected");
+    const shim = createResumeProviderShim({
+      getSandbox: () => ({ nativeHostedProviderAttachment: first }),
+      isNonInteractive: () => true,
+      providerExistsInGateway: vi.fn(() => false),
+      isRoutedInferenceProvider: () => false,
+      replaceNamedCredential,
+    });
+    const recovery = await shim.ensureResumeProviderReady(
+      h.input.gatewayName,
+      binding.provider,
+      null,
+      undefined,
+      { sandboxName: "alpha", endpointUrl: binding.endpointUrl },
+    );
+    const onCredentialPersisted = vi.fn();
+    const resumed = await prepareCustomNativeProvider({
+      ...h.input,
+      recordedAttachment: first,
+      credentialEnv: recovery.credentialEnv!,
+      credentialValue: null,
+      onCredentialPersisted,
+    });
+    expect(resumed).toEqual(first);
+    expect(h.adapter.createProvider).toHaveBeenCalledTimes(1);
+    expect(h.adapter.updateProvider).not.toHaveBeenCalled();
+    expect(replaceNamedCredential).not.toHaveBeenCalled();
+    expect(onCredentialPersisted).not.toHaveBeenCalled();
   });
 
   it("does not retire a credential when authority persistence fails", async () => {

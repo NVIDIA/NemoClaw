@@ -415,7 +415,7 @@ Use the stable `id` value with `$$nemoclaw onboard --profile <name>`. Display na
 Run the interactive setup wizard (recommended for new installs). The wizard creates an OpenShell gateway, registers inference providers, selects the exact managed image (or builds an explicit custom Dockerfile), and creates the sandbox. Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
-$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository>@sha256:<digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository>@sha256:<digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 <AgentOnly variant="hermes">
@@ -690,6 +690,16 @@ $$nemoclaw onboard --name my-assistant --recreate-sandbox --tool-disclosure dire
 Recreation without an explicit flag or environment value preserves the recorded setting and only falls back to `progressive` for legacy state. Resuming an interrupted session with a different explicit setting fails with a conflict instead of changing behavior mid-session.
 
 <AgentOnly variant="deepagents">
+
+#### `--dcode-auto-approval <disabled|thread-opt-in>`
+
+Choose the managed Deep Agents Code auto-approval capability during onboarding. A new sandbox defaults to `disabled`.
+Omitting the flag preserves the sandbox registry’s recorded capability, including a previously disabled capability, during resume or recreation.
+`thread-opt-in` permits explicit activation inside Deep Agents Code; onboarding does not activate an approval mode or run `dcode -y`.
+`thread-opt-in` is rejected for other agents and custom images. Pass `--dcode-auto-approval disabled` to clear a recorded capability when switching agents.
+Before sandbox registration, resume preserves the explicit choice saved in the onboarding session.
+An explicit capability change for an existing sandbox requires recreation through the existing onboarding lifecycle.
+See [Configure Thread Auto-Approval](../manage-sandboxes/operate-sandboxes/run-deep-agents-code#configure-thread-auto-approval) for activation, status, and revocation.
 
 #### `--observability` and `--no-observability`
 
@@ -1754,6 +1764,10 @@ For a sandbox that owns managed llama.cpp, text output also reports the recipe I
 | `unknown`   | NemoClaw cannot read or prove the state.                                          |
 
 The managed llama.cpp check forces a nonzero exit for `absent`, `conflict`, or `unknown`. Other sandbox and inference checks can also make the command fail. Rerun the same `NEMOCLAW_PROVIDER=install-llama-cpp` and `NEMOCLAW_LLAMACPP_RECIPE` onboarding selection to recover a stopped or interrupted runtime. Inspect and correct an identity conflict before retrying.
+
+An existing Windows WSL Qwen runtime with the former pinned image cannot start or resume.
+After a qualified native image is pinned, save any sandbox files you need, run `$$nemoclaw <sandbox-name> destroy` to remove the owning sandbox and its managed runtime, and onboard again.
+The shared model cache is preserved. See [Upgrade or Roll Back](../inference/local-inference/set-up-llama-cpp#upgrade-or-roll-back).
 
 <AgentOnly variant="deepagents">
 
@@ -3755,7 +3769,7 @@ For Deep Agents sandboxes, run `$$nemoclaw onboard --fresh --name <sandbox-name>
 
 <Warning>The `$$nemoclaw setup` command is deprecated. Use `$$nemoclaw onboard` instead.</Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup
@@ -3768,7 +3782,7 @@ $$nemoclaw setup
   onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup-spark

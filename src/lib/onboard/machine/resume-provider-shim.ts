@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 import { runOpenshell } from "../../adapters/openshell/runtime";
-import { usesCustomNativeOnboarding } from "../../inference/native-provider/custom-setup";
+import {
+  recordedCustomCredentialEnv,
+  usesCustomNativeOnboarding,
+} from "../../inference/native-provider/custom-setup";
 import { D, R } from "../../cli/terminal-style";
 import { isBedrockRuntimeEndpoint } from "../../inference/bedrock-runtime";
 import { DEFAULT_ROUTE_CREDENTIAL_ENV } from "../../inference/config";
@@ -55,16 +58,13 @@ export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
       revalidateSandboxIdentity?: (operation: string) => void,
       selection?: { sandboxName: string | null; endpointUrl: string | null },
     ): Promise<ResumeProviderRecoveryResult> {
+      const recorded =
+        provider && selection?.sandboxName ? deps.getSandbox?.(selection.sandboxName) : undefined;
       if (
         provider &&
         selection?.sandboxName &&
         deps.getSandbox &&
-        usesCustomNativeOnboarding(
-          provider,
-          selection.endpointUrl,
-          selection.sandboxName,
-          deps.getSandbox(selection.sandboxName),
-        )
+        usesCustomNativeOnboarding(provider, selection.endpointUrl, selection.sandboxName, recorded)
       ) {
         // Setup verifies the endpoint-bound receipt and live resource identity.
         // Looking up the logical name here would demand a key before that check.
@@ -72,6 +72,11 @@ export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
           forceInferenceSetup: true,
           credentialEnv:
             credentialEnv ||
+            recordedCustomCredentialEnv(
+              provider,
+              selection.endpointUrl,
+              recorded?.nativeHostedProviderAttachment,
+            ) ||
             onboardProviders.getRemoteProviderConfigForName(provider)?.credentialEnv ||
             null,
           nativeCustomSetup: true,

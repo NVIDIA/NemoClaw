@@ -98,6 +98,7 @@ it.each([
   ["native", "TEAM_KEY"],
   ["native", null],
   ["reservation", "TEAM_KEY"],
+  ["reservation", null],
   ["legacy", "TEAM_KEY"],
 ] as const)(
   "routes %s custom resume through its owning credential recovery",
@@ -147,7 +148,8 @@ it.each([
         ? { forceInferenceSetup: false, credentialEnv: "TEAM_KEY" }
         : {
             forceInferenceSetup: true,
-            credentialEnv: credentialEnv ?? "COMPATIBLE_API_KEY",
+            credentialEnv:
+              credentialEnv ?? (state === "native" ? "TEAM_KEY" : "COMPATIBLE_API_KEY"),
             nativeCustomSetup: true,
           },
     );
@@ -157,3 +159,99 @@ it.each([
     expect(replaceNamedCredential).not.toHaveBeenCalled();
   },
 );
+
+function nativeResumeHarness(provider: "compatible-endpoint" | "compatible-anthropic-endpoint") {
+  const definition = customNativeProvider({
+    provider,
+    endpointUrl:
+      provider === "compatible-endpoint" ? "https://custom.example/v1" : "https://custom.example",
+    api: provider === "compatible-endpoint" ? "openai-completions" : "anthropic-messages",
+    credentialEnv: "TEAM_KEY",
+    allowedIps: ["8.8.8.8"],
+  });
+  const attachment = {
+    schemaVersion: 1 as const,
+    profileId: definition.profileId,
+    providerName: definition.providerName,
+    providerId: "owned-id",
+    endpointUrl: definition.endpointUrl,
+    allowedIps: definition.allowedIps,
+    custom: definition.custom,
+  };
+  const providerExistsInGateway = vi.fn(() => true);
+  const replaceNamedCredential = vi.fn(async () => "unexpected");
+  const shim = createResumeProviderShim({
+    getSandbox: () => ({ nativeHostedProviderAttachment: attachment }),
+    isNonInteractive: () => true,
+    providerExistsInGateway,
+    isRoutedInferenceProvider: () => false,
+    replaceNamedCredential,
+  });
+  return { attachment, shim, providerExistsInGateway, replaceNamedCredential };
+}
+
+it.each(["compatible-endpoint", "compatible-anthropic-endpoint"] as const)(
+  "recovers the validated %s credential binding for an equivalent endpoint (#13195)",
+  async (provider) => {
+    const h = nativeResumeHarness(provider);
+    const result = await h.shim.ensureResumeProviderReady(
+      "gateway-west",
+      provider,
+      undefined,
+      undefined,
+      { sandboxName: "alpha", endpointUrl: h.attachment.custom.endpointUrl + "/" },
+    );
+    expect(result).toEqual({
+      forceInferenceSetup: true,
+      credentialEnv: "TEAM_KEY",
+      nativeCustomSetup: true,
+    });
+    expect(h.providerExistsInGateway).not.toHaveBeenCalled();
+    expect(h.replaceNamedCredential).not.toHaveBeenCalled();
+  },
+);
+
+it("preserves an explicitly selected credential instead of the recorded binding (#13195)", async () => {
+  const h = nativeResumeHarness("compatible-endpoint");
+  const result = await h.shim.ensureResumeProviderReady(
+    "gateway-west",
+    "compatible-endpoint",
+    "NEW_TEAM_KEY",
+    undefined,
+    { sandboxName: "alpha", endpointUrl: h.attachment.custom.endpointUrl },
+  );
+  expect(result.credentialEnv).toBe("NEW_TEAM_KEY");
+  expect(h.replaceNamedCredential).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["compatible-endpoint", "https://different.example/v1", "COMPATIBLE_API_KEY"],
+  ["compatible-anthropic-endpoint", "https://custom.example/v1", "COMPATIBLE_ANTHROPIC_API_KEY"],
+])(
+  "does not inherit a credential binding for changed %s at %s (#13195)",
+  async (provider, endpointUrl, expected) => {
+    const h = nativeResumeHarness("compatible-endpoint");
+    const result = await h.shim.ensureResumeProviderReady(
+      "gateway-west",
+      provider,
+      null,
+      undefined,
+      { sandboxName: "alpha", endpointUrl },
+    );
+    expect(result.credentialEnv).toBe(expected);
+    expect(h.replaceNamedCredential).not.toHaveBeenCalled();
+  },
+);
+
+it("rejects an altered native attachment before recovering its credential binding (#13195)", async () => {
+  const h = nativeResumeHarness("compatible-endpoint");
+  h.attachment.profileId = "altered-profile";
+  await expect(
+    h.shim.ensureResumeProviderReady("gateway-west", "compatible-endpoint", null, undefined, {
+      sandboxName: "alpha",
+      endpointUrl: h.attachment.custom.endpointUrl,
+    }),
+  ).rejects.toThrow("Invalid native hosted provider attachment");
+  expect(h.providerExistsInGateway).not.toHaveBeenCalled();
+  expect(h.replaceNamedCredential).not.toHaveBeenCalled();
+});
