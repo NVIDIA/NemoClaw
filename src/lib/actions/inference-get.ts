@@ -21,6 +21,8 @@ import {
 } from "../inference/gateway-route-compatibility";
 import { parseHttpsPinRouteId } from "../inference/https-pin-runtime";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../inference/native-nvidia";
+import { NATIVE_LOCAL_CREDENTIAL_ENV } from "../inference/native-local/agent-config";
+import { normalizeNativeLocalProviderAttachment } from "../inference/selection";
 import { recordedNativeProviderAttachment } from "../inference/native-provider/recorded-selection";
 import { hostedNativeProvider } from "../inference/native-provider/hosted";
 import { inspectManagedLlamaCppOwnership } from "../inference/llama-cpp/managed-state";
@@ -311,7 +313,10 @@ export async function runInferenceGet(
   const selectedSandbox = selectedSandboxName
     ? (deps.getSandbox ?? getKnownSandboxTarget)(selectedSandboxName)
     : null;
-  const nativeAttachment = selectedSandbox && recordedNativeProviderAttachment(selectedSandbox);
+  const nativeAttachment =
+    selectedSandbox &&
+    selectedSandbox.nativeLocalProviderAttachment === undefined &&
+    recordedNativeProviderAttachment(selectedSandbox);
   if (selectedSandbox && nativeAttachment) {
     const payload: InferenceGetResult = {
       provider: selectedSandbox.provider ?? null,
@@ -331,6 +336,61 @@ export async function runInferenceGet(
         deps.log(`Provider: ${formatRouteValueForDisplay(payload.provider)}`);
         deps.log(`Model:    ${formatRouteValueForDisplay(payload.model)}`);
         deps.log(`Endpoint: ${formatRouteValueForDisplay(payload.endpointUrl ?? null)}`);
+      }
+    }
+    return payload;
+  }
+  if (selectedSandbox?.nativeLocalProviderAttachment !== undefined) {
+    const attachment = normalizeNativeLocalProviderAttachment(
+      selectedSandbox.nativeLocalProviderAttachment,
+    );
+    let recordedGatewayName: string | undefined;
+    try {
+      recordedGatewayName = getPersistedSandboxTargetGatewayName(selectedSandbox);
+    } catch {
+      // A malformed binding must not make the shared gateway appear selected.
+    }
+    if (
+      !attachment ||
+      selectedSandbox.nativeHostedProviderAttachment !== undefined ||
+      selectedSandbox.nativeNvidiaProviderAttachment !== undefined ||
+      !isPublishedSandboxRegistration(selectedSandbox) ||
+      selectedSandbox.name !== selectedSandboxName ||
+      attachment.sandboxName !== selectedSandbox.name ||
+      attachment.gatewayName !== recordedGatewayName ||
+      attachment.gatewayName !== selectedSandbox.gatewayName ||
+      attachment.provider !== selectedSandbox.provider ||
+      attachment.credentialEnv !== NATIVE_LOCAL_CREDENTIAL_ENV ||
+      typeof selectedSandbox.model !== "string" ||
+      !selectedSandbox.model.trim() ||
+      selectedSandbox.agent !== "langchain-deepagents-code"
+    ) {
+      throw new InferenceGetError(
+        "Invalid native local provider attachment for the recorded inference selection",
+      );
+    }
+    const endpoint =
+      !valueLooksLikeSecret(attachment.endpointUrl) &&
+      endpointPathIsCredentialFreeForDisplay(attachment.endpointUrl)
+        ? { endpointUrl: attachment.endpointUrl }
+        : endpointOmission("withheld");
+    const payload: InferenceGetResult = {
+      provider: selectedSandbox.provider,
+      model: selectedSandbox.model,
+      ...endpoint,
+    };
+    if (!options.quiet) {
+      if (options.json) {
+        deps.log(JSON.stringify(payload, null, 2));
+      } else {
+        deps.log(`Provider: ${formatRouteValueForDisplay(payload.provider)}`);
+        deps.log(`Model:    ${formatRouteValueForDisplay(payload.model)}`);
+        if (payload.endpointUrl) {
+          deps.log(`Endpoint: ${formatRouteValueForDisplay(payload.endpointUrl)}`);
+        } else if (payload.endpointStatus && payload.endpointRecovery) {
+          deps.log(`Endpoint: unavailable (${payload.endpointStatus})`);
+          deps.log(`Action:   ${payload.endpointRecovery}`);
+        }
       }
     }
     return payload;

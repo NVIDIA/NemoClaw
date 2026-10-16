@@ -6229,8 +6229,8 @@ jobs:
       E2E_DEFAULT_ENABLED: "0"
       E2E_GATEWAY_RUNTIMES: agnostic
       E2E_AGENT_RUNTIME: openclaw
-      E2E_OBSERVABLE_OUTCOME: Station Express installs managed Ultra vLLM and NemoClaw, serves sandbox inference, and removes job runtime
-      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: Dedicated DGX Station GB300 with cached Nemotron 3 Ultra 550B
+      E2E_OBSERVABLE_OUTCOME: Station Express installs managed Super VL vLLM and NemoClaw, serves sandbox inference, and removes job runtime
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: Dedicated DGX Station GB300 with cached Nemotron 3.5 Super VL 120B
     steps:
       - name: Check out trusted Station controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

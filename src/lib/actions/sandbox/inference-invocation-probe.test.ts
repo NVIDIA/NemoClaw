@@ -5,6 +5,7 @@ import { SandboxCommandTransportError } from "../../adapters/sandbox/command-tra
 import { spawnSync } from "node:child_process";
 import { getChatCompletionsProbePayload } from "../../inference/openai-probe-models";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import {
   existsSync,
   mkdtempSync,
@@ -937,3 +938,42 @@ describe("native hosted inference probe credential boundary", () => {
     expect(result.stderr).toBe("");
   });
 });
+
+it.each([true, undefined])(
+  "uses a native local attachment without custom hosted authority (native=%s) (#13195)",
+  async (nativeProvider) => {
+    const binding = {
+      provider: "compatible-endpoint",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated",
+      gatewayName: "nemoclaw",
+      sandboxName: input.sandboxName,
+    } as const;
+    const selected = {
+      ...input,
+      agentName: "langchain-deepagents-code",
+      nativeProvider,
+      nativeLocalProviderAttachment: {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "fixture-local-provider",
+      },
+    };
+    const placeholder = "openshell:resolve:env:v123_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+    const body = '{"choices":[{"message":{"content":"OK"}}]}';
+    const result = runProbeCommandWithBody("200", body, tmpdir(), selected, {
+      NEMOCLAW_LOCAL_INFERENCE_TOKEN: placeholder,
+    });
+    expect(result.argv.at(-1)).toBe(binding.endpointUrl + "/chat/completions");
+    expect(result.argv).toContain(`Authorization: Bearer ${placeholder}`);
+    expect(
+      await probeSandboxInferenceInvocation(selected, {
+        commandExecutor: {
+          runBuffered: async () => bufferedResult(0, result.stdout, ""),
+        },
+      }),
+    ).toEqual({ ok: true });
+  },
+);

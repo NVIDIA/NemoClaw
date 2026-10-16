@@ -7,6 +7,7 @@ import os from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import { customNativeProvider } from "../inference/native-provider/custom";
 import { HOSTED_NATIVE_PROVIDERS } from "../inference/native-provider/hosted";
+import { nativeLocalIdentity, type NativeLocalBinding } from "../inference/native-local/contract";
 import { buildHttpsPinRouteBaseUrl } from "../inference/https-pin-runtime";
 import {
   managedLlamaCppStatePaths,
@@ -32,6 +33,31 @@ import {
 
 function configuredRoute(provider: string, model: string): OpenShellInferenceRouteResult {
   return { ok: true, value: { state: "configured", route: { provider, model } } };
+}
+
+function nativeLocalSandbox(overrides: Record<string, unknown> = {}) {
+  const binding: NativeLocalBinding = {
+    provider: "ollama-local",
+    endpointUrl: "http://host.openshell.internal:11435/v1",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "authenticated",
+    gatewayName: "nemoclaw",
+    sandboxName: "alpha",
+  };
+  return {
+    name: "alpha",
+    agent: "langchain-deepagents-code",
+    provider: binding.provider,
+    model: "qwen2.5:7b",
+    gatewayName: binding.gatewayName,
+    nativeLocalProviderAttachment: {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "owned-provider-id",
+    },
+    ...overrides,
+  };
 }
 
 function createDeps(fixture: OpenShellInferenceRouteResult): InferenceGetDeps & {
@@ -174,6 +200,118 @@ function expectBoundedAffectedDiagnostics(result: InferenceGetResult, output: st
 }
 
 describe("runInferenceGet", () => {
+  it.each([
+    {
+      agent: "langchain-deepagents-code",
+      provider: "ollama-local",
+      sandboxName: undefined,
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+    },
+    {
+      agent: "langchain-deepagents-code",
+      provider: "compatible-endpoint",
+      sandboxName: "alpha",
+      endpointUrl: "http://10.42.0.3:8999/v1",
+    },
+  ] as const)(
+    "reads a recorded native-local $agent route without consulting the shared gateway (#12975)",
+    async ({ agent, provider, sandboxName, endpointUrl }) => {
+      const deps = createDeps(configuredRoute("stale-shared-provider", "stale-shared-model"));
+      const sandbox = nativeLocalSandbox();
+      const binding = { ...sandbox.nativeLocalProviderAttachment, provider, endpointUrl };
+      deps.getSandbox = () =>
+        nativeLocalSandbox({
+          agent,
+          provider,
+          nativeLocalProviderAttachment: { ...binding, ...nativeLocalIdentity(binding) },
+        });
+      deps.getDefaultSandbox = () => "alpha";
+
+      await expect(runInferenceGet({ json: true, sandboxName }, deps)).resolves.toEqual({
+        provider,
+        model: "qwen2.5:7b",
+        endpointUrl,
+      });
+      expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+      expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual({
+        provider,
+        model: "qwen2.5:7b",
+        endpointUrl,
+      });
+    },
+  );
+
+  it("prints the selected native-local provider, model, and endpoint (#12975)", async () => {
+    const deps = createDeps(configuredRoute("stale-shared-provider", "stale-shared-model"));
+    deps.getSandbox = () => nativeLocalSandbox();
+
+    await runInferenceGet({ sandboxName: "alpha" }, deps);
+
+    expect(deps.log.mock.calls.map(([line]) => line)).toEqual([
+      "Provider: ollama-local",
+      "Model:    qwen2.5:7b",
+      "Endpoint: http://host.openshell.internal:11435/v1",
+    ]);
+    expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+  });
+
+  it.each([{ json: true }, { json: false }])(
+    "withholds an opaque native-local endpoint path in json=$json output (#12975)",
+    async ({ json }) => {
+      const deps = createDeps(configuredRoute("stale-shared-provider", "stale-shared-model"));
+      const sandbox = nativeLocalSandbox();
+      const endpointUrl = "http://host.openshell.internal:11435/opaque-tenant-credential/v1";
+      const binding = { ...sandbox.nativeLocalProviderAttachment, endpointUrl };
+      deps.getSandbox = () =>
+        nativeLocalSandbox({
+          nativeLocalProviderAttachment: { ...binding, ...nativeLocalIdentity(binding) },
+        });
+
+      await expect(runInferenceGet({ sandboxName: "alpha", json }, deps)).resolves.toEqual({
+        provider: "ollama-local",
+        model: "qwen2.5:7b",
+        endpointStatus: "withheld",
+        endpointRecovery: ENDPOINT_RECOVERY.withheld,
+      });
+      expect(deps.log.mock.calls.flat().join("\n")).not.toContain("opaque-tenant-credential");
+      expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { label: "invalid attachment", overrides: { nativeLocalProviderAttachment: {} } },
+    { label: "provider mismatch", overrides: { provider: "vllm-local" } },
+    { label: "sandbox mismatch", overrides: { name: "beta" } },
+    { label: "gateway mismatch", overrides: { gatewayName: "nemoclaw-19090" } },
+    {
+      label: "missing recorded gateway",
+      overrides: { gatewayName: undefined, gatewayPort: 8080 },
+    },
+    { label: "agent mismatch", overrides: { agent: "hermes" } },
+    {
+      label: "credential boundary mismatch",
+      overrides: {
+        nativeLocalProviderAttachment: (() => {
+          const attachment = nativeLocalSandbox().nativeLocalProviderAttachment;
+          const binding = { ...attachment, credentialEnv: "UNRELATED_TOKEN" };
+          return { ...binding, ...nativeLocalIdentity(binding) };
+        })(),
+      },
+    },
+  ])(
+    "rejects a native-local $label without reporting the shared route (#12975)",
+    async ({ overrides }) => {
+      const deps = createDeps(configuredRoute("stale-shared-provider", "stale-shared-model"));
+      deps.getSandbox = () => nativeLocalSandbox(overrides);
+
+      await expect(runInferenceGet({ sandboxName: "alpha" }, deps)).rejects.toThrow(
+        "Invalid native local provider attachment for the recorded inference selection",
+      );
+      expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+      expect(deps.log).not.toHaveBeenCalled();
+    },
+  );
+
   it("reads a recorded native NVIDIA route without consulting the shared gateway route", async () => {
     const deps = createDeps(configuredRoute("stale-provider", "stale-model"));
     const sandbox = {

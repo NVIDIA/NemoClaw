@@ -89,9 +89,9 @@ describe("Station Express smoke boundaries", () => {
       Cmd: ["-lc", stationVllmCommands()[0]],
     },
   };
-  it.each([0, 1])("pins the default Ultra serving alias in Station command %i", (index) => {
+  it.each([0, 1])("pins the default Super VL serving alias in Station command %i", (index) => {
     expect(stationVllmCommands()[index]).toMatch(
-      /(?:^|\s)--served-model-name nvidia\/nemotron-3-ultra-550b-a55b(?:\s|$)/u,
+      /(?:^|\s)--served-model-name nvidia-nemotron-3\.5-super-vl-120b-a12b-nvfp4(?:\s|$)/u,
     );
   });
 
@@ -104,7 +104,7 @@ describe("Station Express smoke boundaries", () => {
     "rejects a missing or changed alias in Station command %i: %j",
     (index, replacement) => {
       const changed = stationVllmCommands()[index]!.replace(
-        "--served-model-name nvidia/nemotron-3-ultra-550b-a55b",
+        "--served-model-name nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4",
         replacement,
       );
       expect(() =>
@@ -113,11 +113,11 @@ describe("Station Express smoke boundaries", () => {
             { ...container, Config: { ...container.Config, Cmd: ["-lc", changed] } },
           ]),
         ),
-      ).toThrow("default Ultra");
+      ).toThrow("default Super VL");
     },
   );
 
-  it("requires managed vLLM to run the default Ultra serving alias", () => {
+  it("requires managed vLLM to run the default Super VL serving alias", () => {
     expect(assertStationVllm(JSON.stringify([container]))).toBe(container.Image);
     expect(() =>
       assertStationVllm(JSON.stringify([{ ...container, State: { Running: false } }])),
@@ -128,7 +128,7 @@ describe("Station Express smoke boundaries", () => {
           { ...container, Config: { ...container.Config, Cmd: ["serve", "another-model"] } },
         ]),
       ),
-    ).toThrow("default Ultra");
+    ).toThrow("default Super VL");
     expect(() =>
       assertStationVllm(
         JSON.stringify([{ ...container, Config: { ...container.Config, Labels: {} } }]),
@@ -166,7 +166,7 @@ describe("Station Express smoke boundaries", () => {
     expect(() => assertStationInference(JSON.stringify(response))).toThrow();
   });
 
-  it("accepts non-empty content in an Ultra response payload", () => {
+  it("accepts non-empty content in a Super VL response payload", () => {
     expect(() =>
       assertStationInference(
         JSON.stringify({ model: STATION_SMOKE_MODEL, choices: [{ message: { content: "PONG" } }] }),
@@ -179,7 +179,7 @@ describe("Station Express smoke boundaries", () => {
     directories.push(home);
     const model = path.join(
       home,
-      ".cache/huggingface/hub/models--nvidia--NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+      ".cache/huggingface/hub/models--nvidia--NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
     );
     fs.mkdirSync(path.join(model, "blobs"), { recursive: true });
     fs.mkdirSync(path.join(model, "snapshots"));

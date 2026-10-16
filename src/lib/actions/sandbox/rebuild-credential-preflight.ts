@@ -6,7 +6,7 @@ import { fixedNativeProviderForAttachment } from "../../inference/native-provide
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { CLI_NAME } from "../../cli/branding";
 import { R, RD } from "../../cli/terminal-style";
-import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import { resolveSandboxGatewayName, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import {
   checkRebuildGatewayProviderOrBail,
@@ -15,6 +15,8 @@ import {
   type HostCredentialTarget,
 } from "./rebuild-provider-preflight";
 import { getRebuildCredentialEnvFromRegistry } from "./rebuild-resume-config";
+import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
+import { verifyRecordedNativeLocalProviderAttachment } from "../../inference/native-local/profile";
 
 const hermesProviderAuth = require("../../hermes-provider-auth") as {
   HERMES_PROVIDER_NAME: string;
@@ -179,6 +181,28 @@ export async function preflightRebuildCredentials(
     sb.endpointUrl,
   );
   const rebuildProvider = sb.provider;
+  if (sb.nativeLocalProviderAttachment !== undefined) {
+    try {
+      await verifyRecordedNativeLocalProviderAttachment({
+        adapter: createManagedProviderAdapter(),
+        expected: sb.nativeLocalProviderAttachment,
+        sandboxName: sb.name,
+        gatewayName: resolveSandboxGatewayName(sb),
+        agent: sb.agent,
+        provider: rebuildProvider,
+      });
+    } catch {
+      bail("Could not verify native local provider credentials; sandbox is untouched");
+      return false;
+    }
+    return preflightRebuildHostCredential(
+      { ...sb, credentialEnv: rebuildCredentialEnv },
+      rebuildCredentialEnv
+        ? rebuildOnboardDependencies.hydrateCredentialEnv(rebuildCredentialEnv)
+        : null,
+      bail,
+    );
+  }
   let nativeAttachment;
   try {
     nativeAttachment = recordedNativeProviderAttachment(sb);

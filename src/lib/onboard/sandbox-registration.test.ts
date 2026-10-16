@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import type { AgentDefinition } from "../agent/defs";
 import {
   serializedHostLocalInferenceReceipt,
   serializedLlamaCppHostLocalInferenceReceipt,
@@ -24,6 +25,7 @@ const requireDist = createRequire(import.meta.url);
 const onboardSession = requireDist("../state/onboard-session.js");
 const {
   buildCreatedSandboxRegistryEntry,
+  nativeInferenceCreateIntentFields,
   prepareCreatedSandboxRegistration,
   registerCreatedSandbox,
   registerPreparedCreatedSandbox,
@@ -93,6 +95,55 @@ function createdRegistryEntryInput(
 }
 
 describe("buildCreatedSandboxRegistryEntry", () => {
+  it("omits stale Local NIM native attachments while retaining standalone vLLM attachments", () => {
+    const { nativeLocalIdentity } = requireDist(
+      "../inference/native-local/contract.ts",
+    ) as typeof import("../inference/native-local/contract");
+    const binding = {
+      provider: "vllm-local" as const,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "sentinel" as const,
+      gatewayName: "nemoclaw",
+      sandboxName: "demo",
+    };
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "vllm-provider",
+    };
+    const makeEntry = (nimContainer: string | null) => {
+      const base = createdRegistryEntryInput();
+      return buildCreatedSandboxRegistryEntry({
+        ...base,
+        agent: { name: "langchain-deepagents-code" } as AgentDefinition,
+        nativeLocalProviderAttachment: attachment,
+        inferenceSelection: {
+          ...base.inferenceSelection,
+          provider: "vllm-local",
+          endpointUrl: binding.endpointUrl,
+          nimContainer,
+        },
+      });
+    };
+    const nim = makeEntry("nemoclaw-nim-owned");
+    const standalone = makeEntry(null);
+
+    expect(nim.nativeLocalProviderAttachment).toBeUndefined();
+    expect(standalone.nativeLocalProviderAttachment).toEqual(attachment);
+    expect(
+      nativeInferenceCreateIntentFields("vllm-local", nim).nativeLocalProviderAttachment,
+    ).toBeUndefined();
+    expect(
+      nativeInferenceCreateIntentFields("vllm-local", standalone).nativeLocalProviderAttachment,
+    ).toEqual(attachment);
+    expect(
+      nativeInferenceCreateIntentFields("vllm-local", standalone, true)
+        .nativeLocalProviderAttachment,
+    ).toBeUndefined();
+  });
+
   it("records only an exact native NVIDIA provider identity", () => {
     const attachment = {
       schemaVersion: 1 as const,
@@ -175,7 +226,10 @@ describe("buildCreatedSandboxRegistryEntry", () => {
 
     expect(() =>
       registerCreatedSandbox({
-        ...createdRegistryEntryInput({ imageTag: workload.reference, workload }),
+        ...createdRegistryEntryInput({
+          imageTag: workload.reference,
+          workload,
+        }),
         registerSandbox,
       }),
     ).toThrow(/agent identity does not match its managed workload receipt/u);
@@ -268,7 +322,12 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       hermesToolGateways: ["filesystem"],
       hermesDashboardState: {
         enabled: true,
-        config: { enabled: true, port: 18790, internalPort: 19123, tuiEnabled: true },
+        config: {
+          enabled: true,
+          port: 18790,
+          internalPort: 19123,
+          tuiEnabled: true,
+        },
       },
       dashboardPort: 18789,
       lifecycleGeneration: "22222222-2222-4222-8222-222222222222",

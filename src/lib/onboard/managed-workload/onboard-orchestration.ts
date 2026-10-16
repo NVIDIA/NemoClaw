@@ -24,6 +24,7 @@ import { isShippedManagedImageAgent } from "../managed-image/contract";
 import {
   type BuiltManagedStartupOnboardProfile,
   buildManagedStartupOnboardProfile,
+  resolveManagedStartupInferenceEndpoint,
   type ManagedStartupOnboardProfileInput,
 } from "../managed-startup/onboard-profile";
 export {
@@ -197,6 +198,8 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly provider: string | null;
   readonly preferredInferenceApi: string | null;
   readonly endpointUrl: string | null;
+  readonly localNimSelected?: boolean;
+  readonly nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   readonly nativeProvider?: boolean;
   readonly startupProfile: ManagedProfileInput;
   readonly note: (message: string) => void;
@@ -395,8 +398,19 @@ export function createManagedWorkloadOnboardRuntime(
       return input.managedWorkloadRebuild.replacementProfile;
     }
     if (preparedProfile) return preparedProfile;
+    const nativeLocalProviderAttachment =
+      input.agentName === "langchain-deepagents-code"
+        ? input.nativeLocalProviderAttachment
+        : undefined;
     const selectedModel = input.model?.trim() || "";
     const selectedProvider = input.provider?.trim() || null;
+    const endpointUrl = resolveManagedStartupInferenceEndpoint({
+      agentName: input.agentName,
+      provider: selectedProvider,
+      endpointUrl: input.endpointUrl,
+      localNimSelected: input.localNimSelected,
+      nativeLocalProviderAttachment,
+    });
     const inferenceApi =
       input.agentName === "langchain-deepagents-code"
         ? "openai-completions"
@@ -409,13 +423,16 @@ export function createManagedWorkloadOnboardRuntime(
       selectedModel,
       selectedProvider,
       inferenceApi,
-      input.nativeProvider ?? true,
-      input.endpointUrl,
+      input.nativeLocalProviderAttachment && !nativeLocalProviderAttachment
+        ? false
+        : (input.nativeProvider ?? true),
+      endpointUrl,
+      input.agentName,
     );
     preparedProfile = buildManagedStartupOnboardProfile({
       agentName: input.agentName,
       inference:
-        !selectedModel && !selectedProvider && !input.preferredInferenceApi && !input.endpointUrl
+        !selectedModel && !selectedProvider && !input.preferredInferenceApi && !endpointUrl
           ? null
           : {
               routeProvider: inference.providerKey,
@@ -423,7 +440,7 @@ export function createManagedWorkloadOnboardRuntime(
               model: selectedModel,
               routedBaseUrl: inference.inferenceBaseUrl,
               upstreamEndpointUrl:
-                input.agentName === "langchain-deepagents-code" ? input.endpointUrl : null,
+                input.agentName === "langchain-deepagents-code" ? endpointUrl : null,
               api: inference.inferenceApi as
                 | "openai-completions"
                 | "openai-responses"

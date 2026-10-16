@@ -6,6 +6,11 @@
  * All functions are pure.
  */
 
+import { nativeLocalCredentialReference } from "./native-local/agent-config";
+import {
+  usesNativeLocalInference,
+  usesNativeLocalInferenceForAgent,
+} from "./native-local/contract";
 import { isSafeModelId, shouldSkipResponsesProbe } from "../validation";
 import {
   isSafeLlamaCppServedModelAlias,
@@ -28,7 +33,15 @@ import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "./ollama/contract";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openrouter";
 import { VLLM_LOCAL_CREDENTIAL_ENV } from "./serving/vllm-credential-contract";
 
-export { isSafeModelId };
+export {
+  isSafeModelId,
+  nativeLocalCredentialReference,
+  usesNativeLocalInference,
+  usesNativeLocalInferenceForAgent,
+};
+export { normalizeNativeLocalProviderAttachment } from "./native-local/contract";
+export { hasLegacySharedLocalInferenceRoute } from "./selection";
+export type { NativeLocalProviderAttachment } from "./native-local/contract";
 export { OLLAMA_LOCAL_CREDENTIAL_ENV };
 export { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "../inference-credential";
 export {
@@ -331,8 +344,12 @@ export function getSandboxInferenceConfig(
   preferredInferenceApi: string | null = null,
   nativeProvider?: boolean,
   nativeEndpointUrl?: string | null,
+  agentName?: string | null,
 ): SandboxInferenceConfig {
-  const nativeCustom = nativeProvider === true && isCustomHostedProvider(provider);
+  const nativeCustom =
+    nativeProvider === true &&
+    isCustomHostedProvider(provider) &&
+    !usesNativeLocalInference(provider, nativeEndpointUrl);
   const selectedApi = resolveCustomNativeApi(provider, preferredInferenceApi, nativeCustom);
   let providerKey: string = nativeOpenClawProviderKey(provider, selectedApi) ?? MANAGED_PROVIDER_ID;
   let primaryModelRef: string;
@@ -436,6 +453,16 @@ export function getSandboxInferenceConfig(
       break;
   }
 
+  if (
+    useNativeProvider &&
+    agentName === "langchain-deepagents-code" &&
+    nativeEndpointUrl &&
+    usesNativeLocalInference(provider, nativeEndpointUrl) &&
+    nativeLocalCredentialReference(provider, nativeEndpointUrl)
+  ) {
+    inferenceBaseUrl = nativeEndpointUrl;
+    inferenceApi = "openai-completions";
+  }
   return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
 }
 

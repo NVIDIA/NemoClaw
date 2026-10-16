@@ -14,7 +14,7 @@ import {
 import {
   isManagedNativeProfileResponse,
   type NativeProfileBoundary,
-} from "./native-nvidia-profile-response";
+} from "./native-inference-profile-response";
 
 export type HostedNativeProfileId =
   | (typeof HOSTED_NATIVE_PROVIDERS)[number]["profileId"]

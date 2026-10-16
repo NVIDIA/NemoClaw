@@ -19,14 +19,23 @@ content:
 
 NemoClaw provides two first-class llama.cpp paths.
 You can attach an authenticated server that you operate, or let NemoClaw select and materialize a compatible repository-owned profile.
-Both paths are experimental and use OpenAI Chat Completions through `https://inference.local/v1`.
+Both paths are experimental and use OpenAI Chat Completions.
+
+<AgentOnly variant="openclaw,hermes">
+Agent requests use `https://inference.local/v1`.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+New Deep Agents Code sandboxes use the recorded local endpoint through a sandbox-attached OpenShell provider.
+OpenShell supplies the credential at egress; the sandbox receives only a credential reference.
+Refer to [How Inference Routing Works](../about-inference-routing) for the qualification and existing-sandbox boundaries.
+</AgentOnly>
 
 ## Choose a llama.cpp Path
 
-| Path                    | NemoClaw manages                                                                                                                                | You manage                                                                                                                                                                       | Use it when                                                                                             |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Existing server         | Provider registration, route validation, and sandbox traffic through `inference.local`.                                                         | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle.                                                                            | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081`. |
-| Managed NVIDIA GPU host | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | A qualified DGX Spark Arm64, Linux x86_64 NVIDIA GPU, or Windows WSL N1x or Station GB300 host, plus the recipe readiness requirements and any required Hugging Face credential. | You want a repository-owned managed llama.cpp profile without managing `llama-server` directly.         |
+| Path | NemoClaw manages | You manage | Use it when |
+|---|---|---|---|
+| Existing server | Provider registration, route validation, and sandbox inference through OpenShell. | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle. | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081`. |
+| Managed NVIDIA GPU host | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | A qualified DGX Spark Arm64, Linux x86_64 NVIDIA GPU, or Windows WSL N1x or Station GB300 host, plus the recipe readiness requirements and any required Hugging Face credential. | You want a repository-owned managed llama.cpp profile without managing `llama-server` directly. |
 
 Compared with other local options, Ollama emphasizes a simple local model workflow, while managed vLLM provides host-specific NVIDIA GPU profiles and broader model selection.
 NVIDIA NIM provides NVIDIA-packaged inference containers for validated NIM-capable GPUs.
@@ -260,9 +269,9 @@ Onboarding performs these actions:
 - Verifies the GGUF size and SHA-256 digest before it starts the runtime.
 - Runs the authenticated container as the current non-root user with one NVIDIA GPU and no CPU fallback.
 - Configures native `llama-server` with its API-key file, one serving slot, and the recipe's context and socket-timeout settings.
-- Keeps the container's ports unpublished and starts the authenticated host bridge on port `8081`.
+- Starts a host-owned private bridge on `127.0.0.1:8081` and connects the container to a Docker internal network without a Docker-published port.
 - Verifies host-loopback and OpenShell reachability before registering the provider.
-- Registers `llama-cpp-local` and routes agent traffic through `https://inference.local/v1`.
+- Registers `llama-cpp-local` and configures the agent's OpenShell inference route described above.
 
 The runtime cannot download a model and has no egress on its internal Docker network.
 The recipe disables the Web UI, slot inspection, server tools, agent mode, Model Context Protocol proxy, router, and multimodal projection.

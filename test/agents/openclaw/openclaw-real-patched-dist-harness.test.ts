@@ -11,7 +11,12 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { patchOpenClawContainerRestart } from "../../../scripts/lib/patch-openclaw-container-restart.mts";
-import { buildManagedInferenceSafeguardCompaction } from "../../../scripts/generate-openclaw-config.mts";
+import {
+  buildConfig,
+  buildManagedInferenceSafeguardCompaction,
+} from "../../../scripts/generate-openclaw-config.mts";
+import { baseOpenClawGenerationEnv } from "../../helpers/openclaw-env-fixture";
+import { runRealOpenClawAgentReloadProof } from "../../helpers/openclaw-real-agent-reload-proof";
 import { runRealOpenClawCompactionRetryProof } from "../../helpers/openclaw-real-compaction-retry-proof";
 import { runRealOpenClawDeviceSelfApprovalProof } from "../../helpers/openclaw-real-device-self-approval-proof";
 import { runRealOpenClawInstallPathProof } from "../../helpers/openclaw-real-install-path-proof";
@@ -360,6 +365,27 @@ function materializeReviewedTarball(
   requireRuntimeEqual(sha512Sri(tarballPath), expectedIntegrity, "OpenClaw tarball SRI");
   return tarballPath;
 }
+
+it("bounds reload-proof diagnostics while retaining the final gateway error", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "reload-diagnostics-"));
+  try {
+    fs.writeFileSync(
+      path.join(root, "openclaw.mjs"),
+      'process.stdout.write("x".repeat(128 * 1024), () => process.stderr.write("final-gateway-error", () => process.exit(1)));',
+    );
+    const error = await runRealOpenClawAgentReloadProof({
+      dist: path.join(root, "dist"),
+      nodeExecutable: process.execPath,
+      gatewayConfig: { reload: { mode: "hybrid" } },
+    }).catch((error: Error) => error);
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain("final-gateway-error");
+    expect(message.length).toBeLessThanOrEqual(64 * 1024 + "gateway did not start: ".length);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe("OpenClaw real patched-dist materialization guard", () => {
   it("maps container-only patch helpers to their repository fixtures", () => {
@@ -924,6 +950,12 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
             4096,
           ),
           timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+        });
+
+        await runRealOpenClawAgentReloadProof({
+          gatewayConfig: buildConfig(baseOpenClawGenerationEnv()).gateway,
+          dist,
+          nodeExecutable: nodeRuntime.executable,
         });
 
         runRealOpenClawInstallPathProof({
