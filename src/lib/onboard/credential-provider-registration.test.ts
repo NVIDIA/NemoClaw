@@ -4,14 +4,19 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { MessagingProviderApplyError } from "../messaging/applier/openshell-provider";
+import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
 import { requiredMessagingProviderBindings } from "./checkpoint-replay";
+import { createCredentialProviderRegistration } from "./credential-provider-registration";
 import {
-  type CredentialProviderRegistrationDeps,
-  createCredentialProviderRegistration,
-} from "./credential-provider-registration";
+  providerMetadata,
+  providerMissing,
+  registrationDeps,
+  requiredBindings,
+  sandboxInput,
+} from "./__test-helpers__/credential-provider-registration.test-fixtures";
 import type { MessagingTokenDef } from "./messaging-prep";
 
 const messagingBridgeProvider =
@@ -65,64 +70,13 @@ const BRAVE_PROFILE = {
   inference_capable: false,
 };
 
-function providerMetadata(
-  name: string,
-  type: string,
-  credentialKey: string,
-): { status: number; stdout: string; stderr: string } {
-  return {
-    status: 0,
-    stdout: [
-      `Id: provider-${name}`,
-      `Name: ${name}`,
-      `Type: ${type}`,
-      "Resource version: 1",
-      `Credential keys: ${credentialKey}`,
-      "Config keys: <none>",
-    ].join("\n"),
-    stderr: "",
-  };
-}
-
-function providerMissing(name: string) {
-  return { status: 1, stdout: "", stderr: `provider '${name}' not found` };
-}
-
-function registrationDeps(
-  runOpenshellMock: ReturnType<typeof vi.fn>,
-  session: Session,
-): CredentialProviderRegistrationDeps {
-  const updateSession = vi.fn(
-    (mutator: (current: Session) => Session | void): Session => mutator(session) ?? session,
-  );
-  return {
-    root: "/repo",
-    runOpenshell: runOpenshellMock as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
-    getGatewayName: () => "test-gateway",
-    getCredential: () => null,
-    updateSession,
-    stagedLegacyValues: new Map(),
-    migratedLegacyKeys: new Set(),
-  };
-}
-
-function requiredBindings(tokenDefs: readonly MessagingTokenDef[]) {
-  return tokenDefs.map((tokenDef) => ({
-    name: tokenDef.name,
-    type: tokenDef.providerType || "generic",
-    credentialEnv: tokenDef.envKey,
-  }));
-}
-
-function sandboxInput(bindings: ReturnType<typeof requiredBindings>) {
-  return {
-    sandboxName: "alpha",
-    enabledChannels: ["discord"],
-    webSearchConfig: null,
-    agent: {},
-    requiredBindings: bindings,
-  };
-}
+const MESSAGING_PROFILE = {
+  id: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+  credentials: [],
+  endpoints: [],
+  binaries: [],
+  inference_capable: false,
+};
 
 function bridgeRefreshCleanupScenario(deleteStatus: number, deleteError: string) {
   const session = { stagedCredentialProviders: [] } as unknown as Session;
@@ -163,9 +117,13 @@ function bridgeRefreshCleanupScenario(deleteStatus: number, deleteError: string)
     (args: string[]) =>
       commandHandlers.get(args[1] ?? "")?.() ?? { status: 0, stdout: "", stderr: "" },
   );
-  const registration = createCredentialProviderRegistration(
-    registrationDeps(runOpenshell, session),
-  );
+  const deps = registrationDeps(runOpenshell, session);
+  deps.root = process.cwd();
+  deps.getCredential = (envKey) =>
+    envKey === "GOOGLECHAT_SERVICE_ACCOUNT"
+      ? JSON.stringify({ client_email: "bot@example.test", private_key: "test-private-key" })
+      : null;
+  const registration = createCredentialProviderRegistration(deps);
   const tokenDef: MessagingTokenDef = {
     name: "alpha-googlechat-bridge",
     envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
@@ -535,13 +493,20 @@ describe("credential provider registration", () => {
       ],
       [
         "provider get -g test-gateway alpha-discord-bridge",
-        providerMetadata("alpha-discord-bridge", "generic", "DISCORD_BOT_TOKEN"),
+        providerMetadata(
+          "alpha-discord-bridge",
+          MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+          "DISCORD_BOT_TOKEN",
+        ),
       ],
     ]);
     const defaultResult = { status: 0, stdout: "", stderr: "" };
     const runOpenshell = vi.fn((args: string[]) =>
-      args.includes("profile") && args.includes("export") && args.includes("brave")
-        ? { ...defaultResult, stdout: JSON.stringify(BRAVE_PROFILE) }
+      args.includes("profile") && args.includes("export")
+        ? {
+            ...defaultResult,
+            stdout: JSON.stringify(args.includes("brave") ? BRAVE_PROFILE : MESSAGING_PROFILE),
+          }
         : (commandResults.get(args.join(" ")) ?? defaultResult),
     );
     const deps = registrationDeps(runOpenshell, session);
@@ -558,6 +523,7 @@ describe("credential provider registration", () => {
         name: "alpha-discord-bridge",
         envKey: "DISCORD_BOT_TOKEN",
         token: DISCORD_SECRET,
+        providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
       },
     ];
 
@@ -568,7 +534,11 @@ describe("credential provider registration", () => {
 
     expect(registered).toEqual([
       { name: "alpha-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
-      { name: "alpha-discord-bridge", type: "generic", credentialEnv: "DISCORD_BOT_TOKEN" },
+      {
+        name: "alpha-discord-bridge",
+        type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+        credentialEnv: "DISCORD_BOT_TOKEN",
+      },
     ]);
     expect(session.stagedCredentialProviders).toEqual([
       "alpha-brave-search",
@@ -612,23 +582,33 @@ describe("credential provider registration", () => {
   it("creates a missing messaging provider and records its receipt (#6743)", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const success = { status: 0, stdout: "", stderr: "" };
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce(providerMissing("alpha-discord-bridge"))
-      .mockReturnValueOnce(providerMissing("alpha-discord-bridge"))
-      .mockReturnValueOnce(success)
-      .mockReturnValueOnce(
-        providerMetadata("alpha-discord-bridge", "generic", "DISCORD_BOT_TOKEN"),
-      );
-    const registration = createCredentialProviderRegistration(
-      registrationDeps(runOpenshell, session),
-    );
+    let created = false;
+    const runOpenshell = vi.fn((args: string[]) => {
+      const result =
+        args.includes("profile") && args.includes("export")
+          ? { ...success, stdout: JSON.stringify(MESSAGING_PROFILE) }
+          : args[0] === "provider" && args[1] === "get"
+            ? created
+              ? providerMetadata(
+                  "alpha-discord-bridge",
+                  MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+                  "DISCORD_BOT_TOKEN",
+                )
+              : providerMissing("alpha-discord-bridge")
+            : success;
+      created = created || (args[0] === "provider" && args[1] === "create");
+      return result;
+    });
+    const deps = registrationDeps(runOpenshell, session);
+    deps.root = process.cwd();
+    const registration = createCredentialProviderRegistration(deps);
 
     const tokenDefs: MessagingTokenDef[] = [
       {
         name: "alpha-discord-bridge",
         envKey: "DISCORD_BOT_TOKEN",
         token: DISCORD_SECRET,
+        providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
       },
     ];
     const registered = await registration.stageSandboxCredentialProviders(
@@ -637,7 +617,11 @@ describe("credential provider registration", () => {
     );
 
     expect(registered).toEqual([
-      { name: "alpha-discord-bridge", type: "generic", credentialEnv: "DISCORD_BOT_TOKEN" },
+      {
+        name: "alpha-discord-bridge",
+        type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+        credentialEnv: "DISCORD_BOT_TOKEN",
+      },
     ]);
     expect(session.stagedCredentialProviders).toEqual(["alpha-discord-bridge"]);
     expect(runOpenshell).toHaveBeenCalledWith(
@@ -649,7 +633,7 @@ describe("credential provider registration", () => {
         "--name",
         "alpha-discord-bridge",
         "--type",
-        "generic",
+        MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         "--credential",
         "DISCORD_BOT_TOKEN",
       ],
@@ -1113,11 +1097,13 @@ describe("credential provider registration", () => {
         name: "alpha-slack-bridge",
         envKey: "SLACK_BOT_TOKEN",
         token: "xoxb-current-token",
+        providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
       },
       {
         name: "alpha-slack-app",
         envKey: "SLACK_APP_TOKEN",
         token: "xapp-current-token",
+        providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
       },
     ];
 
@@ -1143,11 +1129,19 @@ describe("credential provider registration", () => {
       name: "alpha-discord-bridge",
       envKey: "DISCORD_BOT_TOKEN",
       token: null,
+      providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
     };
-    const runOpenshell = vi.fn(() =>
-      providerMetadata("alpha-discord-bridge", "generic", "DISCORD_BOT_TOKEN"),
+    const runOpenshell = vi.fn((args: string[]) =>
+      args.includes("profile") && args.includes("export")
+        ? { status: 0, stdout: JSON.stringify(MESSAGING_PROFILE), stderr: "" }
+        : providerMetadata(
+            "alpha-discord-bridge",
+            MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+            "DISCORD_BOT_TOKEN",
+          ),
     );
     const deps = registrationDeps(runOpenshell, session);
+    deps.root = process.cwd();
     const registration = createCredentialProviderRegistration(deps);
 
     const registered = await registration.stageSandboxCredentialProviders(
@@ -1199,11 +1193,13 @@ describe("credential provider registration", () => {
           name: "alpha-slack-bridge",
           envKey: "SLACK_BOT_TOKEN",
           token: "xoxb-current-token",
+          providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         },
         {
           name: "alpha-slack-app",
           envKey: "SLACK_APP_TOKEN",
           token: null,
+          providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         },
       ];
 
@@ -1266,6 +1262,7 @@ describe("credential provider registration", () => {
           name: "alpha-discord-bridge",
           envKey: "DISCORD_BOT_TOKEN",
           token: DISCORD_SECRET,
+          providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         },
       ];
 
@@ -1290,6 +1287,7 @@ describe("credential provider registration", () => {
       name: "alpha-discord-bridge",
       envKey: "DISCORD_BOT_TOKEN",
       token: DISCORD_SECRET,
+      providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
     };
 
     await expect(
@@ -1303,6 +1301,38 @@ describe("credential provider registration", () => {
     expect(deps.updateSession).not.toHaveBeenCalled();
   });
 
+  it("rejects an omitted provider type before inspecting or changing the gateway (#13344)", async () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn();
+    const deps = registrationDeps(runOpenshell, session);
+    const registration = createCredentialProviderRegistration(deps);
+    const secret = "discord-secret-do-not-disclose";
+    const tokenDef: MessagingTokenDef = {
+      name: "alpha-discord-bridge",
+      envKey: "DISCORD_BOT_TOKEN",
+      token: secret,
+    };
+
+    const failure = await registration
+      .stageSandboxCredentialProviders(
+        sandboxInput([
+          {
+            name: tokenDef.name,
+            type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+            credentialEnv: tokenDef.envKey,
+          },
+        ]),
+        async () => ({ messagingTokenDefs: [tokenDef] }),
+      )
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("Re-run channel setup with a supported profile.");
+    expect((failure as Error).message).not.toContain(secret);
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(deps.updateSession).not.toHaveBeenCalled();
+  });
+
   it("refuses authority drift after credential-provider planning without side effects (#9833)", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const runOpenshell = vi.fn();
@@ -1312,6 +1342,7 @@ describe("credential provider registration", () => {
       name: "alpha-discord-bridge",
       envKey: "DISCORD_BOT_TOKEN",
       token: DISCORD_SECRET,
+      providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
     };
     const prepare = vi.fn(async () => ({ messagingTokenDefs: [tokenDef] }));
 
@@ -1336,20 +1367,36 @@ describe("credential provider registration", () => {
   it("stops provider registration when authority changes after the first provider (#9833)", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const success = { status: 0, stdout: "", stderr: "" };
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce(providerMissing("alpha-first"))
-      .mockReturnValueOnce(providerMissing("alpha-second"))
-      .mockReturnValueOnce(providerMissing("alpha-first"))
-      .mockReturnValueOnce(providerMissing("alpha-second"))
-      .mockReturnValueOnce(success)
-      .mockReturnValueOnce(providerMetadata("alpha-first", "generic", "FIRST_TOKEN"))
-      .mockReturnValueOnce(success);
+    const responses = [
+      providerMissing("alpha-first"),
+      providerMissing("alpha-second"),
+      providerMissing("alpha-first"),
+      providerMissing("alpha-second"),
+      success,
+      providerMetadata("alpha-first", MESSAGING_CREDENTIAL_PROVIDER_TYPE, "FIRST_TOKEN"),
+      success,
+    ];
+    const runOpenshell = vi.fn((args: string[]) =>
+      args.includes("profile") && args.includes("export")
+        ? { ...success, stdout: JSON.stringify(MESSAGING_PROFILE) }
+        : (responses.shift() ?? success),
+    );
     const deps = registrationDeps(runOpenshell, session);
+    deps.root = process.cwd();
     const registration = createCredentialProviderRegistration(deps);
     const tokenDefs: MessagingTokenDef[] = [
-      { name: "alpha-first", envKey: "FIRST_TOKEN", token: "first-secret" },
-      { name: "alpha-second", envKey: "SECOND_TOKEN", token: "second-secret" },
+      {
+        name: "alpha-first",
+        envKey: "FIRST_TOKEN",
+        token: "first-secret",
+        providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+      },
+      {
+        name: "alpha-second",
+        envKey: "SECOND_TOKEN",
+        token: "second-secret",
+        providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+      },
     ];
     const revalidateSandboxIdentity = vi.fn((operation: string) =>
       operation === 'create messaging provider "alpha-second"'

@@ -53,9 +53,19 @@ export function buildMessagingProviderApplication(
   const refreshes: MessagingProviderRefreshEphemeralInput[] = [];
 
   for (const tokenDef of input.tokenDefs) {
-    const providerType = tokenDef.providerType ?? "generic";
+    const providerType = tokenDef.providerType;
+    if (!providerType) {
+      throw new Error(
+        `Messaging provider '${tokenDef.name}' has no explicit owned profile type. Re-run channel setup with a supported profile.`,
+      );
+    }
     const bridgeProfile = profilesByType.get(providerType);
     const profile = messagingProviderProfileForType(input.root, providerType, bridgeProfile);
+    if (!profile) {
+      throw new Error(
+        `Messaging provider '${tokenDef.name}' has no NemoClaw-owned profile for type '${providerType}'. Re-run channel setup with a supported profile.`,
+      );
+    }
     const channelId =
       bridgeProfile?.channelId ??
       input.channelIdForCredential?.(tokenDef.envKey, tokenDef.name) ??

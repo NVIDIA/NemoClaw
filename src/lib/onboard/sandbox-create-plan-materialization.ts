@@ -302,10 +302,12 @@ export function validateSandboxCreateIntentBindings(
         `Cannot materialize sandbox create intent; credential availability changed for provider '${request.name}'.`,
       );
     }
-    // Default providers omit this field; normalize an empty or missing binding
-    // to the intent's `undefined` representation before comparing.
-    const boundProviderType = tokenDef.providerType || undefined;
-    if (boundProviderType !== request.providerType) {
+    if (!request.providerType || !tokenDef.providerType) {
+      throw new Error(
+        `Cannot materialize sandbox create intent; provider '${request.name}' has no explicit owned profile type. Re-run channel setup with a supported profile.`,
+      );
+    }
+    if (tokenDef.providerType !== request.providerType) {
       throw new Error(
         `Cannot materialize sandbox create intent; provider type changed for '${request.name}'.`,
       );

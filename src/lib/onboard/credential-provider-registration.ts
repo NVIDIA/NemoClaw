@@ -214,13 +214,18 @@ function validatePlannedCredentialProviderBindings(
 
   const plannedByName = new Map<string, CheckpointProviderBinding>();
   for (const tokenDef of tokenDefs) {
+    const required = requiredByName.get(tokenDef.name);
+    if (!required && !hasPreparedCredential(tokenDef)) continue;
+    if (!tokenDef.providerType) {
+      throw new Error(
+        `Messaging provider '${tokenDef.name}' has no explicit owned profile type. Re-run channel setup with a supported profile.`,
+      );
+    }
     const binding = {
       name: tokenDef.name,
-      type: tokenDef.providerType || "generic",
+      type: tokenDef.providerType,
       credentialEnv: tokenDef.envKey,
     };
-    const required = requiredByName.get(binding.name);
-    if (!required && !hasPreparedCredential(tokenDef)) continue;
     if (
       !isCanonicalBinding(binding) ||
       plannedByName.has(binding.name) ||
