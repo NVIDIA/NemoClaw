@@ -535,6 +535,26 @@ describe("connect inference route retries", () => {
     );
   });
 
+  it("pins the inference route probe to its persisted gateway", async () => {
+    runBuffered.mockResolvedValue(completed("OK 200"));
+
+    const result = await probeSandboxInferenceRoute(
+      "alpha",
+      { name: "hermes" },
+      {
+        gatewayName: "nemoclaw-8091",
+      },
+    );
+
+    expect(result).toMatchObject({ healthy: true, broken: false, httpStatus: 200 });
+    expect(runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "nemoclaw-8091" },
+      }),
+    );
+  });
+
   it("returns the final unhealthy probe result after exhausting attempts (#9218)", async () => {
     runBuffered.mockResolvedValue(completed("BROKEN 503"));
 

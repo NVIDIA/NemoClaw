@@ -120,7 +120,7 @@ describe("CLI recovery routing", () => {
         '  "sandbox get liost") printf "Name: liost\\nPhase: Ready\\nPolicy:\\n"; exit 0 ;;',
         `  "policy get"*) printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}; exit 0 ;;`,
         '  "inference get") exit 1 ;;',
-        '  "sandbox exec --name liost --tty -- /bin/bash -i") echo "CONNECTED_LIOST"; exit 0 ;;',
+        '  "sandbox exec --name liost -g nemoclaw --tty -- /bin/bash -i") echo "CONNECTED_LIOST"; exit 0 ;;',
         "  *__NEMOCLAW_SANDBOX_EXEC_STARTED__*) echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'; exit 0 ;;",
         "  *) exit 0 ;;",
         "esac",
@@ -144,6 +144,6 @@ describe("CLI recovery routing", () => {
     // selected gateway (#7105).
     expect(calls).not.toContain("sandbox list");
     expect(calls).toContain("sandbox list -g nemoclaw");
-    expect(calls).toContain("sandbox exec --name liost --tty -- /bin/bash -i");
+    expect(calls).toContain("sandbox exec --name liost -g nemoclaw --tty -- /bin/bash -i");
   });
 });

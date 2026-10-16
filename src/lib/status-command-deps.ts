@@ -22,7 +22,7 @@ import {
   runMessagingStatusHooks,
 } from "./messaging/hooks/status-runner";
 import type { MessagingAgentId } from "./messaging/manifest";
-import { resolveGatewayName } from "./onboard/gateway-binding";
+import { resolveGatewayName, resolveSandboxGatewayName } from "./onboard/gateway-binding";
 import { classifyHermesPortableRegistry } from "./onboard/experimental/hermes-portable-onboarding";
 import { inspectPortableAgentReceiptAuthorityForClassification } from "./onboard/experimental/hermes-portable-receipt";
 import { defaultPortableDemoStateDir } from "./onboard/experimental/portable-runtime-receipt-readiness";
@@ -30,7 +30,7 @@ import * as policy from "./policy";
 import { summarizeForDebug } from "./state/onboard-session";
 import * as registry from "./state/registry";
 import { getHermesPortableHostAuthorityEntryCount } from "./state/portable-uninstall-retirement";
-import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
+import { createSystemDeps, getActiveSandboxSessions } from "./state/sandbox-session";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./tunnel/services";
 
 const INVENTORY_POLICY_PROBE_TIMEOUT_MS = 2_000;
@@ -260,11 +260,6 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
     captureOpenshell(rootDir, args, { maxBuffer: opts.maxBuffer, timeout: opts.timeout }),
   );
 
-  // Resolving a sandbox ID costs one OpenShell call, so only pay it when the
-  // process list actually contains a proxied connection that needs one (#9316).
-  const resolveSandboxIdForSessions = (sshOutput: string, name: string): string | null =>
-    sshOutput.includes("--sandbox-id") ? (sessionDeps?.resolveSandboxId?.(name) ?? null) : null;
-
   const getCachedSshOutput = (): string | null => {
     if (cachedSshOutput === undefined && sessionDeps) {
       try {
@@ -297,12 +292,19 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
     getGatewayAuthority: () => onboardSummary?.gatewayAuthority ?? null,
     loadLastSession: () => onboardSummary,
     getActiveSessionCount: sessionDeps
-      ? (name) => {
+      ? (sandbox) => {
           try {
             const sshOutput = getCachedSshOutput();
             if (sshOutput === null) return null;
-            return parseSshProcesses(sshOutput, name, resolveSandboxIdForSessions(sshOutput, name))
-              .length;
+            const gatewayName =
+              sandbox.gatewayName != null || sandbox.gatewayPort != null
+                ? resolveSandboxGatewayName(sandbox)
+                : resolveGatewayName(GATEWAY_PORT);
+            return getActiveSandboxSessions(
+              sandbox.name,
+              { ...sessionDeps, getSshProcesses: () => sshOutput },
+              gatewayName,
+            ).sessions.length;
           } catch {
             return null;
           }

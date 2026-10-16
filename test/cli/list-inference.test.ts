@@ -312,6 +312,7 @@ describe.concurrent("CLI dispatch", () => {
             provider: "configured-provider",
             gpuEnabled: true,
             agent: "openclaw",
+            gatewayName: "nemoclaw",
           },
         },
         defaultSandbox: "alpha",
@@ -331,7 +332,11 @@ describe.concurrent("CLI dispatch", () => {
     );
     fs.writeFileSync(
       path.join(localBin, "ps"),
-      ["#!/bin/sh", "echo '123 ssh openshell-alpha.default'", "exit 0"].join("\n"),
+      [
+        "#!/bin/sh",
+        "echo '123 ssh -o ProxyCommand=openshell-ssh-proxy --gateway-name nemoclaw openshell-alpha.default'",
+        "exit 0",
+      ].join("\n"),
       { mode: 0o755 },
     );
 
