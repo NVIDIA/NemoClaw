@@ -46,8 +46,11 @@ on:
       - "nemoclaw-blueprint/**"
       - "scripts/**"
       - "src/lib/actions/sandbox/**"
+      - "src/lib/adapters/container-engine.ts"
       - "src/lib/adapters/openshell/**"
+      - "src/lib/adapters/podman/**"
       - "src/lib/agent/candidate-authority.ts"
+      - "src/lib/agent/deep-agents-code-runtime-identity.json"
       - "src/lib/extra-agents-validation.ts"
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"
@@ -56,6 +59,8 @@ on:
       - "src/lib/security/credential-hash.ts"
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
+      - "test/helpers/openclaw-real-agent-reload-proof.ts"
+      - "test/e2e/fixtures/docker-build-guard.ts"
       - "test/e2e/live/mcp-bridge*.ts"
       - "test/e2e/support/mcp-bridge-portable-lock-barrier.ts"
       - "test/e2e/fixtures/gateway-runtime-start.ts"
@@ -187,6 +192,7 @@ jobs:
           done
           for support_relative in \
             agents/langchain-deepagents-code/validate-runtime-contract.py \
+            src/lib/agent/deep-agents-code-runtime-identity.json \
             ci/reviewed-npm-audit.json \
             scripts/lib/bundled-npm-package.mts \
             scripts/lib/patch-bundled-npm-ip-address.mts \
@@ -421,7 +427,7 @@ jobs:
           fi
 
   pr-build-and-entrypoint:
-    name: PR build and direct managed startup (${{ matrix.display_name }})
+    name: PR build and direct managed startup (${{ matrix.display_name }}, ${{ matrix.arch }})
     # External contributor PRs retain the local build/direct-startup lane after
     # GitHub's maintainer workflow approval. Exact digest publication is limited
     # to branches in NVIDIA/NemoClaw; fork jobs never log in or push.
@@ -429,16 +435,19 @@ jobs:
       - pr-reviewed-npm-audit
       - publication-identity
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 90
     permissions:
       contents: read
       packages: write
     env:
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+      PLATFORM: linux/${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
+        agent: [openclaw, hermes, langchain-deepagents-code]
+        arch: [amd64, arm64]
         include:
           - agent: openclaw
             display_name: OpenClaw
@@ -475,9 +484,11 @@ jobs:
       - name: Resolve managed image release identity
         id: release
         shell: bash
+        env:
+          RELEASE: ${{ needs.publication-identity.outputs.release }}
         run: |
           set -euo pipefail
-          release="$(git describe --tags --match 'v*' "$CANDIDATE_SHA")"
+          release="$RELEASE"
           if [[ ! "$release" =~ ^v[0-9]+([.][0-9]+){1,3}([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
             echo "ERROR: managed image release identity is invalid: $release" >&2
             exit 1
@@ -502,18 +513,11 @@ jobs:
             chmod 0664 "$artifact_path"
           done
 
-      - name: Download same-run npm audit evidence
-        if: matrix.agent == 'openclaw'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: reviewed-npm-audit
-          path: ${{ runner.temp }}/reviewed-npm-audit
-
       - name: Checkout trusted mcporter audit verifier
         if: matrix.agent == 'openclaw'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: e0769ad0e6783e4108a1f26cc44b162f1f7ecc3f # reviewed proxy-addr 2.0.8 lock
           path: .trusted-mcporter-audit
           persist-credentials: false
           sparse-checkout: |
@@ -521,6 +525,7 @@ jobs:
             ci/reviewed-npm-audit.json
             scripts/lib/npm-audit-receipt.mts
             scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/reviewed-npm-archive.mts
           sparse-checkout-cone-mode: false
 
       - name: Set up Node.js
@@ -536,14 +541,69 @@ jobs:
         id: mcporter-audit
         shell: bash
         env:
-          REVIEWED_AUDIT_SHA: ${{ github.event.pull_request.base.sha }}
+          REVIEWED_AUDIT_SHA: e0769ad0e6783e4108a1f26cc44b162f1f7ecc3f
         run: |
           set -euo pipefail
-          receipt="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.receipt.json"
-          raw="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.raw.json"
-          policy="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.policy.json"
+          receipt="$RUNNER_TEMP/trusted-mcporter-audit-report/mcporter-runtime.receipt.json"
+          raw="$RUNNER_TEMP/trusted-mcporter-audit-report/mcporter-runtime.raw.json"
+          policy="$RUNNER_TEMP/trusted-mcporter-audit-report/mcporter-runtime.policy.json"
           trusted_root="$GITHUB_WORKSPACE/.trusted-mcporter-audit"
           test "$(git -C "$trusted_root" rev-parse --verify HEAD)" = "$REVIEWED_AUDIT_SHA"
+          audit_config="$RUNNER_TEMP/pr-mcporter-audit-config.json"
+          # PR builds must accept an audited dependency repair before its lock
+          # identity reaches main. Retain all other base-owned policy fields.
+          node --input-type=module - \
+            "$trusted_root/ci/reviewed-npm-audit.json" \
+            "$GITHUB_WORKSPACE/ci/reviewed-npm-audit.json" "$audit_config" <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs";
+          import { isDeepStrictEqual } from "node:util";
+          const [trustedPath, candidatePath, outputPath] = process.argv.slice(2);
+          const trusted = JSON.parse(readFileSync(trustedPath, "utf8"));
+          const candidate = JSON.parse(readFileSync(candidatePath, "utf8"));
+          const baseGraph = trusted.lockedGraphs.find((graph) => graph.id === "mcporter-runtime");
+          const candidateGraph = candidate.lockedGraphs.find((graph) => graph.id === "mcporter-runtime");
+          if (!baseGraph || !candidateGraph || !isDeepStrictEqual(
+            { ...candidateGraph, lockSha256: baseGraph.lockSha256 }, baseGraph,
+          )) {
+            throw new Error("Candidate mcporter package identity differs from the trusted base");
+          }
+          baseGraph.lockSha256 = candidateGraph.lockSha256;
+          writeFileSync(outputPath, JSON.stringify(trusted), { mode: 0o600 });
+          NODE
+          node --input-type=module - "$trusted_root" \
+            "$GITHUB_WORKSPACE/agents/openclaw/mcporter-runtime" "$audit_config" \
+            "$RUNNER_TEMP/trusted-mcporter-audit-report" <<'AUDIT'
+          import { execFileSync } from "node:child_process";
+          import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+          import { join } from "node:path";
+          import { pathToFileURL } from "node:url";
+          const [trustedRoot, sourceRoot, configPath, reportRoot] = process.argv.slice(2);
+          const { verifyReviewedNpmLock, verifyInstalledNpmLock } = await import(pathToFileURL(join(trustedRoot, "scripts/lib/reviewed-npm-archive.mts")));
+          const { runReviewedNpmAudit } = await import(pathToFileURL(join(trustedRoot, "scripts/lib/reviewed-npm-audit.mts")));
+          const { createAuditReceipt, canonicalAuditReceipt } = await import(pathToFileURL(join(trustedRoot, "scripts/lib/npm-audit-receipt.mts")));
+          const config = JSON.parse(readFileSync(configPath, "utf8"));
+          const graph = config.lockedGraphs.find((entry) => entry.id === "mcporter-runtime");
+          const directory = mkdtempSync(join(process.env.RUNNER_TEMP ?? "/tmp", "mcporter-audit-"));
+          const packageJson = join(sourceRoot, "package.json"), packageLock = join(sourceRoot, "package-lock.json");
+          const exceptionFile = join(trustedRoot, "ci/npm-audit-exceptions.json");
+          mkdirSync(reportRoot, { mode: 0o700 });
+          const raw = join(reportRoot, "mcporter-runtime.raw.json");
+          try {
+            verifyReviewedNpmLock({ expectedIntegrity: graph.integrity, expectedLockSha256: graph.lockSha256, label: graph.label, lockfilePath: packageLock, packageSpec: graph.packageSpec, registryOrigin: config.registryOrigin, tarballUrl: graph.tarballUrl });
+            copyFileSync(packageJson, join(directory, "package.json"));
+            copyFileSync(packageLock, join(directory, "package-lock.json"));
+            const env = { ...process.env, NPM_CONFIG_USERCONFIG: "/dev/null", NPM_CONFIG_REGISTRY: config.registryOrigin };
+            delete env.NODE_AUTH_TOKEN; delete env.NPM_TOKEN; delete env.GH_TOKEN;
+            execFileSync("npm", ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"], { cwd: directory, env, stdio: "inherit" });
+            verifyInstalledNpmLock({ expectedLockSha256: graph.lockSha256, installRoot: directory, label: graph.label, lockfilePath: join(directory, "package-lock.json"), omitDev: true });
+            execFileSync("npm", ["audit", "signatures", "--registry=https://registry.yarnpkg.com", "--omit=dev"], { cwd: directory, env, stdio: "inherit" });
+            const result = runReviewedNpmAudit({ directory, exceptionFile, graph: graph.id, reviewedNpmIdentity: config, reportFile: raw, resultFile: join(reportRoot, "mcporter-runtime.policy.json"), threshold: "high" });
+            const receipt = createAuditReceipt({ acceptedAdvisoryIds: result.acceptedAdvisories, blockingAdvisoryIds: result.unacceptedBlockingAdvisories.map((finding) => finding.advisory), exceptionPolicySha256: result.exceptionPolicySha256, graphId: graph.id, reviewedNpmIdentity: config, packageJson: readFileSync(packageJson), packageLock: readFileSync(packageLock), rawResponse: readFileSync(raw), registryOrigin: "https://registry.yarnpkg.com", severityThreshold: "high" });
+            writeFileSync(join(reportRoot, "mcporter-runtime.receipt.json"), canonicalAuditReceipt(receipt), { mode: 0o600 });
+          } finally {
+            rmSync(directory, { recursive: true, force: true });
+          }
+          AUDIT
           node --experimental-strip-types --no-warnings \
             "$trusted_root/scripts/lib/npm-audit-receipt.mts" \
             --receipt "$receipt" \
@@ -552,7 +612,7 @@ jobs:
             --raw-report "$raw" \
             --exceptions "$trusted_root/ci/npm-audit-exceptions.json" \
             --graph mcporter-runtime \
-            --audit-config "$trusted_root/ci/reviewed-npm-audit.json" \
+            --audit-config "$audit_config" \
             --registry https://registry.yarnpkg.com \
             --threshold high \
             --result "$policy"
@@ -568,7 +628,7 @@ jobs:
         shell: bash
         run: scripts/check-production-build-args.sh -f agents/langchain-deepagents-code/Dockerfile.base
 
-      - name: Resolve digest-pinned linux/amd64 PR base
+      - name: Resolve digest-pinned native PR base
         id: base
         shell: bash
         env:
@@ -580,7 +640,6 @@ jobs:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
           DISPLAY_NAME: ${{ matrix.display_name }}
           LOCAL_BASE_REFERENCE: nemoclaw-managed-pr/${{ matrix.agent }}-base:${{ github.event.pull_request.head.sha }}
-          PLATFORM: linux/amd64
         run: scripts/checks/resolve-managed-pr-base.sh
 
       - name: Validate PR managed-image build args
@@ -637,7 +696,7 @@ jobs:
             )
           fi
           docker build \
-            --platform linux/amd64 \
+            --platform "$PLATFORM" \
             --file "$DOCKERFILE" \
             --tag "$IMAGE_REFERENCE" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
@@ -645,7 +704,7 @@ jobs:
             --label "org.opencontainers.image.version=${RELEASE}" \
             --label "io.nvidia.nemoclaw.agent=${{ matrix.agent }}" \
             --label "io.nvidia.nemoclaw.managed-image.contract=1" \
-            --label "io.nvidia.nemoclaw.managed-image.platform=linux/amd64" \
+            --label "io.nvidia.nemoclaw.managed-image.platform=${PLATFORM}" \
             --label "io.nvidia.nemoclaw.managed-image.startup-profile=1" \
             --label "io.nvidia.nemoclaw.managed-image.capabilities=1" \
             --label "io.nvidia.nemoclaw.managed-image.cohort=${PUBLICATION_COHORT}" \
@@ -662,7 +721,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           load: true
           push: false
           tags: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
@@ -672,7 +731,7 @@ jobs:
             org.opencontainers.image.version=${{ steps.release.outputs.value }}
             io.nvidia.nemoclaw.agent=${{ matrix.agent }}
             io.nvidia.nemoclaw.managed-image.contract=1
-            io.nvidia.nemoclaw.managed-image.platform=linux/amd64
+            io.nvidia.nemoclaw.managed-image.platform=linux/${{ matrix.arch }}
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}
@@ -688,7 +747,7 @@ jobs:
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', steps.mcporter-audit.outputs.raw) || '' }}
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-policy-result={0}', steps.mcporter-audit.outputs.policy) || '' }}
-          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
+          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-${{ matrix.arch }}
           provenance: false
           sbom: false
 
@@ -698,7 +757,6 @@ jobs:
         env:
           AGENT: ${{ matrix.agent }}
           IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
-          PLATFORM: linux/amd64
           PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
           RELEASE: ${{ steps.release.outputs.value }}
           RESOLUTION_KEY: ${{ steps.base.outputs.resolution_key }}
@@ -882,7 +940,7 @@ jobs:
             scripts/checks/run-managed-image-direct-e2e.ts \
             --agent "$AGENT" \
             --image "$IMAGE_REFERENCE" \
-            --platform linux/amd64
+            --platform "$PLATFORM"
 
       - name: Log in to GHCR for exact same-repository PR digest
         if: github.event.pull_request.head.repo.full_name == github.repository
@@ -902,7 +960,7 @@ jobs:
           builder: ${{ steps.buildx.outputs.name }}
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           build-contexts: ${{ steps.base.outputs.local == 'true' && format('nemoclaw-pr-base=oci-layout://{0}', steps.base.outputs.oci) || '' }}
           outputs: type=image,name=${{ matrix.repository }},push-by-digest=true,name-canonical=true,push=true
           labels: |
@@ -911,7 +969,7 @@ jobs:
             org.opencontainers.image.version=${{ steps.release.outputs.value }}
             io.nvidia.nemoclaw.agent=${{ matrix.agent }}
             io.nvidia.nemoclaw.managed-image.contract=1
-            io.nvidia.nemoclaw.managed-image.platform=linux/amd64
+            io.nvidia.nemoclaw.managed-image.platform=linux/${{ matrix.arch }}
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}
@@ -927,7 +985,7 @@ jobs:
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', steps.mcporter-audit.outputs.raw) || '' }}
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-policy-result={0}', steps.mcporter-audit.outputs.policy) || '' }}
-          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
+          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-${{ matrix.arch }}
           provenance: false
           sbom: false
 
@@ -959,7 +1017,7 @@ jobs:
           }
           reference="${IMAGE}@${DIGEST}"
           raw="$RUNNER_TEMP/${AGENT}-published-manifest.raw"
-          scripts/checks/pull-public-exact-digest.sh "$reference" linux/amd64
+          scripts/checks/pull-public-exact-digest.sh "$reference" "$PLATFORM"
           if [ "$AGENT" = "hermes" ]; then
             published_layer_count="$(docker image inspect --format '{{len .RootFS.Layers}}' "$reference")"
             if [ "$published_layer_count" -gt 125 ]; then
@@ -995,12 +1053,13 @@ jobs:
             --arg digest "$DIGEST" \
             --arg image "$IMAGE" \
             --arg reference "$reference" \
+            --arg platform "$PLATFORM" \
             --arg release "$RELEASE" \
             --arg revision "$CANDIDATE_SHA" \
             '{
               contractVersion: 1,
               agent: $agent,
-              platform: "linux/amd64",
+              platform: $platform,
               image: $image,
               digest: $digest,
               reference: $reference,
@@ -1018,17 +1077,21 @@ jobs:
         if: github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-pr-contract-${{ github.run_id }}-${{ matrix.agent }}
+          name: managed-pr-contract-${{ matrix.arch == 'arm64' && 'arm64-' || '' }}${{ github.run_id }}-${{ matrix.agent }}
           path: ${{ runner.temp }}/managed-pr-contract/contract.json
           if-no-files-found: error
           overwrite: true
           retention-days: 1
 
   pr-managed-activation:
-    name: PR exact all-agent managed runtime activation
-    needs: pr-build-and-entrypoint
+    name: PR exact all-agent managed runtime activation (${{ matrix.arch }})
+    needs: [pr-build-and-entrypoint, publication-identity]
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
     timeout-minutes: 90
     permissions:
       contents: read
@@ -1041,6 +1104,7 @@ jobs:
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
       NEMOCLAW_E2E_SHARD: default
       NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/managed-pr-catalog.json
+      MANAGED_IMAGE_PLATFORM: linux/${{ matrix.arch }}
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
       OPENSHELL_GATEWAY: nemoclaw
@@ -1072,7 +1136,7 @@ jobs:
       - name: Download exact published all-agent contracts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: managed-pr-contract-${{ github.run_id }}-*
+          pattern: managed-pr-contract-${{ matrix.arch == 'arm64' && 'arm64-' || '' }}${{ github.run_id }}-*
           path: ${{ runner.temp }}/managed-pr-contracts
           merge-multiple: false
 
@@ -1091,6 +1155,28 @@ jobs:
             "$CANDIDATE_SHA" \
             "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG" \
             "${contracts[@]}"
+
+      - name: Bind CLI to publication release
+        shell: bash
+        env:
+          RELEASE: ${{ needs.publication-identity.outputs.release }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]] || {
+            echo "ERROR: CLI checkout does not match the publication revision." >&2
+            exit 1
+          }
+          node --no-warnings -e '
+            const fs = require("node:fs");
+            const { validateBuildIdentity } = require("./src/lib/core/version.ts");
+            if (!process.env.RELEASE.startsWith("v")) throw new Error("Missing publication release prefix.");
+            const identity = validateBuildIdentity({
+              nemoclawVersion: process.env.RELEASE.slice(1),
+              sourceRevision: process.env.CANDIDATE_SHA,
+            });
+            fs.mkdirSync("dist", { recursive: true });
+            fs.writeFileSync("dist/build-identity.json", JSON.stringify(identity) + "\n");
+          '
 
       - name: Build exact candidate CLI
         run: npm run build:cli
@@ -1117,14 +1203,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-image-activation-${{ github.run_id }}-${{ github.run_attempt }}
+          name: managed-image-activation-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: e2e-artifacts/live/managed-image-activation/
           if-no-files-found: error
           retention-days: 1
 
   pr-managed-podman-activation:
     name: PR exact all-agent managed runtime activation on rootless Podman
-    needs: pr-build-and-entrypoint
+    needs: [pr-build-and-entrypoint, publication-identity]
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-26.04
     timeout-minutes: 90
@@ -1201,6 +1287,28 @@ jobs:
             "$CANDIDATE_SHA" \
             "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG" \
             "${contracts[@]}"
+
+      - name: Bind CLI to publication release
+        shell: bash
+        env:
+          RELEASE: ${{ needs.publication-identity.outputs.release }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]] || {
+            echo "ERROR: CLI checkout does not match the publication revision." >&2
+            exit 1
+          }
+          node --no-warnings -e '
+            const fs = require("node:fs");
+            const { validateBuildIdentity } = require("./src/lib/core/version.ts");
+            if (!process.env.RELEASE.startsWith("v")) throw new Error("Missing publication release prefix.");
+            const identity = validateBuildIdentity({
+              nemoclawVersion: process.env.RELEASE.slice(1),
+              sourceRevision: process.env.CANDIDATE_SHA,
+            });
+            fs.mkdirSync("dist", { recursive: true });
+            fs.writeFileSync("dist/build-identity.json", JSON.stringify(identity) + "\n");
+          '
 
       - name: Build exact candidate CLI
         run: npm run build:cli
@@ -1877,13 +1985,42 @@ jobs:
 
   publication-identity:
     name: Record managed image publication identity
-    # Failed-job reruns reuse this successful job and its cohort output. A
-    # retried producer lane therefore stays in the original publication cohort.
+    # Failed-job reruns retain the original cohort and release outputs, even if
+    # another tag arrives before a producer or activation job is retried.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     outputs:
       cohort: ${{ steps.identity.outputs.cohort }}
+      release: ${{ steps.release.outputs.value }}
     steps:
+      - name: Checkout publication revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve managed image release identity
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]
+          release="$(git describe --tags --match 'v*' "$CANDIDATE_SHA")"
+          if [[ ! "$release" =~ ^v[0-9]+([.][0-9]+){1,3}([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "ERROR: managed image release identity is invalid." >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/* && "$release" != "${GITHUB_REF#refs/tags/}" ]]; then
+            echo "ERROR: managed image release identity does not match the release tag." >&2
+            exit 1
+          fi
+          printf 'value=%s\n' "$release" >> "$GITHUB_OUTPUT"
+
       - name: Record publication identity
         id: identity
         shell: bash
@@ -2005,9 +2142,11 @@ jobs:
       - name: Resolve managed image release identity
         id: release
         shell: bash
+        env:
+          RELEASE: ${{ needs.publication-identity.outputs.release }}
         run: |
           set -euo pipefail
-          release="$(git describe --tags --match 'v*' "$GITHUB_SHA")"
+          release="$RELEASE"
           if [[ ! "$release" =~ ^v[0-9]+([.][0-9]+){1,3}([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
             echo "ERROR: managed image release identity is invalid: $release" >&2
             exit 1
@@ -2355,6 +2494,7 @@ jobs:
           const packages = {
             "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.9.2"],
             brave: ["@openclaw/brave-plugin", "2026.9.2"],
+            tavily: ["@openclaw/tavily-plugin", "2026.9.2"],
             discord: ["@openclaw/discord", "2026.9.2"],
             "openclaw-weixin": ["@tencent-weixin/openclaw-weixin", "2.4.9"],
             slack: ["@openclaw/slack", "2026.9.2"],
@@ -2398,9 +2538,6 @@ jobs:
           }
           if (config.plugins?.entries?.telegram?.enabled !== false) {
             throw new Error("bundled OpenClaw plugin telegram is not explicitly disabled");
-          }
-          if (config.plugins?.entries?.tavily !== undefined) {
-            throw new Error("uninstalled OpenClaw plugin tavily is present in managed configuration");
           }
           for (const id of [
             "telegram",

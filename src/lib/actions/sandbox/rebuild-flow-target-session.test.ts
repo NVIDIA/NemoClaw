@@ -40,7 +40,7 @@ describe("rebuildSandbox flow: target session", () => {
       const harness = createRebuildFlowHarness({
         sessionSandboxName,
         sandboxEntry: {
-          provider: "vllm-local",
+          provider: "build",
           model: "example/model",
           servingProfileProvenance: savedProfileProvenance,
         },
@@ -48,7 +48,7 @@ describe("rebuildSandbox flow: target session", () => {
           recreatedProvenance = session.servingProfileProvenance;
         },
       });
-      harness.session.provider = "vllm-local";
+      harness.session.provider = "build";
       harness.session.model = "example/model";
       // Stale session metadata must not replace the sandbox's saved metadata.
       harness.session.servingProfileProvenance = {
@@ -69,7 +69,7 @@ describe("rebuildSandbox flow: target session", () => {
       const harness = createRebuildFlowHarness({
         sessionSandboxName,
         sandboxEntry: {
-          provider: "vllm-local",
+          provider: "build",
           model: "example/model",
           servingProfileProvenance: undefined,
         },
@@ -77,7 +77,7 @@ describe("rebuildSandbox flow: target session", () => {
           recreatedProvenance = session.servingProfileProvenance;
         },
       });
-      harness.session.provider = "vllm-local";
+      harness.session.provider = "build";
       harness.session.model = "example/model";
       harness.session.servingProfileProvenance = savedProfileProvenance;
 
@@ -140,11 +140,9 @@ describe("rebuildSandbox flow: target session", () => {
     }
   });
 
-  it("carries only qualified N1x managed-vLLM replacement intent into recreate (#10955)", async () => {
+  it("stops an unattached N1x managed-vLLM rebuild before deleting the sandbox (#10955)", async () => {
     const restoreEnv = snapshotEnv(["NEMOCLAW_PROVIDER"]);
     process.env.NEMOCLAW_PROVIDER = "install-vllm";
-    let seen: { provider: string | undefined; replacement: boolean } | null = null;
-
     try {
       const harness = createRebuildFlowHarness({
         applyPreset: () => true,
@@ -157,12 +155,6 @@ describe("rebuildSandbox flow: target session", () => {
           hostLocalInferenceReceipt: null,
           nimContainer: null,
         },
-        onboard: (_session, options) => {
-          seen = {
-            provider: process.env.NEMOCLAW_PROVIDER,
-            replacement: options.reinstallDeferredN1xManagedVllm === true,
-          };
-        },
       });
       harness.session.provider = "vllm-local";
       harness.session.model = "nvidia/Qwen3.6-35B-A3B-NVFP4";
@@ -172,9 +164,9 @@ describe("rebuildSandbox flow: target session", () => {
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).resolves.toBeUndefined();
-
-      expect(seen).toEqual({ provider: "install-vllm", replacement: true });
+      ).rejects.toThrow("Legacy shared local inference cannot be rebuilt safely");
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
       expect(process.env.NEMOCLAW_PROVIDER).toBe("install-vllm");
     } finally {
       restoreEnv();

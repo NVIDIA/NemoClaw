@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  NVIDIA_HOSTED_NATIVE_PROVIDER,
+  normalizeNativeNvidiaProviderAttachment,
+} from "../inference/native-nvidia/contract";
 import { resolveProviderCredential } from "../credentials/store";
 import { validateNvidiaApiKeyValue } from "../validation";
 import type { EndpointValidationResult } from "./inference-selection-validation";
@@ -23,12 +28,21 @@ import { logMissingNvidiaApiKeyHelp } from "./missing-credential-hints";
  * Exits the process when the credential is missing/invalid and unrecoverable.
  */
 export async function resolveNonInteractiveBuildCredential(opts: {
-  provider: string;
   helpUrl: string | null | undefined;
-  recoveredFromSandbox: boolean;
+  recovery: { recoveredFromSandbox: boolean; sandboxName?: string | null };
+  getSandbox: (name: string) => { nativeNvidiaProviderAttachment?: unknown } | null;
   providerExistsInGateway: (name: string) => boolean | Promise<boolean>;
 }): Promise<boolean> {
-  const { provider, helpUrl, recoveredFromSandbox, providerExistsInGateway } = opts;
+  const { helpUrl, recovery, providerExistsInGateway } = opts;
+  const { recoveredFromSandbox, sandboxName } = recovery;
+  const recordedAttachment =
+    recoveredFromSandbox && sandboxName
+      ? opts.getSandbox(sandboxName)?.nativeNvidiaProviderAttachment
+      : undefined;
+  const nativeAttachment = normalizeNativeNvidiaProviderAttachment(recordedAttachment);
+  if (recordedAttachment !== undefined && !nativeAttachment) {
+    throw new Error("Malformed native NVIDIA provider attachment");
+  }
   const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
   if (resolvedNvidiaKey) {
     const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
@@ -39,7 +53,10 @@ export async function resolveNonInteractiveBuildCredential(opts: {
     }
     return false;
   }
-  if (!recoveredFromSandbox || !(await providerExistsInGateway(provider))) {
+  const providerName = nativeAttachment
+    ? NVIDIA_HOSTED_NATIVE_PROVIDER
+    : NVIDIA_HOSTED_LOGICAL_PROVIDER;
+  if (!recoveredFromSandbox || !(await providerExistsInGateway(providerName))) {
     logMissingNvidiaApiKeyHelp(helpUrl);
     process.exit(1);
   }

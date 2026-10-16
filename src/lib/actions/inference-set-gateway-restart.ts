@@ -131,6 +131,7 @@ interface InferenceResultForGateway {
 export interface InferenceMutation<T extends InferenceResultForGateway> {
   result: T;
   openClawConfigSyncPending?: boolean;
+  hermesGatewayRestart?: { gatewayName: string };
   openClawGatewayRestartRequired: boolean;
   openClawPairing:
     | { readonly state: "not-required" }
@@ -142,7 +143,8 @@ export interface InferenceMutation<T extends InferenceResultForGateway> {
 }
 
 // SOURCE_OF_TRUTH_REVIEW (OpenClaw post-switch convergence; gateway regressions
-// #4504 and #9527): generated OpenClaw config pins gateway.reload.mode to off.
+// #4504 and #9527): hybrid reload applies agent-entry changes, but does not
+// establish inference-route and device-scope convergence.
 // NemoClaw restarts after every changed route, config, and integrity-hash commit
 // so the running gateway cannot retain the prior model or request shaping. Every
 // changed OpenClaw route then requires exact local device-scope convergence
@@ -152,7 +154,7 @@ export interface InferenceMutation<T extends InferenceResultForGateway> {
 // post-commit recovery behavior. The openclaw-inference-switch live target
 // proves gateway health and forwarding. Remove the restart only when the
 // minimum supported OpenClaw applies all generated inference config changes
-// while reload mode remains off. Remove pairing settlement when OpenClaw no
+// and proves live route convergence. Remove pairing settlement when OpenClaw no
 // longer requires a separate allowlisted device-scope upgrade after a route
 // change.
 
@@ -199,6 +201,7 @@ export function finalizeInferenceMutation<T extends InferenceResultForGateway>(
     agentName: string;
     configChanged: boolean;
     openClawPairingTarget?: InferenceSetOpenClawPairingTarget;
+    hermesGatewayRestart?: { gatewayName: string };
     result: T;
   },
   deps: Pick<InferenceGatewayRestartDeps, "appendAuditEntry" | "log">,
@@ -209,6 +212,11 @@ export function finalizeInferenceMutation<T extends InferenceResultForGateway>(
   const openClawPairingConvergenceRequired =
     agentName === "openclaw" && configChanged && result.inSandboxConfigSynced;
 
+  const hermesGatewayRestart = result.inSandboxConfigSynced
+    ? options.hermesGatewayRestart
+    : undefined;
+  const gatewayRestartRequired = openClawGatewayRestartRequired || Boolean(hermesGatewayRestart);
+
   const auditEntry: OperationalAuditEntry = {
     action: "inference_set",
     sandbox: result.sandboxName,
@@ -218,12 +226,14 @@ export function finalizeInferenceMutation<T extends InferenceResultForGateway>(
         ? " (in-sandbox sync incomplete)"
         : openClawGatewayRestartRequired
           ? " (gateway restart and pairing convergence pending)"
-          : openClawPairingConvergenceRequired
-            ? " (pairing convergence pending)"
-            : ""
+          : hermesGatewayRestart
+            ? " (gateway restart pending)"
+            : openClawPairingConvergenceRequired
+              ? " (pairing convergence pending)"
+              : ""
     }`,
   };
-  if (openClawGatewayRestartRequired || openClawPairingConvergenceRequired) {
+  if (gatewayRestartRequired || openClawPairingConvergenceRequired) {
     appendPostCommitInferenceAudit(deps, auditEntry);
   } else {
     deps.appendAuditEntry(auditEntry);
@@ -231,7 +241,7 @@ export function finalizeInferenceMutation<T extends InferenceResultForGateway>(
 
   if (
     result.inSandboxConfigSynced &&
-    !openClawGatewayRestartRequired &&
+    !gatewayRestartRequired &&
     !openClawPairingConvergenceRequired
   ) {
     deps.log(
@@ -244,6 +254,7 @@ export function finalizeInferenceMutation<T extends InferenceResultForGateway>(
   return {
     result,
     openClawGatewayRestartRequired,
+    ...(hermesGatewayRestart ? { hermesGatewayRestart } : {}),
     openClawPairing: !openClawPairingConvergenceRequired
       ? { state: "not-required" }
       : openClawPairingTarget
@@ -257,17 +268,20 @@ export async function completeInferencePostCommit<T extends InferenceResultForGa
   deps: InferenceGatewayRestartDeps,
 ): Promise<void> {
   const { result } = mutation;
-  if (mutation.openClawGatewayRestartRequired) {
+  if (mutation.openClawGatewayRestartRequired || mutation.hermesGatewayRestart) {
+    const agentName = mutation.hermesGatewayRestart ? "hermes" : "openclaw";
+    const agentLabel = agentName === "hermes" ? "Hermes" : "OpenClaw";
     deps.log(
-      `  Restarting the OpenClaw gateway in '${result.sandboxName}' to apply the updated inference configuration...`,
+      `  Restarting the ${agentLabel} gateway in '${result.sandboxName}' to apply the updated inference configuration...`,
     );
     let restartFailure: string | null = null;
     try {
       const restart = await deps.restartSandboxGateway(
         result.sandboxName,
-        mutation.openClawPairing.state === "required"
-          ? mutation.openClawPairing.target.gatewayName
-          : undefined,
+        mutation.hermesGatewayRestart?.gatewayName ??
+          (mutation.openClawPairing.state === "required"
+            ? mutation.openClawPairing.target.gatewayName
+            : undefined),
       );
       if (!restart.ok) restartFailure = restart.failureLayer;
     } catch {
@@ -278,13 +292,22 @@ export async function completeInferencePostCommit<T extends InferenceResultForGa
         action: "inference_set",
         sandbox: result.sandboxName,
         timestamp: new Date().toISOString(),
-        reason: `inference set openclaw:${result.provider}:${result.model} (config committed; gateway restart failed: ${restartFailure})`,
+        reason: `inference set ${agentName}:${result.provider}:${result.model} (config committed; gateway restart failed: ${restartFailure})`,
       });
       throw new InferenceSetError(
-        `Inference route and config were updated for '${result.sandboxName}', but the managed OpenClaw gateway restart/recovery did not complete successfully. ` +
+        `Inference route and config were updated for '${result.sandboxName}', but the managed ${agentLabel} gateway restart/recovery did not complete successfully (${restartFailure}). ` +
           `The committed route was not rolled back. Retry with '${CLI_NAME} ${result.sandboxName} gateway restart'.`,
       );
     }
+  }
+  if (mutation.hermesGatewayRestart) {
+    appendPostCommitInferenceAudit(deps, {
+      action: "inference_set",
+      sandbox: result.sandboxName,
+      timestamp: new Date().toISOString(),
+      reason: `inference set hermes:${result.provider}:${result.model} (gateway restart completed)`,
+    });
+    deps.log(`  Inference route synced for '${result.sandboxName}': ${result.model}`);
   }
   const pairingMutation = mutation.openClawPairing;
   if (pairingMutation.state === "not-required") return;

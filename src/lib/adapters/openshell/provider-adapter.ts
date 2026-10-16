@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { CheckedInProviderProfileContract } from "./provider-profile";
+
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
 
 export type OpenShellProviderCommandReason =
@@ -119,6 +121,7 @@ export type ImportOpenShellProviderProfileRequest = OpenShellProviderRequest &
 export type InspectOpenShellProviderProfileRequest = OpenShellProviderRequest &
   Readonly<{
     profileType: string;
+    expectedProfile?: CheckedInProviderProfileContract;
   }>;
 
 export type DeleteOpenShellProviderRequest = OpenShellProviderRequest &
@@ -157,6 +160,9 @@ export type OpenShellProviderRefreshStatus = Readonly<{
 
 /** Transport-neutral provider operations used by NemoClaw consumers. */
 export interface OpenShellProviderAdapter {
+  ensureProviderPolicyComposition(
+    request: OpenShellProviderRequest,
+  ): Promise<OpenShellProviderResult<void>>;
   listProviders(
     request: OpenShellProviderRequest,
   ): Promise<OpenShellProviderResult<OpenShellProviderInventory>>;

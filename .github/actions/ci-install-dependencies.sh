@@ -71,6 +71,9 @@ NEMOCLAW_CI_NPM_CACHE="$npm_cache" \
   NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY="${RUNNER_TEMP:-$target_root/.ci-artifacts}/openshell-sdk" \
   node "$trusted_root/scripts/checks/prepare-ci-npm-install.mts"
 
+# Admission credentials belong to trusted preparation, not candidate dependency installation.
+unset GITHUB_TOKEN GH_TOKEN
+
 trusted_npmrc=""
 cleanup() {
   if [ -n "$trusted_npmrc" ]; then

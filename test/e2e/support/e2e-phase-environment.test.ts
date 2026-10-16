@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { type CommandRunner, HostCliClient } from "../fixtures/clients/index.ts";
@@ -260,6 +260,7 @@ describe("environment phase fixture", () => {
   });
 
   it("scopes availability probe env instead of inheriting unrelated secrets", async () => {
+    vi.stubEnv("NEMOCLAW_RECREATE_WITHOUT_BACKUP", "1");
     const previousSecret = process.env.NVIDIA_INFERENCE_API_KEY;
     const previousDockerHost = process.env.DOCKER_HOST;
     const previousHome = process.env.HOME;
@@ -284,7 +285,10 @@ describe("environment phase fixture", () => {
       expect(dockerEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
       expect(cliEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
       expect(dockerEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+      expect(cliEnv).not.toHaveProperty("NEMOCLAW_RECREATE_WITHOUT_BACKUP");
+      expect(dockerEnv).not.toHaveProperty("NEMOCLAW_RECREATE_WITHOUT_BACKUP");
     } finally {
+      vi.unstubAllEnvs();
       if (previousSecret === undefined) {
         delete process.env.NVIDIA_INFERENCE_API_KEY;
       } else {

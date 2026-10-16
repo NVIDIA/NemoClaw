@@ -53,8 +53,49 @@ export type OpenShellInferenceRouteResult =
   | Readonly<{ ok: true; value: OpenShellInferenceRouteObservation }>
   | Readonly<{ ok: false; error: OpenShellInferenceRouteError }>;
 
+export type OpenShellInferenceRouteMutationError =
+  | Readonly<{
+      kind: "authentication" | "schema" | "timeout" | "validation";
+      message: string;
+    }>
+  | Readonly<{
+      kind: "transport";
+      reason: "identity_mismatch" | "process_start" | "unreachable";
+      message: string;
+    }>
+  | Readonly<{
+      kind: "command";
+      reason:
+        | "failed"
+        | "indeterminate"
+        | "invalid_request"
+        | "provider_not_found"
+        | "verification_failed";
+      exitCode: number | null;
+      message: string;
+    }>;
+
+export type OpenShellInferenceRouteMutationResult =
+  | Readonly<{ ok: true }>
+  | Readonly<{
+      ok: false;
+      error: OpenShellInferenceRouteMutationError;
+      /** The command may have changed the remote route before its result became unavailable. */
+      ambiguous: boolean;
+    }>;
+
 export type ObserveOpenShellInferenceRouteRequest = Readonly<{
   target: OpenShellGatewayTarget;
+  timeoutMs?: number;
+}>;
+
+export type SetOpenShellInferenceRouteRequest = Readonly<{
+  target: Readonly<{ kind: "named"; gatewayName: string }>;
+  route: OpenShellInferenceRoute;
+  verification: "required" | "skip";
+  /** OpenShell's provider verification timeout, passed to `inference set`. */
+  verificationTimeoutSeconds?: number;
+  /** Maximum lifetime of the OpenShell process. */
   timeoutMs?: number;
 }>;
 
@@ -70,4 +111,11 @@ export interface OpenShellSynchronousInferenceRouteObserver {
   observeInferenceRoute(
     request: ObserveOpenShellInferenceRouteRequest,
   ): OpenShellInferenceRouteResult;
+}
+
+/** Update one gateway inference route without exposing transport details. */
+export interface OpenShellInferenceRouteMutator {
+  setInferenceRoute(
+    request: SetOpenShellInferenceRouteRequest,
+  ): Promise<OpenShellInferenceRouteMutationResult>;
 }

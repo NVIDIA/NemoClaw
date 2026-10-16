@@ -324,6 +324,21 @@ function namedStage(source: string, name: string): string {
 }
 
 describe("node-tar image remediation contract", () => {
+  it.each([
+    ...pinnedBaseDockerfiles.map((file) => ({ file, count: 2 })),
+    { file: "Dockerfile", count: 1 },
+  ])("pins reviewed curl in every install stage of $file", ({ file, count }) => {
+    const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
+    const versions = dockerfileInstructions(source)
+      .filter((instruction) => instruction.keyword === "RUN")
+      .flatMap((instruction) =>
+        Array.from(instruction.body.matchAll(/\bcurl=([^\s\\]+)/gu), (match) => match[1]),
+      );
+
+    expect(versions, file).toHaveLength(count);
+    expect([...new Set(versions)], file).toEqual(["8.14.1-2+deb13u7"]);
+  });
+
   it("checks inherited runtime instructions without including unrelated stages", () => {
     expect(
       completedStage(
@@ -441,7 +456,7 @@ describe("node-tar image remediation contract", () => {
         "RUN apt-get update && apt-get install -y --no-install-recommends",
         patchInputReady,
       );
-      const curlPackage = source.indexOf("curl=8.14.1-2+deb13u5", aptInstall);
+      const curlPackage = source.indexOf("curl=8.14.1-2+deb13u7", aptInstall);
       const aptInstallCleanup = source.indexOf("&& rm -rf /var/lib/apt/lists/*", curlPackage);
       expect(
         aptInstall > patchCopy &&
@@ -598,7 +613,6 @@ describe("reviewed npm image remediation contract", () => {
       "Dockerfile:builder",
       "Dockerfile:codex-acp-runtime",
       "Dockerfile:wechat-npm-cache",
-      "Dockerfile:openclaw-managed-messaging-npm-cache-0",
       "Dockerfile:openclaw-managed-messaging-npm-cache-1",
       "Dockerfile.base:native-security-builder",
       "Dockerfile.base:<final>",

@@ -10,12 +10,14 @@ content:
   type: "how_to"
 ---
 NVIDIA Endpoints routes NemoClaw to models hosted on [build.nvidia.com](https://build.nvidia.com) through an OpenAI-compatible API.
-The sandbox keeps using `inference.local` while OpenShell forwards requests to the NVIDIA endpoint.
+NemoClaw attaches a least-privilege OpenShell provider to the sandbox, and the agent calls the NVIDIA endpoint directly through that provider.
+The provider allows only model discovery and Chat Completions requests from the agent-runtime and readiness-verification binaries listed in its provider profile.
 
 ## Credential
 
 Set `NVIDIA_INFERENCE_API_KEY` in the host shell before onboarding.
-NemoClaw applies the `nvapi-` prefix check only to this credential and keeps the key on the host.
+NemoClaw applies the `nvapi-` prefix check only to this credential and stores the key in OpenShell provider state.
+The sandbox receives a placeholder, not the real key.
 
 ## Model Choices
 
@@ -39,10 +41,17 @@ If you enter `back` at the NVIDIA API key prompt, the wizard returns to provider
 The wizard validates a manual model entry against the catalog before it continues.
 If the live catalog is unavailable or does not contain safe model IDs, the wizard warns you and uses the bundled fallback list.
 
+<Note>
+Sandboxes created by an earlier release used the shared `inference.local` route and do not have the attached NVIDIA provider receipt.
+NemoClaw does not migrate these beta sandboxes automatically.
+Recreate the sandbox during onboarding to use the native provider path.
+</Note>
+
 ## Validation
 
 NemoClaw validates NVIDIA Endpoints through `/v1/chat/completions` only.
 It skips `/v1/responses` because NVIDIA Build does not expose that route.
+Readiness sends the same request from inside the sandbox through the attached OpenShell provider.
 The wizard retries transient upstream failures before it reports a provider failure.
 
 ## Related Topics

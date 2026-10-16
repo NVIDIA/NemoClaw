@@ -49,6 +49,72 @@ const source = {
 } as unknown as VerifiedExportSource;
 
 describe("export config builder", () => {
+  it.each([true, false])(
+    "omits the gateway credential marker %s without changing authored policy or source (#12138)",
+    (providerCredentialed) => {
+      const endpoint = {
+        host: "api.tavily.com",
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+        request_body_credential_rewrite: true,
+        rules: [{ allow: { method: "POST", path: "/search" } }],
+      };
+      const original = {
+        ...policy,
+        network_policies: {
+          api: {
+            ...policy.network_policies.api,
+            endpoints: [{ ...endpoint, provider_credentialed: providerCredentialed }],
+          },
+        },
+      };
+      const result = buildExportConfig(
+        { ...source, policy: original as unknown as VerifiedExportSource["policy"] },
+        { documentName: alphaDocumentName, documentUid: firstUid },
+      );
+      expect(result.spec.sandboxes[0]?.network.policy.explicit.network_policies).toEqual({
+        api: { ...policy.network_policies.api, endpoints: [endpoint] },
+      });
+      expect(original.network_policies.api.endpoints[0]?.provider_credentialed).toBe(
+        providerCredentialed,
+      );
+    },
+  );
+
+  it.each([true, false])(
+    "omits the gateway credential marker %s without changing authored controls or source policy (#12146)",
+    (marker) => {
+      const endpoint = {
+        host: "api.example.com",
+        port: 443,
+        allow_uninspected_credentials: true,
+      };
+      const observedPolicy = {
+        ...policy,
+        network_policies: {
+          api: {
+            ...policy.network_policies.api,
+            endpoints: [{ ...endpoint, provider_credentialed: marker }],
+          },
+          public: { endpoints: [{ host: "public.example.com", port: 443 }] },
+          disabled: {},
+        },
+      };
+      const before = structuredClone(observedPolicy);
+      const result = buildExportConfig(
+        { ...source, policy: observedPolicy as unknown as VerifiedExportSource["policy"] },
+        { documentName: alphaDocumentName, documentUid: firstUid },
+      );
+
+      expect(result.spec.sandboxes[0]?.network.policy.explicit.network_policies).toEqual({
+        ...observedPolicy.network_policies,
+        api: { ...observedPolicy.network_policies.api, endpoints: [endpoint] },
+      });
+      expect(observedPolicy).toEqual(before);
+    },
+  );
+
   it.each([
     { compatibility: "strict", expected: "hard_requirement" },
     { compatibility: "best_effort", expected: "best_effort" },
@@ -169,6 +235,43 @@ describe("export config builder", () => {
         .sandboxes[0],
     ).not.toHaveProperty("integrations");
   });
+
+  it.each(["openclaw", "hermes"] as const)(
+    "emits a Tavily integration granted only to the exported %s agent (#12138)",
+    (agent) => {
+      const document = buildExportConfig(
+        {
+          ...source,
+          agent,
+          interfaces: undefined,
+          webSearch: {
+            provider: "tavily",
+            agentRefs: ["primary"],
+            credential: { env: "TAVILY_API_KEY" },
+          },
+        },
+        { documentName: alphaDocumentName, documentUid: firstUid },
+      );
+      const sandbox = document.spec.sandboxes[0]!;
+      expect(sandbox.harness.kind).toBe(agent);
+      expect(sandbox.integrations).toEqual({
+        "tavily-search": {
+          kind: "webSearch",
+          provider: "tavily",
+          credential: { env: "TAVILY_API_KEY" },
+        },
+      });
+      expect(sandbox.agent.integrationRefs).toEqual(["tavily-search"]);
+      expect(sandbox.agent.name).toBe("primary");
+      expect(document.spec.inferenceProviders).toHaveLength(1);
+      expect(sandbox.agent.inference).toEqual(
+        buildExportConfig(source, {
+          documentName: alphaDocumentName,
+          documentUid: firstUid,
+        }).spec.sandboxes[0]!.agent.inference,
+      );
+    },
+  );
 
   it("uses the supplied identity and keeps derived references deterministic (#10938)", () => {
     const first = buildExportConfig(source, {

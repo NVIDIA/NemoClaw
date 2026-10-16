@@ -443,5 +443,8 @@ export async function runHermesAcpCommand(
   if (outcome.kind === "failed" && outcome.error.kind !== "client_disconnect") {
     await writeLine(io.diagnostics, outcome.error.message);
   }
-  return outcome.exitCode;
+  if (outcome.cleanupError) {
+    await writeLine(io.diagnostics, outcome.cleanupError.message);
+  }
+  return outcome.exitCode === 0 && outcome.cleanupError ? 1 : outcome.exitCode;
 }

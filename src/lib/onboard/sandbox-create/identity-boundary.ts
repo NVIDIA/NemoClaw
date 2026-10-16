@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
-
 import type { DockerSandboxIdentityObservation } from "../../adapters/docker/inspect";
 import { normalizePendingSandboxCreateIdentity } from "../../state/registry-normalization";
 import type { PendingSandboxCreateIdentity } from "../../state/registry/types";
@@ -13,6 +12,8 @@ import {
 } from "../openshell-docker-sandbox-containers";
 import { fingerprintSandboxRecreateValue } from "../sandbox-recreate-transaction";
 import type { VerifiedSandboxCreateBoundary } from "../types";
+
+export { captureNativeDockerRecoveryAuthority } from "../gateway/state-ownership";
 
 /** Recover one exact Docker runtime from immutable legacy identity evidence. */
 export function resolveLegacyCompatibilityFinalHandoffRuntime(input: {

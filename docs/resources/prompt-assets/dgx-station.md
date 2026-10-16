@@ -24,8 +24,8 @@ Do not run the Station preparation helper separately or reproduce Express by pre
 
 The installer provides these Station Express choices:
 
-1. The ordinary installer selects `nemotron-3-ultra-550b-a55b` and checks for one already-trusted peer at the deterministic counterpart on each of two configured private `/30` ConnectX-8 rails.
-   A qualified pair uses the vLLM 0.25.1 and Ray 2.56.0 dual-Station recipe served as `nemotron-ultra`; otherwise it retains the single-Station Ultra recipe served as `nvidia/nemotron-3-ultra-550b-a55b`.
+1. The ordinary installer checks for one already-trusted peer at the deterministic counterpart on each of two configured private `/30` ConnectX-8 rails.
+   A qualified pair uses the vLLM 0.25.1 and Ray 2.56.0 dual-Station Ultra recipe served as `nemotron-ultra`. Without a qualified pair, a new single-Station install selects the experimental `nemotron-3.5-super-vl-120b` recipe. An existing eligible legacy single-Station Ultra workload keeps its Ultra recipe.
 2. The explicit `--station-deepseek` flag selects `deepseek-v4-flash`, served as `deepseek-ai/DeepSeek-V4-Flash`.
 
 Both choices use the same Station detection, host-preparation, consent, suggested-policy, default-sandbox, and revision resume flow.
@@ -37,14 +37,14 @@ Before asking for consent, explain all of these boundaries:
 - Official Station preparation may require an operator-controlled reboot and resumes only with the accepted NemoClaw revision.
 - NemoClaw does not configure the two private rails, scan the network, enroll SSH trust, or reboot either Station. The operator owns physical isolation, firewalling, SSH trust, and manual reboots.
 - The dual-Station runtime uses unauthenticated Ray, NCCL, and vLLM coordination traffic, including the Ray head on TCP port `6379` and Ray worker traffic. Both Stations and every host that can reach either rail must be mutually trusted; a shared `/24` is not equivalent to the required direct private `/30` rails.
-- Nemotron Ultra Express discloses an approximately `352 GB` model download. DeepSeek Express downloads its pinned vLLM container and model data. Both require enough space on the model-cache filesystem and Docker storage.
+- New single-Station Super VL Express discloses an approximately `75 GB` model download. Distributed Ultra and eligible legacy single-Station Ultra disclose approximately `352 GB`. DeepSeek Express downloads its pinned vLLM container and model data. Each path requires enough space on the model-cache filesystem and Docker storage.
 - DGX Station is tested with limitations across qualified profiles on one physical DGX Station GB300.
 - Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.
 
 Ask: "Which DGX Station Express option would you like?"
 Choices:
 
-1. Automatic pair selection: use Nemotron 3 Ultra 550B with a qualified trusted pair when available; otherwise use the single-Station Ultra recipe.
+1. Automatic selection: use Nemotron 3 Ultra 550B with a qualified trusted pair when available; otherwise use experimental Nemotron 3.5 Super VL on a new single-Station install. An eligible legacy single-Station Ultra workload stays on Ultra.
 2. DeepSeek V4 Flash, the explicit `--station-deepseek` override.
 3. Neither, let me choose the runtime and model normally.
 
@@ -60,7 +60,7 @@ If a Station Express model is selected:
 - Let the installer present its third-party-software notice and complete Express summary. Keep each official confirmation visible, wait for the user's response, and do not pre-answer or suppress it.
 - Do not pass `--force-station-install` unless the installer rejects release metadata on genuine Station GB300 hardware and the user separately chooses the documented temporary override.
 - Follow the command that the installer prints after a required reboot or login transition.
-- Describe Ultra as the ordinary Express selection. Describe the distributed two-Station topology as selected only after the installer reports that reciprocal Station, GPU, rail, MAC, route, neighbor, and jumbo-frame checks qualified the pair.
+- Describe automatic Express selection according to the installer's reported result. Describe the distributed two-Station topology as selected only after the installer reports that reciprocal Station, GPU, rail, MAC, route, neighbor, and jumbo-frame checks qualified the pair.
 
 If Station Express is declined, continue with the normal provider selection.
 Offer existing vLLM when a ready server is detected, managed vLLM, supported local Ollama, and every hosted or compatible provider supported by the selected agent.

@@ -3,6 +3,13 @@
 
 import type { SpawnSyncOptions } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
+import { isExternallySupervised } from "../../onboard/gateway-ownership";
+import {
+  readDockerDriverGatewayBinding,
+  removeDockerDriverGatewayBinding,
+  resolveGatewayStateDirForPort,
+} from "../../onboard/gateway/state-dir";
 import path from "node:path";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import { fingerprintOpenShellSandboxId } from "../../domain/sandbox/openshell-identity";
@@ -64,6 +71,26 @@ export async function removeGatewayRegistration(
   allowLegacyDestroy: boolean,
   gatewayPort: number,
 ): Promise<boolean> {
+  const home = runtime.env.HOME ?? os.homedir();
+  const binding = allowLegacyDestroy ? readDockerDriverGatewayBinding(home, gatewayPort) : null;
+  let stateDir: string | null = null;
+  if (binding) {
+    try {
+      const owner = runtime.resolveGatewayTeardownAuthority(
+        { gatewayName: gatewayLabel, gatewayPort },
+        { allowMissingPackagedServiceTeardown: true, env: runtime.env },
+      );
+      if (!isExternallySupervised(owner)) {
+        stateDir = resolveGatewayStateDirForPort({
+          home,
+          port: gatewayPort,
+          configured: runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+        });
+      }
+    } catch {
+      // Retain the saved binding when teardown ownership is not confirmed.
+    }
+  }
   const outcome = await removeGatewayRegistrationThroughAdapter({
     gatewayName: gatewayLabel,
     allowLegacyDestroy,
@@ -102,6 +129,7 @@ export async function removeGatewayRegistration(
     }
     return false;
   }
+  if (stateDir) removeDockerDriverGatewayBinding(home, gatewayPort, stateDir);
   if (outcome.state === "absent") runtime.warn(`Gateway '${gatewayLabel}' is already absent`);
   else runtime.log(`Removed gateway registration '${gatewayLabel}'`);
   return true;

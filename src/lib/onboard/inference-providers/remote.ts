@@ -177,11 +177,14 @@ export async function setupRemoteProviderInference(
   } = args;
   const {
     runOpenshell,
+    inferenceRouteMutator,
+    gatewayName,
     upsertProvider,
     verifyInferenceRoute,
     verifyOnboardInferenceSmoke,
     isNonInteractive,
     registry,
+    reserveSandboxInferenceRoute,
     exitProcess,
     error,
     log,
@@ -208,7 +211,8 @@ export async function setupRemoteProviderInference(
     endpointUrl,
     credentialEnv,
     isNonInteractive,
-    runOpenshell,
+    gatewayName,
+    inferenceRouteMutator,
     upsertProvider,
     verifyInferenceRoute,
     verifyOnboardInferenceSmoke,
@@ -230,7 +234,8 @@ export async function setupRemoteProviderInference(
     reuseGatewayCredentialWithoutLocalKey,
     skipHostInferenceSmoke,
     isNonInteractive,
-    runOpenshell,
+    gatewayName,
+    inferenceRouteMutator,
     upsertProvider,
     verifyInferenceRoute,
     verifyOnboardInferenceSmoke,
@@ -276,13 +281,26 @@ export async function setupRemoteProviderInference(
       }
     };
     try {
+      if (proxy && !sandboxName) {
+        throw new Error(
+          "A named sandbox is required before configuring a proxy-backed inference route.",
+        );
+      }
       while (true) {
         const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
         const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
         const gatewayEndpointUrl =
           proxy?.baseUrl ?? gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
         let providerResult;
-        if (reuseGatewayCredentialWithoutLocalKey) {
+        if (deps.nativeLocalInference && reuseGatewayCredentialWithoutLocalKey) {
+          providerResult = await upsertProvider(
+            provider,
+            config.providerType,
+            resolvedCredentialEnv,
+            gatewayEndpointUrl,
+            {},
+          );
+        } else if (reuseGatewayCredentialWithoutLocalKey) {
           providerResult = await reuseRegisteredProviderWithGatewayEndpoint({
             provider,
             providerType: config.providerType,
@@ -393,38 +411,119 @@ export async function setupRemoteProviderInference(
           restoreUncommittedProxy();
           return exitProcess(providerResult.status || 1);
         }
-        const argsv = ["inference", "set"];
-        if (config.skipVerify || gatewayEndpointUrl !== resolvedEndpointUrl) {
-          // Host-side verification cannot resolve the sandbox-only bridge URL.
-          argsv.push("--no-verify");
+        if (deps.nativeLocalInference) {
+          if (proxy && sandboxName) {
+            // Preserve the proxy owner before releasing its lifecycle lock.
+            // A failed registry write may already have committed, so retain it.
+            proxy.persist();
+            proxySettled = true;
+            let reservationFailure: string | null = null;
+            try {
+              if (!reserveSandboxInferenceRoute(sandboxName, { model, provider })) {
+                reservationFailure = "reservation returned false";
+              }
+            } catch (reservationError) {
+              reservationFailure = compactText(
+                redact(
+                  reservationError instanceof Error
+                    ? reservationError.message
+                    : String(reservationError),
+                ),
+              );
+            }
+            if (reservationFailure) {
+              throw new Error(
+                `Native local inference could not publish its proxy owner: ${reservationFailure}. The proxy was retained.`,
+              );
+            }
+          }
+          break;
         }
-        argsv.push("--provider", provider, "--model", model);
-        if (provider === "compatible-endpoint") {
-          argsv.push("--timeout", String(LOCAL_INFERENCE_TIMEOUT_SECS));
-        }
-        const applyResult = runOpenshell(argsv, { ignoreError: true });
-        if (applyResult.status === 0) {
+        const applyResult = await inferenceRouteMutator.setInferenceRoute({
+          target: { kind: "named", gatewayName },
+          route: { provider, model },
+          verification:
+            config.skipVerify || gatewayEndpointUrl !== resolvedEndpointUrl ? "skip" : "required",
+          ...(provider === "compatible-endpoint"
+            ? { verificationTimeoutSeconds: LOCAL_INFERENCE_TIMEOUT_SECS }
+            : {}),
+        });
+        if (applyResult.ok) {
           // Publish the pending owner before releasing the proxy lifecycle lock.
           // Otherwise concurrent teardown can stop the newly configured proxy.
-          if (
-            proxy &&
-            sandboxName &&
-            registry.updateSandbox(sandboxName, { model, provider }) === false
-          ) {
-            throw new Error(`Could not reserve the inference route for sandbox '${sandboxName}'.`);
+          let reservationFailure: string | null = null;
+          if (proxy && sandboxName) {
+            try {
+              if (reserveSandboxInferenceRoute(sandboxName, { model, provider }) === false) {
+                reservationFailure = `Could not reserve the inference route for sandbox '${sandboxName}'.`;
+              }
+            } catch (reservationError) {
+              reservationFailure =
+                reservationError instanceof Error
+                  ? reservationError.message
+                  : String(reservationError);
+            }
+          }
+          if (proxy && reservationFailure) {
+            // The confirmed route depends on this proxy. A failed ownership
+            // publication cannot authorize tearing the dependency down.
+            proxy.persist();
+            proxySettled = true;
+            throw new Error(
+              `OpenShell committed the inference route, but NemoClaw could not publish its proxy ownership: ${reservationFailure} ` +
+                `The proxy was retained. Inspect gateway '${gatewayName}', then rerun onboarding to reconcile ownership.`,
+            );
           }
           proxy?.persist();
           proxySettled = true;
           break;
         }
-        const message =
-          compactText(redact(`${applyResult.stderr || ""} ${applyResult.stdout || ""}`)) ||
-          `Failed to configure inference provider '${provider}'.`;
+        const message = applyResult.error.message;
         capabilityCache?.invalidate();
         error(`  ${message}`);
+        if (applyResult.ambiguous) {
+          // The route may depend on this proxy. Retain it until a same-gateway
+          // observation can establish whether the write took effect. The
+          // pending route reservation is ownership, not route-success
+          // publication, and prevents concurrent teardown from stopping it.
+          if (proxy) {
+            if (!sandboxName) {
+              proxy.persist();
+              proxySettled = true;
+              throw new Error(
+                "Cannot retain an ambiguously selected inference proxy without a sandbox route owner.",
+              );
+            }
+            let reserved: boolean;
+            try {
+              reserved = reserveSandboxInferenceRoute(sandboxName, { model, provider });
+            } catch (reservationError) {
+              // Persistence may have succeeded before its readback failed. Do
+              // not destroy a proxy that an ambiguous live route may use.
+              proxy.persist();
+              proxySettled = true;
+              throw reservationError;
+            }
+            if (!reserved) {
+              proxy.persist();
+              proxySettled = true;
+              throw new Error(
+                `Could not reserve durable ownership for the ambiguous inference route for sandbox '${sandboxName}'. The proxy was retained because the live route may depend on it.`,
+              );
+            }
+          }
+          proxy?.persist();
+          proxySettled = true;
+          error(
+            `  The route update result is unknown. Inspect gateway '${gatewayName}' before retrying onboarding.`,
+          );
+          return exitProcess(1);
+        }
         if (isNonInteractive()) {
           restoreUncommittedProxy();
-          return exitProcess(applyResult.status || 1);
+          return exitProcess(
+            applyResult.error.kind === "command" ? (applyResult.error.exitCode ?? 1) : 1,
+          );
         }
         const retry = await promptValidationRecovery(
           config.label,
@@ -440,7 +539,9 @@ export async function setupRemoteProviderInference(
           return { done: true, result: { retry: "selection" } };
         }
         restoreUncommittedProxy();
-        return exitProcess(applyResult.status || 1);
+        return exitProcess(
+          applyResult.error.kind === "command" ? (applyResult.error.exitCode ?? 1) : 1,
+        );
       }
       return { done: false } as const;
     } finally {

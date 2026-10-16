@@ -3,11 +3,37 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { hostedNativeProvider } from "../../inference/native-provider/hosted";
 import { setupHermesProviderInference } from "./hermes";
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
+  const runOpenshell = vi.fn((_args: string[], _options?: { ignoreError?: boolean }) => ({
+    status: 0,
+    stdout: "",
+    stderr: "",
+  }));
   return {
-    runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+    runOpenshell,
+    gatewayName: "nemoclaw",
+    inferenceRouteMutator: {
+      setInferenceRoute: vi.fn(async (request) => {
+        runOpenshell(
+          [
+            "inference",
+            "set",
+            "-g",
+            request.target.gatewayName,
+            "--no-verify",
+            "--provider",
+            request.route.provider,
+            "--model",
+            request.route.model,
+          ],
+          { ignoreError: true },
+        );
+        return { ok: true as const };
+      }),
+    },
     upsertProvider: vi.fn(),
     verifyInferenceRoute: vi.fn(),
     verifyOnboardInferenceSmoke: vi.fn(),
@@ -25,8 +51,8 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     },
     getHermesToolGatewayBroker: vi.fn(() => ({
       getHermesToolGatewayProviderName: vi.fn(() => "hermes-tool-gateway"),
+      isHermesToolGatewayRefreshProviderRegistered: vi.fn(async () => true),
     })),
-    providerExistsInGateway: vi.fn(async () => true),
     normalizeHermesAuthMethod: vi.fn(() => "api-key"),
     resolveHermesNousApiKey: vi.fn(() => null),
     checkHermesProviderStoreReachable: vi.fn(() => ({ ok: true })),
@@ -66,6 +92,36 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   });
   return { promise, resolve };
 }
+
+describe("setupHermesProviderInference route mutation", () => {
+  it("stops after an ambiguous mutation without verifying or persisting success", async () => {
+    const deps = makeDeps({
+      inferenceRouteMutator: {
+        setInferenceRoute: vi.fn(async () => ({
+          ok: false as const,
+          ambiguous: true,
+          error: {
+            kind: "timeout" as const,
+            message: "OpenShell inference route update ended without a confirmed result.",
+          },
+        })),
+      },
+    });
+
+    await expect(setupHermesProviderInference(makeArgs(null), deps as never)).rejects.toThrow(
+      "EXIT_CALLED:1",
+    );
+
+    expect(deps.inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledOnce();
+    expect(deps.verifyInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
+    expect(deps.registry.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.log).not.toHaveBeenCalled();
+    expect(deps.error).toHaveBeenCalledWith(
+      "  The route update result is unknown. Inspect gateway 'nemoclaw' before retrying onboarding.",
+    );
+  });
+});
 
 describe("setupHermesProviderInference smoke verification", () => {
   it("waits for the smoke check before persisting or logging success (#3771)", async () => {
@@ -293,7 +349,7 @@ describe("setupHermesProviderInference SSRF guard (#6072)", () => {
 
     expect(lookup).not.toHaveBeenCalled();
     expect(deps.runOpenshell).toHaveBeenCalledWith(
-      ["inference", "set", "--no-verify", "--provider", "p", "--model", "m"],
+      ["inference", "set", "-g", "nemoclaw", "--no-verify", "--provider", "p", "--model", "m"],
       { ignoreError: true },
     );
     expect(deps.verifyOnboardInferenceSmoke).toHaveBeenCalledWith(
@@ -353,5 +409,148 @@ describe("setupHermesProviderInference SSRF guard (#6072)", () => {
       setupHermesProviderInference(makeArgs(endpointUrl), deps as never),
     ).rejects.toThrow(/private or internal/);
     expect(deps.runOpenshell).not.toHaveBeenCalled();
+  });
+});
+
+describe("native Hermes Provider setup", () => {
+  const endpoint = "https://staging.nous.example/v1";
+  const definition = hostedNativeProvider("hermes-provider", endpoint)!;
+  const receipt = {
+    schemaVersion: 1 as const,
+    profileId: definition.profileId,
+    providerName: definition.providerName,
+    providerId: "native-identity",
+    endpointUrl: endpoint,
+    allowedIps: ["8.8.8.8"],
+  };
+
+  it.each(["oauth", "api-key"])(
+    "prepares %s through native registration without mutating the shared route",
+    async (method) => {
+      const prepareNativeProvider = vi.fn(async () => receipt);
+      const register = vi.fn(async (_sandbox, options) => {
+        await options.registerInferenceCredential({
+          apiKey: "host-secret",
+          credentialEnv: method === "api-key" ? "NOUS_API_KEY" : "OPENAI_API_KEY",
+          baseUrl: endpoint,
+        });
+        return {
+          auth_method: method,
+          credential_env: "OPENAI_API_KEY",
+          inference_base_url: endpoint,
+        };
+      });
+      const deps = makeDeps({
+        getNativeProviderAuthority: () => undefined,
+        prepareNativeProvider,
+        normalizeHermesAuthMethod: () => method,
+        resolveHermesNousApiKey: () => "host-secret",
+        hermesProviderAuth: {
+          isHermesProviderRegistered: vi.fn(),
+          ensureHermesProviderApiKeyCredentials: register,
+          ensureHermesProviderOAuthCredentials: register,
+        },
+      });
+      const result = await setupHermesProviderInference(
+        { ...makeArgs(null), provider: "hermes-provider" },
+        deps as never,
+      );
+      expect(result).toEqual({
+        ok: true,
+        nativeInference: { endpointUrl: endpoint, credentialEnv: "OPENAI_API_KEY" },
+      });
+      expect(prepareNativeProvider).toHaveBeenCalledExactlyOnceWith("host-secret", endpoint);
+      expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+      expect(deps.verifyInferenceRoute).not.toHaveBeenCalled();
+      expect(deps.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
+      expect(deps.registry.updateSandbox).toHaveBeenCalledWith("alpha", {
+        provider: "hermes-provider",
+        model: "m",
+      });
+      expect(
+        JSON.stringify([result, deps.log.mock.calls, deps.registry.updateSandbox.mock.calls]),
+      ).not.toContain("host-secret");
+    },
+  );
+
+  it("reuses exact registered authority noninteractively without another login", async () => {
+    const prepareNativeProvider = vi.fn(async () => receipt);
+    const deps = makeDeps({
+      getNativeProviderAuthority: () => receipt,
+      prepareNativeProvider,
+      isNonInteractive: () => true,
+    });
+    await expect(
+      setupHermesProviderInference(
+        { ...makeArgs(endpoint), provider: "hermes-provider" },
+        deps as never,
+      ),
+    ).resolves.toEqual({
+      ok: true,
+      nativeInference: { endpointUrl: endpoint, credentialEnv: "OPENAI_API_KEY" },
+    });
+    expect(prepareNativeProvider).toHaveBeenCalledExactlyOnceWith(null, endpoint);
+    expect(deps.hermesProviderAuth.ensureHermesProviderOAuthCredentials).not.toHaveBeenCalled();
+    expect(deps.hermesProviderAuth.ensureHermesProviderApiKeyCredentials).not.toHaveBeenCalled();
+    expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+  });
+
+  it("does not publish success or use the shared route when native registration fails", async () => {
+    const deps = makeDeps({
+      getNativeProviderAuthority: () => receipt,
+      isNonInteractive: () => true,
+      prepareNativeProvider: async () => {
+        throw new Error("ownership collision");
+      },
+    });
+    await expect(
+      setupHermesProviderInference(
+        { ...makeArgs(null), provider: "hermes-provider" },
+        deps as never,
+      ),
+    ).rejects.toThrow("ownership collision");
+    expect(deps.registry.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.log).not.toHaveBeenCalled();
+  });
+});
+
+describe("Hermes managed-tool profile reuse", () => {
+  it("checks the owned profile before reusing an existing tool provider", async () => {
+    const isRegistered = vi.fn(async () => true);
+    const deps = makeDeps({
+      isNonInteractive: () => true,
+      getHermesToolGatewayBroker: () => ({
+        getHermesToolGatewayProviderName: () => "alpha-hermes-tool-gateway",
+        isHermesToolGatewayRefreshProviderRegistered: isRegistered,
+      }),
+    });
+    await expect(
+      setupHermesProviderInference(
+        { ...makeArgs(null), hermesToolGateways: ["nous-web"] },
+        deps as never,
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    expect(isRegistered).toHaveBeenCalledExactlyOnceWith("alpha", deps.runOpenshell);
+    expect(deps.hermesProviderAuth.ensureHermesProviderOAuthCredentials).not.toHaveBeenCalled();
+  });
+
+  it("stops before inference mutation when the tool profile conflicts", async () => {
+    const deps = makeDeps({
+      getHermesToolGatewayBroker: () => ({
+        getHermesToolGatewayProviderName: () => "alpha-hermes-tool-gateway",
+        isHermesToolGatewayRefreshProviderRegistered: async () => {
+          throw new Error("Hermes tool gateway profile conflicts with NemoClaw's definition");
+        },
+      }),
+    });
+    await expect(
+      setupHermesProviderInference(
+        { ...makeArgs(null), hermesToolGateways: ["nous-web"] },
+        deps as never,
+      ),
+    ).rejects.toThrow(/profile conflicts/u);
+    expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.hermesProviderAuth.ensureHermesProviderOAuthCredentials).not.toHaveBeenCalled();
   });
 });

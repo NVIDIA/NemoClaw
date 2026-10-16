@@ -10,7 +10,7 @@
  *   1. Gateway reachable (HTTP /health returns 200 or 401)
  *   2. Gateway version retrieval
  *   3. Dashboard port reachable from the host (port forward working)
- *   4. Inference route working (sandbox can reach inference.local)
+ *   4. The recorded native or retained shared inference route works
  *   5. Messaging bridges healthy (if configured)
  *
  * Fixes #2342 — users no longer see "AGENT IS LIVE" followed by
@@ -21,22 +21,34 @@ import os from "node:os";
 
 import { parseVersionFromText } from "./adapters/openshell/client";
 import {
-  isDcodeOpenRouterModelsRoute404,
   runSandboxInferenceInvocationProbe,
+  verifyNativeHostedStatusAttachment,
   type SandboxInferenceRouteHealthContext,
 } from "./actions/sandbox/inference-route-health";
 import { compareChannelSets, type RuntimeChannelStatus } from "./channel-runtime-status";
 import type { DashboardDeliveryChain } from "./dashboard/contract";
+import { isOpenRouterRuntimeAdapterModelsRoute404 } from "./inference/openrouter";
 import { listMessagingChannelsWithoutCredentials } from "./messaging/channels";
 
 import { retryUntilAsync } from "./core/retry";
+import { isNativeNvidiaProvider } from "./inference/native-nvidia";
+import { requireHostedProviderAttachment } from "./inference/native-provider/hosted-attachment";
+import {
+  isPersistedPiSharedLocalInferenceRoute,
+  normalizeNativeLocalBinding,
+  normalizeNativeLocalProviderAttachment,
+  usesNativeLocalInferenceForAgent,
+  type NativeLocalProviderAttachment,
+} from "./inference/native-local/contract";
 import {
   buildCustomOpenClawRuntimeFailureHints,
   classifyOpenClawRuntimeFailure,
   type SandboxCommandExecutor,
 } from "./onboard/custom-openclaw-runtime-diagnosis";
 import { GATEWAY_PORT, resolveGatewayLogPathForPort } from "./onboard/gateway/state-dir";
+import { gatewayReachableCompatibleEndpointUrl } from "./onboard/inference-providers/compatible-endpoint-gateway-route";
 import { getMessagingProviderNamesForChannel } from "./onboard/messaging-reuse";
+import { HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL } from "./onboard/runtime-provider/host-local-inference-routing";
 
 export { shouldDiagnoseCustomOpenClawRuntime } from "./onboard/custom-openclaw-runtime-diagnosis";
 
@@ -110,11 +122,12 @@ export interface VerifyDeploymentDeps {
   providerExistsInGateway: (providerName: string) => boolean | Promise<boolean>;
 
   /**
-   * Send one bounded inference request over the gateway route from inside the
-   * sandbox. Only consulted for the Deep Agents Code OpenRouter models route,
-   * whose HTTP 404 is expected (#9834) and can only be accepted on the
-   * evidence of a served request. Optional: when it is absent that 404 fails
-   * closed, because nothing validated the selected model (#10543).
+   * Send one bounded inference request over the sandbox's configured route.
+   * This request is authoritative for attached native providers, which have
+   * no shared `inference.local` route. It also validates OpenRouter runtime adapters,
+   * whose models route returns HTTP 404 (#12621). When this dependency is
+   * absent, both exceptional paths fail closed because no request validated
+   * the selected model (#10543).
    */
   probeInferenceInvocation?: () => Promise<{ ok: boolean; detail?: string }>;
 
@@ -154,9 +167,9 @@ export interface VerifyDeploymentOptions {
    */
   diagnoseCustomOpenClawRuntime?: boolean;
   /**
-   * Agent and provider behind this deployment, used to recognise the one
-   * models route that answers HTTP 404 by design (#9834). Defaults to no
-   * agent and no provider, which fails every 404 closed.
+   * Agent and provider behind this deployment, used to recognise supported
+   * OpenRouter adapter routes that answer HTTP 404 by design (#12621).
+   * Defaults to no agent and no provider, which fails every 404 closed.
    */
   inferenceRouteContext?: InferenceRouteContext;
 }
@@ -221,13 +234,21 @@ async function probeGatewayInSandboxOnce(
     `http://127.0.0.1:${port}${endpoint} 2>/dev/null || echo 000`;
   const result = await deps.executeSandboxCommand(sandboxName, script);
   if (!result) {
-    return { reachable: false, httpCode: 0, detail: "sandbox unreachable (SSH failed)" };
+    return {
+      reachable: false,
+      httpCode: 0,
+      detail: "sandbox unreachable (SSH failed)",
+    };
   }
   const code = parseInt(result.stdout.trim(), 10) || 0;
   if (GATEWAY_ALIVE_CODES.has(code)) {
     return { reachable: true, httpCode: code, detail: `HTTP ${code}` };
   }
-  return { reachable: false, httpCode: code, detail: `HTTP ${code} (gateway not responding)` };
+  return {
+    reachable: false,
+    httpCode: code,
+    detail: `HTTP ${code} (gateway not responding)`,
+  };
 }
 
 async function verifyGatewayInSandbox(
@@ -260,16 +281,20 @@ async function fetchGatewayVersion(
 type InferenceRouteStatus = "ok" | "unreachable" | "unhealthy";
 
 /**
- * Agent and provider behind the deployment, normalised into the context
+ * Provider behind the deployment, normalized into the context
  * `status` uses so the two readiness paths cannot drift (#10080).
  */
 export type InferenceRouteContext = {
-  agentName?: string | null;
   provider?: string | null;
+  endpointUrl?: string | null;
+  gatewayName?: string;
+  nativeLocalExpected?: boolean;
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
+  nativeHostedProviderAttachment?: unknown;
 };
 
 function toRouteHealthContext(context: InferenceRouteContext): SandboxInferenceRouteHealthContext {
-  return { agentName: context.agentName ?? null, provider: context.provider ?? null };
+  return { provider: context.provider ?? null };
 }
 
 type InferenceRouteProbe = {
@@ -290,7 +315,11 @@ async function probeInferenceRouteOnce(
     `https://inference.local/v1/models 2>/dev/null || echo 000); echo $HTTP_CODE`;
   const result = await deps.executeSandboxCommand(sandboxName, script);
   if (!result) {
-    return { status: "unreachable", detail: "sandbox unreachable", httpCode: 0 };
+    return {
+      status: "unreachable",
+      detail: "sandbox unreachable",
+      httpCode: 0,
+    };
   }
   // curl writes exactly three digits and the script echoes `000` when it fails,
   // so any other token means the probe carries no status worth trusting.
@@ -327,7 +356,11 @@ async function probeInferenceRouteOnce(
       httpCode: code,
     };
   }
-  return { status: "ok", detail: `inference.local responded HTTP ${code}`, httpCode: code };
+  return {
+    status: "ok",
+    detail: `inference.local responded HTTP ${code}`,
+    httpCode: code,
+  };
 }
 
 /**
@@ -352,11 +385,11 @@ function buildInferenceRouteHint(inference: InferenceRouteProbe): string {
 }
 
 /**
- * Resolve the one 404 that is expected: Deep Agents Code on OpenRouter serves
- * no model catalog (#9834). Matching the shared predicate is necessary but not
- * sufficient — the route status alone proves nothing about whether the sandbox
- * can invoke its selected model — so accept it only through a successful
- * bounded inference request, exactly as `status` does.
+ * Resolve an expected OpenRouter adapter 404. The adapter serves Chat
+ * Completions but no model catalog (#12621). Matching the shared predicate is
+ * necessary but not sufficient: the route status alone proves nothing about
+ * whether the sandbox can invoke its selected model. Accept it only through a
+ * successful bounded inference request, exactly as `status` does.
  */
 async function resolveExpectedModelsRoute404(
   probe: InferenceRouteProbe,
@@ -368,7 +401,7 @@ async function resolveExpectedModelsRoute404(
       status: "ok",
       detail:
         "inference.local served an inference request; its models route answers " +
-        "HTTP 404 by design for this agent and provider",
+        "HTTP 404 by design for the OpenRouter adapter",
       httpCode: probe.httpCode,
     };
   }
@@ -376,14 +409,40 @@ async function resolveExpectedModelsRoute404(
   return {
     status: "unhealthy",
     detail:
-      `inference.local answered HTTP ${probe.httpCode} on its models route, which is expected ` +
-      `for this agent and provider, but no inference request confirmed the selected model: ${reason}`,
+      `inference.local answered HTTP ${probe.httpCode} on its models route and serves no model ` +
+      `catalog by design for the OpenRouter adapter, but no inference request confirmed the ` +
+      `selected model: ${reason}`,
     httpCode: probe.httpCode,
     hint:
-      "This agent and provider serve no model catalog, so the models route answering HTTP 404 is " +
+      "The OpenRouter adapter serves no model catalog, so the models route answering HTTP 404 is " +
       "expected. The inference request itself failed. Confirm the provider credential and the " +
       "selected model, then re-run: nemoclaw <sandbox> status.",
   };
+}
+
+function matchesNativeLocalVerificationRoute(
+  context: InferenceRouteContext,
+  sandboxName: string,
+): boolean {
+  const attachment = normalizeNativeLocalProviderAttachment(context.nativeLocalProviderAttachment);
+  if (
+    !attachment ||
+    attachment.sandboxName !== sandboxName ||
+    attachment.gatewayName !== context.gatewayName ||
+    attachment.provider !== context.provider
+  )
+    return false;
+  if (context.endpointUrl === undefined) return true;
+  if (
+    context.nativeLocalExpected &&
+    context.endpointUrl === HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL
+  )
+    return true;
+  const selected = normalizeNativeLocalBinding({
+    ...attachment,
+    endpointUrl: gatewayReachableCompatibleEndpointUrl(attachment.provider, context.endpointUrl),
+  });
+  return selected?.endpointUrl === attachment.endpointUrl;
 }
 
 async function verifyInferenceRoute(
@@ -393,9 +452,64 @@ async function verifyInferenceRoute(
   sleep: (ms: number) => Promise<void>,
   context: InferenceRouteContext,
 ): Promise<InferenceRouteProbe> {
+  const nativeLocal =
+    context.nativeLocalExpected || context.nativeLocalProviderAttachment !== undefined;
+  let hostedAttachment;
+  try {
+    hostedAttachment = requireHostedProviderAttachment(
+      context.nativeHostedProviderAttachment,
+      context.provider,
+    );
+  } catch {
+    return {
+      status: "unhealthy",
+      detail: "Invalid native hosted provider attachment",
+      httpCode: 0,
+      hint: "Restore the recorded provider ownership before retrying onboarding.",
+    };
+  }
+  if (nativeLocal && !matchesNativeLocalVerificationRoute(context, sandboxName)) {
+    return {
+      status: "unhealthy",
+      detail: "native local provider attachment is missing or invalid",
+      httpCode: 0,
+      hint: "Reconcile the recorded native local provider before retrying onboarding.",
+    };
+  }
+  if (isNativeNvidiaProvider(context.provider) || hostedAttachment || nativeLocal) {
+    const label = nativeLocal
+      ? "local"
+      : hostedAttachment
+        ? (context.provider?.trim() ?? "hosted")
+        : "NVIDIA";
+    const invocation = await retryUntilAsync(
+      async () => (await deps.probeInferenceInvocation?.()) ?? null,
+      {
+        accept: (result) => result?.ok === true,
+        retryDelaysMs,
+        sleep,
+      },
+    );
+    if (invocation?.ok) {
+      return {
+        status: "ok",
+        detail: `native ${label} inference served an agent request`,
+        httpCode: 200,
+      };
+    }
+    const reason = invocation?.detail ?? "no inference request confirmed the selected model";
+    return {
+      status: "unhealthy",
+      detail: `native ${label} inference did not serve an agent request: ${reason}`,
+      httpCode: 0,
+      hint:
+        `The sandbox-attached ${label} provider could not serve the selected model. Confirm the ` +
+        `${label} credential and model, then re-run: nemoclaw <sandbox> status.`,
+    };
+  }
   const routeContext = toRouteHealthContext(context);
   const isExpected404 = (result: InferenceRouteProbe) =>
-    isDcodeOpenRouterModelsRoute404(routeContext, result.httpCode);
+    isOpenRouterRuntimeAdapterModelsRoute404(routeContext.provider, result.httpCode);
   // An ordinary 404 still gets the startup budget: a route can answer before
   // its model catalog is registered, and the inference probe already recovers
   // a late route (#6849). Only the 404 that is expected settles immediately,
@@ -425,7 +539,10 @@ function probeDashboardFromHostOnce(
   if (code > 0) {
     return { reachable: false, detail: `host probe HTTP ${code} (unexpected)` };
   }
-  return { reachable: false, detail: "port forward not working (connection refused)" };
+  return {
+    reachable: false,
+    detail: "port forward not working (connection refused)",
+  };
 }
 
 async function verifyDashboardFromHost(
@@ -478,7 +595,10 @@ function probeAgentApiFromHostOnce(
   if (code > 0) {
     return { reachable: false, detail: `host probe HTTP ${code} (unexpected)` };
   }
-  return { reachable: false, detail: "port forward not working (connection refused)" };
+  return {
+    reachable: false,
+    detail: "port forward not working (connection refused)",
+  };
 }
 
 async function verifyAgentApiFromHost(
@@ -865,36 +985,138 @@ export function formatVerificationDiagnostics(result: VerifyDeploymentResult): s
   return lines;
 }
 
-export type InferenceInvocationContext = {
+export type InferenceInvocationContext = InferenceRouteContext & {
   sandboxName: string;
   gatewayName: string;
   agentName: string | null | undefined;
   model: string | null;
   provider: string | null;
   preferredInferenceApi: string | null;
+  nativeLocalExpected?: boolean;
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
 };
+
+/** Keep onboarding route verification and its request on the same selected route. */
+export function onboardInferenceVerificationContext(
+  sandboxName: string,
+  gatewayName: string,
+  agentName: string,
+  flow: Pick<InferenceInvocationContext, "model" | "provider" | "preferredInferenceApi"> & {
+    endpointUrl?: string | null;
+    nimContainer?: string | null;
+  },
+  attachment?:
+    | (Pick<
+        InferenceRouteContext,
+        "nativeLocalProviderAttachment" | "nativeHostedProviderAttachment"
+      > & {
+        nimContainer?: string | null;
+        agent?: string | null;
+        provider?: string | null;
+        model?: string | null;
+        endpointUrl?: string | null;
+        createdAt?: string | null;
+        pendingRouteReservation?: boolean;
+      })
+    | null,
+): { route: InferenceRouteContext; invocation: InferenceInvocationContext } {
+  const nativeLocalExpected =
+    usesNativeLocalInferenceForAgent(
+      agentName,
+      flow.provider,
+      flow.endpointUrl,
+      flow.provider === "vllm-local" && Boolean(attachment?.nimContainer),
+    ) && !isPersistedPiSharedLocalInferenceRoute(attachment, flow);
+  const nativeLocalProviderAttachment =
+    flow.provider === "vllm-local" && attachment?.nimContainer
+      ? undefined
+      : attachment?.nativeLocalProviderAttachment;
+  const nativeHostedProviderAttachment = attachment?.nativeHostedProviderAttachment;
+  return {
+    route: {
+      provider: flow.provider,
+      endpointUrl: flow.endpointUrl ?? null,
+      gatewayName,
+      nativeLocalExpected,
+      nativeLocalProviderAttachment,
+      nativeHostedProviderAttachment,
+    },
+    invocation: {
+      sandboxName,
+      gatewayName,
+      agentName,
+      model: flow.model,
+      provider: flow.provider,
+      endpointUrl: flow.endpointUrl ?? null,
+      preferredInferenceApi: flow.preferredInferenceApi,
+      nativeLocalExpected,
+      nativeLocalProviderAttachment,
+      nativeHostedProviderAttachment,
+    },
+  };
+}
 
 /**
  * The standard `probeInferenceInvocation` dependency: send one bounded
- * inference request over the gateway route, using the same probe `status`
- * runs. Onboarding wires this so the one models route that answers HTTP 404 by
- * design — Deep Agents Code on OpenRouter (#9834) — is accepted only on the
- * evidence of a served request (#10543).
+ * inference request over the recorded native or retained shared route, using
+ * the same probe `status` runs. Onboarding wires this so legacy OpenRouter routes that
+ * answer HTTP 404 by design are accepted only on the evidence of a served
+ * request (#12621).
  */
 export async function probeOnboardInferenceInvocation(
   context: InferenceInvocationContext,
+  probe: typeof runSandboxInferenceInvocationProbe = runSandboxInferenceInvocationProbe,
 ): Promise<{ ok: boolean; detail?: string }> {
   const { model, provider } = context;
   if (!model || !provider) {
-    return { ok: false, detail: "no provider and model were recorded for this sandbox" };
+    return {
+      ok: false,
+      detail: "no provider and model were recorded for this sandbox",
+    };
   }
-  const result = await runSandboxInferenceInvocationProbe({
+  if (
+    (context.nativeLocalExpected || context.nativeLocalProviderAttachment !== undefined) &&
+    !matchesNativeLocalVerificationRoute(context, context.sandboxName)
+  ) {
+    return {
+      ok: false,
+      detail: "native local provider attachment is missing or invalid",
+    };
+  }
+  let hostedAttachment;
+  try {
+    hostedAttachment = requireHostedProviderAttachment(
+      context.nativeHostedProviderAttachment,
+      provider,
+    );
+    if (hostedAttachment)
+      await verifyNativeHostedStatusAttachment({
+        gatewayName: context.gatewayName,
+        sandboxName: context.sandboxName,
+        expected: hostedAttachment,
+      });
+  } catch {
+    return {
+      ok: false,
+      detail: "the recorded native hosted provider attachment could not be verified",
+    };
+  }
+  const result = await probe({
     sandboxName: context.sandboxName,
     gatewayName: context.gatewayName,
     agentName: context.agentName ?? null,
     provider,
     model,
     preferredInferenceApi: context.preferredInferenceApi,
+    ...(context.nativeLocalProviderAttachment
+      ? { nativeLocalProviderAttachment: context.nativeLocalProviderAttachment }
+      : {}),
+    ...(isNativeNvidiaProvider(provider) ||
+    hostedAttachment ||
+    context.nativeLocalProviderAttachment
+      ? { nativeProvider: true }
+      : {}),
+    ...(hostedAttachment?.endpointUrl ? { nativeEndpointUrl: hostedAttachment.endpointUrl } : {}),
   });
   return result.ok ? { ok: true } : { ok: false, detail: result.detail };
 }

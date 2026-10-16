@@ -65,7 +65,7 @@ nemoclaw my-assistant channels remove googlechat
 Replace `my-assistant` with your sandbox name.
 The command attempts endpoint teardown even when interrupted enrollment left no Google Chat registry record.
 If the command reports that it could not stop the tunnel, correct the host service and run the command again before retrying enrollment.
-On any host where NemoClaw cannot inspect the recorded cloudflared process or signal it through an identity-bound operating-system API, independently verify and stop that process with the host process manager, keep the PID record until that process exits, then rerun the removal command.
+If NemoClaw cannot verify the recorded process identity or stop the process safely, independently verify and stop it with the host process manager, keep the PID record until that process exits, then rerun the removal command.
 A removal that completes without cleanup warnings stops the dedicated tunnel and webhook proxy, removes any partial bridge provider and policy preset, and removes Google Chat from the durable messaging plan.
 
 If `GOOGLECHAT_AUDIENCE` already contains the public webhook URL, NemoClaw uses it and does not start or change cloudflared.

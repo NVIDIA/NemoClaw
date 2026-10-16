@@ -1068,6 +1068,7 @@ export interface ManagedVllmProviderBinding {
   baseUrl: string;
   validationBaseUrl?: string;
   apiKey: string;
+  serving?: NonNullable<ReturnType<typeof recoverHostLocalManagedVllmEndpoint>>["serving"];
 }
 
 type ManagedStationVllmBaseUrlResolver = (overrides?: {
@@ -1081,7 +1082,7 @@ type ManagedClusterVllmEndpointResolver = (options?: {
 
 type HostLocalManagedVllmEndpointResolver = (options?: {
   loadApiKey?: () => string | null;
-}) => { baseUrl: string; apiKey: string } | null;
+}) => Pick<ManagedVllmProviderBinding, "baseUrl" | "apiKey" | "serving"> | null;
 
 export type ManagedVllmProviderState =
   | { kind: "absent" }
@@ -1221,6 +1222,7 @@ export function getManagedVllmProviderState(
       baseUrl: `${HOST_GATEWAY_URL}:${String(recoveredPort)}/v1`,
       validationBaseUrl: `${hostLocalEndpoint.baseUrl.replace(/\/+$/, "")}/v1`,
       apiKey: hostLocalEndpoint.apiKey,
+      ...(hostLocalEndpoint.serving ? { serving: hostLocalEndpoint.serving } : {}),
     };
   }
   if (!managedClusterEndpoint) return stationState;
@@ -1246,6 +1248,7 @@ export function getManagedVllmProviderBinding(
     baseUrl: state.baseUrl,
     ...(state.validationBaseUrl ? { validationBaseUrl: state.validationBaseUrl } : {}),
     apiKey: state.apiKey,
+    ...(state.serving ? { serving: state.serving } : {}),
   };
 }
 

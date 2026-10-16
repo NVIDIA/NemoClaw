@@ -2,55 +2,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Brev launchable startup script — CI-Ready CPU
+# Standalone Brev CPU bootstrap for Docker, reviewed Node/npm, OpenShell, and NemoClaw.
 #
-# Pre-bakes a VM with everything needed for NemoClaw E2E tests so that
-# CI runs only need to: rsync branch code → npm ci → nemoclaw onboard → test.
-#
-# What this installs:
-#   1. Docker (docker.io) — enabled and running
-#   2. Node.js 24.18.1 and verified npm 12.0.2
-#   3. OpenShell CLI binary (pinned release)
-#   4. NemoClaw repo cloned with npm deps installed and TS plugin built
-#
-# What this does NOT install (intentionally):
-#   - code-server (not needed for automated CI)
-#   - VS Code themes/extensions
-#   - NVIDIA Container Toolkit (see brev-launchable-ci-gpu.sh for GPU flavor)
-#   - Ollama / vLLM
-#
-# Readiness detection:
-#   Writes /var/run/nemoclaw-launchable-ready when complete.
-#   Also writes "=== Ready ===" to /tmp/launch-plugin.log for backward compat.
-#
-# Usage (Brev launchable startup script — one-liner that curls this):
-#   curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/<ref>/scripts/brev-launchable-ci-cpu.sh | bash
-#   bash scripts/brev-launchable-ci-cpu.sh --print-openshell-version  # resolve only
-#
-# Environment overrides:
-#   OPENSHELL_VERSION          — OpenShell CLI release tag (must resolve to v0.0.116)
-#   NEMOCLAW_OPENSHELL_CHANNEL — Release channel (stable/auto)
-#   NEMOCLAW_REF               — NemoClaw git ref to clone (default: main)
-#   NEMOCLAW_CLONE_DIR         — Where to clone NemoClaw (default: ~/NemoClaw)
-#
-# Related:
-#   - Epic: https://github.com/NVIDIA/NemoClaw/issues/1326
-#   - Issue: https://github.com/NVIDIA/NemoClaw/issues/1327
 
 set -euo pipefail
 
-# ── Configuration ────────────────────────────────────────────────────
 OPENSHELL_VERSION="${OPENSHELL_VERSION:-}"
 NEMOCLAW_REF="${NEMOCLAW_REF:-main}"
 
 LAUNCH_LOG="${LAUNCH_LOG:-/tmp/launch-plugin.log}"
 SENTINEL="/var/run/nemoclaw-launchable-ready"
 
-# ── Suppress apt noise ───────────────────────────────────────────────
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-# Logging
 mkdir -p "$(dirname "$LAUNCH_LOG")"
 exec > >(tee -a "$LAUNCH_LOG") 2>&1
 
@@ -61,6 +26,115 @@ fail() {
   printf '\033[0;31m[%s ci-cpu]\033[0m %s\n' "$(_ts)" "$1"
   exit 1
 }
+
+# Keep aligned with scripts/lib/npm-diagnostics.sh.
+# BEGIN npm diagnostics helper
+sanitize_npm_diagnostics() {
+  LC_ALL=C sed -E \
+    -e $'s/\033\\][^\007\033]*(\007|\033\\\\)//g' \
+    -e $'s/\033\\[[0-?]*[ -\\/]*[@-~]//g' \
+    | LC_ALL=C tr '\015' '\012' \
+    | LC_ALL=C tr -cd '\11\12\40-\176' \
+    | awk '
+    BEGIN { private_key = 0 }
+    {
+      line = $0
+      lower = tolower(line)
+      if (line ~ /-----BEGIN ([A-Z0-9]+ )?PRIVATE[ ]KEY-----/) {
+        print "<REDACTED>"
+        private_key = 1
+        next
+      }
+      if (private_key) {
+        if (line ~ /-----END ([A-Z0-9]+ )?PRIVATE[ ]KEY-----/) private_key = 0
+        next
+      }
+      if (lower ~ /(authorization|proxy-authorization|cookie|set-cookie)[ \t]*[:=]/ ||
+          lower ~ /(bearer|basic)[ \t]+[^ \t]/ ||
+          lower ~ /(^|[^a-z0-9])[a-z0-9_.-]*(auth|credential|key|pass|passwd|password|secret|token)[a-z0-9_.-]*[ \t]*[:=]/) {
+        print "<REDACTED CREDENTIAL LINE>"
+        next
+      }
+      print line
+    }
+  ' \
+    | sed -E \
+      -e 's#[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]'"'"'"]+#<REDACTED_URL>#g' \
+      -e 's#(github_pat_|ghp_|glpat-|gsk_|hf_|nvcf-|nvapi-|pypi-|sk-(ant-|proj-)?|tvly-|xapp-|xox[bpas]-)[A-Za-z0-9_-]{8,}#<REDACTED>#g' \
+      -e 's#eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}#<REDACTED>#g' \
+      -e 's#[A-Za-z0-9_+/=-]{32,}#<REDACTED>#g'
+}
+
+bounded_npm_diagnostic_excerpt() {
+  local limit="${1:-3900}"
+  LC_ALL=C awk -v limit="$limit" '
+    {
+      tail = tail $0 ORS
+      if (length(tail) > limit) tail = substr(tail, length(tail) - limit + 1)
+      if ($0 ~ /^npm (error|ERR!|verbose stack)( |$)/ && length(errors) < 2000)
+        errors = substr(errors $0 ORS, 1, 2000)
+    }
+    END {
+      remaining = limit - length(errors)
+      if (length(tail) > remaining) tail = substr(tail, length(tail) - remaining + 1)
+      printf "%s%s", errors, tail
+    }
+  '
+}
+# END npm diagnostics helper
+
+run_npm_install_with_diagnostics() (
+  readonly stage="$1"
+  readonly working_directory="$2"
+  readonly MAX_EXCERPT_BYTES=3900
+  caller_umask="$(umask)"
+  readonly caller_umask
+  umask 077
+  diagnostic_directory="$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-npm-install.XXXXXX")"
+  readonly diagnostic_directory
+  readonly command_log="$diagnostic_directory/npm-install.redacted.log"
+  trap 'if ! rm -rf -- "$diagnostic_directory"; then printf "npm diagnostic cleanup failed\n" >&2; fi' EXIT
+  umask "$caller_umask"
+
+  cd "$working_directory"
+  command=(env
+    -u COMPATIBLE_API_KEY -u GH_TOKEN -u GITHUB_TOKEN
+    -u NVIDIA_INFERENCE_API_KEY -u NODE_AUTH_TOKEN -u NPM_CONFIG__AUTH_TOKEN -u NPM_TOKEN
+    NO_COLOR=1 npm_config_color=false npm_config_loglevel=verbose npm_config_logs_max=0)
+  npm_command=(npm install --ignore-scripts)
+  if [[ "$stage" == "reviewed-npm" ]]; then
+    command=(sudo "${command[@]}" "RUNNER_TEMP=$reviewed_npm_tmp")
+    npm_command=(bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json)
+  fi
+
+  set +e
+  "${command[@]}" "${npm_command[@]}" 2>&1 \
+    | sanitize_npm_diagnostics \
+    | bounded_npm_diagnostic_excerpt "$MAX_EXCERPT_BYTES" >"$command_log"
+  pipeline_status=("${PIPESTATUS[@]}")
+  set -e
+  readonly status="${pipeline_status[0]}"
+  if [[ "${pipeline_status[1]}" -ne 0 || "${pipeline_status[2]}" -ne 0 ]]; then
+    : >"$command_log"
+    printf 'npm command diagnostic sanitization or capture failed\n' >&2
+  fi
+  if [[ "$status" -eq 0 ]]; then
+    tail -3 "$command_log"
+    exit 0
+  fi
+  if [[ "$stage" == "reviewed-npm" ]]; then
+    printf 'reviewed npm bootstrap failed (exit %s).\n' "$status" >&2
+  else
+    printf 'npm install failed during %s dependency installation (exit %s).\n' "$stage" "$status" >&2
+  fi
+  printf '%s\n' '--- npm command output ---' >&2
+  if [[ -s "$command_log" ]]; then
+    cat "$command_log" >&2
+  else
+    printf 'npm command output unavailable\n' >&2
+  fi
+  exit "$status"
+)
 
 assert_openshell_version() {
   local raw="$1"
@@ -95,8 +169,6 @@ TARGET_USER="${SUDO_USER:-$(id -un)}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 NEMOCLAW_CLONE_DIR="${NEMOCLAW_CLONE_DIR:-${TARGET_HOME}/NemoClaw}"
 
-# ── Retry helper ─────────────────────────────────────────────────────
-# Usage: retry 3 10 "description" command arg1 arg2
 retry() {
   local max_attempts="$1" sleep_sec="$2" desc="$3"
   shift 3
@@ -115,7 +187,6 @@ retry() {
   done
 }
 
-# Wait for apt locks.
 # Brev VMs sometimes have unattended-upgrades running at boot.
 wait_for_apt_lock() {
   local max_wait=120 elapsed=0
@@ -218,7 +289,6 @@ install_openshell_cli_release() {
   rm -rf "$tmpdir"
 }
 
-# ══════════════════════════════════════════════════════════════════════
 # 1. System packages
 # Kill unattended-upgrades immediately — it grabs the apt lock on boot
 # and can block for 60-120s. Irrelevant on an ephemeral CI VM.
@@ -244,10 +314,7 @@ else
 fi
 sudo systemctl enable --now docker
 sudo usermod -aG docker "$TARGET_USER" 2>/dev/null || true
-# The current bootstrap process predates the usermod above, so any Docker
-# daemon command in this session must use `sg docker -c ...`. New SSH sessions
-# naturally receive the docker group. Never weaken the host-root-equivalent
-# Docker socket permissions to work around stale group membership.
+# New Docker group membership takes effect in a new login session.
 info "Docker enabled ($(docker --version 2>/dev/null | head -c 40))"
 
 # 3. Node.js 24.18.1
@@ -285,6 +352,8 @@ else
     rm -f "$node_tmp"
     fail "Node.js archive integrity check failed\n  Expected: $node_sha256\n  Actual:   $actual_hash"
   fi
+  # The archive does not delete files left by the bundled npm from an older Node release.
+  sudo rm -rf /usr/local/lib/node_modules/npm
   sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner
   rm -f "$node_tmp"
   [[ "$(node --version)" == "v${NODE_VERSION}" ]] || fail "Node.js installation did not produce v${NODE_VERSION}"
@@ -324,42 +393,32 @@ info "Installing npm dependencies..."
 cd "$NEMOCLAW_CLONE_DIR"
 reviewed_npm_tmp="$(mktemp -d)"
 trap 'rm -rf "$reviewed_npm_tmp"' EXIT
-sudo env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \
-  RUNNER_TEMP="$reviewed_npm_tmp" \
-  bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json
+run_npm_install_with_diagnostics reviewed-npm "$NEMOCLAW_CLONE_DIR"
 rm -rf "$reviewed_npm_tmp"
 trap - EXIT
 [[ "$(npm --version)" == "12.0.2" ]] || fail "Reviewed npm 12.0.2 installation failed"
-npm install --ignore-scripts 2>&1 | tail -3
+run_npm_install_with_diagnostics root "$NEMOCLAW_CLONE_DIR"
 info "Root deps installed"
 
-# --ignore-scripts above skips the `prepare` lifecycle which normally
-# builds dist/ (via `build:cli`). Build it explicitly — bin/nemoclaw.js
-# does `require("../dist/nemoclaw")` and needs the compiled output.
+# Build explicitly because --ignore-scripts skips prepare.
 info "Building CLI (dist/)..."
 npm run build:cli 2>&1 | tail -3
 info "CLI built"
 
 info "Building TypeScript plugin..."
 cd "$NEMOCLAW_CLONE_DIR/nemoclaw"
-npm install --ignore-scripts 2>&1 | tail -3
+run_npm_install_with_diagnostics plugin "$NEMOCLAW_CLONE_DIR/nemoclaw"
 npm run build 2>&1 | tail -3
 cd "$NEMOCLAW_CLONE_DIR"
 info "Plugin built"
 
-# Expose the nemoclaw CLI on PATH. Earlier this was `sudo npm link`, but
-# on cold CPU Brev that routinely hangs inside npm's global-prefix
-# housekeeping and `sudo chown -R node_modules` traversal (≥20 min in
-# CI). npm link just creates two symlinks in the end; do them directly
-# so setup stays deterministic and fast.
+# Link the compiled CLI without npm's global-prefix housekeeping.
 info "Linking nemoclaw CLI (direct symlink)..."
 sudo ln -sf "$NEMOCLAW_CLONE_DIR/bin/nemoclaw.js" /usr/local/bin/nemoclaw
 sudo chmod +x "$NEMOCLAW_CLONE_DIR/bin/nemoclaw.js"
 info "nemoclaw CLI linked at /usr/local/bin/nemoclaw"
 
-# ══════════════════════════════════════════════════════════════════════
 # 6. Readiness sentinel
-# ══════════════════════════════════════════════════════════════════════
 sudo touch "$SENTINEL"
 echo "=== Ready ===" | sudo tee -a "$LAUNCH_LOG" >/dev/null
 

@@ -94,8 +94,7 @@ export function createFinalOnboardFlowPhases<
       context,
       options.preserveRebuildLivePolicy === true,
     );
-    const settleOpenclawStartupBeforeConfiguration =
-      initializeNativeInferenceRoute && Boolean(context.session?.metadata?.fromImage);
+    const settleOpenclawStartupBeforeConfiguration = initializeNativeInferenceRoute;
     if (initializeNativeInferenceRoute && !context.revalidateSandboxIdentity) {
       throw new Error("Initial OpenClaw inference route requires verified sandbox identity.");
     }
@@ -173,6 +172,7 @@ export function createFinalOnboardFlowPhases<
         webSearchEnabled && context.webSearchConfig
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
+      preferredInferenceApi: context.preferredInferenceApi,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       externalComponent: context.externalComponent,
       providerless: isProviderlessComponentOnboarding(context),
@@ -214,6 +214,7 @@ export function createFinalOnboardFlowPhases<
         webSearchEnabled && context.webSearchConfig
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
+      preferredInferenceApi: context.preferredInferenceApi,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       externalComponent: null,
       deferRuntimeVerification: options.preserveRebuildLivePolicy === true,

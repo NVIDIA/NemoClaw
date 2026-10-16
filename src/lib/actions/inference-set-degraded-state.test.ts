@@ -10,7 +10,7 @@ import {
   baseSession,
   createCompatibleProviderCapture,
   createDeps,
-} from "./inference-set.test-support";
+} from "../../../test/helpers/inference-set";
 
 describe("runInferenceSet degraded state handling", () => {
   it("aborts before mutating any layer when the sandbox config read fails (#6997)", async () => {

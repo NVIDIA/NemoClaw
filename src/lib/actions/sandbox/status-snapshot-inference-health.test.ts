@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import type { ProviderHealthStatus } from "../../inference/health";
 import type { SandboxEntry } from "../../state/registry";
 import type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
@@ -50,6 +51,112 @@ function snapshotDeps(
 }
 
 describe("collectSandboxStatusSnapshot inference route health", () => {
+  it.each([true, false])(
+    "reports native local attachment health without querying the shared route: %s (#12558)",
+    async (attached) => {
+      const binding = {
+        provider: "ollama-local",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        authMode: "sentinel",
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+      } as const;
+      const receipt = {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "owned-local-provider",
+      };
+      const options = snapshotDeps(
+        null,
+        null,
+        { ok: true },
+        {
+          provider: binding.provider,
+          gatewayName: binding.gatewayName,
+          nativeLocalProviderAttachment: receipt,
+        },
+      );
+      const observeInferenceRoute = vi.fn();
+      const verifyNativeLocalProviderAttachmentImpl = vi.fn();
+      verifyNativeLocalProviderAttachmentImpl.mockImplementation(
+        attached
+          ? async () => undefined
+          : async () => {
+              throw new Error("attachment missing");
+            },
+      );
+      const probeSandboxInferenceInvocationImpl = vi.fn(async () => ({ ok: true as const }));
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        ...options,
+        deps: {
+          ...options.deps,
+          inferenceRouteObserver: { observeInferenceRoute },
+          verifyNativeLocalProviderAttachmentImpl,
+          probeSandboxInferenceInvocationImpl,
+        },
+      });
+      expect(snapshot.inferenceHealth).toMatchObject({
+        ok: attached,
+        endpoint: expect.stringContaining(binding.endpointUrl),
+      });
+      expect(observeInferenceRoute).not.toHaveBeenCalled();
+      expect(verifyNativeLocalProviderAttachmentImpl).toHaveBeenCalledWith({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        expected: receipt,
+      });
+      expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledTimes(Number(attached));
+    },
+  );
+
+  it("reports bounded redacted native local verification details and recovery (#12558)", async () => {
+    const binding = {
+      provider: "ollama-local",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "sentinel",
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+    } as const;
+    const receipt = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "owned-local-provider",
+    };
+    const secret = `nvapi-${"a".repeat(40)}`;
+    const options = snapshotDeps(
+      null,
+      null,
+      { ok: true },
+      {
+        provider: binding.provider,
+        gatewayName: binding.gatewayName,
+        nativeLocalProviderAttachment: receipt,
+      },
+    );
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        verifyNativeLocalProviderAttachmentImpl: async () => {
+          throw new Error(
+            `profile changed\nAuthorization: Bearer ${secret} ${"detail ".repeat(100)}`,
+          );
+        },
+      },
+    });
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false, probed: false });
+    expect(snapshot.inferenceHealth?.detail).toContain("profile changed");
+    expect(snapshot.inferenceHealth?.detail).toContain(receipt.providerName);
+    expect(snapshot.inferenceHealth?.detail).toContain("Recreate");
+    expect(snapshot.inferenceHealth?.detail).not.toContain(secret);
+    expect(snapshot.inferenceHealth?.detail).not.toMatch(/[\u0000-\u001f\u007f]/u);
+    expect(snapshot.inferenceHealth?.detail?.length).toBeLessThan(600);
+  });
+
   it("restores the guarded agent and host-forward chain before probing a Docker-recovered sandbox", async () => {
     const order: string[] = [];
     const gateway: SandboxInferenceRouteHealth = {
@@ -590,7 +697,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unreachable" });
   });
 
-  it("reports an OpenClaw sandbox with a 404 models route as not ready (#10080)", async () => {
+  it("reports a non-OpenRouter sandbox with a 404 models route as not ready (#10080)", async () => {
     const gateway: SandboxInferenceRouteHealth = {
       ok: true,
       endpoint: "https://inference.local/v1/models",
@@ -605,55 +712,58 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(snapshot.inferenceHealth?.okLabel).toBeUndefined();
   });
 
-  it("reports a Deep Agents Code OpenRouter 404 route as ready once an invocation succeeds (#10080)", async () => {
-    const gateway: SandboxInferenceRouteHealth = {
-      ok: true,
-      endpoint: "https://inference.local/v1/models",
-      httpStatus: 404,
-      detail:
-        "Inference gateway responded HTTP 404 on https://inference.local/v1/models (full chain reachable).",
-    };
+  it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi", "nemocua"])(
+    "reports a %s OpenRouter 404 route as ready once an invocation succeeds (#12621)",
+    async (agentName) => {
+      const gateway: SandboxInferenceRouteHealth = {
+        ok: true,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus: 404,
+        detail:
+          "Inference gateway responded HTTP 404 on https://inference.local/v1/models (full chain reachable).",
+      };
 
-    const options = snapshotDeps(
-      gateway,
-      null,
-      { ok: true },
-      {
-        agent: "langchain-deepagents-code",
-        gatewayName: "nemoclaw-19080",
-        provider: "openrouter-api",
-        model: "openai/gpt-4o-mini",
-      },
-    );
-    const probeSandboxInferenceInvocationImpl = vi.fn(async () => ({ ok: true }) as const);
-    const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => gateway);
-    const snapshot = await collectSandboxStatusSnapshot("alpha", {
-      ...options,
-      deps: {
-        ...options.deps,
-        probeSandboxInferenceGatewayHealthImpl,
-        probeSandboxInferenceInvocationImpl,
-      },
-    });
+      const options = snapshotDeps(
+        gateway,
+        null,
+        { ok: true },
+        {
+          agent: agentName,
+          gatewayName: "nemoclaw-19080",
+          provider: "openrouter-api",
+          model: "openai/gpt-4o-mini",
+        },
+      );
+      const probeSandboxInferenceInvocationImpl = vi.fn(async () => ({ ok: true }) as const);
+      const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => gateway);
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        ...options,
+        deps: {
+          ...options.deps,
+          probeSandboxInferenceGatewayHealthImpl,
+          probeSandboxInferenceInvocationImpl,
+        },
+      });
 
-    expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
-      {
-        sandboxName: "alpha",
+      expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
+        {
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw-19080",
+          ...(agentName === "langchain-deepagents-code" ? { agentName } : {}),
+          provider: "openrouter-api",
+          model: "openai/gpt-4o-mini",
+          preferredInferenceApi: null,
+        },
+        {},
+        95_000,
+      );
+      expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha", {
         gatewayName: "nemoclaw-19080",
-        agentName: "langchain-deepagents-code",
-        provider: "openrouter-api",
-        model: "openai/gpt-4o-mini",
-        preferredInferenceApi: null,
-      },
-      {},
-      95_000,
-    );
-    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha", {
-      gatewayName: "nemoclaw-19080",
-    });
-    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledOnce();
-    expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
-  });
+      });
+      expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledOnce();
+      expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
+    },
+  );
 
   it("pins Hermes status health to its recorded OpenShell gateway (#10302)", async () => {
     const gateway: SandboxInferenceRouteHealth = {
@@ -705,7 +815,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
   });
 
-  it("reports a Deep Agents Code OpenRouter 404 route as not ready when the invocation fails (#10080)", async () => {
+  it("reports a supported OpenRouter 404 route as not ready when the invocation fails (#12621)", async () => {
     const gateway: SandboxInferenceRouteHealth = {
       ok: true,
       endpoint: "https://inference.local/v1/models",
@@ -725,7 +835,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
           httpStatus: 401,
         },
         {
-          agent: "langchain-deepagents-code",
+          agent: "hermes",
           provider: "openrouter-api",
           model: "openai/gpt-4o-mini",
         },
@@ -852,7 +962,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(delayInferenceRecoveryProbe).toHaveBeenCalledOnce();
     expect(snapshot.inferenceHealth).toMatchObject({
       ok: false,
-      detail: brokenRoute.detail,
+      detail: expect.stringContaining(brokenRoute.detail),
       failureLabel: "unreachable",
     });
   });

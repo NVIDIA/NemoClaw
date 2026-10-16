@@ -112,3 +112,50 @@ export async function captureSandboxFailureDiagnostics(
     // Failure-only evidence must preserve the original lifecycle assertion.
   }
 }
+
+/** Preserve the installer failure and the runtime inventory before a lifecycle assertion stops the test. */
+export async function captureLifecycleInstallFailureDiagnostics(
+  host: Pick<HostCliClient, "command" | "openshellCommandPath">,
+  runtime: RuntimeProviderPrerequisite,
+  result: { exitCode: number | null; timedOut: boolean },
+  options: {
+    sandboxName: string;
+    gatewayName: string;
+    artifactPrefix: string;
+    env: NodeJS.ProcessEnv;
+    redactionValues: string[];
+  },
+): Promise<void> {
+  if (result.exitCode === 0 && !result.timedOut) return;
+  await captureSandboxFailureDiagnostics(host, result, {
+    sandboxName: options.sandboxName,
+    artifactPrefix: options.artifactPrefix,
+    redactionValues: options.redactionValues,
+    captureGatewayLog: true,
+  });
+  await Promise.allSettled([
+    runtime.command(
+      [
+        "container",
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `label=openshell.ai/sandbox-name=${options.sandboxName}`,
+        "--format",
+        "{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Status}}",
+      ],
+      {
+        artifactName: `${options.artifactPrefix}-container-inventory`,
+        redactionValues: options.redactionValues,
+        timeoutMs: 30_000,
+      },
+    ),
+    host.command(host.openshellCommandPath, ["sandbox", "list", "-g", options.gatewayName], {
+      artifactName: `${options.artifactPrefix}-sandbox-list`,
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 30_000,
+    }),
+  ]);
+}

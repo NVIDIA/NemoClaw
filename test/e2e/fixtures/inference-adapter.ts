@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes } from "node:crypto";
+import { nativeHostedAuthHeaderScript } from "../../../src/lib/inference/native-provider/contract.ts";
+import {
+  NATIVE_NVIDIA_AUTH_HEADER_SCRIPT,
+  NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+} from "../../../src/lib/inference/native-nvidia/contract.ts";
 
 import type { ArtifactSink } from "./artifacts.ts";
 import { buildAvailabilityProbeEnv } from "./availability-env.ts";
@@ -249,7 +255,13 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
       signal: AbortSignal.timeout(MODEL_PROBE_TIMEOUT_MS),
     });
     const json = await responseJsonOrThrow(response, "model probe");
-    await this.artifacts.writeJson(`${artifactName}.json`, json);
+    // The mock reply is asserted by the caller. Keep a success marker in the
+    // artifact without copying network-controlled response content to disk.
+    await this.artifacts.writeJson(`${artifactName}.json`, {
+      mode: "mock",
+      probe: "models",
+      responseReceived: true,
+    });
     return json;
   }
 
@@ -281,10 +293,11 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
       signal: AbortSignal.timeout(DIRECT_CHAT_TIMEOUT_MS),
     });
     const json = await responseJsonOrThrow(response, "direct chat");
-    await this.artifacts.writeJson(
-      `${options.artifactName ?? "direct-compatible-chat"}.json`,
-      json,
-    );
+    await this.artifacts.writeJson(`${options.artifactName ?? "direct-compatible-chat"}.json`, {
+      mode: "mock",
+      probe: "direct-chat",
+      responseReceived: true,
+    });
     return json;
   }
 
@@ -449,3 +462,39 @@ export async function createE2EInferenceAdapter(
 }
 
 export { DEFAULT_HOSTED_INFERENCE_MODEL as DEFAULT_INTERNAL_NVIDIA_MODEL };
+
+/** Build the in-sandbox chat request without exposing a host credential. */
+export function buildSandboxInferenceChatCommand(
+  requestBody: string,
+  logicalProvider: string,
+  endpointUrl?: string,
+): [string, ...string[]] {
+  const nativeCustom = logicalProvider === "compatible-endpoint" && endpointUrl;
+  if (logicalProvider === NVIDIA_HOSTED_LOGICAL_PROVIDER || nativeCustom) {
+    const auth = nativeCustom
+      ? nativeHostedAuthHeaderScript({
+          credentialEnv: "COMPATIBLE_API_KEY",
+          api: "openai-completions",
+        })
+      : NATIVE_NVIDIA_AUTH_HEADER_SCRIPT;
+    return [
+      "bash",
+      "-c",
+      `${auth}; exec curl -fsS --max-time 90 "$1" -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-raw "$2"`,
+      "full-e2e-native-inference",
+      `${(nativeCustom ? endpointUrl : NVIDIA_HOSTED_NATIVE_ENDPOINT).replace(/\/+$/u, "")}/chat/completions`,
+      requestBody,
+    ];
+  }
+  return [
+    "curl",
+    "-fsS",
+    "--max-time",
+    "90",
+    "https://inference.local/v1/chat/completions",
+    "-H",
+    "Content-Type: application/json",
+    "--data-raw",
+    requestBody,
+  ];
+}

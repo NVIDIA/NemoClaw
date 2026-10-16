@@ -70,6 +70,7 @@ on:
       - "src/lib/onboard/runtime-provider/podman*.ts"
       - "src/lib/actions/sandbox/destroy*.ts"
       - "src/lib/domain/sandbox/destroy.ts"
+      - "src/lib/domain/sandbox/image-tag.ts"
       - "src/lib/actions/sandbox/probe/hermes-portable-inference-recovery.ts"
       - "src/lib/onboard/experimental/hermes-portable-ollama-*.ts"
       - "src/lib/onboard/runtime-provider/host-local-inference*.ts"
@@ -85,6 +86,7 @@ on:
       - "src/lib/agent/defs.ts"
       - "src/lib/core/retry.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
+      - "test/e2e/fixtures/portable-hermes-transaction-live.ts"
       - "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
   push:
     branches:
@@ -128,6 +130,7 @@ on:
       - "test/e2e/fixtures/availability-env.ts"
       - "test/e2e/fixtures/portable-profile-systemctl-shim.sh"
       - "test/e2e/fixtures/portable-profile-systemctl.ts"
+      - "test/e2e/fixtures/portable-hermes-transaction-live.ts"
       - "test/e2e/live/full-e2e.test.ts"
       - "test/e2e/live/launch-agent-turn.ts"
       - "test/e2e/live/portable-profile-gateway-proof.ts"

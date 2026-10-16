@@ -492,11 +492,13 @@ describe("vLLM run command", () => {
   it("preserves profile run flags and image as argv tokens", () => {
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
     expect(profile).not.toBeNull();
-    const args = buildVllmRunArgs(profile!, profile!.defaultModel, [
-      "--gpus",
-      '"device=0,1"',
-      "--ipc=host",
-    ]);
+    const args = buildVllmRunArgs(
+      profile!,
+      profile!.defaultModel,
+      ["--gpus", '"device=0,1"', "--ipc=host"],
+      { VLLM_API_KEY: "a".repeat(64) },
+      "172.18.0.1",
+    );
     expect(args).toEqual(expect.arrayContaining(["--gpus", '"device=0,1"', "--ipc=host"]));
     expect(args).toContain(profile!.image);
     expect(args).toEqual(expect.arrayContaining(["--entrypoint", "/bin/bash"]));

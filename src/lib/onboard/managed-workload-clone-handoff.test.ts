@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { createInMemoryRuntimeProviderBundle } from "../../../test/helpers/runtime-provider-bundle";
+import { hostedNativeProvider } from "../inference/native-provider/hosted";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../state/registry/types";
 import {
   MANAGED_IMAGE_REPOSITORIES,
@@ -415,5 +416,69 @@ describe("prepareManagedWorkloadCloneHandoff", () => {
         getHermesInferenceProviderName: vi.fn(),
       }),
     ).toThrow(/snapshot content authority is invalid/u);
+  });
+});
+
+describe("native clone handoff authority", () => {
+  it.each(["openai-api", "anthropic-prod", "gemini-api", "openrouter-api", "hermes-provider"])(
+    "retains the exact %s attachment alongside the native startup route",
+    (logicalProvider) => {
+      const definition = hostedNativeProvider(
+        logicalProvider,
+        logicalProvider === "hermes-provider" ? "https://api.nousresearch.com/v1" : undefined,
+      )!;
+      const entry = source("openclaw", "docker");
+      entry.provider = logicalProvider;
+      entry.model = "test-model";
+      entry.nativeHostedProviderAttachment = {
+        schemaVersion: 1,
+        profileId: definition.profileId,
+        providerName: definition.providerName,
+        providerId: "immutable-hosted-id",
+        ...(definition.endpointUrl
+          ? { endpointUrl: definition.endpointUrl, allowedIps: ["8.8.8.8"] }
+          : {}),
+      };
+      const handoff = prepare(entry, provider("docker"));
+      expect(handoff.registryFields.nativeHostedProviderAttachment).toEqual(
+        entry.nativeHostedProviderAttachment,
+      );
+      expect(handoff.registryFields.nativeNvidiaProviderAttachment).toBeUndefined();
+      expect(handoff.rebound.profile.inference?.routedBaseUrl).toBe(
+        definition.endpoint.replace(/\/+$/, ""),
+      );
+      expect(Object.isFrozen(handoff.registryFields.nativeHostedProviderAttachment)).toBe(true);
+    },
+  );
+
+  it("retains native NVIDIA authority without converting it to a hosted receipt", () => {
+    const entry = source("openclaw", "docker");
+    entry.provider = "nvidia-prod";
+    entry.nativeNvidiaProviderAttachment = {
+      schemaVersion: 1,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId: "immutable-nvidia-id",
+    };
+    const handoff = prepare(entry, provider("docker"));
+    expect(handoff.registryFields.nativeNvidiaProviderAttachment).toEqual(
+      entry.nativeNvidiaProviderAttachment,
+    );
+    expect(handoff.registryFields.nativeHostedProviderAttachment).toBeUndefined();
+  });
+
+  it("rejects a receipt for a different source selection before handoff", () => {
+    const entry = source("openclaw", "docker");
+    entry.provider = "anthropic-prod";
+    const definition = hostedNativeProvider("openai-api")!;
+    entry.nativeHostedProviderAttachment = {
+      schemaVersion: 1,
+      profileId: definition.profileId,
+      providerName: definition.providerName,
+      providerId: "wrong-selection-id",
+    };
+    expect(() => prepare(entry, provider("docker"))).toThrow(
+      "managed startup profile could not be rebound",
+    );
   });
 });

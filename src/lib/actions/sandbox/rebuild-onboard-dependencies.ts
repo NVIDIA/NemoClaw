@@ -5,15 +5,28 @@ import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-
 import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider/registry";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import type { NativeLocalProviderAttachment } from "../../inference/native-local/contract";
 
 type RebuildAuthoritativePreflightOptions = RebuildRecreateOnboardOpts & {
   deferInferenceRouteUntilOnboard?: true;
+  agent?: string | null;
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   model: string;
   provider: string;
   sandboxName: string;
 };
 
+type RebuildCompatibleEndpointSmokeOptions = Pick<
+  Parameters<
+    typeof import("../../onboard/compatible-endpoint-smoke").verifyCompatibleEndpointSandboxSmoke
+  >[0],
+  "sandboxName" | "provider" | "model" | "endpointUrl" | "credentialEnv"
+> & { environment: NodeJS.ProcessEnv; gatewayName?: string };
+
 type RebuildOnboardModule = {
+  verifyRebuiltOpenClawCompatibleEndpoint: (
+    options: RebuildCompatibleEndpointSmokeOptions,
+  ) => Promise<void>;
   ensureValidatedWebSearchCredential: (
     config: NonNullable<RebuildDurableConfig["webSearchConfig"]>,
     nonInteractive?: boolean,
@@ -57,6 +70,11 @@ function loadOnboardModule(): RebuildOnboardModule {
  * the onboarding APIs are side-effect-free named imports.
  */
 export const rebuildOnboardDependencies = {
+  verifyRebuiltOpenClawCompatibleEndpoint(
+    options: RebuildCompatibleEndpointSmokeOptions,
+  ): Promise<void> {
+    return loadOnboardModule().verifyRebuiltOpenClawCompatibleEndpoint(options);
+  },
   detectGpuWithRuntimeProviderProof(
     providerId: string | null | undefined,
   ): import("../../inference/nim").GpuDetection | null {

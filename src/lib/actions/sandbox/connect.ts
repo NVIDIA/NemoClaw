@@ -3,7 +3,10 @@
 
 import { isDeepStrictEqual } from "node:util";
 import { formatOpenShellForwardStartFailure } from "../../adapters/openshell/forward";
-import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../adapters/openshell/inference-route-cli";
+import {
+  createCliOpenShellInferenceRouteMutator,
+  createSynchronousCliOpenShellInferenceRouteObserver,
+} from "../../adapters/openshell/inference-route-cli";
 import {
   createCliOpenShellSandboxCommandExecutor,
   createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor,
@@ -18,11 +21,10 @@ import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sand
 import {
   captureOpenshell,
   captureResolvedOpenshell,
-  runOpenshell,
+  captureResolvedOpenshellAsync,
 } from "../../adapters/openshell/runtime";
 import {
   OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
-  OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../../agent/defs";
@@ -51,7 +53,7 @@ import {
 import { emitPortableOpenClawAlreadyRunningTiming } from "../../onboard/experimental/portable-demo-lifecycle-timing";
 import { ROOT, shellQuote } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
-import { redact, redactFull } from "../../security/redact";
+import { redact, redactFull, redactFullWithUrls } from "../../security/redact";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -74,7 +76,8 @@ import {
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   assertSandboxGatewayRouteCompatible,
-  buildGatewayInferenceSetArgs,
+  connectInferenceRouteMutationRequest,
+  type ConnectInferenceRouteMutationResult,
   sandboxUsesLegacyClusterGateway,
 } from "./connect-inference-gateway";
 import {
@@ -85,6 +88,7 @@ import {
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import {
+  createSandboxStartErrorGrace,
   ensureLiveSandboxOrExit,
   buildHermesPortableCommandAuthority,
   defaultPortableDemoStateDir,
@@ -118,6 +122,8 @@ import {
   type ProbeTimingRecorder,
   publicationFromDecision,
   publishLaunchReadiness,
+  getNativeProviderAttachment,
+  requireNativeInferenceHealth,
   settlePortableOpenClawPairing,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
@@ -257,7 +263,10 @@ export type ManagedInferenceRouteResetDeps = {
     provider: string,
     options: { quiet?: boolean; recordedEndpointUrl?: string | null },
   ) => boolean;
-  runInferenceSet: (provider: string, model: string) => { status: number | null };
+  runInferenceSet: (
+    provider: string,
+    model: string,
+  ) => Promise<ConnectInferenceRouteMutationResult>;
   probe: (
     sandboxName: string,
     options?: InferenceRouteProbeOptions,
@@ -269,6 +278,11 @@ export type ManagedInferenceRouteResetDeps = {
 
 const INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS = 3;
 const INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS = 2_000;
+
+const inferenceRouteMutator = createCliOpenShellInferenceRouteMutator(
+  captureResolvedOpenshellAsync,
+  { redactDiagnostic: redactFullWithUrls },
+);
 
 const SANDBOX_CONNECT_FLAGS = new Set([
   "--dangerously-skip-permissions",
@@ -1379,10 +1393,10 @@ async function reapplyVmInferenceRoute(
 ): Promise<SandboxInferenceRouteProbe | null> {
   const inference = sb ? registry.getSandboxEntryInference(sb) : null;
   if (inference?.kind !== "configured") return null;
-  runOpenshell(buildGatewayInferenceSetArgs(gatewayName, inference.provider, inference.model), {
-    ignoreError: true,
-    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-  });
+  const applyResult = await inferenceRouteMutator.setInferenceRoute(
+    connectInferenceRouteMutationRequest(gatewayName, inference.provider, inference.model),
+  );
+  if (!applyResult.ok && applyResult.ambiguous) throw new Error(applyResult.error.message);
   return probeSandboxInferenceRoute(sandboxName, agent);
 }
 
@@ -1637,8 +1651,14 @@ export async function resetManagedInferenceRouteWithDeps(
   }
 
   if (!quiet) log(`  Resetting inference route to ${route}.`);
-  const resetResult = deps.runInferenceSet(provider, model);
-  const resetFailed = resetResult.status !== 0;
+  const resetResult = await deps.runInferenceSet(provider, model);
+  if (!resetResult.ok && resetResult.ambiguous) {
+    return fail(
+      resetResult.error.message,
+      "  Error: the OpenShell inference route result is unknown; inspect the same gateway before retrying.",
+    );
+  }
+  const resetFailed = !resetResult.ok;
   if (!resetFailed && !deps.verifyLocalInferenceRouteDependencies(provider, dependencyOptions)) {
     return fail(detail);
   }
@@ -1672,10 +1692,9 @@ async function resetManagedInferenceRoute(
     {
       verifyLocalInferenceRouteDependencies,
       runInferenceSet: (provider, model) =>
-        runOpenshell(buildGatewayInferenceSetArgs(gatewayName, provider, model), {
-          ignoreError: true,
-          timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-        }),
+        inferenceRouteMutator.setInferenceRoute(
+          connectInferenceRouteMutationRequest(gatewayName, provider, model),
+        ),
       probe: (name, options) => probeSandboxInferenceRoute(name, agent, options),
       printUnrecoverableInferenceRoute,
     },
@@ -1698,6 +1717,17 @@ async function ensureSandboxInferenceRouteUnlocked(
     assertNoOpenShellGatewayEndpointOverride();
     const { provider, model } = inference;
     const gatewayName = getPersistedSandboxTargetGatewayName(sb);
+    const nativeAttachment = getNativeProviderAttachment(sb);
+    if (nativeAttachment || sb.nativeLocalProviderAttachment !== undefined) {
+      await requireNativeInferenceHealth({
+        sandboxName,
+        gatewayName,
+        agentName: agent?.name,
+        entry: sb,
+        deps: {},
+      });
+      return { sandbox: sb, routeHealthy: true };
+    }
     // The live route exposes only provider/model. Prove the target's durable
     // custom endpoint/API identity before any route read, probe, or mutation.
     assertSandboxGatewayRouteCompatible(sandboxName, sb, gatewayName);
@@ -1735,11 +1765,15 @@ async function ensureSandboxInferenceRouteUnlocked(
         // plan.kind === "repair": empty gateway, genuine repair — quiet-aware.
         console.log(`  Setting inference route to ${recordedRoute} for sandbox '${sandboxName}'`);
       }
-      const swapResult = runOpenshell(buildGatewayInferenceSetArgs(gatewayName, provider, model), {
-        ignoreError: true,
-        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-      });
-      if (swapResult.status !== 0 && (plan.kind === "diverged" || !quiet)) {
+      const swapResult = await inferenceRouteMutator.setInferenceRoute(
+        connectInferenceRouteMutationRequest(gatewayName, provider, model),
+      );
+      if (!swapResult.ok && swapResult.ambiguous) {
+        throw new Error(
+          `${swapResult.error.message} Inspect gateway '${gatewayName}' before retrying the route mutation.`,
+        );
+      }
+      if (!swapResult.ok && (plan.kind === "diverged" || !quiet)) {
         console.error(
           `  ${YW}Warning: failed to switch inference route — connect will proceed anyway.${R}`,
         );
@@ -1845,6 +1879,12 @@ async function ensureSandboxInferenceRoute(
   if (!snapshot) return { sandbox: null, routeHealthy: null };
   if (registry.getSandboxEntryInference(snapshot).kind !== "configured")
     return { sandbox: snapshot, routeHealthy: null };
+  if (
+    getNativeProviderAttachment(snapshot) ||
+    snapshot.nativeLocalProviderAttachment !== undefined
+  ) {
+    return ensureSandboxInferenceRouteUnlocked(sandboxName, agent, { quiet });
+  }
   const gatewayName = getPersistedSandboxTargetGatewayName(snapshot);
   return withGatewayRouteMutationLock(gatewayName, () => {
     const lockedSnapshot = readConnectSandbox(sandboxName);
@@ -1943,16 +1983,6 @@ type WaitForSandboxReadyOptions = {
   successLogs?: readonly string[];
 };
 
-// OpenShell can transiently publish `Error` immediately after `sandbox start`
-// before the same sandbox advances through `Provisioning` to `Ready`. Its list
-// output exposes no structured transition reason. A caller opts into twenty
-// three-second grace polls only after it starts the container; every other
-// terminal phase still fails immediately, and a persistent Error fails after
-// the bound. Remove this compatibility exception once OpenShell exposes a
-// structured restart signal or guarantees that post-start recovery never emits
-// the terminal Error phase.
-const START_INITIAL_ERROR_GRACE_POLLS = 20;
-
 // Readiness budget for the repair paths that wait for a restarted sandbox
 // before they touch in-sandbox processes or host forwards. A cold agent boot on
 // a constrained host can exceed the interactive budget, and `start` and
@@ -2014,9 +2044,9 @@ export async function waitForSandboxReadyOrExit(
   if (status && /^unknown$/i.test(status)) {
     await failIfGatewayBlocksConnectReadiness(sandboxName);
   }
-  let remainingInitialErrorGracePolls =
-    allowInitialErrorAfterStart && status === "Error" ? START_INITIAL_ERROR_GRACE_POLLS - 1 : 0;
-  if (status && TERMINAL_SANDBOX_PHASES.has(status) && remainingInitialErrorGracePolls === 0) {
+  const allowInitialError = createSandboxStartErrorGrace(allowInitialErrorAfterStart);
+  const initialErrorAllowed = allowInitialError(status);
+  if (status && TERMINAL_SANDBOX_PHASES.has(status) && !initialErrorAllowed) {
     failConnectReadinessTerminalPhase(sandboxName, `is in '${status}'`, {
       inspectDockerIdentity: allowDockerRuntimeInspection,
       retryCommand,
@@ -2047,12 +2077,7 @@ export async function waitForSandboxReadyOrExit(
       await failIfGatewayBlocksConnectReadiness(sandboxName);
     }
     if (cur !== "unknown") everSeen = true;
-    const waitingThroughInitialError = cur === "Error" && remainingInitialErrorGracePolls > 0;
-    if (waitingThroughInitialError) {
-      remainingInitialErrorGracePolls -= 1;
-    } else {
-      remainingInitialErrorGracePolls = 0;
-    }
+    const waitingThroughInitialError = allowInitialError(cur);
     if (TERMINAL_SANDBOX_PHASES.has(cur) && !waitingThroughInitialError) {
       failConnectReadinessTerminalPhase(sandboxName, `entered '${cur}'`, {
         inspectDockerIdentity: allowDockerRuntimeInspection,

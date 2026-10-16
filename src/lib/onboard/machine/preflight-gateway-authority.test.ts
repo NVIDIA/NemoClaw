@@ -150,6 +150,7 @@ describe("preflight gateway authority", () => {
       projection: gatewayReadiness,
       snapshot: gatewaySnapshot,
     });
+    expect(collectReadiness).toHaveBeenLastCalledWith(expect.objectContaining({ exitProcess }));
 
     await expect(authority.prepareGatewayAuthority()).resolves.toEqual({
       externallySupervised: false,

@@ -27,6 +27,7 @@ import {
   TERMINAL_SANDBOX_PHASES,
 } from "../../state/gateway";
 export { isTerminalSandboxPhase, sandboxPhaseNeedsLifecycleStart, TERMINAL_SANDBOX_PHASES };
+export { createSandboxStartErrorGrace } from "../../domain/lifecycle/sandbox-start-error-grace";
 import { selectNamedGateway, selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,

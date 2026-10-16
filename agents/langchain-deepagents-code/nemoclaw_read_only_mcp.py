@@ -247,6 +247,19 @@ async def _call_read_only_tool(tool_name: str, arguments: dict[str, Any]) -> dic
             no_mcp=config_path is None,
             trust_project_mcp=False,
         )
+        # Upstream allocates unique aliases for colliding server/tool pairs.
+        # Refuse an ambiguous original name before its first alias can run.
+        original_matches = [
+            tool
+            for tool in tools
+            if isinstance(tool.metadata, Mapping)
+            and (
+                f"{tool.metadata.get('_deepagents_code_mcp_server')}_"
+                f"{tool.metadata.get('_deepagents_code_mcp_tool')}"
+            ) == tool_name
+        ]
+        if len(original_matches) > 1:
+            raise _CallError("ambiguous_tool", "The exact MCP tool name is ambiguous.")
         matches = [tool for tool in tools if tool.name == tool_name]
         if len(matches) != 1:
             code = "tool_not_found" if not matches else "ambiguous_tool"

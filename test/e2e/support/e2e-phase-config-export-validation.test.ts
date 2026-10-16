@@ -8,11 +8,22 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
-import { encodeManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
 import {
   EXPECTED_NATIVE_SETTINGS,
   PINNED_CONSUMER_EVIDENCE,
+  IMAGE_REF,
+  POLICY,
+  document,
+  instance,
+  manifest,
+  searchConsumerEvidence,
+  sourceProfile,
+  SECRET,
+  ENCODED_SECRET,
+  DIAGNOSTIC_SECRET_REPRESENTATIONS,
+  INTERNAL_TRANSPORT,
+  ENCODED_INTERNAL_TRANSPORT,
+  INTERNAL_TRANSPORT_REPRESENTATIONS,
 } from "./config-export-consumer-evidence-fixture.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -25,67 +36,13 @@ import {
   ConfigExportValidationPhaseFixture,
   parseConfigExport,
 } from "../fixtures/phases/config-export-validation.ts";
-import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import { ShellProbe, type ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { listTargets } from "../registry/registry.ts";
-import type { NemoClawInstanceManifest, TargetDefinition } from "../registry/types.ts";
+import type { TargetDefinition } from "../registry/types.ts";
 
-const IMAGE_REF = `nvcr.io/nvidia/nemoclaw@sha256:${"a".repeat(64)}`;
 const SOURCE_REVISION = "b".repeat(40);
-const ENCODED_PROFILE = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
-const SECRET = "fixture-secret-value";
-const ENCODED_SECRET = Buffer.from(SECRET, "utf8").toString("base64");
-const DIAGNOSTIC_SECRET_REPRESENTATIONS = [
-  { name: "literal", value: SECRET },
-  { name: "wrapped-literal", value: `${SECRET.slice(0, 7)}\n# ${SECRET.slice(7)}` },
-  {
-    name: "escaped-literal",
-    value: `\\u${SECRET.charCodeAt(0).toString(16).padStart(4, "0")}${SECRET.slice(1)}`,
-  },
-  { name: "base64", value: ENCODED_SECRET },
-  {
-    name: "wrapped-base64",
-    value: `${ENCODED_SECRET.slice(0, 12)}\n# ${ENCODED_SECRET.slice(12)}`,
-  },
-  {
-    name: "escaped-base64",
-    value: `\\u${ENCODED_SECRET.charCodeAt(0).toString(16).padStart(4, "0")}${ENCODED_SECRET.slice(1)}`,
-  },
-] as const;
-const INTERNAL_TRANSPORT = "openshell:resolve:env:KEY";
-const ENCODED_INTERNAL_TRANSPORT = Buffer.from(INTERNAL_TRANSPORT, "utf8").toString("base64");
-const INTERNAL_TRANSPORT_REPRESENTATIONS = [
-  {
-    name: "escaped",
-    value: [...INTERNAL_TRANSPORT]
-      .map((character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
-      .join(""),
-  },
-  { name: "base64", value: ENCODED_INTERNAL_TRANSPORT },
-  {
-    name: "base64url",
-    value: Buffer.from("openshell:resolve:env:ÿ", "utf8")
-      .toString("base64")
-      .replace(/\+/gu, "-")
-      .replace(/\//gu, "_"),
-  },
-  {
-    name: "wrapped-base64",
-    value: `${ENCODED_INTERNAL_TRANSPORT.slice(0, 16)}\n# ${ENCODED_INTERNAL_TRANSPORT.slice(16)}`,
-  },
-] as const;
-const POLICY = {
-  version: 1,
-  network_policies: {
-    inference: {
-      name: "inference",
-      endpoints: [{ host: "inference.example", port: 443 }],
-      binaries: [{ path: "/usr/bin/openclaw" }],
-    },
-  },
-};
 const createdDirectories: string[] = [];
 const artifactDirectories: string[] = [];
 
@@ -103,116 +60,10 @@ function target(expectation: TargetDefinition["configExport"]["expectation"]): T
   };
 }
 
-function manifest(
-  features?: Record<string, unknown>,
-  credentialRefs = ["NVIDIA_INFERENCE_API_KEY"],
-): NemoClawInstanceManifest {
-  return {
-    apiVersion: "nemoclaw.io/v1",
-    kind: "NemoClawInstance",
-    metadata: { name: "openclaw" },
-    spec: {
-      setup: { install: {}, runtime: {}, platform: {} },
-      onboarding: {
-        agent: "openclaw",
-        provider: "nvidia",
-        modelRoute: "inference-local",
-        policyTier: "personal",
-        messaging: [],
-        ...(features ? { features } : {}),
-      },
-      state: { credentialRefs },
-    },
-  };
-}
-
-function document(
-  overrides: {
-    model?: string;
-    observability?: boolean;
-    credentialReference?: string;
-    gatewayEndpoint?: string;
-  } = {},
-): ConfigExportDocument {
-  const gatewayEndpoint = overrides.gatewayEndpoint ?? "http://127.0.0.1:8080";
-  return {
-    apiVersion: "nemoclaw.nvidia.com/v1alpha1",
-    kind: "NemoClawConfig",
-    metadata: {
-      name: "export",
-      uid: "123e4567-e89b-42d3-a456-426614174000",
-    },
-    spec: {
-      gateway: { management: "managed", endpoint: gatewayEndpoint },
-      inferenceProviders: [
-        {
-          name: "hosted-compatible-endpoint",
-          provider: "openai",
-          api: "openai-completions",
-          endpoint: "https://inference.example/v1",
-          credential: { env: overrides.credentialReference ?? "NVIDIA_INFERENCE_API_KEY" },
-        },
-      ],
-      sandboxes: [
-        {
-          name: "sandbox",
-          runtime: { provider: "docker" },
-          network: { policy: { explicit: POLICY } },
-          harness: {
-            kind: "openclaw",
-            ...(overrides.observability
-              ? {
-                  observability: {
-                    otlp: {
-                      enabled: true,
-                      endpoint: "http://host.openshell.internal:4318",
-                      serviceName: "openclaw",
-                      sampleRate: 1,
-                    },
-                  },
-                }
-              : {}),
-          },
-          agent: {
-            name: "primary",
-            inference: {
-              routes: [
-                {
-                  name: "primary",
-                  providerRef: "hosted-compatible-endpoint",
-                  overrides: { model: overrides.model ?? "nvidia/model" },
-                },
-              ],
-            },
-          },
-        },
-      ],
-    },
-  } as unknown as ConfigExportDocument;
-}
-
-function instance(expectedFailure = false): NemoClawInstance {
-  return {
-    onboarding: "cloud-openclaw",
-    sandboxName: "sandbox",
-    agent: "openclaw",
-    provider: "nvidia",
-    providerEnv: "cloud",
-    gatewayUrl: "http://127.0.0.1:18789",
-    result: {} as NemoClawInstance["result"],
-    ...(expectedFailure
-      ? {
-          expectedFailure: {
-            phase: "onboarding" as const,
-            errorClass: "policy-presets-required" as const,
-          },
-        }
-      : {}),
-  };
-}
-
 function dependencies(
   options: {
+    agent?: "openclaw" | "hermes";
+    searchProvider?: "brave" | "tavily";
     credentialRefs?: string[];
     features?: Record<string, unknown>;
     parsedDocument?: ConfigExportDocument;
@@ -243,14 +94,16 @@ function dependencies(
     },
     loadManifest: (filePath) => ({
       filePath,
-      document: manifest(options.features, options.credentialRefs),
+      document: manifest(options.features, options.credentialRefs, options.agent),
     }),
     loadRegistry: () => ({
       defaultSandbox: "sandbox",
       sandboxes: {
         sandbox: {
           name: "sandbox",
-          agent: "openclaw",
+          agent: options.agent ?? "openclaw",
+          webSearchEnabled: Boolean(options.searchProvider),
+          webSearchProvider: options.searchProvider ?? null,
           openshellDriver: "docker",
           gatewayName: "nemoclaw",
           provider: "compatible-endpoint",
@@ -268,7 +121,7 @@ function dependencies(
             sourceCohort: "test",
             capabilityContractVersion: 1,
             startupProfileContractVersion: 1,
-            encodedProfile: ENCODED_PROFILE,
+            encodedProfile: sourceProfile(options.agent ?? "openclaw", options.searchProvider),
             startupProfileSha256: `sha256:${"c".repeat(64)}`,
             credentialProxyReplayRequired: true,
             shared: true,
@@ -764,6 +617,127 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     );
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
+  it.each([
+    ["openclaw", "brave", "BRAVE_API_KEY"],
+    ["openclaw", "tavily", "TAVILY_API_KEY"],
+    ["hermes", "tavily", "TAVILY_API_KEY"],
+  ] as const)(
+    "validates the raw %s %s export and native search binding (#12138)",
+    async (agent, provider, credentialReference) => {
+      const raw = JSON.stringify(document({ agent, searchProvider: provider }));
+      const search = {
+        provider,
+        credentialReference,
+        agentRefs: ["primary"],
+        nativeProvider: provider,
+      };
+      const inputs = dependencies({
+        agent,
+        searchProvider: provider,
+        features: { webSearch: true },
+        credentialRefs: ["NVIDIA_INFERENCE_API_KEY", credentialReference],
+      });
+      inputs.parseConfig = parseConfigExport;
+      inputs.validateWithPinnedV1 = vi.fn(() => searchConsumerEvidence(agent, search));
+      const test = fixture({ dependencies: inputs, host: successfulHost(raw) });
+
+      const evidence = await test.phase.from(target("required"), { ...instance(), agent });
+
+      expect(inputs.validateWithPinnedV1).toHaveBeenCalledWith(raw);
+      expect(evidence).toMatchObject({
+        passed: true,
+        observed: { enabledFeatures: ["webSearch"] },
+        consumer: {
+          passed: true,
+          expected: { webSearch: { sandbox: search } },
+          actual: { webSearch: { sandbox: search } },
+        },
+        export: { bytes: raw },
+      });
+    },
+  );
+  it.each([
+    ["provider", { provider: "brave" }, true],
+    ["credential", { credentialReference: "OTHER_API_KEY" }, true],
+    ["grant", { agentRefs: ["secondary"] }, true],
+    ["native provider", { nativeProvider: "brave" }, true],
+    ["unexpected search on a disabled source", {}, false],
+  ] as const)(
+    "withholds export evidence for mismatched search settings: %s (#12138)",
+    async (_name, change, enabled) => {
+      const provider = enabled ? "tavily" : undefined;
+      const inputs = dependencies({ searchProvider: provider, features: { webSearch: enabled } });
+      inputs.parseConfig = parseConfigExport;
+      inputs.validateWithPinnedV1 = () =>
+        searchConsumerEvidence("openclaw", {
+          provider: "tavily",
+          credentialReference: "TAVILY_API_KEY",
+          agentRefs: ["primary"],
+          nativeProvider: "tavily",
+          ...change,
+        });
+      const test = fixture({
+        dependencies: inputs,
+        host: successfulHost(JSON.stringify(document({ searchProvider: provider }))),
+      });
+
+      await captureFailure(test.phase.from(target("required"), instance()));
+
+      expect(test.writes.at(-1)).toMatchObject({
+        failureStage: "verification",
+        consumer: { passed: false },
+      });
+      expect(test.writes.at(-1)).not.toHaveProperty("export");
+    },
+  );
+  it.each([undefined, ["brave-search"]] as const)(
+    "rejects Tavily export without its selected grant %j (#12138)",
+    async (integrationRefs) => {
+      const candidate = document({ searchProvider: "tavily" });
+      Object.assign(candidate.spec.sandboxes[0]!.agent, { integrationRefs });
+      const inputs = dependencies({ searchProvider: "tavily", features: { webSearch: true } });
+      inputs.parseConfig = parseConfigExport;
+      const test = fixture({
+        dependencies: inputs,
+        host: successfulHost(JSON.stringify(candidate)),
+      });
+
+      await captureFailure(test.phase.from(target("required"), instance()));
+
+      expect(test.writes.at(-1)?.verifications).toContainEqual(
+        expect.objectContaining({ id: "enabledFeatures", passed: false }),
+      );
+      expect(test.writes.at(-1)).not.toHaveProperty("export");
+    },
+  );
+  it.each([undefined, "unsupported"])(
+    "refuses an enabled source with invalid search provider %s (#12138)",
+    async (provider) => {
+      const inputs = dependencies({ searchProvider: "tavily" });
+      const registry = inputs.loadRegistry();
+      Object.assign(registry.sandboxes.sandbox!, { webSearchProvider: provider });
+      inputs.loadRegistry = () => registry;
+      const test = fixture({ dependencies: inputs });
+      await captureFailure(test.phase.from(target("required"), instance()));
+      expect(test.writes.at(-1)).toMatchObject({
+        failureStage: "observation",
+        diagnostic: "the live web-search provider is missing or unsupported",
+      });
+      expect(test.host.nemoclaw).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["brave", "tavily"] as const)(
+    "rejects a %s integration whose name and provider disagree (#12138)",
+    (provider) => {
+      const candidate = document({ searchProvider: provider });
+      Object.assign(candidate.spec.sandboxes[0]!.integrations![`${provider}-search`]!, {
+        provider: provider === "brave" ? "tavily" : "brave",
+      });
+      expect(() => parseConfigExport(JSON.stringify(candidate))).toThrow(
+        "complete v1alpha1 export contract",
+      );
+    },
+  );
   it("compares exports with deployment state captured before the exporter runs (#11485)", async () => {
     const mutableDependencies = dependencies();
     const loadRegistry = mutableDependencies.loadRegistry;

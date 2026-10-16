@@ -155,6 +155,76 @@ function writeOpenClawRegistry(): void {
 }
 
 describe("managed rebuild restore authority", () => {
+  it.each([0, 42])(
+    "preserves native-state outcomes with SSH exit %s and cleanup failure (#10947)",
+    async (exitCode) => {
+      const fixture = fs.mkdtempSync(path.join(TMP_HOME, "cleanup-source-"));
+      const sshFile = path.join(BIN_DIR, "ssh");
+      const originalSsh = fs.readFileSync(sshFile);
+      const remove = fs.rmSync;
+      const retained: string[] = [];
+      const rejectRemoval = (target: fs.PathLike): never => {
+        retained.push(String(target));
+        throw new Error("injected cleanup failure");
+      };
+      try {
+        fs.writeFileSync(path.join(fixture, "state.txt"), "preserved");
+        writeOpenClawRegistry();
+        const complete = sandboxState.backupSandboxState("alpha", {
+          nativeStateSource: { root: "/sandbox", directory: fixture, assertCurrent: vi.fn() },
+        });
+        expect(complete.success, complete.error).toBe(true);
+        fs.writeFileSync(
+          sshFile,
+          `#!/usr/bin/env node
+const fs = require("node:fs");
+const command = process.argv.at(-1) || "";
+if (${exitCode} !== 0) { process.stderr.write("operation failed"); process.exit(${exitCode}); }
+if (command.includes("printf") && command.includes("$HOME")) {
+  process.stdout.write(Buffer.from("/sandbox\\0/sandbox\\0"));
+  process.exit(0);
+}
+if (command.includes("tar -C")) {
+  process.stdout.write(fs.readFileSync(${JSON.stringify(path.join(complete.manifest!.backupPath, "native-home.tar"))}));
+  process.exit(0);
+}
+process.stdin.resume();
+process.stdin.on("end", () => process.exit(0));
+`,
+        );
+        vi.spyOn(fs, "rmSync").mockImplementation((target, options) =>
+          /^nemoclaw-native-(?:state|restore)-/u.test(path.basename(String(target)))
+            ? rejectRemoval(target)
+            : remove(target, options),
+        );
+        const backup = sandboxState.backupSandboxState("alpha");
+        const restore = await sandboxState.restoreSandboxState(
+          "alpha",
+          complete.manifest!.backupPath,
+        );
+
+        expect(backup.success).toBe(false);
+        expect(restore.success).toBe(false);
+        expect(backup.error).toContain(JSON.stringify(retained[0]));
+        expect(restore.error).toContain(JSON.stringify(retained[1]));
+        expect(backup.error).toContain("Remove that directory before retrying");
+        expect(restore.error).toContain("Remove that directory before retrying");
+        expect(backup.error).toContain(exitCode === 0 ? "failed to remove" : "operation failed");
+        expect(restore.error).toContain(exitCode === 0 ? "failed to remove" : "operation failed");
+        expect(backup.backedUpDirs, backup.error).toEqual(exitCode === 0 ? ["."] : []);
+        expect(restore.restoredDirs, restore.error).toEqual(exitCode === 0 ? ["."] : []);
+        expect(retained).toHaveLength(2);
+        expect(fs.readFileSync(path.join(fixture, "state.txt"), "utf8")).toBe("preserved");
+      } finally {
+        vi.restoreAllMocks();
+        fs.writeFileSync(sshFile, originalSsh);
+        remove(retained[0] ?? path.join(fixture, "missing-0"), { recursive: true, force: true });
+        remove(retained[1] ?? path.join(fixture, "missing-1"), { recursive: true, force: true });
+        remove(fixture, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("binds every normalized restore-relevant manifest field selected by the operator", () => {
     const manifest = writeBackup({ agentVersion: "1.0.0" });
     const selected = sandboxState.getLatestBackup("alpha");

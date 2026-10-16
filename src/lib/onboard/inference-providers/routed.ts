@@ -17,15 +17,14 @@ export async function setupRoutedInference(
 ): Promise<{ done: false }> {
   const { model, provider, endpointUrl, credentialEnv } = args;
   const {
-    runOpenshell,
+    inferenceRouteMutator,
+    gatewayName,
     upsertProvider,
     reconcileModelRouter,
     routedInference,
     hydrateCredentialEnv,
     exitProcess,
     error,
-    redact,
-    compactText,
   } = deps;
 
   // Blueprint profile provider (e.g., nvidia-router for the routed profile).
@@ -44,16 +43,21 @@ export async function setupRoutedInference(
     error(`  ${routed.result.message}`);
     return exitProcess(routed.result.status || 1);
   }
-  const applyResult = runOpenshell(
-    ["inference", "set", "--no-verify", "--provider", provider, "--model", model],
-    { ignoreError: true },
-  );
-  if (applyResult.status !== 0) {
-    const message =
-      compactText(redact(`${applyResult.stderr || ""} ${applyResult.stdout || ""}`)) ||
-      `Failed to configure inference provider '${provider}'.`;
-    error(`  ${message}`);
-    return exitProcess(applyResult.status || 1);
+  const applyResult = await inferenceRouteMutator.setInferenceRoute({
+    target: { kind: "named", gatewayName },
+    route: { provider, model },
+    verification: "skip",
+  });
+  if (!applyResult.ok) {
+    error(`  ${applyResult.error.message}`);
+    if (applyResult.ambiguous) {
+      error(
+        `  The route update result is unknown. Inspect gateway '${gatewayName}' before retrying onboarding.`,
+      );
+    }
+    return exitProcess(
+      applyResult.error.kind === "command" ? (applyResult.error.exitCode ?? 1) : 1,
+    );
   }
   return { done: false };
 }

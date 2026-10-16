@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
 import { loadAgent } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
@@ -76,10 +77,67 @@ describe("resolveRegisteredSandboxAgent", () => {
 });
 
 describe("resolveSessionAgentDefinition", () => {
-  it("preserves an explicitly selected agent definition", () => {
-    expect(resolveSessionAgentDefinition("alpha", hermesAgent)).toEqual({
-      agent: hermesAgent,
-      requestedName: "hermes",
+  it.each(["hermes", "langchain-deepagents-code"])(
+    "keeps a registered null agent on OpenClaw after %s onboarding (#12586)",
+    (sessionAgent) => {
+      vi.spyOn(registry, "getSandbox").mockReturnValue({ agent: null } as never);
+      const session = vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+        agent: sessionAgent,
+      } as never);
+
+      expect(resolveSessionAgentDefinition("alpha", null)).toEqual({
+        agent: loadAgent("openclaw"),
+        requestedName: "openclaw",
+        resolved: true,
+      });
+      expect(session).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["openclaw", "hermes", "langchain-deepagents-code", "missing-agent"])(
+    "uses session agent %s when no registry row exists",
+    (name) => {
+      vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+      vi.spyOn(onboardSession, "loadSession").mockReturnValue({ agent: name } as never);
+
+      expect(resolveSessionAgentDefinition("alpha", null)).toEqual({
+        agent: name === "openclaw" ? loadAgent("openclaw") : null,
+        requestedName: name,
+        resolved: name === "openclaw",
+      });
+    },
+  );
+
+  it.each(["", false, 0, {}, [], "../openclaw"])(
+    "rejects malformed registered agent %j without using the session",
+    (agent) => {
+      vi.spyOn(registry, "getSandbox").mockReturnValue({ agent } as never);
+      vi.spyOn(onboardSession, "loadSession").mockReturnValue({ agent: "openclaw" } as never);
+
+      expect(resolveSessionAgentDefinition("alpha", null)).toEqual({
+        agent: null,
+        requestedName: agent,
+        resolved: false,
+      });
+    },
+  );
+
+  it.each(["hermes", "langchain-deepagents-code"])("preserves a selected %s definition", (name) => {
+    const selectedAgent = loadAgent(name);
+    expect(resolveSessionAgentDefinition("alpha", selectedAgent)).toEqual({
+      agent: selectedAgent,
+      requestedName: name,
+      resolved: true,
+    });
+  });
+
+  it("defaults to OpenClaw when no registry row or session exists", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
+
+    expect(resolveSessionAgentDefinition("alpha", null)).toEqual({
+      agent: loadAgent("openclaw"),
+      requestedName: "openclaw",
       resolved: true,
     });
   });

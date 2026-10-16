@@ -680,6 +680,7 @@ function assertSameTransaction(
 }
 
 export interface BeginSandboxRecreateTransactionInput {
+  readonly reconcileOpenClawInference?: true;
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly gatewayPort: number;
@@ -718,6 +719,7 @@ function newSandboxRecreateTransaction(
       : fingerprintSandboxRecreateValue(null),
     sourceLiveIdentityFingerprint: input.observation.liveIdentityFingerprint,
     sourceWorkload: input.sourceEntry ? checkpointSourceWorkload(input.sourceEntry) : null,
+    ...(input.reconcileOpenClawInference ? { reconcileOpenClawInference: true as const } : {}),
     targetIntentFingerprint: input.targetIntentFingerprint,
     targetGeneration: input.targetGeneration ?? randomUUID(),
     targetLiveIdentityFingerprint: null,
@@ -1175,6 +1177,7 @@ interface SandboxRecreateTransactionOwnerStore extends SandboxRecreateSessionSto
 }
 
 export interface OwnSandboxRecreateTransactionInput {
+  readonly reconcileOpenClawInference?: true;
   readonly sessionStore: SandboxRecreateTransactionOwnerStore;
   readonly sandboxName: string;
   readonly gatewayName: string;
@@ -1191,6 +1194,7 @@ export interface OwnSandboxRecreateTransactionInput {
 }
 
 export interface OwnedSandboxRecreateTransaction {
+  readonly openedWithoutPriorTransaction: boolean;
   readonly session: Session;
   readonly transaction: CheckpointSandboxRecreateTransaction;
   readonly recovery: SandboxRecreateRecoveryPlan;
@@ -1273,6 +1277,7 @@ export function ownSandboxRecreateTransaction(
           sandboxName: input.sandboxName,
           gatewayName: input.gatewayName,
           gatewayPort: input.gatewayPort,
+          reconcileOpenClawInference: input.reconcileOpenClawInference,
           sourceEntry: freshRegistryEntry,
           observation: freshObservation,
           targetIntentFingerprint: input.targetIntentFingerprint,
@@ -1310,6 +1315,7 @@ export function ownSandboxRecreateTransaction(
     );
   }
   return {
+    openedWithoutPriorTransaction: expectedOld === null,
     session: storedSession,
     transaction: writtenTransaction,
     recovery,
@@ -1319,6 +1325,7 @@ export function ownSandboxRecreateTransaction(
 }
 
 export interface BeginSandboxRecreateDeleteInput {
+  readonly reconcileOpenClawInference?: true;
   readonly sessionStore: SandboxRecreateTransactionOwnerStore;
   readonly openingSessionId: string;
   readonly expectedTransaction: CheckpointSandboxRecreateTransaction;
@@ -1410,6 +1417,14 @@ export function beginSandboxRecreateDelete(input: BeginSandboxRecreateDeleteInpu
         : transaction.phase === "deleting"
           ? transaction
           : advanceSandboxRecreateTransaction(current, transaction.id, "deleting");
+      if (
+        input.reconcileOpenClawInference &&
+        transaction.phase === "planned" &&
+        observation?.state !== "missing"
+      ) {
+        nextTransaction = { ...nextTransaction, reconcileOpenClawInference: true };
+        setSandboxRecreateTransaction(current, baseCheckpoint(current), nextTransaction);
+      }
       return current;
     },
     `nemoclaw begin deleting sandbox '${input.expectedTransaction.sandboxName}'`,
@@ -1453,7 +1468,7 @@ export interface SandboxRecreateRuntime {
     "lifecycleGeneration" | "lifecycleLiveIdentityFingerprint"
   >;
   advance(phase: CheckpointSandboxRecreatePhase): void;
-  beginDelete(): SandboxRecreateSourcePresence;
+  beginDelete(reconcileOpenClawInference?: true): SandboxRecreateSourcePresence;
   confirmDeleted(): void;
   recordExactIdentity(liveIdentityFingerprint: string): CreatedSandboxLifecycleRegistration;
   recordCreated(observation: SandboxRecreateObservation): void;
@@ -1578,7 +1593,7 @@ export function createSandboxRecreateRuntime(
       };
     },
     advance,
-    beginDelete: () => {
+    beginDelete: (reconcileOpenClawInference) => {
       const compareAndSwap = sessionStore.compareAndSwapSession;
       if (!compareAndSwap) {
         throw new Error(
@@ -1586,6 +1601,9 @@ export function createSandboxRecreateRuntime(
         );
       }
       const begun = beginSandboxRecreateDelete({
+        ...(request.freshNonForced && reconcileOpenClawInference
+          ? { reconcileOpenClawInference: true as const }
+          : {}),
         sessionStore: { ...sessionStore, compareAndSwapSession: compareAndSwap },
         openingSessionId,
         expectedTransaction: currentTransaction,

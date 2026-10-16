@@ -62,7 +62,7 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Run every exact managed-image contract directly",
 ] as const;
 const REVIEWED_EXECUTION_SURFACE_SHA256 =
-  "3838afa4f7e9fd98e182a5dc320a122751981a26c606732f240b5edb65ffcf16";
+  "10a73edea771fdd015b543a8dec7ed55be5d6c28dc1a43bed8dccd07be497ba7";
 const SHARED_POLICY_BOUNDARY_RUN = [
   "set -euo pipefail",
   "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {",
@@ -357,6 +357,8 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   }
 
   const activation = requireStep(errors, steps, "Validate candidate activation contract");
+  if (activation?.id !== "candidate-contract")
+    errors.push(`${JOB_ID} activation must bind the DCode base source`);
   requireFragments(errors, activation, [
     `activation="${ACTIVATION_PATH}"`,
     '[[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]]',
@@ -364,11 +366,18 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     '(keys | sort) == ["agents", "contractVersion", "jobId", "platforms"]',
     '.agents == ["openclaw", "hermes", "langchain-deepagents-code"]',
     '.platforms == ["linux/amd64", "linux/arm64"]',
+    ".contractVersion == 1",
+    '.contractVersion == 2 and .dcodeBaseSource == "candidate"',
+    '(keys | sort) == ["agents", "contractVersion", "dcodeBaseSource", "jobId", "platforms"]',
+    "dcode_source=%s",
   ]);
 
   const hermesBase = requireStep(errors, steps, "Resolve reviewed Hermes platform base image");
   if (hermesBase?.uses !== REVIEWED_HERMES_PLATFORM_ACTION) {
     errors.push(`${JOB_ID} must use the shared reviewed Hermes platform resolver`);
+  }
+  if (hermesBase?.if !== "${{ inputs.checkout_sha == '' }}") {
+    errors.push(`${JOB_ID} must resolve a published Hermes base only without a PR candidate`);
   }
   requireValues(errors, `${JOB_ID} Hermes platform resolver`, record(hermesBase?.with), {
     "dockerfile-path": "agents/hermes/Dockerfile",
@@ -392,10 +401,15 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
 
   const bases = requireStep(errors, steps, "Resolve digest-pinned platform base images");
   requireValues(errors, `${JOB_ID} exact base resolution`, record(bases?.env), {
+    CANDIDATE_BASES: "${{ inputs.checkout_sha != '' }}",
     DCODE_BASE_CONTRACT: "${{ needs.base-image-publication.outputs.dcode_base_contract }}",
+    HERMES_BASE_REF:
+      "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.hermes-base.outputs.digest }}",
     PLATFORM: "${{ matrix.platform }}",
   });
   requireFragments(errors, bases, [
+    'case "$CANDIDATE_BASES" in',
+    "printf 'openclaw=candidate\\nhermes=candidate\\ndcode=candidate\\n'",
     'arch="${PLATFORM#linux/}"',
     'docker buildx imagetools inspect "$alias" --raw',
     '.platform.os == "linux" and .platform.architecture == $arch',
@@ -428,6 +442,11 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   ]);
 
   const build = requireStep(errors, steps, "Build exact all-agent protected managed images");
+  requireValues(errors, `${JOB_ID} candidate base selection`, record(build?.env), {
+    BASE_DCODE:
+      "${{ steps.candidate-contract.outputs.dcode_source == 'candidate' && 'candidate' || steps.bases.outputs.dcode }}",
+    BASE_OPENCLAW: "${{ steps.bases.outputs.openclaw }}",
+  });
   requireFragments(errors, build, [
     "scripts/checks/build-protected-managed-images.sh",
     '--revision "$CHECKOUT_SHA"',
@@ -440,8 +459,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     '--dcode-base "$BASE_DCODE"',
   ]);
   requireValues(errors, `${JOB_ID} protected build bases`, record(build?.env), {
-    BASE_HERMES:
-      "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.hermes-base.outputs.digest }}",
+    BASE_HERMES: "${{ steps.bases.outputs.hermes }}",
   });
 
   const direct = requireStep(errors, steps, "Run every exact managed-image contract directly");

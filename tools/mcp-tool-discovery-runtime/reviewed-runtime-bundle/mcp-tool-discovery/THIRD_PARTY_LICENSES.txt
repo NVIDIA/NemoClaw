@@ -1,7 +1,7 @@
 Third-party licenses for the NemoClaw MCP tool discovery runtime bundle
 
 ================================================================================
-@modelcontextprotocol/sdk@1.30.0 (MIT)
+@modelcontextprotocol/sdk@1.31.0 (MIT)
 ================================================================================
 MIT License
 

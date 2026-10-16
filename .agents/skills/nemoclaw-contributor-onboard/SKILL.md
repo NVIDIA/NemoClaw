@@ -17,7 +17,7 @@ Do not duplicate its dependency, build, hook, CLI-exposure, or readiness logic i
 2. Inspect the worktree and current branch without discarding or overwriting existing changes.
 3. Refresh the trusted `origin/main` reference, then compare the entire checkout/worktree diff against that up-to-date base before executing any checkout-local code.
    Include staged, unstaged, and untracked files; review lockfiles and all transitively executed source, not only the entry script or package manifests.
-4. If any execution surface differs from trusted `origin/main`, review the diff and obtain explicit approval before running it.
+4. If an execution surface differs from trusted `origin/main`, review the diff before running it. Existing implementation authorization covers in-scope repository-local validation. Isolate candidate code from host credentials and host mutations. This includes setup scripts and installed hooks. Stop before execution if that isolation cannot be established. Ask only for exposure or side effects outside that authorization.
 
 ## Route by Intent
 

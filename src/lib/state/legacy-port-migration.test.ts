@@ -83,6 +83,7 @@ function recordRecovery(
   sandboxName: string,
   gatewayPort: number,
   seed: string,
+  createAuthority?: import("./onboard-session/retained-sandbox-recovery").RetainedSandboxCreateAuthority,
 ): void {
   recordRetainedSandboxRecovery(filePath, {
     sandboxName,
@@ -91,6 +92,7 @@ function recordRecovery(
     gatewayPort,
     lifecycleGeneration: `generation-${seed}`,
     createAttemptNonce: seed.repeat(62),
+    ...(createAuthority ? { createAuthority } : {}),
     resources: {
       sharedInferenceProviders: [],
       sandboxScopedProviders: [],
@@ -379,7 +381,14 @@ describe("legacy non-default gateway state migration", () => {
       metadata: { gatewayName: "nemoclaw-9123" },
     });
     const sharedRecovery = path.join(shared, "retained-sandbox-recovery.json");
-    recordRecovery(sharedRecovery, "port-box", 9123, "a");
+    const createAuthority = {
+      schemaVersion: 1 as const,
+      runtime: "native-linux-default-docker" as const,
+      reservationSessionId: "original-session",
+      gatewayStateDir: path.join(home, "gateway"),
+      daemonId: "original-daemon",
+    };
+    recordRecovery(sharedRecovery, "port-box", 9123, "a", createAuthority);
     recordRecovery(sharedRecovery, "default-box", 8080, "b");
     writeJson(path.join(shared, "credentials.json"), { NVIDIA_API_KEY: "legacy-secret" });
     writeJson(path.join(shared, "usage-notice.json"), { acceptedVersion: "1" });
@@ -407,6 +416,7 @@ describe("legacy non-default gateway state migration", () => {
     );
     const remainingRecoveryRecords = listRetainedSandboxRecoveryRecords(sharedRecovery);
     expect(selectedRecoveryRecords.map((record) => record.sandboxName)).toEqual(["port-box"]);
+    expect(selectedRecoveryRecords[0]?.createAuthority).toEqual(createAuthority);
     expect(remainingRecoveryRecords.map((record) => record.sandboxName)).toEqual(["default-box"]);
     expectRetainedNameBlocked(selectedRecoveryRecords, "port-box");
     expectRetainedNameBlocked(remainingRecoveryRecords, "default-box");

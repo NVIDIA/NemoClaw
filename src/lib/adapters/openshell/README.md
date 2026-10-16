@@ -45,13 +45,14 @@ Schema failures use fixed messages without rejected values.
 
 Provider reads return credential names and requested non-secret config values.
 For native NVIDIA hosted inference with no overrides, export also reads `raw.getProviderProfile`
-through the same gateway and workspace. It requires the built-in `nvidia` profile, static scope,
+through the same gateway at the provider's empty or current-workspace binding. Either binding must
+resolve to the built-in `nvidia` profile. Export requires static scope,
 revision zero, inference capability, and its single `integrate.api.nvidia.com:443` endpoint.
 The pinned OpenShell native resolver uses `/v1` on that host. Export records the built-in profile
 as the endpoint evidence. Custom profiles, profile scope changes, and provider config overrides
-cannot use this derivation.
+cannot use this derivation. Missing or foreign-workspace bindings cannot use it either.
 
-Consumers can request `profileContract: "brave"` or `"openai"` to qualify a managed profile.
+Consumers can request `profileContract: "brave"`, `"openai"`, `"tavily"`, or `"tavily-hermes-v1"` to qualify a managed profile.
 The reader resolves `raw.getProviderProfile` at the provider's `profileWorkspace` through the
 same gateway. Brave onboarding imports its checked-in profile in the `default` workspace.
 User profiles must have a nonzero revision and a scope matching their binding; builtin profiles
@@ -62,7 +63,9 @@ its global or same-workspace binding returns `managedProfile: null`. Ollama expo
 evidence; managed vLLM still requires a qualified profile. Other read failures remain terminal.
 
 Qualification requires the checked-in credential declaration, endpoint rules, binary allowlist,
-and inference capability. Brave permits its single header credential and search endpoint;
+and inference capability. Brave permits its single header credential and search endpoint.
+Tavily requires its bearer credential, JSON-body rewriting, and the POST `/search` and `/extract` rules.
+The Hermes Tavily profile requires its managed Python executable instead of the general Tavily binary list.
 OpenAI requires the endpointless inference contract. Credential refresh, token grants, discovery,
 changed rewriting rules, and unknown protobuf fields in the profile's semantic messages fail.
 Provider credential values and handles remain opaque. The reader returns profile identity,
@@ -104,3 +107,22 @@ then call `release()` in `finally`. Check `wasInterrupted()` before publication 
 success, since interruption can arrive during post-transfer verification or lock release. Do not
 retry an interrupted or indeterminate transfer. Session exports, onboarding downloads, and plugin
 copy remain assigned to later #9810 deliveries.
+
+Native NVIDIA setup uses `provider-adapter-cli.ts` to read the named gateway's
+`providers_v2_enabled` setting before publishing credentials. OpenShell 0.0.116
+leaves provider-derived policy disabled when that setting is unset. Setup enables
+that default and confirms the result, preserves an explicit `false`, and stops on
+unknown or failed responses without retrying a settings write. A successfully
+enabled setting remains enabled if later provider setup fails; it is gateway state,
+not a sandbox-owned resource.
+
+Native NVIDIA policy preparation and invocation probes are shared across agent
+integrations. When NVIDIA is selected, policy preparation adds the mandatory
+`native_nvidia_inference` entry from the checked-in provider profile's endpoint,
+method, path, and binary scope. Existing sandboxes receive the required entry
+during a native rebuild; a conflicting host-defined entry stops rebuild before the
+sandbox is replaced. DCode reads the attached `NVIDIA_INFERENCE_API_KEY`
+placeholder from its runtime environment, so the supervisor resolves the current
+credential generation without exposing the key to DCode. Its managed runtime maps
+the legacy config key to that current placeholder, so a restored config does not
+keep sending the retired fixed value.

@@ -11,6 +11,7 @@ import { MessagingWorkflowPlanner } from "../compiler";
 import { createBuiltInMessagingHookRegistry } from "../hooks";
 import type { SandboxMessagingPlan } from "../manifest";
 import { MessagingSetupApplier } from "./setup-applier";
+import { messagingSandboxFiles } from "../../../../test/support/messaging-sandbox-files";
 import type { MessagingOpenShellRunner } from "./types";
 
 const HERMES_ENV_PATH = "/sandbox/.hermes/.env";
@@ -85,25 +86,9 @@ function sandboxFiles(
     const script = args.includes("sh") ? String(args.at(-1)) : "";
     const envProbe = /printf '%s' "[$][{]([A-Za-z_][A-Za-z0-9_]*)-[}]"/u.exec(script)?.[1];
     const envProbeResult = envProbe ? { status: 0, stdout: runtimeEnv[envProbe] ?? "" } : null;
-    const target = String(args.at(-1));
-    const reading = args.includes("cat") && options?.input === undefined;
-    const written = options?.input;
-    const write = (content: string) => {
-      files[target] = content;
-      writes.push(target);
-      return { status: 0 };
-    };
-    return (
-      envProbeResult ??
-      (written !== undefined
-        ? write(written)
-        : reading
-          ? {
-              status: files[target] === undefined ? 1 : 0,
-              stdout: files[target] ?? "",
-            }
-          : { status: 1 })
-    );
+    const result = envProbeResult ?? messagingSandboxFiles(files)(args, options);
+    writes.push(...(options?.input === undefined ? [] : [String(args.at(-1))]));
+    return result;
   };
   return { files, writes, runOpenshell };
 }

@@ -7,11 +7,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
+import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../../src/lib/sandbox/build-context";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
-type PreparedContextScenario = "create" | "custom-dockerfile";
+type PreparedContextScenario = "create" | "custom-dockerfile" | "fallback";
 
 type PreparedContextResult = {
+  patchedDockerfile: string | null;
   buildCtx: string;
   buildId: string;
   cleanupCalls: number;
@@ -20,22 +22,24 @@ type PreparedContextResult = {
   patchCalls: number;
   patchSleepUsesSeconds: boolean | null;
   planFromRefs: string[];
-  registerCalls: Array<{ imageTag?: string | null }>;
+  registerCalls: Array<{ imageTag?: string | null; dcodeAutoApprovalMode?: string }>;
   resolvedBuildIds: string[];
   stageCalls: number;
 };
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 
-function runPreparedContextScenario(scenario: PreparedContextScenario): PreparedContextResult {
+function runPreparedContextScenario(
+  scenario: PreparedContextScenario,
+  mode: "disabled" | "thread-opt-in" = "disabled",
+): PreparedContextResult {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-prepared-context-test-"));
   const fakeBin = path.join(tmpDir, "bin");
   const scriptPath = path.join(tmpDir, "scenario.js");
-  const preparedBuildCtx = path.join(tmpDir, "prepared-build-context");
+  const preparedBuildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
   const buildId = "6195000123456";
 
   fs.mkdirSync(fakeBin, { recursive: true });
-  fs.mkdirSync(preparedBuildCtx, { recursive: true });
   writeOkOpenshell(fakeBin);
   fs.writeFileSync(
     path.join(preparedBuildCtx, "Dockerfile"),
@@ -86,6 +90,9 @@ const scenario = ${JSON.stringify(scenario)};
 const buildCtx = ${JSON.stringify(preparedBuildCtx)};
 const buildId = ${JSON.stringify(buildId)};
 const sandboxName = "prepared-dcode";
+const mode = ${JSON.stringify(mode)};
+let patchedDockerfile = null;
+const generatedImageRef = "nemoclaw-sandbox-local:" + sandboxName + "-" + buildId;
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName });
 createdSandbox.installRuntimeObservation();
 const commands = [];
@@ -130,11 +137,30 @@ dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = (options) => {
   };
 };
 
-buildContextStage.stageCreateSandboxBuildContext = () => {
+const stageBuildContext = buildContextStage.stageCreateSandboxBuildContext;
+const patchDockerfile = dockerfilePatchFlow.prepareSandboxDockerfilePatch;
+buildContextStage.stageCreateSandboxBuildContext = (input) => {
+  if (scenario === "fallback") {
+    stageCalls += 1;
+    return stageBuildContext({ ...input, createAgentSandbox: () => {
+      fs.copyFileSync(input.agent.dockerfilePath, buildCtx + "/Dockerfile");
+      return { buildCtx, stagedDockerfile: buildCtx + "/Dockerfile" };
+    }});
+  }
   stageCalls += 1;
   throw new Error("prepared context was unexpectedly restaged");
 };
-dockerfilePatchFlow.prepareSandboxDockerfilePatch = async () => {
+dockerfilePatchFlow.prepareSandboxDockerfilePatch = async (input) => {
+  if (scenario === "fallback") {
+    patchCalls += 1;
+    const result = await patchDockerfile({ ...input, deps: {
+      isLinuxDockerDriverGatewayEnabled: () => false,
+      enforceDockerGpuPatchPreserveNetwork: async () => false,
+      now: () => Number(buildId),
+    }});
+    patchedDockerfile = fs.readFileSync(input.stagedDockerfile, "utf8");
+    return result;
+  }
   patchCalls += 1;
   throw new Error("prepared context was unexpectedly repatched");
 };
@@ -166,6 +192,9 @@ runner.runFile = (file, args = []) => {
 };
 runner.runCapture = (command) => {
   const normalized = normalize(command);
+  if (normalized === "docker image inspect --format {{.Id}} " + generatedImageRef) {
+    return "sha256:" + "a".repeat(64);
+  }
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
   if (
@@ -178,7 +207,7 @@ runner.runCapture = (command) => {
       "Route:    inference",
       "Provider: nvidia-prod",
       "Model:    openai:nvidia/nemotron-3-super-120b-a12b",
-      "Endpoint: https://inference.local/v1",
+      "Endpoint: https://integrate.api.nvidia.com/v1",
     ].join("\n");
   }
   return "";
@@ -237,13 +266,47 @@ const preparedBuildContext = {
   },
 };
 
+if (scenario === "fallback") {
+  const preparation = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/workload/preparation.ts"))});
+  const catalog = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/managed-image/catalog.ts"))});
+  const prepare = preparation.prepareSandboxWorkloadSource;
+  preparation.prepareSandboxWorkloadSource = (input) => prepare({ ...input, catalog: null, catalogPath: null }, {
+    resolveCatalog: async () => { throw new catalog.ManagedImageCatalogUnavailableError("fixture registry offline"); },
+  });
+}
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const agent = loadAgent("langchain-deepagents-code");
   let errorMessage = null;
+  let resumedMode = mode;
   try {
+    if (scenario === "fallback") {
+      const sessionStore = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
+      const { prepareOnboardSession } = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/session-bootstrap.ts"))});
+      const { resolveAutoApprovalMode } = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/machine/handlers/sandbox-dcode-resume.ts"))});
+      const { getResumeConfigConflicts } = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/resume-config.ts"))});
+      const deps = {
+        ...sessionStore,
+        applySessionRecovery: () => {}, setOnboardBrandingAgent: () => {},
+        getResumeConfigConflicts, recordResumeConflict: async () => {},
+        resolvePath: (value) => value, cliName: () => "nemoclaw",
+        error: (message) => { throw new Error(message); },
+        exitProcess: (code) => { throw new Error("exit " + code); },
+        requireHostMountRuntimeSupport: () => {},
+        resolveResumeCheckpoint: () => ({ status: "none" }),
+      };
+      const input = { resume: false, fresh: false, requestedFromDockerfile: null,
+        requestedSandboxName: sandboxName, cannotPrompt: true, nonInteractive: true,
+        requestedDcodeAutoApprovalMode: mode };
+      await prepareOnboardSession(input, deps);
+      // Resume from disk before any sandbox registration, without repeating the flag.
+      const resumed = await prepareOnboardSession({ ...input, resume: true, requestedDcodeAutoApprovalMode: null }, deps);
+      resumedMode = resolveAutoApprovalMode({ agent, fromDockerfile: null, provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b", resume: true, session: resumed.session },
+        sandboxName, { ...deps, getSandboxRegistryEntry: () => null });
+    }
     await createSandbox(
       ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
         [
@@ -262,9 +325,9 @@ const { createSandbox } = require(${onboardPath});
           [],
           null,
           null,
+          scenario === "fallback" ? { dcodeAutoApprovalMode: resumedMode } : null,
           null,
-          null,
-          preparedBuildContext,
+          scenario === "fallback" ? null : preparedBuildContext,
         ],
         createFixture,
       ),
@@ -274,6 +337,7 @@ const { createSandbox } = require(${onboardPath});
   }
 
   console.log(JSON.stringify({
+    patchedDockerfile,
     buildCtx,
     buildId,
     cleanupCalls,
@@ -301,9 +365,12 @@ const { createSandbox } = require(${onboardPath});
       HOME: tmpDir,
       NEMOCLAW_HOME: path.join(tmpDir, ".nemoclaw"),
       NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_SANDBOX_PREBUILD: "1",
       PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     },
   });
+  fs.rmSync(preparedBuildCtx, { recursive: true, force: true });
+  fs.rmSync(tmpDir, { recursive: true, force: true });
 
   assert.equal(result.status, 0, result.stderr);
   const payloadLine = result.stdout
@@ -316,6 +383,24 @@ const { createSandbox } = require(${onboardPath});
 }
 
 describe("onboard prepared DCode build context", () => {
+  it.each(["disabled", "thread-opt-in"] as const)(
+    "patches the fallback Dockerfile and registers capability %s",
+    { timeout: 90_000 },
+    (mode) => {
+      const result = runPreparedContextScenario("fallback", mode);
+      assert.equal(result.errorMessage, null);
+      assert.equal(result.stageCalls, 1);
+      assert.equal(result.patchCalls, 1);
+      assert.ok(result.patchedDockerfile?.includes(`ARG NEMOCLAW_DCODE_AUTO_APPROVAL=${mode}`));
+      assert.equal(result.registerCalls[0]?.dcodeAutoApprovalMode, mode);
+      assert.ok(
+        result.commands.some(
+          (command) => command.includes("build") && command.includes(result.buildCtx),
+        ),
+      );
+      assert.ok(result.commands.every((command) => !/dcode (?:-y|--auto-approve)/.test(command)));
+    },
+  );
   it(
     "creates from the supplied context without restaging or repatching it (#6195)",
     {
@@ -328,21 +413,15 @@ describe("onboard prepared DCode build context", () => {
       assert.equal(result.stageCalls, 0);
       assert.equal(result.patchCalls, 0);
       assert.deepEqual(result.planFromRefs, [`${result.buildCtx}/Dockerfile`]);
-      assert.deepEqual(result.resolvedBuildIds, [result.buildId]);
+      assert.deepEqual(result.resolvedBuildIds, []);
       assert.equal(result.cleanupCalls, 1);
       assert.ok(
         result.commands.some(
           (command) =>
             command.includes("sandbox create ") &&
-            command.includes(` --from ${result.buildCtx}/Dockerfile `),
+            command.includes(` --from nemoclaw-sandbox-local:prepared-dcode-${result.buildId} `),
         ),
         `expected create command to use prepared context; commands:\n${result.commands.join("\n")}`,
-      );
-      assert.ok(
-        result.registerCalls.some(
-          (entry) => entry.imageTag === `openshell/sandbox-from:${result.buildId}`,
-        ),
-        "expected the prepared build ID to determine the registered image tag",
       );
     },
   );

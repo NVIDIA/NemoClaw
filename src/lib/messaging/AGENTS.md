@@ -18,7 +18,7 @@ The design goal is to keep messaging channel behavior out of core onboard/rebuil
 5. `onboard/dockerfile-patch.ts` bakes the plan into the sandbox build.
 6. `applier/build/messaging-build-applier.mts` applies agent install, render, post-agent-install build files, and writes the reduced runtime plan artifact.
 7. `MessagingHostStateApplier` persists durable plan state under the sandbox registry entry.
-8. Rebuild reads the persisted plan, stages a fresh build plan, and reapplies OpenClaw render/post-install hooks after `openclaw doctor` rewrites config.
+8. Rebuild reads the persisted plan, stages a fresh build plan, and reapplies manifest render/post-install hooks after restoring agent state. OpenClaw keeps its maintenance window through these writes; Hermes reloads the restored config through its native supervised restart.
 
 ## Package Map
 

@@ -3,7 +3,7 @@
 
 /** Target revision that owns the recorded omission behavior. */
 export const V1ALPHA1_RUNTIME_DEFAULTS_REVISION =
-  "88c6600c06b0937907290362eef86912052c4ad0" as const;
+  "42a26d90f1f6207cc35b5053556db67c86ce759f" as const;
 
 /**
  * Effective v1 runtime values when the exporter omits a supported agent setting.

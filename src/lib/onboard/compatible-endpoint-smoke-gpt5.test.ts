@@ -18,10 +18,15 @@ vi.mock("../inference/config", () => ({
 
 import { buildCompatibleEndpointSandboxSmokeScript } from "./compatible-endpoint-smoke";
 
-describe("compatible endpoint GPT-5 reply-budget smoke", () => {
+describe("compatible endpoint GPT-5 and GPT-6 reply-budget smoke", () => {
   it.each([
     {
       model: "gpt-5.4",
+      expectedField: "max_completion_tokens",
+      unexpectedField: "max_tokens",
+    },
+    {
+      model: "gpt-6-astra",
       expectedField: "max_completion_tokens",
       unexpectedField: "max_tokens",
     },
