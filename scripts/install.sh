@@ -6279,12 +6279,9 @@ configure_station_express_model() {
       # Super VL is single-host only. Explicit peers retain the Ultra recipe.
       NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
       NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
-    elif [ "${_STATION_INSTALL_MODE:-}" = "express" ]; then
-      NEMOCLAW_VLLM_MODEL="$STATION_SUPER_VL_VLLM_MODEL"
-      NEMOCLAW_MODEL="$STATION_SUPER_VL_SERVED_MODEL"
     else
-      # A direct provider selection outside Express keeps the Station profile
-      # default unless the operator selects a model or peer.
+      # The catalog owns the single-Station default for Express and direct
+      # provider setup. Keep automatic intent available for pair discovery.
       unset NEMOCLAW_VLLM_MODEL
     fi
   else
@@ -6323,10 +6320,6 @@ station_dual_model_requested() {
   local selected_model
   selected_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
   case "$selected_model" in
-    "$STATION_SUPER_VL_VLLM_MODEL")
-      # Implicit Express still discovers trusted pairs before final selection.
-      [ "${_STATION_INSTALL_MODE:-}" = "express" ] && [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]
-      ;;
     "$STATION_ULTRA_VLLM_MODEL" | "$STATION_ULTRA_SERVED_MODEL" | "$STATION_ULTRA_DUAL_SERVED_MODEL" | "nvidia/nvidia-nemotron-3-ultra-550b-a55b-nvfp4")
       return 0
       ;;
@@ -6627,11 +6620,6 @@ load_station_express_resume() {
 save_station_express_resume() {
   local state_file state_dir temp_file revision generation
   local model="${NEMOCLAW_VLLM_MODEL:-auto}" agent="${NEMOCLAW_AGENT:-openclaw}"
-  # Preserve topology discovery across reboot instead of turning the implicit
-  # single-Station default into an explicit prohibition on paired serving.
-  if [ "$model" = "$STATION_SUPER_VL_VLLM_MODEL" ] && [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]; then
-    model=auto
-  fi
   local sandbox="${NEMOCLAW_SANDBOX_NAME:-my-assistant}" policy_tier="${NEMOCLAW_POLICY_TIER:-balanced}"
   local gateway_port dashboard_port vllm_port mode="${_STATION_INSTALL_MODE:-express}"
   validate_station_express_resume_model "$model" || error "Cannot save an invalid DGX Station express model selector."
@@ -7254,14 +7242,13 @@ ensure_station_express_pair() {
         if [ "${_STATION_EXPRESS_MIGRATING_LEGACY_HEAD:-0}" = "1" ]; then
           NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
           NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
+          export NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
         else
-          NEMOCLAW_VLLM_MODEL="$STATION_SUPER_VL_VLLM_MODEL"
-          NEMOCLAW_MODEL="$STATION_SUPER_VL_SERVED_MODEL"
+          unset NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
         fi
-        export NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
       fi
       unset NEMOCLAW_DGX_STATION_SSH_BINDING
-      info "No eligible reciprocal dual-DGX Station pair is available; using single-Station model ${NEMOCLAW_VLLM_MODEL}."
+      info "No eligible reciprocal dual-DGX Station pair is available; using single-Station model ${NEMOCLAW_VLLM_MODEL:-selected by the serving catalog}."
       ;;
     ready)
       [ "$status" -eq 0 ] \
