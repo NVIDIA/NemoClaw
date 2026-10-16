@@ -172,7 +172,7 @@ describe("OpenClaw native local live selection", () => {
         sandboxName: "alpha",
       }),
     ).toMatchObject({ ok: true, value: { names: [attachment.providerName] } });
-    expect(deps.getNativeLocalProviderAuthority(next.providerName)).toEqual(next);
+    expect(deps.getNativeLocalProviderAuthority?.(next.providerName)).toEqual(next);
     expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalled();
   });
 
@@ -199,7 +199,7 @@ describe("OpenClaw native local live selection", () => {
     await expect(result).rejects.toThrow(/removal was not confirmed.*restoration rejected/s);
     await expect(result).rejects.toThrow(attachment.providerName);
     await expect(result).rejects.toThrow(next.providerName);
-    expect(deps.getNativeLocalProviderAuthority(next.providerName)).toEqual(next);
+    expect(deps.getNativeLocalProviderAuthority?.(next.providerName)).toEqual(next);
     expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalled();
   });
 
