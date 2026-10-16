@@ -83,9 +83,6 @@ jobs:
       - name: Check native reconfiguration
         if: needs.plan.outputs.images == 'true'
         run: |
-          native() {
-            image=$1 script=$2
-            shift 2
-            docker run --rm --runtime=runc --network none               -v "$PWD/image/$script:/$script:ro"               --entrypoint /opt/fabric/bin/python "$image" -B "/$script" "$@"
-          }
-          native nc-fabric:openclaw test_openclaw_reconfiguration.py
+          docker run --rm --runtime=runc --network none \
+            -v "$PWD/image/test_openclaw_reconfiguration.py:/test_openclaw_reconfiguration.py:ro" \
+            --entrypoint /opt/fabric/bin/python nc-fabric:openclaw -B /test_openclaw_reconfiguration.py
