@@ -20,6 +20,7 @@ import type {
   ContainerEngineCommandResult,
 } from "../../src/lib/adapters/container-engine";
 import type { CheckpointPortableRuntimeAuthority } from "../../src/lib/state/onboard-checkpoint-types";
+import { privateHermesManifestAgent } from "../../src/lib/onboard/experimental/__test-helpers__/hermes-manifest-agent";
 import { createPortableOnboardEnvironmentScope } from "../../src/lib/onboard/session-bootstrap";
 import { createHermesPortableOllamaInferenceResolver } from "../../src/lib/onboard/experimental/hermes-portable-ollama-inference";
 import { PORTABLE_PROBE_IMAGE } from "../../src/lib/onboard/experimental/hermes-portable-ollama-authority";
@@ -222,6 +223,7 @@ function matchingRegistryEntry(
   };
 }
 
+/** Build a minimal Hermes portable onboarding input for tests. */
 export function createHermesPortableTestInput(
   stateDir: string,
   policyPath: string,
@@ -271,7 +273,7 @@ export function createHermesPortableTestInput(
       retire: vi.fn(() => true),
     },
     startup: {
-      agent: loadAgent("hermes"),
+      agent: privateHermesManifestAgent(loadAgent("hermes")),
       sandboxName: "alpha",
       startupArgv: startupArgv(),
     },

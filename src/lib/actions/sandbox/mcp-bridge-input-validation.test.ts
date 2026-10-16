@@ -114,7 +114,7 @@ describe("MCP CLI input validation", () => {
     ).toEqual({ server: "doordash", denyTools: ["admin_*", "doordash_submit_order"] });
     expect(parseMcpUpdateArgs(["doordash", "--clear-deny-tools"])).toEqual({
       server: "doordash",
-      denyTools: [],
+      clearDenyTools: true,
     });
   });
 

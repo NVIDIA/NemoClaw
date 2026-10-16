@@ -61,6 +61,9 @@ export type McpMigrationPlan = {
   applied: boolean;
 };
 
+/**
+ * preflightMigrationOpenShellState.
+ */
 async function preflightMigrationOpenShellState(
   sandboxName: string,
   entries: readonly McpSourceEntry[],
@@ -103,6 +106,9 @@ async function preflightMigrationOpenShellState(
   }
 }
 
+/**
+ * migrateMcpBridges.
+ */
 export async function migrateMcpBridges(
   sandboxName: string,
   options: {
