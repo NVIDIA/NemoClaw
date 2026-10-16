@@ -18,6 +18,7 @@ import {
   type ServingProfileProvenance,
 } from "./onboard-session/selection-provenance";
 
+import type { DcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
@@ -327,6 +328,8 @@ export interface Session {
   observabilityEnabled: boolean;
   /** True when observability was explicitly enabled or disabled for this resumable run. */
   observabilityRequestedExplicitly: boolean;
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode | null;
+  dcodeAutoApprovalRequestedExplicitly: boolean;
   /** Operator-selected APF create mode; this is not observed policy provenance. */
   apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
@@ -419,6 +422,8 @@ export interface DebugSessionSummary {
   toolDisclosure: ToolDisclosure;
   observabilityEnabled: boolean;
   observabilityRequestedExplicitly: boolean;
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode | null;
+  dcodeAutoApprovalRequestedExplicitly: boolean;
   apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
   gpuPassthrough: boolean;
@@ -1037,6 +1042,8 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     ),
     resourceProfile: parseSessionResourceProfile(overrides.resourceProfile),
     toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
+    dcodeAutoApprovalMode: overrides.dcodeAutoApprovalMode ?? null,
+    dcodeAutoApprovalRequestedExplicitly: overrides.dcodeAutoApprovalRequestedExplicitly === true,
     observabilityEnabled: overrides.observabilityEnabled === true,
     observabilityRequestedExplicitly: overrides.observabilityRequestedExplicitly === true,
     apfInterceptorRequested: overrides.apfInterceptorRequested === true,
@@ -1174,6 +1181,11 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxPromptProgress: parseSandboxPromptProgress(data.sandboxPromptProgress, data),
     resourceProfile: parseSessionResourceProfile(data.resourceProfile),
     toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
+    dcodeAutoApprovalMode:
+      data.dcodeAutoApprovalMode === "disabled" || data.dcodeAutoApprovalMode === "thread-opt-in"
+        ? data.dcodeAutoApprovalMode
+        : null,
+    dcodeAutoApprovalRequestedExplicitly: data.dcodeAutoApprovalRequestedExplicitly === true,
     observabilityEnabled: data.observabilityEnabled === true,
     observabilityRequestedExplicitly: data.observabilityRequestedExplicitly === true,
     apfInterceptorRequested: data.apfInterceptorRequested === true,
@@ -2566,6 +2578,8 @@ export function summarizeForDebug(
     compatibleEndpointReasoningEffort: session.compatibleEndpointReasoningEffort,
     nimContainer: session.nimContainer,
     toolDisclosure: session.toolDisclosure,
+    dcodeAutoApprovalMode: session.dcodeAutoApprovalMode,
+    dcodeAutoApprovalRequestedExplicitly: session.dcodeAutoApprovalRequestedExplicitly,
     observabilityEnabled: session.observabilityEnabled,
     observabilityRequestedExplicitly: session.observabilityRequestedExplicitly,
     apfInterceptorRequested: session.apfInterceptorRequested,

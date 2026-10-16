@@ -8,6 +8,7 @@ on:
     paths:
       - ".github/workflows/llama-cpp-image.yaml"
       - ".github/workflows/llama-cpp-image-attest.yaml"
+      - "ci/llama-cpp-branch-publication.yaml"
       - "managed-inference/images/llama-cpp/**"
       - "managed-inference/recipes/llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml"
       - "scripts/checks/export-llama-cpp-image-config.mts"
@@ -15,30 +16,43 @@ on:
       - "test/inference/llama/llama-cpp-image.test.ts"
       - "test/inference/llama/llama-cpp-image-publication-evidence.test.ts"
       - "test/inference/llama/llama-cpp-image-workflow.test.ts"
-      - "test/platform/images/llama-cpp-stdio-image-proof.py"
-      - "test/platform/images/llama-cpp-stdio-image-proof-test.py"
-      - "test/platform/images/fixtures/llama-cpp-stdio-upstream.c"
+      - "src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge*.ts"
+      - "src/lib/onboard/runtime-provider/docker-operation-authority.ts"
+      - "test/package-contract/inference/llama-cpp-native-cancellation*.ts"
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish the declaratively enabled run-unique candidate from main
+        description: Publish a run-unique candidate from main or the approved PR 12664 branch
         required: true
         default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      publish:
+        required: true
+        type: boolean
+      publisher_call:
+        default: true
         type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.publisher_call && 'publisher' || 'controller' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   config:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || inputs.publisher_call
     name: Compile declarative image configuration
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
+      trusted_revision: ${{ steps.identity.outputs.revision }}
+      definition_ref: ${{ steps.identity.outputs.definition_ref }}
+      wrapper_sha: ${{ steps.source.outputs.wrapper_sha }}
+      image_context_sha: ${{ steps.source.outputs.image_context_sha }}
       backend_directory: ${{ steps.manifest.outputs.backend_directory }}
       compiler_c: ${{ steps.manifest.outputs.compiler_c }}
       compiler_cuda_host_cxx: ${{ steps.manifest.outputs.compiler_cuda_host_cxx }}
@@ -47,7 +61,6 @@ jobs:
       cuda_runtime_image: ${{ steps.manifest.outputs.cuda_runtime_image }}
       image: ${{ steps.manifest.outputs.image }}
       matrix: ${{ steps.manifest.outputs.matrix }}
-      request_guard_go_version: ${{ steps.manifest.outputs.request_guard_go_version }}
       publication_allowed_ref: ${{ steps.manifest.outputs.publication_allowed_ref }}
       publication_anonymous_exact_digest_pull: ${{ steps.manifest.outputs.publication_anonymous_exact_digest_pull }}
       publication_candidate_tag_template: ${{ steps.manifest.outputs.publication_candidate_tag_template }}
@@ -74,10 +87,44 @@ jobs:
       source_archive_sha256: ${{ steps.manifest.outputs.source_archive_sha256 }}
       source_revision: ${{ steps.manifest.outputs.source_revision }}
     steps:
+      - name: Resolve the workflow's own source
+        id: identity
+        env:
+          WORKFLOW_JOB: ${{ toJSON(job) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="$(jq -er --arg repo "$GITHUB_REPOSITORY" '
+            select(.workflow_repository == $repo and
+              .workflow_file_path == ".github/workflows/llama-cpp-image.yaml")
+            | .workflow_sha | select(type == "string" and test("^[0-9a-f]{40}$"))
+          ' <<< "$WORKFLOW_JOB")"
+          definition_ref="$(jq -er '.workflow_ref | select(type == "string" and test("^[^\\r\\n]+$"))' <<< "$WORKFLOW_JOB")"
+          {
+            printf 'revision=%s\n' "$revision"
+            printf 'definition_ref=%s\n' "$definition_ref"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ steps.identity.outputs.revision }}
           persist-credentials: false
+
+      - name: Bind trusted build and caller inputs
+        id: source
+        env:
+          TRUSTED_REVISION: ${{ steps.identity.outputs.revision }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TRUSTED_REVISION"
+          wrapper_sha="$( { cat .github/workflows/llama-cpp-image.yaml; sed "s/PUBLISHER_REVISION/$TRUSTED_REVISION/g" ci/llama-cpp-branch-publication.yaml; } | git hash-object --stdin)"
+          image_context_sha="$(git rev-parse HEAD:managed-inference/images/llama-cpp)"
+          {
+            printf 'wrapper_sha=%s\n' "$wrapper_sha"
+            printf 'image_context_sha=%s\n' "$image_context_sha"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -107,6 +154,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.config.outputs.trusted_revision }}
           persist-credentials: false
 
       - name: Set up Docker Buildx
@@ -124,8 +172,6 @@ jobs:
           LLAMA_CPP_ARCHIVE_SHA256: ${{ needs.config.outputs.source_archive_sha256 }}
           LLAMA_CPP_REVISION: ${{ needs.config.outputs.source_revision }}
           NEMOCLAW_REVISION: ${{ github.sha }}
-          REQUEST_GUARD_GO_ARCHIVE_SHA256: ${{ matrix.request_guard_go_archive_sha256 }}
-          REQUEST_GUARD_GO_VERSION: ${{ needs.config.outputs.request_guard_go_version }}
           RUNTIME_GID: ${{ needs.config.outputs.runtime_gid }}
           RUNTIME_UID: ${{ needs.config.outputs.runtime_uid }}
           TARGETPLATFORM: ${{ matrix.platform }}
@@ -142,8 +188,6 @@ jobs:
             --build-arg "LLAMA_CPP_ARCHIVE_SHA256=${LLAMA_CPP_ARCHIVE_SHA256}" \
             --build-arg "LLAMA_CPP_REVISION=${LLAMA_CPP_REVISION}" \
             --build-arg "NEMOCLAW_REVISION=${NEMOCLAW_REVISION}" \
-            --build-arg "REQUEST_GUARD_GO_ARCHIVE_SHA256=${REQUEST_GUARD_GO_ARCHIVE_SHA256}" \
-            --build-arg "REQUEST_GUARD_GO_VERSION=${REQUEST_GUARD_GO_VERSION}" \
             --build-arg "RUNTIME_GID=${RUNTIME_GID}" \
             --build-arg "RUNTIME_UID=${RUNTIME_UID}" \
             --build-arg "TARGETPLATFORM=${TARGETPLATFORM}"
@@ -168,8 +212,6 @@ jobs:
             LLAMA_CPP_ARCHIVE_SHA256=${{ needs.config.outputs.source_archive_sha256 }}
             LLAMA_CPP_REVISION=${{ needs.config.outputs.source_revision }}
             NEMOCLAW_REVISION=${{ github.sha }}
-            REQUEST_GUARD_GO_ARCHIVE_SHA256=${{ matrix.request_guard_go_archive_sha256 }}
-            REQUEST_GUARD_GO_VERSION=${{ needs.config.outputs.request_guard_go_version }}
             RUNTIME_GID=${{ needs.config.outputs.runtime_gid }}
             RUNTIME_UID=${{ needs.config.outputs.runtime_uid }}
             TARGETPLATFORM=${{ matrix.platform }}
@@ -186,8 +228,6 @@ jobs:
           CUDA_RUNTIME_IMAGE: ${{ needs.config.outputs.cuda_runtime_image }}
           IMAGE: nemoclaw-llama-cpp-pr:${{ matrix.arch }}-${{ github.sha }}
           PLATFORM: ${{ matrix.platform }}
-          REQUEST_GUARD_GO_ARCHIVE_SHA256: ${{ matrix.request_guard_go_archive_sha256 }}
-          REQUEST_GUARD_GO_VERSION: ${{ needs.config.outputs.request_guard_go_version }}
           RUNTIME_FORBIDDEN_PATHS: ${{ needs.config.outputs.runtime_forbidden_paths }}
           RUNTIME_GID: ${{ needs.config.outputs.runtime_gid }}
           RUNTIME_REQUIRED_PATHS: ${{ needs.config.outputs.runtime_required_paths }}
@@ -203,8 +243,6 @@ jobs:
             --arg dev "$CUDA_DEV_IMAGE" \
             --arg gid "$RUNTIME_GID" \
             --arg platform "$PLATFORM" \
-            --arg requestGuardGoArchive "$REQUEST_GUARD_GO_ARCHIVE_SHA256" \
-            --arg requestGuardGoVersion "$REQUEST_GUARD_GO_VERSION" \
             --arg revision "$GITHUB_SHA" \
             --arg runtime "$CUDA_RUNTIME_IMAGE" \
             --arg uid "$RUNTIME_UID" \
@@ -218,9 +256,6 @@ jobs:
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.platform"] == $platform
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.upstream.revision"] == $upstream
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.upstream.archive-sha256"] == $archive
-              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.request-guard.authentication"] == "managed-bearer-v1"
-              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.version"] == $requestGuardGoVersion
-              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.archive-sha256"] == $requestGuardGoArchive
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.cuda.development-base"] == $dev
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.cuda.runtime-base"] == $runtime
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.cuda.architectures"] == $architectures
@@ -235,6 +270,16 @@ jobs:
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
             "$IMAGE" --version 2>&1 | tee "$RUNNER_TEMP/llama-server-version.txt"
           grep -F "$SOURCE_REVISION" "$RUNNER_TEMP/llama-server-version.txt"
+
+          docker run --rm \
+            --network none \
+            --read-only \
+            --user 65532:65532 \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --env NVIDIA_VISIBLE_DEVICES=void \
+            --entrypoint /usr/bin/curl \
+            "$IMAGE" --version
 
           container_id="$(docker create "$IMAGE" --version)"
           trap 'docker rm --force "$container_id" >/dev/null 2>&1 || true' EXIT
@@ -256,13 +301,59 @@ jobs:
           docker rm "$container_id" >/dev/null
           trap - EXIT
 
-      - name: Exercise packaged request guard through Docker exec
+      - name: Set up Node.js for native cancellation proof
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
+      - name: Build the CLI for native cancellation proof
+        run: |
+          npm ci --ignore-scripts
+          npm --prefix nemoclaw ci --ignore-scripts
+          npm run build:cli
+
+      - name: Verify cancellation through the compiled bridge and real Docker
         shell: bash
         env:
-          IMAGE: nemoclaw-llama-cpp-pr:${{ matrix.arch }}-${{ github.sha }}
+          NEMOCLAW_NATIVE_LLAMA_TEST_IMAGE: nemoclaw-llama-cpp-pr:${{ matrix.arch }}-${{ github.sha }}
+          NEMOCLAW_NATIVE_LLAMA_TEST_MODEL: ${{ runner.temp }}/SmolLM2-135M-Instruct-Q4_K_M.gguf
+          NEMOCLAW_NATIVE_LLAMA_TEST_EVIDENCE: ${{ runner.temp }}/llama-cpp-native-evidence/evidence.json
         run: |
           set -euo pipefail
-          test/platform/images/llama-cpp-stdio-image-proof.py "$IMAGE"
+          install -d -m 0700 "$RUNNER_TEMP/llama-cpp-native-evidence"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --max-time 180 \
+            'https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF/resolve/9e6855bc4be717fca1ef21360a1db4b29d5c559a/SmolLM2-135M-Instruct-Q4_K_M.gguf' \
+            --output "$NEMOCLAW_NATIVE_LLAMA_TEST_MODEL"
+          printf '%s  %s\n' \
+            'ed5fa30c487b282ec156c29062f1222e5c20875a944ac98289dbd242e947f747' \
+            "$NEMOCLAW_NATIVE_LLAMA_TEST_MODEL" | sha256sum --check --strict
+          npx --no-install vitest run --project package-contract \
+            test/package-contract/inference/llama-cpp-native-cancellation.test.ts \
+            --reporter=default --reporter=json \
+            --outputFile.json="$RUNNER_TEMP/llama-cpp-native-evidence/result.json" \
+            > "$RUNNER_TEMP/llama-cpp-native-evidence/run.log" 2>&1
+          node - "$RUNNER_TEMP/llama-cpp-native-evidence/result.json" \
+            "$NEMOCLAW_NATIVE_LLAMA_TEST_EVIDENCE" <<'NODE'
+          const fs = require("node:fs");
+          const result = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const evidence = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+          if (result.success !== true || result.numPassedTests !== 10 ||
+              result.numPendingTests !== 0 || evidence.bridgeCancellationPassed !== true) {
+            throw new Error("Native cancellation proof must pass all ten real-Docker cases.");
+          }
+          NODE
+
+      - name: Retain native cancellation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: llama-cpp-native-cancellation-${{ matrix.arch }}-${{ github.sha }}
+          path: ${{ runner.temp }}/llama-cpp-native-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
 
   publication-gate:
     name: Validate trusted publication request
@@ -270,9 +361,14 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.publish == true
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    permissions: {}
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
     outputs:
       candidate_tag: ${{ steps.gate.outputs.candidate_tag }}
+      publication_ref: ${{ steps.gate.outputs.publication_ref }}
+      signature_identity: ${{ steps.gate.outputs.signature_identity }}
     steps:
       - name: Enforce declarative publication boundary
         id: gate
@@ -281,6 +377,13 @@ jobs:
           ALLOWED_REF: ${{ needs.config.outputs.publication_allowed_ref }}
           ANONYMOUS_EXACT_DIGEST_PULL: ${{ needs.config.outputs.publication_anonymous_exact_digest_pull }}
           CANDIDATE_TAG_TEMPLATE: ${{ needs.config.outputs.publication_candidate_tag_template }}
+          CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          ROOT_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          TRUSTED_REVISION: ${{ needs.config.outputs.trusted_revision }}
+          DEFINITION_REF: ${{ needs.config.outputs.definition_ref }}
+          WRAPPER_SHA: ${{ needs.config.outputs.wrapper_sha }}
+          IMAGE_CONTEXT_SHA: ${{ needs.config.outputs.image_context_sha }}
+          GH_TOKEN: ${{ github.token }}
           IMAGE: ${{ needs.config.outputs.image }}
           PLATFORMS: ${{ needs.config.outputs.publication_platforms }}
           PUBLICATION_ENABLED: ${{ needs.config.outputs.publication_enabled }}
@@ -290,6 +393,7 @@ jobs:
           RECEIPT_SCHEMA_VERSION: ${{ needs.config.outputs.publication_receipt_schema_version }}
           SBOM_FORMAT: ${{ needs.config.outputs.publication_sbom_format }}
           SIGNATURE_MODE: ${{ needs.config.outputs.publication_signature_mode }}
+          SIGNATURE_IDENTITY: ${{ needs.config.outputs.publication_signature_identity }}
           SIGNATURE_TRANSPARENCY_LOG: ${{ needs.config.outputs.publication_signature_transparency_log }}
           SLSA_PREDICATE_TYPE: ${{ needs.config.outputs.publication_provenance_predicate_type }}
           VULNERABILITY_ONLY_FIXED: ${{ needs.config.outputs.publication_vulnerability_only_fixed }}
@@ -298,7 +402,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$GITHUB_REPOSITORY" != "NVIDIA/NemoClaw" ] \
-            || [ "$GITHUB_REF" != "$ALLOWED_REF" ] \
+            || [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] \
             || [ "$PUBLICATION_TRIGGER" != "workflow_dispatch" ] \
             || [ "$PUBLICATION_ENABLED" != "true" ] \
             || [ "$PUBLICATION_REPOSITORY" != "$IMAGE" ] \
@@ -315,11 +419,65 @@ jobs:
             echo "ERROR: repository, ref, trigger, enablement, image, or publication policy does not match the trusted contract." >&2
             exit 1
           fi
+          # This maintainer-approved branch exception expires when PR 12664 closes.
+          # Match main's required checks and signatures before granting write jobs.
+          if [ "$GITHUB_REF" != "$ALLOWED_REF" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/fix/issue-12285-wsl-transport" ] \
+              || [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] \
+              || [[ ! "$TRUSTED_REVISION" =~ ^[0-9a-f]{40}$ ]] \
+              || [ "$ROOT_WORKFLOW_SHA" != "$GITHUB_SHA" ] \
+              || [ "$DEFINITION_REF" != "NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@$TRUSTED_REVISION" ] \
+              || [ "$CALLER_WORKFLOW_REF" != "NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@$GITHUB_REF" ]; then
+              echo "ERROR: publication ref is not approved." >&2
+              exit 1
+            fi
+            gh api "repos/NVIDIA/NemoClaw/contents/.github/workflows/llama-cpp-image.yaml?ref=$GITHUB_SHA" \
+              | jq -e --arg expected "$WRAPPER_SHA" '.type == "file" and .sha == $expected' >/dev/null
+            gh api graphql \
+              -f query="query(\$expression:String!){repository(owner:\"NVIDIA\",name:\"NemoClaw\"){object(expression:\$expression){__typename oid}}}" \
+              -f "expression=$GITHUB_SHA:managed-inference/images/llama-cpp" \
+              | jq -e --arg expected "$IMAGE_CONTEXT_SHA" '
+                  .data.repository.object | .__typename == "Tree" and .oid == $expected
+                ' >/dev/null
+            gh api repos/NVIDIA/NemoClaw/pulls/12664 | jq -e --arg sha "$GITHUB_SHA" '
+              .state == "open" and .head.sha == $sha
+              and .head.ref == "fix/issue-12285-wsl-transport"
+              and .head.repo.full_name == "NVIDIA/NemoClaw"
+              and .base.ref == "main" and .base.repo.full_name == "NVIDIA/NemoClaw"
+            ' >/dev/null
+            if [ "$(gh api "repos/NVIDIA/NemoClaw/commits/$GITHUB_SHA" --jq '.commit.verification.verified')" != "true" ]; then
+              echo "ERROR: branch publication requires a verified signed commit." >&2
+              exit 1
+            fi
+            # PR description edits add a skipped changes check. Every required
+            # check still needs an actual success on this exact commit.
+            gh api --paginate --slurp "repos/NVIDIA/NemoClaw/commits/$GITHUB_SHA/check-runs?per_page=100&filter=latest" \
+              | jq -e --arg sha "$GITHUB_SHA" '
+                [.[] | .check_runs[] | select(.app.id == 15368 and .head_sha == $sha)] as $runs
+                | ["checks", "commit-lint", "dco-check", "check-hash", "changes",
+                   "Build native llama.cpp server (amd64)", "Build native llama.cpp server (arm64)"]
+                | all(.[]; . as $name
+                    | [$runs[] | select(.name == $name)]
+                    | any(.[]; .conclusion == "success")
+                      and all(.[]; .status == "completed" and
+                        (.conclusion == "success" or ($name == "changes" and .conclusion == "skipped"))))
+              ' >/dev/null
+            # GitHub requires both forms when a name has check runs and commit
+            # statuses. In particular, admission also owns check-hash status.
+            gh api --paginate --slurp "repos/NVIDIA/NemoClaw/commits/$GITHUB_SHA/statuses?per_page=100" \
+              | jq -e '
+                add | group_by(.context) | map(max_by(.id))
+                | all(.[] | select(.context == "checks" or .context == "commit-lint" or
+                    .context == "dco-check" or .context == "check-hash" or .context == "changes");
+                    .state == "success" and .creator.id == 41898282 and .creator.type == "Bot")
+              ' >/dev/null
+          else
+            test "$CALLER_WORKFLOW_REF" = "NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@$GITHUB_REF"
+          fi
           if ! jq -e '
-            (keys | sort) == ["environment", "execution", "gpu", "model", "platform", "probeBounds", "probes", "profile", "recipeRef", "requestGuard", "required", "runner"]
+            (keys | sort) == ["environment", "execution", "gpu", "model", "platform", "probeBounds", "probes", "profile", "recipeRef", "required", "runner"]
             and .required == true
             and .execution == "enabled"
-            and .requestGuard == "required"
             and .profile == "dgx-spark-gb10-single"
             and .recipeRef == "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1"
             and .platform == "linux/arm64"
@@ -339,7 +497,15 @@ jobs:
             echo "ERROR: generated candidate tag is invalid." >&2
             exit 1
           fi
-          printf 'candidate_tag=%s\n' "$candidate_tag" >> "$GITHUB_OUTPUT"
+          {
+            printf 'candidate_tag=%s\n' "$candidate_tag"
+            printf 'publication_ref=%s\n' "$GITHUB_REF"
+            if [ "$GITHUB_REF" = "$ALLOWED_REF" ]; then
+              printf 'signature_identity=%s\n' "$SIGNATURE_IDENTITY"
+            else
+              printf 'signature_identity=%s@%s\n' "${SIGNATURE_IDENTITY%@*}" "$TRUSTED_REVISION"
+            fi
+          } >> "$GITHUB_OUTPUT"
 
   publish-platform:
     name: Publish native llama.cpp digest (${{ matrix.arch }})
@@ -356,6 +522,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.config.outputs.trusted_revision }}
           persist-credentials: false
 
       - name: Set up Docker Buildx
@@ -380,8 +547,6 @@ jobs:
           LLAMA_CPP_ARCHIVE_SHA256: ${{ needs.config.outputs.source_archive_sha256 }}
           LLAMA_CPP_REVISION: ${{ needs.config.outputs.source_revision }}
           NEMOCLAW_REVISION: ${{ github.sha }}
-          REQUEST_GUARD_GO_ARCHIVE_SHA256: ${{ matrix.request_guard_go_archive_sha256 }}
-          REQUEST_GUARD_GO_VERSION: ${{ needs.config.outputs.request_guard_go_version }}
           RUNTIME_GID: ${{ needs.config.outputs.runtime_gid }}
           RUNTIME_UID: ${{ needs.config.outputs.runtime_uid }}
           TARGETPLATFORM: ${{ matrix.platform }}
@@ -398,8 +563,6 @@ jobs:
             --build-arg "LLAMA_CPP_ARCHIVE_SHA256=${LLAMA_CPP_ARCHIVE_SHA256}" \
             --build-arg "LLAMA_CPP_REVISION=${LLAMA_CPP_REVISION}" \
             --build-arg "NEMOCLAW_REVISION=${NEMOCLAW_REVISION}" \
-            --build-arg "REQUEST_GUARD_GO_ARCHIVE_SHA256=${REQUEST_GUARD_GO_ARCHIVE_SHA256}" \
-            --build-arg "REQUEST_GUARD_GO_VERSION=${REQUEST_GUARD_GO_VERSION}" \
             --build-arg "RUNTIME_GID=${RUNTIME_GID}" \
             --build-arg "RUNTIME_UID=${RUNTIME_UID}" \
             --build-arg "TARGETPLATFORM=${TARGETPLATFORM}"
@@ -423,8 +586,6 @@ jobs:
             LLAMA_CPP_ARCHIVE_SHA256=${{ needs.config.outputs.source_archive_sha256 }}
             LLAMA_CPP_REVISION=${{ needs.config.outputs.source_revision }}
             NEMOCLAW_REVISION=${{ github.sha }}
-            REQUEST_GUARD_GO_ARCHIVE_SHA256=${{ matrix.request_guard_go_archive_sha256 }}
-            REQUEST_GUARD_GO_VERSION=${{ needs.config.outputs.request_guard_go_version }}
             RUNTIME_GID=${{ needs.config.outputs.runtime_gid }}
             RUNTIME_UID=${{ needs.config.outputs.runtime_uid }}
             TARGETPLATFORM=${{ matrix.platform }}
@@ -495,14 +656,6 @@ jobs:
             '{imageId:$imageId,platform:$platform,platformDigest:$platformDigest,reference:$reference}' \
             > "$RUNNER_TEMP/llama-cpp-anonymous-pulls/anonymous-pull-${ARCH}.json"
 
-      - name: Exercise published request guard through Docker exec
-        shell: bash
-        env:
-          IMAGE: ${{ needs.config.outputs.publication_repository }}@${{ steps.build.outputs.digest }}
-        run: |
-          set -euo pipefail
-          test/platform/images/llama-cpp-stdio-image-proof.py "$IMAGE"
-
       - name: Upload anonymous pull evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -536,6 +689,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.config.outputs.trusted_revision }}
           persist-credentials: false
 
       - name: Set up Docker Buildx
@@ -722,8 +876,10 @@ jobs:
     permissions:
       attestations: write
       contents: read
+      checks: read
       id-token: write
       packages: write
+      pull-requests: read
     uses: ./.github/workflows/llama-cpp-image-attest.yaml
     with:
       candidate_tag: ${{ needs.assemble-candidate.outputs.candidate_tag }}
@@ -734,14 +890,7 @@ jobs:
 
   verify-candidate:
     name: Verify evidence and emit publication receipt
-    needs:
-      [
-        config,
-        publication-gate,
-        assemble-candidate,
-        scan-candidate,
-        attest-candidate,
-      ]
+    needs: [config, publication-gate, assemble-candidate, scan-candidate, attest-candidate]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -752,6 +901,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.config.outputs.trusted_revision }}
           persist-credentials: false
 
       - name: Set up Docker Buildx
@@ -799,10 +949,11 @@ jobs:
       - name: Verify cryptographic evidence
         shell: bash
         env:
-          CERTIFICATE_IDENTITY: ${{ needs.config.outputs.publication_signature_identity }}
+          CERTIFICATE_IDENTITY: ${{ needs.publication-gate.outputs.signature_identity }}
           CERTIFICATE_OIDC_ISSUER: ${{ needs.config.outputs.publication_signature_issuer }}
-          EXPECTED_REF: ${{ needs.config.outputs.publication_allowed_ref }}
+          EXPECTED_REF: ${{ needs.publication-gate.outputs.publication_ref }}
           EXPECTED_REVISION: ${{ github.sha }}
+          SIGNER_REVISION: ${{ needs.config.outputs.trusted_revision }}
           GH_TOKEN: ${{ github.token }}
           PROVENANCE_PREDICATE_TYPE: ${{ needs.config.outputs.publication_provenance_predicate_type }}
           REFERENCE: ${{ needs.assemble-candidate.outputs.reference }}
@@ -833,13 +984,14 @@ jobs:
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/llama-cpp-image-attest.yaml" \
             --source-ref "$EXPECTED_REF" \
             --source-digest "$EXPECTED_REVISION" \
+            --signer-digest "$SIGNER_REVISION" \
             --predicate-type "$PROVENANCE_PREDICATE_TYPE" \
             --format json > "$evidence/provenance-verification.json"
 
       - name: Verify publication evidence and create receipt
         shell: bash
         env:
-          CERTIFICATE_IDENTITY: ${{ needs.config.outputs.publication_signature_identity }}
+          CERTIFICATE_IDENTITY: ${{ needs.publication-gate.outputs.signature_identity }}
           CERTIFICATE_OIDC_ISSUER: ${{ needs.config.outputs.publication_signature_issuer }}
           CUDA_DEVELOPMENT_BASE: ${{ needs.config.outputs.cuda_dev_image }}
           CUDA_RUNTIME_BASE: ${{ needs.config.outputs.cuda_runtime_image }}
@@ -881,3 +1033,21 @@ jobs:
           path: ${{ runner.temp }}/llama-cpp-evidence/publication-receipt.json
           if-no-files-found: error
           retention-days: ${{ fromJSON(needs.config.outputs.publication_receipt_retention_days) }}
+
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# SHA-pinned caller. No executable steps are allowed here.
+  publish-approved-branch:
+    name: Publish the approved branch through the immutable publisher
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && !inputs.publisher_call && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/fix/issue-12285-wsl-transport'
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
+      packages: write
+      attestations: write
+      id-token: write
+    uses: NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@195d6fa1670f993095be3432bcfe822095546717
+    with:
+      publish: true
+      publisher_call: true

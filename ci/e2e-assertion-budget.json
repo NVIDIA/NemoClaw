@@ -27,14 +27,14 @@
       "generatedProbeConditions": 215
     },
     "unique": {
-      "expectCalls": 1695,
-      "matcherAssertions": 1669,
+      "expectCalls": 1694,
+      "matcherAssertions": 1668,
       "nodeAssertions": 127,
       "namedAssertionHelpers": 664,
       "failCalls": 1,
       "throwGuards": 526,
       "objectFieldAssertions": 258,
-      "assertionPoints": 3245,
+      "assertionPoints": 3244,
       "generatedProbeBlocks": 208,
       "generatedProbeConditions": 720
     },
@@ -308,8 +308,8 @@
       "test/e2e/live/managed-image-protected-runtime.test.ts": [
         0,
         0,
-        40,
-        77,
+        39,
+        76,
         15
       ],
       "test/e2e/live/mcp-bridge.test.ts": [

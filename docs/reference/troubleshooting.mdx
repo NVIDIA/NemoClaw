@@ -2326,7 +2326,9 @@ openclaw config unset <dotpath>
 ```
 
 Restart and reconnect preserve the current native configuration.
-Rebuild transfers the complete native configuration captured immediately before replacement.
+Rebuild transfers the native configuration captured immediately before replacement.
+Before gateway startup, NemoClaw refreshes the scoped inference credential handle when its endpoint and credential key match the native NVIDIA or OpenRouter provider.
+Refer to [Understand Runtime Changes](../manage-sandboxes/configure-sandboxes/understand-runtime-changes) for the reconciliation rules.
 The retired selective snapshot restore flow is not available; roll back by explicitly reapplying reviewed files from an independent trusted backup.
 The host command `$$nemoclaw <sandbox> config set` returns guidance to use the native OpenClaw command.
 

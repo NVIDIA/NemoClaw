@@ -102,7 +102,7 @@ The hosted plan job authenticates the open PR and exact revisions. It loads cand
 manifest and activation data without executing candidate code. Candidate runner,
 approval environment, and staged model path must match trusted main. Executable
 llama.cpp image build inputs must also match trusted main; the candidate's digest-bound
-plan supplies the pinned source, CUDA, Go, recipe, and agent qualification inputs.
+plan supplies the pinned source, CUDA, recipe, and agent qualification inputs.
 
 The configured runner must be a physical DGX Spark with NVIDIA GB10, a supported
 Docker/NVIDIA runtime, OpenShell prerequisites, and the exact locally staged GGUF.
@@ -155,10 +155,6 @@ It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JO
 Each selected consumer restores the artifact instead of running `npm run build:cli`.
 Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
 The `managed-image-multiarch-startup` no-build job keeps that setting and compiles only the candidate shared policy boundary on the host.
-The `managed-image-protected-runtime` qualification-relay case uses a digest-pinned Node HTTP fixture on an owned internal Docker network.
-It exercises the qualification runner's address inspection and relay, then removes the fixture resources.
-This case needs Docker but no GPU, model, OpenShell sandbox, or provider credential.
-The deterministic qualification-runner tests retain ownership of TCP forwarding, invalid-input coverage, and listener closure.
 It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
 Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
 The trusted controller accepts both v1 multiarch activation and v2 Deep Agents
@@ -264,6 +260,10 @@ Manual PR E2E does not fall back to local Dockerfile builds.
 
 PR image publication builds each shipped agent on native AMD64 and ARM64 runners.
 Each platform retains its own digest contract and runs the direct startup checks.
+For OpenClaw, those checks also run the shared agent-reload proof against the image's generated
+gateway policy and installed distribution. The proof checks live named-agent discovery, gateway
+health, and a nonzero exit after a restart-class bind failure. Google Chat's reload-off exception
+is tracked separately in #13274.
 Docker activation selects the matching platform catalog and runs the existing all-agent lifecycle test.
 Rootless Podman activation remains AMD64. The catalog reader accepts only one platform per catalog;
 it rejects missing agents, mixed platforms, revisions, releases, and cohorts.

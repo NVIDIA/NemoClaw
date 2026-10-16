@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import crypto from "node:crypto";
+import { describe } from "vitest";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
 import { parse as parseToml } from "smol-toml";
 import YAML from "yaml";
@@ -241,81 +243,111 @@ test(
 
 // Four cases use OpenClaw; the Nous API-key case uses Hermes.
 
-test.for(hostedCases)(
-  "$id $label answers through its native provider",
-  {
-    timeout: 20 * 60_000,
-    meta: {
-      e2ePhases: [
-        "confirm hosted provider prerequisites",
-        "recreate the hosted sandbox",
-        "onboard the hosted provider",
-        "verify native agent configuration",
-        "verify hosted credential isolation",
-        "switch OpenRouter models when selected",
-        "request a fresh agent response",
-      ],
-    },
-  },
-  async (
-    selected,
-    { artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip },
-  ) => {
-    requireProviderSmokeSelected(selected.selector, skip);
-    const environment = hostedProviderSmokeEnvironment(`hosted-inference-${selected.selector}`, {
-      [selected.credential]: secrets.optional(selected.credential),
-      [selected.modelEnv]: process.env[selected.modelEnv],
-    });
-    const apiKey = environment[selected.credential]!;
-    const model = environment[selected.modelEnv]!;
-    await requireLivePrerequisites(host, runtimeProvider);
-    const hermes = selected.selector === "hermes";
-    const sandboxName = inferenceSandboxName(`e2e-${selected.selector}`);
-    cleanup.add(`best-effort hosted inference cleanup for ${sandboxName}`, () =>
-      cleanupSandbox(host, sandbox, sandboxName),
-    );
-    progress.phase("recreate the hosted sandbox");
-    await cleanupSandbox(host, sandbox, sandboxName);
-    await artifacts.target.declare({
-      id: `inference-routing-${selected.selector}`,
-      model,
-      contract: [
-        "hosted provider onboards",
-        "agent uses the native endpoint with a credential placeholder",
-        "selected credential is absent from sandbox environment, process arguments, and sampled files",
-        "fresh agent request answers with the selected model",
-        ...(selected.selector === "openrouter"
-          ? ["both OpenRouter model switches preserve a fresh agent response"]
-          : []),
-      ],
-    });
-    progress.phase("onboard the hosted provider");
-    const onboard = await onboardSandbox(
-      artifacts,
-      sandboxName,
+describe.each(hostedCases.map((entry) => [entry.id, entry.label, entry] as const))(
+  "%s %s",
+  (_id, _label, selected) => {
+    test(
+      "answers through its native provider",
       {
-        NEMOCLAW_AGENT: hermes ? "hermes" : "openclaw",
-        NEMOCLAW_MODEL: model,
-        NEMOCLAW_PROVIDER: selected.provider,
-        [selected.credential]: apiKey,
+        timeout: (selected.selector === "openrouter" ? 35 : 20) * 60_000,
+        meta: {
+          e2ePhases: [
+            "confirm hosted provider prerequisites",
+            "recreate the hosted sandbox",
+            "onboard the hosted provider",
+            "exercise the selected hosted lifecycle",
+            "verify native agent configuration",
+            "verify hosted credential isolation",
+            "switch OpenRouter models when selected",
+            "request a fresh agent response",
+          ],
+        },
       },
-      [apiKey],
-      `${selected.id}-onboard`,
-      progress,
-    );
-    expectOnboardSuccess(onboard, `${selected.id} hosted onboard`);
-    cleanup.add(`strict hosted inference cleanup for ${sandboxName}`, () =>
-      cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
-    );
-    progress.phase("verify native agent configuration");
-    const config = await sandbox.exec(
-      sandboxName,
-      hermes
-        ? ["cat", "/sandbox/.hermes/config.yaml"]
-        : [
-            "node",
-            "-e",
-            String.raw`
+      async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+        requireProviderSmokeSelected(selected.selector, skip);
+        const environment = hostedProviderSmokeEnvironment(
+          `hosted-inference-${selected.selector}`,
+          {
+            [selected.credential]: secrets.optional(selected.credential),
+            [selected.modelEnv]: process.env[selected.modelEnv],
+          },
+        );
+        const apiKey = environment[selected.credential]!;
+        const model = environment[selected.modelEnv]!;
+        await requireLivePrerequisites(host, runtimeProvider);
+        const hermes = selected.selector === "hermes";
+        const sandboxName = inferenceSandboxName(`e2e-${selected.selector}`);
+        cleanup.add(`best-effort hosted inference cleanup for ${sandboxName}`, () =>
+          cleanupSandbox(host, sandbox, sandboxName),
+        );
+        progress.phase("recreate the hosted sandbox");
+        await cleanupSandbox(host, sandbox, sandboxName);
+        await artifacts.target.declare({
+          id: `inference-routing-${selected.selector}`,
+          model,
+          contract: [
+            "hosted provider onboards",
+            ...(selected.selector === "openrouter"
+              ? ["OpenRouter remains usable after rebuild without a fresh host credential"]
+              : []),
+            "agent uses the native endpoint with a credential placeholder",
+            "selected credential is absent from sandbox environment, process arguments, and sampled files",
+            "fresh agent request answers with the selected model",
+            ...(selected.selector === "openrouter"
+              ? ["both OpenRouter model switches preserve a fresh agent response"]
+              : []),
+          ],
+        });
+        progress.phase("onboard the hosted provider");
+        const onboard = await onboardSandbox(
+          artifacts,
+          sandboxName,
+          {
+            NEMOCLAW_AGENT: hermes ? "hermes" : "openclaw",
+            NEMOCLAW_MODEL: model,
+            NEMOCLAW_PROVIDER: selected.provider,
+            [selected.credential]: apiKey,
+          },
+          [apiKey],
+          `${selected.id}-onboard`,
+          progress,
+        );
+        expectOnboardSuccess(onboard, `${selected.id} hosted onboard`);
+        cleanup.add(`strict hosted inference cleanup for ${sandboxName}`, () =>
+          cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+        );
+        progress.phase("exercise the selected hosted lifecycle");
+        // Reuse routing and isolation checks after rebuild without a fresh host key.
+        const rebuilt =
+          selected.selector === "openrouter"
+            ? await host.command(
+                process.execPath,
+                [CLI_ENTRYPOINT, sandboxName, "rebuild", "--yes", "--verbose"],
+                {
+                  artifactName: "tc-inf-07-rebuild",
+                  env: {
+                    ...buildAvailabilityProbeEnv(),
+                    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+                    NEMOCLAW_NON_INTERACTIVE: "1",
+                  },
+                  redactionValues: [apiKey],
+                  timeoutMs: 10 * 60_000,
+                },
+              )
+            : null;
+        expect(
+          rebuilt === null ? 0 : rebuilt.exitCode,
+          rebuilt === null ? "fresh hosted provider lifecycle" : resultText(rebuilt),
+        ).toBe(0);
+        progress.phase("verify native agent configuration");
+        const config = await sandbox.exec(
+          sandboxName,
+          hermes
+            ? ["cat", "/sandbox/.hermes/config.yaml"]
+            : [
+                "node",
+                "-e",
+                String.raw`
 const fs = require("node:fs");
 let config;
 try {
@@ -336,206 +368,204 @@ console.log(JSON.stringify({
     "openshell:resolve:env:" + process.argv[2],
 }));
 `,
-            selected.providerKey,
-            selected.placeholder,
-            selected.endpoint,
-          ],
-      {
-        artifactName: `${selected.id}-native-config`,
-        env: buildAvailabilityProbeEnv(),
-        redactionValues: [apiKey],
-        timeoutMs: 60_000,
-      },
-    );
-    expect(config.exitCode, "native provider config read failed; inspect the artifact").toBe(0);
-    const providerConfig = hermes ? YAML.parse(config.stdout).model : JSON.parse(config.stdout);
-    expect(providerConfig).toMatchObject({
-      [hermes ? "base_url" : "endpointMatches"]: hermes ? selected.endpoint : true,
-      [hermes ? "api_key" : "credentialHandleMatches"]: hermes
-        ? `\${${selected.placeholder}}`
-        : true,
-    });
-    progress.phase("verify hosted credential isolation");
-    const isolation = await sandbox.exec(sandboxName, hostedCredentialScanCommand(apiKey), {
-      artifactName: `${selected.id}-credential-isolation`,
-      env: buildAvailabilityProbeEnv(),
-      redactionValues: [apiKey],
-      timeoutMs: 90_000,
-    });
-    expect(isolation.exitCode, "credential isolation scan failed; inspect the artifact").toBe(0);
-    const isolationEvidence = JSON.parse(isolation.stdout);
-    expect(
-      isolationEvidence.environmentClean,
-      "real credential absent from sandbox environment",
-    ).toBe(true);
-    expect(
-      isolationEvidence.processesClean,
-      "sandbox process arguments are available and credential-free",
-    ).toBe(true);
-    expect(
-      isolationEvidence.sampledFilesClean,
-      "real credential absent from sampled sandbox files",
-    ).toBe(true);
-    expect(isolationEvidence.canaryDetected, "filesystem scanner detects a planted control").toBe(
-      true,
-    );
-    const requestOpenClawAgent = async (artifactName: string) => {
-      const response = await sandbox.exec(
-        sandboxName,
-        [
-          "nemoclaw-start",
-          "openclaw",
-          "agent",
-          "--agent",
-          "main",
-          "--json",
-          "--thinking",
-          "off",
-          "--session-id",
-          `native-${crypto.randomUUID()}`,
-          "-m",
-          "Reply with one short greeting. Do not use tools.",
-        ],
-        {
-          artifactName,
+                selected.providerKey,
+                selected.placeholder,
+                selected.endpoint,
+              ],
+          {
+            artifactName: `${selected.id}-native-config`,
+            env: buildAvailabilityProbeEnv(),
+            redactionValues: [apiKey],
+            timeoutMs: 60_000,
+          },
+        );
+        expect(config.exitCode, "native provider config read failed; inspect the artifact").toBe(0);
+        const providerConfig = hermes ? YAML.parse(config.stdout).model : JSON.parse(config.stdout);
+        expect(providerConfig).toMatchObject({
+          [hermes ? "base_url" : "endpointMatches"]: hermes ? selected.endpoint : true,
+          [hermes ? "api_key" : "credentialHandleMatches"]: hermes
+            ? `\${${selected.placeholder}}`
+            : true,
+        });
+        progress.phase("verify hosted credential isolation");
+        const isolation = await sandbox.exec(sandboxName, hostedCredentialScanCommand(apiKey), {
+          artifactName: `${selected.id}-credential-isolation`,
+          env: buildAvailabilityProbeEnv(),
+          redactionValues: [apiKey],
+          timeoutMs: 90_000,
+        });
+        expect(isolation.exitCode, "credential isolation scan failed; inspect the artifact").toBe(
+          0,
+        );
+        const isolationEvidence = JSON.parse(isolation.stdout);
+        expect(
+          isolationEvidence.environmentClean,
+          "real credential absent from sandbox environment",
+        ).toBe(true);
+        expect(
+          isolationEvidence.processesClean,
+          "sandbox process arguments are available and credential-free",
+        ).toBe(true);
+        expect(
+          isolationEvidence.sampledFilesClean,
+          "real credential absent from sampled sandbox files",
+        ).toBe(true);
+        expect(
+          isolationEvidence.canaryDetected,
+          "filesystem scanner detects a planted control",
+        ).toBe(true);
+        const requestOpenClawAgent = async (artifactName: string) => {
+          const response = await sandbox.exec(
+            sandboxName,
+            [
+              "nemoclaw-start",
+              "openclaw",
+              "agent",
+              "--agent",
+              "main",
+              "--json",
+              "--thinking",
+              "off",
+              "--session-id",
+              `native-${crypto.randomUUID()}`,
+              "-m",
+              "Reply with one short greeting. Do not use tools.",
+            ],
+            {
+              artifactName,
+              env: buildAvailabilityProbeEnv(),
+              redactionValues: [apiKey],
+              timeoutMs: 180_000,
+            },
+          );
+          const document = parseOpenClawJsonDocuments(response.stdout)
+            .map(openClawAgentResponseRecord)
+            .filter((value) => value !== null)
+            .at(-1);
+          return { response, document, text: parseOpenClawAgentText(response.stdout) };
+        };
+        switch (selected.selector) {
+          case "openrouter": {
+            const alternateModel =
+              model === "nvidia/nemotron-3-super-120b-a12b"
+                ? "nvidia/nemotron-3-ultra-550b-a55b"
+                : "nvidia/nemotron-3-super-120b-a12b";
+            const switchEnv = buildChildEnv(
+              { ...process.env, OPENROUTER_API_KEY: apiKey },
+              {
+                additionalAllowedEnv: AVAILABILITY_PROBE_EXTRA_ENV_KEYS,
+                secretEnv: ["OPENROUTER_API_KEY"],
+                fixtureOverlay: {},
+              },
+            );
+            progress.phase("switch OpenRouter models when selected");
+            const toAlternate = await host.nemoclaw(
+              [
+                "inference",
+                "set",
+                "--provider",
+                "openrouter-api",
+                "--model",
+                alternateModel,
+                "--sandbox",
+                sandboxName,
+              ],
+              {
+                artifactName: `${selected.id}-switch-to-alternate`,
+                env: switchEnv,
+                redactionValues: [apiKey],
+                timeoutMs: 180_000,
+              },
+            );
+            expect(
+              toAlternate.exitCode,
+              "OpenRouter alternate switch failed; inspect the redacted artifact",
+            ).toBe(0);
+            const {
+              response: alternateResponse,
+              document: alternateDocument,
+              text: alternateText,
+            } = await requestOpenClawAgent(`${selected.id}-alternate-native-agent`);
+            expect(alternateResponse.exitCode, resultText(alternateResponse)).toBe(0);
+            const alternateMeta = alternateDocument?.meta;
+            const alternateAgentMeta = isObjectRecord(alternateMeta)
+              ? alternateMeta.agentMeta
+              : undefined;
+            expect(isObjectRecord(alternateAgentMeta) ? alternateAgentMeta.model : undefined).toBe(
+              alternateModel,
+            );
+            expect(alternateText.trim()).not.toBe("");
+
+            const backToSelected = await host.nemoclaw(
+              [
+                "inference",
+                "set",
+                "--provider",
+                "openrouter-api",
+                "--model",
+                model,
+                "--sandbox",
+                sandboxName,
+              ],
+              {
+                artifactName: `${selected.id}-switch-back`,
+                env: switchEnv,
+                redactionValues: [apiKey],
+                timeoutMs: 180_000,
+              },
+            );
+            expect(
+              backToSelected.exitCode,
+              "OpenRouter return switch failed; inspect the redacted artifact",
+            ).toBe(0);
+            break;
+          }
+          default:
+            break;
+        }
+        progress.phase("request a fresh agent response");
+        const responseOptions = {
+          artifactName: `${selected.id}-native-agent`,
           env: buildAvailabilityProbeEnv(),
           redactionValues: [apiKey],
           timeoutMs: 180_000,
-        },
-      );
-      const document = parseOpenClawJsonDocuments(response.stdout)
-        .map(openClawAgentResponseRecord)
-        .filter((value) => value !== null)
-        .at(-1);
-      return { response, document, text: parseOpenClawAgentText(response.stdout) };
-    };
-    switch (selected.selector) {
-      case "openrouter": {
-        const alternateModel =
-          model === "nvidia/nemotron-3-super-120b-a12b"
-            ? "nvidia/nemotron-3-ultra-550b-a55b"
-            : "nvidia/nemotron-3-super-120b-a12b";
-        const switchEnv = buildChildEnv(
-          { ...process.env, OPENROUTER_API_KEY: apiKey },
-          {
-            additionalAllowedEnv: AVAILABILITY_PROBE_EXTRA_ENV_KEYS,
-            secretEnv: ["OPENROUTER_API_KEY"],
-            fixtureOverlay: {},
-          },
-        );
-        progress.phase("switch OpenRouter models when selected");
-        const toAlternate = await host.nemoclaw(
-          [
-            "inference",
-            "set",
-            "--provider",
-            "openrouter-api",
-            "--model",
-            alternateModel,
-            "--sandbox",
-            sandboxName,
-          ],
-          {
-            artifactName: `${selected.id}-switch-to-alternate`,
-            env: switchEnv,
-            redactionValues: [apiKey],
-            timeoutMs: 180_000,
-          },
-        );
-        expect(
-          toAlternate.exitCode,
-          "OpenRouter alternate switch failed; inspect the redacted artifact",
-        ).toBe(0);
-        const {
-          response: alternateResponse,
-          document: alternateDocument,
-          text: alternateText,
-        } = await requestOpenClawAgent(`${selected.id}-alternate-native-agent`);
-        expect(alternateResponse.exitCode, resultText(alternateResponse)).toBe(0);
-        const alternateMeta = alternateDocument?.meta;
-        const alternateAgentMeta = isObjectRecord(alternateMeta)
-          ? alternateMeta.agentMeta
-          : undefined;
-        expect(isObjectRecord(alternateAgentMeta) ? alternateAgentMeta.model : undefined).toBe(
-          alternateModel,
-        );
-        expect(alternateText.trim()).not.toBe("");
-
-        const backToSelected = await host.nemoclaw(
-          [
-            "inference",
-            "set",
-            "--provider",
-            "openrouter-api",
-            "--model",
-            model,
-            "--sandbox",
-            sandboxName,
-          ],
-          {
-            artifactName: `${selected.id}-switch-back`,
-            env: switchEnv,
-            redactionValues: [apiKey],
-            timeoutMs: 180_000,
-          },
-        );
-        expect(
-          backToSelected.exitCode,
-          "OpenRouter return switch failed; inspect the redacted artifact",
-        ).toBe(0);
-        const selectedRoute = await host.nemoclaw([sandboxName, "inference", "get", "--json"], {
-          artifactName: `${selected.id}-selected-route`,
-          env: buildAvailabilityProbeEnv(),
-          timeoutMs: 30_000,
+        };
+        const openClawResult = hermes
+          ? null
+          : await requestOpenClawAgent(`${selected.id}-native-agent`);
+        const response = hermes
+          ? await sandbox.execShell(
+              sandboxName,
+              trustedSandboxShellScript(
+                hermesApiCommand(
+                  JSON.stringify({
+                    model,
+                    messages: [
+                      { role: "user", content: "Reply with one short greeting. Do not use tools." },
+                    ],
+                    stream: false,
+                  }),
+                ),
+              ),
+              responseOptions,
+            )
+          : openClawResult!.response;
+        expect(response.exitCode, resultText(response)).toBe(0);
+        const document = hermes ? JSON.parse(response.stdout) : openClawResult!.document;
+        // Hermes reports the response model through its API; its selected adapter is
+        // recorded in config. OpenClaw reports both in the agent response metadata.
+        const agentSelection = hermes
+          ? { provider: providerConfig.provider, model: document.model }
+          : document?.meta?.agentMeta;
+        expect(agentSelection).toMatchObject({
+          provider: hermes ? "custom" : selected.providerKey,
+          model,
         });
-        expect(
-          selectedRoute.exitCode,
-          "OpenRouter selected route read failed; inspect the artifact",
-        ).toBe(0);
-        break;
-      }
-      default:
-        break;
-    }
-    progress.phase("request a fresh agent response");
-    const responseOptions = {
-      artifactName: `${selected.id}-native-agent`,
-      env: buildAvailabilityProbeEnv(),
-      redactionValues: [apiKey],
-      timeoutMs: 180_000,
-    };
-    const openClawResult = hermes
-      ? null
-      : await requestOpenClawAgent(`${selected.id}-native-agent`);
-    const response = hermes
-      ? await sandbox.execShell(
-          sandboxName,
-          trustedSandboxShellScript(
-            hermesApiCommand(
-              JSON.stringify({
-                model,
-                messages: [
-                  { role: "user", content: "Reply with one short greeting. Do not use tools." },
-                ],
-                stream: false,
-              }),
-            ),
-          ),
-          responseOptions,
-        )
-      : openClawResult!.response;
-    expect(response.exitCode, resultText(response)).toBe(0);
-    const document = hermes ? JSON.parse(response.stdout) : openClawResult!.document;
-    // Hermes reports the response model through its API; its selected adapter is
-    // recorded in config. OpenClaw reports both in the agent response metadata.
-    const agentSelection = hermes
-      ? { provider: providerConfig.provider, model: document.model }
-      : document?.meta?.agentMeta;
-    expect(agentSelection).toMatchObject({
-      provider: hermes ? "custom" : selected.providerKey,
-      model,
-    });
-    const text = hermes ? (document.choices?.[0]?.message?.content ?? "") : openClawResult!.text;
-    expect(text.trim()).not.toBe("");
+        const text = hermes
+          ? (document.choices?.[0]?.message?.content ?? "")
+          : openClawResult!.text;
+        expect(text.trim()).not.toBe("");
+      },
+    );
   },
 );

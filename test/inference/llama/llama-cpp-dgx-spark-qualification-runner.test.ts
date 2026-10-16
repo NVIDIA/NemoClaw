@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as childProcess from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
-import * as childProcess from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
@@ -18,8 +18,6 @@ import {
   expectedRegistryName,
   expectedRegistryOwner,
   hashModelFile,
-  resolveRequestGuardAddress,
-  startQualificationLoopbackRelay,
   parseQualificationBridgeGateway,
   parseNvidiaSmi,
   parseQualificationInvocation,
@@ -316,34 +314,6 @@ function mutatedPlan(mutate: (value: Record<string, any>) => void): [string, str
   return [source, sha256Text(source)];
 }
 
-it.each([
-  ["Cannot connect to the Docker daemon", "qualification command failed"],
-  ["permission denied for registry credentials", "qualification command failed"],
-  ["Error: No such object: unrelated-container", "qualification command failed"],
-  ["Error: No such object: owned-container", "owned container and network"],
-])("does not infer resource absence from ambiguous inspection: %s", (stderr, expected) => {
-  const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValueOnce({
-    status: 1,
-    error: undefined,
-    stdout: "",
-    stderr,
-    output: [],
-    pid: 1,
-    signal: null,
-  } as any);
-  try {
-    expect(() =>
-      resolveRequestGuardAddress({
-        containerName: "owned-container",
-        networkName: "owned-network",
-        registryOwner: "owned-run",
-      }),
-    ).toThrow(expected);
-  } finally {
-    spawn.mockRestore();
-  }
-});
-
 it("rejects cleanup when Docker inspection is unavailable and identifies the owned run", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-cleanup-cli-"));
   try {
@@ -381,7 +351,7 @@ it("rejects cleanup when Docker inspection is unavailable and identifies the own
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      `failed at cleanup for ${expectedRegistryOwner(RUN_ID, RUN_ATTEMPT)}: command-failed`,
+      `failed at cleanup for ${expectedRegistryOwner(RUN_ID, RUN_ATTEMPT)}: cleanup-incomplete`,
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -481,18 +451,6 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         },
         (value: Record<string, any>) => {
           value.imageBuild.cuda.runtimeBase = "docker.io/nvidia/cuda:latest";
-        },
-        (value: Record<string, any>) => {
-          delete value.imageBuild.requestGuardToolchain;
-        },
-        (value: Record<string, any>) => {
-          value.imageBuild.requestGuardToolchain.version = "1.26.8";
-        },
-        (value: Record<string, any>) => {
-          value.imageBuild.requestGuardToolchain.archiveSha256 = `sha256:${"0".repeat(64)}`;
-        },
-        (value: Record<string, any>) => {
-          value.imageBuild.requestGuardToolchain.untrusted = true;
         },
         (value: Record<string, any>) => {
           value.recipe.runtime.gpu.cpuFallback = "allow";
@@ -632,21 +590,6 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     );
   });
 
-  it("passes the pinned Go toolchain to the candidate image build (#13026)", () => {
-    const argv = buildCandidateImageArgv(plan, parsedInvocation(), "/work/tmp/metadata.json");
-    const matrix = JSON.parse(config.matrix) as {
-      include: { platform: string; request_guard_go_archive_sha256: string }[];
-    };
-    const arm64 = matrix.include.find(({ platform }) => platform === "linux/arm64");
-    expect(arm64).toBeDefined();
-    expect(valuesAfter(argv, "--build-arg")).toEqual(
-      expect.arrayContaining([
-        `REQUEST_GUARD_GO_VERSION=${config.request_guard_go_version}`,
-        `REQUEST_GUARD_GO_ARCHIVE_SHA256=${arm64!.request_guard_go_archive_sha256}`,
-      ]),
-    );
-  });
-
   it("requires the candidate Dockerfile to byte-match trusted main (#8260)", () => {
     const candidateRoot = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-llama-cpp-candidate-")),
@@ -669,7 +612,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it("keeps the recipe-selected request guard internal without putting the API key in Docker arguments (#8667)", () => {
+  it("launches native llama.cpp with unpublished ports and no API key in Docker arguments (#8667)", () => {
     const content = Buffer.from("qualification model fixture\n", "utf8");
     const testPlan = qualificationPlanForModel(content);
     const modelRoot = fs.realpathSync(
@@ -731,37 +674,12 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       expect(valuesAfter(argv, "--env")).toEqual(["LLAMA_ARG_LOG_VERBOSITY=4"]);
       expect(valuesAfter(argv, "--publish")).toEqual([]);
       expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
-      expect(valuesAfter(argv, "--entrypoint")).toEqual([
-        "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
-      ]);
-      expect(valuesAfter(argv, "--listen-port")).toEqual([String(testPlan.recipe.serve.port)]);
-      expect(valuesAfter(argv, "--upstream-port")).toEqual([
-        String(testPlan.recipe.serve.requestGuard.upstreamPort),
-      ]);
-      expect(valuesAfter(argv, "--max-request-body-bytes")).toEqual([
-        String(testPlan.recipe.serve.limits.maxRequestBodyBytes),
-      ]);
-      expect(valuesAfter(argv, "--max-request-header-bytes")).toEqual([
-        String(testPlan.recipe.serve.limits.maxRequestHeaderBytes),
-      ]);
-      expect(valuesAfter(argv, "--max-output-tokens")).toEqual([
-        String(testPlan.recipe.serve.limits.maxOutputTokens),
-      ]);
-      expect(valuesAfter(argv, "--request-timeout-seconds")).toEqual([
+      expect(valuesAfter(argv, "--host")).toEqual(["0.0.0.0"]);
+      expect(valuesAfter(argv, "--port")).toEqual([String(testPlan.recipe.serve.port)]);
+      expect(valuesAfter(argv, "--timeout")).toEqual([
         String(testPlan.recipe.serve.limits.requestTimeoutSeconds),
       ]);
-      expect(valuesAfter(argv, "--shutdown-timeout-seconds")).toEqual([
-        String(testPlan.recipe.serve.limits.shutdownTimeoutSeconds),
-      ]);
-      const separator = argv.indexOf("--");
-      expect(argv[separator + 1]).toBe("/usr/local/bin/llama-server");
-      expect(valuesAfter(argv.slice(separator), "--host")).toEqual(["127.0.0.1"]);
-      expect(valuesAfter(argv.slice(separator), "--port")).toEqual([
-        String(testPlan.recipe.serve.requestGuard.upstreamPort),
-      ]);
-      expect(valuesAfter(argv.slice(separator), "--n-predict")).toEqual([
-        String(testPlan.recipe.serve.limits.maxOutputTokens),
-      ]);
+      expect(valuesAfter(argv, "--api-key-file")).toEqual(["/run/secrets/llama-cpp-api-key"]);
       const alternateContainerPort = 9_081;
       // The adapter must use its validated plan input instead of duplicating the current recipe port.
       const alternatePortPlan = {
@@ -775,12 +693,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         ...containerOptions,
       });
       expect(valuesAfter(alternatePortArgv, "--publish")).toEqual([]);
-      expect(valuesAfter(alternatePortArgv, "--listen-port")).toEqual([
-        String(alternateContainerPort),
-      ]);
-      expect(valuesAfter(alternatePortArgv, "--listen-port")).toEqual([
-        String(alternateContainerPort),
-      ]);
+      expect(valuesAfter(alternatePortArgv, "--port")).toEqual([String(alternateContainerPort)]);
       expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
       expect(valuesAfter(argv, "--user")).toEqual(["1001:1001"]);
       expect(valuesAfter(argv, "--gpus")).toEqual(["driver=nvidia,count=1"]);
@@ -819,194 +732,6 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     } finally {
       fs.rmSync(modelRoot, { force: true, recursive: true });
     }
-  });
-
-  describe("request guard address inspection", () => {
-    const names = {
-      containerName: "qualification-container",
-      networkName: "qualification-network",
-      registryOwner: "qualification-owner",
-    };
-
-    function dockerInspection() {
-      const fixture = {
-        containerOwner: names.registryOwner,
-        networkOwner: names.registryOwner,
-        containerStatus: 0,
-        networkStatus: 0,
-        network: { Id: "internal-network-id", Internal: true },
-        container: {
-          State: { Running: true },
-          NetworkSettings: {
-            Networks: {
-              [names.networkName]: { NetworkID: "internal-network-id", IPAddress: "172.29.0.7" },
-            },
-          },
-        },
-      };
-      vi.spyOn(childProcess, "spawnSync").mockImplementation((command, args = []) => {
-        expect(command).toBe("docker");
-        const network = args[0] === "network";
-        const owner = args.includes("--format");
-        expect(args.at(-1)).toBe(network ? names.networkName : names.containerName);
-        const stdout = owner
-          ? `${network ? fixture.networkOwner : fixture.containerOwner}\n`
-          : Buffer.from(JSON.stringify([network ? fixture.network : fixture.container]));
-        return {
-          pid: 1,
-          status: owner ? (network ? fixture.networkStatus : fixture.containerStatus) : 0,
-          signal: null,
-          stdout,
-          stderr: "",
-          output: [],
-        };
-      });
-      return fixture;
-    }
-
-    it("returns the IPv4 address of an owned running container on its internal network (#8231)", () => {
-      dockerInspection();
-      expect(resolveRequestGuardAddress(names)).toBe("172.29.0.7");
-    });
-
-    it.each([
-      ["foreign container owner", /qualification relay requires/u],
-      ["foreign network owner", /qualification relay requires/u],
-      ["failed container inspection", /qualification command failed/u],
-      ["failed network inspection", /qualification command failed/u],
-      ["stopped container", /qualification relay requires/u],
-      ["external network", /qualification relay requires/u],
-      ["additional network", /qualification relay requires/u],
-      ["missing network endpoint", /qualification relay requires/u],
-      ["mismatched network ID", /qualification relay requires/u],
-      ["empty address", /qualification relay requires/u],
-      ["hostname address", /qualification relay requires/u],
-      ["IPv6 address", /qualification relay requires/u],
-    ])("rejects %s before returning a relay target (#8231)", (scenario, expectedError) => {
-      const fixture = dockerInspection();
-      const endpoints = fixture.container.NetworkSettings.Networks;
-      const endpoint = endpoints[names.networkName]!;
-      switch (scenario) {
-        case "foreign container owner":
-          fixture.containerOwner = "foreign-owner";
-          break;
-        case "foreign network owner":
-          fixture.networkOwner = "foreign-owner";
-          break;
-        case "failed container inspection":
-          fixture.containerStatus = 1;
-          break;
-        case "failed network inspection":
-          fixture.networkStatus = 1;
-          break;
-        case "stopped container":
-          fixture.container.State.Running = false;
-          break;
-        case "external network":
-          fixture.network.Internal = false;
-          break;
-        case "additional network":
-          endpoints.other = { NetworkID: "other-id", IPAddress: "172.30.0.7" };
-          break;
-        case "missing network endpoint":
-          delete endpoints[names.networkName];
-          break;
-        case "mismatched network ID":
-          endpoint.NetworkID = "other-id";
-          break;
-        case "empty address":
-          endpoint.IPAddress = "";
-          break;
-        case "hostname address":
-          endpoint.IPAddress = "example.com";
-          break;
-        case "IPv6 address":
-          endpoint.IPAddress = "fd00::7";
-          break;
-        default:
-          throw new Error("unknown inspection scenario");
-      }
-      expect(() => resolveRequestGuardAddress(names)).toThrow(expectedError);
-    });
-  });
-
-  it("forwards through localhost while synchronous qualification commands run and closes the listener (#8231)", async () => {
-    // A worker-owned echo endpoint keeps both ends independent of this test's blocked event loop.
-    const { Worker } = await import("node:worker_threads");
-    const upstream = new Worker(
-      `
-      const net = require('node:net');
-      const {parentPort} = require('node:worker_threads');
-      const server = net.createServer(s => s.pipe(s));
-      server.listen(0, '127.0.0.1', () => parentPort.postMessage(server.address().port));
-    `,
-      { eval: true },
-    );
-    let relay: Awaited<ReturnType<typeof startQualificationLoopbackRelay>> | undefined;
-    try {
-      const targetPort = await new Promise<number>((resolve) => upstream.once("message", resolve));
-      relay = await startQualificationLoopbackRelay("127.0.0.1", targetPort, 2);
-      const response = childProcess.spawnSync(
-        process.execPath,
-        [
-          "-e",
-          `
-        const s = require('node:net').createConnection({host:'127.0.0.1',port:${relay.port}}, () => s.write('relay-proof'));
-        s.once('data', d => { process.stdout.write(d); s.destroy(); });
-        s.on('error', () => process.exit(1));
-      `,
-        ],
-        { encoding: "utf8", timeout: 3000 },
-      );
-      expect(response.status).toBe(0);
-      expect(response.stdout).toBe("relay-proof");
-      await expect(
-        startQualificationLoopbackRelay("127.0.0.1", targetPort, 2, relay.port),
-      ).rejects.toThrow(/could not listen/u);
-      await relay.close();
-      const closed = await new Promise<boolean>((resolve) => {
-        const socket = net.createConnection({ host: "127.0.0.1", port: relay!.port });
-        socket.on("error", () => resolve(true));
-        socket.on("connect", () => {
-          socket.destroy();
-          resolve(false);
-        });
-      });
-      expect(closed).toBe(true);
-    } finally {
-      await relay?.close();
-      await upstream.terminate();
-    }
-  });
-
-  it("closes a relay connection when the request guard is unavailable (#8231)", async () => {
-    const reserve = net.createServer();
-    await new Promise<void>((resolve) => reserve.listen(0, "127.0.0.1", resolve));
-    const targetPort = (reserve.address() as net.AddressInfo).port;
-    await new Promise<void>((resolve) => reserve.close(() => resolve()));
-    const relay = await startQualificationLoopbackRelay("127.0.0.1", targetPort, 1);
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const socket = net.createConnection({ host: "127.0.0.1", port: relay.port });
-        socket.setTimeout(2000, () => {
-          socket.destroy();
-          reject(new Error("relay did not close"));
-        });
-        socket.on("error", () => {});
-        socket.on("close", () => resolve());
-      });
-    } finally {
-      await relay.close();
-    }
-  });
-
-  it("rejects relay addresses and ports before opening a listener (#8231)", async () => {
-    await expect(startQualificationLoopbackRelay("example.com", 8081, 10)).rejects.toThrow(/IPv4/u);
-    await expect(startQualificationLoopbackRelay("127.0.0.1", 0, 10)).rejects.toThrow(/port/u);
-    await expect(startQualificationLoopbackRelay("127.0.0.1", 8081, 0)).rejects.toThrow(/timeout/u);
-    await expect(
-      startQualificationLoopbackRelay("127.0.0.1", 8081, 10, 0, "0.0.0.0"),
-    ).rejects.toThrow(/private or loopback/u);
   });
 
   it("accepts only the selected private Docker bridge gateway", () => {

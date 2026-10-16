@@ -212,6 +212,7 @@ describe("host-local managed vLLM recovery", () => {
       baseUrl: "http://127.0.0.1:8000",
       apiKey: API_KEY,
       containerId: "a".repeat(64),
+      serving: IDENTITY,
     });
   });
 
