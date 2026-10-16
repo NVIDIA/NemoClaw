@@ -148,6 +148,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   deps,
 }: PoliciesStateOptions<Agent, WebSearchConfig>): Promise<PoliciesStateResult> {
   const latestSession = deps.loadSession();
+  const recordedPolicyTier = latestSession?.policyTier ?? null;
   const observabilityEnabled = latestSession?.observabilityEnabled === true;
   const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan);
   const activeSandbox = deps.getActiveSandbox(sandboxName);
@@ -236,7 +237,8 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     webSearchConfig,
     webSearchConfigChanged,
     webSearchSupported,
-    tierName: null,
+    // A recorded `--policy-tier` governs resume reconciliation too (#13180).
+    tierName: recordedPolicyTier,
   });
   const livePolicyPresetsForSupport = policyResumeSelection.policyPresets;
   const staleLocalInferencePolicy =
@@ -285,7 +287,8 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       // Hermes runs keep their own name.
       agent: normalizeAgentNameForResumeState((agent as { name?: string } | null)?.name),
       observabilityEnabled,
-      tierName: null,
+      // A recorded `--policy-tier` replaces the tier prompt.
+      tierName: recordedPolicyTier,
       webSearchSupported,
       hermesToolGateways,
       onSelection: () => undefined,

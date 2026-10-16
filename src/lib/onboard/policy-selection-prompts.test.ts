@@ -67,17 +67,20 @@ function createHarness({
   stdinTTY = true,
   stdoutTTY = true,
   promptReplies = [],
+  envTier = null,
 }: {
   tiers?: TierDefinition[];
   stdinTTY?: boolean;
   stdoutTTY?: boolean;
   promptReplies?: string[];
+  envTier?: string | null;
 } = {}) {
   const stdin = new FakeInput(stdinTTY);
   const stdout = new FakeOutput(stdoutTTY);
   const processEvents = new EventEmitter();
   const markCancelled = vi.fn();
   const prompt = vi.fn(async () => promptReplies.shift() ?? "");
+  const note = vi.fn();
 
   const helpers = createPolicySelectionPromptHelpers({
     tiers: {
@@ -85,10 +88,11 @@ function createHarness({
       getTier: (name) => tiers.find((tier) => tier.name === name) ?? null,
     },
     policyTierEnv: {
-      resolvePolicyTierFromEnv: () => "balanced",
+      resolvePolicyTierFromEnv: () => envTier ?? "balanced",
+      readPolicyTierPreselectionFromEnv: () => envTier,
     },
     isNonInteractive: () => false,
-    note: vi.fn(),
+    note,
     prompt,
     selectFromNumberedMenuOrExit,
     makeOnboardCancelExit: (rollback, cleanup, exit) => () => {
@@ -103,7 +107,7 @@ function createHarness({
     processEvents,
   });
 
-  return { helpers, markCancelled, processEvents, prompt, stdin, stdout };
+  return { helpers, markCancelled, note, processEvents, prompt, stdin, stdout };
 }
 
 afterEach(() => {
@@ -132,6 +136,45 @@ describe("createPolicySelectionPromptHelpers", () => {
     });
 
     await expect(helpers.selectPolicyTier()).resolves.toBe("balanced");
+  });
+
+  it("selectPolicyTier pre-selects NEMOCLAW_POLICY_TIER in the non-TTY fallback (#13180)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { helpers, note, prompt } = createHarness({
+      stdinTTY: false,
+      stdoutTTY: false,
+      promptReplies: [""],
+      envTier: "restricted",
+    });
+
+    await expect(helpers.selectPolicyTier()).resolves.toBe("restricted");
+    expect(prompt).toHaveBeenCalledWith(expect.stringContaining("(default: 1 restricted)"));
+    expect(note).toHaveBeenCalledWith(expect.stringContaining("NEMOCLAW_POLICY_TIER: Restricted"));
+  });
+
+  it("selectPolicyTier pre-selects NEMOCLAW_POLICY_TIER in the raw-mode TUI (#13180)", async () => {
+    const { helpers, stdin, stdout } = createHarness({ envTier: "open" });
+
+    const selection = helpers.selectPolicyTier();
+    stdin.emit("data", "\r");
+
+    await expect(selection).resolves.toBe("open");
+    expect(stdout.chunks.join("")).toContain("> [✓] Open");
+  });
+
+  it("selectPolicyTier ignores an unknown interactive NEMOCLAW_POLICY_TIER (#13180)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { helpers, note } = createHarness({
+      stdinTTY: false,
+      stdoutTTY: false,
+      promptReplies: [""],
+      envTier: "locked",
+    });
+
+    await expect(helpers.selectPolicyTier()).resolves.toBe("balanced");
+    expect(note).toHaveBeenCalledWith(
+      expect.stringContaining("Ignoring unknown NEMOCLAW_POLICY_TIER 'locked'"),
+    );
   });
 
   it("selectTierPresetsAndAccess honors comma-separated non-TTY allowlists", async () => {

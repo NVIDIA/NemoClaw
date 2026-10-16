@@ -39,4 +39,27 @@ describe("onboard action runtime composition", () => {
       googlechatTunnelRuntime,
     });
   });
+
+  it("passes each run's --policy-tier on its own invocation without env state (#13180)", async () => {
+    mocks.runOnboardCommand.mockImplementation(
+      async (deps: {
+        flags: { "policy-tier"?: string };
+        listPolicyTiers(): readonly string[];
+        runOnboard(options: unknown): Promise<void>;
+      }) => {
+        expect(deps.listPolicyTiers()).toEqual(["restricted", "balanced", "open", "personal"]);
+        await deps.runOnboard({ requestedPolicyTier: deps.flags["policy-tier"] });
+      },
+    );
+    const ambient = process.env.NEMOCLAW_POLICY_TIER;
+
+    await runOnboardAction({ "policy-tier": "restricted" });
+    await runOnboardAction({ "policy-tier": "open" });
+
+    expect(mocks.onboard.mock.calls.map(([options]) => options.requestedPolicyTier)).toEqual([
+      "restricted",
+      "open",
+    ]);
+    expect(process.env.NEMOCLAW_POLICY_TIER).toBe(ambient);
+  });
 });

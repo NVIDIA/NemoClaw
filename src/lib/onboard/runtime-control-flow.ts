@@ -39,6 +39,7 @@ export function applyOnboardRuntimeControlRequests(
     | "observabilityEnabled"
     | "observabilityRequestedExplicitly"
     | "dcodeAutoApprovalMode"
+    | "requestedPolicyTier"
   >,
 ) {
   const observabilityIsExplicit = opts.observabilityRequestedExplicitly !== false;
@@ -51,6 +52,7 @@ export function applyOnboardRuntimeControlRequests(
     requestedDcodeAutoApprovalMode: isDcodeAutoApprovalMode(opts.dcodeAutoApprovalMode)
       ? opts.dcodeAutoApprovalMode
       : null,
+    requestedPolicyTier: opts.requestedPolicyTier ?? null,
   };
 }
 

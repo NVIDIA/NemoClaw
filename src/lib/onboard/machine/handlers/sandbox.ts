@@ -1931,6 +1931,7 @@ class SandboxStateFlow<
       staleExtraProviders,
       hostMounts: this.options.hostMounts,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
+      ...requestedPolicyTierIntent(state.session),
     });
     const recreate = requiresSandboxRecreation(decision, this.options.recreateSandbox(false));
     return {
@@ -1973,6 +1974,7 @@ class SandboxStateFlow<
       ...(this.options.rebuildPolicySourcePath
         ? { rebuildPolicySourcePath: this.options.rebuildPolicySourcePath }
         : {}),
+      ...requestedPolicyTierIntent(state.session),
       extraProviders,
     };
   }
@@ -2766,6 +2768,11 @@ class SandboxStateFlow<
         : await this.recreateSandbox(initialState, decision);
     return this.complete(completedState);
   }
+}
+
+/** A recorded `--policy-tier` governs create-time policy for fresh and resumed runs. */
+function requestedPolicyTierIntent(session: Session | null | undefined): { policyTier?: string } {
+  return session?.policyTier ? { policyTier: session.policyTier } : {};
 }
 
 export async function handleSandboxState<

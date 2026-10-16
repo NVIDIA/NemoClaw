@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Flags } from "@oclif/core";
+import { listPolicyTierNames } from "../policy/tiers";
 import { TOOL_DISCLOSURE_VALUES, type ToolDisclosure } from "../tool-disclosure";
 import { DCODE_AUTO_APPROVAL_MODES, type DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { describeAgentFlag } from "./agent-flag-help";
@@ -47,8 +48,22 @@ function agentFlagDescription(): string {
   }
 }
 
+// Resolve the tier names from tiers.yaml for `--policy-tier` help. If the tier
+// file cannot be read, the flag accepts any value and onboarding validates it.
+function policyTierFlagOptions(): string[] | undefined {
+  try {
+    return listPolicyTierNames();
+  } catch {
+    return undefined;
+  }
+}
+
+function policyTierUsage(): string {
+  return policyTierFlagOptions()?.join("|") ?? "tier";
+}
+
 export const onboardUsage = [
-  `onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository@sha256:digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository@sha256:digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--policy-tier <${policyTierUsage()}>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -61,6 +76,7 @@ export const onboardExamples = [
   "<%= config.bin %> onboard --from-image registry.example.com/agent@sha256:<digest> --name alpha",
   "<%= config.bin %> onboard --name alpha --host-mount /home/user/project:/sandbox/project",
   "<%= config.bin %> onboard --agents ./agents.yaml",
+  "<%= config.bin %> onboard --policy-tier restricted",
   "<%= config.bin %> onboard --sandbox-gpu --sandbox-gpu-device nvidia.com/gpu=0",
   `<%= config.bin %> onboard --non-interactive --yes --name alpha ${NOTICE_ACCEPT_FLAG}`,
 ];
@@ -86,6 +102,7 @@ export type OnboardFlags = {
   agent?: string;
   agents?: string;
   "tool-disclosure"?: ToolDisclosure;
+  "policy-tier"?: string;
   "dcode-auto-approval"?: DcodeAutoApprovalMode;
   observability?: boolean;
   "control-ui-port"?: number;
@@ -163,6 +180,11 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
       description:
         "Choose progressive tool discovery or direct exposure of all session-authorized tools",
       options: [...TOOL_DISCLOSURE_VALUES],
+    }),
+    "policy-tier": Flags.string({
+      description:
+        "Select the network policy tier without the tier prompt (overrides NEMOCLAW_POLICY_TIER)",
+      options: policyTierFlagOptions(),
     }),
     "dcode-auto-approval": Flags.string({
       description:

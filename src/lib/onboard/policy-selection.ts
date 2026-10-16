@@ -242,7 +242,7 @@ export function createOnboardPolicyApplication(deps: OnboardPolicyApplicationDep
         setupPoliciesWithSelection(setupDeps, sandboxName, options),
       );
     },
-    validatePolicyTierEnvEarly: policyTierEnv.validatePolicyTierEnvEarly,
+    createPolicyTierEnvGate: policyTierEnv.createPolicyTierEnvGate,
   };
 }
 
@@ -536,6 +536,10 @@ async function setupPoliciesWithSelectionInner(
     return resumeSelection;
   }
 
+  if (requestedTierName) {
+    const label = deps.tiers.getTier(requestedTierName)?.label ?? requestedTierName;
+    deps.note(`  Policy tier: ${label} (from --policy-tier)`);
+  }
   const tierName = requestedTierName ?? (await deps.selectPolicyTier());
   if (personalAlreadyActive && tierName !== PERSONAL_POLICY_TIER_NAME) {
     refuseInPlacePersonalRemoval(personalAlreadyActive, []);

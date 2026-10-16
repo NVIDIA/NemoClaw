@@ -415,7 +415,7 @@ Use the stable `id` value with `$$nemoclaw onboard --profile <name>`. Display na
 Run the interactive setup wizard (recommended for new installs). The wizard creates an OpenShell gateway, registers inference providers, selects the exact managed image (or builds an explicit custom Dockerfile), and creates the sandbox. Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
-$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository>@sha256:<digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository>@sha256:<digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--policy-tier <restricted|balanced|open|personal>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 <AgentOnly variant="hermes">
@@ -689,6 +689,21 @@ $$nemoclaw onboard --name my-assistant --recreate-sandbox --tool-disclosure dire
 
 Recreation without an explicit flag or environment value preserves the recorded setting and only falls back to `progressive` for legacy state. Resuming an interrupted session with a different explicit setting fails with a conflict instead of changing behavior mid-session.
 
+#### `--policy-tier <tier>`
+
+Select the network policy tier for this onboarding run: `restricted`, `balanced`, `open`, or `personal`.
+In interactive mode, the wizard skips the tier prompt and still shows the preset review screen.
+The flag works in interactive and non-interactive mode and takes precedence over `NEMOCLAW_POLICY_TIER`, which is then not used or validated.
+NemoClaw records the tier with the onboarding session, so a resumed session keeps it.
+When you pass `--policy-tier` while resuming, it must match the recorded tier.
+To choose a different tier, run `$$nemoclaw onboard --fresh`, which starts a new onboarding session.
+A sandbox that already uses the Personal tier cannot move to another tier in place, because Personal replaces overlapping web routes; create a new sandbox with the other tier instead.
+For tier details, refer to [Network Policies](network-policies#policy-tiers).
+
+```bash
+$$nemoclaw onboard --policy-tier restricted
+```
+
 <AgentOnly variant="deepagents">
 
 #### `--dcode-auto-approval <disabled|thread-opt-in>`
@@ -886,13 +901,19 @@ Four tiers are available:
 
 After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access. When Personal is selected during the current onboarding run, `personal-open-internet` is mandatory for every agent and every onboarding entry point. The picker and policy modes control only additional presets; they cannot deselect, skip, or replace Personal's required web authority. For details on tiers and the presets each includes, refer to [Network Policies](network-policies#policy-tiers). When onboarding creates a sandbox with presets, NemoClaw prints the exact finalized create-time policy scope before registering providers or creating the sandbox. NemoClaw does not persist that selection as desired policy state; later lifecycle operations read the current OpenShell policy, including host edits.
 
-In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `balanced`):
+To choose the tier without the prompt, pass [`--policy-tier`](#--policy-tier-tier):
+
+```bash
+$$nemoclaw onboard --policy-tier restricted
+```
+
+You can also set the tier with `NEMOCLAW_POLICY_TIER` (default: `balanced`):
 
 ```bash
 NEMOCLAW_POLICY_TIER=restricted $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
-Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced` default. In non-interactive mode, any non-blank value must be one of `restricted`, `balanced`, `open`, or `personal`; otherwise onboarding exits before preflight, gateway, or inference side effects with an error listing the valid options. Interactive onboarding ignores an invalid environment value and shows the normal tier prompt.
+Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced` default. In non-interactive mode, `NEMOCLAW_POLICY_TIER` selects the tier, and any non-blank value must be one of `restricted`, `balanced`, `open`, or `personal`; otherwise onboarding exits before preflight, gateway, or inference side effects with an error listing the valid options. In interactive mode, a valid value pre-selects that tier in the prompt. Interactive onboarding ignores an invalid value and pre-selects `balanced`. `--policy-tier` takes precedence over `NEMOCLAW_POLICY_TIER`; when the flag is set, NemoClaw does not validate the environment value.
 
 `NEMOCLAW_POLICY_MODE` controls how non-interactive onboarding reconciles the tier-derived suggestions against the sandbox's currently-applied presets. The default is `suggested`, which is _additive_. Onboarding applies tier defaults and preserves any presets you previously added with [`$$nemoclaw <name> policy add`](#$$nemoclaw-name-policy-add) across re-onboards. Use `custom` with `NEMOCLAW_POLICY_PRESETS` when you want the explicit list to be authoritative for optional presets. Onboarding removes any optional preset that is not in the list. `skip` does not add optional tier defaults and retains eligible optional presets already applied. It still applies the required preset for each messaging channel enabled during the same onboarding run so the configured channel can reach its service. For Personal, all modes still apply or retain the mandatory `personal-open-internet` preset. NemoClaw filters tier suggestions and resume selections by active agent support and the selected web search provider. During automatic suggestion and resume reconciliation, it removes stale web-search selections when they conflict with the active agent or selected provider. The Personal tier instead uses `personal-open-internet` for web transport and does not select Brave Search or Tavily Search merely to enable ordinary web fetches. This makes keyless fetches available to any sandbox binary, but it does not add a provider-free `web_search` implementation.
 
@@ -3765,7 +3786,7 @@ For Deep Agents sandboxes, run `$$nemoclaw onboard --fresh --name <sandbox-name>
 
 <Warning>The `$$nemoclaw setup` command is deprecated. Use `$$nemoclaw onboard` instead.</Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--policy-tier <restricted|balanced|open|personal>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup
@@ -3778,7 +3799,7 @@ $$nemoclaw setup
   onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--policy-tier <restricted|balanced|open|personal>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup-spark

@@ -14,6 +14,7 @@ import path from "node:path";
 import {
   readModelSelectionProvenance,
   type ModelSelectionProvenance,
+  isPolicyTierName,
   parseServingProfileProvenance,
   type ServingProfileProvenance,
 } from "./onboard-session/selection-provenance";
@@ -332,6 +333,8 @@ export interface Session {
   dcodeAutoApprovalRequestedExplicitly: boolean;
   /** Operator-selected APF create mode; this is not observed policy provenance. */
   apfInterceptorRequested: boolean;
+  /** Tier selected with `onboard --policy-tier`; null when the wizard or environment chooses. */
+  policyTier: string | null;
   hermesToolGateways: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
   /** Non-secret names of credential providers registered before sandbox setup completed. */
@@ -1047,6 +1050,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     observabilityEnabled: overrides.observabilityEnabled === true,
     observabilityRequestedExplicitly: overrides.observabilityRequestedExplicitly === true,
     apfInterceptorRequested: overrides.apfInterceptorRequested === true,
+    policyTier: isPolicyTierName(overrides.policyTier) ? overrides.policyTier : null,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
     stagedCredentialProviders: readStringArray(overrides.stagedCredentialProviders) ?? [],
@@ -1096,6 +1100,13 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   }
   const vllmGpuDevice = parseVllmGpuDevice(data.vllmGpuDevice);
   if (hasOwn(data, "vllmGpuDevice") && data.vllmGpuDevice !== null && !vllmGpuDevice) {
+    return null;
+  }
+  if (
+    hasOwn(data, "policyTier") &&
+    data.policyTier !== null &&
+    !isPolicyTierName(data.policyTier)
+  ) {
     return null;
   }
   const compatibleEndpointReasoningEffort = normalizeReasoningEffort(
@@ -1189,6 +1200,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     observabilityEnabled: data.observabilityEnabled === true,
     observabilityRequestedExplicitly: data.observabilityRequestedExplicitly === true,
     apfInterceptorRequested: data.apfInterceptorRequested === true,
+    policyTier: isPolicyTierName(data.policyTier) ? data.policyTier : null,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
     stagedCredentialProviders: readStringArray(data.stagedCredentialProviders) ?? [],

@@ -459,7 +459,10 @@
       "live": "test/e2e/live/onboard-policy-preset-sequencing.test.ts",
       "fast": [
         "test/e2e/support/onboard-interactive-pty.test.ts",
-        "test/e2e/support/runtime-provider-fixture.test.ts"
+        "test/e2e/support/runtime-provider-fixture.test.ts",
+        "src/lib/onboard/command-policy-tier.test.ts",
+        "src/lib/onboard/machine/handlers/policies.test.ts",
+        "test/runtime/policy/policy-tiers-onboard.test.ts"
       ]
     },
     {

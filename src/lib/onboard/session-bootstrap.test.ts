@@ -319,6 +319,7 @@ describe("prepareOnboardSession", () => {
         nonInteractive: true,
         requestedToolDisclosure: "direct",
         requestedObservabilityEnabled: true,
+        requestedPolicyTier: "restricted",
         apfInterceptorRequested: true,
         requestedHostMounts: [
           { source: "/srv/project", target: "/sandbox/project", readOnly: true },
@@ -338,6 +339,7 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
     expect(result.session?.apfInterceptorRequested).toBe(true);
+    expect(result.session?.policyTier).toBe("restricted");
     expect(getSession()?.sessionId).not.toBe("old-session");
   });
 

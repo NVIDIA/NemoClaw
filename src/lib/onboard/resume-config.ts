@@ -21,6 +21,7 @@ export interface ResumeSessionLike {
   agent?: string | null;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
+  policyTier?: string | null;
   metadata?: {
     fromDockerfile?: string | null;
     fromImage?: string | null;
@@ -144,6 +145,7 @@ export function getResumeConfigConflicts(
     agent?: string | null;
     toolDisclosure?: ToolDisclosure | null;
     observabilityEnabled?: boolean | null;
+    policyTier?: string | null;
     hostMounts?: readonly SandboxHostMount[];
     /**
      * Internal rebuild-resume mode: the caller already rewrote the session from
@@ -234,6 +236,16 @@ export function getResumeConfigConflicts(
       field: "host mounts",
       requested: requestedHostMounts,
       recorded: recordedHostMounts,
+    });
+  }
+
+  const requestedPolicyTier = opts.policyTier ?? null;
+  const recordedPolicyTier = session?.policyTier ?? null;
+  if (requestedPolicyTier && requestedPolicyTier !== recordedPolicyTier) {
+    conflicts.push({
+      field: "policy tier",
+      requested: requestedPolicyTier,
+      recorded: recordedPolicyTier,
     });
   }
 

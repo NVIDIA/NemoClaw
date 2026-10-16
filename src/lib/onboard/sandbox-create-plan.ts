@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isPolicyTierName } from "../policy/tiers";
+
 export {
   resolvePrimaryMessagingCredentialEnvKeys,
   resolveSandboxCreateIntent,
@@ -20,14 +22,6 @@ export {
   validateSandboxCreateIntentBindings,
 } from "./sandbox-create-plan-materialization";
 
-// Known canonical policy tier names. Kept inline so the create-time path
-// validates the env value without pulling `../policy/tiers` (which transitively
-// requires `runner.ts` and breaks vitest source resolution for this module's
-// tests). The list mirrors `nemoclaw-blueprint/policies/tiers.yaml`; adding a
-// tier there requires updating this set so an explicit tier env value reaches
-// the create-time policy decision.
-const KNOWN_POLICY_TIER_NAMES = new Set(["restricted", "balanced", "open", "personal"]);
-
 export function resolveSandboxCreatePolicyTier(requestedPolicyTier?: string | null): string | null {
   if (requestedPolicyTier !== undefined) return requestedPolicyTier;
   // Only trust the env value in non-interactive mode. Interactive flows let the
@@ -41,5 +35,5 @@ export function resolveSandboxCreatePolicyTier(requestedPolicyTier?: string | nu
   const raw = process.env.NEMOCLAW_POLICY_TIER;
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim().toLowerCase();
-  return KNOWN_POLICY_TIER_NAMES.has(trimmed) ? trimmed : null;
+  return isPolicyTierName(trimmed) ? trimmed : null;
 }

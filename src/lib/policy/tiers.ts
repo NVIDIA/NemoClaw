@@ -15,9 +15,19 @@ import path from "node:path";
 import YAML from "yaml";
 
 import { isObjectRecord } from "../core/json-types";
-import { ROOT } from "../runner";
 
-const TIERS_FILE = path.join(ROOT, "nemoclaw-blueprint", "policies", "tiers.yaml");
+// src/lib/policy and dist/lib/policy both sit three levels below the
+// repository root. Resolve it locally so loading tier names does not pull in
+// the runner dependency chain.
+const TIERS_FILE = path.resolve(
+  __dirname,
+  "..",
+  "..",
+  "..",
+  "nemoclaw-blueprint",
+  "policies",
+  "tiers.yaml",
+);
 export const PERSONAL_POLICY_TIER_NAME = "personal";
 export const PERSONAL_OPEN_INTERNET_PRESET_NAME = "personal-open-internet";
 const ALLOWED_ACCESS: ReadonlySet<string> = new Set(["read", "read-write"]);
@@ -128,6 +138,16 @@ function listTiers(): TierDefinition[] {
   return parseTierDocument(content).tiers;
 }
 
+/** Return the tier names defined in tiers.yaml, in file order. */
+function listPolicyTierNames(): string[] {
+  return listTiers().map((tier) => tier.name);
+}
+
+/** Return whether a value names a tier defined in tiers.yaml. */
+function isPolicyTierName(value: unknown): value is string {
+  return typeof value === "string" && listPolicyTierNames().includes(value);
+}
+
 /**
  * Return a single tier definition by name.
  * Returns null if the tier does not exist.
@@ -173,4 +193,11 @@ function resolveTierPresets(
   return presets;
 }
 
-export { getTier, listTiers, resolveTierPresets, TIERS_FILE };
+export {
+  getTier,
+  isPolicyTierName,
+  listPolicyTierNames,
+  listTiers,
+  resolveTierPresets,
+  TIERS_FILE,
+};

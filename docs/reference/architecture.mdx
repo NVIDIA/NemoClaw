@@ -438,7 +438,7 @@ The following environment variables configure optional services and local access
 | `SLACK_ALLOWED_CHANNELS` | Comma-separated Slack channel IDs where channel `@mention` events are enabled (e.g. `C012AB3CD,C987ZY6XW`). Baked into the sandbox image at build time. Combine with `SLACK_ALLOWED_USERS` to restrict both channel and member. |
 </AgentOnly>
 <AgentOnly variant="deepagents">
-| `NEMOCLAW_POLICY_TIER` | Optional non-interactive policy tier selection during onboarding. |
+| `NEMOCLAW_POLICY_TIER` | Optional policy tier for onboarding. Selects the tier in non-interactive mode and pre-selects it in the interactive prompt. `--policy-tier` takes precedence. |
 | `TAVILY_API_KEY` | Host-side input for the optional managed Tavily provider. Register it with `$$nemoclaw credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY` before attaching the provider to Deep Agents. |
 </AgentOnly>
 

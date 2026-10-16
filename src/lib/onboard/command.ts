@@ -85,6 +85,8 @@ export interface OnboardCommandOptions {
   agent: string | null;
   agentsManifest: string | null;
   toolDisclosure: ToolDisclosure | null;
+  /** Operator-selected `--policy-tier`; skips the tier prompt when set. */
+  requestedPolicyTier: string | null;
   dcodeAutoApprovalMode: DcodeAutoApprovalMode | null;
   observabilityEnabled: boolean | null;
   controlUiPort: number | null;
@@ -106,6 +108,7 @@ export interface ResolveOnboardOptionsDeps {
   arch?: NodeJS.Architecture;
   runtimeProviders?: import("./runtime-provider/access").RuntimeProviderBundleRegistry;
   listAgents?: () => string[];
+  listPolicyTiers?: () => readonly string[];
   listServingProfiles?: () => ServingProfileListEntry[];
   loadServingCatalog?: () => CompiledServingCatalog;
   loadSession?: () => {
@@ -474,6 +477,22 @@ function resolveOnboardToolDisclosure(
   }
 }
 
+function resolveRequestedPolicyTier(
+  requested: string | undefined,
+  experimentalProfile: ExperimentalOnboardProfile | null,
+  deps: ResolveOnboardOptionsDeps,
+): string | null {
+  if (requested === undefined) return null;
+  // The CLI parser already limits the flag to exact tier names; this check
+  // covers direct callers with the same exact-match contract.
+  const knownTiers = deps.listPolicyTiers?.() ?? [];
+  if (knownTiers.length > 0 && !knownTiers.includes(requested)) {
+    fail(deps, `  Unknown policy tier: ${requested}. Valid: ${knownTiers.join(", ")}`);
+  }
+  if (experimentalProfile) fail(deps, "  --policy-tier cannot be used with the Portable profile.");
+  return requested;
+}
+
 function resolveExternalImageReference(
   value: string | undefined,
   deps: ResolveOnboardOptionsDeps,
@@ -505,6 +524,11 @@ export function resolveOnboardOptions(
   if (experimentalProfile === PORTABLE_EXPERIMENTAL_PROFILE && fromImage) {
     fail(deps, "  --from-image cannot be used with the Portable profile.");
   }
+  const requestedPolicyTier = resolveRequestedPolicyTier(
+    flags["policy-tier"],
+    experimentalProfile,
+    deps,
+  );
   return {
     tempManagedRuntime: flags["temp-managed-runtime"] === true,
     tempManagedRuntimeCatalog: resolveFileOption(
@@ -530,6 +554,7 @@ export function resolveOnboardOptions(
     agent,
     agentsManifest: resolveAgentsManifest(flags.agents, agent, deps),
     toolDisclosure,
+    requestedPolicyTier,
     dcodeAutoApprovalMode: flags["dcode-auto-approval"] ?? null,
     observabilityEnabled: typeof flags.observability === "boolean" ? flags.observability : null,
     controlUiPort: flags["control-ui-port"] ?? null,

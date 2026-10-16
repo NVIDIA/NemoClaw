@@ -103,6 +103,22 @@ describe("onboard session normalization", () => {
     ).toBe(false);
   });
 
+  it("keeps a recorded --policy-tier and rejects an unknown saved tier (#13180)", () => {
+    const selected = createSession({ policyTier: "restricted" });
+    expect(normalizeSession(selected)?.policyTier).toBe("restricted");
+    expect(createSession().policyTier).toBeNull();
+    const legacy: Record<string, unknown> = { ...selected };
+    delete legacy.policyTier;
+    expect(
+      normalizeSession(legacy as Parameters<typeof normalizeSession>[0])?.policyTier,
+    ).toBeNull();
+    expect(
+      normalizeSession({ ...selected, policyTier: "locked" } as Parameters<
+        typeof normalizeSession
+      >[0]),
+    ).toBeNull();
+  });
+
   it("refuses malformed saved APF create intent instead of downgrading it (#9833)", () => {
     const selected = createSession({ apfInterceptorRequested: true });
     const malformed = { ...selected, apfInterceptorRequested: "true" };

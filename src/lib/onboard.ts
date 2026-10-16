@@ -2464,7 +2464,7 @@ const {
   selectPolicyTier,
   selectTierPresetsAndAccess,
   setupPoliciesWithSelection,
-  validatePolicyTierEnvEarly,
+  createPolicyTierEnvGate,
 } = createOnboardPolicyApplication({
   localInferenceProviders: [...LOCAL_INFERENCE_PROVIDERS, "llama-cpp-local"],
   step,
@@ -2605,9 +2605,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       const { fresh, nonInteractive, cannotPrompt, resume } = entryOptions;
       const { requestedFromDockerfile, requestedSandboxName } = entryOptions;
       NON_INTERACTIVE = nonInteractive;
-      const validatePolicyTierBeforeRuntime =
-        isNonInteractive() && !resume && opts.experimentalProfile !== "portable";
-      if (validatePolicyTierBeforeRuntime) validatePolicyTierEnvEarly();
+      const policyTierEnvGate = createPolicyTierEnvGate(opts, resume, isNonInteractive);
+      policyTierEnvGate.beforeRuntime();
       const baseImageResolutionContext = baseImageResolutionFlow.createBaseImageResolutionContext({
         fresh,
         initialHint: opts.baseImageResolutionHint,
@@ -2622,7 +2621,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       portableEnvScope = lockedRuntime.environmentScope;
       entryDecisions.clearGatewayEnvironmentWithoutBinding(authoritativeGateway, process.env);
       preparedDcodeRuntime.applyGatewayEnv(process.env);
-      if (isNonInteractive() && !validatePolicyTierBeforeRuntime) validatePolicyTierEnvEarly();
+      policyTierEnvGate.afterRuntime(onboardSession.loadSession);
       // Validate provider/model hints only after the locked profile and runtime authority are active.
       const stationSessionInput = onboardEntryOptions.prepareSessionInput(
         runtimeControlRequests,

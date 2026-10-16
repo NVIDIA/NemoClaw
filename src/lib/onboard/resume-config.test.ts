@@ -70,6 +70,23 @@ describe("authoritative rebuild resume config", () => {
     });
   });
 
+  it("resumes a recorded --policy-tier and rejects a different explicit tier (#13180)", () => {
+    const session = { sandboxName: "demo", policyTier: "restricted" };
+    const tierConflicts = (policyTier: string | null, recorded: object = session) =>
+      getResumeConfigConflicts(recorded, { policyTier }).filter(
+        ({ field }) => field === "policy tier",
+      );
+
+    expect(tierConflicts(null)).toEqual([]);
+    expect(tierConflicts("restricted")).toEqual([]);
+    expect(tierConflicts("open")).toEqual([
+      { field: "policy tier", requested: "open", recorded: "restricted" },
+    ]);
+    expect(tierConflicts("open", { sandboxName: "demo" })).toEqual([
+      { field: "policy tier", requested: "open", recorded: null },
+    ]);
+  });
+
   it("resumes an adopted external-image disclosure when the operator made no explicit choice", () => {
     expect(
       getResumeConfigConflicts(

@@ -12,7 +12,7 @@
   },
   "policy": {
     "preflightAuthoritativeRebuildTarget": 1,
-    "runOnboard": 4,
+    "runOnboard": 1,
     "sandboxCreateIntentResolver.getAgentPolicyPath": 1
   },
   "provider": {

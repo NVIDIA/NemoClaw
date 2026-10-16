@@ -6,6 +6,7 @@ import type { GooglechatTunnelRuntimeDeps } from "../messaging/channels/googlech
 import { type OnboardCommandOptions, runOnboardCommand } from "../onboard/command";
 import { type OnboardFlags, readAgentRegistryNames } from "../onboard/command-support";
 import { resolveOnboardResumeIntent } from "../onboard/session-bootstrap";
+import { listPolicyTierNames } from "../policy/tiers";
 import { loadOnboardCommandResumeSession } from "../onboard/sandbox-registration";
 import type { OnboardOptions } from "../onboard/types";
 
@@ -31,6 +32,7 @@ function buildOnboardCommandDeps(flags: OnboardFlags, runtimeDeps: OnboardAction
     env: process.env,
     runOnboard: (options: OnboardCommandOptions) => runOnboard(options, runtimeDeps),
     listAgents: () => [...readAgentRegistryNames()],
+    listPolicyTiers: () => listPolicyTierNames(),
     loadServingCatalog,
     loadSession: loadOnboardCommandResumeSession,
     resolveResumeIntent: resolveOnboardResumeIntent,

@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { makeMessagingPlan } from "../../../../../test/helpers/messaging-plan-fixtures";
+import { createSession } from "../../../state/onboard-session";
 import { createPolicyHandlerDeps, basePolicyHandlerOptions } from "./policies-test-fixture";
 import { handlePoliciesState } from "./policies";
 
@@ -59,6 +60,35 @@ describe("policy state handler", () => {
     expect(calls.complete).toHaveBeenCalledWith(
       "policies",
       expect.not.objectContaining({ policyPresets: expect.anything() }),
+    );
+  });
+
+  it("reconciles a resumed session against its recorded --policy-tier (#13180)", async () => {
+    const { deps, calls } = createPolicyHandlerDeps({
+      loadSession: () => createSession({ policyTier: "restricted" }),
+    });
+    await handlePoliciesState({ ...basePolicyHandlerOptions(deps), resume: true });
+    expect(calls.prepareResume).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ tierName: "restricted" }),
+    );
+  });
+
+  it("passes a recorded --policy-tier to policy selection (#13180)", async () => {
+    const { deps, calls } = createPolicyHandlerDeps({
+      loadSession: () => createSession({ policyTier: "open" }),
+    });
+    await handlePoliciesState(basePolicyHandlerOptions(deps));
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ selectedPresets: null, tierName: "open" }),
+    );
+
+    const unset = createPolicyHandlerDeps();
+    await handlePoliciesState(basePolicyHandlerOptions(unset.deps));
+    expect(unset.calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ tierName: null }),
     );
   });
 

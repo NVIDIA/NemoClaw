@@ -51,6 +51,7 @@ async function runCheckboxSelector(
     },
     policyTierEnv: {
       resolvePolicyTierFromEnv: () => "balanced",
+      readPolicyTierPreselectionFromEnv: () => null,
     },
     isNonInteractive: () => false,
     note: () => undefined,

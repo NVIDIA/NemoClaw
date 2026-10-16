@@ -202,6 +202,8 @@ export type OnboardOptions = {
   dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode | null;
   /** Internal authoritative rebuild tier; never exposed as an onboard CLI option. */
   policyTier?: string | null;
+  /** Operator-selected `onboard --policy-tier`; governs create-time and policy-step tier. */
+  requestedPolicyTier?: string | null;
   controlUiPort?: number | null;
   gpu?: boolean;
   noGpu?: boolean;
