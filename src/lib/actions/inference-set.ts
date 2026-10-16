@@ -68,10 +68,12 @@ import {
   restorePreviousNativeAfterFailedPublish,
   nativeSelectionRegistryFields,
   clearNativeLocalProviderAuthority,
+  listNativeLocalProviderAuthorities,
   resolveOpenClawLocalSwitch,
   detachPreviousOpenClawLocal,
   restorePreviousOpenClawLocal,
   retirePreviousOpenClawLocal,
+  reconcilePreviousOpenClawLocal,
   openClawLocalProbeFields,
   openClawLocalRegistryFields,
 } from "./inference-set/native";
@@ -201,6 +203,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   getNativeNvidiaProviderAuthority?: typeof registry.getNativeNvidiaProviderAuthority;
   setNativeNvidiaProviderAuthority: typeof registry.setNativeNvidiaProviderAuthority;
   clearNativeLocalProviderAuthority: typeof clearNativeLocalProviderAuthority;
+  listNativeLocalProviderAuthorities?: typeof listNativeLocalProviderAuthorities;
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
   getRequestedAgent: () => string | null | undefined;
   loadSession: () => onboardSession.Session | null;
@@ -339,6 +342,7 @@ function defaultDeps(): InferenceSetDeps {
     getNativeNvidiaProviderAuthority: registry.getNativeNvidiaProviderAuthority,
     setNativeNvidiaProviderAuthority: registry.setNativeNvidiaProviderAuthority,
     clearNativeLocalProviderAuthority,
+    listNativeLocalProviderAuthorities,
     updateSandbox: registry.updateSandbox,
     getRequestedAgent: () => process.env.NEMOCLAW_AGENT,
     loadSession: onboardSession.loadSession,
@@ -2097,14 +2101,20 @@ export async function runInferenceSet(
       deps.runtimeProviders,
     );
     const gatewayName = resolveSandboxGatewayName(lockedSelection.entry);
-    const mutation = await deps.withGatewayRouteMutationLock(gatewayName, () =>
-      runInferenceSetWithoutHostLock(
+    const mutation = await deps.withGatewayRouteMutationLock(gatewayName, async () => {
+      await reconcilePreviousOpenClawLocal({
+        entry: lockedSelection.entry,
+        sandboxName: selected.sandboxName,
+        gatewayName,
+        deps,
+      });
+      return await runInferenceSetWithoutHostLock(
         { ...options, sandboxName: selected.sandboxName },
         deps,
         gatewayName,
         runtimeProvider,
-      ),
-    );
+      );
+    });
     // Retain the outer sandbox lifecycle lock so another process cannot replace
     // this sandbox between the committed write, an optional restart, and
     // device-scope convergence.

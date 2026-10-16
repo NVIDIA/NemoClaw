@@ -309,10 +309,12 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected DGX Station/);
     expect(output).toMatch(
-      /Express install will configure managed local vLLM with NVIDIA Nemotron 3 Ultra 550B and automatic Station topology selection/,
+      /Express install will configure managed local vLLM with NVIDIA Nemotron 3.5 Super VL and automatic Station topology selection/,
     );
-    expect(output).toMatch(/pretrusted reciprocal dual-Station pair selects distributed serving/);
-    expect(output).toMatch(/approximately 352 GB model/);
+    expect(output).toMatch(
+      /pretrusted reciprocal dual-Station pair selects distributed Ultra serving/,
+    );
+    expect(output).toMatch(/approximately 75 GB for Super VL or 352 GB for Ultra/);
     expect(output).toContain(
       "Hugging Face authentication is optional for this public model but recommended",
     );
@@ -330,7 +332,7 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toMatch(/dual-Station configurations are not yet validated/);
     expect(output).toMatch(/Using express install for DGX Station/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4 VLLM_MODEL=nemotron-3.5-super-vl-120b POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
     expect(output).toMatch(/STATION_EXPRESS=1/);
   });
@@ -1174,9 +1176,11 @@ printf 'NON_EXPRESS_ALLOWED\n'
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/automatic Station topology selection/);
-    expect(output).toMatch(/pretrusted reciprocal dual-Station pair selects distributed serving/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      /pretrusted reciprocal dual-Station pair selects distributed Ultra serving/,
+    );
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4 VLLM_MODEL=nemotron-3.5-super-vl-120b POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
   });
 

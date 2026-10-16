@@ -17,7 +17,11 @@ export {
   openClawLocalProbeFields,
   openClawLocalRegistryFields,
 } from "./native-local";
-export { clearNativeLocalProviderAuthority } from "../../state/registry/native-local-provider-authority";
+export {
+  clearNativeLocalProviderAuthority,
+  listNativeLocalProviderAuthorities,
+} from "../../state/registry/native-local-provider-authority";
+export { reconcilePreviousOpenClawLocal } from "./native-local";
 import { isSafeModelId } from "../../validation";
 import { InferenceSetError } from "../inference-set-error";
 import type { NativeProviderAttachment } from "../../inference/native-provider/contract";

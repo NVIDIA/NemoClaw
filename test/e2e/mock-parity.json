@@ -209,6 +209,7 @@
         "test/e2e/fixtures/hermes-api-command.ts"
       ],
       "fast": [
+        "test/agents/openclaw/runtime/provider-placeholder-refresh.test.ts",
         "test/generation/generate-native-hosted-config.test.ts",
         "test/e2e/support/hosted-provider-smoke-selection.test.ts",
         "test/e2e/support/hosted-credential-scan.test.ts",
@@ -1007,6 +1008,7 @@
     {
       "live": "test/e2e/live/dgx-express.test.ts",
       "fast": [
+        "src/lib/inference/vllm-runtime-selection.test.ts",
         "test/e2e/support/dgx-station-express.test.ts",
         "test/e2e/support/live-vitest-invocation.test.ts",
         "test/installer-integration/install-express-noninteractive.test.ts",

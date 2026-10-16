@@ -2080,6 +2080,18 @@ function resolveVllmInstallRuntime(
   return resolveVllmModelRuntime(profile, model);
 }
 
+function isFixedVllmInstallProfile(profile: VllmProfile): boolean {
+  // A platform's menu default is not yet a selected fixed recipe. Resolve operator
+  // intent first; materialized recipes retain their fixed-command restrictions.
+  return (
+    profile.defaultModel.fixedServeCommand === true &&
+    (Boolean(profile.servingCatalog) ||
+      !profile.defaultModel.runtimeVariants?.some(
+        (variant) => variant.selection === "automatic" && variant.fixedServeCommand === true,
+      ))
+  );
+}
+
 async function runVllmInstall(
   profile: VllmProfile,
   opts: InstallVllmOptions,
@@ -2098,7 +2110,7 @@ async function runVllmInstall(
     configuredPeer,
     configuredManagedClusterPeers,
   } = selection;
-  const fixedServeCommand = profile.defaultModel.fixedServeCommand === true;
+  const fixedServeCommand = isFixedVllmInstallProfile(profile);
   if (fixedServeCommand) {
     if (
       (!hostLocalSelection && explicitModel) ||

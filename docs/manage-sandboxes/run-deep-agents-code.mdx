@@ -237,7 +237,18 @@ The managed headless path still disables shell execution, startup commands, inte
 Managed Deep Agents sandboxes keep interactive thread auto-approval disabled by default.
 In this mode, the TUI auto-approval choice and `dcode -y` fail closed.
 
-Enable the capability for a named sandbox through a transactional rebuild because NemoClaw bakes the capability into the managed image:
+For initial onboarding, select the capability explicitly:
+
+```bash
+nemoclaw onboard --agent langchain-deepagents-code --dcode-auto-approval thread-opt-in
+```
+
+`thread-opt-in` supports only managed Deep Agents Code images. It grants the capability without activating auto-approval.
+Use `--dcode-auto-approval disabled` to select the default posture or clear a recorded capability when switching agents.
+Before sandbox registration, resume preserves the explicit choice saved in the onboarding session.
+Omitting the flag preserves the registered capability during resume or recreation, including a prior revocation.
+
+For an existing sandbox, change the capability through a transactional rebuild because NemoClaw bakes it into the managed image:
 
 ```bash
 nemo-deepagents <sandbox-name> rebuild --dcode-auto-approval thread-opt-in --yes

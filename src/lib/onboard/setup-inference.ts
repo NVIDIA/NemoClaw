@@ -578,12 +578,21 @@ function releaseSupersededOllamaModel(
     withOwnershipLock(() => {
       const peers = deps.listSandboxes?.().sandboxes ?? [];
       const selectedHost = deps.localInference.loadPersistedOllamaHost?.() ?? null;
-      const nextRoute = { provider: nextProvider, model: nextModel, endpointUrl: nextEndpointUrl };
+      const nextRoute = {
+        provider: nextProvider,
+        model: nextModel,
+        endpointUrl: nextEndpointUrl,
+      };
       const superseded = supersededOllamaModel(previous, nextRoute, peers, selectedHost);
       const pending = loadPending(previous.name);
       const retryablePending = pending.filter((model) =>
         supersededOllamaModel(
-          { name: previous.name, provider: "ollama-local", model, endpointUrl: null },
+          {
+            name: previous.name,
+            provider: "ollama-local",
+            model,
+            endpointUrl: null,
+          },
           nextRoute,
           peers,
           selectedHost,
@@ -764,7 +773,10 @@ async function prepareSelectedHostedProvider(input: {
   credentialEnv: string | null;
   reuseExistingCredential: boolean;
   deps: SetupInferenceDeps;
-}): Promise<{ attachment: NativeProviderAttachment; retainedCredential: boolean }> {
+}): Promise<{
+  attachment: NativeProviderAttachment;
+  retainedCredential: boolean;
+}> {
   const { provider, gatewayName, sandboxName, credentialEnv, reuseExistingCredential, deps } =
     input;
   if (
@@ -945,7 +957,10 @@ function createGatewayRouteStager(input: {
         // route publication, and reservation. Acquiring it here would deadlock.
         deferredInferenceRoute: async (reserve) => {
           input.revalidateSandboxIdentity?.("apply the backed-up sandbox inference route");
-          const target = { kind: "named" as const, gatewayName: input.gatewayName };
+          const target = {
+            kind: "named" as const,
+            gatewayName: input.gatewayName,
+          };
           const before = await input.deps.inferenceRouteObserver.observeInferenceRoute({
             target,
           });
@@ -1076,7 +1091,13 @@ export function createSetupInference(
           return deps.exitProcess(1);
         }
         const { authority: hermesAuthority, selected: nativeHostedSelection } =
-          resolveHostedSelection({ provider, endpointUrl, sandboxName, gatewayName, deps });
+          resolveHostedSelection({
+            provider,
+            endpointUrl,
+            sandboxName,
+            gatewayName,
+            deps,
+          });
         if (
           !(await gatewayRouteCompatible({
             provider,
@@ -1648,7 +1669,9 @@ export function createSetupInference(
                   allowToolsIncompatible: options.allowToolsIncompatible === true,
                   ...(hostLocalRoute
                     ? {}
-                    : { preparedProxyToken: options.preparedOllamaProxyToken }),
+                    : {
+                        preparedProxyToken: options.preparedOllamaProxyToken,
+                      }),
                 },
                 {
                   ...commonDeps,
@@ -1899,10 +1922,12 @@ export function createSetupInference(
       let previousSandbox: OllamaModelHolder | null = null;
       const selectedAgent = options.agentName ?? options.hostLocalInference?.request.application;
       let recordedAgent: string | null | undefined;
+      let recordedNimContainer: string | null | undefined;
       try {
         const recorded = sandboxName ? (deps.getSandbox?.(sandboxName) ?? null) : null;
         previousSandbox = recorded;
         recordedAgent = recorded?.agent;
+        recordedNimContainer = recorded?.nimContainer;
       } catch (error) {
         if (!selectedAgent && usesNativeLocalInference(provider, endpointUrl)) throw error;
         /* An unreadable registry skips GPU release; it must not fail onboarding. */
@@ -1911,7 +1936,7 @@ export function createSetupInference(
         selectedAgent ?? recordedAgent,
         provider,
         endpointUrl,
-        options.nimContainer,
+        options.localNimSelected ?? (provider === "vllm-local" && Boolean(recordedNimContainer)),
       );
       if (selectingNativeLocal)
         await (deps.requireNativeProviderPolicy ?? requireNativeProviderPolicy)(gatewayName);

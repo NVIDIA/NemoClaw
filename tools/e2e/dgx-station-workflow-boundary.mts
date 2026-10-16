@@ -52,6 +52,14 @@ export function validateDgxStationDispatchBoundary(workflow: unknown): string[] 
     ["1", TARGET, "0", "agnostic"],
     "Station must be an explicit-only external E2E target",
   );
+  requireEqual(
+    [env.E2E_OBSERVABLE_OUTCOME, env.E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT],
+    [
+      "Station Express installs managed Super VL vLLM and NemoClaw, serves sandbox inference, and removes job runtime",
+      "Dedicated DGX Station GB300 with cached Nemotron 3.5 Super VL 120B",
+    ],
+    "Station evidence metadata must describe the Super VL default and cached model",
+  );
   const checkout = step("Check out trusted Station controller");
   requireEqual(
     checkout,

@@ -25,6 +25,7 @@ export interface PolicyPresetEntry {
 
 export interface ActiveSandboxPolicyState {
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
+  nimContainer?: string | null;
   messaging?: { plan: SandboxMessagingPlan } | null;
 }
 
@@ -165,7 +166,8 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     normalizeAgentNameForResumeState((agent as { name?: string } | null)?.name),
     provider,
     endpointUrl,
-    latestSession?.nimContainer,
+    provider === "vllm-local" &&
+      Boolean(activeSandbox ? activeSandbox.nimContainer : latestSession?.nimContainer),
   );
   const nativeLocal = nativeLocalSelected ? recordedNativeLocal : undefined;
   if (nativeLocalSelected && !nativeLocal)
@@ -213,7 +215,9 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       ...(nativeLocal ? { nativeLocalProviderAttachment: nativeLocal } : {}),
       ...(hostLocalInferenceRouteOnly ? { forceCanonicalRoute: true } : {}),
       ...(hostLocalInferenceRouteOnly
-        ? { hostLocalInferenceProofAuthority: hostLocalInferenceSandboxProofAuthority ?? undefined }
+        ? {
+            hostLocalInferenceProofAuthority: hostLocalInferenceSandboxProofAuthority ?? undefined,
+          }
         : {}),
     });
   if (preserveRebuildLivePolicy) {

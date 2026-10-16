@@ -6108,6 +6108,8 @@ validate_express_platform_boundary() {
 }
 
 STATION_ULTRA_VLLM_MODEL="nemotron-3-ultra-550b-a55b"
+STATION_SUPER_VL_VLLM_MODEL="nemotron-3.5-super-vl-120b"
+STATION_SUPER_VL_SERVED_MODEL="nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4"
 STATION_ULTRA_SERVED_MODEL="nvidia/nemotron-3-ultra-550b-a55b"
 STATION_ULTRA_DUAL_SERVED_MODEL="nemotron-ultra"
 STATION_ULTRA_LEGACY_VLLM_IMAGE="vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416"
@@ -6273,12 +6275,13 @@ configure_station_express_model() {
     NEMOCLAW_VLLM_MODEL="$STATION_DEEPSEEK_VLLM_MODEL"
     NEMOCLAW_MODEL="$STATION_DEEPSEEK_SERVED_MODEL"
   elif [ -z "$selected_model" ]; then
-    if [ "${_STATION_INSTALL_MODE:-}" = "express" ] || [ -n "${NEMOCLAW_DGX_STATION_PEER:-}" ]; then
-      # Station Express keeps its single-host Ultra default. Pair qualification
-      # changes only the serving topology. An explicit peer also selects Ultra
-      # for a provider-driven, non-interactive pair setup.
+    if [ -n "${NEMOCLAW_DGX_STATION_PEER:-}" ]; then
+      # Super VL is single-host only. Explicit peers retain the Ultra recipe.
       NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
       NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
+    elif [ "${_STATION_INSTALL_MODE:-}" = "express" ]; then
+      NEMOCLAW_VLLM_MODEL="$STATION_SUPER_VL_VLLM_MODEL"
+      NEMOCLAW_MODEL="$STATION_SUPER_VL_SERVED_MODEL"
     else
       # A direct provider selection outside Express keeps the Station profile
       # default unless the operator selects a model or peer.
@@ -6289,6 +6292,10 @@ configure_station_express_model() {
       || error "NEMOCLAW_VLLM_MODEL=auto is reserved for DGX Station reboot-resume state. Unset NEMOCLAW_VLLM_MODEL to request automatic selection."
     _STATION_EXPRESS_MODEL_WAS_EXPLICIT=1
     case "$selected_model" in
+      "$STATION_SUPER_VL_VLLM_MODEL" | "$STATION_SUPER_VL_SERVED_MODEL" | "nvidia/nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4")
+        NEMOCLAW_VLLM_MODEL="$STATION_SUPER_VL_VLLM_MODEL"
+        NEMOCLAW_MODEL="$STATION_SUPER_VL_SERVED_MODEL"
+        ;;
       "$STATION_ULTRA_VLLM_MODEL" | "nvidia/nvidia-nemotron-3-ultra-550b-a55b-nvfp4")
         NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
         ;;
@@ -6316,6 +6323,10 @@ station_dual_model_requested() {
   local selected_model
   selected_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
   case "$selected_model" in
+    "$STATION_SUPER_VL_VLLM_MODEL")
+      # Implicit Express still discovers trusted pairs before final selection.
+      [ "${_STATION_INSTALL_MODE:-}" = "express" ] && [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]
+      ;;
     "$STATION_ULTRA_VLLM_MODEL" | "$STATION_ULTRA_SERVED_MODEL" | "$STATION_ULTRA_DUAL_SERVED_MODEL" | "nvidia/nvidia-nemotron-3-ultra-550b-a55b-nvfp4")
       return 0
       ;;
@@ -6616,6 +6627,11 @@ load_station_express_resume() {
 save_station_express_resume() {
   local state_file state_dir temp_file revision generation
   local model="${NEMOCLAW_VLLM_MODEL:-auto}" agent="${NEMOCLAW_AGENT:-openclaw}"
+  # Preserve topology discovery across reboot instead of turning the implicit
+  # single-Station default into an explicit prohibition on paired serving.
+  if [ "$model" = "$STATION_SUPER_VL_VLLM_MODEL" ] && [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]; then
+    model=auto
+  fi
   local sandbox="${NEMOCLAW_SANDBOX_NAME:-my-assistant}" policy_tier="${NEMOCLAW_POLICY_TIER:-balanced}"
   local gateway_port dashboard_port vllm_port mode="${_STATION_INSTALL_MODE:-express}"
   validate_station_express_resume_model "$model" || error "Cannot save an invalid DGX Station express model selector."
@@ -7235,12 +7251,17 @@ ensure_station_express_pair() {
           || error "The nemoclaw-vllm container no longer matches the legacy image ($STATION_ULTRA_LEGACY_VLLM_IMAGE) and ownership contract after peer discovery. Inspect it with 'docker inspect nemoclaw-vllm'; restore the original single-Station workload before retrying, or stop this upgrade if the change was intentional."
       fi
       if [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]; then
-        NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
-        NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
+        if [ "${_STATION_EXPRESS_MIGRATING_LEGACY_HEAD:-0}" = "1" ]; then
+          NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
+          NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
+        else
+          NEMOCLAW_VLLM_MODEL="$STATION_SUPER_VL_VLLM_MODEL"
+          NEMOCLAW_MODEL="$STATION_SUPER_VL_SERVED_MODEL"
+        fi
         export NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
       fi
       unset NEMOCLAW_DGX_STATION_SSH_BINDING
-      info "No eligible reciprocal dual-DGX Station pair is available; using the existing single-Station Ultra recipe."
+      info "No eligible reciprocal dual-DGX Station pair is available; using single-Station model ${NEMOCLAW_VLLM_MODEL}."
       ;;
     ready)
       [ "$status" -eq 0 ] \
@@ -7360,8 +7381,8 @@ describe_express_install() {
         esac
       else
         show_hf_authentication="1"
-        inference_summary="managed local vLLM with NVIDIA Nemotron 3 Ultra 550B and automatic Station topology selection"
-        inference_disclosure="A pretrusted reciprocal dual-Station pair selects distributed serving; otherwise NemoClaw uses the existing single-Station Ultra recipe. The pinned image and approximately 352 GB model are pulled only after topology qualification."
+        inference_summary="managed local vLLM with NVIDIA Nemotron 3.5 Super VL and automatic Station topology selection"
+        inference_disclosure="One Station uses Super VL NVFP4 + MTP with 49,152-token context and a pinned public vLLM nightly (experimental). A pretrusted reciprocal dual-Station pair selects distributed Ultra serving. Downloads start only after topology qualification: approximately 75 GB for Super VL or 352 GB for Ultra. Explicit Ultra selection remains available; existing workloads are not automatically switched."
       fi
       case "$(classify_dgx_station_release)" in
         supported-dgx-os)

@@ -112,7 +112,12 @@ export function normalizeNativeLocalProviderAttachment(
     !receipt.providerId.trim()
   )
     return undefined;
-  return { ...binding, ...identity, schemaVersion: 1, providerId: receipt.providerId };
+  return {
+    ...binding,
+    ...identity,
+    schemaVersion: 1,
+    providerId: receipt.providerId,
+  };
 }
 
 export function normalizeNativeLocalProviderAuthorities(
@@ -164,11 +169,12 @@ export function usesNativeLocalInferenceForAgent(
   agentName: string | null | undefined,
   provider: string | null | undefined,
   endpointUrl?: string | null,
-  nimContainer?: string | null,
+  localNimSelected = false,
 ): boolean {
+  if (provider === "vllm-local" && localNimSelected) return false;
   return (
     (agentName === "langchain-deepagents-code" &&
       usesNativeLocalInference(provider, endpointUrl)) ||
-    (agentName === "openclaw" && !nimContainer && isLocalInferenceProvider(provider))
+    (agentName === "openclaw" && isLocalInferenceProvider(provider))
   );
 }

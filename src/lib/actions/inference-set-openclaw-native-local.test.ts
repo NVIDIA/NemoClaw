@@ -120,4 +120,41 @@ describe("OpenClaw native local live selection", () => {
       ),
     ).toBe(false);
   });
+
+  it("retries exact provider retirement after a committed route switch", async () => {
+    const deps = fixture();
+    let pending = true;
+    const originalDelete = deps.providerAdapter.deleteProvider.bind(deps.providerAdapter);
+    vi.spyOn(deps.providerAdapter, "deleteProvider").mockImplementation(async (request) =>
+      pending
+        ? { ok: false, error: { kind: "command", reason: "attached", message: "attached" } }
+        : originalDelete(request),
+    );
+    deps.listNativeLocalProviderAuthorities = () => [attachment];
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-router", model: "routed-model", sandboxName: "alpha" },
+        deps,
+      ),
+    ).rejects.toThrow(/retry inference set/);
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ nativeLocalProviderAttachment: undefined }),
+    );
+    expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalled();
+
+    pending = false;
+    deps.getSandbox = () => ({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      provider: "nvidia-router",
+      model: "routed-model",
+    });
+    await runInferenceSet(
+      { provider: "nvidia-router", model: "routed-model", sandboxName: "alpha" },
+      deps,
+    );
+    expect(deps.calls.clearNativeLocalProviderAuthority).toHaveBeenCalledWith(attachment);
+  });
 });

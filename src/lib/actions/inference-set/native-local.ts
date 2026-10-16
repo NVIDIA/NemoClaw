@@ -131,7 +131,35 @@ export async function retirePreviousOpenClawLocal(input: {
   });
   if (result.status === "attached") {
     throw new InferenceSetError(
-      "Previous native local provider remains attached. Cleanup authority was retained for repair.",
+      `OpenClaw sandbox '${input.sandboxName}' switched routes, but provider '${input.previous.providerName}' remains attached. Its exact cleanup authority was retained. Inspect its OpenShell attachments, then retry inference set for this sandbox to finish cleanup.`,
     );
+  }
+}
+
+/** The gateway authority map preserves the exact detached provider after registry commit. */
+export async function reconcilePreviousOpenClawLocal(input: {
+  entry: SandboxEntry;
+  sandboxName: string;
+  gatewayName: string;
+  deps: InferenceSetDeps;
+}): Promise<void> {
+  if (input.entry.agent !== "openclaw") return;
+  const current = normalizeNativeLocalProviderAttachment(input.entry.nativeLocalProviderAttachment);
+  const candidates =
+    input.deps.listNativeLocalProviderAuthorities?.(input.sandboxName, input.gatewayName) ?? [];
+  for (const previous of candidates) {
+    if (current?.providerName === previous.providerName) continue;
+    const result = await retireNativeLocalProvider({
+      adapter: input.deps.providerAdapter,
+      expected: previous,
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      clearAuthority: input.deps.clearNativeLocalProviderAuthority,
+    });
+    if (result.status === "attached") {
+      throw new InferenceSetError(
+        `OpenClaw sandbox '${input.sandboxName}' still has a pending provider cleanup for '${previous.providerName}'. Inspect its OpenShell attachments, then retry inference set for this sandbox. No new route was selected.`,
+      );
+    }
   }
 }

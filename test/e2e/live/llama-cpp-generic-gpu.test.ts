@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { GATEWAY_PORT } from "../../../src/lib/core/ports.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
 
 import {
   loadManagedLlamaCppApiKey,
@@ -329,6 +330,12 @@ NODE`),
     });
 
     progress.phase("verify OpenClaw agent inference and owned cleanup");
+    const ownedLocal = getSandbox(SANDBOX_NAME)?.nativeLocalProviderAttachment;
+    assert(ownedLocal, "OpenClaw must retain its native local attachment");
+    assert.equal(ownedLocal.agent, "openclaw");
+    assert.equal(ownedLocal.provider, "llama-cpp-local");
+    assert.match(ownedLocal.providerName, /^nemoclaw-local-v1-/u);
+    assert.match(ownedLocal.endpointUrl, /^http:\/\/host\.openshell\.internal:/u);
     const agentArgs = [
       SANDBOX_NAME,
       "agent",

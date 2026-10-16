@@ -415,7 +415,7 @@ Use the stable `id` value with `$$nemoclaw onboard --profile <name>`. Display na
 Run the interactive setup wizard (recommended for new installs). The wizard creates an OpenShell gateway, registers inference providers, selects the exact managed image (or builds an explicit custom Dockerfile), and creates the sandbox. Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
-$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository>@sha256:<digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository>@sha256:<digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 <AgentOnly variant="hermes">
@@ -690,6 +690,16 @@ $$nemoclaw onboard --name my-assistant --recreate-sandbox --tool-disclosure dire
 Recreation without an explicit flag or environment value preserves the recorded setting and only falls back to `progressive` for legacy state. Resuming an interrupted session with a different explicit setting fails with a conflict instead of changing behavior mid-session.
 
 <AgentOnly variant="deepagents">
+
+#### `--dcode-auto-approval <disabled|thread-opt-in>`
+
+Choose the managed Deep Agents Code auto-approval capability during onboarding. A new sandbox defaults to `disabled`.
+Omitting the flag preserves the sandbox registry’s recorded capability, including a previously disabled capability, during resume or recreation.
+`thread-opt-in` permits explicit activation inside Deep Agents Code; onboarding does not activate an approval mode or run `dcode -y`.
+`thread-opt-in` is rejected for other agents and custom images. Pass `--dcode-auto-approval disabled` to clear a recorded capability when switching agents.
+Before sandbox registration, resume preserves the explicit choice saved in the onboarding session.
+An explicit capability change for an existing sandbox requires recreation through the existing onboarding lifecycle.
+See [Configure Thread Auto-Approval](../manage-sandboxes/operate-sandboxes/run-deep-agents-code#configure-thread-auto-approval) for activation, status, and revocation.
 
 #### `--observability` and `--no-observability`
 
@@ -1216,8 +1226,8 @@ During that lease, another `launch` still verifies these conditions:
 <AgentOnly variant="deepagents">
 
 - The recorded inference selection matches its provider path, and every configured route serves a valid response to a bounded request for the recorded model.
-  NVIDIA Endpoints and supported fixed hosted selections verify their recorded sandbox-attached provider and request the model at its native endpoint without a shared-route models probe.
-  Retained legacy, custom, and local shared routes use `inference.local`.
+  NVIDIA Endpoints, supported fixed hosted selections, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections verify their recorded sandbox-attached provider and request the model at its native endpoint without a shared-route models probe.
+  Owned Local NVIDIA NIM, retained legacy and other custom shared routes use `inference.local`.
   Their models probe must return HTTP 2xx, except that a retained legacy `openrouter-api` shared route can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
   A failed model request rejects readiness before the agent starts.
 
@@ -1291,7 +1301,7 @@ A recognized broken shared-route result lets `connect` attempt DNS or route repa
 When the initial shared-route probe cannot return a trusted result, `connect` fails closed before health-driven repair and before opening SSH.
 It prints a bounded, redacted last-probe detail and points you to `$$nemoclaw <name> doctor`.
 
-For NVIDIA Endpoints and supported fixed hosted selections, `connect` does not inspect or change the unrelated shared route.
+For NVIDIA Endpoints, supported fixed hosted selections, and new Deep Agents Code Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections, `connect` does not inspect or change the unrelated shared route.
 It verifies the recorded sandbox-attached provider and sends a native inference request for the selected model.
 The request must return a structurally valid successful inference result before `connect` opens SSH.
 <AgentOnly variant="deepagents">
@@ -1719,9 +1729,7 @@ $$nemoclaw my-assistant start
 When that deadline expires, `start` keeps the existing container, exits non-zero, and prints the
 `NEMOCLAW_CONNECT_TIMEOUT` value to use on the next run.
 
-After the gateway and forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers.
-Deep Agents also uses attached providers for qualified local endpoints.
-Local NVIDIA NIM, other agents' local selections, and other custom endpoints retain the shared `inference.local` route. A reachable provider path can still reject an inference request or return an invalid result, so the command exits non-zero in either case. It prints the probe result, including the HTTP status when the path returned one, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. For a shared gateway route, `doctor` still classifies an HTTP `401` or `403` response as reachable. The native NVIDIA doctor probe instead requires a 2xx response from the sandbox-attached provider. Correct the provider credential when `start` reports either status.
+After the gateway and forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. NVIDIA Endpoints, supported fixed hosted providers, and new Deep Agents Code Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, retained legacy and other custom shared routes, and local routes for other agents use `inference.local`. A reachable provider path can still reject an inference request or return an invalid result, so the command exits non-zero in either case. It prints the probe result, including the HTTP status when the path returned one, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. For a shared gateway route, `doctor` still classifies an HTTP `401` or `403` response as reachable. The native NVIDIA doctor probe instead requires a 2xx response from the sandbox-attached provider. Correct the provider credential when `start` reports either status.
 
 ### `$$nemoclaw <name> status`
 
@@ -1757,6 +1765,10 @@ For a sandbox that owns managed llama.cpp, text output also reports the recipe I
 
 The managed llama.cpp check forces a nonzero exit for `absent`, `conflict`, or `unknown`. Other sandbox and inference checks can also make the command fail. Rerun the same `NEMOCLAW_PROVIDER=install-llama-cpp` and `NEMOCLAW_LLAMACPP_RECIPE` onboarding selection to recover a stopped or interrupted runtime. Inspect and correct an identity conflict before retrying.
 
+An existing Windows WSL Qwen runtime with the former pinned image cannot start or resume.
+After a qualified native image is pinned, save any sandbox files you need, run `$$nemoclaw <sandbox-name> destroy` to remove the owning sandbox and its managed runtime, and onboard again.
+The shared model cache is preserved. See [Upgrade or Roll Back](../inference/local-inference/set-up-llama-cpp#upgrade-or-roll-back).
+
 <AgentOnly variant="deepagents">
 
 For a Deep Agents sandbox, text output includes `DCode auto-approval capability: disabled` or `DCode auto-approval capability: thread-opt-in`. JSON output reports the same configured value in `dcodeAutoApprovalMode`. This value does not attest that auto-approval is active in any live TUI thread.
@@ -1769,9 +1781,7 @@ $$nemoclaw my-assistant status --json
 $$nemoclaw sandbox status my-assistant --json
 ```
 
-The command probes the selected provider path from inside the sandbox, and when that probe reports the path reachable it sends an inference request over the same path. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers.
-Deep Agents also uses attached providers for qualified local endpoints.
-Local NVIDIA NIM, other agents' local selections, and other custom endpoints retain the shared `inference.local` route. That inference request is the authoritative inference health check, and both checks exercise the path that agent traffic uses. The main `Inference` line reports one of these states:
+The command probes the selected provider path from inside the sandbox, and when that probe reports the path reachable it sends an inference request over the same path. NVIDIA Endpoints, supported fixed hosted providers, and new Deep Agents Code Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, retained legacy and other custom shared routes, and local routes for other agents use `inference.local`. That inference request is the authoritative inference health check, and both checks exercise the path that agent traffic uses. The main `Inference` line reports one of these states:
 
 | State          | Meaning                                                                                                                                                                                                               |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2128,9 +2138,7 @@ The sandbox must be running for `nemohermes my-assistant gateway-token --quiet` 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-`gateway-token` is not applicable to Deep Agents sandboxes because there is no OpenClaw gateway token. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers.
-Deep Agents also uses attached providers for qualified local endpoints.
-Local NVIDIA NIM, other agents' local selections, and other custom endpoints retain the shared `inference.local` route.
+`gateway-token` is not applicable to Deep Agents sandboxes because there is no OpenClaw gateway token. NVIDIA Endpoints, supported fixed hosted providers, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, retained legacy and other custom shared routes use `inference.local`.
 
 </AgentOnly>
 
@@ -3766,7 +3774,7 @@ For Deep Agents sandboxes, run `$$nemoclaw onboard --fresh --name <sandbox-name>
 
 <Warning>The `$$nemoclaw setup` command is deprecated. Use `$$nemoclaw onboard` instead.</Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup
@@ -3779,7 +3787,7 @@ $$nemoclaw setup
   onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup-spark
@@ -4339,7 +4347,7 @@ The following variables let you tune onboarding without editing the Dockerfile o
 
 <AgentOnly variant="openclaw">
   | `NEMOCLAW_INFERENCE_INPUTS` | comma-separated list of `text` and/or `image` | OpenClaw only.
-  Declares model input modalities. Unsupported or duplicate values are rejected. | |
+  Declares model input modalities. Unsupported or duplicate values are rejected. An explicit valid value takes precedence; unattended onboarding defaults to `text,image` for registered multimodal managed-vLLM models such as Super VL. | |
   `NEMOCLAW_OPENCLAW_OTEL` | `1` to enable | Enables OpenClaw conversation diagnostics export
   through the `diagnostics-otel` plugin. Disabled by default. | | `NEMOCLAW_OPENCLAW_OTEL_ENDPOINT`
   | OTLP/HTTP URL | Sets the OpenTelemetry collector endpoint for OpenClaw diagnostics. Defaults to
@@ -4370,12 +4378,12 @@ requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer sets this value from
 registered served model name | Selects the model the managed-vLLM install path serves and remains
 authoritative during DGX Station installer setup. Slugs, full model IDs, and registered served model
 names are case-insensitive. Recognized slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`,
-`muse-glimmer-30b`, `nemotron-3.5-lightning-30b`, `nemotron-3-nano-4b`, `deepseek-v4-flash`,
+`muse-glimmer-30b`, `nemotron-3.5-lightning-30b`, `nemotron-3.5-super-vl-120b`, `nemotron-3-nano-4b`, `deepseek-v4-flash`,
 `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. The `muse-glimmer-30b` and
 `nemotron-3.5-lightning-30b` profiles are Experimental on DGX Spark and Linux x86_64 with a
 qualifying NVIDIA GPU. NemoClaw does not enable vision or DFlash speculative decoding for Muse
-Glimmer. Station Express selects `nemotron-3-ultra-550b-a55b`; a qualified reciprocal pair uses the
-distributed topology, while no qualifying pair retains the single-Station Ultra topology. Outside
+Glimmer. New single-Station Express installs select `nemotron-3.5-super-vl-120b`; a qualified reciprocal pair uses distributed Ultra.
+An existing legacy single-Station Ultra workload keeps Ultra when automatic pair discovery finds no qualified pair. Outside
 Station Express, unset uses the per-platform profile default. Gated models (for example,
 `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. | |
 `NEMOCLAW_DGX_STATION_PEER` | SSH host or `user@host` | Selects one exact, already-trusted DGX

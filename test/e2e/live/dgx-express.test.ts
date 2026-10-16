@@ -421,7 +421,7 @@ test(
 );
 
 test(
-  "dgx-station-express: Station Express installs cached Ultra vLLM and NemoClaw, routes inference, and cleans up runtime",
+  "dgx-station-express: Station Express installs cached Super VL vLLM and NemoClaw, routes inference, and cleans up runtime",
   {
     timeout: 48 * 60_000,
     meta: { e2ePhases: STATION_SMOKE_PHASES, e2eCleanupTimeoutMs: 6 * 60_000 },
@@ -431,7 +431,7 @@ test(
       id: "dgx-station-express",
       contract: [
         "local candidate Express installation",
-        "default Ultra model and routed inference",
+        "default Super VL model and routed inference",
         "runtime cleanup with unchanged model-cache metadata and retained vLLM image",
       ],
     });
@@ -444,7 +444,7 @@ test(
       phases: {
         inspect: () => progress.phase("inspect the prepared Station"),
         install: () => progress.phase("install Station Express from the candidate checkout"),
-        assert: () => progress.phase("assert managed Ultra and routed inference"),
+        assert: () => progress.phase("assert managed Super VL and routed inference"),
         cleanup: () => progress.phase("clean up the job runtime"),
       },
       writeEvidence: (name, value) => artifacts.writeJson(name, value),
