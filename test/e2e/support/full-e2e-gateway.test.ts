@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
+import { withGroupWritableReadinessHome } from "../fixtures/launch-readiness-home.ts";
+import * as readinessLease from "../../../src/lib/state/launch-readiness-lease.ts";
 import { captureNativePluginFailureReadiness } from "../fixtures/native-plugin-failure-diagnostics.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 
@@ -273,11 +275,9 @@ it("captures bounded readiness status after a failed plugin invocation without r
   await captureNativePluginFailureReadiness(
     { execShell },
     { exitCode: 22 },
-    {
-      sandboxName: "owned-sandbox",
-      artifactName: "plugin",
-      env: {},
-    },
+    "owned-sandbox",
+    "plugin",
+    {},
   );
   expect(execShell).toHaveBeenCalledExactlyOnceWith("owned-sandbox", expect.anything(), {
     artifactName: "plugin-readiness-after-failure",
@@ -289,11 +289,75 @@ it("captures bounded readiness status after a failed plugin invocation without r
 
 it("skips successful plugin calls and preserves a failed result when diagnostics are unavailable", async () => {
   const execShell = vi.fn().mockRejectedValue(new Error("sandbox unavailable"));
-  const options = { sandboxName: "owned-sandbox", artifactName: "plugin", env: {} };
-  await captureNativePluginFailureReadiness({ execShell }, { exitCode: 0 }, options);
+  const args = ["owned-sandbox", "plugin", {}] as const;
+  await captureNativePluginFailureReadiness({ execShell }, { exitCode: 0 }, ...args);
   expect(execShell).not.toHaveBeenCalled();
   await expect(
-    captureNativePluginFailureReadiness({ execShell }, { exitCode: 22 }, options),
+    captureNativePluginFailureReadiness({ execShell }, { exitCode: 22 }, ...args),
   ).resolves.toBeUndefined();
   expect(execShell).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  { scenario: "success", fails: false, leaseKind: "valid", error: undefined },
+  { scenario: "launch failure", fails: true, leaseKind: "valid", error: "launch failed" },
+  {
+    scenario: "invalid lease",
+    fails: false,
+    leaseKind: "unsafe",
+    error: "Launch readiness did not qualify: unsafe",
+  },
+])(
+  "restores home permissions and umask after launch qualification ($scenario)",
+  async ({ fails, leaseKind, error }) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "readiness-home-"));
+    fs.chmodSync(home, 0o750);
+    const user = os.userInfo();
+    vi.spyOn(os, "userInfo").mockReturnValue({ ...user, homedir: home });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(readinessLease, "readLaunchReadinessLease").mockReturnValue({
+      kind: leaseKind,
+    } as ReturnType<typeof readinessLease.readLaunchReadinessLease>);
+    const receipt = readinessLease.launchReadinessReceiptPath("test-home", 18080, home);
+    fs.mkdirSync(path.dirname(receipt), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(receipt, "old receipt", { mode: 0o600 });
+    const retained = path.join(path.dirname(receipt), "unrelated.json");
+    fs.writeFileSync(retained, "retained", { mode: 0o600 });
+    const umask = process.umask();
+    const failure = new Error("launch failed");
+    try {
+      const outcome = await withGroupWritableReadinessHome(
+        {
+          enabled: true,
+          sandboxName: "test-home",
+          gatewayName: "nemoclaw-18080",
+          gatewayPort: 18080,
+        },
+        async () => {
+          expect(fs.statSync(home).mode & 0o777).toBe(0o775);
+          expect(process.umask()).toBe(0o002);
+          expect(fs.existsSync(receipt)).toBe(false);
+          return fails ? Promise.reject(failure) : Promise.resolve();
+        },
+      ).catch((error: unknown) => error);
+      expect(outcome).toEqual(error ? new Error(error) : undefined);
+      expect(fs.statSync(home).mode & 0o777).toBe(0o750);
+      expect(process.umask()).toBe(umask);
+      expect(fs.readFileSync(retained, "utf8")).toBe("retained");
+    } finally {
+      process.umask(umask);
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
+
+it("leaves local and preinstalled host permissions alone", async () => {
+  const userInfo = vi.spyOn(os, "userInfo");
+  const launch = vi.fn(async () => undefined);
+  await withGroupWritableReadinessHome(
+    { enabled: false, sandboxName: "test-home", gatewayName: "nemoclaw", gatewayPort: 8080 },
+    launch,
+  );
+  expect(userInfo).not.toHaveBeenCalled();
+  expect(launch).toHaveBeenCalledOnce();
 });

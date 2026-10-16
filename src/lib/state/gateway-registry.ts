@@ -10,7 +10,8 @@ import { resolveLegacyModelRouterPort } from "../core/model-router-port";
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { isValidDashboardExternalUrl } from "../dashboard/url";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
-import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
+import { registryEntryGatewayPort, resolveGatewayName } from "../onboard/gateway-binding/identity";
+export { registryEntryGatewayPort } from "../onboard/gateway-binding/identity";
 import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
 import { normalizePendingSandboxCreateIdentity } from "./registry/pending-create-identity";
 
@@ -188,37 +189,6 @@ export function readGatewayRegistryFile(
   } finally {
     fs.closeSync(fd);
   }
-}
-
-/** Resolve the gateway identity recorded by a registry row, rejecting ambiguity. */
-export function registryEntryGatewayPort(entry: GatewayRegistryEntry): number {
-  const hasPort = entry.gatewayPort !== undefined && entry.gatewayPort !== null;
-  const hasName = entry.gatewayName !== undefined && entry.gatewayName !== null;
-  const port = entry.gatewayPort;
-  const name = entry.gatewayName;
-
-  if (
-    hasPort &&
-    (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535)
-  ) {
-    throw stateError(`sandbox ${JSON.stringify(entry.name)} has an invalid gatewayPort`);
-  }
-  if (hasName && typeof name !== "string") {
-    throw stateError(`sandbox ${JSON.stringify(entry.name)} has an invalid gatewayName`);
-  }
-
-  const portFromName = typeof name === "string" ? resolveGatewayPortFromName(name) : null;
-  if (hasName && portFromName === null) {
-    throw stateError(`sandbox ${JSON.stringify(entry.name)} has an unrecognized gatewayName`);
-  }
-  if (typeof port === "number") {
-    if (typeof name === "string" && resolveGatewayName(port) !== name) {
-      throw stateError(`sandbox ${JSON.stringify(entry.name)} has conflicting gateway identity`);
-    }
-    return port;
-  }
-  if (portFromName !== null) return portFromName;
-  return DEFAULT_GATEWAY_PORT;
 }
 
 /** Recover one unambiguous onboard-time custom OpenShell state directory for a gateway port. */

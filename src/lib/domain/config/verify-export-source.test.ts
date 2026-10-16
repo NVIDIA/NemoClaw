@@ -159,8 +159,8 @@ describe("config export source verification (#10938)", () => {
       findings(verify({ ...value, registry: { ...value.registry, webSearchProvider: "tavily" } })),
     ).toContainEqual(
       expect.objectContaining({
-        field: "spec.sandboxes[].integrations.webSearch",
-        category: "unsupported",
+        field: "source.webSearch",
+        category: "drifted",
       }),
     );
   });

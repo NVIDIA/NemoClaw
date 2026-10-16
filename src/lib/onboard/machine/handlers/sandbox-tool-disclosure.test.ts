@@ -11,6 +11,16 @@ vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
 }));
 
+vi.mock("../../sandbox-registration", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../sandbox-registration")>()),
+  withSandboxImageRegistrationFence: async <T>(operation: () => Promise<T> | T) => operation(),
+}));
+
+vi.mock("../../../state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../state/registry")>()),
+  getSandbox: vi.fn(() => null),
+}));
+
 const registeredEntry = (name: string, overrides: Record<string, unknown> = {}) => ({
   name,
   provider: "provider",
@@ -23,6 +33,183 @@ const registeredEntry = (name: string, overrides: Record<string, unknown> = {}) 
 });
 
 describe("handleSandboxState tool disclosure", () => {
+  it.each([
+    [
+      "accepted Qwen preview",
+      "vllm-local",
+      "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      true,
+      null,
+      "progressive",
+    ],
+    ["unaccepted Qwen route", "vllm-local", "nvidia/Qwen3.6-35B-A3B-NVFP4", false, null, "direct"],
+    ["another vLLM model", "vllm-local", "another-model", true, null, "direct"],
+    ["Gemma on Ollama", "ollama-local", "gemma4:26b", true, null, "direct"],
+    [
+      "mismatched reservation",
+      "vllm-local",
+      "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      true,
+      null,
+      "direct",
+      "another-model",
+    ],
+    ["explicit direct", "vllm-local", "nvidia/Qwen3.6-35B-A3B-NVFP4", true, "direct", "direct"],
+    [
+      "explicit progressive",
+      "vllm-local",
+      "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      true,
+      "progressive",
+      "progressive",
+    ],
+  ] as const)(
+    "selects tool disclosure for %s (#13088)",
+    async (
+      _case,
+      provider,
+      model,
+      previewAccepted,
+      requested,
+      expected,
+      recordedModel: string = model,
+    ) => {
+      const session = createSession();
+      const { deps, calls } = createDeps(
+        {
+          getSandboxRegistryEntry: (name) =>
+            registeredEntry(name, {
+              provider,
+              model: recordedModel,
+              pendingRouteReservation: true,
+              reservationSessionId: session.sessionId,
+            }),
+        },
+        session,
+      );
+
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        provider,
+        model,
+        agent: { name: "openclaw" },
+        deferredN1xManagedVllmPreviewIntent: previewAccepted,
+        env: requested ? { NEMOCLAW_TOOL_DISCLOSURE: requested } : {},
+      });
+
+      const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+      expect(createSandboxCall[15]).toMatchObject({ toolDisclosure: expected });
+      expect(calls.removeSandbox).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["progressive", "direct"] as const)(
+    "preserves recorded %s disclosure for an N1x Qwen sandbox (#13088)",
+    async (mode) => {
+      const session = createSession({ toolDisclosure: mode });
+      const provider = "vllm-local";
+      const model = "nvidia/Qwen3.6-35B-A3B-NVFP4";
+      const { deps, calls } = createDeps(
+        {
+          getSandboxRegistryEntry: (name) =>
+            registeredEntry(name, { provider, model, toolDisclosure: mode }),
+        },
+        session,
+      );
+
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        provider,
+        model,
+        deferredN1xManagedVllmPreviewIntent: true,
+      });
+
+      const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+      expect(createSandboxCall[15]).toMatchObject({ toolDisclosure: mode });
+    },
+  );
+
+  it.each([
+    ["ollama-local", "openclaw", "direct"],
+    ["vllm-local", "openclaw", "direct"],
+    ["nvidia-prod", "openclaw", "progressive"],
+    ["llama-cpp-local", "openclaw", "progressive"],
+    ["ollama-local", "hermes", "progressive"],
+    ["vllm-local", "langchain-deepagents-code", "progressive"],
+  ] as const)(
+    "uses %s/%s initial tool disclosure %s (#12106)",
+    async (provider, agentName, mode) => {
+      const session = createSession();
+      const { deps, calls } = createDeps(
+        {
+          getSandboxRegistryEntry: (name) =>
+            registeredEntry(name, {
+              provider,
+              pendingRouteReservation: true,
+              reservationSessionId: session.sessionId,
+            }),
+        },
+        session,
+      );
+
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        provider,
+        agent: { name: agentName },
+      });
+
+      const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+      expect(createSandboxCall[15]).toMatchObject({ toolDisclosure: mode });
+      expect(calls.removeSandbox).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["progressive", "direct"] as const)(
+    "preserves an explicit %s choice for a fresh local OpenClaw sandbox (#12106)",
+    async (mode) => {
+      const session = createSession();
+      const { deps, calls } = createDeps(
+        {
+          getSandboxRegistryEntry: (name) =>
+            registeredEntry(name, {
+              provider: "ollama-local",
+              pendingRouteReservation: true,
+              reservationSessionId: session.sessionId,
+            }),
+        },
+        session,
+      );
+
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        provider: "ollama-local",
+        agent: { name: "openclaw" },
+        env: { NEMOCLAW_TOOL_DISCLOSURE: mode },
+      });
+
+      const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+      expect(createSandboxCall[15]).toMatchObject({ toolDisclosure: mode });
+    },
+  );
+
+  it.each(["ollama-local", "vllm-local"])(
+    "preserves progressive when %s creation targets registered state (#12106)",
+    async (provider) => {
+      const session = createSession();
+      const { deps, calls } = createDeps({}, session);
+
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        provider,
+        agent: { name: "openclaw" },
+      });
+
+      const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+      expect(createSandboxCall[15]).toMatchObject({ toolDisclosure: "progressive" });
+      expect(calls.removeSandbox).not.toHaveBeenCalled();
+    },
+  );
+
   it("fails closed without claiming an unregistered live sandbox as a managed migration", async () => {
     const session = createSession({ sandboxName: "saved", toolDisclosure: "progressive" });
     session.steps.sandbox.status = "complete";

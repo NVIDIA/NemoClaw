@@ -29,6 +29,7 @@ import {
   sanitizeRouteValueForDisplay,
   VLLM_LOCAL_CREDENTIAL_ENV,
 } from "./config";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
 
 describe("resolveAgentDefaultCloudModel", () => {
   it("uses the Deep Agents manifest default", () => {
@@ -230,11 +231,11 @@ describe("inference selection config", () => {
     });
   });
 
-  it("maps the remaining hosted providers to the sandbox inference route", () => {
+  it("maps the remaining hosted providers to native endpoints (#12589)", () => {
     // Full-object assertion for one hosted provider to catch structural regressions
     expect(getProviderSelectionConfig("openai-api", "gpt-5.4-mini")).toEqual({
       endpointType: "custom",
-      endpointUrl: INFERENCE_ROUTE_URL,
+      endpointUrl: "https://api.openai.com/v1",
       ncpPartner: null,
       model: "gpt-5.4-mini",
       profile: DEFAULT_ROUTE_PROFILE,
@@ -244,7 +245,7 @@ describe("inference selection config", () => {
     });
     expect(getProviderSelectionConfig("openrouter-api", "moonshotai/kimi-k2.6")).toEqual({
       endpointType: "custom",
-      endpointUrl: INFERENCE_ROUTE_URL,
+      endpointUrl: "https://openrouter.ai/api/v1",
       ncpPartner: null,
       model: "moonshotai/kimi-k2.6",
       profile: DEFAULT_ROUTE_PROFILE,
@@ -270,7 +271,7 @@ describe("inference selection config", () => {
     });
     expect(getProviderSelectionConfig("hermes-provider", "anthropic/claude-opus-4.7")).toEqual({
       endpointType: "custom",
-      endpointUrl: INFERENCE_ROUTE_URL,
+      endpointUrl: "https://inference-api.nousresearch.com/v1",
       ncpPartner: null,
       model: "anthropic/claude-opus-4.7",
       profile: DEFAULT_ROUTE_PROFILE,
@@ -379,7 +380,7 @@ describe("getSandboxInferenceConfig", () => {
     });
   });
 
-  it("maps NVIDIA Endpoints to the routed inference provider", () => {
+  it("maps NVIDIA Endpoints to its native endpoint while preserving the agent provider key (#12558)", () => {
     expect(
       getSandboxInferenceConfig(
         "nvidia/nemotron-3-super-120b-a12b",
@@ -389,9 +390,9 @@ describe("getSandboxInferenceConfig", () => {
     ).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`,
-      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceBaseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
       inferenceApi: "openai-completions",
-      inferenceCompat: null,
+      inferenceCompat: { supportsStore: false },
     });
   });
 
@@ -411,9 +412,9 @@ describe("getSandboxInferenceConfig", () => {
     ).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.6`,
-      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceBaseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
       inferenceApi: "openai-completions",
-      inferenceCompat: null,
+      inferenceCompat: { supportsStore: false },
     });
   });
 
@@ -431,11 +432,11 @@ describe("getSandboxInferenceConfig", () => {
     });
   });
 
-  it("maps OpenRouter to the managed inference provider with store disabled (#5826)", () => {
+  it("uses native OpenRouter access with store disabled (#12589)", () => {
     expect(getSandboxInferenceConfig("moonshotai/kimi-k2.6", "openrouter-api")).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.6`,
-      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceBaseUrl: "https://openrouter.ai/api/v1",
       inferenceApi: "openai-completions",
       inferenceCompat: {
         supportsStore: false,
@@ -496,11 +497,11 @@ describe("getSandboxInferenceConfig", () => {
     });
   });
 
-  it("maps Gemini to the routed inference provider with supportsStore disabled", () => {
+  it("uses the native Gemini OpenAI-compatible endpoint with store disabled (#12589)", () => {
     expect(getSandboxInferenceConfig("gemini-2.5-flash", "gemini-api")).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/gemini-2.5-flash`,
-      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
       inferenceApi: "openai-completions",
       inferenceCompat: {
         supportsStore: false,
@@ -512,7 +513,7 @@ describe("getSandboxInferenceConfig", () => {
     expect(getSandboxInferenceConfig("gpt-5.4", "openai-api", "openai-responses")).toEqual({
       providerKey: "openai",
       primaryModelRef: "openai/gpt-5.4",
-      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceBaseUrl: "https://api.openai.com/v1",
       inferenceApi: "openai-responses",
       inferenceCompat: null,
     });
@@ -648,3 +649,43 @@ describe("formatInferenceRouteDriftForDisplay", () => {
     });
   });
 });
+
+it.each([
+  ["openclaw", true, "https://inference.local/v1"],
+  ["hermes", true, "https://inference.local/v1"],
+  ["pi", true, "https://inference.local/v1"],
+  ["langchain-deepagents-code", false, "https://inference.local/v1"],
+  ["langchain-deepagents-code", true, "http://host.openshell.internal:8000/v1"],
+] as const)("routes %s with native attachment %s to %s (#13197)", (agent, attached, expected) => {
+  expect(
+    getSandboxInferenceConfig(
+      "fixture-model",
+      "compatible-endpoint",
+      "openai-completions",
+      attached,
+      "http://host.openshell.internal:8000/v1",
+      agent,
+    ).inferenceBaseUrl,
+  ).toBe(expected);
+});
+
+it.each([
+  ["openclaw", true, "http://host.openshell.internal:8000/v1"],
+  ["openclaw", false, "https://inference.local/v1"],
+  ["hermes", true, "https://inference.local/v1"],
+  ["pi", true, "https://inference.local/v1"],
+] as const)(
+  "routes %s standalone vLLM with native attachment %s to %s",
+  (agent, attached, expected) => {
+    expect(
+      getSandboxInferenceConfig(
+        "fixture-model",
+        "vllm-local",
+        "openai-completions",
+        attached,
+        "http://host.openshell.internal:8000/v1",
+        agent,
+      ).inferenceBaseUrl,
+    ).toBe(expected);
+  },
+);

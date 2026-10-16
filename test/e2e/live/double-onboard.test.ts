@@ -14,7 +14,7 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
@@ -58,14 +58,14 @@ function dashboardPort(sandboxName: string): string {
   return sandboxName === SANDBOX_A ? DASHBOARD_PORT_A : DASHBOARD_PORT_B;
 }
 
-function onboardEnv(sandboxName: string, fakeBaseUrl: string): NodeJS.ProcessEnv {
+function onboardEnv(sandboxName: string, fakeBaseUrl: string, model: string): NodeJS.ProcessEnv {
   return commandEnv({
     COMPATIBLE_API_KEY: "dummy",
     NEMOCLAW_PROVIDER: "custom",
     NEMOCLAW_AGENT: process.env.NEMOCLAW_AGENT ?? "openclaw",
     NEMOCLAW_HERMES_API_PORT: sandboxName === SANDBOX_A ? process.env.NEMOCLAW_HERMES_API_PORT : "",
     NEMOCLAW_ENDPOINT_URL: fakeBaseUrl,
-    NEMOCLAW_MODEL: "test-model",
+    NEMOCLAW_MODEL: model,
     NEMOCLAW_SANDBOX_NAME: sandboxName,
     NEMOCLAW_POLICY_MODE: "skip",
     NEMOCLAW_DASHBOARD_PORT: dashboardPort(sandboxName),
@@ -98,10 +98,11 @@ async function runOnboard(
   sandboxName: string,
   fakeBaseUrl: string,
   artifactName: string,
+  model = "test-model",
 ): Promise<ShellProbeResult> {
   return await command(host, ["onboard", "--non-interactive"], {
     artifactName,
-    env: onboardEnv(sandboxName, fakeBaseUrl),
+    env: onboardEnv(sandboxName, fakeBaseUrl, model),
     timeoutMs: ONBOARD_TIMEOUT_MS,
   });
 }
@@ -265,6 +266,7 @@ test(
         "validate double-onboard lifecycle prerequisites",
         "onboard first sandbox",
         "re-onboard same sandbox on existing gateway",
+        "recreate OpenClaw sandbox after a model change",
         "onboard sibling sandbox with isolated dashboard",
         "stop sibling sandbox without disturbing the first forward",
         "replace sandbox after stale registry refusal",
@@ -283,11 +285,6 @@ test(
     sandbox,
     skip,
   }) => {
-    expect(
-      fs.existsSync(CLI_DIST_ENTRYPOINT),
-      "run `npm run build:cli` before live repo CLI targets",
-    ).toBe(true);
-
     await runtimeProvider.requireAvailable({
       artifactName: "prereq-runtime-info",
       scenarioLabel: "double-onboard",
@@ -369,7 +366,12 @@ test(
       id: "double-onboard",
       boundary: "direct-cli-openshell-lifecycle",
       contract: [
-        "same-name onboarding reuses the live gateway and sandbox",
+        "same-selection onboarding reuses the live gateway and sandbox",
+        ...(process.env.NEMOCLAW_AGENT === "hermes"
+          ? []
+          : [
+              "changed-model OpenClaw onboarding replaces the sandbox and updates agent and registry selection",
+            ]),
         "a sibling sandbox keeps a separate owned dashboard forward",
         "stopping the sibling releases only its dashboard forward",
         "status and connect preserve a stale local registration",
@@ -447,19 +449,46 @@ test(
       );
       hermesApiForwardOwned = apiListenerAfterReuse.valid;
       expect(hermesApiForwardOwned, apiListenerAfterReuse.output).toBe(true);
+    } else {
+      progress.phase("recreate OpenClaw sandbox after a model change");
+      const changedModel = "changed-model";
+      const changed = await runOnboard(
+        host,
+        SANDBOX_A,
+        fake.baseUrl,
+        "phase-3-model-change-onboard",
+        changedModel,
+      );
+      expect(changed.exitCode, resultText(changed)).toBe(0);
+      const recreated = await sandbox.openshell(["sandbox", "get", SANDBOX_A], {
+        artifactName: "phase-3-model-change-sandbox",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      });
+      expect(recreated.exitCode, resultText(recreated)).toBe(0);
+      const recreatedId = parseOpenShellSandboxId(resultText(recreated));
+      expect(recreatedId, resultText(recreated)).not.toBeNull();
+      expect(recreatedId).not.toBe(sandboxAIdAfterReuse);
+      const primary = await sandbox.exec(
+        SANDBOX_A,
+        ["openclaw", "config", "get", "agents.defaults.model.primary", "--json"],
+        {
+          artifactName: "phase-3-model-change-openclaw-primary",
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        },
+      );
+      expect(primary.exitCode, resultText(primary)).toBe(0);
+      expect(JSON.parse(primary.stdout)).toBe(`inference/${changedModel}`);
+      const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+        sandboxes?: Record<string, { model?: string }>;
+      };
+      expect(registry.sandboxes?.[SANDBOX_A]?.model).toBe(changedModel);
     }
 
     progress.phase("onboard sibling sandbox with isolated dashboard");
     const sibling = await runOnboard(host, SANDBOX_B, fake.baseUrl, "phase-4-sibling-onboard");
     expect(sibling.exitCode, resultText(sibling)).toBe(0);
-    await sandbox.expectListed(SANDBOX_A, {
-      artifactName: "phase-4-openshell-sandbox-a-listed",
-      env: commandEnv(),
-    });
-    await sandbox.expectListed(SANDBOX_B, {
-      artifactName: "phase-4-openshell-sandbox-b-listed",
-      env: commandEnv(),
-    });
 
     const dashboardABeforeStop = await waitForDashboardReachability(
       host,

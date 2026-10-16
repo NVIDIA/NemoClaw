@@ -1,0 +1,68 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.132
+
+NemoClaw v0.0.132 expands qualified image and NVIDIA inference paths and improves sandbox recovery.
+It also strengthens credential checks, preserves gateway-scoped tunnels during sandbox changes, and makes failure guidance more specific.
+
+- Rootless Podman can onboard, resume, rebuild, and clean up exact-digest external OpenClaw and Hermes images selected with `--from-image`.
+  NemoClaw validates the local image identity and retains shared images that it does not own.
+  Related change: [PR #12538](https://github.com/NVIDIA/NemoClaw/pull/12538).
+  Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- New and recreated NVIDIA Endpoints sandboxes use a sandbox-attached OpenShell provider instead of the shared `inference.local` route.
+  Older sandboxes keep the shared route until recreated.
+  Recreate Deep Agents Code sandboxes during onboarding.
+  OpenClaw and Hermes can switch an existing native attachment in place.
+  Follow-up repairs restore native sandbox requests and use the supervisor-issued credential handle for OpenClaw and Hermes.
+  Related changes: [PR #12562](https://github.com/NVIDIA/NemoClaw/pull/12562), [PR #12826](https://github.com/NVIDIA/NemoClaw/pull/12826), and [PR #12895](https://github.com/NVIDIA/NemoClaw/pull/12895).
+  Refer to [Use NVIDIA Endpoints](/user-guide/openclaw/inference/hosted-inference/use-nvidia-endpoints).
+- A qualifying Station GB300 Windows Subsystem for Linux host can automatically select the managed Qwen 3.6 35B-A3B llama.cpp recipe.
+  Managed vLLM selection retains a completed Docker GPU proof across WSL preflight, and read-only readiness reports when it did not run a container CUDA proof.
+  Related changes: [PR #12557](https://github.com/NVIDIA/NemoClaw/pull/12557), [PR #12609](https://github.com/NVIDIA/NemoClaw/pull/12609), and [PR #12856](https://github.com/NVIDIA/NemoClaw/pull/12856).
+  Refer to [Set Up llama.cpp](/user-guide/openclaw/inference/local-inference/set-up-llama-cpp).
+- Custom-image OpenClaw onboarding waits for native startup before it configures and restarts the gateway.
+  For the **Other OpenAI-compatible endpoint** provider, OpenClaw rebuild verifies the restored inference route.
+  If verification fails, NemoClaw reports the preserved backup and a retry action.
+  Related change: [PR #12720](https://github.com/NVIDIA/NemoClaw/pull/12720).
+  Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- Resumed Deep Agents Code onboarding restarts a stopped OpenRouter adapter and requires a bounded inference request before it reports success.
+  Failed adapter recovery or model validation leaves onboarding incomplete for retry.
+  Related change: [PR #12681](https://github.com/NVIDIA/NemoClaw/pull/12681).
+  Refer to [Verify the Sandbox Inference Route](/user-guide/deepagents/inference/validate-inference/verify-inference-route).
+- `nemoclaw tunnel start` uses the selected OpenShell gateway port, and the tunnel stays available when one sandbox stops, is destroyed, or is recreated.
+  Tunnel selection and cleanup retain gateway ownership checks.
+  Related changes: [PR #12490](https://github.com/NVIDIA/NemoClaw/pull/12490) and [PR #12566](https://github.com/NVIDIA/NemoClaw/pull/12566).
+  Refer to [Run Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/run-sandboxes).
+- `nemoclaw <name> destroy --yes` can remove a retained live sandbox after interrupted onboarding when its OpenShell identity matches the recovery record.
+  Missing identity, uncertain presence, and identity drift still block deletion.
+  OpenShell deletes by mutable name, so the final identity check and deletion are not atomic; prevent another client from replacing the sandbox name during cleanup.
+  Related change: [PR #12893](https://github.com/NVIDIA/NemoClaw/pull/12893).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#inspect-retained-sandbox-recovery).
+- Rebuild validates a nonempty host API key for applicable remote providers before image preparation or backup and again before sandbox deletion.
+  A failed validation preserves the existing sandbox even with `--force`; unset a host key when you intend to reuse a valid OpenShell-stored credential.
+  Related change: [PR #12801](https://github.com/NVIDIA/NemoClaw/pull/12801).
+  Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- Legacy sandbox rebuild can recover after a confirmed failed probe without treating the old sandbox as absent.
+  Source-installed CLI rebuilds use the installed source catalog instead of requesting an unpublished release version.
+  Related changes: [PR #12767](https://github.com/NVIDIA/NemoClaw/pull/12767) and [PR #12762](https://github.com/NVIDIA/NemoClaw/pull/12762).
+- A successful default uninstall identifies the native-state archive that contains Deep Agents Code files.
+  Ordinary Docker uninstall also accepts a completed empty registry after the last sandbox was destroyed; ambiguous or non-Docker authority still fails closed.
+  Related change: [PR #12774](https://github.com/NVIDIA/NemoClaw/pull/12774).
+  Refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
+- Rebuild preserves Hermes messaging configuration, and Slack remediation validates the managed install and policy boundaries before applying a repair.
+  A failed Slack remediation command is reported instead of being treated as success.
+  Related changes: [PR #12841](https://github.com/NVIDIA/NemoClaw/pull/12841), [PR #12846](https://github.com/NVIDIA/NemoClaw/pull/12846), and [PR #12662](https://github.com/NVIDIA/NemoClaw/pull/12662).
+- Onboarding keeps unprovable forwarded ports occupied rather than selecting a conflicting port.
+  It also checks the local inference route during GPU finalization and preserves a completed GPU proof across a resumed create step.
+  Related changes: [PR #12763](https://github.com/NVIDIA/NemoClaw/pull/12763), [PR #12755](https://github.com/NVIDIA/NemoClaw/pull/12755), and [PR #12372](https://github.com/NVIDIA/NemoClaw/pull/12372).
+- Diagnostics identify a failed custom endpoint while redacting credential-bearing URL components.
+  Inference switching reports the gateway restart failure category, and non-GPU startup failures use the selected operation's recovery guidance.
+  Related changes: [PR #12759](https://github.com/NVIDIA/NemoClaw/pull/12759), [PR #12705](https://github.com/NVIDIA/NemoClaw/pull/12705), and [PR #12796](https://github.com/NVIDIA/NemoClaw/pull/12796).
+- `nemoclaw config export` rejects unsupported Gemini configuration instead of producing an unusable export.
+  Related change: [PR #12551](https://github.com/NVIDIA/NemoClaw/pull/12551).
+- Sandbox image cleanup protects images used by sibling gateways.
+  Fresh onboarding no longer detaches providers before the sandbox exists, avoiding misleading `sandbox not found` warnings.
+  Related changes: [PR #12608](https://github.com/NVIDIA/NemoClaw/pull/12608) and [PR #12835](https://github.com/NVIDIA/NemoClaw/pull/12835).

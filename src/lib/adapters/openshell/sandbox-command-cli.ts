@@ -10,6 +10,10 @@ import {
 } from "../../core/process-session";
 import { spawnExitCode } from "../../core/process-exit";
 import { buildSubprocessEnv } from "../../subprocess-env";
+import {
+  buildOpenShellRuntimeSelectionEnv,
+  type OpenShellRuntimeSelection,
+} from "./runtime-selection";
 import type { OpenshellAsyncCaptureSignalSource } from "./client";
 import { captureOpenshellCommandAsyncResult } from "./command-execution";
 import { resolveOpenshellBinaryOrNull } from "./resolve-shared";
@@ -257,6 +261,16 @@ function unavailableBinary(): OpenShellSandboxCommandCompletion {
   };
 }
 
+/** Apply the same filtered environment and recorded runtime to native sandbox probes. */
+export function buildSandboxCommandEnvironment(
+  runtimeSelection?: OpenShellRuntimeSelection,
+  runtimeEnv?: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  return runtimeSelection
+    ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
+    : (runtimeEnv ?? buildSubprocessEnv());
+}
+
 export function createCliOpenShellSandboxCommandExecutor(
   deps: CliOpenShellSandboxCommandExecutorDeps = {},
 ): OpenShellSandboxCommandExecutor & OpenShellSandboxBufferedCommandExecutor {
@@ -297,7 +311,10 @@ export function createCliOpenShellSandboxCommandExecutor(
     },
     runBuffered: async (request) => {
       assertCliOpenShellSandboxName(request.sandboxName);
-      const environment = request.environment ?? deps.hostEnv ?? buildSubprocessEnv();
+      const environment = buildSandboxCommandEnvironment(
+        undefined,
+        request.environment ?? deps.hostEnv,
+      );
       assertCliOpenShellTarget(request.target, environment);
       const binary = resolveBinary();
       if (!binary) {

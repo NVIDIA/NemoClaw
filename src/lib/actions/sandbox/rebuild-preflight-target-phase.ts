@@ -55,6 +55,7 @@ import {
   hasValidDeferredN1xManagedVllmReplacementAuthority,
   hydrateMessagingConfigForRebuild,
   preflightAuthoritativeOnboardRuntime,
+  preflightRebuildTargetHostCredential,
   preflightRebuildTargetRuntime,
   prepareRebuildRecreateOptions,
   prepareRebuildTargetConfig,
@@ -203,6 +204,8 @@ export async function prepareRebuildTargetPreflights(args: {
   );
   if (!targetConfig) return null;
   const { resumeConfig, durableConfig, credentialEnv, fromDockerfile, fromImage } = targetConfig;
+  // An unavailable replacement catalog must not hide a rejected replacement key.
+  if (!(await preflightRebuildTargetHostCredential(targetConfig, bail))) return null;
   const baseImageResolutionHint = readSandboxBaseImageResolutionMetadata(sandboxEntry.imageTag);
   const forceBaseImageRefresh = isSandboxBaseImageRefreshRequested(process.env);
   const recreateOptions = prepareRebuildRecreateOptions(

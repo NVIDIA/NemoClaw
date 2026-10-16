@@ -3,6 +3,9 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import { blockRebuildOnLegacySharedLocalRoute } from "./rebuild-preflight-phase";
+
 import { restoreEnvBulk } from "../../../../test/helpers/env-test-helpers";
 import type {
   ProviderRecoveryReceipt,
@@ -231,5 +234,91 @@ describe("stageRebuildBaseImageResolutionHandoff", () => {
         resolutionMetadata: current,
       }),
     ).toThrow("provenance did not match its immutable handoff");
+  });
+});
+
+describe("rebuild legacy local route preflight", () => {
+  it.each([
+    {
+      agent: "langchain-deepagents-code",
+      provider: "ollama-local",
+      createdAt: "2026-09-01T00:00:00Z",
+    },
+    {
+      agent: "langchain-deepagents-code",
+      provider: "vllm-local",
+      createdAt: "2026-09-01T00:00:00Z",
+    },
+    { agent: "langchain-deepagents-code", provider: "ollama-local", createdAt: undefined },
+    { agent: "langchain-deepagents-code", provider: "vllm-local", createdAt: undefined },
+    { agent: "openclaw", provider: "ollama-local", createdAt: undefined },
+    { agent: "openclaw", provider: "vllm-local", createdAt: undefined },
+    { agent: "openclaw", provider: "llama-cpp-local", createdAt: undefined },
+    {
+      agent: "langchain-deepagents-code",
+      provider: "ollama-local",
+      createdAt: "2026-09-01T00:00:00Z",
+      pendingRouteReservation: true,
+    },
+  ])(
+    "blocks legacy $provider rebuild with createdAt=$createdAt",
+    ({ agent, provider, createdAt, ...state }) => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const bail = vi.fn((message: string): never => {
+        throw new Error(message);
+      });
+      const entry = {
+        name: "alpha",
+        createdAt,
+        agent,
+        provider,
+        model: "local-model",
+        ...state,
+      } as RebuildSandboxEntry;
+
+      expect(() => blockRebuildOnLegacySharedLocalRoute("alpha", entry, bail)).toThrow(
+        "Legacy shared local inference cannot be rebuilt safely",
+      );
+      expect(error.mock.calls.flat().join("\n")).toContain("Back up the sandbox");
+      expect(bail).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("leaves Local NIM on its existing shared rebuild path", () => {
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+    const entry = {
+      name: "alpha",
+      agent: "openclaw",
+      provider: "vllm-local",
+      model: "nim-model",
+      nimContainer: "nim-alpha",
+    } as RebuildSandboxEntry;
+    expect(blockRebuildOnLegacySharedLocalRoute("alpha", entry, bail)).toBe(false);
+    expect(bail).not.toHaveBeenCalled();
+  });
+
+  it("leaves attached selections on their existing preflight path", () => {
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+    const entry = {
+      name: "alpha",
+      createdAt: "2026-09-01T00:00:00Z",
+      agent: "langchain-deepagents-code",
+      provider: "ollama-local",
+      model: "local-model",
+      nativeLocalProviderAttachment: {},
+    } as RebuildSandboxEntry;
+    expect(blockRebuildOnLegacySharedLocalRoute("alpha", entry, bail)).toBe(false);
+    expect(
+      blockRebuildOnLegacySharedLocalRoute(
+        "alpha",
+        { ...entry, pendingRouteReservation: true },
+        bail,
+      ),
+    ).toBe(false);
+    expect(bail).not.toHaveBeenCalled();
   });
 });

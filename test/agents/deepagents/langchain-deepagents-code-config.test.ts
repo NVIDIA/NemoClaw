@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadAgent } from "../../../src/lib/agent/defs";
+import { HOSTED_NATIVE_PROVIDERS } from "../../../src/lib/inference/native-provider/hosted";
 import {
   coerceAgentInferenceApi,
   getSandboxInferenceConfig,
@@ -68,6 +69,59 @@ function runGenerator(env: Record<string, string | undefined>): string {
 }
 
 describe("LangChain Deep Agents Code config generator", () => {
+  it.each(["ollama-local", "vllm-local", "llama-cpp-local"])(
+    "writes the selected native endpoint and credential reference for %s (#12558)",
+    (provider) => {
+      const config = runGenerator({
+        NEMOCLAW_UPSTREAM_PROVIDER: provider,
+        NEMOCLAW_MODEL: "local-model",
+        NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+        OPENAI_API_KEY: "ambient-secret-must-not-escape",
+      });
+      expect(config).toContain('base_url = "http://host.openshell.internal:11434/v1"');
+      expect(config).toContain('api_key_env = "NEMOCLAW_LOCAL_INFERENCE_TOKEN"');
+      expect(config).toContain('default = "openai:local-model"');
+      expect(config).not.toContain("ambient-secret-must-not-escape");
+    },
+  );
+  it.each(["http://10.1.2.3:8000/v1", "http://host.openshell.internal:42103/v1"])(
+    "keeps compatible endpoint %s on the managed credential contract (#13197)",
+    (endpoint) => {
+      const config = runGenerator({
+        NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+        NEMOCLAW_INFERENCE_BASE_URL: getSandboxInferenceConfig(
+          "fixture-model",
+          "compatible-endpoint",
+          "openai-completions",
+          false,
+          endpoint,
+          "langchain-deepagents-code",
+        ).inferenceBaseUrl,
+      });
+      expect(config).toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
+      expect(config).not.toContain("NEMOCLAW_LOCAL_INFERENCE_TOKEN");
+    },
+  );
+
+  it.each(
+    HOSTED_NATIVE_PROVIDERS.filter(
+      (provider) =>
+        provider.api === "openai-completions" && provider.logicalProvider !== "openrouter-api",
+    ),
+  )("generates native $label routing without writing the host credential (#12589)", (provider) => {
+    const config = runGenerator({
+      NEMOCLAW_MODEL: "selected-model",
+      NEMOCLAW_UPSTREAM_PROVIDER: provider.logicalProvider,
+      NEMOCLAW_INFERENCE_BASE_URL: provider.endpoint,
+      [provider.credentialEnv]: "host-credential-must-not-be-written",
+    });
+    expect(config).toContain('default = "openai:selected-model"');
+    expect(config).toContain(`api_key_env = "${provider.credentialEnv}"`);
+    expect(config).toContain(`base_url = "${provider.endpoint}"`);
+    expect(config).toContain("use_responses_api = false");
+    expect(config).not.toContain("host-credential-must-not-be-written");
+  });
+
   it("routes managed inference through OpenAI-compatible chat completions", () => {
     const config = runGenerator({});
 
@@ -84,6 +138,17 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).toContain("[warnings]");
     expect(config).toContain('suppress = ["tavily"]');
     expect(config).not.toMatch(/NVIDIA_API_KEY|OPENAI_API_KEY=|sk-/);
+  });
+
+  it("uses the attached-provider placeholder for native NVIDIA inference (#12558)", () => {
+    const config = runGenerator({
+      NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
+    });
+
+    expect(config).not.toContain("force_nonempty_content");
+    expect(config).toContain('api_key_env = "NVIDIA_INFERENCE_API_KEY"');
+    expect(config).not.toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
   });
 
   it("keeps the legacy provider key when the renamed route variables are absent", () => {
@@ -110,13 +175,19 @@ describe("LangChain Deep Agents Code config generator", () => {
     const config = runGenerator({
       NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
       NEMOCLAW_UPSTREAM_PROVIDER: "openrouter-api",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://openrouter.ai/api/v1",
     });
 
     expect(config).toContain('default = "openrouter:nvidia/nemotron-3-ultra-550b-a55b"');
     expect(config).toContain("[models.providers.openrouter]");
     expect(config).toContain('models = ["nvidia/nemotron-3-ultra-550b-a55b"]');
-    expect(config).toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
-    expect(config).toContain('base_url = "https://inference.local/v1"');
+    expect(config).toContain('api_key_env = "OPENROUTER_API_KEY"');
+    expect(config).toContain('base_url = "https://openrouter.ai/api/v1"');
+    expect(config).toContain(
+      '[models.providers.openrouter.params."nvidia/nemotron-3-ultra-550b-a55b"]',
+    );
+    expect(config).toContain('"HTTP-Referer" = "https://www.nvidia.com/nemoclaw/"');
+    expect(config).toContain('"X-OpenRouter-Title" = "NVIDIA NemoClaw"');
     expect(config).toContain(
       "# NemoClaw provider route: inference; upstream provider: openrouter-api; API: openai-completions.",
     );

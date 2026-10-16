@@ -3,8 +3,15 @@
 
 import { describe, expect, it } from "vitest";
 import type { ConfigObject } from "../security/credential-filter";
+import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
-import { baseSession, createDeps } from "./inference-set.test-support";
+import { baseSession, createDeps } from "../../../test/helpers/inference-set";
+
+const legacyLocalEntry: SandboxEntry = {
+  name: "alpha",
+  agent: "openclaw",
+  provider: "ollama-local",
+};
 
 describe("runInferenceSet local-provider verification", () => {
   const localConfig = (): ConfigObject => ({
@@ -20,7 +27,11 @@ describe("runInferenceSet local-provider verification", () => {
   });
 
   it("forces --no-verify for a local provider whose host validation passes", async () => {
-    const deps = createDeps({ config: localConfig(), session: baseSession() });
+    const deps = createDeps({
+      config: localConfig(),
+      entry: legacyLocalEntry,
+      session: baseSession(),
+    });
 
     await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps);
 
@@ -34,7 +45,11 @@ describe("runInferenceSet local-provider verification", () => {
     // The reporter's exact input `ollama_local` must reach the local-provider
     // path as the canonical `ollama-local`, so host validation and the OpenShell
     // selection both use the normalized name (not the underscore spelling).
-    const deps = createDeps({ config: localConfig(), session: baseSession() });
+    const deps = createDeps({
+      config: localConfig(),
+      entry: legacyLocalEntry,
+      session: baseSession(),
+    });
 
     await runInferenceSet({ provider: "ollama_local", model: "qwen2.5:7b" }, deps);
 
@@ -54,6 +69,7 @@ describe("runInferenceSet local-provider verification", () => {
   it("warns and proceeds with --no-verify when the host stack is reachable despite a failed probe", async () => {
     const deps = createDeps({
       config: localConfig(),
+      entry: legacyLocalEntry,
       session: baseSession(),
       localValidation: {
         ok: false,
@@ -75,6 +91,7 @@ describe("runInferenceSet local-provider verification", () => {
   it("aborts without touching the route when the host stack is unreachable", async () => {
     const deps = createDeps({
       config: localConfig(),
+      entry: legacyLocalEntry,
       session: baseSession(),
       localValidation: {
         ok: false,
@@ -90,20 +107,19 @@ describe("runInferenceSet local-provider verification", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("does not run local validation or force --no-verify for cloud providers", async () => {
+  it("does not run local validation or mutate the shared route for native cloud providers", async () => {
     const deps = createDeps({
       config: localConfig(),
       session: baseSession(),
     });
 
-    await runInferenceSet(
-      { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" },
-      deps,
-    );
+    await runInferenceSet({ provider: "openai-api", model: "gpt-5.4-mini" }, deps);
 
     expect(deps.calls.validateLocalProvider).not.toHaveBeenCalled();
     expect(deps.calls.ensureLocalProviderReachable).not.toHaveBeenCalled();
-    const args = deps.calls.captureOpenshell.mock.calls[0][0] as string[];
-    expect(args).not.toContain("--no-verify");
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "openai-api", nativeProvider: true }),
+    );
   });
 });

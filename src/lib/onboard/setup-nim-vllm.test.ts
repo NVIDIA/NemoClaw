@@ -3,6 +3,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requireValue } from "../core/require-value";
+import { resolveVllmModelAlias } from "../inference/vllm-models";
+import { bindStationExpressProviderSelection } from "./station-express-resume";
 import type { SetupNimSelectionState } from "./setup-nim-flow";
 import {
   buildDgxSparkExistingVllmHeadroomWarning,
@@ -59,7 +61,83 @@ beforeEach(() => {
 
 afterEach(() => vi.restoreAllMocks());
 
+function reviewedStationSelection(
+  options: {
+    unmanaged?: boolean;
+    missingReceipt?: boolean;
+    changedField?: "catalogDigest" | "presetId" | "presetDigest" | "recipeId" | "recipeDigest";
+    root?: string;
+  } = {},
+) {
+  const model = requireValue(
+    resolveVllmModelAlias("nemotron-3.5-super-vl-120b"),
+    "Expected Super VL catalog model",
+  );
+  const variant = requireValue(
+    model.runtimeVariants?.find((entry) => entry.platforms?.includes("station")),
+    "Expected Station runtime",
+  );
+  const serving = {
+    ...requireValue(variant.servingCatalog, "Expected catalog receipt"),
+    ...(options.changedField ? { [options.changedField]: `sha256:${"f".repeat(64)}` } : {}),
+  };
+  const raw = JSON.stringify({
+    data: [
+      {
+        id: variant.servedModelId,
+        root: options.root ?? "/tmp/nemoclaw-reviewed-model-fixture/model",
+      },
+    ],
+  });
+  const selection = state(variant.servedModelId);
+  const handler = createSetupNimVllmHandler(
+    deps({
+      getManagedVllmProviderBinding: () =>
+        options.unmanaged
+          ? null
+          : {
+              baseUrl: "http://host.openshell.internal:8000/v1",
+              validationBaseUrl: "http://127.0.0.1:8000/v1",
+              apiKey: "a".repeat(64),
+              ...(options.missingReceipt ? {} : { serving }),
+            },
+      queryVllmModels: () => raw,
+      runCapture: () => raw,
+    }),
+  );
+  const bind = () =>
+    bindStationExpressProviderSelection(
+      { version: 1, model: model.envValue, sandboxName: "station-test" },
+      selection.provider,
+      selection.model,
+      selection.vllmModelIdentity,
+    );
+  return { handler, selection, bind, model, variant };
+}
+
 describe("setupNim vLLM route containment", () => {
+  it("binds a reviewed Station snapshot through its verified recipe identity", async () => {
+    const { handler, selection, bind, model, variant } = reviewedStationSelection();
+    await expect(handler(selection, { managedInstall: true })).resolves.toBe("selected");
+    expect(selection.vllmModelIdentity).toBe(model.id);
+    expect(bind()).toMatchObject({ servedModel: variant.servedModelId, checkpointModel: model.id });
+  });
+
+  it.each([
+    ["unmanaged endpoint", { unmanaged: true }],
+    ["missing receipt", { missingReceipt: true }],
+    ["different catalog", { changedField: "catalogDigest" }],
+    ["different preset", { changedField: "presetId" }],
+    ["different preset digest", { changedField: "presetDigest" }],
+    ["different recipe", { changedField: "recipeId" }],
+    ["different recipe digest", { changedField: "recipeDigest" }],
+    ["different checkpoint", { root: "other/checkpoint" }],
+  ] as const)("refuses Station snapshot binding for a %s", async (_name, options) => {
+    const { handler, selection, bind } = reviewedStationSelection(options);
+    await expect(handler(selection, { managedInstall: true })).resolves.toBe("selected");
+    expect(bind).toThrow("Cannot record an invalid DGX Station Express provider selection");
+  });
+
   it("preflights before discovery and exact-checks the detected model before validation (#6315)", async () => {
     const events: string[] = [];
     const selection = state(null);

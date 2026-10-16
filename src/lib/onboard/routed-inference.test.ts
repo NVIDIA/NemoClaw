@@ -21,6 +21,8 @@ import {
   resolveRoutedCredentialEnv,
   upsertRoutedProvider,
 } from "./routed-inference";
+import { setupRoutedInference } from "./inference-providers/routed";
+import type { RoutedDeps } from "./inference-providers/types";
 
 describe("normalizeRoutedEndpointUrl (#4564)", () => {
   it("rewrites localhost to the sandbox-facing host alias", async () => {
@@ -168,5 +170,85 @@ describe("upsertRoutedProvider (#4564)", () => {
     expect(settled).toBe(false);
     release?.({ ok: true });
     await expect(resultPromise).resolves.toMatchObject({ ok: true });
+  });
+});
+
+function makeRoutedSetupDeps(
+  setInferenceRoute: RoutedDeps["inferenceRouteMutator"]["setInferenceRoute"] = vi.fn(async () => ({
+    ok: true as const,
+  })),
+) {
+  return {
+    runOpenshell: vi.fn(),
+    inferenceRouteMutator: { setInferenceRoute },
+    gatewayName: "nemoclaw-8091",
+    upsertProvider: vi.fn(async () => ({ ok: true })),
+    verifyInferenceRoute: vi.fn(),
+    verifyOnboardInferenceSmoke: vi.fn(),
+    isNonInteractive: vi.fn(() => true),
+    registry: { updateSandbox: vi.fn() },
+    exitProcess: vi.fn((code: number): never => {
+      throw new Error(`exit ${code}`);
+    }),
+    error: vi.fn(),
+    log: vi.fn(),
+    reconcileModelRouter: vi.fn(async () => undefined),
+    routedInference: {
+      upsertRoutedProvider: vi.fn(async () => ({ ok: true, result: { ok: true } })),
+    },
+    hydrateCredentialEnv: vi.fn(() => "nvapi-secret"),
+    redact: vi.fn((value: string) => value),
+    compactText: vi.fn((value: string) => value),
+  };
+}
+
+describe("setupRoutedInference route mutation", () => {
+  const args = {
+    model: "nemotron-test",
+    provider: "nvidia-router",
+    endpointUrl: "http://localhost:4000/v1",
+    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+  };
+
+  it("sends the exact route to the named gateway", async () => {
+    const deps = makeRoutedSetupDeps();
+
+    await expect(setupRoutedInference(args, deps as unknown as RoutedDeps)).resolves.toEqual({
+      done: false,
+    });
+
+    expect(deps.inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledOnce();
+    expect(deps.inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw-8091" },
+      route: { provider: "nvidia-router", model: "nemotron-test" },
+      verification: "skip",
+    });
+  });
+
+  it("exits before the caller can publish success after an ambiguous mutation", async () => {
+    const setInferenceRoute = vi.fn(async () => ({
+      ok: false as const,
+      ambiguous: true,
+      error: {
+        kind: "timeout" as const,
+        message: "OpenShell inference route update ended without a confirmed result.",
+      },
+    }));
+    const deps = makeRoutedSetupDeps(setInferenceRoute);
+    const publishSuccess = vi.fn();
+    const setup = async () => {
+      const result = await setupRoutedInference(args, deps as unknown as RoutedDeps);
+      publishSuccess();
+      return result;
+    };
+
+    await expect(setup()).rejects.toThrow("exit 1");
+
+    expect(setInferenceRoute).toHaveBeenCalledOnce();
+    expect(publishSuccess).not.toHaveBeenCalled();
+    expect(deps.exitProcess).toHaveBeenCalledWith(1);
+    expect(deps.error).toHaveBeenCalledWith(
+      "  The route update result is unknown. Inspect gateway 'nemoclaw-8091' before retrying onboarding.",
+    );
   });
 });

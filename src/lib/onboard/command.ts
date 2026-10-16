@@ -29,7 +29,11 @@ import {
   TOOL_DISCLOSURE_ENV,
   type ToolDisclosure,
 } from "../tool-disclosure";
-import { applyAgentsManifestEnv, assertNoPerAgentMaxSpawnDepthJson } from "./agents-manifest";
+import {
+  applyAgentsManifestEnv,
+  assertNoPerAgentMaxSpawnDepthJson,
+  takeSelectedAgentsManifest,
+} from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
 import { handleOnboardCommandError, reportOnboardCommandError } from "./command/error-reporting";
 import {
@@ -47,6 +51,7 @@ import {
   resolveLocalModelProfilePlan,
 } from "./local-model-profile/plan";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
+import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { parseReadOnlyHostMounts, requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
@@ -80,6 +85,7 @@ export interface OnboardCommandOptions {
   agent: string | null;
   agentsManifest: string | null;
   toolDisclosure: ToolDisclosure | null;
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode | null;
   observabilityEnabled: boolean | null;
   controlUiPort: number | null;
   gpu: boolean;
@@ -524,6 +530,7 @@ export function resolveOnboardOptions(
     agent,
     agentsManifest: resolveAgentsManifest(flags.agents, agent, deps),
     toolDisclosure,
+    dcodeAutoApprovalMode: flags["dcode-auto-approval"] ?? null,
     observabilityEnabled: typeof flags.observability === "boolean" ? flags.observability : null,
     controlUiPort: flags["control-ui-port"] ?? null,
     gpu: flags.gpu === true,
@@ -698,6 +705,7 @@ function restoreOnboardCommandEnvironment(
   restoreServingProfileEnvironment: () => void,
 ): void {
   if (options.agentsManifest) {
+    takeSelectedAgentsManifest(env);
     if (snapshot.agentsManifest === undefined) delete env.NEMOCLAW_EXTRA_AGENTS_JSON;
     else env.NEMOCLAW_EXTRA_AGENTS_JSON = snapshot.agentsManifest;
   }

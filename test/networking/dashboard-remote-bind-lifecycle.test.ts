@@ -140,16 +140,23 @@ describe("remote dashboard bind production lifecycle", () => {
     }
   });
 
-  it("rejects config rewrites appended to checked-in metadata validation (#6024)", () => {
+  it.each([
+    [
+      "metadata validation",
+      "    && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'",
+    ],
+    [
+      "Tavily installation",
+      "TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY openclaw doctor --fix --non-interactive",
+    ],
+  ])("rejects config rewrites appended to checked-in %s (#6024)", (_label, instructionTail) => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-metadata-"));
     const dockerfile = path.join(directory, "Dockerfile");
     const stockDockerfile = fs.readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8");
-    const metadataTail =
-      "    && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'";
     const mutatedDockerfile = stockDockerfile.replace(
-      metadataTail,
-      `${metadataTail} \\
+      instructionTail,
+      `${instructionTail} \\
     && printf '{}' > /sandbox/.openclaw/openclaw.json`,
     );
     fs.writeFileSync(dockerfile, mutatedDockerfile);

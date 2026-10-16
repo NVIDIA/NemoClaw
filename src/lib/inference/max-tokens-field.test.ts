@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { requiresMaxCompletionTokensField, resolveMaxTokensField } from "./max-tokens-field";
+import {
+  requiresMaxCompletionTokensField,
+  resolveMaxTokensField,
+  resolveProbeReplyTokens,
+} from "./max-tokens-field";
 
 describe("resolveMaxTokensField", () => {
   it.each(["gpt-5", "gpt-5.4", "gpt-5.4-turbo", "GPT-5.4"])(
@@ -46,5 +50,17 @@ describe("resolveMaxTokensField", () => {
     expect(resolveMaxTokensField("")).toBe("max_tokens");
     expect(resolveMaxTokensField(null)).toBe("max_tokens");
     expect(resolveMaxTokensField(undefined)).toBe("max_tokens");
+  });
+});
+
+describe("reasoning probe reply budgets", () => {
+  it("allows Ultra reasoning before visible acknowledgement without increasing other models", () => {
+    expect(resolveProbeReplyTokens("nvidia-prod", "nvidia/nemotron-3-ultra-550b-a55b")).toBe(256);
+    expect(resolveProbeReplyTokens("nvidia-nim", "nvidia/nemotron-3-ultra-550b-a55b")).toBe(256);
+    expect(resolveProbeReplyTokens("nvidia-prod", "nvidia/nemotron-3-super-120b-a12b")).toBe(16);
+    expect(
+      resolveProbeReplyTokens("compatible-endpoint", "nvidia/nemotron-3-ultra-550b-a55b"),
+    ).toBe(16);
+    expect(resolveProbeReplyTokens("gemini-api")).toBe(256);
   });
 });

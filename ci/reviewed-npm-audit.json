@@ -12,9 +12,7 @@
     "integrity": "sha512-MFnyX2vs47f/yVJRUXKmA7C6wZDH03ZGFFg+R5gZME+yMQDg9WF6G4Kdz/APM7nCUpaoGk2bwNEdUUmR60J54A==",
     "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.116/3380652847354127ed1bb8010490f8815040ada3"
   },
-  "sourceNestedShrinkwrapPackages": [
-    "@earendil-works/pi-coding-agent@0.80.6"
-  ],
+  "sourceNestedShrinkwrapPackages": ["@earendil-works/pi-coding-agent@0.80.6"],
   "sourceRegistryPackagesWithoutIntegrity": [
     {
       "label": "Pi agent core 0.80.6 nested shrinkwrap entry",
@@ -63,6 +61,12 @@
       "tarballUrl": "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.2.tgz"
     },
     {
+      "label": "OpenClaw Tavily plugin 2026.9.2",
+      "packageSpec": "@openclaw/tavily-plugin@2026.9.2",
+      "integrity": "sha512-FYK2e7aXagwcGiTRQfidS3PThIfJkAQoqYEtlkadiGxmgeChYY71YLeD6nQAHZKHmTAOw9U7njDxMBvYyXPf5w==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.2.tgz"
+    },
+    {
       "label": "OpenClaw Discord plugin 2026.9.2",
       "packageSpec": "@openclaw/discord@2026.9.2",
       "integrity": "sha512-j+fSHxbXA+DSxwbL8SvtsDNL6tvBX4+RmH+EerVW6dCbeIwSconXj6J/+AaN/mhzZI4g0jPPj30TUhdCRRbc2w==",
@@ -91,6 +95,60 @@
       "packageSpec": "@tencent-weixin/openclaw-weixin@2.4.9",
       "integrity": "sha512-SfaYehR1Cwq2VV5HxJBp9sVilMms420VfZlMbF4YjRbWomr5+GxfXp9HkeU6y5TbnOc4Ysq0qPw1yBvJwbenBA==",
       "tarballUrl": "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz"
+    },
+    {
+      "label": "OpenClaw Tavily plugin 2026.9.5",
+      "packageSpec": "@openclaw/tavily-plugin@2026.9.5",
+      "integrity": "sha512-jlV7NUB+oag/7O/k36DqfzYXexZsMuOLCcDZ6ZAKRXsTZasgpH7vMN9FJMHEry8aTlggbAFf001SlYbYnv5olg==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.5.tgz"
+    },
+    {
+      "label": "@openclaw/brave-plugin 2026.9.5",
+      "packageSpec": "@openclaw/brave-plugin@2026.9.5",
+      "integrity": "sha512-dnXM0FGBqqYVDaEze8nzpcjXOLSc/xENGvfx9xt09JWFi45uBF8x9+e0E4i4l1H9pqFFI3zPI1TU4U6lYT8w0w==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.5.tgz"
+    },
+    {
+      "label": "@openclaw/diagnostics-otel 2026.9.5",
+      "packageSpec": "@openclaw/diagnostics-otel@2026.9.5",
+      "integrity": "sha512-ewmCbGFRteN1wXNQL+eN5FCPefIJHyx65Se9mTCrCiBrLHRybrlPwbydaPa/2xR0QX5ESSKxDM6XDkhp47cAUQ==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.5.tgz"
+    },
+    {
+      "label": "@openclaw/discord 2026.9.5",
+      "packageSpec": "@openclaw/discord@2026.9.5",
+      "integrity": "sha512-kPEbPiYAnJqxqLHqBnZCr3zowsxzboW0Q7ZdqX52X7IENLrU4CBdK4+ndqzQf+255ilffrYBTDrHBg8a137cgQ==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.5.tgz"
+    },
+    {
+      "label": "@openclaw/msteams 2026.9.5",
+      "packageSpec": "@openclaw/msteams@2026.9.5",
+      "integrity": "sha512-8zOP4qjEhaVxwT2NsmGKhwxDz2ZRBSBIjtwpkTcLnyHyj/u9e2RnM4yhYumdwHjpmwniIuDvkc91DCKBg9DHSA==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.9.5.tgz"
+    },
+    {
+      "label": "@openclaw/slack 2026.9.5",
+      "packageSpec": "@openclaw/slack@2026.9.5",
+      "integrity": "sha512-Q45q/ZW+zw6Gr5Fg8J8V8xMWYXegMVEn3q8TcRBJyuD0nP0PtuW9FdkPF82KJ/yCP0tj18VPCgLPOuhYaiwR7A==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.5.tgz"
+    },
+    {
+      "label": "@openclaw/whatsapp 2026.9.5",
+      "packageSpec": "@openclaw/whatsapp@2026.9.5",
+      "integrity": "sha512-V7o/ckrk0N0iN4fKk5jMBs4nqe4Ftc4/drJWY374fREY8gEMzmdvXMB2pfM2VrmptJfoPMMhI78C+1+mGUtwJw==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.9.5.tgz"
+    },
+    {
+      "label": "openclaw 2026.9.5",
+      "packageSpec": "openclaw@2026.9.5",
+      "integrity": "sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w==",
+      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.5.tgz"
+    },
+    {
+      "label": "OpenClaw Google Chat plugin 2026.9.5",
+      "packageSpec": "@openclaw/googlechat@2026.9.5",
+      "integrity": "sha512-8yX3i7u6044gyq+W4tMbJH5CRXLBsJSbdDMzysAxJYDgPimYB5DS+fTNU924tt8zhzkruqRjUzz7FjTtMTn0jA==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.9.5.tgz"
     }
   ],
   "lockedGraphs": [
@@ -101,7 +159,14 @@
       "integrity": "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "cbcfdd15430b81f50ada9f39858a694815e570c8bb3e6b4bb9f1c0b53bf0ef4a"
+      "lockSha256": "b44c7f475fe36a378ebc078dbf068bd225f8470002834ce1308872049213b633",
+      "replacement": {
+        "label": "OpenClaw 2026.9.5 locked runtime graph",
+        "packageSpec": "openclaw@2026.9.5",
+        "integrity": "sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w==",
+        "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.5.tgz",
+        "lockSha256": "b73ebd8bb5e15cfcf080a21beaca0dce50cbca903988b20be74d49c9498baeb7"
+      }
     },
     {
       "id": "mcporter-runtime",
@@ -110,7 +175,7 @@
       "integrity": "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==",
       "tarballUrl": "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz",
       "directory": "agents/openclaw/mcporter-runtime",
-      "lockSha256": "c387e62372cba539d24725e70d26b32093a7bb6f001cd16a473ba74404a4e0f9"
+      "lockSha256": "3c81d752d50113a2781b2aa1e8f1faade088f6fe3ed0bdde6ad0fb67a364f958"
     },
     {
       "id": "wechat-runtime",
@@ -128,11 +193,18 @@
     {
       "id": "mcp-tool-discovery-runtime",
       "label": "MCP tool discovery runtime locked production graph",
-      "packageSpec": "@modelcontextprotocol/sdk@1.30.0",
-      "integrity": "sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==",
-      "tarballUrl": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
+      "packageSpec": "@modelcontextprotocol/sdk@1.31.0",
+      "integrity": "sha512-UvTMgnNlnIBO/22ob2RcVGDlcvOslQs8T59+FTGdA0L27a39fdGF/EDETNtDVK4DZGpwomlsYpRdA8UXcVL/pw==",
+      "tarballUrl": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz",
       "directory": "tools/mcp-tool-discovery-runtime",
-      "lockSha256": "cd1470ac69456da681654c399fc970fef16b9befed1106af226c0bf549557439"
+      "lockSha256": "ccb3c75ff554bb9a8c8b94e7f98205dde1456e58df6797fc8757c635e2c58413"
     }
-  ]
+  ],
+  "sourceRegistryPackageReplacement": {
+    "artifactName": "nvidia-openshell-sdk-0.1.3.tgz",
+    "label": "OpenShell TypeScript SDK 0.1.3",
+    "packageSpec": "@nvidia/openshell-sdk@0.1.3",
+    "integrity": "sha512-JXWcEDIl/h8Pp6c2NrFMp0XLloDsLaDZvSVJzXvKUyGEulE64d/utiE1KtNh45JtiZXbVmB2PMJAWEmgZKW5kA==",
+    "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.3/32e1b675af5ad8b8a8fe078a1a11d515a9f45571"
+  }
 }

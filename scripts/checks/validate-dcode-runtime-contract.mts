@@ -6,11 +6,14 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import sandboxIdentity from "../../src/lib/agent/deep-agents-code-runtime-identity.json" with { type: "json" };
+
 const IMMUTABLE_REFERENCE_PATTERN =
   /^(?:sha256:[0-9a-f]{64}|[a-z0-9.-]+(?::[0-9]+)?(?:\/[a-z0-9._-]+)+@sha256:[0-9a-f]{64})$/u;
 const PLATFORM_PATTERN = /^linux\/(?:amd64|arm64)$/u;
 const SUCCESS_MARKER = "nemoclaw-dcode-runtime-contract-ok";
 const VALIDATOR_PATH = "/usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py";
+const SANDBOX_USER = `${sandboxIdentity.uid}:${sandboxIdentity.gid}`;
 
 export type DockerRunner = (args: readonly string[]) => string;
 
@@ -49,7 +52,7 @@ export function dcodeRuntimeValidationArgs(reference: string, platform: string):
     "no-new-privileges",
     "--read-only",
     "--user",
-    "999:999",
+    SANDBOX_USER,
     "--entrypoint",
     "/opt/venv/bin/python3",
     reference,

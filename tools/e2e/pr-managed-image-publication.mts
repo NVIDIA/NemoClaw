@@ -7,10 +7,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  isManagedImagePlatform,
   parseManagedImageContractV1,
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ManagedImageContractCatalog,
   type ManagedImageContractV1,
+  type ManagedImagePlatform,
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import {
   baseImageInputsChanged,
@@ -75,6 +77,7 @@ export function assembleManagedImageCatalog(
   values: readonly unknown[],
   candidateSha: string,
   consumerRun: WorkflowRun,
+  platform: ManagedImagePlatform = "linux/amd64",
 ): ManagedImageContractCatalog {
   if (!SHA_PATTERN.test(candidateSha)) throw new Error("candidate SHA is invalid");
   if (values.length !== SHIPPED_MANAGED_IMAGE_AGENTS.length) {
@@ -82,9 +85,7 @@ export function assembleManagedImageCatalog(
       `exact PR managed-image publication requires ${SHIPPED_MANAGED_IMAGE_AGENTS.length} contracts`,
     );
   }
-  const contracts = values.map((value) =>
-    parseManagedImageContractV1(value, undefined, "linux/amd64"),
-  );
+  const contracts = values.map((value) => parseManagedImageContractV1(value, undefined, platform));
   const byAgent = new Map(contracts.map((contract) => [contract.agent, contract]));
   if (
     byAgent.size !== SHIPPED_MANAGED_IMAGE_AGENTS.length ||
@@ -123,11 +124,12 @@ export function writeManagedImageCatalog(
   candidateSha: string,
   outputPath: string,
   consumerRun: WorkflowRun,
+  platform: ManagedImagePlatform = "linux/amd64",
 ): void {
   const contracts = contractPaths.map(
     (contractPath) => JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown,
   );
-  const catalog = assembleManagedImageCatalog(contracts, candidateSha, consumerRun);
+  const catalog = assembleManagedImageCatalog(contracts, candidateSha, consumerRun, platform);
   writeValidatedManagedImageCatalog(catalog, outputPath);
 }
 
@@ -350,6 +352,7 @@ export async function resolvePrManagedImageCatalog(
     readonly candidateSha: string;
     readonly managedImageSha?: string;
     readonly outputPath: string;
+    readonly platform?: ManagedImagePlatform;
     readonly prNumber: number;
     readonly token: string;
     readonly workflowSource: string;
@@ -361,6 +364,8 @@ export async function resolvePrManagedImageCatalog(
   downloadArtifact: (identity: BoundArtifactIdentity) => Promise<Buffer> = (identity) =>
     downloadBoundArtifact(identity, input.token, { log: console.error }),
 ): Promise<PrManagedImageSelection> {
+  const platform = input.platform ?? "linux/amd64";
+  if (!isManagedImagePlatform(platform)) throw new Error("unsupported managed-image platform");
   if (!SHA_PATTERN.test(input.baseSha) || !SHA_PATTERN.test(input.candidateSha)) {
     throw new Error("PR base and candidate SHAs are required");
   }
@@ -397,7 +402,7 @@ export async function resolvePrManagedImageCatalog(
   try {
     const contracts: ManagedImageContractV1[] = [];
     for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
-      const name = `managed-pr-contract-${run.id}-${agent}`;
+      const name = `managed-pr-contract-${platform === "linux/arm64" ? "arm64-" : ""}${run.id}-${agent}`;
       const metadata = await request(
         `/repos/${REPOSITORY}/actions/runs/${run.id}/artifacts?name=${encodeURIComponent(name)}&per_page=100`,
       );
@@ -415,10 +420,15 @@ export async function resolvePrManagedImageCatalog(
         JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown as ManagedImageContractV1,
       );
     }
-    const catalog = assembleManagedImageCatalog(contracts, managedImageSha, {
-      id: run.id,
-      attempt: run.attempt,
-    });
+    const catalog = assembleManagedImageCatalog(
+      contracts,
+      managedImageSha,
+      {
+        id: run.id,
+        attempt: run.attempt,
+      },
+      platform,
+    );
     writeValidatedManagedImageCatalog(catalog, input.outputPath);
     return "candidate-catalog";
   } finally {
@@ -432,14 +442,22 @@ function requiredInteger(value: string | undefined, label: string): number {
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
+  const platform = env.MANAGED_IMAGE_PLATFORM ?? "linux/amd64";
+  if (!isManagedImagePlatform(platform)) throw new Error("unsupported managed-image platform");
   if (argv[0] === "assemble") {
     if (argv.length < 4) {
       throw new Error("expected candidate SHA, output path, and managed-image contract paths");
     }
-    writeManagedImageCatalog(argv.slice(3), argv[1], argv[2], {
-      id: requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID"),
-      attempt: requiredInteger(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT"),
-    });
+    writeManagedImageCatalog(
+      argv.slice(3),
+      argv[1],
+      argv[2],
+      {
+        id: requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID"),
+        attempt: requiredInteger(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT"),
+      },
+      platform,
+    );
     console.log("pr-managed-image-catalog outcome=assembled");
     return;
   }
@@ -450,6 +468,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     candidateSha: env.CANDIDATE_SHA ?? "",
     managedImageSha: env.MANAGED_IMAGE_SHA || undefined,
     outputPath: argv[0],
+    platform,
     prNumber: requiredInteger(env.PR_NUMBER, "PR_NUMBER"),
     token: env.GITHUB_TOKEN ?? "",
     workflowSource: fs.readFileSync(BASE_IMAGE_WORKFLOW_PATH, "utf8"),

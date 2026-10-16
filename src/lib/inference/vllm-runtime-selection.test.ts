@@ -52,6 +52,39 @@ function sparkReadiness(memoryBytes: number | undefined) {
 
 describe("vLLM catalog runtime selection", () => {
   it.each([
+    ["", "nemotron-3.5-super-vl-120b"],
+    ["nemotron-3-ultra-550b-a55b", "nemotron-3-ultra-550b-a55b"],
+    ["deepseek-v4-flash", "deepseek-v4-flash"],
+  ])("selects the Station default or explicit model '%s'", (requested, expected) => {
+    const profile = detectVllmProfile({ platform: "station" })!;
+    expect(profile.defaultModel.envValue).toBe("nemotron-3.5-super-vl-120b");
+    expect(
+      resolveHostLocalVllmSelection(
+        profile,
+        { NEMOCLAW_VLLM_MODEL: requested },
+        {
+          automatic: true,
+          readinessReports: vllmInstallTestReadiness(profile, expected),
+        },
+      ),
+    ).toMatchObject({ kind: "selected", model: { envValue: expected } });
+  });
+
+  it("rejects Super VL on Spark instead of substituting the Station recipe", () => {
+    const profile = detectVllmProfile({ platform: "spark" })!;
+    expect(profile.defaultModel.envValue).toBe("qwen3.6-35b-a3b-nvfp4");
+    expect(
+      resolveHostLocalVllmSelection(
+        profile,
+        { NEMOCLAW_VLLM_MODEL: "nemotron-3.5-super-vl-120b" },
+        {
+          automatic: true,
+          readinessReports: vllmInstallTestReadiness(profile),
+        },
+      ),
+    ).toMatchObject({ kind: "rejected" });
+  });
+  it.each([
     [60_000_000_000, "", "spark-single-64gb.v1", 32768, 1, 0.5],
     [61_614_325_760, "", "spark-single-64gb.v1", 32768, 1, 0.5],
     [61_614_325_760, "qwen3.6-35b-a3b-nvfp4", "spark-single-64gb.v1", 32768, 1, 0.5],

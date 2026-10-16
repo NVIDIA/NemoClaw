@@ -14,6 +14,48 @@ afterEach(() => {
 });
 
 describe("CLI recovery routing", () => {
+  it("routes destroy to retained recovery after its registry row is retired (#12260)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, exitSpy }) => {
+        await dispatchCli(["alpha", "destroy", "--yes"]);
+
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "sandbox:destroy",
+          ["alpha", "--yes"],
+          expect.objectContaining({ publicSandboxName: "alpha" }),
+        );
+        expect(recoverRegistryEntries).not.toHaveBeenCalled();
+        expect(exitSpy).not.toHaveBeenCalled();
+      },
+      { retainedRecoverySandboxNames: ["alpha"] },
+    );
+  });
+
+  it("keeps missing-name checks for destroy without matching local recovery (#12260)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, stderr }) => {
+        await expect(dispatchCli(["alpha", "destroy", "--yes"])).rejects.toThrow("process.exit:1");
+
+        expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "alpha" });
+        expect(runOclifCommandById).not.toHaveBeenCalled();
+        expect(stderr.join("\n")).toContain("Sandbox 'alpha' does not exist.");
+      },
+      { retainedRecoverySandboxNames: ["beta"] },
+    );
+  });
+
+  it("does not admit other sandbox actions from a retained recovery record (#12260)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById }) => {
+        await expect(dispatchCli(["alpha", "status"])).rejects.toThrow("process.exit:1");
+
+        expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "alpha" });
+        expect(runOclifCommandById).not.toHaveBeenCalled();
+      },
+      { retainedRecoverySandboxNames: ["alpha"] },
+    );
+  });
+
   it.each([
     {
       argv: ["term"],

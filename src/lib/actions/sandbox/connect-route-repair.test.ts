@@ -19,6 +19,8 @@ vi.mock("../../adapters/openshell/sandbox-command-cli", async (importOriginal) =
 
 vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: vi.fn(() => ({ status: 0, output: "" })),
+  captureResolvedOpenshell: vi.fn(() => ({ status: 0, output: "" })),
+  captureResolvedOpenshellAsync: vi.fn(async () => ({ status: 0, output: "" })),
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: vi.fn(() => ({ status: 0 })),
 }));
@@ -328,9 +330,9 @@ function makeResetDeps(
       });
       return true;
     }),
-    runInferenceSet: vi.fn((provider, model) => {
+    runInferenceSet: vi.fn(async (provider, model) => {
       calls.inferenceSets.push({ provider, model });
-      return { status: 0 };
+      return { ok: true as const };
     }),
     probe: vi.fn(async (_sandboxName, options) => {
       calls.probeOptions.push(options);
@@ -397,9 +399,18 @@ describe("managed inference route reset unit flow", () => {
 
   it("probes route health after a non-zero inference set and accepts a healthy route", async () => {
     const { calls, deps } = makeResetDeps([healthy()], {
-      runInferenceSet: vi.fn((provider, model) => {
+      runInferenceSet: vi.fn(async (provider, model) => {
         calls.inferenceSets.push({ provider, model });
-        return { status: 1 };
+        return {
+          ok: false as const,
+          ambiguous: false,
+          error: {
+            kind: "command" as const,
+            reason: "failed" as const,
+            exitCode: 1,
+            message: "failed",
+          },
+        };
       }),
     });
 
@@ -414,6 +425,36 @@ describe("managed inference route reset unit flow", () => {
     expect(calls.localChecks).toHaveLength(1);
     expect(calls.probeOptions[0]).toEqual({ attempts: 3, delayMs: 2000 });
     expect(calls.errors).toEqual([]);
+  });
+
+  it("stops an ambiguous route reset before dependency recheck or probe", async () => {
+    const { calls, deps } = makeResetDeps([healthy()], {
+      runInferenceSet: vi.fn(async (provider, model) => {
+        calls.inferenceSets.push({ provider, model });
+        return {
+          ok: false as const,
+          ambiguous: true,
+          error: {
+            kind: "command" as const,
+            reason: "indeterminate" as const,
+            exitCode: null,
+            message: "route result unknown",
+          },
+        };
+      }),
+    });
+
+    await expect(
+      resetManagedInferenceRouteWithDeps("demo", sandbox(), { detail: "BROKEN 503" }, deps),
+    ).resolves.toBe(false);
+    expect(calls.inferenceSets).toEqual([
+      { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" },
+    ]);
+    expect(calls.localChecks).toHaveLength(1);
+    expect(calls.probeOptions).toEqual([]);
+    expect(calls.errors).toContain(
+      "  Error: the OpenShell inference route result is unknown; inspect the same gateway before retrying.",
+    );
   });
 
   it("stops before inference set when local dependency checks fail", async () => {
@@ -438,9 +479,18 @@ describe("managed inference route reset unit flow", () => {
 
   it("fails closed when route reset and the follow-up probe are both unhealthy", async () => {
     const { calls, deps } = makeResetDeps([broken("BROKEN 503 still down")], {
-      runInferenceSet: vi.fn((provider, model) => {
+      runInferenceSet: vi.fn(async (provider, model) => {
         calls.inferenceSets.push({ provider, model });
-        return { status: 1 };
+        return {
+          ok: false as const,
+          ambiguous: false,
+          error: {
+            kind: "command" as const,
+            reason: "failed" as const,
+            exitCode: 1,
+            message: "failed",
+          },
+        };
       }),
     });
 

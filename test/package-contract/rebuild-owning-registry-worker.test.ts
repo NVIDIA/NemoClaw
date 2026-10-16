@@ -282,7 +282,7 @@ describe("compiled rebuild owning-registry worker", () => {
   it("binds a valid rebuild descriptor to the selected sibling registry root", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-sibling-root-"));
     try {
-      writeSiblingRegistry(home);
+      writeSiblingRegistry(home, { provider: "nvidia-prod" });
       const recoveryManifest = writeRecoveryFixture(home);
       vi.stubEnv("HOME", home);
       vi.stubEnv("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE", "1");

@@ -32,11 +32,11 @@ describe("sandbox connect inference route swap (#1248)", () => {
       expect(state.inferenceSetCalls[0]).toEqual([
         "-g",
         "nemoclaw",
+        "--no-verify",
         "--provider",
         "anthropic-prod",
         "--model",
         "claude-sonnet-4-20250514",
-        "--no-verify",
       ]);
 
       // Override must be loud (#3726), not a silent status-style line.
@@ -87,11 +87,11 @@ describe("sandbox connect inference route swap (#1248)", () => {
         [
           "-g",
           "nemoclaw",
+          "--no-verify",
           "--provider",
           "ollama-local",
           "--model",
           "qwen3:0.6b",
-          "--no-verify",
           "--timeout",
           "321",
         ],

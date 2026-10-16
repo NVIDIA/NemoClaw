@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeNativeLocalProviderAttachment,
+  usesNativeLocalInferenceForAgent,
+  type NativeLocalProviderAttachment,
+} from "../../../inference/native-local/contract";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import { normalizeAgentNameForResumeState } from "../../agent-resume-state";
@@ -19,6 +24,8 @@ export interface PolicyPresetEntry {
 }
 
 export interface ActiveSandboxPolicyState {
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
+  nimContainer?: string | null;
   messaging?: { plan: SandboxMessagingPlan } | null;
 }
 
@@ -68,6 +75,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       credentialEnv: string | null;
       messagingChannels: string[];
       agent: Agent;
+      nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
       forceCanonicalRoute?: boolean;
       hostLocalInferenceProofAuthority?: HostLocalInferenceSandboxProofAuthority;
       beforeSuccess?: () => void;
@@ -151,6 +159,22 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   const observabilityEnabled = latestSession?.observabilityEnabled === true;
   const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan);
   const activeSandbox = deps.getActiveSandbox(sandboxName);
+  const recordedNativeLocal = normalizeNativeLocalProviderAttachment(
+    activeSandbox?.nativeLocalProviderAttachment,
+  );
+  const nativeLocalSelected = usesNativeLocalInferenceForAgent(
+    normalizeAgentNameForResumeState((agent as { name?: string } | null)?.name),
+    provider,
+    endpointUrl,
+    provider === "vllm-local" &&
+      Boolean(activeSandbox ? activeSandbox.nimContainer : latestSession?.nimContainer),
+  );
+  const nativeLocal = nativeLocalSelected ? recordedNativeLocal : undefined;
+  if (nativeLocalSelected && !nativeLocal)
+    throw new Error(
+      "Native local inference requires its recorded provider attachment before policy application.",
+    );
+  const excludeLocalPreset = hostLocalInferenceRouteOnly || Boolean(nativeLocal);
   const activePlan = activeSandbox?.messaging?.plan;
   const activeMessagingChannels = getActiveChannelsFromPlan(activePlan);
   const planDisabledChannels = getDisabledChannelsFromPlan(activePlan);
@@ -188,13 +212,24 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       credentialEnv,
       messagingChannels: policyMessagingChannels,
       agent,
+      ...(nativeLocal ? { nativeLocalProviderAttachment: nativeLocal } : {}),
       ...(hostLocalInferenceRouteOnly ? { forceCanonicalRoute: true } : {}),
       ...(hostLocalInferenceRouteOnly
-        ? { hostLocalInferenceProofAuthority: hostLocalInferenceSandboxProofAuthority ?? undefined }
+        ? {
+            hostLocalInferenceProofAuthority: hostLocalInferenceSandboxProofAuthority ?? undefined,
+          }
         : {}),
     });
   if (preserveRebuildLivePolicy) {
-    await verifySandboxInferenceRoute();
+    // OpenClaw's saved configuration is restored by the outer rebuild after
+    // inner onboarding returns. Verify that route in the post-restore phase.
+    if (
+      hostLocalInferenceRouteOnly ||
+      provider !== "compatible-endpoint" ||
+      normalizeAgentNameForResumeState((agent as { name?: string } | null)?.name) !== "openclaw"
+    ) {
+      await verifySandboxInferenceRoute();
+    }
     deps.skippedStepMessage("policies", "live OpenShell rebuild policy");
     await deps.recordStateSkipped("policies", {
       reason: "rebuild-live-policy",
@@ -217,7 +252,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       }),
     };
   }
-  if (!hostLocalInferenceRouteOnly) await verifySandboxInferenceRoute();
+  if (!excludeLocalPreset) await verifySandboxInferenceRoute();
 
   const policyResumeSelection = await deps.preparePolicyPresetResumeSelection(sandboxName, {
     disabledChannels,
@@ -232,8 +267,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   });
   const livePolicyPresetsForSupport = policyResumeSelection.policyPresets;
   const staleLocalInferencePolicy =
-    hostLocalInferenceRouteOnly &&
-    (await deps.arePolicyPresetsApplied(sandboxName, ["local-inference"]));
+    excludeLocalPreset && (await deps.arePolicyPresetsApplied(sandboxName, ["local-inference"]));
   const resumePolicies =
     resume &&
     !staleLocalInferencePolicy &&
@@ -245,7 +279,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   let appliedPolicyPresets = livePolicyPresetsForSupport;
   let session: Session | null;
   if (resumePolicies) {
-    if (hostLocalInferenceRouteOnly) await verifySandboxInferenceRoute();
+    if (excludeLocalPreset) await verifySandboxInferenceRoute();
     deps.skippedStepMessage("policies", livePolicyPresetsForSupport.join(", "));
     await deps.recordStateSkipped("policies", {
       reason: "resume",
@@ -269,8 +303,8 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       enabledChannels: policyMessagingChannels,
       disabledChannels,
       webSearchConfig,
-      provider: hostLocalInferenceRouteOnly ? null : provider,
-      ...(hostLocalInferenceRouteOnly ? { excludedPresets: ["local-inference"] } : {}),
+      provider: excludeLocalPreset ? null : provider,
+      ...(excludeLocalPreset ? { excludedPresets: ["local-inference"] } : {}),
       // selectOnboardAgent returns null for the default OpenClaw path (no
       // --agent flag, no recorded agent). Normalise null/blank/whitespace
       // to "openclaw" so the auto-suggest gate still fires; explicit
@@ -282,7 +316,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       hermesToolGateways,
       onSelection: () => undefined,
     });
-    if (hostLocalInferenceRouteOnly) await verifySandboxInferenceRoute();
+    if (excludeLocalPreset) await verifySandboxInferenceRoute();
     session = await deps.recordStepComplete(
       "policies",
       deps.toSessionUpdates({

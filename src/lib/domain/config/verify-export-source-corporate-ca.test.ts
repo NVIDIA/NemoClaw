@@ -35,18 +35,56 @@ describe("config export with corporate CA trust", () => {
   it.each([
     { agent: "OpenClaw", snapshot, profileInput },
     { agent: "Hermes", snapshot: hermesSnapshot, profileInput: hermesProfileInput },
-  ])("exports $agent without carrying corporate CA state into v1", async (fixture) => {
+  ])("reports omitted corporate CA without changing $agent YAML (#12146)", async (fixture) => {
     const baseline = fixture.snapshot();
     const observed = withCorporateCa(baseline, fixture.profileInput());
     const original = structuredClone(observed);
     const withoutCa = await exportSnapshots([baseline]);
     const result = await exportSnapshots([observed]);
 
-    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
-    expect(withoutCa.outcome.ok).toBe(true);
+    expect(result.outcome).toEqual({
+      ok: true,
+      completion: { kind: "stdout" },
+      corporateCaOmitted: true,
+    });
+    expect(withoutCa.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     expect(result.writeStdout).toHaveBeenCalledOnce();
     expect(result.writeStdout.mock.calls).toEqual(withoutCa.writeStdout.mock.calls);
     expect(observed).toEqual(original);
+  });
+
+  it.each([false, true])(
+    "reports only the stable CA omission after a changed snapshot pair: %s (#12146)",
+    async (retainedCa) => {
+      const plain = snapshot();
+      const withCa = withCorporateCa(plain);
+      const stable = retainedCa ? withCa : plain;
+      const changed = retainedCa ? plain : withCa;
+      const baseline = await exportSnapshots([stable]);
+      const result = await exportSnapshots([changed, stable, stable, stable]);
+
+      expect(result.read).toHaveBeenCalledTimes(4);
+      expect(result.outcome).toEqual(baseline.outcome);
+      expect(result.writeStdout.mock.calls).toEqual(baseline.writeStdout.mock.calls);
+    },
+  );
+
+  it("withholds the CA omission report when both snapshot pairs change (#12146)", async () => {
+    const plain = snapshot();
+    const withCa = withCorporateCa(plain);
+    const result = await exportSnapshots([withCa, plain, withCa, plain]);
+
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        attempts: 2,
+        findings: [expect.objectContaining({ category: "unstable-source" })],
+      },
+    });
+    expect(result.outcome).not.toHaveProperty("corporateCaOmitted");
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
   });
 
   it("rejects a mismatched CA digest before publication", async () => {
@@ -73,6 +111,7 @@ describe("config export with corporate CA trust", () => {
         ],
       },
     });
+    expect(result.outcome).not.toHaveProperty("corporateCaOmitted");
     expect(result.writeStdout).not.toHaveBeenCalled();
     expect(result.publish).not.toHaveBeenCalled();
   });

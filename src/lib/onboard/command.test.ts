@@ -305,6 +305,7 @@ describe("onboard command options", () => {
       agent: "langchain-deepagents-code",
       agentsManifest: null,
       toolDisclosure: "direct",
+      dcodeAutoApprovalMode: null,
       observabilityEnabled: true,
       controlUiPort: 18790,
       deferProcessExit: true,
@@ -353,6 +354,7 @@ describe("onboard command options", () => {
       agent: null,
       agentsManifest: null,
       toolDisclosure: null,
+      dcodeAutoApprovalMode: null,
       observabilityEnabled: null,
       controlUiPort: null,
       deferProcessExit: true,
@@ -1020,7 +1022,7 @@ describe("onboard command options", () => {
       ),
     ).toThrow("exit:1");
     expect(errors).toEqual([
-      `  Serving profile '${profileId}' is incompatible: podman-host: readiness status is incompatible.`,
+      `  Serving profile '${profileId}' is incompatible: podman-host: readiness status is incompatible; host.docker.unavailable: Docker is unavailable..`,
     ]);
   });
 

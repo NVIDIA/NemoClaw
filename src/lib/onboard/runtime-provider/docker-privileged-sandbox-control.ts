@@ -40,6 +40,7 @@ type SandboxEntry = import("../../state/registry").SandboxEntry;
 function findDirectSandboxContainer(
   sandboxName: string,
   registeredSandboxNames: readonly string[],
+  timeoutMs = DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS,
 ): string | null {
   let output: string;
   try {
@@ -55,7 +56,7 @@ function findDirectSandboxContainer(
         "--format",
         "{{.ID}}\t{{.Names}}",
       ],
-      { timeout: DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS },
+      { timeout: Math.max(1, Math.min(DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS, timeoutMs)) },
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -148,14 +149,18 @@ function resolveDockerTarget(
   input: Pick<
     RuntimeProviderPrivilegedSandboxCommandInput,
     "registeredSandboxNames" | "sandbox" | "sandboxName"
-  >,
+  > & { readonly timeoutMs?: number },
 ): RuntimeProviderPrivilegedSandboxTarget {
   const portable = portableTarget(input.sandboxName, input.sandbox);
   if (portable) {
     portable.assertRuntimeAuthority();
     return Object.freeze({ providerId: "docker", resourceHandle: portable.containerId });
   }
-  const containerId = findDirectSandboxContainer(input.sandboxName, input.registeredSandboxNames);
+  const containerId = findDirectSandboxContainer(
+    input.sandboxName,
+    input.registeredSandboxNames,
+    input.timeoutMs,
+  );
   if (!containerId) {
     throw new DirectSandboxContainerNotFoundError(
       `No running direct OpenShell sandbox container found for '${input.sandboxName}' ` +

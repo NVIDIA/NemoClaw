@@ -454,10 +454,14 @@ export interface RuntimeProviderPrivilegedSandboxControl {
     input: Pick<
       RuntimeProviderPrivilegedSandboxCommandInput,
       "registeredSandboxNames" | "sandbox" | "sandboxName"
-    >,
+    > & { readonly timeoutMs?: number },
   ): RuntimeProviderPrivilegedSandboxTarget;
   execute(
     input: RuntimeProviderPrivilegedSandboxCommandInput,
+  ): RuntimeProviderPrivilegedSandboxCommandResult;
+  /** Provider-owned execution as the pinned native-home sandbox user. */
+  executeAsSandboxUser?(
+    input: RuntimeProviderPrivilegedSandboxCommandInput & { readonly sandboxUser: string },
   ): RuntimeProviderPrivilegedSandboxCommandResult;
   clearStoppedStateRoots?(
     input: RuntimeProviderStoppedSandboxStateCleanupInput,
@@ -817,6 +821,23 @@ export interface RuntimeProviderNvidiaContainerSurface {
   ): RuntimeProviderOwnedContainerCleanupResult;
 }
 
+export type RuntimeProviderExternalImageLocalInspection =
+  | {
+      readonly status: "present";
+      readonly inspection: RuntimeProviderCommandCapture;
+    }
+  | { readonly status: "absent" }
+  | { readonly status: "failed"; readonly error?: Error };
+
+/** Provider-owned commands and identity normalization for immutable external images. */
+export interface RuntimeProviderExternalImagePreparationSurface {
+  readonly displayName: string;
+  inspectLocal(reference: string, timeoutMs: number): RuntimeProviderExternalImageLocalInspection;
+  pull(reference: string, timeoutMs: number): RuntimeProviderCommandCapture;
+  inspectPulled(reference: string, timeoutMs: number): RuntimeProviderCommandCapture;
+  normalizeContentId(value: unknown): string | null;
+}
+
 export type RuntimeProviderContainerEngineSurface =
   | RuntimeProviderSupportedSurface<{
       readonly identities: readonly {
@@ -829,6 +850,7 @@ export type RuntimeProviderContainerEngineSurface =
         args: readonly string[],
         timeoutMs?: number,
       ): RuntimeProviderCommandCapture;
+      readonly externalImagePreparation?: RuntimeProviderExternalImagePreparationSurface;
       readonly nvidiaContainer?: RuntimeProviderNvidiaContainerSurface;
     }>
   | RuntimeProviderUnsupportedSurface;

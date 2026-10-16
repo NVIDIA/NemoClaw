@@ -539,6 +539,14 @@ function productionLockLocations(
   return reachable;
 }
 
+/** Resolve one package's locked dependency graph with the shared npm resolution rules. */
+export function reviewedNpmDependencyLocations(
+  packages: Readonly<Record<string, Record<string, unknown>>>,
+  packageName: string,
+): ReadonlySet<string> {
+  return productionLockLocations({ ...packages, "": { dependencies: { [packageName]: "*" } } });
+}
+
 function verifyReviewedLockDigest(
   lockfilePath: string,
   expectedLockSha256: string,

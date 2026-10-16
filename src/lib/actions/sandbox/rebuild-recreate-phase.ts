@@ -167,9 +167,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         observabilityRequestedExplicitly: recreateOptions.observabilityRequestedExplicitly,
         telegramConfig: sessionMatchesSandbox ? sessionBefore?.telegramConfig : null,
         wechatConfig: sessionMatchesSandbox ? sessionBefore?.wechatConfig : null,
-        migratedLegacyValueHashes: sessionMatchesSandbox
-          ? sessionBefore?.migratedLegacyValueHashes
-          : null,
         routerPid: resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPid : undefined,
         routerPort:
           resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPort : undefined,

@@ -113,7 +113,11 @@ export async function applyAgentConfigAtOpenShell(
       if (changed) appliedTargets.push(resolvedTarget);
       continue;
     }
-    const existing = readSandboxFile(plan.sandboxName, resolvedTarget, options.runOpenshell);
+    const existing = readOptionalSandboxFile(
+      plan.sandboxName,
+      resolvedTarget,
+      options.runOpenshell,
+    );
     // Nothing rendered and no file on disk: no migration to perform.
     if (!kind && existing === undefined) continue;
     const contents =
@@ -181,7 +185,7 @@ export function removeDisabledChannelAgentConfigAtOpenShell(
       if (changed) appliedTargets.push(resolvedTarget);
       continue;
     }
-    const existing = readSandboxFileForRemoval(
+    const existing = readOptionalSandboxFile(
       plan.sandboxName,
       resolvedTarget,
       options.runOpenshell,
@@ -1018,7 +1022,7 @@ function readSandboxFile(
   return status === 0 ? String(result.stdout ?? "") : undefined;
 }
 
-function readSandboxFileForRemoval(
+function readOptionalSandboxFile(
   sandboxName: string,
   target: string,
   runOpenshell: MessagingOpenShellRunner,
@@ -1027,12 +1031,12 @@ function readSandboxFileForRemoval(
     ignoreError: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  if ((result.status ?? 0) === 0) return String(result.stdout ?? "");
+  if (!result.error && !result.signal && result.status === 0) return String(result.stdout ?? "");
   const missing = runOpenshell(
     ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", 'test ! -e "$1"', "sh", target],
     { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
   );
-  if ((missing.status ?? 0) === 0) return undefined;
+  if (!missing.error && !missing.signal && missing.status === 0) return undefined;
   throw new Error(`Failed to read messaging agent config '${target}': ${compactOutput(result)}`);
 }
 

@@ -60,6 +60,7 @@ const response = await fetch(completionUrl, {
     model,
     messages: [{ role: "user", content: prompt }],
     max_tokens: Number.parseInt(maxTokensText, 10),
+    chat_template_kwargs: { enable_thinking: false },
     stream: streaming,
   }),
 });
@@ -96,13 +97,25 @@ if (!streaming) {
 const SESSION_PROBE_SOURCE = String.raw`
 const fs = require("node:fs");
 const [sessionPath, toolName, fixturePath, fixtureValue] = process.argv.slice(1);
-const items = fs.readFileSync(sessionPath, "utf8").split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+const { entries: items } = JSON.parse(fs.readFileSync(sessionPath, "utf8"));
+if (!Array.isArray(items)) throw new Error("OpenClaw trajectory has no session entries");
 const messages = items.filter((item) => item?.type === "message" && item?.message).map((item) => item.message);
 const blocks = messages.flatMap((message) => Array.isArray(message.content) ? message.content : []);
 const calls = blocks.filter((block) => block?.type === "toolCall");
+const hasExactPath = (value, depth = 0) => {
+  if (value === fixturePath) return true;
+  if (depth >= 4) return false;
+  if (typeof value === "string") {
+    try { return hasExactPath(JSON.parse(value), depth + 1); } catch { return false; }
+  }
+  if (!value || typeof value !== "object") return false;
+  return Object.values(value).some((entry) => hasExactPath(entry, depth + 1));
+};
 const exactCalls = calls.filter((call) =>
-  (call.name === toolName || call.toolName === toolName) &&
-  call.arguments && call.arguments.path === fixturePath
+  (
+    call.name === toolName || call.toolName === toolName ||
+    (call.name === "tool_call" && call.arguments?.id === toolName)
+  ) && hasExactPath(call.arguments)
 );
 const results = messages.filter((message) => message?.role === "toolResult");
 const resultText = JSON.stringify(results);
@@ -143,6 +156,25 @@ export async function runLlamaCppOpenClawAgentQualification(
     const result = context.runSandbox(argv, timeout);
     requireSuccess(result, label, config.bounds.maxResponseBytes);
     return result;
+  };
+  const runAgentTurn = async (argv: readonly string[], label: string) => {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const result = context.runSandbox(argv, timeout);
+      if (result.status === 0) {
+        requireSuccess(result, label, config.bounds.maxResponseBytes);
+        return result;
+      }
+      if (
+        result.status !== 1 ||
+        !/scope upgrade pending approval/iu.test(result.stderr) ||
+        attempt === 3
+      ) {
+        requireSuccess(result, label, config.bounds.maxResponseBytes);
+        throw new Error(`${label} failed`);
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 5_000));
+    }
+    throw new Error(`${label} exceeded its approval wait bound`);
   };
 
   const synchronous = run(
@@ -193,7 +225,7 @@ export async function runLlamaCppOpenClawAgentQualification(
     throw new Error("streaming probe evidence is invalid");
   }
 
-  const normal = run(
+  const normal = await runAgentTurn(
     agentArgv(config.sessions.normal, config.prompts.normal),
     "OpenClaw normal agent turn",
   );
@@ -213,14 +245,14 @@ export async function runLlamaCppOpenClawAgentQualification(
     ],
     "OpenClaw tool fixture creation",
   );
-  const tool = run(
+  const tool = await runAgentTurn(
     agentArgv(config.sessions.tool, config.prompts.tool),
     "OpenClaw tool agent turn",
   );
   if (!tool.stdout.includes(config.fixture.value)) {
     throw new Error("OpenClaw tool agent turn did not return the declared fixture value");
   }
-  const continuation = run(
+  const continuation = await runAgentTurn(
     agentArgv(config.sessions.tool, config.prompts.continuation),
     "OpenClaw tool-result continuation turn",
   );
@@ -228,12 +260,36 @@ export async function runLlamaCppOpenClawAgentQualification(
     throw new Error("OpenClaw tool-result continuation did not retain the prior result");
   }
 
+  const trajectory = run(
+    [
+      "openclaw",
+      "sessions",
+      "export-trajectory",
+      "--session-key",
+      `agent:main:explicit:${config.sessions.tool}`,
+      "--workspace",
+      "/sandbox",
+      "--output",
+      "qualification-tool",
+      "--json",
+    ],
+    "OpenClaw session trajectory export",
+  );
+  const trajectoryEvidence = parseJson(trajectory.stdout, "OpenClaw session trajectory export");
+  const outputDir = trajectoryEvidence.outputDir;
+  if (
+    typeof outputDir !== "string" ||
+    outputDir !== "/sandbox/.openclaw/trajectory-exports/qualification-tool"
+  ) {
+    throw new Error("OpenClaw session trajectory export returned an unexpected path");
+  }
+
   const session = run(
     [
       "node",
       "-e",
       SESSION_PROBE_SOURCE,
-      `/sandbox/.openclaw/agents/main/sessions/${config.sessions.tool}.jsonl`,
+      `${outputDir}/session-branch.json`,
       config.tool.name,
       config.fixture.path,
       config.fixture.value,

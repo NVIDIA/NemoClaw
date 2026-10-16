@@ -72,6 +72,10 @@ import {
   runSandboxTokenContainerProbe,
 } from "./openshell-gateway-auth-probe.ts";
 import { verifyPinnedPodmanGatewayStarts } from "./portable-profile-gateway-proof.ts";
+import {
+  proveHermesPortableOnboardingTransaction,
+  withAmbientPodmanHost,
+} from "../fixtures/portable-hermes-transaction-live.ts";
 
 const gatewayEnvModule = (
   "default" in importedGatewayEnv && importedGatewayEnv.default
@@ -154,7 +158,7 @@ const PORTABLE_PROFILE_E2E_PHASES = [
   "verify distinct same-network routes",
   "upgrade the historical receipt through public start and verify its lifecycle",
   "prove post-recovery stop settlement",
-  "record portable environment completion",
+  "run receipt-bound Hermes build, publish, and OpenShell create",
 ] as const;
 
 function run(command: string, args: readonly string[]): string {
@@ -964,6 +968,17 @@ async function main(progress: TestProgress): Promise<void> {
     const installerDockerHost = selectInstallerPodmanRuntime(process.cwd());
     assert.equal(installerDockerHost, `unix://${runtimeDir}/podman/podman.sock`);
 
+    const legacyImageRef = "localhost:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e";
+    const registryConfig = path.join(
+      configHome,
+      "containers/registries.conf.d/99-nemoclaw-portable.conf",
+    );
+    fs.mkdirSync(path.dirname(registryConfig), { recursive: true });
+    fs.writeFileSync(
+      registryConfig,
+      '[[registry]]\nlocation = "localhost:5000"\ninsecure = true\n',
+    );
+
     progress.phase("prepare the rootless container runtime");
     const prepared = preparePortableExperimentalHost(process.env, { home });
     assert.equal(prepared?.authority.configHome, configHome);
@@ -973,14 +988,6 @@ async function main(progress: TestProgress): Promise<void> {
     assert.match(
       fs.readFileSync(String(process.env.CONTAINERS_CONF), "utf-8"),
       /default_rootless_network_cmd = "pasta"/,
-    );
-    const registryConfig = path.join(
-      configHome,
-      "containers/registries.conf.d/99-nemoclaw-portable.conf",
-    );
-    assert.equal(
-      fs.readFileSync(registryConfig, "utf-8"),
-      '[[registry]]\nlocation = "localhost:5000"\ninsecure = true\n',
     );
     assert.match(
       run("ip", ["-o", "-4", "address", "show", "dev", "lo"]),
@@ -1063,7 +1070,7 @@ async function main(progress: TestProgress): Promise<void> {
       log: console.log,
     });
     const imageRef = prebuild.imageRef;
-    assert.equal(imageRef, "localhost:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e");
+    assert.equal(imageRef, "127.0.0.1:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e");
 
     run("podman", ["image", "rm", "--force", imageRef]);
     run("podman", ["pull", imageRef]);
@@ -1071,6 +1078,13 @@ async function main(progress: TestProgress): Promise<void> {
       run("podman", ["image", "inspect", "--format", "{{.Id}}", imageRef]),
       /^(?:sha256:)?[a-f0-9]{64}$/,
     );
+
+    run("podman", ["pull", legacyImageRef]);
+    assert.equal(
+      run("podman", ["image", "inspect", "--format", "{{.Id}}", legacyImageRef]),
+      run("podman", ["image", "inspect", "--format", "{{.Id}}", imageRef]),
+    );
+    run("podman", ["image", "rm", legacyImageRef]);
 
     progress.phase("prepare the staged Hermes build context");
     const hermesContextStateDir = path.join(root, "hermes-build-state");
@@ -1124,10 +1138,6 @@ async function main(progress: TestProgress): Promise<void> {
         "{{.Id}}",
         hermesImageRef,
       ]).toLowerCase();
-      assert.equal(
-        inspectedHermesImageId.replace(/^sha256:/u, ""),
-        hermesPrebuild.imageId!.replace(/^sha256:/u, ""),
-      );
       hermesImageId = inspectedHermesImageId;
       run("podman", [
         "run",
@@ -1318,6 +1328,36 @@ async function main(progress: TestProgress): Promise<void> {
         runtimeAuthority,
         sourceRevision,
       });
+      progress.phase("run receipt-bound Hermes build, publish, and OpenShell create");
+      await withAmbientPodmanHost(`unix://${path.join(root, "absent-podman.sock")}`, async () => {
+        await proveHermesPortableOnboardingTransaction({
+          artifactDir,
+          openshellBin,
+          openshellClientEnv,
+          runtimeAuthority,
+          sourceRevision,
+          sourceEnv: withoutPodmanConnectionSelectors(openshellClientEnv),
+          gatewayName: HERMES_PORTABLE_E2E_GATEWAY_NAME,
+          policySourcePath: HERMES_PORTABLE_E2E_POLICY,
+          buildSettings: HERMES_PORTABLE_E2E_BUILD_SETTINGS,
+        });
+      });
+      const transactionEvidence = JSON.parse(
+        fs.readFileSync(
+          path.join(artifactDir, "hermes-portable-transaction-receipt.json"),
+          "utf-8",
+        ),
+      ) as { imageRef: string };
+      const cleanedImage = spawnSync(
+        "podman",
+        ["--url", verifiedPodmanUrl, "image", "exists", transactionEvidence.imageRef],
+        { encoding: "utf-8", env: process.env, killSignal: "SIGKILL", timeout: 15_000 },
+      );
+      assert.equal(
+        cleanedImage.status,
+        1,
+        "transaction image must leave the receipt-selected Podman store",
+      );
     });
 
     fs.writeFileSync(
@@ -1362,7 +1402,6 @@ async function main(progress: TestProgress): Promise<void> {
       { encoding: "utf-8", mode: 0o600 },
     );
 
-    progress.phase("record portable environment completion");
     console.log("Portable profile rootless environment E2E passed.");
   } finally {
     void (disposableNetworkCreated

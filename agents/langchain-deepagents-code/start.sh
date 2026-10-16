@@ -61,6 +61,7 @@ export LANGCHAIN_TRACING_V2=false
 export DEEPAGENTS_CODE_OFFLINE=1
 export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
+unset NEMOCLAW_ATTACHED_PROVIDER_API_KEY
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 
 # Harden RLIMITs (nproc + nofile) for the long-running Deep Agents Code process
@@ -226,7 +227,7 @@ fi
 
 _PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
 _NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"
-# Deep Agents Code 0.1.55 intentionally ignores environment proxies in
+# Deep Agents Code 0.1.71 intentionally ignores environment proxies in
 # fetch_url so it can pin direct DNS results against rebinding. OpenShell's
 # sandbox instead requires all ordinary egress, including DNS resolution for a
 # destination, to stay behind its policy proxy. This explicit variable opts the
@@ -277,6 +278,7 @@ prepare_runtime_env() {
     write_export_if_set DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL
     # shellcheck disable=SC2016
     printf '%s\n' 'export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"'
+    printf '%s\n' 'unset NEMOCLAW_ATTACHED_PROVIDER_API_KEY'
     # shellcheck disable=SC2016
     printf '%s\n' 'export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"'
     printf '%s\n' 'unset ALL_PROXY all_proxy OPENAI_PROXY'

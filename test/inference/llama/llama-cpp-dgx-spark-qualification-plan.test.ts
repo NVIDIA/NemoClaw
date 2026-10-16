@@ -156,6 +156,15 @@ describe("llama.cpp DGX Spark qualification plan export (#8260)", () => {
     });
   });
 
+  it("rejects candidate-selected infrastructure even with valid protected-name syntax", () => {
+    const root = candidateRoot({ activation, enabled: true });
+    const file = path.join(root, "managed-inference/images/llama-cpp/image.yaml");
+    const document = YAML.parse(fs.readFileSync(file, "utf8"));
+    document.spec.publication.qualification.environment = "approve-dgx-spark-unprotected";
+    fs.writeFileSync(file, YAML.stringify(document));
+    expect(() => exportLlamaCppDgxSparkQualificationPlan(root)).toThrow("must match trusted main");
+  });
+
   it("rejects a dormant image even when an activation file exists", () => {
     expect(() => exportLlamaCppDgxSparkQualificationPlan(candidateRoot({ activation }))).toThrow(
       "protected llama.cpp DGX Spark qualification is not enabled",

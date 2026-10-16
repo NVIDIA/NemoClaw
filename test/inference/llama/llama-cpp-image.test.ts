@@ -32,7 +32,6 @@ type ImageManifest = {
   apiVersion?: string;
   kind?: string;
   metadata?: {
-    annotations?: { "nemoclaw.nvidia.com/request-guard-state"?: string };
     id?: string;
   };
   spec?: {
@@ -41,10 +40,6 @@ type ImageManifest = {
       cmake?: Record<string, boolean>;
       compiler?: { c?: string; cudaHostCxx?: string; cxx?: string };
       packages?: Record<string, string>;
-      requestGuardToolchain?: {
-        archives?: { amd64?: string; arm64?: string };
-        version?: string;
-      };
       target?: string;
     };
     cuda?: { developmentBase?: string; runtimeBase?: string };
@@ -168,12 +163,6 @@ function configureManifestAnnotations(source: string, annotations: Record<string
   return YAML.stringify(candidate);
 }
 
-function removeManifestAnnotations(source: string): string {
-  const candidate = YAML.parse(source) as { metadata: { annotations?: Record<string, string> } };
-  delete candidate.metadata.annotations;
-  return YAML.stringify(candidate);
-}
-
 describe("declarative llama.cpp server image", () => {
   const manifestSource = fs.readFileSync(manifestPath, "utf8");
   const manifest = YAML.parse(manifestSource) as ImageManifest;
@@ -186,9 +175,6 @@ describe("declarative llama.cpp server image", () => {
       kind: "ServerImageBuild",
       metadata: {
         id: "llama-cpp-server.v1",
-        annotations: {
-          "nemoclaw.nvidia.com/request-guard-state": "dormant",
-        },
       },
       spec: {
         repository: "ghcr.io/nvidia/nemoclaw/llama-cpp-server",
@@ -200,8 +186,6 @@ describe("declarative llama.cpp server image", () => {
           requiredPaths: expect.arrayContaining([
             "/opt/llama.cpp/lib/libggml-cuda.so",
             "/usr/local/bin/llama-server",
-            "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
-            "/usr/local/share/licenses/go/LICENSE",
             "/usr/local/share/licenses/llama.cpp/LICENSE",
           ]),
           writablePaths: ["/tmp"],
@@ -218,13 +202,6 @@ describe("declarative llama.cpp server image", () => {
     );
     expect(manifest.spec?.runtime?.uid).toBeGreaterThan(0);
     expect(manifest.spec?.runtime?.gid).toBeGreaterThan(0);
-    expect(manifest.spec?.build?.requestGuardToolchain).toEqual({
-      archives: {
-        amd64: "sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89",
-        arm64: "sha256:d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e",
-      },
-      version: "1.26.6",
-    });
   });
 
   it("declares native amd64 and DGX Spark arm64 compilation explicitly (#8231)", () => {
@@ -235,7 +212,7 @@ describe("declarative llama.cpp server image", () => {
         runner: "ubuntu-24.04",
       },
       {
-        cudaArchitectures: "121a-real",
+        cudaArchitectures: "103-real;120-real;121a-real",
         platform: "linux/arm64",
         runner: "ubuntu-24.04-arm",
       },
@@ -264,7 +241,7 @@ describe("declarative llama.cpp server image", () => {
     expect(JSON.parse(output.publication_qualification_plan)).toMatchObject({
       contractVersion: 1,
       imageBuild: {
-        platform: { cudaArchitectures: "121a-real", platform: "linux/arm64" },
+        platform: { cudaArchitectures: "103-real;120-real;121a-real", platform: "linux/arm64" },
         source: { revision: manifest.spec?.source?.revision },
       },
       qualification: {
@@ -272,8 +249,8 @@ describe("declarative llama.cpp server image", () => {
           execution: "enabled",
           image: {
             reference:
-              "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:3648441718cdd6c2bc4c8fe39fa0d04d3931656b2063af34215cc51841cd0d5e",
-            sourceRevision: "eb1d2f5700393892f227ac9fd56f485fc6718bce",
+              "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:473643565f557517f4139b0cf6ac552160f555cfd8f6241ef221144c25e9ed4d",
+            sourceRevision: "95d6505265ba1f2cb05355f83786353e654de096",
           },
           probes: [
             "synchronous-chat",
@@ -284,7 +261,6 @@ describe("declarative llama.cpp server image", () => {
             "agent-multi-turn",
           ],
         },
-        requestGuard: "required",
       },
       recipe: {
         id: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
@@ -347,7 +323,6 @@ describe("declarative llama.cpp server image", () => {
         manifest.spec?.publication?.evidence?.vulnerability?.scanner,
       publication_vulnerability_severity_cutoff:
         manifest.spec?.publication?.evidence?.vulnerability?.severityCutoff,
-      request_guard_go_version: manifest.spec?.build?.requestGuardToolchain?.version,
       runtime_forbidden_paths: JSON.stringify(manifest.spec?.runtime?.forbiddenPaths),
       runtime_gid: String(manifest.spec?.runtime?.gid),
       runtime_required_paths: JSON.stringify(manifest.spec?.runtime?.requiredPaths),
@@ -362,8 +337,6 @@ describe("declarative llama.cpp server image", () => {
           arch,
           cuda_architectures: cudaArchitectures,
           platform,
-          request_guard_go_archive_sha256:
-            manifest.spec?.build?.requestGuardToolchain?.archives?.[arch],
           runner,
         };
       }),
@@ -390,17 +363,6 @@ describe("declarative llama.cpp server image", () => {
       ),
     ],
     [
-      "an unreviewed request guard Go version",
-      manifestSource.replace("version: 1.26.6", "version: 1.26.5"),
-    ],
-    [
-      "a substituted request guard Go archive",
-      manifestSource.replace(
-        "sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89",
-        `sha256:${"0".repeat(64)}`,
-      ),
-    ],
-    [
       "a duplicate platform",
       manifestSource
         .replace("platform: linux/arm64", "platform: linux/amd64")
@@ -417,17 +379,9 @@ describe("declarative llama.cpp server image", () => {
       "an unexpected top-level field",
       manifestSource.replace("kind: ServerImageBuild", "kind: ServerImageBuild\nunexpected: true"),
     ],
-    ["a missing request guard state annotation", removeManifestAnnotations(manifestSource)],
-    [
-      "a non-dormant request guard state annotation",
-      configureManifestAnnotations(manifestSource, {
-        "nemoclaw.nvidia.com/request-guard-state": "active",
-      }),
-    ],
     [
       "an unexpected image annotation",
       configureManifestAnnotations(manifestSource, {
-        "nemoclaw.nvidia.com/request-guard-state": "dormant",
         "nemoclaw.nvidia.com/unexpected": "true",
       }),
     ],
@@ -724,26 +678,6 @@ describe("declarative llama.cpp server image", () => {
     expect(dockerfile).toContain("USER ${RUNTIME_UID}:${RUNTIME_GID}");
     expect(dockerfile).toContain('SHELL ["/bin/bash", "-o", "pipefail", "-c"]');
     expect(dockerfile).toContain('ENTRYPOINT ["/usr/local/bin/llama-server"]');
-    expect(dockerfile).toContain("go test ./...");
-    expect(dockerfile).toContain("CGO_ENABLED=0 go build");
-    expect(dockerfile).toContain("GOTOOLCHAIN=local");
-    expect(dockerfile).toContain(
-      '"https://go.dev/dl/go${REQUEST_GUARD_GO_VERSION}.linux-${TARGETARCH}.tar.gz"',
-    );
-    expect(dockerfile).toContain('"${REQUEST_GUARD_GO_ARCHIVE_SHA256#sha256:}" "$go_archive"');
-    expect(dockerfile).toContain('test "$(go env GOVERSION)" = "go${REQUEST_GUARD_GO_VERSION}"');
-    expect(dockerfile).toContain("test ! -e /usr/local/go");
-    expect(dockerfile).toContain("cp /usr/local/go/LICENSE /opt/llama.cpp/licenses/go/LICENSE");
-    expect(dockerfile).toContain(
-      'io.nvidia.nemoclaw.inference-server.request-guard.go.version="${REQUEST_GUARD_GO_VERSION}"',
-    );
-    expect(dockerfile).toContain(
-      'io.nvidia.nemoclaw.inference-server.request-guard.go.archive-sha256="${REQUEST_GUARD_GO_ARCHIVE_SHA256}"',
-    );
-    expect(dockerfile).not.toContain("golang-go=");
-    expect(dockerfile).toContain(
-      "COPY --from=build --chmod=0555 /opt/llama.cpp/bin/nemoclaw-llama-cpp-request-guard /usr/local/bin/nemoclaw-llama-cpp-request-guard",
-    );
     expect(dockerfile).toContain(
       "COPY --from=build /opt/llama.cpp/licenses/ /usr/local/share/licenses/",
     );

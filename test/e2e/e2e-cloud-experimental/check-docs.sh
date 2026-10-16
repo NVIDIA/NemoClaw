@@ -627,8 +627,9 @@ run_install_check() {
     return 1
   fi
 
-  local _doc_provider_row _doc_provider_values
-  _doc_provider_row="$(grep -F "| \`NEMOCLAW_PROVIDER\` |" "$COMMANDS_REF" || true)"
+  local _doc_provider_row _doc_provider_values _backtick
+  _backtick="$(printf '\140')"
+  _doc_provider_row="$(grep -E "\|[[:space:]]*${_backtick}NEMOCLAW_PROVIDER${_backtick}[[:space:]]*\|" "$COMMANDS_REF" || true)"
   if [[ -z "$_doc_provider_row" ]]; then
     echo "check-docs: [install] no NEMOCLAW_PROVIDER row found in ${COMMANDS_REF#"$REPO_ROOT"/}" >&2
     _drift=1

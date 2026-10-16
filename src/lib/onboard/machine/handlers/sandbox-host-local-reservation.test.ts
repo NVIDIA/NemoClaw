@@ -3,9 +3,7 @@
 
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, expect, it, vi } from "vitest";
 import { serializedLlamaCppHostLocalInferenceReceipt } from "../../../../../test/helpers/host-local-inference-receipt";
 
 vi.mock("../../messaging-channel-setup", () => ({
@@ -13,27 +11,36 @@ vi.mock("../../messaging-channel-setup", () => ({
   detectUnconfiguredMessagingChannels: vi.fn(() => []),
 }));
 
-let home: string;
+const home = await vi.hoisted(async () => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-host-local-resume-"));
+  vi.stubEnv("HOME", directory);
+  return directory;
+});
+
+import { handleSandboxState } from "./sandbox";
+import { baseOptions, createDeps } from "./sandbox-test-fixtures";
+import { createSession } from "../../../state/onboard-session";
+import * as registry from "../../../state/registry";
+import { normalizeInferenceSelection } from "../../../inference/selection";
+import { qualifyPendingSandboxCreateReservation } from "../../../state/registry/route-reservation";
+import { createSandboxHostLocalInferenceProvenance } from "../../../state/registry/host-local-inference";
+
 beforeEach(async () => {
-  home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-host-local-resume-"));
   vi.stubEnv("HOME", home);
-  vi.resetModules();
+  expect(process.env.HOME).toBe(home);
+  await fs.mkdir(home, { recursive: true });
 });
 afterEach(async () => {
-  vi.unstubAllEnvs();
   await fs.rm(home, { recursive: true, force: true });
+});
+afterAll(() => {
+  vi.unstubAllEnvs();
 });
 
 async function resumedHostLocalSandbox() {
-  const { handleSandboxState } = await import("./sandbox");
-  const { baseOptions, createDeps } = await import("./sandbox-test-fixtures");
-  const { createSession } = await import("../../../state/onboard-session");
-  const registry = await import("../../../state/registry");
-  const { normalizeInferenceSelection } = await import("../../../inference/selection");
-  const { qualifyPendingSandboxCreateReservation } =
-    await import("../../../state/registry/route-reservation");
-  const { createSandboxHostLocalInferenceProvenance } =
-    await import("../../../state/registry/host-local-inference");
   const session = createSession({ sandboxName: "saved" });
   session.steps.sandbox.status = "complete";
   const hostLocalInferenceReceipt = serializedLlamaCppHostLocalInferenceReceipt("docker");
@@ -60,6 +67,8 @@ async function resumedHostLocalSandbox() {
     async (...args: Parameters<ReturnType<typeof createDeps>["deps"]["createSandbox"]>) => {
       const authority = args[14];
       assert(authority, "Missing create reservation authority");
+      // The create mock represents admission after the source backup succeeds.
+      await args[15]?.reservePublishedRouteAfterBackup?.();
       const entry = registry.getSandbox(args[4]);
       expect(authority.sessionId).toBe(session.sessionId);
       expect(normalizeInferenceSelection(authority.selection)).toEqual(
@@ -105,13 +114,13 @@ it("reserves the exact published host-local route before resumed create admissio
   });
 });
 
-it("rejects a changed host-local route before create and preserves its authority", async () => {
+it("rejects a changed host-local route before create admission and preserves its authority", async () => {
   const test = await resumedHostLocalSandbox();
   test.options.model = "different-model";
   await expect(test.run()).rejects.toThrow(
     "Cannot change an explicit host-local inference lifecycle reservation",
   );
-  expect(test.createSandbox).not.toHaveBeenCalled();
+  expect(test.createSandbox).toHaveBeenCalledOnce();
   expect(test.registry.getSandbox("saved")).toEqual(test.original);
 });
 
@@ -145,7 +154,7 @@ it.each(["gatewayPort", "openshellDriver"] as const)(
       "cause.message",
       "Cannot reserve host-local inference provenance without exact runtime and gateway authority",
     );
-    expect(test.createSandbox).not.toHaveBeenCalled();
+    expect(test.createSandbox).toHaveBeenCalledOnce();
     expect(test.registry.getSandbox("saved")).toEqual(before);
   },
 );

@@ -56,6 +56,7 @@ import {
   rebuildCustomImagePreflight,
   rebuildFlowHelpers,
   rebuildInference,
+  rebuildProviderPreflight,
   rebuildManagedImage,
   rebuildMessagingConflict,
   rebuildOnboardDependencies,
@@ -101,6 +102,9 @@ function expectPolicyCaptureOptions() {
 export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
   purgeRebuildModule();
 
+  vi.spyOn(rebuildOnboardDependencies, "verifyRebuiltOpenClawCompatibleEndpoint").mockResolvedValue(
+    undefined,
+  );
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -395,6 +399,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   );
   const defaultHydrateCredentialEnv =
     onboardCredentialEnv.hydrateCredentialEnv.bind(onboardCredentialEnv);
+  vi.spyOn(rebuildProviderPreflight, "validateRebuildHostInferenceCredential").mockResolvedValue(
+    true,
+  );
   const hydrateCredentialEnvSpy = vi
     .spyOn(rebuildOnboardDependencies, "hydrateCredentialEnv")
     .mockImplementation((...args: unknown[]) => {
@@ -453,7 +460,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
   const currentSandboxEntry = {
     name: "alpha",
-    provider: "ollama-local",
+    provider: "build",
     model: "nvidia/nemotron",
     policies: ["npm"],
     agent: null,

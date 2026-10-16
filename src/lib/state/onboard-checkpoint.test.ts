@@ -396,6 +396,24 @@ describe("checkpoint schema inspection", () => {
     expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
   });
 
+  it("retains the bounded OpenClaw reconciliation marker when reading a checkpoint (#12667)", () => {
+    const serialized = serializedRecreateCheckpoint();
+    (serialized.sandboxRecreate as Record<string, unknown>).reconcileOpenClawInference = true;
+    expect(inspectCheckpoint(serialized)).toMatchObject({
+      status: "loaded",
+      checkpoint: { sandboxRecreate: { reconcileOpenClawInference: true } },
+    });
+  });
+
+  it.each([false, "true", 1, {}])(
+    "rejects malformed OpenClaw reconciliation authority %j (#12667)",
+    (value) => {
+      const serialized = serializedRecreateCheckpoint();
+      (serialized.sandboxRecreate as Record<string, unknown>).reconcileOpenClawInference = value;
+      expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
+    },
+  );
+
   it("rejects malformed recreate journal fingerprints", () => {
     const serialized = serializedRecreateCheckpoint();
     (serialized.sandboxRecreate as Record<string, unknown>).targetIntentFingerprint = "bad";

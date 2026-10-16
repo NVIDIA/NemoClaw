@@ -19,6 +19,8 @@ import { retryUntilAsync } from "../../core/retry";
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
   getLlamaCppRouteDetails,
+  normalizeNativeNvidiaProviderAttachment,
+  normalizeNativeLocalProviderAttachment,
   type GatewayInference,
   type LlamaCppRouteDetails,
   planInferenceRouteReconcile,
@@ -52,11 +54,18 @@ import {
   getSandboxGatewayStateForStatus,
 } from "./gateway-state";
 import {
+  readNativeStatusSelection,
   buildSandboxInferenceRouteHealth,
   isTransientInferenceInvocationFailure,
   type ProbeSandboxInferenceInvocation,
   probeSandboxInferenceGatewayHealth,
   runSandboxInferenceInvocationProbe,
+  verifyNativeNvidiaStatusAttachment,
+  verifyNativeLocalStatusAttachment,
+  verifyNativeHostedStatusAttachment,
+  type VerifyNativeLocalStatusAttachment,
+  type VerifyNativeHostedStatusAttachment,
+  type VerifyNativeNvidiaStatusAttachment,
 } from "./inference-route-health";
 import {
   getSandboxStatusPreflight,
@@ -329,6 +338,9 @@ interface CollectSandboxStatusSnapshotDeps {
   getSandboxStatusPreflightImpl?: typeof getSandboxStatusPreflight;
   getGatewayPresets?: GetGatewayPresets;
   inspectManagedLlamaCppOwnership?: typeof inspectManagedLlamaCppOwnership;
+  verifyNativeNvidiaProviderAttachmentImpl?: VerifyNativeNvidiaStatusAttachment;
+  verifyNativeLocalProviderAttachmentImpl?: VerifyNativeLocalStatusAttachment;
+  verifyNativeHostedProviderAttachmentImpl?: VerifyNativeHostedStatusAttachment;
 }
 
 function sanitizedStatusDetail(error: unknown): string {
@@ -554,18 +566,24 @@ export async function collectSandboxStatusSnapshot(
   const suppressInferenceProbe =
     (postRecoveryPreflight ?? initialPreflight)?.suppressInferenceProbe ??
     opts.suppressInferenceProbe === true;
+  const nativeSelection = readNativeStatusSelection(sb);
+  const { attachment: nativeAttachment, label: nativeLabel } = nativeSelection;
+  let nativeAttachmentFailure = nativeSelection.failure;
+  const nativeProvider = Boolean(nativeAttachment || nativeAttachmentFailure);
   let liveResult: OpenShellInferenceRouteResult | null = null;
   let gatewayName: string | null = null;
   if (lookup.state === "present") {
     try {
       gatewayName = resolveSandboxGatewayName(sb);
-      const observer =
-        opts.deps?.inferenceRouteObserver ??
-        createCliOpenShellInferenceRouteObserver(captureOpenshellForStatus);
-      liveResult = await observer.observeInferenceRoute({
-        target: { kind: "named", gatewayName },
-        timeoutMs: getStatusProbeTimeoutMs(),
-      });
+      if (!nativeProvider) {
+        const observer =
+          opts.deps?.inferenceRouteObserver ??
+          createCliOpenShellInferenceRouteObserver(captureOpenshellForStatus);
+        liveResult = await observer.observeInferenceRoute({
+          target: { kind: "named", gatewayName },
+          timeoutMs: getStatusProbeTimeoutMs(),
+        });
+      }
     } catch {
       // Invalid persisted gateway bindings and failed reads stay fail-closed:
       // never substitute the selected/default gateway's inference route.
@@ -603,8 +621,56 @@ export async function collectSandboxStatusSnapshot(
   // as drift instead of being mislabeled as this sandbox's configuration.
   const currentModel = sb ? sb.model || "unknown" : (live && live.model) || "unknown";
   const currentProvider = sb ? sb.provider || "unknown" : (live && live.provider) || "unknown";
+  if (!suppressInferenceProbe && lookup.state === "present" && nativeProvider && sb) {
+    const expected = nativeAttachment;
+    if (!gatewayName || !expected) {
+      nativeAttachmentFailure =
+        `Native ${nativeLabel} provider attachment is unavailable for sandbox '${sandboxName}'. ` +
+        `Recreate the sandbox to restore native ${nativeLabel} inference.`;
+    } else {
+      try {
+        const nvidia = normalizeNativeNvidiaProviderAttachment(expected);
+        const local =
+          sb.nativeLocalProviderAttachment === undefined
+            ? undefined
+            : normalizeNativeLocalProviderAttachment(sb.nativeLocalProviderAttachment);
+        if (local) {
+          await (
+            opts.deps?.verifyNativeLocalProviderAttachmentImpl ?? verifyNativeLocalStatusAttachment
+          )({
+            gatewayName,
+            sandboxName,
+            expected: local,
+          });
+        } else if (nvidia) {
+          await verifyNativeNvidiaStatusAttachment({
+            gatewayName,
+            sandboxName,
+            expected: nvidia,
+            ...(opts.deps?.verifyNativeNvidiaProviderAttachmentImpl
+              ? { verify: opts.deps.verifyNativeNvidiaProviderAttachmentImpl }
+              : {}),
+          });
+        } else {
+          await verifyNativeHostedStatusAttachment({
+            gatewayName,
+            sandboxName,
+            expected,
+            ...(opts.deps?.verifyNativeHostedProviderAttachmentImpl
+              ? { verify: opts.deps.verifyNativeHostedProviderAttachmentImpl }
+              : {}),
+          });
+        }
+      } catch (error) {
+        const detail = sanitizedStatusDetail(error);
+        nativeAttachmentFailure =
+          `Native ${nativeLabel} provider '${nativeAttachment.providerName}' is unavailable for sandbox '${sandboxName}'` +
+          `${detail ? `: ${detail}` : "."} Recreate the sandbox to restore native ${nativeLabel} inference.`;
+      }
+    }
+  }
   const routeDriftPlan =
-    sb && sb.provider && sb.model
+    !nativeProvider && sb && sb.provider && sb.model
       ? planInferenceRouteReconcile(live, { provider: sb.provider, model: sb.model })
       : null;
   const routeDrift =
@@ -635,14 +701,16 @@ export async function collectSandboxStatusSnapshot(
   // value to null afterwards.
   let providerHealth: ProviderHealthStatus | null = null;
   try {
-    providerHealth = maybeGetSandboxStatusInferenceHealth(
-      suppressInferenceProbe,
-      lookup.state === "present",
-      (live && live.provider) || currentProvider,
-      (live && live.model) || currentModel,
-      opts.deps?.probeProviderHealthImpl,
-      sb?.endpointUrl,
-    );
+    providerHealth = nativeAttachmentFailure
+      ? null
+      : maybeGetSandboxStatusInferenceHealth(
+          suppressInferenceProbe,
+          lookup.state === "present",
+          nativeProvider ? currentProvider : (live && live.provider) || currentProvider,
+          nativeProvider ? currentModel : (live && live.model) || currentModel,
+          opts.deps?.probeProviderHealthImpl,
+          sb?.endpointUrl,
+        );
   } catch {
     providerHealth = {
       ok: false,
@@ -654,16 +722,15 @@ export async function collectSandboxStatusSnapshot(
     };
   }
   let inferenceHealth = providerHealth;
-  // `inference.local` is authoritative because it is the route the agent uses.
-  // Probe it independently of direct/upstream provider diagnostics, including
-  // providers without a registered host-side health probe (#6192).
+  // Probe the same route the agent uses: the recorded attached provider for
+  // native providers, otherwise the shared `inference.local` route.
   if (!suppressInferenceProbe && lookup.state === "present") {
     let gatewayChain: Awaited<ReturnType<ProbeSandboxInferenceGatewayHealth>> = null;
     // Take the provider and model as one pair. Falling back per field can pair
     // a live model with a recorded provider and request a route neither one
     // describes.
     const invocationRoute =
-      live?.provider && live.model
+      !nativeProvider && live?.provider && live.model
         ? {
             provider: live.provider,
             model: live.model,
@@ -690,9 +757,13 @@ export async function collectSandboxStatusSnapshot(
         opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth;
       await retryUntilAsync(
         async () => {
-          gatewayChain = gatewayName ? await probe(sandboxName, { gatewayName }) : null;
+          gatewayChain = nativeProvider
+            ? null
+            : gatewayName
+              ? await probe(sandboxName, { gatewayName })
+              : null;
           invocation =
-            gatewayChain?.ok && canProbeInvocation
+            !nativeAttachmentFailure && (nativeProvider || gatewayChain?.ok) && canProbeInvocation
               ? await runSandboxInferenceInvocationProbe(
                   {
                     sandboxName,
@@ -701,6 +772,13 @@ export async function collectSandboxStatusSnapshot(
                     provider: invocationProvider,
                     model: invocationModel,
                     preferredInferenceApi: invocationRoute.preferredInferenceApi,
+                    ...(nativeProvider ? { nativeProvider: true } : {}),
+                    ...(sb?.nativeLocalProviderAttachment
+                      ? { nativeLocalProviderAttachment: sb.nativeLocalProviderAttachment }
+                      : {}),
+                    ...(nativeAttachment?.endpointUrl
+                      ? { nativeEndpointUrl: nativeAttachment.endpointUrl }
+                      : {}),
                   },
                   opts.deps?.probeSandboxInferenceInvocationImpl,
                   (error) =>
@@ -714,6 +792,9 @@ export async function collectSandboxStatusSnapshot(
         },
         {
           accept: ({ gatewayChain: chain, invocation: result }) => {
+            if (nativeProvider) {
+              return result?.ok === true || !isTransientInferenceInvocationFailure(result);
+            }
             if (chain?.ok && (!canProbeInvocation || result?.ok)) return true;
             // After this run recovered a managed gateway, keep waiting for the
             // restarted chain to settle whatever the failure shape (#8572).
@@ -745,10 +826,27 @@ export async function collectSandboxStatusSnapshot(
       gatewayChain = null;
       invocation = null;
     }
-    inferenceHealth = buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation, {
-      agentName: sb?.agent ?? null,
-      provider: invocationRoute.provider ?? null,
-    });
+    inferenceHealth = nativeAttachmentFailure
+      ? {
+          ok: false,
+          probed: false,
+          providerLabel: `Native ${nativeLabel} provider attachment`,
+          endpoint: nativeSelection.endpoint,
+          detail: nativeAttachmentFailure,
+          failureLabel: "unreachable",
+          probeLabel: "provider attachment",
+        }
+      : buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation, {
+          provider: invocationRoute.provider ?? null,
+          nativeProvider,
+          nativeEndpointUrl: nativeAttachment?.endpointUrl,
+          nativeLocalEndpoint:
+            sb?.nativeLocalProviderAttachment === undefined
+              ? undefined
+              : nativeAttachment?.endpointUrl,
+          model: invocationRoute.model ?? null,
+          preferredInferenceApi: sb?.preferredInferenceApi ?? null,
+        });
   }
   // Classify once per snapshot so every renderer observes the same receipt state.
   // A complete matching live route is required because the shared gateway route
@@ -860,6 +958,12 @@ async function buildSandboxStatusReport(
   const livePolicies =
     sb && deps.getGatewayPresets ? await deps.getGatewayPresets(sandboxName, undefined, sb) : [];
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
+  const nativeProvider = Boolean(
+    sb &&
+    (sb.nativeNvidiaProviderAttachment !== undefined ||
+      sb.nativeHostedProviderAttachment !== undefined ||
+      sb.nativeLocalProviderAttachment !== undefined),
+  );
   return {
     schemaVersion: 1,
     name: sandboxName,
@@ -869,11 +973,11 @@ async function buildSandboxStatusReport(
     agentRuntime: agent.agentRuntime,
     dcodeAutoApprovalMode: resolveSandboxStatusDcodeAutoApprovalMode(sb),
     ...(agent.agentLoadError ? { agentLoadError: agent.agentLoadError } : {}),
-    // Keep schema v1's established live-first fields for existing consumers.
-    // The explicit route fields separate durable sandbox intent from the one
-    // gateway-global route without changing those legacy meanings.
-    model: liveRoute?.model ?? currentModel,
-    provider: liveRoute?.provider ?? currentProvider,
+    // Native NVIDIA inference is sandbox-attached and independent of the
+    // gateway-global route. Other schema-v1 consumers keep the established
+    // live-first fields, with explicit route fields separating both views.
+    model: nativeProvider ? currentModel : (liveRoute?.model ?? currentModel),
+    provider: nativeProvider ? currentProvider : (liveRoute?.provider ?? currentProvider),
     servingProfileProvenance: sb?.servingProfileProvenance ?? null,
     llamaCpp,
     recordedRoute,

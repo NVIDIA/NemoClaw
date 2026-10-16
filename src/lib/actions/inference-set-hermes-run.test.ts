@@ -12,13 +12,87 @@ vi.mock("../onboard/experimental/portable-agent-lifecycle", async (importOrigina
   assertHermesPortableCommandUnavailable: portableMocks.assertUnavailable,
 }));
 import { HERMES_PROXY_REWRITE_SENTINEL } from "../hermes-managed-route";
+import { NVIDIA_HOSTED_NATIVE_PROVIDER } from "../inference/native-nvidia/contract";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
-import { baseSession, createDeps, HERMES_TARGET } from "./inference-set.test-support";
+import { baseSession, createDeps, HERMES_TARGET } from "../../../test/helpers/inference-set";
 
 describe("runInferenceSet Hermes routing", () => {
   beforeEach(() => {
     portableMocks.assertUnavailable.mockReset();
+  });
+
+  it("reads the attached native handle before publishing a Hermes switch", async () => {
+    const config: ConfigObject = { model: { default: "local-model", provider: "custom" } };
+    const deps = createDeps({
+      config,
+      entry: { name: "hermes", agent: "hermes", provider: "vllm-local", model: "local-model" },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+    });
+    await runInferenceSet(
+      {
+        provider: "nvidia-prod",
+        model: "nvidia/test-model",
+        sandboxName: "hermes",
+        noVerify: true,
+      },
+      deps,
+    );
+    expect(deps.calls.readNativeNvidiaCredentialHandle).toHaveBeenCalledWith("hermes", "nemoclaw");
+    expect(config.model).toMatchObject({
+      api_key: "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY",
+    });
+    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledOnce();
+  });
+
+  it("leaves the Hermes config unchanged when the attached handle is unavailable", async () => {
+    const config: ConfigObject = { model: { default: "local-model", provider: "custom" } };
+    const deps = createDeps({
+      config,
+      entry: { name: "hermes", agent: "hermes", provider: "vllm-local", model: "local-model" },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+      readNativeNvidiaCredentialHandle: async () => {
+        throw new Error("provider-bound handle unavailable");
+      },
+    });
+    const attachProvider = vi.spyOn(deps.providerAdapter, "attachProvider");
+    const detachProvider = vi.spyOn(deps.providerAdapter, "detachProvider");
+    await expect(
+      runInferenceSet(
+        {
+          provider: "nvidia-prod",
+          model: "nvidia/test-model",
+          sandboxName: "hermes",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow("provider-bound handle unavailable");
+    expect(config.model).toEqual({ default: "local-model", provider: "custom" });
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(attachProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "hermes",
+        providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+      }),
+    );
+    expect(detachProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "hermes",
+        providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+      }),
+    );
+    await expect(
+      deps.providerAdapter.listProviderAttachments({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        sandboxName: "hermes",
+      }),
+    ).resolves.toEqual({ ok: true, value: { names: [] } });
   });
 
   it("rejects schema-5 before OpenShell or registry mutation (#9203)", async () => {
@@ -112,6 +186,7 @@ describe("runInferenceSet Hermes routing", () => {
       contextWindow: 128_000,
     });
 
+    vi.spyOn(deps.providerAdapter, "attachProvider");
     const result = await runInferenceSet(
       {
         provider: "hermes-provider",
@@ -122,19 +197,12 @@ describe("runInferenceSet Hermes routing", () => {
       deps,
     );
 
-    expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
-      [
-        "inference",
-        "set",
-        "-g",
-        "nemoclaw",
-        "--provider",
-        "hermes-provider",
-        "--model",
-        "openai/gpt-5.4-mini",
-        "--no-verify",
-      ],
-      { ignoreError: true, includeStreams: true, maxBuffer: 64 * 1024 },
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.providerAdapter.attachProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "hermes",
+        providerName: "nemoclaw-hermes-provider-v1",
+      }),
     );
     expect(config).toEqual({
       _nemoclaw_upstream: {
@@ -145,23 +213,23 @@ describe("runInferenceSet Hermes routing", () => {
       custom_providers: [
         {
           name: "hermes-provider",
-          base_url: "https://inference.local/v1",
-          api_key: HERMES_PROXY_REWRITE_SENTINEL,
+          base_url: "https://inference-api.nousresearch.com/v1",
+          api_key: "${OPENAI_API_KEY}",
           discover_models: true,
         },
       ],
       model: {
         default: "openai/gpt-5.4-mini",
         provider: "custom",
-        base_url: "https://inference.local/v1",
-        api_key: HERMES_PROXY_REWRITE_SENTINEL,
+        base_url: "https://inference-api.nousresearch.com/v1",
+        api_key: "${OPENAI_API_KEY}",
         context_length: 128_000,
       },
       providers: {
         "hermes-provider": {
           name: "hermes-provider",
-          api: "https://inference.local/v1",
-          api_key: HERMES_PROXY_REWRITE_SENTINEL,
+          api: "https://inference-api.nousresearch.com/v1",
+          api_key: "${OPENAI_API_KEY}",
           default_model: "openai/gpt-5.4-mini",
           discover_models: true,
         },
@@ -190,7 +258,8 @@ describe("runInferenceSet Hermes routing", () => {
       expect.objectContaining({
         action: "inference_set",
         sandbox: "hermes",
-        reason: "inference set hermes:hermes-provider:openai/gpt-5.4-mini",
+        reason:
+          "inference set hermes:hermes-provider:openai/gpt-5.4-mini (gateway restart completed)",
       }),
     );
     expect(result).toMatchObject({
@@ -201,7 +270,7 @@ describe("runInferenceSet Hermes routing", () => {
       providerKey: "inference",
       configChanged: true,
     });
-    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("hermes", "nemoclaw");
     expect(deps.calls.resolveContextWindowForModel).toHaveBeenCalledWith(
       "hermes-provider",
       "openai/gpt-5.4-mini",

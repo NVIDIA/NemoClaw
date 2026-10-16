@@ -9,15 +9,19 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
+import {
+  readModelSelectionProvenance,
+  type ModelSelectionProvenance,
+  parseServingProfileProvenance,
+  type ServingProfileProvenance,
+} from "./onboard-session/selection-provenance";
 
+import type { DcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
-import {
-  parseServingProfileProvenance,
-  type ServingProfileProvenance,
-} from "../inference/serving/profile-provenance";
 import {
   normalizeWebSearchConfig,
   webSearchEnvFor,
@@ -63,6 +67,7 @@ import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 import {
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
+  archiveRetainedSandboxRecoveryForLocalDiscard as archiveRecoveryForLocalDiscard,
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
   retainedRebuildSessionFileName,
@@ -72,6 +77,8 @@ import {
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
   validSafeEvidence,
+  parseRetainedSandboxCreateAuthority,
+  type RetainedSandboxCreateAuthority,
 } from "./onboard-session/retained-sandbox-recovery";
 import {
   acquireOnboardStateLock,
@@ -144,6 +151,7 @@ export interface SessionFailure {
 }
 
 export interface SessionCancellationRecovery {
+  readonly createAuthority?: RetainedSandboxCreateAuthority;
   readonly reason: "cancelled_after_sandbox_creation" | "retained_after_sandbox_creation_failure";
   readonly sandboxName: string;
   readonly sandboxIdentityFingerprint: string | null;
@@ -176,7 +184,8 @@ function sameCancellationRecovery(
     left.gatewayPort === right.gatewayPort &&
     left.lifecycleGeneration === right.lifecycleGeneration &&
     left.createAttemptNonce === right.createAttemptNonce &&
-    left.recordedAt === right.recordedAt
+    left.recordedAt === right.recordedAt &&
+    isDeepStrictEqual(left.createAuthority, right.createAuthority)
   );
 }
 
@@ -286,6 +295,7 @@ export interface Session {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  modelSelectionProvenance?: ModelSelectionProvenance | null;
   /** Secret-free model intent retained only while a managed vLLM install is unfinished. */
   vllmInstallModel: string | null;
   /** GPU exposed to the host-side managed vLLM container for this onboarding attempt. */
@@ -318,24 +328,14 @@ export interface Session {
   observabilityEnabled: boolean;
   /** True when observability was explicitly enabled or disabled for this resumable run. */
   observabilityRequestedExplicitly: boolean;
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode | null;
+  dcodeAutoApprovalRequestedExplicitly: boolean;
   /** Operator-selected APF create mode; this is not observed policy provenance. */
   apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
   /** Non-secret names of credential providers registered before sandbox setup completed. */
   stagedCredentialProviders: string[];
-  // SHA-256 hex digest of every legacy credential value successfully
-  // written to the OpenShell gateway during this onboard session, keyed by
-  // env-name. Persisted across process restarts so a `--resume` run that
-  // skips already-completed upserts still knows the migration completed
-  // earlier and can safely remove ~/.nemoclaw/credentials.json on the
-  // final completeSession. Storing the hash (not just the env-name) lets
-  // us detect when the legacy file value was edited between runs, when
-  // the gateway provider was reset out-of-band, or when an unrelated
-  // session is found on disk — in any of those cases the in-memory
-  // migrated set is NOT seeded from the persisted record, so the cleanup
-  // gate keeps the file until the *current* value is actually re-migrated.
-  migratedLegacyValueHashes: Record<string, string> | null;
   gpuPassthrough: boolean;
   telegramConfig: TelegramConfig | null;
   wechatConfig: WechatConfig | null;
@@ -368,6 +368,7 @@ export interface SessionUpdates {
   sandboxName?: string | null;
   provider?: string | null;
   model?: string | null;
+  modelSelectionProvenance?: ModelSelectionProvenance | null;
   servingProfileProvenance?: ServingProfileProvenance | null;
   endpointUrl?: string | null;
   credentialEnv?: string | null;
@@ -384,7 +385,6 @@ export interface SessionUpdates {
   observabilityEnabled?: boolean;
   hermesToolGateways?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
-  migratedLegacyValueHashes?: Record<string, string>;
   gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
   wechatConfig?: WechatConfig | null;
@@ -422,6 +422,8 @@ export interface DebugSessionSummary {
   toolDisclosure: ToolDisclosure;
   observabilityEnabled: boolean;
   observabilityRequestedExplicitly: boolean;
+  dcodeAutoApprovalMode: DcodeAutoApprovalMode | null;
+  dcodeAutoApprovalRequestedExplicitly: boolean;
   apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
   gpuPassthrough: boolean;
@@ -594,15 +596,6 @@ function readCanonicalIsoTimestamp(value: SessionJsonValue | undefined): string 
 function readStringArray(value: SessionJsonValue | undefined): string[] | null {
   if (!Array.isArray(value)) return null;
   return value.filter((entry): entry is string => typeof entry === "string");
-}
-
-function readStringRecord(value: SessionJsonValue | undefined): Record<string, string> | null {
-  if (!isObject(value)) return null;
-  const result: Record<string, string> = {};
-  for (const [k, v] of Object.entries(value)) {
-    if (typeof k === "string" && typeof v === "string") result[k] = v;
-  }
-  return result;
 }
 
 function isStepStatus(value: string): value is StepStatus {
@@ -833,6 +826,7 @@ function parseSessionCancellationRecovery(
   const gatewayPort = value.gatewayPort;
   const lifecycleGeneration = readString(value.lifecycleGeneration);
   const createAttemptNonce = readString(value.createAttemptNonce);
+  const createAuthority = parseRetainedSandboxCreateAuthority(value.createAuthority);
   if (
     !sandboxName ||
     sandboxName.length > NAME_MAX_LENGTH ||
@@ -845,7 +839,8 @@ function parseSessionCancellationRecovery(
     Number(gatewayPort) > 65_535 ||
     !lifecycleGeneration ||
     !createAttemptNonce ||
-    !/^[0-9a-f]{62}$/u.test(createAttemptNonce)
+    !/^[0-9a-f]{62}$/u.test(createAttemptNonce) ||
+    (value.createAuthority !== undefined && !createAuthority)
   ) {
     return null;
   }
@@ -857,6 +852,7 @@ function parseSessionCancellationRecovery(
     gatewayPort: Number(gatewayPort),
     lifecycleGeneration,
     createAttemptNonce,
+    ...(createAuthority ? { createAuthority } : {}),
     recordedAt,
   };
 }
@@ -1011,6 +1007,13 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     sandboxName: overrides.sandboxName ?? null,
     provider: overrides.provider ?? null,
     model: overrides.model ?? null,
+    ...(readModelSelectionProvenance(overrides.modelSelectionProvenance)
+      ? {
+          modelSelectionProvenance: readModelSelectionProvenance(
+            overrides.modelSelectionProvenance,
+          ),
+        }
+      : {}),
     vllmInstallModel: parseVllmInstallModel(overrides.vllmInstallModel),
     vllmGpuDevice: parseVllmGpuDevice(overrides.vllmGpuDevice),
     servingProfileProvenance: parseServingProfileProvenance(overrides.servingProfileProvenance),
@@ -1039,15 +1042,14 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     ),
     resourceProfile: parseSessionResourceProfile(overrides.resourceProfile),
     toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
+    dcodeAutoApprovalMode: overrides.dcodeAutoApprovalMode ?? null,
+    dcodeAutoApprovalRequestedExplicitly: overrides.dcodeAutoApprovalRequestedExplicitly === true,
     observabilityEnabled: overrides.observabilityEnabled === true,
     observabilityRequestedExplicitly: overrides.observabilityRequestedExplicitly === true,
     apfInterceptorRequested: overrides.apfInterceptorRequested === true,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
     stagedCredentialProviders: readStringArray(overrides.stagedCredentialProviders) ?? [],
-    migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
-      ? readStringRecord(overrides.migratedLegacyValueHashes)
-      : null,
     gpuPassthrough: overrides.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(overrides.telegramConfig),
     wechatConfig: parseWechatConfig(overrides.wechatConfig),
@@ -1157,6 +1159,9 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxName: readString(data.sandboxName),
     provider: readString(data.provider),
     model: readString(data.model),
+    ...(readModelSelectionProvenance(data.modelSelectionProvenance)
+      ? { modelSelectionProvenance: readModelSelectionProvenance(data.modelSelectionProvenance) }
+      : {}),
     vllmInstallModel,
     vllmGpuDevice,
     servingProfileProvenance,
@@ -1176,13 +1181,17 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxPromptProgress: parseSandboxPromptProgress(data.sandboxPromptProgress, data),
     resourceProfile: parseSessionResourceProfile(data.resourceProfile),
     toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
+    dcodeAutoApprovalMode:
+      data.dcodeAutoApprovalMode === "disabled" || data.dcodeAutoApprovalMode === "thread-opt-in"
+        ? data.dcodeAutoApprovalMode
+        : null,
+    dcodeAutoApprovalRequestedExplicitly: data.dcodeAutoApprovalRequestedExplicitly === true,
     observabilityEnabled: data.observabilityEnabled === true,
     observabilityRequestedExplicitly: data.observabilityRequestedExplicitly === true,
     apfInterceptorRequested: data.apfInterceptorRequested === true,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
     stagedCredentialProviders: readStringArray(data.stagedCredentialProviders) ?? [],
-    migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
     gpuPassthrough: data.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(data.telegramConfig),
     wechatConfig: parseWechatConfig(data.wechatConfig),
@@ -1568,7 +1577,8 @@ function onboardLockContentionGuidance(
   return [lead, ...holderDetails, remediation].join(" ");
 }
 
-function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
+/** Hold the onboarding writer lock through one synchronous state transition. */
+export function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
   const managesOnboardLock = heldLockHandle === null;
   if (managesOnboardLock) {
     const lock = acquireOnboardLock(command);
@@ -1705,6 +1715,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   assignNullableString(safe, "sandboxName", updates.sandboxName);
   assignNullableString(safe, "provider", updates.provider);
   assignNullableString(safe, "model", updates.model);
+  if (updates.modelSelectionProvenance === null) safe.modelSelectionProvenance = null;
+  else {
+    const provenance = readModelSelectionProvenance(updates.modelSelectionProvenance);
+    if (provenance) safe.modelSelectionProvenance = provenance;
+  }
   if (updates.servingProfileProvenance === null) {
     safe.servingProfileProvenance = null;
   } else {
@@ -1775,13 +1790,6 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     const messagingPlan = parseSandboxMessagingPlan(updates.messagingPlan);
     if (messagingPlan) safe.messagingPlan = messagingPlan;
   }
-  if (isObject(updates.migratedLegacyValueHashes)) {
-    const cleaned: Record<string, string> = {};
-    for (const [k, v] of Object.entries(updates.migratedLegacyValueHashes)) {
-      if (typeof k === "string" && typeof v === "string") cleaned[k] = v;
-    }
-    safe.migratedLegacyValueHashes = cleaned;
-  }
   if (updates.gpuPassthrough === true || updates.gpuPassthrough === false) {
     safe.gpuPassthrough = updates.gpuPassthrough;
   }
@@ -1827,6 +1835,7 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
 }
 
 export interface RetainedSandboxRecoveryContext {
+  readonly createAuthority?: RetainedSandboxCreateAuthority;
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string;
@@ -1863,6 +1872,7 @@ function persistIndependentRetainedSandboxRecovery(
     lifecycleGeneration: context.lifecycleGeneration,
     createAttemptNonce: context.createAttemptNonce,
     resources: retainedSandboxResourceEvidence(session),
+    ...(context.createAuthority ? { createAuthority: context.createAuthority } : {}),
     reason,
   });
 }
@@ -1877,6 +1887,8 @@ export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRe
       recovery &&
       !records.some(
         (record) =>
+          (!record.createAuthority ||
+            record.createAuthority.reservationSessionId === current.sessionId) &&
           record.sandboxName === recovery.sandboxName &&
           record.sandboxIdentityFingerprint === recovery.sandboxIdentityFingerprint &&
           record.createAttemptNonce === recovery.createAttemptNonce,
@@ -1891,6 +1903,7 @@ export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRe
           lifecycleGeneration: recovery.lifecycleGeneration,
           createAttemptNonce: recovery.createAttemptNonce,
           resources: retainedSandboxResourceEvidence(current),
+          ...(recovery.createAuthority ? { createAuthority: recovery.createAuthority } : {}),
           reason: recovery.reason,
           recordedAt: recovery.recordedAt,
         });
@@ -1991,11 +2004,16 @@ export function recordRetainedSandboxRecovery(
 
 export function retainedSandboxRecoveryMatchesSession(
   record: RetainedSandboxRecoveryRecord,
-  session: Pick<Session, "cancellationRecovery"> | null | undefined,
+  session:
+    | (Pick<Session, "cancellationRecovery"> & Partial<Pick<Session, "sessionId">>)
+    | null
+    | undefined,
 ): boolean {
   const recovery = session?.cancellationRecovery;
   if (!recovery) return false;
   return (
+    (!record.createAuthority ||
+      record.createAuthority.reservationSessionId === session?.sessionId) &&
     record.sandboxName === recovery.sandboxName &&
     record.sandboxIdentityFingerprint === recovery.sandboxIdentityFingerprint &&
     record.gatewayName === recovery.gatewayName &&
@@ -2005,14 +2023,31 @@ export function retainedSandboxRecoveryMatchesSession(
   );
 }
 
-/** Clear one recovery-only session after destroy verifies the retained resources absent. */
-export function resolveRetainedSandboxRecovery(record: RetainedSandboxRecoveryRecord): boolean {
+/** Archive the selected record before an explicit local-only discard. */
+export function archiveRetainedSandboxRecoveryForLocalDiscard(
+  record: RetainedSandboxRecoveryRecord,
+  reservation: SandboxEntry | null,
+): string {
+  return withOwnedOnboardLock("nemoclaw forced local recovery archive", () =>
+    archiveRecoveryForLocalDiscard(RETAINED_SANDBOX_RECOVERY_FILE, record, reservation),
+  );
+}
+
+/** Preserve another onboarding session when retiring an operator-selected local record. */
+export function resolveRetainedSandboxRecovery(
+  record: RetainedSandboxRecoveryRecord,
+  options: { preserveSession?: boolean } = {},
+): boolean {
   return withOwnedOnboardLock("nemoclaw retained sandbox recovery completion", () => {
     if (!retainedSandboxRecoveryAuthorityIsCurrent(RETAINED_SANDBOX_RECOVERY_FILE, record)) {
       return false;
     }
     const current = loadSession();
-    if (current && retainedSandboxRecoveryMatchesSession(record, current)) {
+    if (
+      !options.preserveSession &&
+      current &&
+      retainedSandboxRecoveryMatchesSession(record, current)
+    ) {
       current.status = "failed";
       current.resumable = false;
       current.sandboxName = null;
@@ -2042,6 +2077,12 @@ export function markCancellationRecovery(
   }
   return withOwnedOnboardLock("nemoclaw cancellation recovery", () => {
     const saved = updateSession((session) => {
+      if (
+        context.createAuthority &&
+        context.createAuthority.reservationSessionId !== session.sessionId
+      ) {
+        throw new Error("The retained create authority belongs to another onboarding session.");
+      }
       if (session.sandboxName !== null && session.sandboxName !== sandboxName) {
         throw new Error("Cannot record cancellation recovery for a different onboarding sandbox.");
       }
@@ -2100,6 +2141,12 @@ export function markRetainedSandboxRecovery(
   }
   return withOwnedOnboardLock("nemoclaw retained sandbox recovery", () => {
     const saved = updateSession((session) => {
+      if (
+        context.createAuthority &&
+        context.createAuthority.reservationSessionId !== session.sessionId
+      ) {
+        throw new Error("The retained create authority belongs to another onboarding session.");
+      }
       if (session.sandboxName !== null && session.sandboxName !== sandboxName) {
         throw new Error(
           "Cannot record retained sandbox recovery for a different onboarding sandbox.",
@@ -2531,6 +2578,8 @@ export function summarizeForDebug(
     compatibleEndpointReasoningEffort: session.compatibleEndpointReasoningEffort,
     nimContainer: session.nimContainer,
     toolDisclosure: session.toolDisclosure,
+    dcodeAutoApprovalMode: session.dcodeAutoApprovalMode,
+    dcodeAutoApprovalRequestedExplicitly: session.dcodeAutoApprovalRequestedExplicitly,
     observabilityEnabled: session.observabilityEnabled,
     observabilityRequestedExplicitly: session.observabilityRequestedExplicitly,
     apfInterceptorRequested: session.apfInterceptorRequested,

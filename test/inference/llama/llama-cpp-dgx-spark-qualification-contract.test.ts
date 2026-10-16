@@ -2,8 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import {
+  validateLlamaCppDgxSparkReceipt,
+  publishLlamaCppDgxSparkArtifacts,
+} from "../../../scripts/checks/validate-llama-cpp-dgx-spark-receipt.mts";
 
 import {
   LLAMA_CPP_DGX_SPARK_AGENT_PROBES,
@@ -27,7 +36,6 @@ import {
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE,
-  LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES,
   LLAMA_CPP_DGX_SPARK_RUNNER_PATTERN,
   LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID,
   LLAMA_CPP_DGX_SPARK_SOURCE_ARCHIVE_SHA256,
@@ -41,6 +49,8 @@ import {
   parseLlamaCppDgxSparkQualificationPlan,
   parseLlamaCppDgxSparkQualificationReceipt as parseQualificationReceiptWithPlan,
   verifyLlamaCppDgxSparkExecutionPlanSha256,
+  createLlamaCppDgxSparkFailureDiagnostic,
+  parseLlamaCppDgxSparkFailureDiagnostic,
 } from "../../../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts";
 
 const HEAD_SHA = "a".repeat(40);
@@ -131,7 +141,6 @@ function disabledPlan() {
     probes: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
     profile: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE,
     recipeRef: LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE,
-    requestGuard: "required",
     required: true,
     runner: null,
   };
@@ -197,27 +206,27 @@ function receipt() {
       cancellation: { aborted: true, ok: true, recovered: true },
       contextWindow: { contextSize: 262144, ok: true, slots: 1 },
       disabledSurfaces: {
-        corsProxyHttpStatus: 403,
+        corsProxyHttpStatus: 404,
         multimodal: false,
         ok: true,
-        propertiesMutationHttpStatus: 501,
+        propertiesMutationHttpStatus: 404,
         routerHttpStatus: 404,
-        slotsHttpStatus: 501,
-        toolsHttpStatus: 403,
+        slotsHttpStatus: 404,
+        toolsHttpStatus: 404,
         uiHttpStatus: 404,
       },
       health: { httpStatus: 200, ok: true },
       logRedaction: { ok: true },
       malformedRequest: { httpStatus: 400, ok: true },
       requestBodyLimit: {
-        acceptedBytes: 1048576,
+        acceptedBytes: 1_048_576,
         acceptedHttpStatus: 200,
         continuationHealthHttpStatus: 200,
         continuationHttpStatus: 200,
         errorCode: "request_body_too_large",
         errorType: "invalid_request_error",
         ok: true,
-        rejectedBytes: LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES,
+        rejectedBytes: 1_100_000,
         rejectedHttpStatus: 413,
       },
       metrics: {
@@ -291,7 +300,7 @@ function executionPlan() {
         developmentBase: LLAMA_CPP_DGX_SPARK_CUDA_DEVELOPMENT_BASE,
         runtimeBase: LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE,
       },
-      platform: { cudaArchitectures: "121a-real", platform: "linux/arm64" },
+      platform: { cudaArchitectures: "103-real;120-real;121a-real", platform: "linux/arm64" },
       repository: LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY,
       runtime: { gid: 10001, port: 8081, uid: 10001 },
       source: {
@@ -304,7 +313,6 @@ function executionPlan() {
       agentQualification: agentQualification(),
       probeBounds: probeBounds(),
       probes: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
-      requestGuard: "required",
     },
     recipe: {
       capabilities: {
@@ -373,13 +381,8 @@ function executionPlan() {
         kvCache: { key: "f16", value: "f16" },
         speculativeDecoding: "disabled",
         limits: {
-          maxRequestBodyBytes: 1048576,
-          maxRequestHeaderBytes: 32768,
-          maxOutputTokens: 4096,
           requestTimeoutSeconds: 900,
-          shutdownTimeoutSeconds: 25,
         },
-        requestGuard: { upstreamPort: 8082 },
       },
       server: {
         technology: "llama.cpp",
@@ -404,6 +407,269 @@ function executionPlan() {
 function parseLlamaCppDgxSparkQualificationReceipt(value: unknown, identity: unknown) {
   return parseQualificationReceiptWithPlan(value, identity, executionPlan());
 }
+
+describe("workflow Spark qualification artifact validation (#13114)", () => {
+  it("executes failure publication through the actual artifact CLI", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-publish-cli-"));
+    try {
+      const digest = llamaCppDgxSparkExecutionPlanSha256(
+        parseLlamaCppDgxSparkExecutionPlan(executionPlan()),
+      );
+      fs.writeFileSync(
+        path.join(root, "failure.json"),
+        JSON.stringify(
+          createLlamaCppDgxSparkFailureDiagnostic(
+            evidenceIdentity(),
+            digest,
+            "model",
+            false,
+            "model-digest-mismatch",
+          ),
+        ),
+      );
+      const validator = fileURLToPath(
+        new URL(
+          "../../../scripts/checks/validate-llama-cpp-dgx-spark-receipt.mts",
+          import.meta.url,
+        ),
+      );
+      const result = spawnSync(
+        process.execPath,
+        ["--no-warnings", validator, "--publish", root, "failure", "success", digest],
+        {
+          encoding: "utf8",
+          timeout: 10000,
+          env: {
+            ...process.env,
+            BASE_SHA,
+            CHECKOUT_SHA: HEAD_SHA,
+            WORKFLOW_SHA,
+            GITHUB_RUN_ID: String(evidenceIdentity().runId),
+            GITHUB_RUN_ATTEMPT: String(evidenceIdentity().runAttempt),
+          },
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+      expect(fs.readdirSync(path.join(root, "published"))).toEqual(["failure.json"]);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(root, "published/failure.json"), "utf8")),
+      ).toMatchObject({
+        status: "failed",
+        phase: "model",
+        reason: "model-digest-mismatch",
+        cleanupComplete: false,
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("stages only verified success evidence", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-success-"));
+    try {
+      const plan = parseLlamaCppDgxSparkExecutionPlan(executionPlan());
+      const digest = llamaCppDgxSparkExecutionPlanSha256(plan);
+      fs.writeFileSync(path.join(root, "plan.json"), JSON.stringify(plan));
+      fs.writeFileSync(path.join(root, "receipt.json"), JSON.stringify(receipt()));
+      fs.writeFileSync(path.join(root, "raw.log"), "private-key-model-and-prompt");
+      const published = publishLlamaCppDgxSparkArtifacts(
+        root,
+        digest,
+        evidenceIdentity(),
+        "success",
+        "success",
+      );
+      expect(fs.readdirSync(published).sort()).toEqual([
+        "plan-sha256",
+        "plan.json",
+        "receipt.json",
+      ]);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(published, "receipt.json"), "utf8")),
+      ).toMatchObject({ headSha: HEAD_SHA });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["failure", "cancelled"])(
+    "retains sanitized %s evidence without publishing a success receipt",
+    (outcome) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-failure-"));
+      try {
+        const digest = llamaCppDgxSparkExecutionPlanSha256(
+          parseLlamaCppDgxSparkExecutionPlan(executionPlan()),
+        );
+        const diagnostic = createLlamaCppDgxSparkFailureDiagnostic(
+          evidenceIdentity(),
+          digest,
+          "protocol",
+          false,
+        );
+        fs.writeFileSync(path.join(root, "failure.json"), JSON.stringify(diagnostic));
+        fs.writeFileSync(path.join(root, "raw.log"), "private-key-model-and-prompt");
+        fs.writeFileSync(path.join(root, "receipt.json"), "unvalidated old receipt");
+        const published = publishLlamaCppDgxSparkArtifacts(
+          root,
+          digest,
+          evidenceIdentity(),
+          outcome,
+          "success",
+        );
+        expect(fs.readdirSync(published)).toEqual(["failure.json"]);
+        expect(fs.readFileSync(path.join(published, "failure.json"), "utf8")).not.toContain(
+          "private-key-model-and-prompt",
+        );
+        expect(JSON.parse(fs.readFileSync(path.join(published, "failure.json"), "utf8"))).toEqual(
+          diagnostic,
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("records incomplete cleanup and missing runner evidence as failure only", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-cleanup-failure-"));
+    try {
+      const digest = llamaCppDgxSparkExecutionPlanSha256(
+        parseLlamaCppDgxSparkExecutionPlan(executionPlan()),
+      );
+      const published = publishLlamaCppDgxSparkArtifacts(
+        root,
+        digest,
+        evidenceIdentity(),
+        "success",
+        "failure",
+      );
+      expect(
+        JSON.parse(fs.readFileSync(path.join(published, "failure.json"), "utf8")),
+      ).toMatchObject({ phase: "cleanup", cleanupComplete: false, status: "failed" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["recovery", "secret-api-key"],
+    ["owner", "another-run"],
+    ["phase", "unknown-phase"],
+    ["status", "passed"],
+    ["planSha256", `sha256:${"0".repeat(64)}`],
+    ["apiKey", "secret-api-key"],
+    ["cleanupComplete", "yes"],
+    ["reason", "secret-api-key"],
+    ["exitCode", "secret-api-key"],
+  ])("rejects substituted failure %s", (field, value) => {
+    const digest = llamaCppDgxSparkExecutionPlanSha256(
+      parseLlamaCppDgxSparkExecutionPlan(executionPlan()),
+    );
+    const diagnostic = createLlamaCppDgxSparkFailureDiagnostic(
+      evidenceIdentity(),
+      digest,
+      "model",
+      false,
+    );
+    expect(() =>
+      parseLlamaCppDgxSparkFailureDiagnostic(
+        { ...diagnostic, [field]: value },
+        evidenceIdentity(),
+        digest,
+      ),
+    ).toThrow();
+  });
+
+  it("validates real receipt files and rejects unsafe artifact inputs", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spark-receipt-"));
+    try {
+      const plan = parseLlamaCppDgxSparkExecutionPlan(executionPlan());
+      const planFile = path.join(root, "plan.json");
+      const receiptFile = path.join(root, "receipt.json");
+      fs.writeFileSync(planFile, JSON.stringify(plan));
+      fs.writeFileSync(receiptFile, JSON.stringify(receipt()));
+      const validator = fileURLToPath(
+        new URL(
+          "../../../scripts/checks/validate-llama-cpp-dgx-spark-receipt.mts",
+          import.meta.url,
+        ),
+      );
+      const run = (file: string, extra: string[] = []) =>
+        spawnSync(
+          process.execPath,
+          [
+            "--no-warnings",
+            validator,
+            file,
+            planFile,
+            llamaCppDgxSparkExecutionPlanSha256(plan),
+            ...extra,
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              BASE_SHA,
+              CHECKOUT_SHA: HEAD_SHA,
+              WORKFLOW_SHA,
+              GITHUB_RUN_ID: String(evidenceIdentity().runId),
+              GITHUB_RUN_ATTEMPT: String(evidenceIdentity().runAttempt),
+            },
+            timeout: 10000,
+          },
+        );
+      expect(run(receiptFile).status).toBe(0);
+      expect(run(receiptFile, ["unexpected"]).status).not.toBe(0);
+      const link = path.join(root, "linked.json");
+      fs.symlinkSync(receiptFile, link);
+      expect(run(link).status).not.toBe(0);
+      fs.writeFileSync(receiptFile, Buffer.alloc(1024 * 1024 + 1));
+      expect(run(receiptFile).status).not.toBe(0);
+      fs.writeFileSync(receiptFile, "{}");
+      expect(run(receiptFile).status).not.toBe(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts only a receipt matching the digest-bound plan and workflow identity", () => {
+    const plan = parseLlamaCppDgxSparkExecutionPlan(executionPlan());
+    const planSource = JSON.stringify(plan);
+    const digest = llamaCppDgxSparkExecutionPlanSha256(plan);
+    expect(
+      validateLlamaCppDgxSparkReceipt(
+        JSON.stringify(receipt()),
+        planSource,
+        digest,
+        evidenceIdentity(),
+      ),
+    ).toMatchObject({ headSha: receipt().headSha, cleanup: receipt().cleanup });
+    expect(() =>
+      validateLlamaCppDgxSparkReceipt(
+        JSON.stringify(receipt()),
+        planSource,
+        `sha256:${"0".repeat(64)}`,
+        evidenceIdentity(),
+      ),
+    ).toThrow(/digest/);
+    expect(() =>
+      validateLlamaCppDgxSparkReceipt(JSON.stringify(receipt()), planSource, digest, {
+        ...evidenceIdentity(),
+        headSha: "0".repeat(40),
+      }),
+    ).toThrow("identity");
+    const invalidCleanup = receipt();
+    invalidCleanup.cleanup.registryRemoved = false;
+    expect(() =>
+      validateLlamaCppDgxSparkReceipt(
+        JSON.stringify(invalidCleanup),
+        planSource,
+        digest,
+        evidenceIdentity(),
+      ),
+    ).toThrow("cleanup");
+  });
+});
 
 describe("llama.cpp DGX Spark qualification contract", () => {
   it("pins the exact protected ARM64 activation identity and patterns (#8260)", () => {
@@ -644,31 +910,7 @@ describe("llama.cpp DGX Spark qualification contract", () => {
         },
       }),
     ).toThrow("micro-batch size is invalid");
-    expect(() =>
-      parseLlamaCppDgxSparkExecutionPlan({
-        ...value,
-        recipe: {
-          ...value.recipe,
-          serve: {
-            ...value.recipe.serve,
-            limits: { ...value.recipe.serve.limits, maxOutputTokens: 262145 },
-          },
-        },
-      }),
-    ).toThrow("maximum output tokens is invalid");
-    expect(() =>
-      parseLlamaCppDgxSparkExecutionPlan({
-        ...value,
-        recipe: {
-          ...value.recipe,
-          serve: {
-            ...value.recipe.serve,
-            requestGuard: { upstreamPort: value.recipe.serve.port },
-          },
-        },
-      }),
-    ).toThrow("serve contract is invalid");
-    const { shutdownTimeoutSeconds: _removed, ...incompleteLimits } = value.recipe.serve.limits;
+    const { requestTimeoutSeconds: _removed, ...incompleteLimits } = value.recipe.serve.limits;
     expect(() =>
       parseLlamaCppDgxSparkExecutionPlan({
         ...value,
@@ -714,12 +956,6 @@ describe("llama.cpp DGX Spark qualification contract", () => {
         },
       }),
     ).toThrow("protocol probes are invalid");
-    expect(() =>
-      parseLlamaCppDgxSparkExecutionPlan({
-        ...value,
-        qualification: { ...value.qualification, requestGuard: "disabled" },
-      }),
-    ).toThrow("request-guard activation is invalid");
   });
 
   it("accepts one bounded receipt with only allowlisted workflow, image, model, and Spark evidence (#8260)", () => {
@@ -904,21 +1140,6 @@ describe("llama.cpp DGX Spark qualification contract", () => {
         {
           ...receipt(),
           probes: { ...receipt().probes, health: { httpStatus: 503, ok: false } },
-        },
-        evidenceIdentity(),
-      ),
-    ).toThrow("probes did not pass");
-    expect(() =>
-      parseLlamaCppDgxSparkQualificationReceipt(
-        {
-          ...receipt(),
-          probes: {
-            ...receipt().probes,
-            requestBodyLimit: {
-              ...receipt().probes.requestBodyLimit,
-              continuationHealthHttpStatus: 503,
-            },
-          },
         },
         evidenceIdentity(),
       ),

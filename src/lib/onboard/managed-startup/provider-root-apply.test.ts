@@ -10,6 +10,10 @@ import {
 import { createPodmanRuntimeProviderBundle } from "../runtime-provider/podman";
 import type { RuntimeProviderBundle } from "../runtime-provider/contract";
 import {
+  DirectSandboxContainerNotFoundError,
+  DirectSandboxFallbackUnavailableError,
+} from "../runtime-provider/privileged-sandbox-control-errors";
+import {
   PODMAN_MANAGED_LABEL,
   PODMAN_SANDBOX_CONTAINER_PREFIX,
   PODMAN_SANDBOX_ID_LABEL,
@@ -31,7 +35,159 @@ const IMAGE_ID = `sha256:${"b".repeat(64)}`;
 const SANDBOX_ID = "sandbox-podman-managed";
 const SANDBOX_NAME = "managed-podman";
 
+function createDockerRootApplyFixture(
+  resolveTarget: (input: { readonly timeoutMs?: number }) => { resourceHandle: string },
+) {
+  const labels = {
+    "openshell.ai/managed-by": "openshell",
+    "openshell.ai/sandbox-name": SANDBOX_NAME,
+    "openshell.ai/sandbox-id": SANDBOX_ID,
+    "openshell.ai/sandbox-workspace": "default",
+  };
+  const execute = vi.fn((input: { readonly command: readonly string[] }) => ({
+    status: 0,
+    stdout: input.command.includes("--shared-state-transaction-status") ? "pending\n" : "",
+    stderr: "",
+  }));
+  const runtimeProvider = {
+    identity: { id: "docker" },
+    lifecycle: {
+      supported: true,
+      privilegedSandboxControl: { resolveTarget, execute },
+    },
+    containerEngine: {
+      supported: true,
+      identities: [{ operation: "sandbox-lifecycle" }],
+      capture: () => ({
+        status: 0,
+        stdout: JSON.stringify([
+          {
+            Id: CONTAINER_ID,
+            Image: IMAGE_ID,
+            Config: { Labels: labels },
+            State: { Dead: false, Paused: false, Restarting: false, Running: true },
+          },
+        ]),
+        stderr: "",
+      }),
+    },
+  } as unknown as RuntimeProviderBundle;
+  const request = createManagedStartupRootApplyRequest({
+    agent: "openclaw",
+    corporateCaB64: Buffer.from(MANAGED_STARTUP_E2E_CORPORATE_CA_PEM, "utf8").toString("base64"),
+    encodedProfile: encodeManagedStartupProfile(
+      managedStartupE2eProfile("openclaw", false, true, true),
+    ),
+  });
+  return { request, runtimeProvider };
+}
+
 describe("provider-owned managed startup root application", () => {
+  it("waits for the exact OpenShell container to appear after create returns", () => {
+    const resolveTarget = vi
+      .fn<() => { resourceHandle: string }>()
+      .mockImplementationOnce(() => {
+        throw new DirectSandboxContainerNotFoundError("container absent");
+      })
+      .mockImplementationOnce(() => {
+        throw new DirectSandboxContainerNotFoundError("container absent");
+      })
+      .mockReturnValue({ resourceHandle: CONTAINER_ID });
+    const { request, runtimeProvider } = createDockerRootApplyFixture(resolveTarget);
+    const sleep = vi.fn();
+
+    const transaction = applyProviderManagedStartupRootRequest(
+      {
+        runtimeProvider,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
+        bootstrapIdentity: "c".repeat(64),
+        request,
+        environment: {},
+      },
+      { sleep },
+    );
+
+    expect(transaction?.containerId).toBe(CONTAINER_ID);
+    expect(resolveTarget).toHaveBeenCalledTimes(3);
+    expect(sleep.mock.calls).toEqual([[250], [250]]);
+  });
+
+  it("fails with bounded evidence when the exact OpenShell container stays absent", () => {
+    const resolveTarget = vi.fn(() => {
+      throw new DirectSandboxContainerNotFoundError("container absent");
+    });
+    const { request, runtimeProvider } = createDockerRootApplyFixture(resolveTarget);
+    const sleep = vi.fn();
+
+    expect(() =>
+      applyProviderManagedStartupRootRequest(
+        {
+          runtimeProvider,
+          sandboxName: SANDBOX_NAME,
+          sandboxId: SANDBOX_ID,
+          bootstrapIdentity: "c".repeat(64),
+          request,
+          environment: {},
+        },
+        { sleep },
+      ),
+    ).toThrow(/remained absent after 21 observations over \d+ms \(budget 5000ms\)/u);
+    expect(resolveTarget).toHaveBeenCalledTimes(21);
+    expect(sleep).toHaveBeenCalledTimes(20);
+  });
+
+  it("bounds slow container discovery by the remaining handoff deadline", () => {
+    let nowMs = 10_000;
+    const resolveTarget = vi.fn((input: { readonly timeoutMs?: number }) => {
+      nowMs += input.timeoutMs === 5_000 ? 3_000 : 2_000;
+      throw new DirectSandboxContainerNotFoundError("container absent");
+    });
+    const { request, runtimeProvider } = createDockerRootApplyFixture(resolveTarget);
+    const sleep = vi.fn();
+
+    expect(() =>
+      applyProviderManagedStartupRootRequest(
+        {
+          runtimeProvider,
+          sandboxName: SANDBOX_NAME,
+          sandboxId: SANDBOX_ID,
+          bootstrapIdentity: "c".repeat(64),
+          request,
+          environment: {},
+        },
+        { now: () => nowMs, sleep },
+      ),
+    ).toThrow(/remained absent after 2 observations over 5000ms \(budget 5000ms\)/u);
+    expect(resolveTarget).toHaveBeenCalledTimes(2);
+    expect(resolveTarget.mock.calls.map(([input]) => input.timeoutMs)).toEqual([5_000, 2_000]);
+    expect(sleep.mock.calls).toEqual([[250]]);
+  });
+
+  it("does not retry ambiguous container ownership", () => {
+    const resolveTarget = vi.fn(() => {
+      throw new DirectSandboxFallbackUnavailableError("ambiguous container ownership");
+    });
+    const { request, runtimeProvider } = createDockerRootApplyFixture(resolveTarget);
+    const sleep = vi.fn();
+
+    expect(() =>
+      applyProviderManagedStartupRootRequest(
+        {
+          runtimeProvider,
+          sandboxName: SANDBOX_NAME,
+          sandboxId: SANDBOX_ID,
+          bootstrapIdentity: "c".repeat(64),
+          request,
+          environment: {},
+        },
+        { sleep },
+      ),
+    ).toThrow(/ambiguous container ownership/u);
+    expect(resolveTarget).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("retries a failed hold release on resume through the same exact Podman runtime", () => {
     const calls: Array<{ args: readonly string[]; input?: Buffer }> = [];
     let committed = false;

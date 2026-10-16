@@ -13,8 +13,16 @@ content:
 Use the custom OpenAI-compatible provider for servers that implement `/v1/chat/completions` or a compatible `/v1/responses` API.
 Examples include vLLM, TensorRT-LLM, llama.cpp, LocalAI, and other compatible servers.
 
+<AgentOnly variant="openclaw,hermes">
 The agent connects to `inference.local` inside the sandbox.
 OpenShell forwards that traffic to the endpoint configured during onboarding.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+New Deep Agents Code sandboxes use sandbox-attached OpenShell providers for qualified host-local endpoints.
+The agent uses the recorded endpoint and a credential reference; OpenShell supplies the credential at egress.
+Other compatible endpoints retain the shared `inference.local` route.
+Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
+</AgentOnly>
 
 ## Start the Server
 
@@ -62,7 +70,14 @@ Use a host-routable URL such as `http://localhost:8000/v1` when you want onboard
 To qualify for automatic rewriting, an HTTP endpoint URL must use the loopback host `localhost`, `127.0.0.1`, or `[::1]`.
 Automatic rewriting is limited to the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) and ports `11434` and `11435`.
 NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
+<AgentOnly variant="openclaw,hermes">
 Sandbox inference requests continue to use the base `inference.local` policy, so the managed compatible-endpoint route does not require adding the `local-inference` preset.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+For qualified host-local endpoints, the attached provider profile authorizes the recorded endpoint and the managed DCode runtime binaries.
+Other compatible endpoints use the base `inference.local` policy.
+Neither path requires adding the `local-inference` preset.
+</AgentOnly>
 For authenticated endpoints, NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
 Those authenticated URLs require a separately compatible runtime topology and network policy.
 This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox; if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.

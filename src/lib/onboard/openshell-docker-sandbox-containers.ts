@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dockerCapture, dockerRun } from "../adapters/docker";
+import { dockerCapture, dockerLogs, dockerRun } from "../adapters/docker";
 import {
   inspectDockerSandboxIdentities,
   type DockerSandboxIdentityObservation,
 } from "../adapters/docker/inspect";
+import { captureDockerContainerFailureEvidence } from "./compute/docker-container-failure-evidence";
 import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
@@ -76,6 +77,69 @@ export function findOpenShellDockerSandboxContainerIds(
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+/**
+ * One deadline for discovery, inspection, and log reads, so diagnostics delay
+ * rollback by at most this long even when Docker stalls.
+ */
+const SANDBOX_FAILURE_OUTPUT_BUDGET_MS = 4_000;
+
+type SandboxFailureOutputDeps = Pick<
+  DockerGpuPatchDeps,
+  "dockerCapture" | "dockerLogs" | "dockerRun"
+> & { readonly now?: () => number };
+
+/**
+ * Capture redacted recent output from one sandbox container before rollback
+ * can remove or replace it. Use the exact replacement container when the
+ * caller owns one; otherwise require exactly one OpenShell-labeled container.
+ *
+ * SOURCE_OF_TRUTH_REVIEW
+ * invalidState: OpenShell 0.0.116 writes supervisor startup failures, such as
+ *   a Landlock hard_requirement error, only to the sandbox container's stderr;
+ *   neither `openshell logs` nor sandbox status carries the reason (#13178).
+ * sourceBoundary: captureDockerContainerFailureEvidence owns bounded Docker
+ *   inspect, log, and redaction behavior.
+ * whyNotSourceFix: the supervisor runs in the pinned external OpenShell
+ *   release; OpenShell 0.1.x reports the supervisor log tail in sandbox status.
+ * regressionTest: openshell-docker-sandbox-containers.test.ts and
+ *   onboard-sandbox-create-failure.test.ts.
+ * removalCondition: remove once the OpenShell pin reaches 0.1.0.
+ */
+export function captureOpenShellDockerSandboxFailureOutput(
+  sandboxName: string,
+  expectedContainerId: string | null,
+  deps: SandboxFailureOutputDeps = {},
+): string | null {
+  try {
+    const now = deps.now ?? Date.now;
+    const deadlineMs = now() + SANDBOX_FAILURE_OUTPUT_BUDGET_MS;
+    let containerId = expectedContainerId;
+    if (!containerId) {
+      const containers = queryOpenShellDockerSandboxContainers(
+        sandboxName,
+        { dockerRun: deps.dockerRun ?? dockerRun },
+        Math.min(2_000, deadlineMs - now()),
+      );
+      if (!containers.ok || containers.ids.length !== 1) return null;
+      containerId = containers.ids[0];
+    }
+    const evidence = captureDockerContainerFailureEvidence(
+      containerId,
+      {
+        dockerCapture: deps.dockerCapture ?? dockerCapture,
+        dockerLogs: deps.dockerLogs ?? dockerLogs,
+      },
+      { deadlineMs, now },
+    );
+    // Opaque credentials are redacted only after inspect identifies them;
+    // without that, pattern redaction alone could print an opaque value.
+    if (!evidence.inspectRedactionApplied) return null;
+    return evidence.redactedLogTail || null;
+  } catch {
+    return null;
+  }
 }
 
 export type OpenShellDockerSandboxContainerQuery =
@@ -223,12 +287,17 @@ type ExactDockerContainerCleanupDeps = {
 
 export function inspectDockerSandboxNameLabeledContainers(
   sandboxName: string,
+  inspect?: Parameters<typeof inspectDockerSandboxIdentities>[2],
 ): DockerSandboxIdentityObservation {
-  return inspectDockerSandboxIdentities(`${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`, {
-    managedBy: OPENSHELL_MANAGED_BY_LABEL,
-    workspace: OPENSHELL_SANDBOX_WORKSPACE_LABEL,
-    sandboxId: OPENSHELL_SANDBOX_ID_LABEL,
-  });
+  return inspectDockerSandboxIdentities(
+    `${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
+    {
+      managedBy: OPENSHELL_MANAGED_BY_LABEL,
+      workspace: OPENSHELL_SANDBOX_WORKSPACE_LABEL,
+      sandboxId: OPENSHELL_SANDBOX_ID_LABEL,
+    },
+    inspect,
+  );
 }
 
 function exactCleanupContainerIds(
