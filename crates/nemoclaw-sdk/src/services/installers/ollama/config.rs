@@ -18,6 +18,11 @@ pub struct ManagedOllama {
         skip_serializing_if = "crate::services::ServiceUpdatePolicy::is_preserve"
     )]
     pub update_policy: crate::services::ServiceUpdatePolicy,
+    /// Image metadata, scheduling requests, and retained-volume settings for managed Kubernetes or OpenShift only. Rejected for Docker and Podman.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "crate::services::KubernetesService")]
+    #[schemars(extend("x-nemoclaw-required" = "With a managed Kubernetes or OpenShift gateway"))]
+    pub kubernetes: Option<crate::services::KubernetesService>,
     /// Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServiceContainer")]

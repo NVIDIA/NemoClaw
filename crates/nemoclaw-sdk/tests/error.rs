@@ -33,6 +33,22 @@ fn workload_details_are_single_line_bounded_and_redact_token_like_runs() {
 }
 
 #[test]
+fn resource_details_preserve_only_the_exact_known_name_outside_credentials() {
+    let name = "nc-0123456789abcdef-model-0123456789abcdef";
+    let detail = format!(
+        "Pod {name:?}\n\u{1b}[31m prefix{name} {name}-suffix other-0123456789abcdef0123456789abcdef Bearer {name} api_key='{name}' {}",
+        "diagnostic ".repeat(200)
+    );
+    let safe = ObservationError::sanitized_resource_detail(&detail, name);
+    assert!(safe.starts_with(&format!("Pod {name:?}")), "{safe}");
+    assert_eq!(safe.matches(name).count(), 1, "{safe}");
+    assert!(!safe.contains("other-0123456789abcdef0123456789abcdef"));
+    assert!(safe.len() <= 1024);
+    assert!(safe.bytes().all(|byte| (b' '..=b'~').contains(&byte)));
+    assert!(!ObservationError::sanitized_detail(&detail).contains(name));
+}
+
+#[test]
 fn wrapped_sdk_errors_preserve_their_typed_sources_and_messages() {
     let diagnostic = nemoclaw_runtime::config::ConfigError::new("invalid configuration");
     for configuration in [

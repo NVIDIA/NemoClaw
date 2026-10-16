@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bindings, observations, and the safe diagnostic categories backends report.
 
-use regex::Regex;
+use regex::{Captures, Regex, Replacer};
 use std::{fmt, sync::LazyLock};
 
+/// Identity that must survive refresh, independently of configuration drift.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Binding {
     owner: String,
@@ -62,11 +63,43 @@ pub enum ObservationError {
     Extension,
     Incomplete,
     BindingMismatch,
+    /// An identity or authored-field mismatch, without expected or observed values.
+    KubernetesObjectMismatch {
+        kind: String,
+        namespace: String,
+        name: String,
+        field: &'static str,
+    },
     /// A fixed, non-secret diagnostic from an owning backend.
     Backend(&'static str),
     Rejected {
         operation: &'static str,
         code: &'static str,
+        detail: Box<str>,
+    },
+    /// The owned model Pod's runtime stopped or cannot start.
+    ModelRuntimeStopped {
+        namespace: String,
+        name: String,
+        reason: &'static str,
+        exit_code: Option<i32>,
+        detail: Box<str>,
+    },
+    ModelScheduling {
+        name: String,
+        detail: Box<str>,
+    },
+    ModelUpdateRefused {
+        name: String,
+    },
+    UnrecordedResource {
+        kind: String,
+        namespace: String,
+        name: String,
+    },
+    Admission {
+        kind: String,
+        name: String,
         detail: Box<str>,
     },
     Hardware(nemoclaw_runtime::hardware::HardwareDiagnostic),
@@ -88,11 +121,71 @@ pub enum ObservationError {
 impl fmt::Display for ObservationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::KubernetesObjectMismatch {
+                kind,
+                namespace,
+                name,
+                field,
+            } => write!(
+                f,
+                "Kubernetes {} {}/{} does not match its saved binding at {field}; resources retained",
+                kind.escape_default(),
+                namespace.escape_default(),
+                name.escape_default()
+            ),
             Self::Rejected {
                 operation,
                 code,
                 detail,
             } => write!(f, "OpenShell {operation} rejected ({code}): {detail}"),
+            Self::UnrecordedResource {
+                kind,
+                namespace,
+                name,
+            } => write!(
+                f,
+                "Kubernetes {kind} {namespace}/{name} may have been created before its identity was recorded; verify and remove that object before retrying; resources retained"
+            ),
+            Self::Admission { kind, name, detail } => {
+                write!(f, "Kubernetes rejected {kind} {name}: {detail}")
+            }
+            Self::ModelScheduling { name, detail } => write!(
+                f,
+                "Kubernetes model Pod {} cannot be scheduled: {detail}; resources retained; correct scheduling constraints or capacity and apply again",
+                name.escape_default()
+            ),
+            Self::ModelUpdateRefused { name } => write!(
+                f,
+                "Kubernetes model Pod {} is preserved by service updatePolicy: Preserve; replacing it requires explicit updatePolicy: Recreate, which permits downtime if the replacement cannot start; Pod, configuration, and saved receipt retained",
+                name.escape_default()
+            ),
+            Self::ModelRuntimeStopped {
+                namespace,
+                name,
+                reason,
+                exit_code,
+                detail,
+            } => {
+                write!(
+                    f,
+                    "Kubernetes model Pod {}/{} ",
+                    namespace.escape_default(),
+                    name.escape_default()
+                )?;
+                if matches!(*reason, "ErrImageNeverPull" | "InvalidImageName") {
+                    write!(f, "cannot start: reason {reason}; storage retained")
+                } else {
+                    write!(
+                        f,
+                        "stopped: reason {reason}, exit code {}",
+                        exit_code.map_or_else(|| "unknown".into(), |code| code.to_string())
+                    )?;
+                    if !detail.is_empty() {
+                        write!(f, "; {detail}")?;
+                    }
+                    f.write_str("; inspect its runtime container logs; storage retained")
+                }
+            }
             Self::SandboxConfigurationRejected { reason } => write!(
                 f,
                 "OpenShell configuration rejected: {reason}; resources retained"
@@ -130,7 +223,14 @@ impl fmt::Display for ObservationError {
     }
 }
 
-impl std::error::Error for ObservationError {}
+impl std::error::Error for ObservationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::KubernetesObjectMismatch { .. } => Some(&Self::BindingMismatch),
+            _ => None,
+        }
+    }
+}
 
 static BEARER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+").expect("constant diagnostic bearer pattern")
@@ -146,6 +246,24 @@ static TOKENS: LazyLock<Regex> = LazyLock::new(|| {
 impl ObservationError {
     /// Bound backend diagnostics and remove credentials before they enter public errors.
     pub fn sanitized_detail(detail: &str) -> Box<str> {
+        Self::sanitize(detail, "[REDACTED]")
+    }
+
+    /// Preserve an exact non-secret resource name obtained from the request or
+    /// verified binding, never from the diagnostic. Credential fields remain redacted.
+    pub fn sanitized_resource_detail(detail: &str, resource_name: &str) -> Box<str> {
+        // Long generated object names resemble tokens. Only the caller's known
+        // name is exempt, after credential values have been removed.
+        Self::sanitize(detail, |token: &Captures<'_>| {
+            if &token[0] == resource_name {
+                resource_name
+            } else {
+                "[REDACTED]"
+            }
+        })
+    }
+
+    fn sanitize(detail: &str, tokens: impl Replacer) -> Box<str> {
         let printable: String = detail
             .chars()
             .map(|character| {
@@ -159,7 +277,7 @@ impl ObservationError {
         // Redact Bearer first: a key/value match alone would consume only the scheme.
         let hidden = BEARER.replace_all(&printable, "[REDACTED]");
         let hidden = CREDENTIALS.replace_all(&hidden, "[REDACTED]");
-        let hidden = TOKENS.replace_all(&hidden, "[REDACTED]");
+        let hidden = TOKENS.replace_all(&hidden, tokens);
         let mut result = hidden.split_whitespace().collect::<Vec<_>>().join(" ");
         if result.len() > 1024 {
             result.truncate(1021);

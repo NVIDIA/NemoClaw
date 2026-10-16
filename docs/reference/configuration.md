@@ -246,6 +246,7 @@ Paths:
 - `spec.sandboxes[].inferenceProviders[].credential`
 - `spec.sandboxes[].inferences.{key}.routes[].provider.credential`
 - `spec.sandboxes[].integrations.{key}.credential`
+- `spec.services.{key}.kubernetes.imageMetadata`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -571,6 +572,27 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `profile` | string | Yes | — | Development generates the scoped local authentication fixture. Existing production issuers use gateway.management: external. Constraints: `"development"`. |
+
+## KubernetesService
+
+One GPU model service in the managed gateway's namespace. Storage survives destroy.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.kubernetes`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `cpuRequestMillis` | integer | Yes | — | Requested CPU capacity in millicores. Must not exceed container.cpuLimitMillis. Constraints: minimum 1. |
+| `imageMetadata` | [Credential](#credential) | Yes | — | Environment reference to an absolute local OCI metadata bundle for the service image. Plan and apply verify its digest, Linux architecture, and runtime labels before changing cluster resources. Destroy does not read it. |
+| `memoryRequestGiB` | integer | Yes | — | Requested container memory in GiB. Must not exceed container.memoryLimitGiB. Constraints: minimum 1; maximum 8589934591. |
+| `nodeSelector` | map of string | No | — | Required node labels in addition to the model's declared CPU architecture. Constraints: keys: pattern `^(?:(?=[^/]{1,253}/)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*/)?[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$(?![\s\S])`; values: pattern `^(?:[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)?$(?![\s\S])`. |
+| `runtimeClassName` | string | No | — | Existing RuntimeClass to use for the model Pod. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$(?![\s\S])`; maximum characters 253. |
+| `storageClass` | string | No | — | StorageClass for retained volumes. Omission selects the cluster default. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$(?![\s\S])`; maximum characters 253. |
+| `storageGiB` | integer | Yes | — | Retained model-volume capacity in GiB. Must cover prepared data plus a 16 GiB working reserve; allow additional space for model downloads and retained snapshots. Constraints: minimum 16; maximum 8589934591. |
+| `tolerations` | array of [ServiceToleration](#servicetoleration) | No | — | Node taints the model Pod may tolerate. |
 
 ## ManagedKubernetes
 
@@ -1103,6 +1125,7 @@ Managed Ollama daemon and selected model.
 | `image` | string | Yes | — | Immutable runtime image containing Ollama and the NemoClaw supervisor. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollama"`. |
+| `kubernetes` | [KubernetesService](#kubernetesservice) | With a managed Kubernetes or OpenShift gateway | — | Image metadata, scheduling requests, and retained-volume settings for managed Kubernetes or OpenShift only. Rejected for Docker and Podman. |
 | `memory` | [OllamaMemory](#ollamamemory) | No | — | GPU budget and resident memory-protection thresholds. |
 | `model` | [OllamaModel](#ollamamodel) | Yes | — | Selected immutable Ollama registry model. |
 | `placement` | [ServicePlacement](#serviceplacement) | No | — | Optional remote Docker placement. Requires publication. |
@@ -1137,6 +1160,7 @@ Managed vLLM runtime and immutable model snapshot.
 | `image` | string | Yes | — | Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"vllm"`. |
+| `kubernetes` | [KubernetesService](#kubernetesservice) | With a managed Kubernetes or OpenShift gateway | — | Image metadata, scheduling requests, and retained-volume settings for managed Kubernetes or OpenShift only. Rejected for Docker and Podman. |
 | `memory` | [Memory](#memory) | No | — | GPU budget and resident watchdog thresholds. Omission selects the SDK defaults. |
 | `model` | [Model](#model) | Yes | — | Public Hugging Face repository and immutable commit. |
 | `placement` | [ServicePlacement](#serviceplacement) | With external gateway or Podman; paired with publication | — | SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication. |
@@ -1230,6 +1254,24 @@ Paths:
 |---|---|---|---|---|
 | `bindAddress` | string | Yes | — | Private host IPv4 address outside the service Docker subnet. Loopback is rejected. |
 | `endpoint` | string | Yes | — | Private HTTP inference URL reachable by OpenShell. Constraints: pattern `^http://.+:[0-9]+/v1$`. |
+
+## ServiceToleration
+
+One explicit Kubernetes node-taint toleration.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.kubernetes.tolerations[]`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `effect` | [TolerationEffect](#tolerationeffect) | No | — | Omission matches all taint effects. |
+| `key` | string | No | — | Taint key. An empty key requires Exists and matches every key. Constraints: `""` or pattern `^(?:(?=[^/]{1,253}/)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*/)?[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$(?![\s\S])`. |
+| `operator` | [TolerationOperator](#tolerationoperator) | Yes | — | Match the taint's value with Equal, or its presence with Exists. |
+| `tolerationSeconds` | integer | No | — | Optional eviction delay, valid only for NoExecute tolerations. Constraints: minimum 0; maximum 9223372036854775807. |
+| `value` | string | No | — | Value matched by Equal; Exists requires an empty value. Constraints: pattern `^(?:[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)?$(?![\s\S])`. |
 
 ## ServiceUpdatePolicy
 
@@ -1327,6 +1369,34 @@ Paths:
 | `ca` | [Credential](#credential) | Yes | — | Environment variable whose value names the local CA certificate file. |
 | `certificate` | [Credential](#credential) | Yes | — | Environment variable whose value names the local client certificate file. |
 | `key` | [Credential](#credential) | Yes | — | Environment variable whose value names the local client private-key file. |
+
+## TolerationEffect
+
+Node-taint effect matched by a toleration.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.kubernetes.tolerations[].effect`
+
+Accepted input: string.
+
+Constraints: `"NoSchedule"` or `"PreferNoSchedule"` or `"NoExecute"`.
+
+## TolerationOperator
+
+How a toleration matches a node taint.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.kubernetes.tolerations[].operator`
+
+Accepted input: string.
+
+Constraints: `"Equal"` or `"Exists"`.
 
 ## Tool
 

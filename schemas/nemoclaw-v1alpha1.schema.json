@@ -1171,6 +1171,73 @@
       ],
       "type": "object"
     },
+    "KubernetesService": {
+      "additionalProperties": false,
+      "description": "One GPU model service in the managed gateway's namespace. Storage survives destroy.",
+      "properties": {
+        "cpuRequestMillis": {
+          "description": "Requested CPU capacity in millicores. Must not exceed container.cpuLimitMillis.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "imageMetadata": {
+          "$ref": "#/$defs/Credential",
+          "description": "Environment reference to an absolute local OCI metadata bundle for the service image. Plan and apply verify its digest, Linux architecture, and runtime labels before changing cluster resources. Destroy does not read it."
+        },
+        "memoryRequestGiB": {
+          "description": "Requested container memory in GiB. Must not exceed container.memoryLimitGiB.",
+          "format": "uint64",
+          "maximum": 8589934591,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "nodeSelector": {
+          "additionalProperties": {
+            "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)?$(?![\\s\\S])",
+            "type": "string"
+          },
+          "description": "Required node labels in addition to the model's declared CPU architecture.",
+          "propertyNames": {
+            "pattern": "^(?:(?=[^/]{1,253}/)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*/)?[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$(?![\\s\\S])"
+          },
+          "type": "object"
+        },
+        "runtimeClassName": {
+          "description": "Existing RuntimeClass to use for the model Pod.",
+          "maxLength": 253,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$(?![\\s\\S])",
+          "type": "string"
+        },
+        "storageClass": {
+          "description": "StorageClass for retained volumes. Omission selects the cluster default.",
+          "maxLength": 253,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$(?![\\s\\S])",
+          "type": "string"
+        },
+        "storageGiB": {
+          "description": "Retained model-volume capacity in GiB. Must cover prepared data plus a 16 GiB working reserve; allow additional space for model downloads and retained snapshots.",
+          "format": "uint64",
+          "maximum": 8589934591,
+          "minimum": 16,
+          "type": "integer"
+        },
+        "tolerations": {
+          "description": "Node taints the model Pod may tolerate.",
+          "items": {
+            "$ref": "#/$defs/ServiceToleration"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "imageMetadata",
+        "cpuRequestMillis",
+        "memoryRequestGiB",
+        "storageGiB"
+      ],
+      "type": "object"
+    },
     "ManagedKubernetes": {
       "additionalProperties": false,
       "description": "Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context, and installs nothing cluster-wide: Agent Sandbox and a default StorageClass must already exist. `runtime.provider: openshift` selects the OpenShift profile.",
@@ -2564,6 +2631,11 @@
               "description": "Supported installer selected by this service definition.",
               "type": "string"
             },
+            "kubernetes": {
+              "$ref": "#/$defs/KubernetesService",
+              "description": "Image metadata, scheduling requests, and retained-volume settings for managed Kubernetes or OpenShift only. Rejected for Docker and Podman.",
+              "x-nemoclaw-required": "With a managed Kubernetes or OpenShift gateway"
+            },
             "memory": {
               "$ref": "#/$defs/OllamaMemory",
               "description": "GPU budget and resident memory-protection thresholds."
@@ -2873,6 +2945,11 @@
               "description": "Supported installer selected by this service definition.",
               "type": "string"
             },
+            "kubernetes": {
+              "$ref": "#/$defs/KubernetesService",
+              "description": "Image metadata, scheduling requests, and retained-volume settings for managed Kubernetes or OpenShift only. Rejected for Docker and Podman.",
+              "x-nemoclaw-required": "With a managed Kubernetes or OpenShift gateway"
+            },
             "memory": {
               "$ref": "#/$defs/Memory",
               "description": "GPU budget and resident watchdog thresholds. Omission selects the SDK defaults."
@@ -3145,6 +3222,96 @@
       "required": [
         "endpoint",
         "bindAddress"
+      ],
+      "type": "object"
+    },
+    "ServiceToleration": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "key": {
+                "minLength": 1
+              }
+            },
+            "required": [
+              "key"
+            ]
+          },
+          "if": {
+            "properties": {
+              "operator": {
+                "const": "Exists"
+              }
+            },
+            "required": [
+              "operator"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "const": ""
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "tolerationSeconds"
+            ]
+          },
+          "then": {
+            "properties": {
+              "effect": {
+                "const": "NoExecute"
+              }
+            },
+            "required": [
+              "effect"
+            ]
+          }
+        }
+      ],
+      "description": "One explicit Kubernetes node-taint toleration.",
+      "properties": {
+        "effect": {
+          "$ref": "#/$defs/TolerationEffect",
+          "description": "Omission matches all taint effects."
+        },
+        "key": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "pattern": "^(?:(?=[^/]{1,253}/)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*/)?[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$(?![\\s\\S])"
+            }
+          ],
+          "description": "Taint key. An empty key requires Exists and matches every key.",
+          "type": "string"
+        },
+        "operator": {
+          "$ref": "#/$defs/TolerationOperator",
+          "description": "Match the taint's value with Equal, or its presence with Exists."
+        },
+        "tolerationSeconds": {
+          "description": "Optional eviction delay, valid only for NoExecute tolerations.",
+          "format": "uint64",
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "value": {
+          "description": "Value matched by Equal; Exists requires an empty value.",
+          "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)?$(?![\\s\\S])",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operator"
       ],
       "type": "object"
     },
@@ -3519,6 +3686,23 @@
       ],
       "type": "object"
     },
+    "TolerationEffect": {
+      "description": "Node-taint effect matched by a toleration.",
+      "enum": [
+        "NoSchedule",
+        "PreferNoSchedule",
+        "NoExecute"
+      ],
+      "type": "string"
+    },
+    "TolerationOperator": {
+      "description": "How a toleration matches a node taint.",
+      "enum": [
+        "Equal",
+        "Exists"
+      ],
+      "type": "string"
+    },
     "Tool": {
       "additionalProperties": false,
       "description": "Executable identity inside the runtime image; this is not a shell command.",
@@ -3798,6 +3982,27 @@
       }
     },
     {
+      "else": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "services": {
+                "additionalProperties": {
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "kubernetes"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       "if": {
         "properties": {
           "spec": {

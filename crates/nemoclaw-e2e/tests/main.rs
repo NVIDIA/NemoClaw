@@ -22,6 +22,8 @@ mod export_observations;
 mod fabric_deployment;
 #[path = "fabric_live.rs"]
 mod fabric_live;
+#[path = "fixture_keepalive.rs"]
+mod fixture_keepalive;
 #[path = "health.rs"]
 mod health;
 // Unix only, as before it moved here from nemoclaw-sdk.

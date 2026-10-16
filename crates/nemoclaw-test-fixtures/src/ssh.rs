@@ -46,7 +46,8 @@ pub fn relay(address: SocketAddr) -> ExitCode {
     let mut downstream = stream;
     let mut stdout = std::io::stdout().lock();
     let mut buffer = [0; 8192];
-    // The fixture closes after each response; relay until it does.
+    // The engine client sends `Connection: close`, so the fixture closes
+    // after its response; relay until it does.
     loop {
         match downstream.read(&mut buffer) {
             Ok(0) | Err(_) => break,

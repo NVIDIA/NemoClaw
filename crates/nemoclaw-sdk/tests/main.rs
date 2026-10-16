@@ -117,6 +117,8 @@ mod kubernetes_operations;
 mod kubernetes_read_failures;
 #[path = "kubernetes_receipt.rs"]
 mod kubernetes_receipt;
+#[path = "kubernetes_services.rs"]
+mod kubernetes_services;
 #[path = "kubernetes_storage.rs"]
 mod kubernetes_storage;
 #[path = "managed_auth.rs"]

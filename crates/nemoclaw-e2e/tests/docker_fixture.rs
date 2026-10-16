@@ -24,7 +24,7 @@ async fn fixture_preserves_request_bytes_and_recovers_after_a_lost_reply() {
         let mut socket = tokio::net::UnixStream::connect(path).await.unwrap();
         socket
             .write_all(
-                b"POST /v1.53/containers/create?name=owned HTTP/1.1\r\nContent-Length: 4\r\n\r\n",
+                b"POST /v1.53/containers/create?name=owned HTTP/1.1\r\nContent-Length: 4\r\nConnection: close\r\n\r\n",
             )
             .await
             .unwrap();
@@ -67,7 +67,7 @@ async fn disconnected_clients_do_not_stop_the_engine_fixture() {
         let response = tokio::time::timeout(std::time::Duration::from_secs(2), async {
             let mut client = tokio::net::UnixStream::connect(path).await.unwrap();
             client
-                .write_all(b"GET /version HTTP/1.1\r\n\r\n")
+                .write_all(b"GET /version HTTP/1.1\r\nConnection: close\r\n\r\n")
                 .await
                 .unwrap();
             let mut response = String::new();

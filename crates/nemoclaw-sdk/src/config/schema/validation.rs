@@ -343,6 +343,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     ]);
     defs["AgentExecution"]["minProperties"] = json!(1);
     crate::services::constrain_schema(defs, normalized);
+    crate::services::cluster_config::constrain(defs, normalized);
 
     root["allOf"] = json!([{
         "if": {"not": at("spec/gateway/runtime/provider", json!({"const":"podman"}), true)},
@@ -374,7 +375,8 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                 at("spec/services", json!({"maxProperties":0}), false)
             ],
             "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
-        }
+        },
+        "else": at("spec/services", json!({"additionalProperties": forbid(&["kubernetes"])}), false)
     }));
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
