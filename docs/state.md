@@ -35,10 +35,8 @@ Use authenticated [native access](interfaces.md) for the selected deployment.
 |---|---|
 | OpenClaw configuration and state | `/sandbox/.openclaw`; includes `openclaw.json` and, when a dashboard is declared, `interface-token` |
 | Declared OpenClaw agent’s working files | `/sandbox/workspaces/<agent-name>` |
-| Hermes service mode API and agent state | `/sandbox/.hermes`; includes the API `interface-token` |
-| Hermes service mode dashboard and browser-chat state | `/sandbox/.hermes/profiles/dashboard-home`; separate from the API conversation |
 | Hermes Relay traces | `/sandbox/artifacts/relay`; per-session event/trajectory files; deleted with the sandbox |
-| Hermes session mode home | `.fabric/hermes/runtimes/<runtime-id>` under the configured Fabric artifact root; distinct from the local Hermes API/dashboard homes |
+| Hermes home | `.fabric/hermes/runtimes/<runtime-id>` under the configured Fabric artifact root |
 | Pi conversation | Held in the running Pi process; switching declared choices preserves it, while applying configuration changes or restarting the runtime loses it |
 
 The [OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw) and [interface guide](interfaces.md) define these locations.

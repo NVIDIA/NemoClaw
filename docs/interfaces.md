@@ -5,6 +5,7 @@
 
 The OpenShell gateway manages sandbox access.
 The OpenClaw gateway runs inside an OpenClaw sandbox and serves its agent and optional dashboard.
+Hermes's native API, dashboard and browser TUI are unavailable until Fabric's Hermes adapter provides them ([#13321](https://github.com/NVIDIA/NemoClaw/issues/13321)).
 
 ## Select the Gateway and Workspace
 
@@ -113,47 +114,3 @@ These codes require an agent image built from the bundle's source revision.
 A successful descriptor plan does not establish membership in Pi's runtime model catalog.
 Correct the reported conflict before reapplying; do not delete retained state to hide drift.
 Offline configuration tests do not qualify browser rendering or public dashboard access.
-
-## Hermes API, Dashboard, and Browser TUI
-
-The [Hermes interface example](../examples/hermes-interfaces.yaml) selects `nvidia.fabric.hermes` and declares native interface settings in `harness.settings`:
-
-```yaml
-settings:
-  mode: service
-  interfaces:
-    api:
-      port: 8643
-    dashboard:
-      enabled: true
-      port: 18800
-      internalPort: 19120
-      tui:
-        enabled: true
-```
-
-Fabric's descriptor and adapter own accepted ports, defaults, authentication, and the relationship between API and dashboard sessions.
-NemoClaw does not select a different adapter because tracing or search is configured.
-Native interface and telemetry options must be accepted by the exact adapter installed in the selected image.
-See [native controls](agents.md#native-controls-at-initialization) for their ownership boundary.
-
-### Build and Connect
-
-Follow the [image build prerequisites](build.md#build-agent-images) and build from the repository root:
-
-```sh
-cargo images build --platform linux/arm64 hermes
-```
-
-Replace the example's image digest and deployment-specific values, then apply using the [desired-state workflow](usage.md).
-After [selecting the gateway and workspace](#select-the-gateway-and-workspace), run each required forward in its own terminal:
-
-```sh
-openshell forward service assistant --target-port 18800 --local 127.0.0.1:18800
-openshell forward service assistant --target-port 8643 --local 127.0.0.1:8643
-```
-
-Keep forwarding bound to loopback.
-Follow the installed Fabric adapter's authentication contract before using either service.
-Native browser login, session continuity and credential rotation have not been tested ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
-Stopping a client forward does not stop the managed sandbox or Fabric runtime.

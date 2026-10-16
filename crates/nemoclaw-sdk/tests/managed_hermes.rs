@@ -12,7 +12,7 @@ fn hermes_accepts_managed_gateway_and_inference() {
         let mut value: Value = serde_saphyr::from_str(source).unwrap();
         value["spec"]["sandboxes"][0]["harness"]["kind"] = "hermes".into();
         let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice())
-            .expect("Hermes native server supports managed services");
+            .expect("Hermes accepts a managed gateway and inference");
         assert_eq!(
             Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
             document

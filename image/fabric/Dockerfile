@@ -125,7 +125,6 @@ COPY image/fabric/TAVILY-NOTICE.md /app/dist/extensions/tavily/NOTICE.md
 USER node
 
 FROM base AS hermes-assets
-COPY --from=node /node/ /
 ARG HERMES_REVISION=29112bef099274229cadff79cdff7bf7b99c4b77
 ARG HERMES_SHA256=76b99a8be9b77d66833c3cfe2b35c6d6f6a58e4ff9637ef8effcfc1f420ab35a
 ADD --checksum=sha256:${HERMES_SHA256} https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${HERMES_REVISION} /sources/hermes.tar.gz
@@ -135,10 +134,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf
     && mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && patch --batch --fuzz=0 -d /opt/hermes -p1 < /sources/metadata-propagate.patch \
     && cp /sources/HERMES-NOTICE.md /opt/hermes/NEMOCLAW-NOTICE.md
-RUN --mount=type=cache,target=/root/.npm \
-    npm install --global npm@11.17.0 \
-    && cd /opt/hermes/web && npm ci --ignore-scripts && npm run build \
-    && cd /opt/hermes/ui-tui && npm ci --ignore-scripts && npm run build:ink && npm run build
 
 FROM interactive AS hermes
 COPY --from=hermes-assets /opt/hermes /opt/hermes

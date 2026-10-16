@@ -287,7 +287,6 @@ fixtures! {
     fabric_pi => "fabric-pi",
     fabric_remote_agent => "fabric-remote-agent",
     hermes_auth => "hermes-auth",
-    hermes_interfaces => "hermes-interfaces",
     inference_tuning => "inference-tuning",
     inline_inference => "inline-inference",
     local => "local",

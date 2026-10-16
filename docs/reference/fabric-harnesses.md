@@ -34,7 +34,7 @@ External services remain operated by their owners; NemoClaw still owns its deplo
 Build an image for the selected harness using [the agent image procedure](../build.md#build-agent-images).
 Replace example identities, endpoints, and local/placeholder image digests with your own values.
 Keep the image, schema, and bundle matched to the desired configuration.
-Hermes service mode is selected explicitly through its Fabric settings; [Relay tracing](../agents.md#hermes-relay-tracing) does not change the adapter identifier.
+[Hermes Relay tracing](../agents.md#hermes-relay-tracing) does not change the adapter identifier.
 
 The [configuration validator](../../crates/nemoclaw-sdk/src/config/validation.rs) checks deployment structure and transport contracts.
 [Fabric compatibility assessment](../../crates/nemoclaw-fabric/src/capabilities.rs) checks the advertised native constraints for both onboarding and OpenTofu planning.

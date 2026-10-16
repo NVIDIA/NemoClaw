@@ -233,23 +233,6 @@ fn openclaw_dashboard_should_work() {
 }
 
 #[test]
-fn hermes_api_dashboard_and_tui_should_work() {
-    let yaml = include_bytes!("../../../examples/hermes-interfaces.yaml");
-    let document = Document::parse(yaml.as_slice()).unwrap();
-    let desired = normalized(&document);
-    let interfaces = &desired["spec"]["sandboxes"][0]["harness"]["settings"]["interfaces"];
-    assert_eq!(
-        desired["spec"]["sandboxes"][0]["harness"]["kind"],
-        "nvidia.fabric.hermes"
-    );
-    assert_eq!(interfaces["api"]["port"], 8643);
-    assert_eq!(interfaces["dashboard"]["enabled"], true);
-    assert_eq!(interfaces["dashboard"]["port"], 18800);
-    assert_eq!(interfaces["dashboard"]["internalPort"], 19120);
-    assert_eq!(interfaces["dashboard"]["tui"]["enabled"], true);
-}
-
-#[test]
 fn brave_web_search_should_work() {
     let yaml = include_bytes!("../../../examples/openclaw-web-search.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();

@@ -91,7 +91,7 @@ class AgentImage(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in (prefix / "bin").glob("pip*")), [])
 
     def test_only_javascript_harnesses_carry_node(self):
-        # OpenClaw's CLI, Hermes's TUI, and the TypeScript Pi adapter run on Node.js.
+        # OpenClaw's CLI, Hermes's Node.js-based tools, and the TypeScript Pi adapter run on Node.js.
         expected = os.environ["NEMOCLAW_TEST_HARNESS"] in {"openclaw", "hermes", "pi"}
         self.assertEqual(shutil.which("node") is not None, expected)
         self.assertEqual(Path("/usr/local/lib/node_modules").exists(), expected)

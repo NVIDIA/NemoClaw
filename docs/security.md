@@ -46,7 +46,7 @@ Use the owning guide for the selected credential type:
 | Generated managed vLLM key | Private file in a separate retained credential volume, available to runtime root and engine administrators; recreation reuses it; retiring the container does not erase the key | [Managed service authentication](inference.md#authenticate-a-managed-vllm-service) |
 | Generated external-Ollama proxy key | Private credential volume, available to proxy root and engine administrators; retained across destroy/recreation and never forwarded to Ollama | [Ollama proxy](inference.md#use-external-ollama-through-a-managed-proxy) |
 | Brave or Tavily search key | Caller supplies the value; OpenShell holds it and replaces the agent's placeholder; destroy removes managed registrations but does not revoke the upstream key | [Brave web search](agents.md#brave-web-search), [Tavily web search](agents.md#tavily-web-search) |
-| Native OpenClaw/local Hermes interface tokens | Sandbox-user-readable native files; retained across process restarts, deleted with sandbox data; replace compromised credentials through a fresh deployment | [Agent interfaces](interfaces.md) |
+| Native OpenClaw interface token | Sandbox-user-readable native files; retained across process restarts, deleted with sandbox data; replace compromised credentials through a fresh deployment | [Agent interfaces](interfaces.md) |
 
 Removing a caller's environment variable does not revoke an upstream key or erase a credential retained by a gateway.
 Unchanged apply does not automatically detect changed values behind the same reference.
@@ -101,8 +101,7 @@ Before enabling export, identify who can read the collector's stored data and ho
 The current integration selects an existing collector; it does not provision or manage that retention policy.
 Experimental [Hermes Relay tracing](agents.md#hermes-relay-tracing) instead writes local sandbox artifacts without adding a collector or egress rule.
 Its full-payload setting is disabled, but trace contents still need privacy review before sharing; deleting the sandbox deletes those files.
-Relay with both explicit `interfaces` and Tavily search omitted selects the upstream adapter, which defaults to `HERMES_YOLO_MODE=1` and accepted hooks when unset; the local Hermes adapter's manual-approval configuration does not apply.
-Review this change in native control behavior before enabling the experimental mode.
+Fabric's Hermes adapter sets `HERMES_YOLO_MODE=1` and accepts hooks when they are unset, so Hermes does not ask for approval before running commands; rely on the sandbox policy for isolation.
 
 Privacy review and retention guidance for production tracing are tracked in [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643).
 

@@ -189,7 +189,7 @@ No single active configuration exercises every schema branch:
 | Inline provider or integration | [Inline provider](../examples/inline-inference.yaml), [inline integration](agents.md#brave-web-search) | A consumer cannot both inline and reference the same definition |
 | Managed Ollama or an existing endpoint | [Managed Ollama](../examples/managed-ollama.yaml), [external endpoint](../examples/inference-tuning.yaml) | Each provider selects one service connection; see the [Ollama deployment limits](inference.md#combine-local-and-hosted-providers) |
 | Existing Ollama through an authenticated proxy | [Proxy guide](inference.md#use-external-ollama-through-a-managed-proxy) | Alternative provider mode to managed vLLM |
-| Hermes authentication, interfaces, or Relay | [Authentication](../examples/hermes-auth.yaml), [interfaces](../examples/hermes-interfaces.yaml), [Relay](agents.md#hermes-relay-tracing) | Explicit Hermes interfaces can include Relay tracing |
+| Hermes authentication or Relay | [Authentication](../examples/hermes-auth.yaml), [Relay](agents.md#hermes-relay-tracing) | Relay tracing is Fabric public configuration, separate from provider authentication |
 | Pi model metadata | [Pi example](../examples/fabric-pi.yaml) | Accepted fields depend on the selected Fabric model settings schema |
 | Model preparation recipe | [Spark recipe](../examples/spark/spark-inline.yaml) | Separate model, image, and hardware contract |
 | External gateway credentials and mTLS | [Gateway fields](reference/configuration.md#gateway) | Managed gateways use local HTTP and reject these fields |

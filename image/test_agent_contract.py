@@ -33,7 +33,7 @@ class AgentContract(unittest.TestCase):
         self.assertFalse(REFERENCE, "native profile requires a production image")
         settings = {
             "openclaw": {"cli": "/app/openclaw.mjs"},
-            "hermes": {"mode": "service"},
+            "hermes": {},
             "pi": {},
         }[PROFILE]
         inference = self.enterContext(local_inference())
@@ -58,7 +58,7 @@ class AgentContract(unittest.TestCase):
             if PROFILE == "openclaw"
             else {"prompt": prompt, "model": "default"}
             if PROFILE == "pi"
-            # Hermes service mode takes text; the bridge unwraps this form.
+            # The bridge requires an object; Hermes's adapter serializes it as the prompt.
             else {"text": prompt}
         )
         return config, invocation, "fabric-native-ok", inference

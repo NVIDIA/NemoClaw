@@ -61,7 +61,6 @@ spec:
       harness:
         kind: nvidia.fabric.hermes
         settings:
-          mode: service
           plugins_enabled: [web/tavily]
           native_config:
             web:

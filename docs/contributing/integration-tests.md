@@ -245,7 +245,7 @@ docker run --rm --runtime=runc --network none --entrypoint /bin/sh nc-fabric:ope
 '
 ```
 
-For Hermes, select `nc-fabric:hermes`, adapter ID `nvidia.fabric.hermes`, and settings `{"mode":"service"}`.
+For Hermes, select `nc-fabric:hermes`, adapter ID `nvidia.fabric.hermes`, and settings `{}`.
 The script starts the installed native runtime, sends two turns to an isolated local inference fixture, and stops the runtime.
 Expect a JSON result with `result: passed`; the container is removed on exit.
 These checks use no live credentials or external model endpoints and do not qualify external search APIs.

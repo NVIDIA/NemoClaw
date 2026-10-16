@@ -45,7 +45,6 @@ Inside the sandbox, `fabric-agent invoke --agent NAME --input FILE` reads one JS
 Use `--input -` to read the object from stdin instead; see the [bridge commands](design/fabric-management.md#bridge-commands).
 A request can incur inference charges and affect retained agent history.
 Do not assume a universal prompt/result shape.
-An adapter that takes only a text prompt, today Hermes in `service` mode, receives `{"text": "..."}` from the bridge as the string itself; any other object is refused for it.
 No request walkthrough has been rehearsed yet ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 
 ### Run One Headless OpenClaw Request
@@ -196,14 +195,6 @@ Inference names using `tavily-search` or its registration prefix are reserved wh
 Unused definitions create no resources or credentials.
 Follow [credential retirement](security.md#credentials-and-authentication) when replacing or revoking the key.
 Tavily search has not been tested live through OpenShell ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
-
-## Hermes Native Server
-
-Fabric owns native server startup, interfaces, authentication, persisted state, and conversation behavior.
-NemoClaw manages the sandbox and submits the resolved public configuration to Fabric.
-The [Hermes interface example](../examples/hermes-interfaces.yaml) shows authored settings; [interface access](interfaces.md#hermes-api-dashboard-and-browser-tui) explains OpenShell forwarding.
-A started Fabric runtime does not by itself prove a healthy native HTTP listener or model response.
-Native file drift requires an observation contract supplied by Fabric; the generic runtime host does not infer it from remembered configuration.
 
 ## Pi Model Selection
 

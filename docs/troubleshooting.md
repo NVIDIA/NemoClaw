@@ -176,21 +176,13 @@ OpenClaw writes gateway stdout and stderr to its retained native home:
 openshell sandbox exec -n assistant -- tail -n 100 /sandbox/.openclaw/gateway.log
 ```
 
-The Hermes service mode writes its Fabric-owned API process output separately from dashboard sessions:
-
-```sh
-openshell sandbox exec -n assistant -- tail -n 100 /sandbox/.hermes/api.log
-```
-
 Expect the latest process output, which may be empty before the process emits a message.
 A missing file can mean startup stopped before opening the log; it does not establish that the sandbox or its data is absent.
 Use the original apply error and the [failure table](#identify-the-failure) to choose recovery.
 Do not replay an uncertain native invocation merely to reproduce a log entry.
-The [OpenClaw](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw) and [Hermes](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/hermes) adapters define these paths and append behavior.
-The selected Fabric settings determine Hermes' native runtime mode.
-[Relay trace artifacts](agents.md#hermes-relay-tracing) alone do not establish a native API process or `api.log`.
+The [OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw) defines this path and its append behavior.
 
-Log collection for other harnesses, Hermes dashboard logs and an inaccessible sandbox is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
+Log collection for other harnesses and an inaccessible sandbox is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
 
 ## Traces and Web Search
 

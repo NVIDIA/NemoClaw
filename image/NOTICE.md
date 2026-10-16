@@ -23,8 +23,8 @@ Pi's builder follows Fabric's focused installation recipe and packs its adapter,
 The runtime contains their packed code and npm's locked dependencies, including Pi's declared peers, without the Fabric source tests.
 Fabric owns those source tests.
 
-[`qualify_native.py`](qualify_native.py) and [`hermes_security.py`](hermes_security.py) run in built images from the image workflow.
-Both came from NeMo Fabric's `tests/native/` at the pinned revision; their headers record the source revision and every modification.
-They use only owned local processes and a simulated inference endpoint, so they do not establish external provider compatibility.
+[`qualify_native.py`](qualify_native.py) runs in built images from the image workflow.
+It came from NeMo Fabric's `tests/native/` at the pinned revision; its header records the source revision and every modification.
+It uses only owned local processes and a simulated inference endpoint, so they do not establish external provider compatibility.
 
 The [image metadata contract](../docs/design/fabric-management.md#image-metadata) describes the catalog labels and runtime manifests these recipes produce.

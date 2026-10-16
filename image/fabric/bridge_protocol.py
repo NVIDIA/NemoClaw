@@ -25,7 +25,6 @@ MESSAGES = {
     "health_observation_changed": "The runtime changed during the health observation.",
     "operational_unsupported": "Operational checks are deferred; use explicit invocation.",
     "streaming_unsupported": "Streaming invocation is not supported.",
-    "text_input_required": 'This agent takes a text prompt; send {"text": "..."} as the input.',
     "host_unavailable": "The runtime host is unavailable.",
     "host_stopping": "The runtime host is shutting down.",
     "runtime_unavailable": "No active runtime is available.",
