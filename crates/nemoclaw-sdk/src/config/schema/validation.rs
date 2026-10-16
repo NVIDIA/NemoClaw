@@ -333,8 +333,14 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     provider["then"] = json!({"properties": {"provider":{"const":"openai"},"endpoint": {"const": ""}}, "allOf": [forbid(&["credential"])]});
     provider["else"] =
         json!({"required": ["endpoint"], "properties": {"endpoint": {"pattern": "^https?://"}}});
+    // A key crosses plain HTTP only to a Service in the gateway's cluster; the
+    // document root rejects that form without a Kubernetes or OpenShift gateway.
+    let mut plain_http = forbid(&["credential"]);
+    plain_http["x-nemoclaw-error"] = json!(
+        "credential requires an HTTPS endpoint, or an http://SERVICE.NAMESPACE.svc.cluster.local:PORT endpoint with a Kubernetes or OpenShift gateway"
+    );
     provider["allOf"] = json!([
-        {"if": at("endpoint", json!({"pattern": "^http:"}), true), "then": forbid(&["credential"])},
+        {"if": at("endpoint", json!({"pattern": "^http:", "not": {"pattern": c::CLUSTER_SERVICE_ENDPOINT}}), true), "then": plain_http},
         {"if": {"required":["api"]}, "then": {
             "if": at("api", json!({"const":"anthropic-messages"}), true),
             "then": at("provider", json!({"const":"anthropic"}), false),
@@ -375,6 +381,30 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             ],
             "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
         }
+    }));
+    // A Service name resolves only inside a cluster, so a Docker or Podman
+    // gateway's sandboxes never send that endpoint a key. Inference providers
+    // are declared in five places; the rule covers each.
+    let mut service_key = forbid(&["credential"]);
+    service_key["x-nemoclaw-error"] = json!(
+        "credential on an http://SERVICE.NAMESPACE.svc.cluster.local endpoint requires a Kubernetes or OpenShift gateway"
+    );
+    let provider = json!({
+        "if": at("endpoint", json!({"pattern": c::CLUSTER_SERVICE_ENDPOINT}), true),
+        "then": service_key
+    });
+    let routes = at("routes/[]/provider", provider.clone(), false);
+    root["allOf"].as_array_mut().unwrap().push(json!({
+        "if": {"not": at("spec/gateway/runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true)},
+        "then": at("spec", json!({"properties": {
+            "inferenceProviders": {"items": provider},
+            "inferences": {"additionalProperties": routes},
+            "sandboxes": {"items": {"properties": {
+                "inferenceProviders": {"items": provider},
+                "inferences": {"additionalProperties": routes},
+                "agent": at("inference", routes, false)
+            }}}
+        }}), false)
     }));
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",

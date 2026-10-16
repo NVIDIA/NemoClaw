@@ -203,7 +203,7 @@ pub struct InferenceProvider {
     pub endpoint: String,
     #[serde(rename = "credential", skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "Credential")]
-    /// Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef.
+    /// Optional API credential reference for an external HTTPS endpoint or, with a Kubernetes or OpenShift gateway, for an in-cluster `http://SERVICE.NAMESPACE.svc.cluster.local:PORT` endpoint; the key then crosses the cluster network over plain HTTP. Excluded by serviceRef.
     pub credential: Option<Credential>,
     #[serde(
         rename = "serviceRef",

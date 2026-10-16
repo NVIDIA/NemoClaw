@@ -4,7 +4,7 @@
 //! the user runs in the gateway's cluster by its Service DNS name.
 use nemoclaw_sdk::{
     compile::compile,
-    config::Document,
+    config::{Document, schema},
     discovery::{DiscoveryQuery, plan_queries},
     inference_discovery::{endpoint_requests, is_cluster_service_endpoint},
 };
@@ -59,14 +59,16 @@ fn cluster_gateways() -> [(&'static str, bool); 3] {
     ]
 }
 
-#[test]
-fn a_cluster_service_endpoint_is_an_http_service_dns_name_with_an_explicit_port() {
-    let label = |first: char, length: usize| {
-        std::iter::once(first)
-            .chain(std::iter::repeat_n('a', length - 1))
-            .collect::<String>()
-    };
-    for accepted in [
+/// A DNS label of `length` characters starting with `first`.
+fn label(first: char, length: usize) -> String {
+    std::iter::once(first)
+        .chain(std::iter::repeat_n('a', length - 1))
+        .collect()
+}
+
+/// Endpoints that name a Service by its cluster DNS name.
+fn service_endpoints() -> Vec<String> {
+    vec![
         SERVICE.to_owned(),
         "http://qwen.models.svc.cluster.local:8000".into(),
         "http://qwen.models.svc.cluster.local:8000/".into(),
@@ -78,10 +80,12 @@ fn a_cluster_service_endpoint_is_an_http_service_dns_name_with_an_explicit_port(
             label('q', 63),
             label('0', 63)
         ),
-    ] {
-        assert!(is_cluster_service_endpoint(&accepted), "{accepted}");
-    }
-    for rejected in [
+    ]
+}
+
+/// Endpoints that do not, including ones that resemble the form.
+fn other_endpoints() -> Vec<String> {
+    vec![
         "https://qwen.models.svc.cluster.local:8000/v1".to_owned(),
         "HTTP://qwen.models.svc.cluster.local:8000/v1".into(),
         "qwen.models.svc.cluster.local:8000/v1".into(),
@@ -124,8 +128,16 @@ fn a_cluster_service_endpoint_is_an_http_service_dns_name_with_an_explicit_port(
         "http://qwen.models.svc.cluster.local:8000/${var.path}".into(),
         "http://qwen.models.svc.cluster.local:8000/v1\n".into(),
         " http://qwen.models.svc.cluster.local:8000/v1".into(),
-    ] {
-        assert!(!is_cluster_service_endpoint(&rejected), "{rejected}");
+    ]
+}
+
+#[test]
+fn a_cluster_service_endpoint_is_an_http_service_dns_name_with_an_explicit_port() {
+    for endpoint in service_endpoints() {
+        assert!(is_cluster_service_endpoint(&endpoint), "{endpoint}");
+    }
+    for endpoint in other_endpoints() {
+        assert!(!is_cluster_service_endpoint(&endpoint), "{endpoint}");
     }
 }
 
@@ -247,4 +259,127 @@ fn a_cluster_service_compiles_to_a_literal_server_and_an_fqdn_sandbox_rule() {
             assert_eq!(model["base_url"], SERVICE, "{driver}");
         }
     }
+}
+
+const KEY_ERROR: &str = "credential on an http://SERVICE.NAMESPACE.svc.cluster.local endpoint requires a Kubernetes or OpenShift gateway";
+
+/// `input` with its one provider given a key and declared, in turn, in each
+/// place a document can declare an inference provider.
+fn keyed_providers(input: &Value) -> Vec<(&'static str, Value)> {
+    fn sandbox(document: &mut Value) -> &mut Value {
+        &mut document["spec"]["sandboxes"][0]
+    }
+    let mut provider = input["spec"]["inferenceProviders"][0].clone();
+    provider["credential"] = json!({"env": "QWEN_INFERENCE_KEY"});
+    let mut shared = input.clone();
+    shared["spec"]["inferenceProviders"][0] = provider.clone();
+    let mut bare = input.clone();
+    bare["spec"]
+        .as_object_mut()
+        .unwrap()
+        .remove("inferenceProviders");
+    let mut route = sandbox(&mut bare)["agent"]["inference"]["routes"][0].clone();
+    route.as_object_mut().unwrap().remove("providerRef");
+    route["provider"] = provider.clone();
+    let inference = json!({"routes": [route]});
+    let mut scoped = bare.clone();
+    sandbox(&mut scoped)["inferenceProviders"] = json!([provider]);
+    let mut inline = bare.clone();
+    sandbox(&mut inline)["agent"]["inference"] = inference.clone();
+    let named = |mut document: Value, in_sandbox: bool| {
+        let owner = if in_sandbox {
+            sandbox(&mut document)
+        } else {
+            &mut document["spec"]
+        };
+        owner["inferences"] = json!({"chat": inference});
+        let agent = sandbox(&mut document)["agent"].as_object_mut().unwrap();
+        agent.remove("inference");
+        agent.insert("inferenceRef".into(), json!("chat"));
+        document
+    };
+    vec![
+        ("spec.inferenceProviders", shared),
+        ("sandbox inferenceProviders", scoped),
+        ("agent inference", inline),
+        ("spec.inferences", named(bare.clone(), false)),
+        ("sandbox inferences", named(bare, true)),
+    ]
+}
+
+/// A key crosses plain HTTP only to a Service in the gateway's own cluster,
+/// so only a Kubernetes or OpenShift gateway accepts one for that endpoint,
+/// wherever the provider is declared.
+#[test]
+fn a_cluster_service_endpoint_takes_a_key_only_with_a_cluster_gateway() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    for (driver, managed) in cluster_gateways() {
+        for (location, input) in keyed_providers(&document(driver, managed, SERVICE)) {
+            assert!(validator.is_valid(&input), "{driver} {location}");
+            let document = parse(&input);
+            assert!(
+                document.credential_names().contains(&"QWEN_INFERENCE_KEY"),
+                "{driver} {location}"
+            );
+            let graph = compile(&document, &generations(), "0.1.0").unwrap();
+            assert_eq!(
+                only(&graph, "openshell_inference")["server"]["credential_env"],
+                "QWEN_INFERENCE_KEY",
+                "{driver} {location}"
+            );
+        }
+    }
+    for driver in ["docker", "podman"] {
+        for (location, input) in keyed_providers(&document(driver, false, SERVICE)) {
+            assert!(!validator.is_valid(&input), "{driver} {location}");
+            let error = Document::parse(input.to_string().as_bytes())
+                .unwrap_err()
+                .to_string();
+            assert!(error.ends_with(KEY_ERROR), "{driver} {location}: {error}");
+        }
+    }
+}
+
+/// Validation of a directly constructed document applies the same rule.
+#[test]
+fn a_constructed_document_cannot_send_a_key_to_a_service_from_a_local_gateway() {
+    let (_, input) = keyed_providers(&document("kubernetes", false, SERVICE)).remove(0);
+    let mut document = parse(&input);
+    assert!(document.validate().is_ok());
+    document.spec.gateway = parse(&self::document("docker", false, SERVICE))
+        .spec
+        .gateway;
+    document.spec.sandboxes[0].image.metadata = None;
+    let error = document.validate().unwrap_err().to_string();
+    assert!(error.ends_with(KEY_ERROR), "{error}");
+}
+
+/// Every other plain-HTTP endpoint still takes no key, on any gateway.
+#[test]
+fn only_the_service_form_takes_a_key_over_plain_http() {
+    for (driver, managed) in cluster_gateways() {
+        for endpoint in service_endpoints()
+            .into_iter()
+            .chain(other_endpoints())
+            .filter(|endpoint| endpoint.starts_with("http://"))
+        {
+            let mut input = document(driver, managed, &endpoint);
+            input["spec"]["inferenceProviders"][0]["credential"] =
+                json!({"env": "QWEN_INFERENCE_KEY"});
+            assert_eq!(
+                Document::parse(input.to_string().as_bytes()).is_ok(),
+                is_cluster_service_endpoint(&endpoint),
+                "{driver} {endpoint}"
+            );
+        }
+    }
+    let mut input = document("kubernetes", false, "http://10.96.0.10:8000/v1");
+    input["spec"]["inferenceProviders"][0]["credential"] = json!({"env": "QWEN_INFERENCE_KEY"});
+    let error = Document::parse(input.to_string().as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.ends_with("credential requires an HTTPS endpoint, or an http://SERVICE.NAMESPACE.svc.cluster.local:PORT endpoint with a Kubernetes or OpenShift gateway"),
+        "{error}"
+    );
 }

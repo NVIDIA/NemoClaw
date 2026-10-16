@@ -813,6 +813,9 @@
           "if": {
             "properties": {
               "endpoint": {
+                "not": {
+                  "pattern": "^http://[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?\\.svc\\.cluster\\.local:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])(?:/[^?#]*)?$(?![\\s\\S])"
+                },
                 "pattern": "^http:"
               }
             },
@@ -829,7 +832,8 @@
                   ]
                 }
               ]
-            }
+            },
+            "x-nemoclaw-error": "credential requires an HTTPS endpoint, or an http://SERVICE.NAMESPACE.svc.cluster.local:PORT endpoint with a Kubernetes or OpenShift gateway"
           }
         },
         {
@@ -889,7 +893,7 @@
         },
         "credential": {
           "$ref": "#/$defs/Credential",
-          "description": "Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef."
+          "description": "Optional API credential reference for an external HTTPS endpoint or, with a Kubernetes or OpenShift gateway, for an in-cluster `http://SERVICE.NAMESPACE.svc.cluster.local:PORT` endpoint; the key then crosses the cluster network over plain HTTP. Excluded by serviceRef."
         },
         "endpoint": {
           "description": "Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. With a Kubernetes or OpenShift gateway, `http://SERVICE.NAMESPACE.svc.cluster.local:PORT` with an optional path names a Service in the gateway's cluster; sandboxes reach it through OpenShell, and plan and onboarding do not read its model catalog.",
@@ -3708,6 +3712,220 @@
           }
         ],
         "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "spec": {
+              "properties": {
+                "gateway": {
+                  "properties": {
+                    "runtime": {
+                      "properties": {
+                        "provider": {
+                          "enum": [
+                            "kubernetes",
+                            "openshift"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "provider"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "runtime"
+                  ]
+                }
+              },
+              "required": [
+                "gateway"
+              ]
+            }
+          },
+          "required": [
+            "spec"
+          ]
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "inferenceProviders": {
+                "items": {
+                  "if": {
+                    "properties": {
+                      "endpoint": {
+                        "pattern": "^http://[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?\\.svc\\.cluster\\.local:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])(?:/[^?#]*)?$(?![\\s\\S])"
+                      }
+                    },
+                    "required": [
+                      "endpoint"
+                    ]
+                  },
+                  "then": {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "credential"
+                          ]
+                        }
+                      ]
+                    },
+                    "x-nemoclaw-error": "credential on an http://SERVICE.NAMESPACE.svc.cluster.local endpoint requires a Kubernetes or OpenShift gateway"
+                  }
+                }
+              },
+              "inferences": {
+                "additionalProperties": {
+                  "properties": {
+                    "routes": {
+                      "items": {
+                        "properties": {
+                          "provider": {
+                            "if": {
+                              "properties": {
+                                "endpoint": {
+                                  "pattern": "^http://[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?\\.svc\\.cluster\\.local:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])(?:/[^?#]*)?$(?![\\s\\S])"
+                                }
+                              },
+                              "required": [
+                                "endpoint"
+                              ]
+                            },
+                            "then": {
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "credential"
+                                    ]
+                                  }
+                                ]
+                              },
+                              "x-nemoclaw-error": "credential on an http://SERVICE.NAMESPACE.svc.cluster.local endpoint requires a Kubernetes or OpenShift gateway"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "sandboxes": {
+                "items": {
+                  "properties": {
+                    "agent": {
+                      "properties": {
+                        "inference": {
+                          "properties": {
+                            "routes": {
+                              "items": {
+                                "properties": {
+                                  "provider": {
+                                    "if": {
+                                      "properties": {
+                                        "endpoint": {
+                                          "pattern": "^http://[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?\\.svc\\.cluster\\.local:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])(?:/[^?#]*)?$(?![\\s\\S])"
+                                        }
+                                      },
+                                      "required": [
+                                        "endpoint"
+                                      ]
+                                    },
+                                    "then": {
+                                      "not": {
+                                        "anyOf": [
+                                          {
+                                            "required": [
+                                              "credential"
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      "x-nemoclaw-error": "credential on an http://SERVICE.NAMESPACE.svc.cluster.local endpoint requires a Kubernetes or OpenShift gateway"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "inferenceProviders": {
+                      "items": {
+                        "if": {
+                          "properties": {
+                            "endpoint": {
+                              "pattern": "^http://[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?\\.svc\\.cluster\\.local:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])(?:/[^?#]*)?$(?![\\s\\S])"
+                            }
+                          },
+                          "required": [
+                            "endpoint"
+                          ]
+                        },
+                        "then": {
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "credential"
+                                ]
+                              }
+                            ]
+                          },
+                          "x-nemoclaw-error": "credential on an http://SERVICE.NAMESPACE.svc.cluster.local endpoint requires a Kubernetes or OpenShift gateway"
+                        }
+                      }
+                    },
+                    "inferences": {
+                      "additionalProperties": {
+                        "properties": {
+                          "routes": {
+                            "items": {
+                              "properties": {
+                                "provider": {
+                                  "if": {
+                                    "properties": {
+                                      "endpoint": {
+                                        "pattern": "^http://[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?\\.svc\\.cluster\\.local:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])(?:/[^?#]*)?$(?![\\s\\S])"
+                                      }
+                                    },
+                                    "required": [
+                                      "endpoint"
+                                    ]
+                                  },
+                                  "then": {
+                                    "not": {
+                                      "anyOf": [
+                                        {
+                                          "required": [
+                                            "credential"
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    "x-nemoclaw-error": "credential on an http://SERVICE.NAMESPACE.svc.cluster.local endpoint requires a Kubernetes or OpenShift gateway"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   ],
