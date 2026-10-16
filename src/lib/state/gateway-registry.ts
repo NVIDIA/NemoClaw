@@ -16,7 +16,7 @@ import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
 import { normalizePendingSandboxCreateIdentity } from "./registry/pending-create-identity";
 
 export { GATEWAYS_SUBDIR, resolveHome } from "./state-root";
-export { DEFAULT_GATEWAY_PORT } from "../core/ports";
+export { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 export { isValidName } from "../name-validation";
 export {
   releaseManagedGatewayStateLifecycleLock,

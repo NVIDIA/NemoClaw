@@ -12,6 +12,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { rebuildOwningRegistryDependencies } from "../../dist/lib/actions/sandbox/rebuild/owning-registry";
 import { withSandboxLifecycleLock } from "../../dist/lib/actions/sandbox/lifecycle/lock";
+import { ensureManagedGatewayStateRoot } from "../../dist/lib/onboard/gateway/state-dir";
+import { recordRetainedSandboxRecovery } from "../../dist/lib/state/onboard-session/retained-sandbox-recovery";
 import { execTimeout, testTimeout } from "../helpers/timeouts";
 
 const TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
@@ -139,6 +141,27 @@ function writeMissingSandboxOpenShell(home: string): string {
   return executable;
 }
 
+function writeSuccessfulDestroyOpenShell(home: string, envMarker: string): string {
+  const binDir = path.join(home, "bin");
+  fs.mkdirSync(binDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(binDir, "docker"), "#!/usr/bin/env node\n", { mode: 0o755 });
+  const executable = path.join(binDir, "openshell");
+  fs.writeFileSync(
+    executable,
+    [
+      "#!/usr/bin/env node",
+      'const fs = require("node:fs");',
+      'const workerEnv = fs.readFileSync(`/proc/${String(process.ppid)}/environ`, "utf8").split("\\0");',
+      `fs.writeFileSync(${JSON.stringify(envMarker)}, JSON.stringify(workerEnv));`,
+      'if (process.argv.includes("sandbox") && process.argv.includes("list")) {',
+      '  process.stdout.write(process.argv.includes("json") ? "[]\\n" : "");',
+      "}",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return executable;
+}
+
 function writeSiblingRegistry(
   home: string,
   entryOverrides: Readonly<Record<string, unknown>> = {},
@@ -212,7 +235,7 @@ describe("compiled rebuild owning-registry worker", () => {
 
   it("rejects delegated worker startup on unsupported native Windows", () => {
     expect(() => rebuildOwningRegistryDependencies.assertWorkerPlatformSupported("win32")).toThrow(
-      "Delegated owning-registry rebuild work is unsupported on native Windows. Run NemoClaw inside WSL.",
+      "Delegated owning-registry work is unsupported on native Windows. Run NemoClaw inside WSL.",
     );
   });
 
@@ -504,6 +527,169 @@ describe("compiled rebuild owning-registry worker", () => {
       }
     },
     testTimeout(30_000),
+  );
+
+  it("rejects a destroy descriptor with a non-boolean option before destroy runs", async () => {
+    await expect(
+      rebuildOwningRegistryDependencies.runWorker(
+        { operation: "destroy", sandboxName: "alpha", options: { yes: "true" } } as never,
+        9000,
+      ),
+    ).rejects.toThrow(
+      "Delegated destroy in the owning gateway registry did not complete successfully.",
+    );
+  });
+
+  it("runs a delegated destroy against the owning root's recovery records and reports its exit status", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-destroy-root-"));
+    try {
+      writeSiblingRegistry(home);
+      const recoveryFile = path.join(
+        home,
+        ".nemoclaw",
+        "gateways",
+        "9000",
+        "retained-sandbox-recovery.json",
+      );
+      recordRetainedSandboxRecovery(recoveryFile, {
+        sandboxName: "alpha",
+        sandboxIdentityFingerprint: "a".repeat(64),
+        gatewayName: "nemoclaw-9000",
+        gatewayPort: 9000,
+        lifecycleGeneration: "unmatched-generation",
+        createAttemptNonce: "b".repeat(62),
+        resources: {
+          sharedInferenceProviders: [],
+          sandboxScopedProviders: [],
+          credentialEnvironmentVariables: [],
+        },
+        reason: "retained_after_sandbox_creation_failure",
+      });
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", writeMissingSandboxOpenShell(home));
+      let failure: unknown;
+
+      try {
+        await rebuildOwningRegistryDependencies.runWorker(
+          { operation: "destroy", sandboxName: "alpha", options: { yes: true } },
+          9000,
+        );
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).cause).toEqual({
+        ok: false,
+        operation: "destroy",
+        sandboxName: "alpha",
+        gatewayPort: 9000,
+        exitCode: 1,
+      });
+      const registry = JSON.parse(
+        fs.readFileSync(path.join(home, ".nemoclaw", "gateways", "9000", "sandboxes.json"), "utf8"),
+      );
+      expect(Object.keys(registry.sandboxes)).toEqual(["alpha"]);
+      expect(JSON.parse(fs.readFileSync(recoveryFile, "utf8")).unresolved).toHaveLength(1);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform === "linux")(
+    "completes a delegated destroy in the owning root and replaces the caller's gateway state directory override",
+    async () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-destroy-success-"));
+      const stateRootParent = fs.mkdtempSync(
+        path.join(process.cwd(), "nemoclaw-worker-gateway-state-"),
+      );
+      try {
+        const callerStateDir = path.join(home, "caller-gateway-state");
+        const owningStateDir = path.join(stateRootParent, "owning-gateway-state");
+        ensureManagedGatewayStateRoot({
+          gatewayName: "nemoclaw-9000",
+          gatewayPort: 9000,
+          stateDir: owningStateDir,
+        });
+        const envMarker = path.join(home, "worker-env.json");
+        const openshellBin = writeSuccessfulDestroyOpenShell(home, envMarker);
+        writeSiblingRegistry(home, {
+          agent: "langchain-deepagents-code",
+          provider: "nvidia-prod",
+          openshellGatewayStateDir: owningStateDir,
+        });
+        const stateRoot = path.join(home, ".nemoclaw", "gateways", "9000");
+        const sessionFile = path.join(stateRoot, "onboard-session.json");
+        fs.writeFileSync(
+          sessionFile,
+          `${JSON.stringify({
+            version: 1,
+            sessionId: "session-alpha",
+            updatedAt: "2026-09-30T00:00:00.000Z",
+            sandboxName: "alpha",
+            endpointUrl: null,
+            routerPid: null,
+            routerCredentialHash: null,
+          })}\n`,
+          { mode: 0o600 },
+        );
+        vi.stubEnv("HOME", home);
+        vi.stubEnv("PATH", `${path.dirname(openshellBin)}:${process.env.PATH ?? ""}`);
+        vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", openshellBin);
+        vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", callerStateDir);
+
+        await expect(
+          rebuildOwningRegistryDependencies.runWorker(
+            {
+              operation: "destroy",
+              sandboxName: "alpha",
+              options: { yes: true, cleanupGateway: false },
+            },
+            9000,
+          ),
+        ).resolves.toBeUndefined();
+
+        const firstWorkerEnv = JSON.parse(fs.readFileSync(envMarker, "utf8")) as string[];
+        expect(firstWorkerEnv).toContain("NEMOCLAW_GATEWAY_PORT=9000");
+        expect(firstWorkerEnv).toContain(`NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=${owningStateDir}`);
+        expect(firstWorkerEnv).not.toContain(
+          `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=${callerStateDir}`,
+        );
+        expect(JSON.parse(fs.readFileSync(path.join(stateRoot, "sandboxes.json"), "utf8"))).toEqual(
+          expect.objectContaining({
+            defaultSandbox: null,
+            sandboxes: {},
+          }),
+        );
+        expect(JSON.parse(fs.readFileSync(sessionFile, "utf8")).sandboxName).toBeNull();
+
+        writeSiblingRegistry(home, {
+          agent: "langchain-deepagents-code",
+          provider: "nvidia-prod",
+        });
+        await expect(
+          rebuildOwningRegistryDependencies.runWorker(
+            {
+              operation: "destroy",
+              sandboxName: "alpha",
+              options: { yes: true, cleanupGateway: false },
+            },
+            9000,
+          ),
+        ).resolves.toBeUndefined();
+
+        const secondWorkerEnv = JSON.parse(fs.readFileSync(envMarker, "utf8")) as string[];
+        expect(secondWorkerEnv).toContain("NEMOCLAW_GATEWAY_PORT=9000");
+        expect(
+          secondWorkerEnv.some((entry) =>
+            entry.startsWith("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="),
+          ),
+        ).toBe(false);
+      } finally {
+        fs.rmSync(stateRootParent, { recursive: true, force: true });
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
   );
 
   it("reports an unreaped worker as potentially active", async () => {

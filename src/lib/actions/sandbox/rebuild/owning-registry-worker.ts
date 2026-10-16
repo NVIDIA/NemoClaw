@@ -3,8 +3,12 @@
 
 import fs from "node:fs";
 
-import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
+import type {
+  DestroySandboxOptions,
+  RebuildSandboxOptions,
+} from "../../../domain/lifecycle/options";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../../state/migrations/removed-immutability";
+import { destroySandboxInSelectedRoot, sandboxDestroyExitCode } from "../destroy";
 import { withSandboxLifecycleLock } from "../lifecycle/lock";
 import { rebuildSandbox } from "../rebuild-pipeline";
 import { redactBoundedRebuildFailure } from "../rebuild-preflight-confirmation";
@@ -16,6 +20,25 @@ const MAX_REBUILD_INPUT_BYTES = 4 * 1024 * 1024;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const DESTROY_OPTION_FIELDS = [
+  "cleanupGateway",
+  "cleanupGatewayPromptAnswer",
+  "force",
+  "keepVllm",
+  "yes",
+] as const;
+
+function parseDestroyOptions(value: Record<string, unknown>): DestroySandboxOptions | null {
+  const options: DestroySandboxOptions = {};
+  for (const field of DESTROY_OPTION_FIELDS) {
+    const option = value[field];
+    if (option === undefined) continue;
+    if (typeof option !== "boolean") return null;
+    options[field] = option;
+  }
+  return options;
 }
 
 function readInput(): OwningRegistryWorkerInput {
@@ -58,6 +81,13 @@ function readInput(): OwningRegistryWorkerInput {
       confirmDataRecovered: parsed.confirmDataRecovered,
     };
   }
+  const destroyOptions =
+    parsed.operation === "destroy" && isRecord(parsed.options)
+      ? parseDestroyOptions(parsed.options)
+      : null;
+  if (destroyOptions) {
+    return { operation: "destroy", sandboxName: parsed.sandboxName, options: destroyOptions };
+  }
   throw new Error("Rebuild worker input is invalid.");
 }
 
@@ -74,6 +104,10 @@ function workerIdentity(input: OwningRegistryWorkerInput): Omit<OwningRegistryWo
 }
 
 async function run(input: OwningRegistryWorkerInput): Promise<void> {
+  if (input.operation === "destroy") {
+    await destroySandboxInSelectedRoot(input.sandboxName, input.options);
+    return;
+  }
   if (input.operation === "retire-recovery") {
     const retired = await withSandboxLifecycleLock(input.sandboxName, () => {
       enforceRemovedImmutabilityMigrationBoundary(input.sandboxName, {
@@ -100,8 +134,15 @@ async function main(): Promise<void> {
     await run(input);
     writeResult({ ok: true, ...identity });
   } catch (error) {
-    const detail = redactBoundedRebuildFailure(error);
-    writeResult({ ok: false, ...identity, ...(detail ? { message: detail } : {}) });
+    // Destroy prints its own diagnostics before it requests an exit status.
+    const exitCode = sandboxDestroyExitCode(error);
+    const detail = exitCode === undefined ? redactBoundedRebuildFailure(error) : "";
+    writeResult({
+      ok: false,
+      ...identity,
+      ...(detail ? { message: detail } : {}),
+      ...(exitCode === undefined ? {} : { exitCode }),
+    });
     process.exitCode = 1;
   }
 }
