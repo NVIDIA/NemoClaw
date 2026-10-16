@@ -35,8 +35,8 @@
       "throwGuards": 526,
       "objectFieldAssertions": 265,
       "assertionPoints": 3279,
-      "generatedProbeBlocks": 208,
-      "generatedProbeConditions": 720
+      "generatedProbeBlocks": 209,
+      "generatedProbeConditions": 721
     },
     "fileMetricOrder": [
       "directExpectCalls",
@@ -163,7 +163,7 @@
         30,
         28,
         60,
-        7
+        8
       ],
       "test/e2e/live/gpu-double-onboard.test.ts": [
         21,
@@ -241,6 +241,13 @@
         60,
         108,
         15
+      ],
+      "test/e2e/live/inference-routing-openclaw-native.test.ts": [
+        23,
+        35,
+        49,
+        79,
+        2
       ],
       "test/e2e/live/inference-routing-openclaw-native.test.ts": [
         23,

@@ -262,11 +262,13 @@ export function prepareRebuildResumeConfig(
     return null;
   }
   if (hostedDefinition) {
-    const expectedEndpoint = hostedDefinition.endpoint;
+    const expectedEndpoint = hostedDefinition.custom?.endpointUrl ?? hostedDefinition.endpoint;
     if (
       (sb.endpointUrl &&
         sb.endpointUrl.replace(/\/+$/, "") !== expectedEndpoint.replace(/\/+$/, "")) ||
-      (sb.credentialEnv && sb.credentialEnv !== hostedDefinition.credentialEnv)
+      (sb.credentialEnv &&
+        sb.credentialEnv !==
+          (hostedDefinition.custom?.credentialEnv ?? hostedDefinition.credentialEnv))
     ) {
       bail(
         "Native provider selection does not match recorded credential or endpoint; sandbox is untouched",
@@ -283,6 +285,7 @@ export function prepareRebuildResumeConfig(
     return null;
   }
   const credentialEnv =
+    hostedDefinition?.custom?.credentialEnv ??
     hostedDefinition?.credentialEnv ??
     getRebuildCredentialEnvFromRegistry(
       trustedSelection.provider,

@@ -316,19 +316,21 @@ export async function runInferenceGet(
   const selectedSandbox = selectedSandboxName
     ? (deps.getSandbox ?? getKnownSandboxTarget)(selectedSandboxName)
     : null;
-  if (
+  const nativeAttachment =
     selectedSandbox &&
     selectedSandbox.nativeLocalProviderAttachment === undefined &&
-    recordedNativeProviderAttachment(selectedSandbox)
-  ) {
+    recordedNativeProviderAttachment(selectedSandbox);
+  if (selectedSandbox && nativeAttachment) {
     const payload: InferenceGetResult = {
       provider: selectedSandbox.provider ?? null,
       model: selectedSandbox.model ?? null,
       endpointUrl:
+        nativeAttachment.endpointUrl ??
         hostedNativeProvider(
           selectedSandbox.provider,
           selectedSandbox.nativeHostedProviderAttachment?.endpointUrl,
-        )?.endpoint ?? NVIDIA_HOSTED_NATIVE_ENDPOINT,
+        )?.endpoint ??
+        NVIDIA_HOSTED_NATIVE_ENDPOINT,
     };
     if (!options.quiet) {
       if (options.json) {

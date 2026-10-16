@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { requireHermesPublicPins } from "./hermes-pins";
+import { customNativeProvider, isCustomNativeProviderName } from "./custom";
 import { normalizeNativeProviderAttachment, type NativeProviderAttachment } from "./contract";
 import {
   HOSTED_NATIVE_PROVIDERS,
@@ -14,6 +15,14 @@ export function hostedNativeProviderForAttachment(
 ): HostedProviderDefinition | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const receipt = value as Record<string, unknown>;
+  if (receipt.custom !== undefined) {
+    try {
+      const definition = customNativeProvider(receipt.custom);
+      return normalizeNativeProviderAttachment(value, definition) ? definition : undefined;
+    } catch {
+      return undefined;
+    }
+  }
   for (const fixed of HOSTED_NATIVE_PROVIDERS) {
     let definition: HostedProviderDefinition;
     try {
@@ -59,7 +68,8 @@ export function requireHostedProviderAttachment(
 export function isNativeHostedProviderName(name: string | null | undefined): boolean {
   return (
     !!name &&
-    (HOSTED_NATIVE_PROVIDERS.some((definition) => definition.providerName === name) ||
+    (isCustomNativeProviderName(name) ||
+      HOSTED_NATIVE_PROVIDERS.some((definition) => definition.providerName === name) ||
       /^nemoclaw-hermes-[a-f0-9]{20}-v1$/u.test(name))
   );
 }

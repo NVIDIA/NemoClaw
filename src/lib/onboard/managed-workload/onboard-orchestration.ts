@@ -427,7 +427,9 @@ export function createManagedWorkloadOnboardRuntime(
       selectedModel,
       selectedProvider,
       inferenceApi,
-      input.nativeProvider ?? Boolean(nativeLocalProviderAttachment),
+      input.nativeLocalProviderAttachment && !nativeLocalProviderAttachment
+        ? false
+        : (input.nativeProvider ?? true),
       endpointUrl,
       input.agentName,
     );

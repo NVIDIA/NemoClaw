@@ -56,6 +56,7 @@ type ProfileContract =
       kind: "native-local";
       binding: Parameters<typeof isManagedNativeLocalProfileResponse>[1] & { profileId: string };
     };
+type CustomNativeBinding = import("../../inference/native-provider/custom").CustomNativeBinding;
 
 export type Provider = Readonly<
   Pick<OpenShellProviderMetadata, "name" | "type" | "credentialKeys" | "configKeys"> & {
@@ -84,6 +85,7 @@ export interface Providers {
         profileContract?: ProfileContract;
         nativeHostedEndpoint?: string;
         nativeHostedAllowedIps?: readonly string[];
+        nativeHostedCustom?: CustomNativeBinding;
       }>,
   ): Promise<Provider | null>;
 }
@@ -118,7 +120,8 @@ async function readManagedProfile(
 ): Promise<NonNullable<Provider["managedProfile"]> | null> {
   const profileId =
     profileContract === "native-hosted"
-      ? hostedNativeProfile(providerType, request.nativeHostedEndpoint)?.profileId
+      ? hostedNativeProfile(providerType, request.nativeHostedEndpoint, request.nativeHostedCustom)
+          ?.profileId
       : managedProfileId(profileContract);
   if (
     providerType !== profileId ||
@@ -145,6 +148,7 @@ async function readManagedProfile(
     providerType,
     request.nativeHostedEndpoint,
     request.nativeHostedAllowedIps,
+    request.nativeHostedCustom,
   );
 }
 
@@ -182,6 +186,7 @@ function validateManagedProfileResponse(
   providerType: string,
   nativeHostedEndpoint?: string,
   nativeHostedAllowedIps?: readonly string[],
+  nativeHostedCustom?: CustomNativeBinding,
 ): NonNullable<Provider["managedProfile"]> {
   if (typeof profileContract === "object")
     return validateNativeManagedProfileResponse(
@@ -199,6 +204,7 @@ function validateManagedProfileResponse(
       providerType,
       nativeHostedEndpoint,
       nativeHostedAllowedIps,
+      nativeHostedCustom,
     );
   }
   const { profile } = readValue(
@@ -229,12 +235,14 @@ function validateNativeHostedManagedProfileResponse(
   providerType: string,
   nativeHostedEndpoint?: string,
   nativeHostedAllowedIps?: readonly string[],
+  nativeHostedCustom?: CustomNativeBinding,
 ): NonNullable<Provider["managedProfile"]> {
   const validated = isManagedNativeHostedProfileResponse(
     response,
     providerType,
     nativeHostedEndpoint,
     nativeHostedAllowedIps,
+    nativeHostedCustom,
   );
   if (
     !validated ||
@@ -254,11 +262,13 @@ function managedInferenceEndpointFor(
   managedProfile: Provider["managedProfile"],
   contract: ProfileContract | undefined,
   nativeHostedEndpoint?: string,
+  nativeHostedCustom?: CustomNativeBinding,
 ): string | undefined {
   if (typeof contract === "object") return contract.binding.endpointUrl;
   return managedProfile?.id === NVIDIA_HOSTED_NATIVE_PROFILE_ID
     ? NVIDIA_HOSTED_NATIVE_ENDPOINT
-    : hostedNativeProfile(managedProfile?.id ?? "", nativeHostedEndpoint)?.endpoint;
+    : hostedNativeProfile(managedProfile?.id ?? "", nativeHostedEndpoint, nativeHostedCustom)
+        ?.endpoint;
 }
 
 async function readProfileEvidence(
@@ -297,6 +307,7 @@ async function readProfileEvidence(
     managedProfile,
     request.profileContract,
     request.nativeHostedEndpoint,
+    request.nativeHostedCustom,
   );
   return {
     ...(builtinInferenceEndpoint === undefined ? {} : { builtinInferenceEndpoint }),

@@ -14,11 +14,6 @@ import {
   writeSmokeConfig,
 } from "./__test-helpers__/compatible-endpoint-smoke-helpers";
 
-vi.mock("../inference/config", () => ({
-  INFERENCE_ROUTE_URL: "https://inference.local/v1",
-  MANAGED_PROVIDER_ID: "inference",
-}));
-
 import {
   createCompatibleEndpointSmoke,
   buildCompatibleEndpointSandboxSmokeCommand,
