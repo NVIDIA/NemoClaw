@@ -278,8 +278,7 @@ tests, not live qualification. OpenShell's gateway-only jobs select the candidat
 release through the existing trusted installer verifier. New release trust
 records, controller protocols, permissions, and unsupported platforms still need
 their own review. Historical upgrade fixtures keep their historical versions.
-Pi retains its separate candidate contract and qualification receipts below;
-selecting a shipped-agent catalog does not qualify Pi.
+Every shipped-agent catalog includes Pi alongside OpenClaw, Hermes, and Deep Agents Code.
 
 ### Candidate OpenShell release admission
 
@@ -345,7 +344,7 @@ If CI starts before the approved artifact exists, wait for the admission workflo
 SDK job, then rerun CI. Changed or revoked approval cannot reuse the older artifact.
 
 This does not yet extend the protected runtime's source projection, permit a new
-SDK graph on protected E2E hosts, qualify Pi, or pass candidate catalogs to the Jetson operator. A data-admission
+SDK graph on protected E2E hosts, build Pi on protected hosts, or pass candidate catalogs to the Jetson operator. A data-admission
 comment is not permission to execute arbitrary candidate code on a protected
 host. Those boundaries require their own supported implementation and validation;
 passing the hash check is not full E2E qualification.
@@ -446,45 +445,15 @@ not retry the mutation or replace its result.
 OpenClaw launch evidence reports whether a SQLite rejection concerns file metadata or the transcript table, without exposing paths, identities, or session contents. The existing evidence checks remain required.
 A failed native weather-plugin invocation also records unauthenticated liveness and readiness HTTP status codes, bounded to two three-second probes. It does not repeat the tool invocation or replace its failure.
 
-The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
-local image, removes registry credentials, validates the anonymously pullable digest, and uploads a
-`managed-candidate-contract-*` artifact bound to the pull-request head. Pi remains outside the
-`managed-pr-contract-*` all-agent catalog pattern and every release alias. The checked-in Pi
-qualification receipts may consume these candidate contracts only when the recorded image-source
-paths are unchanged through the receipt commit.
+The managed-image workflow builds and publishes Pi and adds it to the `managed-pr-contract-*`
+all-agent catalog with the other shipped agents. Its Pi image lanes also start the image through its
+declared entrypoint and prove the dropped PID 1 identity, hardened limits, and persisted proxy and
+corporate CA environment. The Docker activation run exercises every shipped agent. The rootless
+Podman run exercises the agents that the Podman activation qualifies, which excludes Pi.
 
-Keep a Pi upgrade in one PR with two publication steps:
-
-1. Commit and push the image inputs, leaving both existing receipts and their authority unchanged.
-   Local hooks permit this source-only step and report qualification as pending.
-2. After both candidate images publish, add their receipts and matching authority in the same PR.
-   Keep image inputs unchanged between the source and receipt commits.
-
-Use `tools/managed-images/collect-pi-qualification.mts` from a reviewed tooling checkout to prepare
-the receipt commit. Run it with the upgrade checkout as the working directory. Supply a GitHub API
-token through `GITHUB_TOKEN`; do not put credentials in the command or patch. The collector reads
-Git objects without passing that token to Git and does not execute the upgrade checkout's code.
-
-```bash
-node /path/to/reviewed-checkout/tools/managed-images/collect-pi-qualification.mts PR_NUMBER RUN_ID > /path/to/pi-refresh.patch
-git apply --check /path/to/pi-refresh.patch
-git apply /path/to/pi-refresh.patch
-```
-
-The selected managed-images run must have succeeded for the current open upstream PR commit.
-The collector verifies both artifact archive digests, platforms, source revision, release and
-publication attempt. It rechecks the PR and run before printing a three-file patch: both receipts
-and their authority hashes. It does not apply the patch, publish changes or certify full lifecycle
-qualification. Review the patch and run the existing receipt refresh check before committing it.
-Do not apply a partial patch after a collection error.
-
-CI does not permit the source-only exception. It requires refreshed receipts before the PR can pass.
-A partial receipt or authority change remains an error in local hooks and CI.
-
-Pi full lifecycle qualification runs on Linux AMD64. Linux ARM64 remains release-gated by its native
-managed-image build, startup, publication, and checked-in receipt. The receipt refresh check requires
-the Linux AMD64 and Linux ARM64 receipts to identify one source revision, release, and publication
-cohort.
+Pi full lifecycle qualification runs on Linux AMD64 against the exact-commit catalog. Linux ARM64
+remains release-gated by its native managed-image build, startup, and publication in the all-agent
+cohort. The protected multi-architecture and GPU local-inference lanes do not yet build Pi.
 
 The gateway restart fixture restarts the user service it stopped. If no service was selected, the candidate CLI startup code starts the registered gateway.
 A selected service that cannot restart remains selected for cleanup; recovery does not switch to another startup path.
@@ -2143,7 +2112,7 @@ Runs without a PR catalog require a trusted main base and managed-image publicat
 PR runs select the nearest fully successful publication on the trusted workflow commit's first-parent history.
 The publication must cover the PR base's latest reviewed image input.
 For that publication, the job binds the run ID, attempt, revision, cohort artifact ID, and artifact digest before it emits `managed_image_revision`.
-It validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that publication attempt.
+It validates the complete all-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that publication attempt.
 `generate-matrix` runs first and selects whether publication is required.
 Stock-onboarding jobs still depend on publication, so incomplete publication creates no onboarding fanout.
 Direct `main` runs use the same publication workflow and artifact contract.

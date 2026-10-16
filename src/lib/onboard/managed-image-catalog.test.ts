@@ -378,7 +378,7 @@ describe("managed image GHCR catalog", () => {
     ).rejects.toThrow(/GHCR image config bytes do not match digest/);
   });
 
-  it.each(["hermes", "langchain-deepagents-code"] as const)(
+  it.each(["hermes", "langchain-deepagents-code", "pi"] as const)(
     "refuses independent %s release-alias discovery",
     async (agent) => {
       const fetchImpl = vi.fn();
@@ -393,8 +393,8 @@ describe("managed image GHCR catalog", () => {
     },
   );
 
-  it.each(["hermes", "langchain-deepagents-code"] as const)(
-    "resolves the complete three-agent catalog rather than an OpenClaw-only default [%s] (#7744)",
+  it.each(["hermes", "langchain-deepagents-code", "pi"] as const)(
+    "resolves the complete all-agent catalog rather than an OpenClaw-only default [%s] (#7744)",
     async (agent) => {
       const fixture = catalogFixture();
 
@@ -408,7 +408,7 @@ describe("managed image GHCR catalog", () => {
         SHIPPED_MANAGED_IMAGE_AGENTS.map(
           (agent) => (catalog[agent] as { source: { cohort: string } }).source.cohort,
         ),
-      ).toEqual([COHORT, COHORT, COHORT]);
+      ).toEqual(SHIPPED_MANAGED_IMAGE_AGENTS.map(() => COHORT));
       const rootManifestRequests = fixture.fetchMock.mock.calls
         .map(([input]) => new URL(String(input)).pathname)
         .filter((pathname) => pathname.includes("/manifests/"));
@@ -494,6 +494,7 @@ describe("managed image GHCR catalog", () => {
       "langchain-deepagents-code": {
         labels: { "org.opencontainers.image.version": publishedRelease },
       },
+      pi: { labels: { "org.opencontainers.image.version": publishedRelease } },
     });
 
     const catalog = await resolveManagedImageCatalogFromGhcr({

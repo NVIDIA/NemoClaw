@@ -4,19 +4,21 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import { getAgentChoices, loadAgent } from "../agent/defs";
+import type { AgentHostOs } from "../agent/host-os";
 import { resolveAgent } from "../agent/onboard";
 import { createSelectOnboardAgent } from "./agent-selection";
 import { selectFromNumberedMenuOrExit } from "./prompt-helpers";
 
 // Exercises the real agent registry (agents/openclaw + agents/hermes) so the
 // red->green transition reflects genuine wizard behavior rather than a mock.
-function makeSelectOnboardAgent(reply: string) {
+function makeSelectOnboardAgent(reply: string, hostOs: AgentHostOs | null = "linux") {
   const prompt = vi.fn(async (_question: string) => reply);
   const log = vi.fn((_message?: string) => {});
   const select = createSelectOnboardAgent({
     resolveAgent,
     loadAgent,
     getAgentChoices,
+    detectAgentHostOs: () => hostOs,
     isNonInteractive: () => false,
     note: () => {},
     log,
@@ -80,5 +82,26 @@ describe("selectOnboardAgent interactive agent selection", () => {
 
     assert.equal(agent, null);
     assert.equal(prompt.mock.calls.length, 0);
+  });
+
+  it("hides host-restricted agents like Pi from the interactive menu on macOS and WSL", async () => {
+    const { select: selectMacos, log: logMacos } = makeSelectOnboardAgent("1", "macos");
+    assert.equal(await selectMacos({ canPrompt: true }), null);
+    const macosMenu = logMacos.mock.calls.map((call) => call[0]).join("\n");
+    assert.match(macosMenu, /OpenClaw/);
+    assert.match(macosMenu, /Hermes/);
+    assert.doesNotMatch(macosMenu, /\bPi\b/);
+
+    const { select: selectWsl, log: logWsl } = makeSelectOnboardAgent("1", "wsl");
+    assert.equal(await selectWsl({ canPrompt: true }), null);
+    const wslMenu = logWsl.mock.calls.map((call) => call[0]).join("\n");
+    assert.match(wslMenu, /OpenClaw/);
+    assert.match(wslMenu, /Hermes/);
+    assert.doesNotMatch(wslMenu, /\bPi\b/);
+
+    const { select: selectLinux, log: logLinux } = makeSelectOnboardAgent("1", "linux");
+    await selectLinux({ canPrompt: true });
+    const linuxMenu = logLinux.mock.calls.map((call) => call[0]).join("\n");
+    assert.match(linuxMenu, /\bPi\b/);
   });
 });

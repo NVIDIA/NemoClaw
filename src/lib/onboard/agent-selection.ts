@@ -3,6 +3,7 @@
 
 import type { AgentChoice, AgentDefinition } from "../agent/defs";
 import { getAgentChoices, loadAgent } from "../agent/defs";
+import { type AgentHostOs, detectAgentHostOs, requireAgentHostOsSupported } from "../agent/host-os";
 import { resolveAgent } from "../agent/onboard";
 import { selectFromNumberedMenuOrExit } from "./prompt-helpers";
 
@@ -13,6 +14,7 @@ export interface SelectOnboardAgentDeps {
   }): AgentDefinition | null;
   loadAgent(name: string): AgentDefinition;
   getAgentChoices(): AgentChoice[];
+  detectAgentHostOs?(): AgentHostOs | null;
   isNonInteractive(): boolean;
   note(message: string): void;
   log(message?: string): void;
@@ -38,6 +40,20 @@ async function promptForAgentChoice(
   // OpenClaw is sorted first (getAgentChoices), so index 1 is the default.
   const reply = await deps.prompt("  Choose [1]: ");
   return deps.selectFromNumberedMenu(reply, 1, choices);
+}
+
+/** Check whether an interactive agent choice is supported on the detected host OS. */
+function isChoiceSupportedOnHost(
+  deps: SelectOnboardAgentDeps,
+  choice: AgentChoice,
+  host: AgentHostOs | null,
+): boolean {
+  try {
+    requireAgentHostOsSupported(deps.loadAgent(choice.name), host);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function createSelectOnboardAgent(deps: SelectOnboardAgentDeps) {
@@ -66,11 +82,14 @@ export function createSelectOnboardAgent(deps: SelectOnboardAgentDeps) {
     // (e.g. OpenClaw and Hermes); without this the wizard silently defaulted
     // to OpenClaw and Hermes could only be reached via --agent/NEMOCLAW_AGENT.
     if (!explicitlySelected && !resume && canPrompt && !deps.isNonInteractive()) {
-      const choices = deps.getAgentChoices();
+      const host = (deps.detectAgentHostOs ?? detectAgentHostOs)();
+      const choices = deps
+        .getAgentChoices()
+        .filter((choice) => isChoiceSupportedOnHost(deps, choice, host));
       if (choices.length > 1) {
         const selected = await promptForAgentChoice(deps, choices);
         // The default OpenClaw path is represented by a null agent downstream.
-        return selected.name === "openclaw" ? null : deps.loadAgent(selected.name);
+        return deps.resolveAgent({ agentFlag: selected.name });
       }
     }
 

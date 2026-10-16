@@ -2,15 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-const authority = vi.hoisted(() => ({ digests: [] as string[] }));
-
-vi.mock("../agent/candidate-authority", () => ({
-  CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS: { pi: authority.digests },
-  acceptedCandidateReceiptDigests: () => authority.digests,
-}));
 
 vi.mock("../state/onboard-session", async (original) => ({
   ...(await original<typeof import("../state/onboard-session")>()),
@@ -26,10 +22,6 @@ import { createManagedWorkloadOnboardRuntime } from "./managed-workload/onboard-
 import { rebindManagedStartupProfileForClone } from "./managed-startup/clone-rebinder";
 import { mapManagedStartupProfileToAgentEnvironment } from "./managed-startup/agent-environment";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
-import {
-  type CandidateQualificationFixture,
-  candidateQualificationEnvironment,
-} from "../agent/candidate-test-fixture";
 import type { SandboxEntry } from "../state/registry/types";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -37,7 +29,9 @@ import {
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  type ManagedImageAgent,
   type ManagedImageContractV1,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
 } from "./managed-image/contract";
 import { encodeManagedStartupProfile } from "./managed-startup/profile";
 import type { RuntimeProviderBundle } from "./runtime-provider/contract";
@@ -50,47 +44,56 @@ import type { SandboxWorkloadRuntimeCapabilities } from "./workload/source";
 
 const PLATFORM = "linux/amd64" as const;
 const ORIGINAL_PREPARE = managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource;
+let installedRoot: string;
 
-function installedContract(): ManagedImageContractV1 {
-  const image = MANAGED_IMAGE_REPOSITORIES.pi;
-  const digest = `sha256:${"1b".repeat(32)}` as const;
+function contract(
+  agent: ManagedImageAgent,
+  digestByte: string,
+  release: string,
+  revision: string,
+  cohort: `ghrun-${number}-${number}`,
+): ManagedImageContractV1 {
+  const image = MANAGED_IMAGE_REPOSITORIES[agent];
+  const digest = `sha256:${digestByte.repeat(32)}` as const;
   return {
     contractVersion: MANAGED_IMAGE_CONTRACT_VERSION,
-    agent: "pi",
+    agent,
     platform: PLATFORM,
     image,
     digest,
     reference: `${image}@${digest}`,
-    source: {
-      repository: MANAGED_IMAGE_SOURCE_REPOSITORY,
-      revision: "c".repeat(40),
-      release: "v0.0.99",
-      cohort: "ghrun-7927-2",
-    },
+    source: { repository: MANAGED_IMAGE_SOURCE_REPOSITORY, revision, release, cohort },
     startupProfileContractVersion: MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
     capabilityContractVersion: MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   };
 }
 
+const INSTALLED = contract("pi", "1b", "v0.0.99", "c".repeat(40), "ghrun-7927-2");
+const RELEASE_CATALOG = Object.fromEntries(
+  SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [
+    agent,
+    contract(agent, String(index + 2).repeat(2), "v0.0.100", "e".repeat(40), "ghrun-8818-1"),
+  ]),
+);
+
 function piEntry(): SandboxEntry {
-  const contract = installedContract();
   const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("pi"));
   return {
     name: "rebuild-pi",
     agent: "pi",
-    openshellDriver: "mxc",
+    openshellDriver: "docker",
     fromDockerfile: null,
-    imageTag: contract.reference,
+    imageTag: INSTALLED.reference,
     workload: {
       schemaVersion: 1,
       kind: "managed-image",
-      reference: contract.reference,
+      reference: INSTALLED.reference,
       platform: PLATFORM,
-      release: contract.source.release,
-      sourceRevision: contract.source.revision,
-      sourceCohort: contract.source.cohort,
-      capabilityContractVersion: contract.capabilityContractVersion,
-      startupProfileContractVersion: contract.startupProfileContractVersion,
+      release: INSTALLED.source.release,
+      sourceRevision: INSTALLED.source.revision,
+      sourceCohort: INSTALLED.source.cohort,
+      capabilityContractVersion: INSTALLED.capabilityContractVersion,
+      startupProfileContractVersion: INSTALLED.startupProfileContractVersion,
       encodedProfile,
       startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
       credentialProxyReplayRequired: false,
@@ -99,7 +102,10 @@ function piEntry(): SandboxEntry {
   } as unknown as SandboxEntry;
 }
 
-function runtimeCapabilities(providerId = "mxc"): SandboxWorkloadRuntimeCapabilities {
+function runtime(
+  providerId: string,
+  agents: readonly ManagedImageAgent[],
+): SandboxWorkloadRuntimeCapabilities {
   return {
     driverName: providerId,
     managedImageSelectionPolicy: "require-managed",
@@ -107,13 +113,14 @@ function runtimeCapabilities(providerId = "mxc"): SandboxWorkloadRuntimeCapabili
     managedImages: {
       exactDigestReferences: true,
       platforms: [PLATFORM],
+      agents,
       startupProfileContractVersions: [1],
       capabilityContractVersions: [1],
     },
   };
 }
 
-function provider(providerId = "mxc"): RuntimeProviderBundle {
+function provider(providerId: string, agents: readonly ManagedImageAgent[]): RuntimeProviderBundle {
   return {
     identity: { contractVersion: 1, id: providerId, displayName: providerId },
     workload: {
@@ -123,6 +130,7 @@ function provider(providerId = "mxc"): RuntimeProviderBundle {
         support: {
           exactDigestReferences: true,
           platforms: ["linux/amd64", "linux/arm64"],
+          agents,
           startupProfileContractVersions: [1],
           capabilityContractVersions: [1],
         },
@@ -136,56 +144,72 @@ function provider(providerId = "mxc"): RuntimeProviderBundle {
   } as unknown as RuntimeProviderBundle;
 }
 
-describe("Pi candidate managed rebuild", () => {
-  let previousEnv: NodeJS.ProcessEnv;
-  let fixture: CandidateQualificationFixture | null = null;
-
-  function writeReceipt(): CandidateQualificationFixture {
-    fixture = candidateQualificationEnvironment();
-    Object.assign(process.env, fixture.env);
-    return fixture;
-  }
-
-  function publish(receipt: CandidateQualificationFixture): void {
-    authority.digests.push(receipt.receiptDigest);
-  }
-
+describe("Pi managed rebuild", () => {
   beforeEach(() => {
-    previousEnv = { ...process.env };
+    vi.stubEnv("NEMOCLAW_INSTALL_REF", "");
+    installedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-rebuild-installed-"));
+    fs.mkdirSync(path.join(installedRoot, "dist"));
+    fs.writeFileSync(
+      path.join(installedRoot, "dist", "build-identity.json"),
+      JSON.stringify({ nemoclawVersion: "0.0.100", sourceRevision: "e".repeat(40) }),
+    );
+    fs.writeFileSync(path.join(installedRoot, ".version"), "0.0.100\n");
   });
 
   afterEach(() => {
-    process.env = previousEnv;
-    authority.digests.splice(0, authority.digests.length);
-    fixture?.cleanup();
-    fixture = null;
+    fs.rmSync(installedRoot, { force: true, recursive: true });
+    vi.unstubAllEnvs();
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = ORIGINAL_PREPARE;
   });
 
-  it("restores the accepted candidate image without the release catalog (#7927)", async () => {
-    publish(writeReceipt());
-    const releaseCatalog = vi.fn(ORIGINAL_PREPARE);
-    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = releaseCatalog;
+  it("rebuilds Pi from the complete all-agent release catalog", async () => {
+    const resolveCatalog = vi.fn(async () => RELEASE_CATALOG);
+    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = (input) =>
+      ORIGINAL_PREPARE(input, { resolveCatalog });
 
     const handoff = await prepareManagedWorkloadRebuildHandoff(piEntry(), {
-      runtime: runtimeCapabilities(),
-      provider: provider(),
+      runtime: runtime("docker", SHIPPED_MANAGED_IMAGE_AGENTS),
+      provider: provider("docker", SHIPPED_MANAGED_IMAGE_AGENTS),
+      rootDir: installedRoot,
       version: "0.0.100",
     });
 
+    expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({
+      release: "v0.0.100",
+      platform: PLATFORM,
+    });
     expect(handoff).toMatchObject({
       agent: "pi",
       previousReceipt: { kind: "managed-image", release: "v0.0.99" },
       replacement: {
-        source: { kind: "managed-image", contract: { agent: "pi", platform: PLATFORM } },
+        release: "v0.0.100",
+        source: { kind: "managed-image", reference: RELEASE_CATALOG.pi?.reference },
       },
     });
-    expect(handoff?.replacement.source.reference).toBe(
-      `${MANAGED_IMAGE_REPOSITORIES.pi}@sha256:${"7a".repeat(32)}`,
+  });
+
+  it("refuses a Pi rebuild before catalog resolution when the runtime does not qualify Pi", async () => {
+    const qualified: readonly ManagedImageAgent[] = [
+      "openclaw",
+      "hermes",
+      "langchain-deepagents-code",
+    ];
+    const resolveCatalog = vi.fn(async () => RELEASE_CATALOG);
+    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = (input) =>
+      ORIGINAL_PREPARE(input, { resolveCatalog });
+
+    await expect(
+      prepareManagedWorkloadRebuildHandoff(piEntry(), {
+        runtime: runtime("podman", qualified),
+        provider: provider("podman", qualified),
+        version: "0.0.100",
+      }),
+    ).rejects.toThrow(
+      new ManagedWorkloadRebuildError(
+        "Managed image workload is required for 'pi', but driver 'podman' is not qualified for that agent.",
+      ),
     );
-    // A candidate publishes outside the all-agent cohort, so the release
-    // catalog must never be consulted for it.
-    expect(releaseCatalog).not.toHaveBeenCalled();
+    expect(resolveCatalog).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -196,7 +220,9 @@ describe("Pi candidate managed rebuild", () => {
   ])(
     "preserves Pi $logicalProvider routing through onboarding, rebuild and recovery",
     async (definition) => {
-      publish(writeReceipt());
+      const resolveCatalog = vi.fn(async () => RELEASE_CATALOG);
+      managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = (input) =>
+        ORIGINAL_PREPARE(input, { resolveCatalog });
       const native = "profileId" in definition;
       const attachment = native
         ? {
@@ -212,7 +238,7 @@ describe("Pi candidate managed rebuild", () => {
       const expectedEndpoint = native
         ? definition.endpoint.replace(/\/+$/, "")
         : "https://inference.local/v1";
-      const runtime = createManagedWorkloadOnboardRuntime(
+      const onboardRuntime = createManagedWorkloadOnboardRuntime(
         {
           computePlan: { driverName: "docker", gatewayLauncher: "nemoclaw" },
           managedWorkloadRebuild: null,
@@ -248,7 +274,9 @@ describe("Pi candidate managed rebuild", () => {
         },
         { getSandboxInferenceConfig, resolveAgentInferenceApi },
       );
-      const built = runtime.ensurePreparedProfile({ source: { kind: "managed-image" } } as never)!;
+      const built = onboardRuntime.ensurePreparedProfile({
+        source: { kind: "managed-image" },
+      } as never)!;
       const entry = piEntry();
       Object.assign(entry, {
         provider: definition.logicalProvider,
@@ -261,6 +289,7 @@ describe("Pi candidate managed rebuild", () => {
           ...entry.workload,
           encodedProfile: built.encodedProfile,
           startupProfileSha256: built.startupProfileSha256,
+          ...(built.corporateCaB64 === undefined ? {} : { corporateCaB64: built.corporateCaB64 }),
         },
       });
       const resume = prepareRebuildResumeConfig(entry.name, entry, "pi", vi.fn(), (message) => {
@@ -268,8 +297,9 @@ describe("Pi candidate managed rebuild", () => {
       })!;
       expect(resume.nativeHostedProviderAttachment).toEqual(attachment);
       const catalog = (await prepareManagedWorkloadRebuildHandoff(entry, {
-        runtime: runtimeCapabilities(),
-        provider: provider(),
+        runtime: runtime("docker", SHIPPED_MANAGED_IMAGE_AGENTS),
+        provider: provider("docker", SHIPPED_MANAGED_IMAGE_AGENTS),
+        rootDir: installedRoot,
         version: "0.0.100",
       }))!;
       const rebuilt = prepareManagedRebuildProfileHandoff({
@@ -295,6 +325,9 @@ describe("Pi candidate managed rebuild", () => {
         destinationDashboardPort: null,
         encodedProfile: rebuilt.replacementProfile.encodedProfile,
         startupProfileSha256: rebuilt.replacementProfile.startupProfileSha256,
+        ...(rebuilt.replacementProfile.corporateCaB64 === undefined
+          ? {}
+          : { corporateCaB64: rebuilt.replacementProfile.corporateCaB64 }),
         currentSource: entry,
       });
       expect(built.profile.inference?.routedBaseUrl.replace(/\/+$/, "")).toBe(expectedEndpoint);
@@ -322,29 +355,4 @@ describe("Pi candidate managed rebuild", () => {
       ).toBe(expectedEndpoint);
     },
   );
-
-  it("refuses a candidate rebuild without qualification authority (#7927)", async () => {
-    delete process.env.NEMOCLAW_CANDIDATE_AGENTS;
-    delete process.env.NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT;
-
-    await expect(
-      prepareManagedWorkloadRebuildHandoff(piEntry(), {
-        runtime: runtimeCapabilities(),
-        provider: provider(),
-        version: "0.0.100",
-      }),
-    ).rejects.toThrow(ManagedWorkloadRebuildError);
-  });
-
-  it("refuses a candidate rebuild from a receipt the repository never published (#7927)", async () => {
-    writeReceipt();
-
-    await expect(
-      prepareManagedWorkloadRebuildHandoff(piEntry(), {
-        runtime: runtimeCapabilities(),
-        provider: provider(),
-        version: "0.0.100",
-      }),
-    ).rejects.toThrow("qualification receipt is unavailable or invalid");
-  });
 });

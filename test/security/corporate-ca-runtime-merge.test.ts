@@ -430,4 +430,28 @@ describe("corporate proxy CA runtime merge (#6210)", () => {
     expect(skipped.SSL_CERT_FILE).toBe("");
     expect(skipped.CURL_CA_BUNDLE).toBe("");
   });
+
+  it("skips Pi corporate CA re-merge after managed startup root apply (#8818)", () => {
+    const dir = tmpDir("nemoclaw-corp-pi-managed-startup-");
+    const piStartPath = join(__dirname, "..", "..", "agents", "pi", "start.sh");
+    const block = sliceBlock(
+      piStartPath,
+      "# Corporate proxy CA merge (NemoClaw#6210).",
+      'if [ "$_NEMOCLAW_PI_DROP_PRIVILEGES" -eq 1 ]; then',
+    );
+    const managedBundle = join(dir, "nemoclaw-managed-startup-ca-bundle.pem");
+    writeFileSync(managedBundle, `${OPENSHELL_PEM}\n${CORPORATE_PEM}`);
+
+    const out = runShellLines(dir, [
+      "export NEMOCLAW_MANAGED_STARTUP_APPLIED=1",
+      "export _NEMOCLAW_CORPORATE_CA_MERGED=1",
+      `export SSL_CERT_FILE=${JSON.stringify(managedBundle)}`,
+      block,
+      'printf "SSL_CERT_FILE=%s\\n" "${SSL_CERT_FILE:-}"',
+      'printf "MERGED=%s\\n" "${_NEMOCLAW_CORPORATE_CA_MERGED:-}"',
+    ]);
+
+    expect(out).toContain(`SSL_CERT_FILE=${managedBundle}\n`);
+    expect(out).toContain("MERGED=1\n");
+  });
 });

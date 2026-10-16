@@ -24,6 +24,7 @@ const EXPECTED_AGENT_IMAGES = [
     agent: "langchain-deepagents-code",
     image: "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox",
   },
+  { agent: "pi", image: "ghcr.io/nvidia/nemoclaw/pi-sandbox" },
 ] as const;
 type JsonObject = Record<string, unknown>;
 type PlatformPublication = {

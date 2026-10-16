@@ -12,10 +12,6 @@ import YAML from "yaml";
 import { inspectProtectedDcodeBase } from "../../../scripts/checks/protected-dcode-base-receipt.mts";
 
 import {
-  CANDIDATE_MANAGED_IMAGE_AGENTS,
-  SHIPPED_MANAGED_IMAGE_AGENTS,
-} from "../../../src/lib/onboard/managed-image/contract.ts";
-import {
   PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH,
   PROTECTED_MANAGED_IMAGE_AGENTS,
   PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID,
@@ -38,7 +34,7 @@ function contracts(platform: ProtectedManagedImagePlatform) {
     const digest = `sha256:${digit.repeat(64)}`;
     return {
       agent,
-      baseReference: `ghcr.io/nvidia/nemoclaw/${BASE_REPOSITORIES[agent]}@sha256:${String(index + 4).repeat(64)}`,
+      baseReference: `ghcr.io/nvidia/nemoclaw/${BASE_REPOSITORIES[agent as keyof typeof BASE_REPOSITORIES]}@sha256:${String(index + 4).repeat(64)}`,
       digest,
       localContentId: `sha256:${String(index + 7).repeat(64)}`,
       platform,
@@ -148,7 +144,7 @@ function runBaseResolution(jobId: string, stepName: string, options: BaseResolut
   const references = PROTECTED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
     return options.localBases && options.publishedAgent !== agent
       ? candidateBase(fixture, agent)
-      : `ghcr.io/nvidia/nemoclaw/${BASE_REPOSITORIES[agent]}@${Object.values(PLATFORM_DIGESTS)[index]}`;
+      : `ghcr.io/nvidia/nemoclaw/${BASE_REPOSITORIES[agent as keyof typeof BASE_REPOSITORIES]}@${Object.values(PLATFORM_DIGESTS)[index]}`;
   });
   writeFileSync(
     path.join(fixture, "prepared-inputs"),
@@ -551,12 +547,21 @@ describe("protected managed-image build contract", () => {
     ).toThrow("does not match its exact contract");
   });
 
-  it.each(Array.from(CANDIDATE_MANAGED_IMAGE_AGENTS, (value) => [value]))(
-    "keeps candidate agent %s outside the shipped managed-image inventory (#7927)",
-    (agent) => {
-      expect([...PROTECTED_MANAGED_IMAGE_AGENTS]).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS]);
+  it("rejects a shipped agent that the protected controller does not build", () => {
+    const digest = `sha256:${"9".repeat(64)}`;
+    const withPi = contracts("linux/amd64").map((contract, index) =>
+      index === 2
+        ? {
+            ...contract,
+            agent: "pi",
+            digest,
+            reference: `localhost:5000/nemoclaw-managed-protected/pi@${digest}`,
+          }
+        : contract,
+    );
 
-      expect(PROTECTED_MANAGED_IMAGE_AGENTS).not.toContain(agent);
-    },
-  );
+    expect(() => parseProtectedManagedImageContracts(withPi, "linux/amd64")).toThrow(
+      "invalid agent",
+    );
+  });
 });

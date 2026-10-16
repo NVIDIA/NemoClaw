@@ -38,7 +38,6 @@ on:
       # with tools/e2e/base-image-publication.mts.
       - "Dockerfile"
       - "agents/**"
-      - "ci/pi-agent-qualification-v1-*.json"
       - "nemoclaw/**"
       - "nemoclaw-blueprint/**"
       - "scripts/**"
@@ -54,7 +53,6 @@ on:
       - "src/lib/actions/sandbox/rebuild-post-restore-phase.ts"
       - "src/lib/adapters/container-engine.ts"
       - "src/lib/adapters/podman/**"
-      - "src/lib/agent/candidate-authority.ts"
       - "src/lib/agent/deep-agents-code-runtime-identity.json"
       - "src/lib/extra-agents-validation.ts"
       - "src/lib/core/json-types.ts"
@@ -425,7 +423,7 @@ jobs:
           registry-password: ${{ secrets.GITHUB_TOKEN }}
 
 
-  # Consume the three exact base-image contracts in this run. The reusable
+  # Consume the four exact base-image contracts in this run. The reusable
   # publisher promotes no mutable cohort alias until every agent and platform
   # has passed its immutable-digest validation.
   publish-managed-images:
@@ -438,6 +436,7 @@ jobs:
       - build-and-push-hermes
       - build-and-push-dcode
       - build-and-push-openclaw
+      - build-and-push-pi
       - reviewed-npm-audit
     permissions:
       contents: read
@@ -447,3 +446,4 @@ jobs:
       dcode-base-contract-base64: ${{ needs.build-and-push-dcode.outputs.contract-base64 }}
       hermes-base-contract-base64: ${{ needs.build-and-push-hermes.outputs.contract-base64 }}
       openclaw-base-contract-base64: ${{ needs.build-and-push-openclaw.outputs.contract-base64 }}
+      pi-base-contract-base64: ${{ needs.build-and-push-pi.outputs.contract-base64 }}

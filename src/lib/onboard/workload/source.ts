@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  isCandidateManagedImageAgent,
   isManagedImageAgent,
+  isManagedImageOnlyAgent,
   isManagedImagePlatform,
-  isShippedManagedImageAgent,
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  type ManagedImageAgent,
   type ManagedImageContractCatalog,
   type ManagedImageContractV1,
   type ManagedImagePlatform,
@@ -42,6 +42,8 @@ export interface SandboxWorkloadRuntimeCapabilities {
   readonly managedImages: {
     readonly exactDigestReferences: boolean;
     readonly platforms: readonly ManagedImagePlatform[];
+    /** Agents whose managed images the driver's qualification covers. */
+    readonly agents: readonly ManagedImageAgent[];
     readonly startupProfileContractVersions: readonly number[];
     readonly capabilityContractVersions: readonly number[];
   } | null;
@@ -105,7 +107,6 @@ export interface ResolveSandboxWorkloadSourceOptions {
   readonly runtime: SandboxWorkloadRuntimeCapabilities;
   readonly catalog: ManagedImageContractCatalog;
   readonly policy?: ManagedImageSelectionPolicy;
-  readonly candidateAgentsEnabled?: boolean;
 }
 
 export class SandboxWorkloadSourceError extends Error {
@@ -128,9 +129,9 @@ function legacySource(
   options: ResolveSandboxWorkloadSourceOptions,
   reason: LegacyDockerfileReason,
 ): LegacyDockerfileWorkloadSource {
-  if (isCandidateManagedImageAgent(options.agentName)) {
+  if (isManagedImageOnlyAgent(options.agentName)) {
     throw new SandboxWorkloadSourceError(
-      `Agent '${options.agentName}' is a release candidate and must use its exact managed image digest; the legacy Dockerfile workload is not accepted for ${reason}.`,
+      `Agent '${options.agentName}' must use its published managed image; the legacy Dockerfile workload is not accepted for ${reason}.`,
     );
   }
   if (!options.runtime.legacyDockerfileBuilds) {
@@ -155,7 +156,7 @@ function unavailableSource(
   detail: string,
 ): LegacyDockerfileWorkloadSource {
   if (
-    isCandidateManagedImageAgent(options.agentName) ||
+    isManagedImageOnlyAgent(options.agentName) ||
     (options.policy ?? options.runtime.managedImageSelectionPolicy) === "require-managed"
   ) {
     throw new SandboxWorkloadSourceError(
@@ -190,6 +191,19 @@ export function managedImageRuntimeSupportError(
     return `driver '${runtime.driverName}' does not support capability contract v${MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION}`;
   }
   return null;
+}
+
+/** Report why the driver cannot run the selected agent's managed image. */
+export function managedImageAgentSupportError(
+  runtime: SandboxWorkloadRuntimeCapabilities,
+  agentName: string,
+): string | null {
+  const runtimeError = managedImageRuntimeSupportError(runtime);
+  if (runtimeError !== null) return runtimeError;
+  const qualifiedAgents: readonly string[] = runtime.managedImages?.agents ?? [];
+  return qualifiedAgents.includes(agentName)
+    ? null
+    : `driver '${runtime.driverName}' is not qualified for that agent`;
 }
 
 export function managedImageRuntimePlatform(
@@ -247,17 +261,12 @@ export function resolveSandboxWorkloadSource(
     };
   }
 
-  if (
-    isCandidateManagedImageAgent(options.agentName) &&
-    options.customDockerfilePath !== undefined &&
-    options.customDockerfilePath !== null
-  ) {
-    throw new SandboxWorkloadSourceError(
-      `Agent '${options.agentName}' is a release candidate and must use its exact managed image digest; a custom Dockerfile is not accepted.`,
-    );
-  }
-
   if (options.customDockerfilePath !== undefined && options.customDockerfilePath !== null) {
+    if (isManagedImageOnlyAgent(options.agentName)) {
+      throw new SandboxWorkloadSourceError(
+        `Agent '${options.agentName}' must use its published managed image; a custom Dockerfile is not accepted.`,
+      );
+    }
     return legacySource(options, "custom-dockerfile");
   }
 
@@ -269,15 +278,8 @@ export function resolveSandboxWorkloadSource(
       "the selected agent is not a shipped managed agent",
     );
   }
-  if (!isShippedManagedImageAgent(agentName) && options.candidateAgentsEnabled !== true) {
-    return unavailableSource(
-      options,
-      "agent-not-managed",
-      "the selected agent is a release candidate and candidate selection is disabled",
-    );
-  }
 
-  const runtimeSupportError = managedImageRuntimeSupportError(options.runtime);
+  const runtimeSupportError = managedImageAgentSupportError(options.runtime, agentName);
   if (runtimeSupportError !== null) {
     return unavailableSource(options, "runtime-unsupported", runtimeSupportError);
   }

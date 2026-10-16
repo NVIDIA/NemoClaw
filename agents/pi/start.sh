@@ -299,15 +299,19 @@ PY_APPEND_CORPORATE_CA
   export _NEMOCLAW_CORPORATE_CA_MERGED=1
   echo "[nemoclaw] merged corporate proxy CA into sandbox trust bundle (#6210)" >&2
 }
-merge_corporate_proxy_ca
+if [ "${NEMOCLAW_MANAGED_STARTUP_APPLIED:-0}" != "1" ]; then
+  merge_corporate_proxy_ca
+fi
 
 if [ "$_NEMOCLAW_PI_DROP_PRIVILEGES" -eq 1 ]; then
-  if [ "${_NEMOCLAW_CORPORATE_CA_MERGED:-}" = "1" ] \
-    && [ "$(stat -c '%u:%g:%a' "$_NEMOCLAW_MERGED_CA_FILE" 2>/dev/null || true)" != "0:0:444" ]; then
-    printf '%s\n' '[SECURITY] Merged corporate CA bundle is not protected; refusing to drop privileges.' >&2
-    exit 1
+  if [ "${NEMOCLAW_MANAGED_STARTUP_APPLIED:-0}" != "1" ]; then
+    if [ "${_NEMOCLAW_CORPORATE_CA_MERGED:-}" = "1" ] \
+      && [ "$(stat -c '%u:%g:%a' "$_NEMOCLAW_MERGED_CA_FILE" 2>/dev/null || true)" != "0:0:444" ]; then
+      printf '%s\n' '[SECURITY] Merged corporate CA bundle is not protected; refusing to drop privileges.' >&2
+      exit 1
+    fi
+    export _NEMOCLAW_CORPORATE_CA_ROOT_PHASE=1
   fi
-  export _NEMOCLAW_CORPORATE_CA_ROOT_PHASE=1
   exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
     /usr/local/bin/nemoclaw-start "$@"
 fi

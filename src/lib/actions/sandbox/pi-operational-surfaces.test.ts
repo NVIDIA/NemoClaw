@@ -3,24 +3,21 @@
 
 import { createHash } from "node:crypto";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-const authority = vi.hoisted(() => ({ digests: [] as string[] }));
-
-vi.mock("../../agent/candidate-authority", () => ({
-  CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS: { pi: authority.digests },
-  acceptedCandidateReceiptDigests: () => authority.digests,
+vi.mock("../../core/wsl", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../core/wsl")>()),
+  isWsl: () => false,
 }));
 
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
-import {
-  type CandidateQualificationFixture,
-  candidateQualificationEnvironment,
-} from "../../agent/candidate-test-fixture";
 import { loadAgent } from "../../agent/defs";
 import { createOnboardAgentSelector } from "../../onboard/agent-selection";
-import { MANAGED_IMAGE_REPOSITORIES } from "../../onboard/managed-image/contract";
+import {
+  MANAGED_IMAGE_REPOSITORIES,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
+} from "../../onboard/managed-image/contract";
 import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../state/registry/types";
@@ -76,30 +73,20 @@ function statusDeps(entry: SandboxEntry) {
   };
 }
 
-let fixture: CandidateQualificationFixture | null = null;
-
-function qualify(): NodeJS.ProcessEnv {
-  fixture = candidateQualificationEnvironment();
-  authority.digests.push(fixture.receiptDigest);
-  for (const [key, value] of Object.entries(fixture.env)) vi.stubEnv(key, String(value));
-  return fixture.env;
+function onHost(platform: NodeJS.Platform): void {
+  vi.spyOn(process, "platform", "get").mockReturnValue(platform);
 }
 
-describe("Pi candidate operational surfaces", () => {
-  beforeEach(() => {
-    vi.stubEnv("NEMOCLAW_CANDIDATE_AGENTS", "");
-    vi.stubEnv("NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT", "");
-  });
+function nonInteractiveSelector(note = vi.fn(), prompt = vi.fn(async () => "1")) {
+  return createOnboardAgentSelector({ isNonInteractive: () => true, note, prompt });
+}
 
+describe("Pi operational surfaces", () => {
   afterEach(() => {
-    vi.unstubAllEnvs();
-    authority.digests.splice(0, authority.digests.length);
-    fixture?.cleanup();
-    fixture = null;
+    vi.restoreAllMocks();
   });
 
   it("reports Pi separately from its compute runtime in the status report (#7927)", async () => {
-    qualify();
     const entry = piSandboxEntry();
 
     const report = await getSandboxStatusReport(SANDBOX, statusDeps(entry));
@@ -116,17 +103,8 @@ describe("Pi candidate operational surfaces", () => {
     expect(report.agent).not.toBe(String(entry.openshellDriver));
   });
 
-  it("names the withheld candidate in the status report without qualification (#7927)", async () => {
-    const report = await getSandboxStatusReport(SANDBOX, statusDeps(piSandboxEntry()));
-
-    expect(report.agent).toBe("pi");
-    expect(report.agentRuntime).toBe("unknown");
-    expect(report.agentLoadError).toContain("release candidate");
-  });
-
   it("keeps a recorded Pi sandbox off the gateway log source (#7927)", async () => {
-    const env = qualify();
-    const agent = loadAgent("pi", env);
+    const agent = loadAgent("pi");
     const readLogs = vi.fn(async (request: { source: "gateway" | "openshell" }) => ({
       content: request.source,
       diagnostic: "",
@@ -160,34 +138,29 @@ describe("Pi candidate operational surfaces", () => {
   });
 
   it("resumes a recorded Pi session without changing the agent (#7927)", async () => {
-    qualify();
+    onHost("linux");
     const note = vi.fn();
     const prompt = vi.fn(async () => "1");
-    const selectAgent = createOnboardAgentSelector({
-      isNonInteractive: () => true,
+
+    const agent = await nonInteractiveSelector(
       note,
       prompt,
+    )({
+      resume: true,
+      session: { agent: "pi" },
     });
-
-    const agent = await selectAgent({ resume: true, session: { agent: "pi" } });
 
     expect(agent?.name).toBe("pi");
     expect(prompt).not.toHaveBeenCalled();
     expect(note).toHaveBeenCalledWith(expect.stringContaining("Pi"));
   });
 
-  it("refuses to resume a Pi session without qualification authority (#7927)", async () => {
-    const selectAgent = createOnboardAgentSelector({
-      isNonInteractive: () => true,
-      note: vi.fn(),
-      prompt: vi.fn(async () => "1"),
-    });
+  it("refuses to resume a recorded Pi session on a macOS host", async () => {
+    onHost("darwin");
 
-    // Falling back to OpenClaw would silently change the agent the session was
-    // created with, so the withheld candidate must fail closed instead.
-    await expect(selectAgent({ resume: true, session: { agent: "pi" } })).rejects.toThrow(
-      "Agent 'pi' is a release candidate and is not selectable in this release",
-    );
+    await expect(
+      nonInteractiveSelector()({ resume: true, session: { agent: "pi" } }),
+    ).rejects.toThrow("Agent 'pi' is supported only on native Linux hosts; this host is macOS.");
   });
 
   it("delegates Pi destroy cleanup to the selected compute-runtime provider (#7927)", () => {
@@ -197,6 +170,7 @@ describe("Pi candidate operational surfaces", () => {
         support: {
           exactDigestReferences: true,
           platforms: ["linux/amd64", "linux/arm64"],
+          agents: SHIPPED_MANAGED_IMAGE_AGENTS,
           startupProfileContractVersions: [1],
           capabilityContractVersions: [1],
         },

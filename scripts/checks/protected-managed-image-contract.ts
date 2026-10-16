@@ -3,7 +3,14 @@
 
 import type { ShippedManagedImageAgent } from "../../src/lib/onboard/managed-image/contract.ts";
 
-const BASE_REPOSITORIES: Readonly<Record<ShippedManagedImageAgent, string>> = Object.freeze({
+// The trusted protected controller qualifies these agents. A shipped agent
+// joins only after the controller that builds and starts it has landed.
+type ProtectedManagedImageAgent = Extract<
+  ShippedManagedImageAgent,
+  "openclaw" | "hermes" | "langchain-deepagents-code"
+>;
+
+const BASE_REPOSITORIES: Readonly<Record<ProtectedManagedImageAgent, string>> = Object.freeze({
   openclaw: "ghcr.io/nvidia/nemoclaw/sandbox-base",
   hermes: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
   "langchain-deepagents-code": "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
@@ -135,7 +142,7 @@ function parseEntry(
   if (entry.reference !== `${expectedRepository}@${entry.digest}`) {
     throw new Error("protected managed-image contract entry is not the exact agent digest");
   }
-  const basePrefix = `${BASE_REPOSITORIES[entry.agent as ShippedManagedImageAgent]}@`;
+  const basePrefix = `${BASE_REPOSITORIES[entry.agent as ProtectedManagedImageAgent]}@`;
   const candidateBasePrefix = `localhost:5000/nemoclaw-managed-protected-base/${entry.agent}@`;
   if (
     typeof entry.baseReference !== "string" ||

@@ -24,6 +24,7 @@ import {
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
   type RuntimeProviderBundle,
   type RuntimeProviderCleanupInput,
   type RuntimeProviderCommandCapture,
@@ -299,6 +300,7 @@ const COMPLETE_MANAGED_IMAGE_V1_PROFILE = {
   support: {
     exactDigestReferences: true,
     platforms: MANAGED_IMAGE_PLATFORMS,
+    agents: SHIPPED_MANAGED_IMAGE_AGENTS,
     startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
     capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
   },

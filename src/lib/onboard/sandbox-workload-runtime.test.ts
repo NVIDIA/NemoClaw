@@ -6,6 +6,7 @@ import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
 } from "./managed-image/contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./runtime-provider/current";
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
@@ -16,6 +17,7 @@ import { createInMemoryRuntimeProviderBundle } from "../../../test/helpers/runti
 const AMD64_MANAGED_IMAGE_V1_SUPPORT = {
   exactDigestReferences: true,
   platforms: [MANAGED_IMAGE_PLATFORMS[0]],
+  agents: SHIPPED_MANAGED_IMAGE_AGENTS,
   startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
   capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
 } as const;

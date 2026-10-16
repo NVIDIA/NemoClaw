@@ -59,7 +59,7 @@ describe("release post-tag follow-through", () => {
 
   it("classifies production images and leaves lkg under maintainer control", () => {
     expect(followThrough).toContain("Publish complete managed images");
-    expect(followThrough).toContain("Report Pi candidate failures separately");
+    expect(followThrough).toContain("a Pi image failure blocks production promotion");
     expect(followThrough).toMatch(/supports failed-job\s+reruns/u);
     expect(followThrough).toContain("This skill never moves `lkg`");
     expect(followThrough).toContain("returned downstream production-image run");

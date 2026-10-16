@@ -47,7 +47,7 @@ Classify the effects that each workflow owns:
   carry-forward and released-label deletion.
 - For `Docs / Publish Public`, require the `publish` job to succeed.
 - For `Images / Publish Base and Managed Images`, require `Publish complete managed images` to
-  succeed. Report Pi candidate failures separately; they do not determine production promotion.
+  succeed. Its cohort includes Pi, so a Pi image failure blocks production promotion.
 
 A failed post-tag workflow does not change tag success. Report the failing job and recovery path.
 For failed image jobs, check [retry prerequisites](candidate-evidence.md#check-prerequisites-before-a-retry).

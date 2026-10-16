@@ -10,20 +10,49 @@ import {
   runOnboardProcessAsync,
 } from "../helpers/onboard-child-process-harness";
 import {
-  candidateQualificationContract,
-  candidateQualificationEnvironment,
-} from "../../src/lib/agent/candidate-test-fixture";
+  MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+  MANAGED_IMAGE_CONTRACT_VERSION,
+  MANAGED_IMAGE_REPOSITORIES,
+  MANAGED_IMAGE_SOURCE_REPOSITORY,
+  MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  type ManagedImageAgent,
+  type ManagedImageContractV1,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
+} from "../../src/lib/onboard/managed-image/contract";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
+
+function contractFor(agent: ManagedImageAgent, index: number): ManagedImageContractV1 {
+  const image = MANAGED_IMAGE_REPOSITORIES[agent];
+  const digest = `sha256:${String(index + 1).repeat(64)}` as const;
+  return {
+    contractVersion: MANAGED_IMAGE_CONTRACT_VERSION,
+    agent,
+    platform: process.arch === "arm64" ? "linux/arm64" : "linux/amd64",
+    image,
+    digest,
+    reference: `${image}@${digest}`,
+    source: {
+      repository: MANAGED_IMAGE_SOURCE_REPOSITORY,
+      revision: "d".repeat(40),
+      release: "v0.1.0",
+      cohort: "ghrun-7927-1",
+    },
+    startupProfileContractVersion: MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+    capabilityContractVersion: MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+  };
+}
 
 it("creates Pi native routing through public onboarding and preserves it on recovery (#12589)", async (context) => {
   const workspace = createOnboardProcessWorkspace("pi-native-onboard-");
-  const contract = candidateQualificationContract(
-    "pi",
-    process.arch === "arm64" ? "linux/arm64" : "linux/amd64",
-  );
-  const receipt = candidateQualificationEnvironment({ contract });
   const catalog = workspace.path("catalog.json");
-  fs.writeFileSync(catalog, JSON.stringify({ pi: contract }));
+  fs.writeFileSync(
+    catalog,
+    JSON.stringify(
+      Object.fromEntries(
+        SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contractFor(agent, index)]),
+      ),
+    ),
+  );
   const root = path.join(import.meta.dirname, "../..");
   const hook = path.join(root, "test/helpers/onboard-script-mocks.cjs");
   const script = workspace.path("scenario.cjs");
@@ -73,7 +102,7 @@ load("adapters/openshell/provider-adapter-cli.ts").createCliOpenShellProviderAda
 const fixtures = require(${JSON.stringify(hook)});
 fixtures.mockStandaloneGatewayTeardownAuthority();
 fixtures.mockManagedStateVolumeOnboardLifecycle();
-load("agent/candidate-authority.ts").acceptedCandidateReceiptDigests = () => [${JSON.stringify(receipt.receiptDigest)}];
+load("core/version.ts").getVersion = () => "0.1.0";
 const { advanceTo } = load("onboard/machine/result.ts");
 load("onboard/machine/handlers/preflight.ts").handlePreflightState = async ({ session }) => ({
   gpu: null, sandboxGpuConfig: load("onboard/sandbox-gpu-mode.ts").resolveSandboxGpuConfig(null, { flag: "disable" }),
@@ -213,8 +242,8 @@ const { onboard } = load("onboard.ts");
       context,
       timeoutMs: 12_000,
       env: minimalSpawnEnv(workspace.homeDir, {
-        ...receipt.env,
         TMPDIR: workspace.root,
+        NEMOCLAW_CORPORATE_CA_IMPORT: "0",
         OPENAI_API_KEY: "synthetic-pi-openai-key",
         NEMOCLAW_PROVIDER: "openai",
         NEMOCLAW_MODEL: "gpt-5.4",
@@ -224,7 +253,6 @@ const { onboard } = load("onboard.ts");
     expect(result.status, result.output).toBe(0);
     expect(result.stdout).toContain("PI_NATIVE_ONBOARDED");
   } finally {
-    receipt.cleanup();
     workspace.remove();
   }
 });

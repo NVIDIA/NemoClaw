@@ -17,6 +17,7 @@ import {
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ShippedManagedImageAgent,
 } from "../../../src/lib/onboard/managed-image/contract.ts";
+import { RUNTIME_PROVIDER_ACTIVATION_AGENTS } from "../../../src/lib/onboard/runtime-provider/activation.ts";
 import {
   EXTERNAL_IMAGE_AGENTS,
   type ExternalImageAgent,
@@ -95,12 +96,23 @@ const SANDBOX_NAMES: Record<ShippedManagedImageAgent, string> = {
   openclaw: "mi-act-openclaw",
   hermes: "mi-act-hermes",
   "langchain-deepagents-code": "mi-act-dcode",
+  pi: "mi-act-pi",
 };
 const EXTERNAL_IMAGE_SANDBOX_NAMES: Record<ExternalImageAgent, string> = {
   openclaw: "ext-img-openclaw",
   hermes: "ext-img-hermes",
 };
 type ContainerEngine = "docker" | "podman";
+
+/** Docker qualifies every shipped agent; Podman qualifies its activation agents. */
+export function managedActivationAgents(
+  env: NodeJS.ProcessEnv = process.env,
+): readonly ShippedManagedImageAgent[] {
+  return env.NEMOCLAW_GATEWAY_RUNTIME === "podman"
+    ? RUNTIME_PROVIDER_ACTIVATION_AGENTS
+    : SHIPPED_MANAGED_IMAGE_AGENTS;
+}
+
 type RuntimeFixtures = {
   readonly artifacts: ArtifactSink;
   readonly cleanup: CleanupRegistry;
@@ -244,6 +256,8 @@ function agentTurnCommand(agent: ShippedManagedImageAgent, sessionId: string): s
       return ["hermes", "-z", "Reply with exactly one word: PONG"];
     case "langchain-deepagents-code":
       return ["dcode", "-n", "Reply with exactly one word: PONG", "--json"];
+    case "pi":
+      return ["pi", "--no-approve", "--print", "Reply with exactly one word: PONG"];
   }
 }
 
@@ -486,7 +500,7 @@ export function managedActivationOpenClawPluginScript(): string {
 }
 
 function managedActivationNativeStateScript(agent: ShippedManagedImageAgent): string {
-  if (agent === "langchain-deepagents-code") return "";
+  if (agent === "langchain-deepagents-code" || agent === "pi") return "";
   return agent === "openclaw"
     ? managedActivationOpenClawPluginScript()
     : [
@@ -500,7 +514,7 @@ function managedActivationNativeStateScript(agent: ShippedManagedImageAgent): st
 }
 
 function managedActivationNativeStateReadbackScript(agent: ShippedManagedImageAgent): string {
-  if (agent === "langchain-deepagents-code") return "";
+  if (agent === "langchain-deepagents-code" || agent === "pi") return "";
   return agent === "openclaw"
     ? "HOME=/sandbox openclaw plugins inspect managed-activation-native --runtime --json >/dev/null"
     : [
@@ -710,33 +724,31 @@ function enterOnboardPhase(progress: TestProgress, agent: ShippedManagedImageAge
     case "langchain-deepagents-code":
       progress.phase("onboard and exercise Deep Agents Code");
       return;
+    case "pi":
+      progress.phase("onboard and exercise Pi");
+      return;
   }
 }
 
 function enterPublicLifecyclePhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
   switch (agent) {
     case "openclaw":
-      progress.phase("stop and start OpenClaw through public NemoClaw lifecycle");
+      progress.phase(
+        "stop and start OpenClaw through public NemoClaw lifecycle, then verify cleanup",
+      );
       return;
     case "hermes":
-      progress.phase("stop and start Hermes through public NemoClaw lifecycle");
+      progress.phase(
+        "stop and start Hermes through public NemoClaw lifecycle, then verify cleanup",
+      );
       return;
     case "langchain-deepagents-code":
-      progress.phase("stop and start Deep Agents Code through public NemoClaw lifecycle");
+      progress.phase(
+        "stop and start Deep Agents Code through public NemoClaw lifecycle, then verify cleanup",
+      );
       return;
-  }
-}
-
-function enterCleanupPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
-  switch (agent) {
-    case "openclaw":
-      progress.phase("destroy and verify OpenClaw cleanup");
-      return;
-    case "hermes":
-      progress.phase("destroy and verify Hermes cleanup");
-      return;
-    case "langchain-deepagents-code":
-      progress.phase("destroy and verify Deep Agents Code cleanup");
+    case "pi":
+      progress.phase("stop and start Pi through public NemoClaw lifecycle, then verify cleanup");
       return;
   }
 }
@@ -974,7 +986,6 @@ export async function qualifyAgent(
   ).toBe(true);
   await runAgentTurn(sandbox, agent, sandboxName, "after", env);
 
-  enterCleanupPhase(progress, agent);
   await sandbox.cleanupSandbox(sandboxName, {
     artifactName: `managed-activation-openshell-delete-${agent}`,
     env,
@@ -1198,7 +1209,8 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     await inference.close();
   });
 
-  for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
+  const agents = managedActivationAgents();
+  for (const agent of agents) {
     await qualifyAgent(
       fixtures,
       guard,
@@ -1239,14 +1251,14 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     .requests()
     .filter((request) => request.method === "POST" && request.path === "/v1/chat/completions");
   expect(
-    chatRequests.length >= SHIPPED_MANAGED_IMAGE_AGENTS.length * 2 &&
+    chatRequests.length >= agents.length * 2 &&
       chatRequests.every((request) => request.auth === "ok" && request.model === MODEL) &&
       chatRequests.some((request) => request.requestCanaryPresent === true) &&
       chatRequests.some((request) => request.toolResultPresent === true) &&
       externalImages.every((image) => image.verified),
   ).toBe(true);
   await artifacts.writeJson("managed-image-activation-summary.json", {
-    agents: SHIPPED_MANAGED_IMAGE_AGENTS,
+    agents,
     agentTurns: chatRequests.length,
     buildCommands,
     containerEngine,
@@ -1274,9 +1286,9 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
   });
   await artifacts.target.complete({
     id: "managed-image-activation",
-    agents: SHIPPED_MANAGED_IMAGE_AGENTS,
+    agents,
     buildCommands,
-    exactPublishedDigests: [...contracts.values()].map((contract) => contract.reference),
+    exactPublishedDigests: agents.map((agent) => contracts.get(agent)!.reference),
     externalImageDigests: externalImages.map((image) => image.reference),
   });
 }

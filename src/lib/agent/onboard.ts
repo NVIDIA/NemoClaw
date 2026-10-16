@@ -37,10 +37,10 @@ import {
   isTerminalAgent,
   loadAgent,
   requireAgentPolicyAdditionsPath,
-  requireCandidateQualificationEnabled,
   resolveAgentName,
 } from "./defs";
 import { waitForAgentGatewayReady } from "./gateway-readiness";
+import { requireAgentHostOsSupported } from "./host-os";
 import { runAgentSmokeCommands } from "./terminal-smoke";
 import { enforceTerminalAgentVersion } from "./terminal-version-enforcement";
 import { printBearerTokenApiAccess } from "./web-auth-ui";
@@ -143,8 +143,9 @@ export function resolveAgent({
 } = {}): AgentDefinition | null {
   const name = resolveAgentName({ agentFlag, session });
   if (name === "openclaw") return null;
-  requireCandidateQualificationEnabled(name);
-  return loadAgent(name);
+  const agent = loadAgent(name);
+  requireAgentHostOsSupported(agent);
+  return agent;
 }
 
 /**

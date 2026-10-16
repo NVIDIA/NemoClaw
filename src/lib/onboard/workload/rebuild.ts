@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
-import { readCandidateQualificationReceipt } from "../../agent/candidate";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { getVersion } from "../../core/version";
@@ -10,7 +9,6 @@ import type { SandboxEntry } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import type { ResolvedCorporateCa } from "../corporate-ca-types";
 import {
-  isCandidateManagedImageAgent,
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   type ManagedImageAgent,
@@ -42,7 +40,6 @@ import {
   liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
   prepareSandboxWorkloadSource,
-  rejectManagedWorkloadBaseImageOverride,
   SandboxWorkloadPreparationError,
 } from "./preparation";
 import {
@@ -50,6 +47,7 @@ import {
   managedImageRuntimePlatform,
   resolveSandboxWorkloadSource,
   type SandboxWorkloadRuntimeCapabilities,
+  SandboxWorkloadSourceError,
 } from "./source";
 
 const HOST_PROXY_ENV_NAMES = [
@@ -145,86 +143,43 @@ export async function prepareManagedWorkloadRebuildHandoff(
   requireProviderBoundAuthority(authority, options.runtime, options.provider);
 
   let replacement: PreparedSandboxWorkloadSource;
-  if (isCandidateManagedImageAgent(authority.agent)) {
-    try {
-      rejectManagedWorkloadBaseImageOverride(authority.agent);
-    } catch (error) {
-      throw new ManagedWorkloadRebuildError(
-        error instanceof Error
-          ? error.message
-          : "the managed workload base-image override is invalid",
-        { cause: error },
-      );
-    }
-    // A candidate publishes outside the all-agent release cohort, so its
-    // replacement comes from the protected qualification receipt rather than
-    // the current release catalog.
-    let contract;
-    try {
-      contract = readCandidateQualificationReceipt(authority.agent);
-    } catch (error) {
-      throw new ManagedWorkloadRebuildError(
-        "the protected candidate qualification receipt is unavailable or invalid",
-        { cause: error },
-      );
-    }
-    try {
-      replacement = {
-        source: resolveSandboxWorkloadSource({
-          agentName: authority.agent,
-          legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
-          runtime: options.runtime,
-          catalog: { [authority.agent]: contract },
-          policy: "require-managed",
-          candidateAgentsEnabled: true,
-        }),
-        release: contract.source.release,
-        fallbackDiagnostic: null,
-      };
-    } catch (error) {
-      throw new ManagedWorkloadRebuildError(
-        "the accepted candidate image is not supported by the selected runtime",
-        { cause: error },
-      );
-    }
-  } else {
-    const qualificationRevision = liveE2eManagedImageRevision(process.env);
-    const liveCatalog = liveE2eManagedImageCatalog(process.env);
-    if (qualificationRevision && liveCatalog) {
-      throw new ManagedWorkloadRebuildError(
-        "live E2E managed-image revision and catalog authority conflict",
-      );
-    }
-    try {
-      // Source installs publish a SHA pointer, not a Git-describe release alias.
-      // Keep rebuild on the same installed-build authority as onboarding.
-      const rootDir = options.rootDir ?? REPOSITORY_ROOT;
-      const catalogRevision =
-        qualificationRevision ??
-        (liveCatalog ? null : installedManagedImageCatalogRevision(process.env, rootDir));
-      replacement = await managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource({
-        agentName: authority.agent,
-        legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
-        runtime: options.runtime,
-        version: options.version ?? getVersion({ rootDir }),
-        policy: "require-managed",
-        ...(liveCatalog
-          ? {
-              ...(liveCatalog.catalog ? { catalog: liveCatalog.catalog } : {}),
-              catalogPath: liveCatalog.path,
-              expectedCatalogRevision: liveCatalog.revision,
-            }
-          : {}),
-        ...(catalogRevision ? { catalogRevision } : {}),
-      });
-    } catch (error) {
-      throw new ManagedWorkloadRebuildError(
-        error instanceof SandboxWorkloadPreparationError
-          ? error.message
-          : "the selected managed-image catalog is unavailable or invalid",
-        { cause: error },
-      );
-    }
+  const qualificationRevision = liveE2eManagedImageRevision(process.env);
+  const liveCatalog = liveE2eManagedImageCatalog(process.env);
+  if (qualificationRevision && liveCatalog) {
+    throw new ManagedWorkloadRebuildError(
+      "live E2E managed-image revision and catalog authority conflict",
+    );
+  }
+  try {
+    // Source installs publish a SHA pointer, not a Git-describe release alias.
+    // Keep rebuild on the same installed-build authority as onboarding.
+    const rootDir = options.rootDir ?? REPOSITORY_ROOT;
+    const catalogRevision =
+      qualificationRevision ??
+      (liveCatalog ? null : installedManagedImageCatalogRevision(process.env, rootDir));
+    replacement = await managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource({
+      agentName: authority.agent,
+      legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
+      runtime: options.runtime,
+      version: options.version ?? getVersion({ rootDir }),
+      policy: "require-managed",
+      ...(liveCatalog
+        ? {
+            ...(liveCatalog.catalog ? { catalog: liveCatalog.catalog } : {}),
+            catalogPath: liveCatalog.path,
+            expectedCatalogRevision: liveCatalog.revision,
+          }
+        : {}),
+      ...(catalogRevision ? { catalogRevision } : {}),
+    });
+  } catch (error) {
+    throw new ManagedWorkloadRebuildError(
+      error instanceof SandboxWorkloadPreparationError ||
+        error instanceof SandboxWorkloadSourceError
+        ? error.message
+        : "the selected managed-image catalog is unavailable or invalid",
+      { cause: error },
+    );
   }
   if (replacement.source.kind !== "managed-image") {
     throw new ManagedWorkloadRebuildError(
@@ -420,7 +375,6 @@ export function prepareSandboxWorkloadSourceFromRebuildHandoff(
       runtime,
       catalog: { [handoff.agent]: handoff.replacement.source.contract },
       policy: "require-managed",
-      candidateAgentsEnabled: isCandidateManagedImageAgent(handoff.agent),
     });
   } catch (error) {
     throw new SandboxWorkloadPreparationError(

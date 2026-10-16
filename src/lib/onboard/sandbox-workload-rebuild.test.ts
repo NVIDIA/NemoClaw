@@ -22,6 +22,7 @@ import {
   type ManagedImageAgent,
   type ManagedImageContractV1,
   type ManagedImagePlatform,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
 } from "./managed-image/contract";
 import type {
   BuiltManagedStartupOnboardProfile,
@@ -47,7 +48,7 @@ import {
 import type { SandboxWorkloadRuntimeCapabilities } from "./workload/source";
 import { ManagedImageCatalogUnavailableError } from "./managed-image/catalog";
 
-const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
+const AGENTS = SHIPPED_MANAGED_IMAGE_AGENTS;
 let installedRoot: string;
 const ORIGINAL_PREPARE = managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource;
 type RebuildProfileInput = Omit<
@@ -224,6 +225,7 @@ function runtime(
     managedImages: {
       exactDigestReferences: true,
       platforms: [platform],
+      agents: SHIPPED_MANAGED_IMAGE_AGENTS,
       startupProfileContractVersions: [1],
       capabilityContractVersions: [1],
     },
@@ -243,6 +245,7 @@ function provider(
         support: {
           exactDigestReferences: true,
           platforms: ["linux/amd64", "linux/arm64"],
+          agents: SHIPPED_MANAGED_IMAGE_AGENTS,
           startupProfileContractVersions: [1],
           capabilityContractVersions: [1],
         },

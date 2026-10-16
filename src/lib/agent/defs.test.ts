@@ -6,17 +6,6 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const authority = vi.hoisted(() => ({ digests: [] as string[] }));
-
-vi.mock("./candidate-authority", () => ({
-  CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS: { pi: authority.digests },
-  acceptedCandidateReceiptDigests: () => authority.digests,
-}));
-
-import {
-  type CandidateQualificationFixture,
-  candidateQualificationEnvironment,
-} from "./candidate-test-fixture";
 import YAML from "yaml";
 
 import {
@@ -39,14 +28,10 @@ function writeTempAgentManifest(name: string, contents: string): void {
   fs.writeFileSync(path.join(agentDir, "manifest.yaml"), contents);
 }
 
-const qualificationFixtures: CandidateQualificationFixture[] = [];
-
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.NEMOCLAW_AGENT;
   delete process.env.NEMOCLAW_CUA_ENABLED;
-  authority.digests.splice(0, authority.digests.length);
-  while (qualificationFixtures.length > 0) qualificationFixtures.pop()?.cleanup();
   while (tempAgentDirs.length > 0) {
     const agentDir = tempAgentDirs.pop();
     if (agentDir) {
@@ -83,52 +68,28 @@ describe("agent definitions", () => {
     expect(resolveAgent({ agentFlag: "nemocua" })?.name).toBe("nemocua");
   });
 
-  it("keeps the Pi candidate manifest out of agent selection by default (#7925)", () => {
-    expect(fs.existsSync(path.join(AGENTS_DIR, "pi", "manifest.yaml"))).toBe(true);
-
-    expect(listAgents({})).not.toContain("pi");
-    expect(getAgentChoices().map((choice) => choice.name)).not.toContain("pi");
-    expect(resolveAgentNameAlias("pi", listAgents({}))).toBeNull();
-    expect(() => loadAgent("pi", {})).toThrow(
-      "Agent 'pi' is a release candidate and is not selectable in this release",
+  it("lists Pi as a selectable shipped agent in an ordinary environment", () => {
+    expect(listAgents({})).toContain("pi");
+    expect(getAgentChoices()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "pi", displayName: "Pi" })]),
     );
+    expect(resolveAgentNameAlias("pi", listAgents({}))).toBe("pi");
+    expect(loadAgent("pi", {}).name).toBe("pi");
   });
 
-  it("does not let an ordinary environment setting expose Pi (#7925)", () => {
-    const ordinaryEnv = { NEMOCLAW_PI_QUALIFICATION: "1" };
-
-    expect(listAgents(ordinaryEnv)).not.toContain("pi");
-    expect(resolveAgentNameAlias("pi", listAgents(ordinaryEnv))).toBeNull();
-    expect(() => loadAgent("pi", ordinaryEnv)).toThrow(
-      "Agent 'pi' is a release candidate and is not selectable in this release",
-    );
+  it("loads host qualification only for agents whose manifest declares it", () => {
+    expect(loadAgent("pi").hostOs).toEqual(["linux"]);
+    expect(loadAgent("hermes").hostOs).toBeNull();
   });
 
-  it("selects Pi only with protected candidate qualification authority (#7927)", () => {
-    const fixture = candidateQualificationEnvironment();
-    qualificationFixtures.push(fixture);
-    authority.digests.push(fixture.receiptDigest);
+  it("rejects an agent manifest whose host_os names an unknown host", () => {
+    const agentName = `invalid-host-os-${String(Date.now())}`;
+    writeTempAgentManifest(agentName, [`name: ${agentName}`, "host_os:", "  - solaris"].join("\n"));
 
-    expect(listAgents(fixture.env)).toContain("pi");
-    expect(resolveAgentNameAlias("pi", listAgents(fixture.env))).toBe("pi");
-    expect(loadAgent("pi", fixture.env).name).toBe("pi");
+    expect(() => loadAgent(agentName)).toThrow(/host_os/);
   });
 
-  it("withholds Pi from a receipt the repository has not published (#7927)", () => {
-    const fixture = candidateQualificationEnvironment();
-    qualificationFixtures.push(fixture);
-
-    expect(listAgents(fixture.env)).not.toContain("pi");
-    expect(() => loadAgent("pi", fixture.env)).toThrow("is not selectable in this release");
-  });
-
-  it("does not expose Pi from the protected flag alone (#7927)", () => {
-    expect(listAgents({ NEMOCLAW_CANDIDATE_AGENTS: "1" })).not.toContain("pi");
-    expect(listAgents({ NEMOCLAW_CANDIDATE_AGENTS: "0" })).not.toContain("pi");
-    expect(listAgents({ NEMOCLAW_CANDIDATE_AGENTS: "true" })).not.toContain("pi");
-  });
-
-  it("keeps the Pi candidate manifest readable without public resolution (#7925)", () => {
+  it("keeps the Pi manifest readable as YAML (#7925)", () => {
     const manifest = YAML.parse(
       fs.readFileSync(path.join(AGENTS_DIR, "pi", "manifest.yaml"), "utf8"),
     ) as {

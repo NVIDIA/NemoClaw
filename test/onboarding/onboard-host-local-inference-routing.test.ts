@@ -18,6 +18,7 @@ import type {
   HostLocalInferenceGatewayMutation,
   HostLocalInferenceStartupSelection,
 } from "../../src/lib/onboard/runtime-provider/host-local-inference-routing.js";
+import { SHIPPED_MANAGED_IMAGE_AGENTS } from "../../src/lib/onboard/managed-image/contract.js";
 import { createPodmanHostLocalInferenceOperation } from "../../src/lib/onboard/runtime-provider/podman-host-local-inference.js";
 import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
 import { createPodmanHostLocalInferenceTestHarness } from "../helpers/podman-host-local-inference-test-harness.js";
@@ -263,6 +264,7 @@ function fixture(
       support: {
         exactDigestReferences: true,
         platforms: ["linux/amd64"],
+        agents: SHIPPED_MANAGED_IMAGE_AGENTS,
         startupProfileContractVersions: [1],
         capabilityContractVersions: [1],
       },
@@ -1316,6 +1318,7 @@ describe("onboard host-local inference routing", () => {
         support: {
           exactDigestReferences: true,
           platforms: ["linux/amd64"],
+          agents: SHIPPED_MANAGED_IMAGE_AGENTS,
           startupProfileContractVersions: [1],
           capabilityContractVersions: [1],
         },
