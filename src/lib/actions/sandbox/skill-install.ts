@@ -451,6 +451,7 @@ export async function installSandboxSkill(
           local.name,
           stagedSkillDirectory,
           verifiedContentDigest,
+          `${CLI_NAME} ${sandboxName} skill remove ${local.name}`,
         );
     const installed = await runSkillCommandWithStageCleanup(
       sandboxName,
