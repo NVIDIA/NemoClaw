@@ -24,6 +24,10 @@ import {
   hasBedrockRuntimeAwsAuthEnv,
   isBedrockRuntimeEndpoint,
 } from "../../inference/bedrock-runtime";
+import {
+  verifyNativeLocalRebuildSelection,
+  type NativeLocalRebuildSelection,
+} from "./lifecycle/native-local-provider-preflight";
 import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
 import { fixedNativeProviderForAttachment } from "../../inference/native-provider/fixed";
 import { nativeProviderLifecycle } from "../../inference/native-provider";
@@ -149,6 +153,18 @@ function rebuildProviderAdapter(
             runtimeSelection,
           })) as RunProviderCommand)
       : undefined,
+  );
+}
+
+/** Verify the recorded local provider using the rebuild command and registry owners. */
+export function verifyRebuildNativeLocalProvider(
+  sandboxName: string,
+  selection: NativeLocalRebuildSelection,
+  runtimeSelection?: OpenShellRuntimeSelection,
+  adapter = rebuildProviderAdapter(runtimeSelection),
+): Promise<boolean> {
+  return verifyNativeLocalRebuildSelection(sandboxName, selection, runtimeSelection, adapter, () =>
+    registry.getSandbox(sandboxName),
   );
 }
 
@@ -425,6 +441,12 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
   bail: (msg: string, code?: number) => never,
   deps: GatewayCredentialReusePreflightDeps = defaultGatewayCredentialReusePreflightDeps(),
 ): Promise<boolean> {
+  try {
+    if (await verifyRebuildNativeLocalProvider(sandboxName, config)) return true;
+  } catch {
+    bail("Could not verify the recorded native local provider attachment; sandbox is untouched.");
+    return false;
+  }
   const nativeAttachment = recordedNativeProviderAttachment(config);
   if (nativeAttachment) {
     return checkRebuildGatewayProviderOrBail(config.provider, config.credentialEnv, log, bail, {

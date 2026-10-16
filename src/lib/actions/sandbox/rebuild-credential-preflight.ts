@@ -10,6 +10,7 @@ import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import {
   checkRebuildGatewayProviderOrBail,
+  verifyRebuildNativeLocalProvider,
   validateRebuildHostInferenceCredential,
   shouldVerifyRebuildGatewayProvider,
   type HostCredentialTarget,
@@ -173,6 +174,13 @@ export async function preflightRebuildCredentials(
   bail: RebuildBail,
   options: RebuildCredentialPreflightOptions = {},
 ): Promise<boolean> {
+  try {
+    if (await verifyRebuildNativeLocalProvider(sb.name, { ...sb, agent: sb.agent ?? null }))
+      return true;
+  } catch {
+    bail("Could not verify the recorded native local provider attachment; sandbox is untouched.");
+    return false;
+  }
   const rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(
     sb.provider,
     sb.credentialEnv,

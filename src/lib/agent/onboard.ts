@@ -14,6 +14,7 @@ import { sleepSeconds } from "../core/wait";
 import { getProviderSelectionConfig } from "../inference/config";
 import { runSandboxConfigSync } from "../onboard/config-sync";
 import { isValidForwardPort } from "../onboard/dashboard-runtime";
+import { createInitialHermesInferenceRoute } from "../onboard/hermes/initial-inference-route";
 import {
   resolveSandboxHermesApiPort,
   retargetHermesApiPortInUrl,
@@ -46,6 +47,10 @@ import { enforceTerminalAgentVersion } from "./terminal-version-enforcement";
 import { printBearerTokenApiAccess } from "./web-auth-ui";
 
 export { verifyAgentBinaryAvailable } from "./binary-availability";
+
+const initializeHermesInferenceRoute = createInitialHermesInferenceRoute({
+  getSandbox: (name) => registry.getSandbox(name),
+});
 
 export interface OnboardContext {
   step: (current: number, total: number, message: string) => void;
@@ -366,6 +371,15 @@ export async function handleAgentSetup(
         }
       },
     });
+    if (agent.name === "hermes") {
+      await initializeHermesInferenceRoute(
+        sandboxName,
+        model,
+        provider,
+        ctx.gatewayName ?? "",
+        revalidateSandboxIdentity,
+      );
+    }
   };
 
   if (resume && sandboxName) {

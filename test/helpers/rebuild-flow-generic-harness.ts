@@ -37,6 +37,7 @@ import {
   messagingHostForwardLifecycle,
   mutableConfigPerms,
   nim,
+  nativeLocalProfile,
   onboardCredentialEnv,
   onboardSession,
   openClawLifecycle,
@@ -396,6 +397,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         }
       );
     },
+  );
+  // The flow harness isolates OpenShell observations. The native-local preflight
+  // suite exercises the real profile/provider/attachment proof with adapter responses.
+  vi.spyOn(nativeLocalProfile, "verifyNativeLocalProviderAttachment").mockImplementation(
+    async (...args: unknown[]) => (args[0] as { expected: unknown }).expected,
   );
   const defaultHydrateCredentialEnv =
     onboardCredentialEnv.hydrateCredentialEnv.bind(onboardCredentialEnv);

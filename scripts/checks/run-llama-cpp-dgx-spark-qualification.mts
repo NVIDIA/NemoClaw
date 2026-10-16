@@ -4,14 +4,14 @@
 import { spawn, spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import net from "node:net";
-import { startQualificationLoopbackRelay } from "./llama-cpp-qualification-relay.mts";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { compareDottedVersions } from "../../src/lib/domain/maintenance/upgrade.ts";
 import {
-  buildLlamaCppRequestGuardDockerArgv,
+  buildLlamaCppHostLocalDockerArgv,
   consumeDockerLoopbackPublishAuthority,
   type DockerLoopbackPublishAuthority,
   qualifyDockerLoopbackPublishAuthority,
@@ -24,6 +24,7 @@ import {
 } from "./llama-cpp-dgx-spark-protocol-qualification.mts";
 import {
   LLAMA_CPP_DGX_SPARK_MODEL_PATH_PATTERN,
+  LLAMA_CPP_DGX_SPARK_MAX_OUTPUT_TOKENS,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_IMAGE_REPOSITORY,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_KIND,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE,
@@ -41,7 +42,6 @@ import {
 } from "./run-managed-image-openshell-e2e.ts";
 
 export {
-  startQualificationLoopbackRelay,
   qualifyDockerLoopbackPublishAuthority,
   validateChatCompletionResponse,
   validateModelsResponse,
@@ -63,6 +63,39 @@ const maximumModelBytes = 128 * 1024 * 1024 * 1024;
 const relativeImageRoot = "managed-inference/images/llama-cpp";
 const trustedRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const trustedImageRoot = path.join(trustedRepoRoot, relativeImageRoot);
+const requireTrusted = createRequire(import.meta.url);
+const bridgeKeyName = "bridge-api-key";
+
+function requestTransaction(owner: string): string {
+  return createHash("sha256").update(owner).digest("hex");
+}
+
+function qualificationBridge(names: RuntimeNames, targetPort = 8081) {
+  // Use the production controller and its independent event loop. Qualification
+  // runs synchronous commands, so an inline forwarding server would stall.
+  const runtimeRoot = path.join(trustedRepoRoot, "dist/lib/onboard/runtime-provider");
+  const controllerPath = path.join(runtimeRoot, "docker-llama-cpp-private-bridge.js");
+  if (!fs.existsSync(controllerPath))
+    throw new Error("qualification requires npm run build:cli in the trusted checkout");
+  const { createDockerLlamaCppPrivateBridgeController } = requireTrusted(
+    controllerPath,
+  ) as typeof import("../../src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge.ts");
+  const { createDockerOperationAuthority, dockerOperationBridgeEnvironment } = requireTrusted(
+    path.join(runtimeRoot, "docker-operation-authority.js"),
+  ) as typeof import("../../src/lib/onboard/runtime-provider/docker-operation-authority.ts");
+  const authority = createDockerOperationAuthority("host-local-inference");
+  const apiKeyPath = path.join(names.tempRoot, bridgeKeyName);
+  const controller = createDockerLlamaCppPrivateBridgeController({
+    dockerEnvironment: dockerOperationBridgeEnvironment(authority),
+    remoteRequests: { engine: authority.engine, apiKeyPath, targetPort },
+  });
+  return {
+    authority,
+    controller,
+    apiKeyPath,
+    transactionId: requestTransaction(names.registryOwner),
+  };
+}
 
 type JsonRecord = Record<string, unknown>;
 
@@ -299,8 +332,6 @@ export function buildCandidateImageArgv(
     `LLAMA_CPP_ARCHIVE_SHA256=${plan.imageBuild.source.archiveSha256}`,
     `LLAMA_CPP_REVISION=${plan.imageBuild.source.revision}`,
     `NEMOCLAW_REVISION=${invocation.candidateHead}`,
-    `REQUEST_GUARD_GO_ARCHIVE_SHA256=${plan.imageBuild.requestGuardToolchain.archiveSha256}`,
-    `REQUEST_GUARD_GO_VERSION=${plan.imageBuild.requestGuardToolchain.version}`,
     `RUNTIME_GID=${plan.imageBuild.runtime.gid}`,
     `RUNTIME_UID=${plan.imageBuild.runtime.uid}`,
     `TARGETPLATFORM=${plan.imageBuild.platform.platform}`,
@@ -337,16 +368,20 @@ export function buildServerContainerArgv(
     runtimeUid: number;
   },
 ): string[] {
-  if (plan.qualification.requestGuard !== "required") {
-    throw new Error("llama.cpp qualification requires the declarative request guard");
-  }
-  const argv = buildLlamaCppRequestGuardDockerArgv(plan.recipe, {
+  const argv = buildLlamaCppHostLocalDockerArgv(plan.recipe, {
     apiKeyHostPath: options.apiKeyHostPath,
+    hostPort: plan.recipe.serve.port,
     containerName: options.containerName,
     imageReference: options.imageReference,
     model: options.model,
     network: { isolation: "docker-internal", name: options.networkName },
     ownerLabel: { name: registryOwnerLabel, value: options.registryOwner },
+    identityLabels: [
+      {
+        name: "io.nvidia.nemoclaw.host-local-inference.transaction-sha256",
+        value: requestTransaction(options.registryOwner),
+      },
+    ],
     runtimeGid: options.runtimeGid,
     runtimeUid: options.runtimeUid,
   });
@@ -779,6 +814,10 @@ async function cleanupOwnedRuntime(
   } catch (error) {
     managedRecoveryFailure = error;
   }
+  const bridge = qualificationBridge(names, loopbackPort ?? 8081);
+  bridge.controller.stopTransaction(bridge.transactionId);
+  bridge.controller.assertStopped(bridge.transactionId);
+
   const registryWasOwned = dockerContainerOwner(names.registryName) === names.registryOwner;
   for (const name of [names.containerName, names.registryName]) {
     const owner = dockerContainerOwner(name);
@@ -939,35 +978,6 @@ function inspectBuiltImage(
   return { digest, imageId, reference };
 }
 
-export function resolveRequestGuardAddress(
-  names: Pick<RuntimeNames, "containerName" | "networkName" | "registryOwner">,
-): string {
-  if (
-    dockerContainerOwner(names.containerName) !== names.registryOwner ||
-    dockerNetworkOwner(names.networkName) !== names.registryOwner
-  ) {
-    throw new Error("qualification relay requires the owned container and network");
-  }
-  const network = JSON.parse(
-    runCommand("docker", ["network", "inspect", names.networkName]).toString("utf8"),
-  )[0];
-  const container = JSON.parse(
-    runCommand("docker", ["inspect", names.containerName]).toString("utf8"),
-  )[0];
-  const endpoints = container.NetworkSettings.Networks;
-  const endpoint = endpoints[names.networkName];
-  if (
-    network.Internal !== true ||
-    !container.State.Running ||
-    Object.keys(endpoints).length !== 1 ||
-    endpoint?.NetworkID !== network.Id ||
-    net.isIP(endpoint?.IPAddress ?? "") !== 4
-  ) {
-    throw new Error("qualification relay requires one running container on its internal network");
-  }
-  return endpoint.IPAddress;
-}
-
 async function waitForHealth(port: number, timeoutSeconds: number): Promise<void> {
   const deadline = Date.now() + timeoutSeconds * 1000;
   while (Date.now() < deadline) {
@@ -1082,14 +1092,15 @@ async function runQualificationCore(
   const plan = validateQualificationPlan(planSource, invocation.planSha256);
   progress.phase = "prerequisites";
   const names = runtimeNames(invocation, environment);
+  const bridge = qualificationBridge(names, plan.recipe.serve.port);
   progress.phase = "credentials";
+
   if (fs.existsSync(names.tempRoot)) fs.rmSync(names.tempRoot, { force: true, recursive: true });
   fs.mkdirSync(names.tempRoot, { mode: 0o700 });
   const metadataFile = path.join(names.tempRoot, "build-metadata.json");
   const apiKeyHostPath = path.join(names.tempRoot, "api-key");
   let loopbackPort: number | undefined;
-  let relay: Awaited<ReturnType<typeof startQualificationLoopbackRelay>> | undefined;
-  let bridgeRelay: Awaited<ReturnType<typeof startQualificationLoopbackRelay>> | undefined;
+
   let successReceipt: JsonRecord | undefined;
   let failure: unknown;
   let failurePhase: LlamaCppDgxSparkFailurePhase | undefined;
@@ -1124,6 +1135,9 @@ async function runQualificationCore(
       flag: "wx",
       mode: 0o600,
     });
+    // The model key can be owned by the non-root container UID. The existing
+    // bridge controller requires its inherited credential to belong to this host user.
+    fs.writeFileSync(bridge.apiKeyPath, apiKey, { encoding: "utf8", flag: "wx", mode: 0o600 });
     const hostUid = process.getuid?.();
     const hostGid = process.getgid?.();
     if (hostUid === undefined || hostGid === undefined) {
@@ -1168,14 +1182,30 @@ async function runQualificationCore(
       }),
       { capture: false },
     );
-    relay = await startQualificationLoopbackRelay(
-      resolveRequestGuardAddress(names),
-      plan.recipe.serve.port,
-      plan.recipe.serve.limits.requestTimeoutSeconds,
-      plan.qualification.agentQualification.execution === "enabled" ? plan.recipe.serve.port : 0,
-    );
-    loopbackPort = relay.port;
+    loopbackPort = plan.recipe.serve.port;
+    const inspected = bridge.authority.engine.capture([
+      "container",
+      "inspect",
+      names.containerName,
+      "--format",
+      "{{.Id}}",
+    ]);
+    const containerId = inspected.stdout.trim();
+    if (inspected.error || inspected.status !== 0 || !/^[a-f0-9]{64}$/u.test(containerId))
+      throw new Error("qualification could not bind the exact native server container");
+    const bridgeAuthority = {
+      transactionId: bridge.transactionId,
+      apiKeyPath: bridge.apiKeyPath,
+      targetHost: "127.0.0.1",
+      targetPort: plan.recipe.serve.port,
+      listenPort: loopbackPort,
+      containerId,
+      dockerAuthorityId: bridge.authority.engine.authorityId,
+      bindAddresses: ["127.0.0.1"] as const,
+    };
+    bridge.controller.start(bridgeAuthority);
     progress.phase = "gpu";
+
     const smi = parseNvidiaSmi(
       runCommand("docker", [
         "exec",
@@ -1257,13 +1287,11 @@ async function runQualificationCore(
               ).toString("utf8"),
               managedNetworkName,
             );
-            bridgeRelay = await startQualificationLoopbackRelay(
-              resolveRequestGuardAddress(names),
-              plan.recipe.serve.port,
-              plan.recipe.serve.limits.requestTimeoutSeconds,
-              plan.recipe.serve.port,
-              gatewayAddress,
-            );
+            bridge.controller.stopTransaction(bridge.transactionId);
+            bridge.controller.start({
+              ...bridgeAuthority,
+              bindAddresses: ["127.0.0.1", gatewayAddress],
+            });
             return runLlamaCppOpenClawAgentQualification(agentPlan, context);
           },
           {
@@ -1271,7 +1299,7 @@ async function runQualificationCore(
             stateDir: path.join(names.tempRoot, "managed-openshell"),
             networkName: `nemoclaw-managed-${names.registryOwner}`,
           },
-          plan.recipe.serve.limits.maxOutputTokens,
+          LLAMA_CPP_DGX_SPARK_MAX_OUTPUT_TOKENS,
         );
         if (!managedResult.probeEvidence) {
           throw new Error("OpenClaw qualification did not return bounded evidence");
@@ -1351,16 +1379,6 @@ async function runQualificationCore(
     failurePhase = progress.phase;
   } finally {
     progress.phase = "cleanup";
-    try {
-      await bridgeRelay?.close();
-    } catch (cleanupError) {
-      failure ??= cleanupError;
-    }
-    try {
-      await relay?.close();
-    } catch (cleanupError) {
-      failure ??= cleanupError;
-    }
     try {
       cleanupEvidence = await cleanupOwnedRuntime(names, loopbackPort, {
         source: planSource,

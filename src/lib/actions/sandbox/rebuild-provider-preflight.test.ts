@@ -210,7 +210,7 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
     ).resolves.toBe(true);
   });
 
-  it("accepts the loopback no-auth proxy identity recorded by onboarding", async () => {
+  it("rejects a loopback proxy selection without native attachment authority", async () => {
     const noAuthConfig = config({
       credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
       endpointUrl: "http://localhost:11434/v1",
@@ -232,7 +232,7 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
           readRecordedProviderEndpoints: () => [],
         },
       ),
-    ).resolves.toBe(true);
+    ).rejects.toThrow("Could not verify the recorded native local provider attachment");
   });
 
   it("preserves normal host-key validation without reading gateway recovery metadata", async () => {

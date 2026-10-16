@@ -13,6 +13,10 @@ const getSandboxMock = vi.hoisted(() =>
   vi.fn((): { hermesApiPort?: number | null } | null => null),
 );
 vi.mock("../state/registry", () => ({ getSandbox: getSandboxMock }));
+const initializeHermesInferenceRouteMock = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock("../onboard/hermes/initial-inference-route", () => ({
+  createInitialHermesInferenceRoute: () => initializeHermesInferenceRouteMock,
+}));
 
 import type { AgentDefinition } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
@@ -161,6 +165,8 @@ describe("printDashboardUi with port 8642 outside the chat UI (#2078)", () => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     noteSpy.mockReset();
     getSandboxMock.mockReturnValue(null);
+    initializeHermesInferenceRouteMock.mockReset();
+    initializeHermesInferenceRouteMock.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -347,6 +353,8 @@ describe("agent setup session boundaries", () => {
   beforeEach(() => {
     getSandboxMock.mockReset();
     getSandboxMock.mockReturnValue(null);
+    initializeHermesInferenceRouteMock.mockReset();
+    initializeHermesInferenceRouteMock.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -389,6 +397,64 @@ describe("agent setup session boundaries", () => {
     });
     expect(context.recordStepFailed).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "initializes the Hermes route before completing setup (resume=%s)",
+    async (resume) => {
+      const revalidateSandboxIdentity = vi.fn();
+      const { context } = createAgentSetupContext(
+        vi.fn((args: string[]) =>
+          args.includes("curl") ? "ok" : "NEMOCLAW_AGENT_BINARY_CHECK:ok",
+        ),
+        {},
+        { revalidateSandboxIdentity },
+      );
+      const agent = makeAgent({ name: "hermes" });
+      await handleAgentSetup("sandbox-x", "model-x", "compatible-endpoint", agent, resume, null, {
+        ...context,
+        gatewayName: "gateway-x",
+      });
+      expect(context.skippedStepMessage).toHaveBeenCalledTimes(resume ? 1 : 0);
+      expect(initializeHermesInferenceRouteMock).toHaveBeenCalledExactlyOnceWith(
+        "sandbox-x",
+        "model-x",
+        "compatible-endpoint",
+        "gateway-x",
+        revalidateSandboxIdentity,
+      );
+      expect(initializeHermesInferenceRouteMock.mock.invocationCallOrder[0]).toBeLessThan(
+        context.recordStepComplete.mock.invocationCallOrder[0],
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "does not complete setup when Hermes route initialization fails (resume=%s)",
+    async (resume) => {
+      const { context } = createAgentSetupContext(
+        vi.fn((args: string[]) =>
+          args.includes("curl") ? "ok" : "NEMOCLAW_AGENT_BINARY_CHECK:ok",
+        ),
+      );
+      initializeHermesInferenceRouteMock.mockRejectedValueOnce(
+        new Error("native attachment changed"),
+      );
+      const agent = makeAgent({ name: "hermes" });
+      await expect(
+        handleAgentSetup(
+          "sandbox-x",
+          "model-x",
+          "compatible-endpoint",
+          agent,
+          resume,
+          null,
+          context,
+        ),
+      ).rejects.toThrow("native attachment changed");
+      expect(context.recordStepComplete).not.toHaveBeenCalled();
+      expect(context.skippedStepMessage).not.toHaveBeenCalled();
+    },
+  );
 
   it("writes non-default agent configuration through noninteractive sandbox exec", async () => {
     const runCaptureOpenshell = vi.fn(() => "NEMOCLAW_AGENT_BINARY_CHECK:ok");
@@ -820,6 +886,8 @@ describe("printDashboardUi announces per-sandbox Hermes API ports (#8543)", () =
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     noteSpy.mockReset();
     getSandboxMock.mockReturnValue(null);
+    initializeHermesInferenceRouteMock.mockReset();
+    initializeHermesInferenceRouteMock.mockResolvedValue(undefined);
   });
 
   afterEach(() => {

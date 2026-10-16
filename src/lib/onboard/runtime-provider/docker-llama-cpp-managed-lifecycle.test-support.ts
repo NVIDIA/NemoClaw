@@ -1,14 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import { vi } from "vitest";
+
 import { createHash } from "node:crypto";
 
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
 import type { LlamaCppHostLocalLaunchContract } from "../../inference/llama-cpp/host-local-runtime";
+import type {
+  HostLocalCreateJournalExecutionLease,
+  HostLocalCreateJournalRecord,
+  HostLocalCreateJournalStore,
+} from "./host-local-create-journal";
 
 export const MODEL_DIGEST = `sha256:${"a".repeat(64)}`;
-export const IMAGE = `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"c".repeat(64)}`;
+export const IMAGE =
+  "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:93efd0bec1ed2a7166660edfef9bb743fdfeb3c125d915b43801e69c0befca67";
 export const PROBE_IMAGE = `quay.io/curl/curl@sha256:${"d".repeat(64)}`;
 export const RUNTIME_ID = "e".repeat(64);
 export const NETWORK_ID = "7".repeat(64);
@@ -114,13 +123,8 @@ export function contract(): LlamaCppHostLocalLaunchContract {
       idleSleepSeconds: -1,
       kvCache: { key: "f16", value: "f16" },
       limits: {
-        maxRequestBodyBytes: 1_048_576,
-        maxRequestHeaderBytes: 32_768,
-        maxOutputTokens: 4_096,
         requestTimeoutSeconds: 900,
-        shutdownTimeoutSeconds: 25,
       },
-      requestGuard: { upstreamPort: 8_082 },
       microBatchSize: 512,
       port: LLAMA_CPP_PORT,
       protocol: "openai-completions",
@@ -137,4 +141,171 @@ export function contract(): LlamaCppHostLocalLaunchContract {
       ui: "disabled",
     },
   };
+}
+
+export function modelFilesystemIdentity(modelPath: string) {
+  const status = fs.lstatSync(modelPath, { bigint: true });
+  return {
+    ctimeNs: status.ctimeNs,
+    dev: status.dev,
+    ino: status.ino,
+    mtimeNs: status.mtimeNs,
+    size: status.size,
+  };
+}
+
+export function replaceModelWithSameSizeContent(modelPath: string) {
+  const replacement = `${modelPath}.replacement`;
+  fs.writeFileSync(replacement, Buffer.alloc(MODEL_CONTENT.length, 0x62), { mode: 0o600 });
+  fs.renameSync(replacement, modelPath);
+}
+
+export function keyRootIdentitySha256(apiKeyRoot: string): string {
+  const status = fs.lstatSync(apiKeyRoot, { bigint: true });
+  return rawDigest({
+    schemaVersion: 1,
+    identities: [
+      {
+        dev: status.dev.toString(),
+        ino: status.ino.toString(),
+        uid: status.uid.toString(),
+        gid: status.gid.toString(),
+        nlink: status.nlink.toString(),
+        mode: (status.mode & 0o777n).toString(8),
+        mtimeNs: status.mtimeNs.toString(),
+        ctimeNs: status.ctimeNs.toString(),
+      },
+    ],
+  });
+}
+
+export interface TestJournalStore extends HostLocalCreateJournalStore {
+  readonly abandonExecution: () => void;
+  readonly hasExecution: () => boolean;
+  readonly failNextPrepareReceipt: () => void;
+  readonly failNextPrepareReceiptAfterCommit: () => void;
+  readonly failNextFinalize: () => void;
+}
+
+export function journalStore(): TestJournalStore {
+  const records = new Map<string, HostLocalCreateJournalRecord>();
+  let activeLease: HostLocalCreateJournalExecutionLease | null = null;
+  let prepareReceiptFails = false;
+  let prepareReceiptFailsAfterCommit = false;
+  let finalizeFails = false;
+  const update = (
+    id: string,
+    mutate: (value: HostLocalCreateJournalRecord) => HostLocalCreateJournalRecord,
+  ) => {
+    const current = records.get(id);
+    invariant(current, "missing journal");
+    const next = Object.freeze(mutate(current));
+    records.set(id, next);
+    return next;
+  };
+  return {
+    load: (id) => records.get(id) ?? null,
+    list: () => [...records.values()],
+    create: (record) => {
+      records.set(record.transactionId, Object.freeze(record));
+      return record;
+    },
+    recordNetworkCreated: (id, networkId) =>
+      update(id, (record) => ({
+        ...record,
+        phase: "prepared",
+        networkId,
+        createIntentUnixMs: null,
+      })),
+    recordCreating: (id, createIntentUnixMs) =>
+      update(id, (record) => ({ ...record, phase: "creating", createIntentUnixMs })),
+    recordCreated: (id, runtimeId) =>
+      update(id, (record) => ({ ...record, phase: "created", runtimeId })),
+    recordStarted: (id) => update(id, (record) => ({ ...record, phase: "started" })),
+    prepareReceipt: (id, serializedReceipt) => {
+      switch (prepareReceiptFails) {
+        case true:
+          prepareReceiptFails = false;
+          throw new Error("prepare receipt failed");
+      }
+      const prepared = update(id, (record) => ({
+        ...record,
+        phase: "receipt-prepared",
+        serializedReceipt,
+        receiptSha256: createHash("sha256").update(serializedReceipt).digest("hex"),
+      }));
+      switch (prepareReceiptFailsAfterCommit) {
+        case true:
+          prepareReceiptFailsAfterCommit = false;
+          throw new Error("prepare receipt outcome unknown");
+      }
+      return prepared;
+    },
+    finalize: (id) => {
+      switch (finalizeFails) {
+        case true:
+          finalizeFails = false;
+          throw new Error("finalize failed");
+      }
+      return update(id, (record) => ({
+        ...record,
+        phase: "finalized",
+      }));
+    },
+    retire: (id) => void records.delete(id),
+    acquireExecution: (transactionId) => {
+      invariant(activeLease === null, "execution is already owned by a live process");
+      activeLease = Object.freeze({
+        schemaVersion: 1,
+        transactionId,
+        ownerId: "12345678-1234-4123-8123-123456789abc",
+        ownerPid: process.pid,
+        ownerStartIdentity: "test-process-start-identity",
+      });
+      return activeLease;
+    },
+    assertExecution: (lease) => {
+      invariant(activeLease === lease, "execution ownership changed");
+    },
+    releaseExecution: (lease) => {
+      invariant(activeLease === lease, "execution ownership changed");
+      activeLease = null;
+    },
+    abandonExecution: () => (activeLease = null),
+    hasExecution: () => activeLease !== null,
+    failNextPrepareReceipt: () => (prepareReceiptFails = true),
+    failNextPrepareReceiptAfterCommit: () => (prepareReceiptFailsAfterCommit = true),
+    failNextFinalize: () => (finalizeFails = true),
+  };
+}
+
+import {
+  createDockerLlamaCppManagedLifecycle,
+  type DockerLlamaCppManagedLifecycleDependencies,
+  type DockerLlamaCppManagedLifecycleOptions,
+} from "./docker-llama-cpp-managed-lifecycle";
+
+export function privateBridgeFixture() {
+  let active: string | null = null;
+  const privateBridge = {
+    start: vi.fn((authority: unknown) => {
+      active = JSON.stringify(authority);
+    }),
+    assertRunning: vi.fn((authority: unknown) =>
+      invariant(active === JSON.stringify(authority), "bridge is not running"),
+    ),
+    assertStopped: vi.fn(() => invariant(active === null, "bridge is still running")),
+    stopTransaction: vi.fn(() => {
+      active = null;
+    }),
+  };
+  return privateBridge;
+}
+
+export function createTestDockerLlamaCppManagedLifecycle(
+  options: DockerLlamaCppManagedLifecycleOptions,
+  dependencies: DockerLlamaCppManagedLifecycleDependencies = {},
+  privateBridge = privateBridgeFixture(),
+) {
+  return createDockerLlamaCppManagedLifecycle(options, { privateBridge, ...dependencies });
 }

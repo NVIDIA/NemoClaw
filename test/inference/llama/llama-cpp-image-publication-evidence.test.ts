@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -32,6 +32,7 @@ const certificateOidcIssuer = "https://token.actions.githubusercontent.com";
 const sha256 = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 
 type FixtureOptions = {
+  certificateIdentity?: string;
   anonymousEvidenceMismatch?: "amd64" | "arm64";
   anonymousMismatch?: boolean;
   duplicateSbom?: boolean;
@@ -144,7 +145,9 @@ function runEvidence(options: FixtureOptions = {}) {
           predicate: {},
         },
         signature: {
-          certificate: { subjectAlternativeName: certificateIdentity },
+          certificate: {
+            subjectAlternativeName: options.certificateIdentity ?? certificateIdentity,
+          },
         },
         verifiedTimestamps: options.provenanceTimestamps ?? [{ type: "transparency-log" }],
       },
@@ -275,7 +278,7 @@ fi
       "--run-attempt",
       runAttempt,
       "--certificate-identity",
-      certificateIdentity,
+      options.certificateIdentity ?? certificateIdentity,
       "--certificate-oidc-issuer",
       certificateOidcIssuer,
       "--output",
@@ -311,6 +314,18 @@ fi
 }
 
 describe("llama.cpp image publication evidence verifier", () => {
+  it.each([
+    [execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim(), 0],
+    ["refs/heads/fix/issue-12285-wsl-transport", 1],
+    ["0".repeat(40), 1],
+    ["refs/heads/unapproved", 1],
+  ])("accepts only an approved additional signing ref [%s]", (ref, status) => {
+    const identity = `https://github.com/NVIDIA/NemoClaw/.github/workflows/llama-cpp-image-attest.yaml@${ref}`;
+    const fixture = runEvidence({ certificateIdentity: identity });
+    expect(fixture.result.status, fixture.result.stderr).toBe(status);
+    expect(fixture.receipt !== null).toBe(status === 0);
+  });
+
   it("binds isolated anonymous pulls without touching shared Docker image state (#8250)", () => {
     const fixture = runEvidence();
 

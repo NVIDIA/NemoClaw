@@ -87,11 +87,13 @@ describe("handleAgentSetupState", () => {
     const { deps, calls } = createDeps();
     const agent = { name: "hermes", displayName: "Hermes" };
     const session = createSession();
+    const revalidateSandboxIdentity = vi.fn();
 
     const result = await handleAgentSetupState({
       ...baseOptions(deps, agent),
       session,
       resume: true,
+      revalidateSandboxIdentity,
     });
 
     expect(calls.handleAgentSetup).toHaveBeenCalledWith(
@@ -101,7 +103,7 @@ describe("handleAgentSetupState", () => {
       agent,
       true,
       session,
-      { ctx: true, gatewayName: "nemoclaw-19090" },
+      { ctx: true, gatewayName: "nemoclaw-19090", revalidateSandboxIdentity },
     );
     expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent);
     expect(calls.skipped).toHaveBeenCalledWith("openclaw");
@@ -114,6 +116,19 @@ describe("handleAgentSetupState", () => {
       updates: undefined,
       metadata: { state: "agent_setup" },
     });
+  });
+
+  it("does not forward or advance when agent route initialization fails", async () => {
+    const { deps, calls } = createDeps();
+    calls.handleAgentSetup.mockRejectedValueOnce(new Error("native attachment changed"));
+    const agent = { name: "hermes", displayName: "Hermes" };
+    await expect(handleAgentSetupState(baseOptions(deps, agent))).rejects.toThrow(
+      "native attachment changed",
+    );
+    expect(calls.ensureDashboard).not.toHaveBeenCalled();
+    expect(calls.persistDashboardPort).not.toHaveBeenCalled();
+    expect(calls.skipped).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
   });
 
   it("persists the bumped dashboard port returned by the forward (#8214)", async () => {

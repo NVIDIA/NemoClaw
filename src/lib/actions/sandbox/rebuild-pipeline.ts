@@ -76,6 +76,7 @@ import {
 } from "./rebuild-prepared-recovery";
 import {
   inspectRebuildGatewayProviderRegistration,
+  verifyRebuildNativeLocalProvider,
   validateRebuildHostInferenceCredential,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
@@ -842,9 +843,24 @@ async function rebuildSandboxUnlocked(
         },
         validateAtDeleteEdge: async (runtimeSelection) => {
           stoppedSource?.assertCurrent();
-          const hostCredential = resumeConfig.credentialEnv
-            ? hydrateCredentialEnv(resumeConfig.credentialEnv)
-            : null;
+          let nativeLocal: boolean;
+          try {
+            nativeLocal = await verifyRebuildNativeLocalProvider(
+              sandboxName,
+              resumeConfig,
+              runtimeSelection,
+            );
+          } catch {
+            return {
+              ok: false,
+              message:
+                "Could not verify the recorded native local provider attachment before sandbox deletion.",
+            };
+          }
+          const hostCredential =
+            !nativeLocal && resumeConfig.credentialEnv
+              ? hydrateCredentialEnv(resumeConfig.credentialEnv)
+              : null;
           if (
             hostCredential &&
             !(await validateRebuildHostInferenceCredential(resumeConfig, hostCredential))
@@ -859,6 +875,7 @@ async function rebuildSandboxUnlocked(
             resumeConfig.nativeNvidiaProviderAttachment ??
             resumeConfig.nativeHostedProviderAttachment;
           if (
+            !nativeLocal &&
             !recreateOptions.rebuildProviderReconfigure &&
             resumeConfig.provider &&
             (nativeAttachment || shouldVerifyRebuildGatewayProvider(resumeConfig.provider))

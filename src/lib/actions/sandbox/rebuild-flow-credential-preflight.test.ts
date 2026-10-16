@@ -4,7 +4,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
-import { rebuildBackupPhase } from "../../../../test/helpers/rebuild-flow-harness";
+import {
+  rebuildBackupPhase,
+  nativeLocalProfile,
+} from "../../../../test/helpers/rebuild-flow-harness";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
@@ -15,6 +18,7 @@ import {
   nativeProviderRebuildScenario,
 } from "./rebuild-flow-test-fixtures";
 
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import { nativeLocalRebuildAttachment } from "../../../../test/helpers/rebuild-flow-test-support";
 
 type Harness = ReturnType<typeof createRebuildFlowHarness>;
@@ -650,6 +654,65 @@ describe("rebuildSandbox flow: credential preflight", () => {
 
     expect(harness.ensureRebuildAgentBaseImageSpy).toHaveBeenCalledOnce();
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([null, "hermes"] as const)(
+    "rebuilds a native local custom endpoint for %s without a shared logical provider",
+    async (agent) => {
+      const binding = {
+        ...nativeLocalRebuildAttachment("vllm-local"),
+        provider: "compatible-endpoint" as const,
+        authMode: "authenticated" as const,
+        ...(agent ? { agent } : {}),
+      };
+      const attachment = { ...binding, ...nativeLocalIdentity(binding) };
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          agent: agent ?? undefined,
+          provider: "compatible-endpoint",
+          model: MODEL,
+          endpointUrl: attachment.endpointUrl,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          nativeLocalProviderAttachment: attachment,
+        },
+        runOpenshell: providerRuntime([]),
+      });
+      configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
+        agent,
+        endpointUrl: attachment.endpointUrl,
+      });
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+      expect(harness.onboardSpy).toHaveBeenCalledOnce();
+      expect(nativeLocalProfile.verifyNativeLocalProviderAttachment).toHaveBeenCalledTimes(3);
+    },
+  );
+
+  it("keeps the source sandbox when native local authority changes after backup", async () => {
+    const attachment = nativeLocalRebuildAttachment("vllm-local");
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {
+        provider: "vllm-local",
+        model: MODEL,
+        credentialEnv: null,
+        nativeLocalProviderAttachment: attachment,
+      },
+    });
+    configureSession(harness, "vllm-local", null);
+    vi.mocked(nativeLocalProfile.verifyNativeLocalProviderAttachment)
+      .mockResolvedValueOnce(attachment)
+      .mockResolvedValueOnce(attachment)
+      .mockRejectedValueOnce(new Error("Provider changed after backup"));
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow(
+      "Could not verify the recorded native local provider attachment before sandbox deletion",
+    );
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 

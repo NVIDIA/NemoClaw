@@ -123,15 +123,10 @@ export async function handleAgentSetupState<Agent>({
   };
 
   if (agent) {
-    await deps.handleAgentSetup(
-      sandboxName,
-      model,
-      provider,
-      agent,
-      resume,
-      session,
-      agentSetupContext,
-    );
+    await deps.handleAgentSetup(sandboxName, model, provider, agent, resume, session, {
+      ...agentSetupContext,
+      ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
+    });
     // ensureAgentDashboardForward returns the port the dashboard forward was
     // actually established on, which may be bumped when the default is already
     // taken by another sandbox. Persist it to the registry so `dashboard-url`

@@ -3,6 +3,7 @@
 
 import {
   LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+  LLAMA_CPP_DGX_SPARK_ACCEPTED_REQUEST_BODY_BYTES,
   LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES,
   LLAMA_CPP_DGX_SPARK_REQUIRED_METRIC_SERIES,
   type LlamaCppDgxSparkExecutionPlan,
@@ -563,6 +564,66 @@ function assertExecutedProbeInventory(
   }
 }
 
+async function nativeWorkMetrics(
+  fetchImpl: FetchImplementation,
+  url: string,
+  authorization: string,
+  maximumBytes: number,
+  timeoutMilliseconds: number,
+): Promise<{ processing: number; deferred: number; decoded: number } | null> {
+  const response = await fetchImpl(`${new URL(url).origin}/metrics`, {
+    headers: { Authorization: authorization },
+    signal: requestSignal(timeoutMilliseconds),
+  });
+  if (response.status === 503 && response.headers.get("retry-after") === "1") {
+    await readBoundedBytes(response, maximumBytes);
+    return null;
+  }
+  if (response.status !== 200) throw new Error("native work metrics returned an unexpected status");
+  const source = new TextDecoder().decode(await readBoundedBytes(response, maximumBytes));
+  validateMetricsResponse(source);
+  const sample = (name: string) => {
+    const line = source.split("\n").find((value) => value.startsWith(`llamacpp:${name} `));
+    const value = Number(line?.split(/\s+/u)[1]);
+    if (!Number.isFinite(value))
+      throw new Error("native work metrics did not contain a required sample");
+    return value;
+  };
+  return {
+    processing: sample("requests_processing"),
+    deferred: sample("requests_deferred"),
+    decoded: sample("n_decode_total"),
+  };
+}
+
+async function requireNativeWorkStopped(
+  fetchImpl: FetchImplementation,
+  url: string,
+  authorization: string,
+  maximumBytes: number,
+  timeoutMilliseconds: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMilliseconds;
+  let previousDecoded: number | undefined;
+  while (Date.now() < deadline) {
+    const state = await nativeWorkMetrics(
+      fetchImpl,
+      url,
+      authorization,
+      maximumBytes,
+      Math.max(1, deadline - Date.now()),
+    );
+    if (state !== null && state.processing === 0 && state.deferred === 0) {
+      if (previousDecoded === state.decoded) return;
+      previousDecoded = state.decoded;
+    } else {
+      previousDecoded = undefined;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("native generation remained active after cancellation");
+}
+
 async function cancellationProbe(
   fetchImpl: FetchImplementation,
   url: string,
@@ -570,6 +631,20 @@ async function cancellationProbe(
   plan: LlamaCppDgxSparkExecutionPlan,
   timeoutMilliseconds: number,
 ): Promise<void> {
+  const baselineStarted = performance.now();
+  await recoveryCompletion(
+    fetchImpl,
+    url,
+    authorization,
+    plan.recipe.model.servedName,
+    plan.qualification.probeBounds.maxTokens.synchronousChat,
+    timeoutMilliseconds,
+    plan.qualification.probeBounds.maxResponseBytes,
+  );
+  const recoveryBudget = Math.min(
+    timeoutMilliseconds,
+    Math.max(1_000, (performance.now() - baselineStarted) * 3),
+  );
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMilliseconds);
   try {
@@ -596,6 +671,15 @@ async function cancellationProbe(
     if (first.done || !first.value || first.value.byteLength < 1) {
       throw new Error("cancellation probe ended before cancellation");
     }
+    const active = await nativeWorkMetrics(
+      fetchImpl,
+      url,
+      authorization,
+      plan.qualification.probeBounds.maxResponseBytes,
+      timeoutMilliseconds,
+    );
+    if (active !== null && active.processing !== 1)
+      throw new Error("cancellation probe did not observe an occupied native slot");
     controller.abort();
     try {
       await reader.read();
@@ -604,8 +688,17 @@ async function cancellationProbe(
     }
     if (!controller.signal.aborted) throw new Error("cancellation probe was not aborted");
   } finally {
+    controller.abort();
     clearTimeout(timer);
   }
+  await requireNativeWorkStopped(
+    fetchImpl,
+    url,
+    authorization,
+    plan.qualification.probeBounds.maxResponseBytes,
+    recoveryBudget,
+  );
+  const recoveredStarted = performance.now();
   await recoveryCompletion(
     fetchImpl,
     url,
@@ -615,6 +708,8 @@ async function cancellationProbe(
     timeoutMilliseconds,
     plan.qualification.probeBounds.maxResponseBytes,
   );
+  if (performance.now() - recoveredStarted > recoveryBudget)
+    throw new Error("native cancellation recovery exceeded normal completion latency");
 }
 
 async function clientTimeoutProbe(
@@ -646,6 +741,13 @@ async function clientTimeoutProbe(
     aborted = true;
   }
   if (!aborted) throw new Error("client-timeout probe completed outside its deadline contract");
+  await requireNativeWorkStopped(
+    fetchImpl,
+    url,
+    authorization,
+    plan.qualification.probeBounds.maxResponseBytes,
+    timeoutMilliseconds,
+  );
   await recoveryCompletion(
     fetchImpl,
     url,
@@ -787,7 +889,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
   await expectStatus(malformedResponse, 400, bounds.maxResponseBytes, "malformed-request probe");
   executedProbes.add("malformed-request");
 
-  const acceptedRequestBytes = plan.recipe.serve.limits.maxRequestBodyBytes;
+  const acceptedRequestBytes = LLAMA_CPP_DGX_SPARK_ACCEPTED_REQUEST_BODY_BYTES;
   const acceptedResponse = await fetchImpl(
     chatUrl,
     exactSizeJsonRequest(
@@ -1042,6 +1144,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
       rejectedBytes: LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES,
       rejectedHttpStatus: 413,
     },
+
     models: { httpStatus: 200, model, ok: true },
     metrics,
     properties: propertiesEvidence.properties,
