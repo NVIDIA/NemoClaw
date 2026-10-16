@@ -269,6 +269,7 @@ If a pull or validation fails, rebuild keeps the existing sandbox and stops befo
 
 If replacement onboarding returns a nonzero status, rebuild stops before post-create state restoration and preserves the backup and registry recovery state.
 It does not report a successful rebuild.
+If the source backup fails before replacement, NemoClaw keeps the source sandbox and its published inference route unchanged.
 
 When NemoClaw can identify the exact stopped Docker container and prove its immutable runtime authority, rebuild captures the complete native root through the Docker provider without starting or executing inside the source. This recovery path supports stopped OpenClaw and Deep Agents Code sandboxes.
 

@@ -36,8 +36,9 @@ OpenRouter attribution headers remain in the managed agent configuration.
 For an endpoint returned by Hermes login, NemoClaw records its accepted public IP addresses and restricts the provider and sandbox policy to those addresses.
 A different destination cannot gain access through a later DNS change.
 
-Existing sandboxes without a native attachment retain their recorded shared route.
-New Deep Agents Code selections of Ollama, standalone vLLM, llama.cpp, and qualifying local compatible endpoints use sandbox-attached providers for their qualified host-local endpoints. OpenClaw, Pi, Hermes, owned Local NVIDIA NIM, other custom endpoints, and Model Router retain the shared route.
+Existing sandbox routes retain their recorded shared route unless a Deep Agents Code standalone local selection requires a native attachment.
+New Deep Agents Code selections of Ollama, standalone vLLM, llama.cpp, and qualifying local compatible endpoints use sandbox-attached providers for their qualified host-local endpoints.
+OpenClaw, Pi, Hermes, owned Local NVIDIA NIM, other custom endpoints, and Model Router retain the shared route.
 
 ```text
 Sandbox agent -> inference.local -> shared OpenShell route -> selected provider and model
