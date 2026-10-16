@@ -781,7 +781,7 @@ test(
         interactive: true,
         nativeDefaultProjectTrustPreservedAcrossRebuild: true,
         nativeSettingsPreservedAcrossRebuild: true,
-        perPathTrustPreservedAcrossRebuild: true,
+        trustFileMarkerPreservedAcrossRebuild: true,
         sessionStatePreservedAcrossRebuild: true,
       },
       lifecycle: ["onboard", "interactive", "rebuild", "gateway-recovery", "destroy"],
