@@ -1,11 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import YAML from "yaml";
 import assert from "node:assert/strict";
 import { describe, expect, it, vi } from "vitest";
 import * as installerPins from "../../../scripts/checks/extract-installer-pins.mts";
-import { candidateOpenShellVersion } from "../../../tools/e2e/candidate-openshell-version.mts";
+import {
+  candidateOpenShellVersion,
+  reviewedOpenShellMcpRuntime,
+} from "../../../tools/e2e/candidate-openshell-version.mts";
 
 const sha = "a".repeat(40);
 const repository = "NVIDIA/NemoClaw";
@@ -140,4 +147,52 @@ describe("candidate OpenShell selection", () => {
       }),
     ).rejects.toThrow();
   });
+});
+
+describe("reviewed candidate MCP runtime evidence", () => {
+  it.each([
+    ["0.0.116", "mcp-bridge", "mcp-bridge-deepagents"],
+    ["0.0.116", "openshell-credential-generation-window", "openshell-credential-generation-window"],
+    ["0.1.3", "mcp-bridge", "mcp-bridge-deepagents"],
+    ["0.1.3", "openshell-credential-generation-window", "openshell-credential-generation-window"],
+  ])("passes %s provenance unchanged through the %s installer", (version, job, artifact) => {
+    const runtime = reviewedOpenShellMcpRuntime(version);
+    const workflow = YAML.parse(readFileSync(".github/workflows/e2e.yaml", "utf8"));
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-mcp-provenance-"));
+    try {
+      mkdirSync(join(directory, "scripts"));
+      writeFileSync(join(directory, "scripts/install-openshell.sh"), "exit 0\n");
+      const step = workflow.jobs[job].steps.find(
+        (step: { name: string }) => step.name === "Install OpenShell CLI",
+      );
+      const result = spawnSync("bash", ["-c", step.run], {
+        cwd: directory,
+        env: {
+          PATH: process.env.PATH,
+          E2E_ARTIFACT_DIR: directory,
+          NEMOCLAW_MCP_BRIDGE_AGENT: "deepagents",
+          OPENSHELL_RUNTIME_PROVENANCE: JSON.stringify(runtime.provenance),
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const saved = JSON.parse(
+        readFileSync(join(directory, artifact, "openshell-exact-main-provenance.json"), "utf8"),
+      );
+      expect(saved).toEqual(runtime.provenance);
+      expect(saved.releaseTag).toBe(`v${version}`);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["9.9.9", "0.1.3\nsupervisor_image=unreviewed", "", "__proto__"])(
+    "rejects runtime evidence without a reviewed release: %j",
+    (version) => {
+      expect(() => reviewedOpenShellMcpRuntime(version)).toThrow(
+        "no reviewed MCP runtime provenance",
+      );
+    },
+  );
 });

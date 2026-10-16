@@ -89,12 +89,13 @@ const CREDENTIAL_WINDOW_ARTIFACT_DIR = `e2e-artifacts/live/openshell-credential-
 const CREDENTIAL_WINDOW_RUN_STEP = "Run OpenShell credential generation-window live test";
 const CREDENTIAL_WINDOW_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}";
-const STABLE_RELEASE_SUPERVISOR_INDEX =
-  "c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42";
+const REVIEWED_SUPERVISOR_IMAGE = "${{ needs.generate-matrix.outputs.openshell_supervisor_image }}";
+const REVIEWED_RUNTIME_PROVENANCE =
+  "${{ needs.generate-matrix.outputs.openshell_runtime_provenance }}";
 const STABLE_MCP_INSTALL_CONTENT_SHA256 =
-  "3cfce1666262924082f93257212eadc6f133c60eb705263c715aa9f79c293943";
+  "6bec62a12c79d35e18293514fb5488a7e7ea59806f364b4a2991f50377c99fb9";
 const CREDENTIAL_WINDOW_INSTALL_CONTENT_SHA256 =
-  "8fb967344552c39a0c01b2901b6ec7bfa527f248e7d3aaf3edf63fbcc1c376c0";
+  "382f7b143c9688e933e73de79b5155b0a4b0aef469632194682342275d644912";
 const DEV_COMPATIBILITY_RUN = [
   "set -euo pipefail",
   'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"',
@@ -265,7 +266,7 @@ function validateJobIdentity(
     requireEqual(
       errors,
       env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
-      `ghcr.io/nvidia/openshell/supervisor@sha256:${STABLE_RELEASE_SUPERVISOR_INDEX}`,
+      REVIEWED_SUPERVISOR_IMAGE,
       "mcp-bridge must pin the reviewed stable supervisor image",
     );
     if (Object.hasOwn(env, "E2E_DEFAULT_ENABLED")) {
@@ -540,6 +541,12 @@ function validateJobExecution(
       installEnv.NEMOCLAW_OPENSHELL_FORCE_INSTALL,
       "1",
       `${jobName} must force the selected OpenShell install`,
+    );
+    requireEqual(
+      errors,
+      installEnv.OPENSHELL_RUNTIME_PROVENANCE,
+      REVIEWED_RUNTIME_PROVENANCE,
+      "mcp-bridge must receive the reviewed candidate runtime provenance",
     );
     if (Object.hasOwn(installEnv, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
       errors.push("mcp-bridge stable installer must not authorize unverified dev artifacts");
@@ -964,7 +971,7 @@ function validateCredentialWindowJob(
     NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_GATEWAY_RUNTIME: MATRIX_RUNTIME_PROVIDER_EXPRESSION,
-    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: `ghcr.io/nvidia/openshell/supervisor@sha256:${STABLE_RELEASE_SUPERVISOR_INDEX}`,
+    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: REVIEWED_SUPERVISOR_IMAGE,
   };
   if (!hasExactEntries(env, expectedEnv)) {
     errors.push(`${CREDENTIAL_WINDOW_JOB} must use only its reviewed exact-stable environment`);
@@ -1029,6 +1036,12 @@ function validateCredentialWindowJob(
     asRecord(install.env).NEMOCLAW_OPENSHELL_FORCE_INSTALL,
     "1",
     `${CREDENTIAL_WINDOW_JOB} must force the stable OpenShell install`,
+  );
+  requireEqual(
+    errors,
+    asRecord(install.env).OPENSHELL_RUNTIME_PROVENANCE,
+    REVIEWED_RUNTIME_PROVENANCE,
+    `${CREDENTIAL_WINDOW_JOB} must receive the reviewed candidate runtime provenance`,
   );
   requireEqual(
     errors,
