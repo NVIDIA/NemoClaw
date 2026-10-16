@@ -9,7 +9,10 @@ import {
   isMessagingProviderMutationFailure,
   MessagingProviderApplyError,
 } from "../messaging/applier/openshell-provider";
-import { buildMessagingProviderApplication } from "../messaging/applier/provider-application";
+import {
+  buildMessagingProviderApplication,
+  hasNemoClawOwnedMessagingProviderProfile,
+} from "../messaging/applier/provider-application";
 import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { CheckpointProviderBinding } from "../state/onboard-checkpoint-types";
@@ -203,6 +206,8 @@ function validatePlannedCredentialProviderBindings(
   tokenDefs: readonly MessagingTokenDef[],
   requiredBindings: readonly CheckpointProviderBinding[],
   hasPreparedCredential: (tokenDef: MessagingTokenDef) => boolean,
+  root: string,
+  agent: SandboxMessagingPlan["agent"],
 ): ReadonlyMap<string, CheckpointProviderBinding> {
   const requiredByName = new Map<string, CheckpointProviderBinding>();
   for (const binding of requiredBindings) {
@@ -219,6 +224,11 @@ function validatePlannedCredentialProviderBindings(
     if (!tokenDef.providerType) {
       throw new Error(
         `Messaging provider '${tokenDef.name}' has no explicit owned profile type. Re-run channel setup with a supported profile.`,
+      );
+    }
+    if (!hasNemoClawOwnedMessagingProviderProfile(root, agent, tokenDef.providerType)) {
+      throw new Error(
+        `Messaging provider '${tokenDef.name}' has no NemoClaw-owned profile for type '${tokenDef.providerType}'. Re-run channel setup with a supported profile.`,
       );
     }
     const binding = {
@@ -450,10 +460,15 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
   ): Promise<readonly CheckpointProviderBinding[]> {
     const messaging = await prepareCredentialProviders(input);
     input.revalidateSandboxIdentity?.("stage sandbox credential providers after planning");
+    const applicationPlan =
+      MessagingSetupApplier.readPlanFromEnv() ??
+      MessagingSetupApplier.emptyPlan(input.sandboxName, agentNameForMessagingPlan(input.agent));
     const plannedBindings = validatePlannedCredentialProviderBindings(
       messaging.messagingTokenDefs,
       input.requiredBindings,
       hasConfiguredMessagingCredential,
+      deps.root,
+      applicationPlan.agent,
     );
     const plannedTokenDefs = new Map(
       messaging.messagingTokenDefs.map((tokenDef) => [tokenDef.name, tokenDef]),
@@ -463,9 +478,6 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       tokenDefs.filter(hasConfiguredMessagingCredential).map((tokenDef) => tokenDef.name),
     );
     const runOpenshell = deps.runOpenshell;
-    const applicationPlan =
-      MessagingSetupApplier.readPlanFromEnv() ??
-      MessagingSetupApplier.emptyPlan(input.sandboxName, agentNameForMessagingPlan(input.agent));
     await preflightRequiredCredentialProviderBindings(
       input.requiredBindings,
       plannedTokenDefs,

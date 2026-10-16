@@ -7,6 +7,7 @@ import {
   withoutOpenShellSandboxCreateGpu,
 } from "../adapters/openshell/sandbox-lifecycle";
 import { hasConfiguredMessagingCredential, type MessagingTokenDef } from "./messaging-prep";
+import { hasNemoClawOwnedMessagingProviderProfile } from "../messaging/applier/provider-application";
 import { filterMessagingProvidersForSandboxCreate } from "./sandbox-create-intent";
 import type {
   MaterializeSandboxCreatePlanInput,
@@ -310,6 +311,17 @@ export function validateSandboxCreateIntentBindings(
     if (tokenDef.providerType !== request.providerType) {
       throw new Error(
         `Cannot materialize sandbox create intent; provider type changed for '${request.name}'.`,
+      );
+    }
+    if (
+      !hasNemoClawOwnedMessagingProviderProfile(
+        undefined,
+        intent.policy.options.agentName,
+        request.providerType,
+      )
+    ) {
+      throw new Error(
+        `Cannot materialize sandbox create intent; provider '${request.name}' has no NemoClaw-owned profile for type '${request.providerType}'. Re-run channel setup with a supported profile.`,
       );
     }
     return tokenDef;

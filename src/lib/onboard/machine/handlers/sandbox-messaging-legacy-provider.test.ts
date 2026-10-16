@@ -11,7 +11,7 @@ import { reconcileSandboxMessaging } from "./sandbox-messaging";
 describe("legacy messaging provider recovery", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("preserves a rebuild plan when a legacy generic provider holds the missing host credential", async () => {
+  it("preserves the registry plan when a legacy generic provider holds the missing host credential", async () => {
     const registryPlan = makeMessagingPlan({
       sandboxName: "alpha",
       agent: "openclaw",

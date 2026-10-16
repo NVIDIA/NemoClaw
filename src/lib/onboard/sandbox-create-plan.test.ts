@@ -1203,6 +1203,21 @@ describe("resolveSandboxCreateIntent", () => {
     });
   });
 
+  it("rejects a matching unowned generic type before policy or provider effects (#13344)", async () => {
+    const tokenDef: MessagingTokenDef = {
+      name: "sandbox-telegram-bridge",
+      envKey: "TELEGRAM_BOT_TOKEN",
+      token: "telegram-secret",
+      providerType: "generic",
+    };
+    await expectCredentialBindingFailure({
+      plannedTokenDef: tokenDef,
+      materializedTokenDefs: [tokenDef],
+      expectedMessage:
+        "Cannot materialize sandbox create intent; provider 'sandbox-telegram-bridge' has no NemoClaw-owned profile for type 'generic'. Re-run channel setup with a supported profile.",
+    });
+  });
+
   it("rejects a changed provider type before running effects", async () => {
     await expectCredentialBindingFailure({
       plannedTokenDef: {

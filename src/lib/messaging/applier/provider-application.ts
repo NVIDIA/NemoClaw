@@ -121,6 +121,25 @@ export function messagingProviderProfileForType(
   return undefined;
 }
 
+/** Check the same checked-in profile ownership boundary before external effects. */
+export function hasNemoClawOwnedMessagingProviderProfile(
+  root: string | undefined,
+  agent: string | null | undefined,
+  providerType: string,
+): boolean {
+  if (
+    providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE ||
+    (WEB_SEARCH_PROVIDER_PROFILE_IDS as readonly string[]).includes(providerType)
+  ) {
+    return true;
+  }
+  const bridgeProfile = messagingBridgeProfilesForAgent(
+    agent,
+    listMessagingBridgeProfiles({ root }),
+  ).find((profile) => profile.profileId === providerType);
+  return Boolean(bridgeProfile);
+}
+
 function buildRefreshDefinition(
   tokenDef: MessagingTokenDef,
   profile: RefreshingMessagingBridgeProfile,
