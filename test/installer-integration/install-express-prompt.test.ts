@@ -303,7 +303,7 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     );
   });
 
-  it("keeps the Station Ultra default while deferring topology selection", () => {
+  it("describes Super VL while leaving automatic selection to topology and the catalog", () => {
     const result = runExpressPromptWithTty("\n", "pipe", "DGX Station");
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
@@ -332,7 +332,7 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toMatch(/dual-Station configurations are not yet validated/);
     expect(output).toMatch(/Using express install for DGX Station/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4 VLLM_MODEL=nemotron-3.5-super-vl-120b POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
     expect(output).toMatch(/STATION_EXPRESS=1/);
   });
@@ -1180,7 +1180,7 @@ printf 'NON_EXPRESS_ALLOWED\n'
       /pretrusted reciprocal dual-Station pair selects distributed Ultra serving/,
     );
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4 VLLM_MODEL=nemotron-3.5-super-vl-120b POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
   });
 
