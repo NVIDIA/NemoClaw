@@ -12,6 +12,7 @@ mod discovery;
 mod executable;
 mod gateway;
 pub mod hardware;
+mod host_container_health;
 mod host_engine;
 mod host_image;
 pub mod kubernetes;

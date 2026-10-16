@@ -9,6 +9,8 @@ pub(crate) const SLUG: &str = nemoclaw_openshell::NAME_PATTERN;
 pub(crate) const UUID: &str = r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$";
 pub(crate) const ENV: &str = r"^[A-Z_][A-Z0-9_]{0,127}$";
 pub(crate) const MODEL: &str = r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$";
+pub(crate) const APPLICATION_USER: &str = r"^[0-9]{1,9}:[0-9]{1,9}$";
+pub(crate) const APPLICATION_ROOT: &str = r"^(/data|/var/lib/[a-z][a-z0-9-]{0,62})$";
 pub(crate) const IMAGE: &str = r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$";
 pub(crate) const GATEWAY_ENDPOINT: &str = "http://127.0.0.1:17681";
 /// The engine a managed gateway uses when none is configured: Docker's default socket.

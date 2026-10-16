@@ -19,6 +19,7 @@ mod image_runtime;
 
 mod discovery;
 mod endpoint_readiness;
+mod host_container_health;
 mod host_image;
 mod provider_protocol;
 mod readiness_refs;
@@ -112,6 +113,7 @@ fn every_type_has_a_contract_test() {
         include_str!("endpoint_readiness.rs"),
         include_str!("readiness_refs.rs"),
         include_str!("provider_protocol.rs"),
+        include_str!("host_container_health.rs"),
         include_str!("host_image.rs"),
         include_str!("service_capacity.rs"),
         include_str!("service_readiness.rs"),

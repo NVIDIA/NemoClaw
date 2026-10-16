@@ -52,6 +52,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Messaging channels | [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037) |
 | Managed MCP servers | [#12137](https://github.com/NVIDIA/NemoClaw/issues/12137) |
 | Hermes OAuth and managed tools | [#12042](https://github.com/NVIDIA/NemoClaw/issues/12042) |
+| Hermes's native API server, dashboard and browser TUI | [#13321](https://github.com/NVIDIA/NemoClaw/issues/13321) |
 | Collector provisioning, production collector troubleshooting and Deep Agents trace export | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144) |
 | Tavily and Brave search have not been tested live through OpenShell | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 

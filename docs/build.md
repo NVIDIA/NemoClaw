@@ -75,7 +75,7 @@ Direct Bake checks and proxy builds require the corresponding `AGENT_PLATFORM` e
 ARM64 selects all ten harnesses; AMD64 selects Deep Agents and OpenClaw.
 The remaining harnesses are ARM64-only until their pinned native dependencies have matching AMD64 artifacts and qualification.
 Agent images share a Python 3.13.15 base without pip.
-Only OpenClaw, Hermes, and Pi, whose harnesses run JavaScript, add Node.js 24.21.0 LTS.
+Only OpenClaw, Hermes, and Pi add Node.js 24.21.0 LTS: OpenClaw's CLI and Pi's adapter run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
 Image qualification checks that interpreter against every Python adapter’s declared version range in the pinned Fabric source.
 Build stages use pinned Rust, Node, Python, and uv images, so the host needs no language toolchains for image assembly.
 Initial builds need network access to fetch the pinned base images, source archives, and package dependencies.

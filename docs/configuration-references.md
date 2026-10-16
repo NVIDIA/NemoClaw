@@ -182,7 +182,8 @@ No single active configuration exercises every schema branch:
 | Inline provider or integration | [Inline provider](../examples/inline-inference.yaml), [inline integration](agents.md#web-search) | A consumer cannot both inline and reference the same definition |
 | Managed Ollama or an existing endpoint | [Managed Ollama](../examples/managed-ollama.yaml), [external endpoint](../examples/inference-tuning.yaml) | Each provider selects one service connection; see the [Ollama deployment limits](inference.md#combine-local-and-hosted-providers) |
 | Existing Ollama through an authenticated proxy | [Proxy guide](inference.md#use-external-ollama-through-a-managed-proxy) | Alternative provider mode to managed vLLM |
-| Hermes authentication or Relay | [Authentication](../examples/hermes-auth.yaml), [Relay](agents.md#hermes-relay-tracing) | Hermes-only settings |
+| Hermes provider authentication or Relay tracing | [Authentication](../examples/hermes-auth.yaml), [Relay](agents.md#hermes-relay-tracing) | The full-featured example selects OpenClaw |
+| Pi model extensions | [Pi example](../examples/fabric-pi.yaml) | Pi needs a context window for a model it does not ship |
 | Model preparation recipe | [Spark recipe](../examples/spark/spark-inline.yaml) | Separate model, image, and hardware contract |
 | External gateway credentials and mTLS | [Gateway fields](reference/configuration.md#gateway) | Managed gateways use local HTTP and reject these fields |
 

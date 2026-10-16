@@ -19,7 +19,7 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 | OpenShell provider | OpenShell workspaces, provider registrations and profiles, sandboxes, and gateway capability reads; Podman gateway processes, gateway storage, and Kubernetes gateway installation |
 | Fabric provider | Fabric runtime configuration and readiness in agent sandboxes |
 | vLLM and Ollama providers | Inference service storage contracts and readiness observations |
-| Host provider | Engine and image observations |
+| Host provider | Engine and image observations, and application container health |
 | Hosted runtime | Model preparation, startup, application health, and protective shutdown |
 | Fabric | Adapter and target discovery, native schemas, native configuration validation and mapping, and agent execution |
 
@@ -33,6 +33,15 @@ Pure policy compilation stays in SDK configuration; OpenShell transport and muta
 
 The [provider reference](../provider.md) owns resource-specific contracts and protocol details.
 Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-backend/src/contract.rs).
+
+Ollama, vLLM, and explicit containers use one internal [container base](../../crates/nemoclaw-sdk/src/services/installers/container/base.rs) to assemble owned specifications, storage, process targets, and dependencies.
+The [container service contract](container-contract.md) defines the public image and input boundary; typed Ollama/vLLM are convenience frontends, not exclusive ways to run those images.
+Service callers supply resource identities, process settings, image acquisition policy, preparation resources, and storage retention requirements.
+Ollama and vLLM supply model and supervisor settings; vLLM also supplies credential storage and source declarations.
+Applications retain image-owned startup and health, literal settings, and publication, on the managed Docker gateway's engine and network.
+The existing Docker compiler maps these plans to OpenTofu resources; providers own mutations and readiness observations.
+The host provider checks identity and reads Docker health, a configured HTTP endpoint, or fresh managed-runtime status without changing containers.
+Each service owns its storage retention requirements.
 
 ## Managed Kubernetes Ownership
 

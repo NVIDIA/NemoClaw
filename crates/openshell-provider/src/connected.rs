@@ -43,6 +43,7 @@ pub(super) fn create_sandbox_request(
             policy: Some(network::granted_row_policy(want, grants)?),
             ..Default::default()
         }),
+        service_exposures: crate::services::request(value(want, crate::services::FIELD))?,
         ..Default::default()
     })
 }
@@ -219,6 +220,26 @@ impl ConnectedOpenShellGateway {
         let row = base(response.sandbox.and_then(|s| s.metadata), name, false)?;
         verify_identity(want, &row)?;
         Ok(row["id"].clone())
+    }
+
+    pub(crate) async fn service(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+        name: &str,
+    ) -> Result<Option<crate::services::Endpoint>, ObservationError> {
+        authoritative(
+            self.client
+                .raw_grpc()
+                .get_service(self.request(proto::GetServiceRequest {
+                    workspace_scope: Some(proto::workspace_selector(workspace)),
+                    sandbox: value(sandbox, "name").into(),
+                    name: name.into(),
+                }))
+                .await,
+        )?
+        .map(|response| crate::services::endpoint(response, workspace, sandbox))
+        .transpose()
     }
 
     pub(crate) async fn update_provider(

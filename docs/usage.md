@@ -101,10 +101,36 @@ Keep state, diagnose the failure, and reapply after recovery.
 
 ## Configuration and Credentials
 
+### Run an Application Container
+
+Declare a `kind: container` service with an immutable image and literal environment settings.
+The image owns its entrypoint; optional `command` overrides its arguments, and `files` supplies nonsecret configuration with mode 0444.
+Environment values enter configuration, plans/state, exports, and Docker inspection; they are not protected credential references.
+Generic credential-file delivery is deferred.
+If an application needs a key through `environment`, follow the [temporary plaintext environment approach](design/container-contract.md#application-environment) and protect every resulting artifact.
+NemoClaw does not expand host environment variables in this map.
+`container` sets GPU access, CPU/memory limits, shared memory, IPC, and ulimits; omission does not expose GPUs.
+The default user is 65532:65532; images that require root must explicitly request `user: "0:0"`.
+The container runs on the managed local Docker gateway's engine and network.
+Optional `publication` binds an unprivileged TCP port to loopback or a private IPv4 address; `port` must agree with the application's listener.
+`readiness.path` selects an HTTP GET expecting 200; `readiness.runtimeStatus` selects a managed-runtime status file such as `/data/status.json`.
+Choose at most one; omission uses Docker HEALTHCHECK, and all modes check on unchanged applies.
+The default readiness timeout is 300 seconds.
+HTTP probes must reach the published or container address from the provider process; virtualized engine networking may require explicit publication.
+A private publication allows an OpenAI-compatible container to be selected by `serviceRef`; registration waits for its readiness and uses /v1.
+Application data defaults to /data, or `data.mountPath` selects a directory below /var/lib.
+This data is disposable: destroy removes the owned volume.
+See the [container contract](design/container-contract.md) for the explicit managed-model form and the manual VoiceClaw interface.
+The typed `ollama` and `vllm` kinds retain their current policies and use this same assembly base.
+
+### Supply Credential References
+
 Use [definitions and references](configuration-references.md) to choose shared or inline configuration.
 Use the [field reference](reference/configuration.md) for names, defaults, and validation rules.
 
-Unknown fields, duplicate keys, inline secrets, and unsupported combinations are rejected; images require immutable SHA-256 references.
+Unknown fields, duplicate keys, and unsupported combinations are rejected; images require immutable SHA-256 references.
+Container `environment` values are literal settings retained in configuration and state, not the credential references described below.
+Validation cannot identify a secret pasted into a literal value.
 Gateway and inference ownership are independent of the harness, but inference must support the harness's request API.
 See [managed models](models.md), [Ollama](inference.md#run-managed-ollama), or [external Ollama with a managed proxy](inference.md#use-external-ollama-through-a-managed-proxy) for service configuration.
 
@@ -112,7 +138,8 @@ Use `credential: {env: INFERENCE_API_KEY}` for an inference provider or gateway.
 The caller supplies the referenced environment value.
 For gateway mTLS, `tls.ca.env`, `tls.certificate.env`, and `tls.key.env` reference environment variables whose values are local file paths.
 
-Credential values stay out of configuration, plans, state, and export.
+Values resolved through credential references stay out of configuration, plans, state, and export.
+This guarantee does not apply to literal container environment settings.
 OpenShell stores installed provider credentials for routing; removing the local variable does not revoke them.
 Rotation under an unchanged reference is not detected automatically.
 

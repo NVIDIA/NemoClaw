@@ -34,7 +34,7 @@ pub struct Spec {
 }
 
 /// Package-neutral container process compiled by a service installer.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Process {
     pub engine: String,
@@ -52,6 +52,8 @@ pub struct Process {
     pub entrypoint: Vec<String>,
     #[serde(default)]
     pub command: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_owned: Option<ImageLaunch>,
     pub mount_target: String,
     pub bind_address: String,
     pub port: u16,
@@ -61,6 +63,20 @@ pub struct Process {
     pub cpu_limit_millis: Option<u32>,
     pub memory_bytes: u64,
     pub gpu: bool,
+}
+
+/// Launch settings when the image owns its entrypoint, command, and health check.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImageLaunch {
+    pub user: String,
+    pub environment: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub files: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub ulimits: std::collections::BTreeMap<String, i64>,
 }
 /// CFS period for container CPU limits, matching kubelet and `docker --cpus`.
 pub(crate) const CPU_PERIOD_MICROS: u64 = 100_000;
@@ -329,6 +345,24 @@ fn hex(bytes: impl AsRef<[u8]>) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
+impl Process {
+    fn valid_launch(&self) -> bool {
+        if let Some(image) = &self.image_owned {
+            !image.user.is_empty()
+                && self.configuration.is_empty()
+                && self.entrypoint.is_empty()
+                && self.command.is_empty()
+        } else {
+            !self.configuration.is_empty()
+                && !self.configuration.contains(['\0', '\r', '\n'])
+                && self.configuration.len() <= 1 << 20
+                && !self.entrypoint.is_empty()
+                && !self.bind_address.is_empty()
+                && self.port != 0
+                && !self.architecture.is_empty()
+        }
+    }
+}
 impl Spec {
     /// Validate ownership, configuration, runtime kind, and layout.
     ///
@@ -382,15 +416,11 @@ impl Spec {
                 && crate::config::validate_engine_endpoint(&process.engine).is_ok()
                 && (process.engine.starts_with("unix://") || process.engine.starts_with("ssh://"))
                 && process.image.contains("@sha256:")
-                && valid_token(&process.configuration)
-                && !process.entrypoint.is_empty()
+                && process.valid_launch()
                 && process.entrypoint.iter().all(|value| valid_token(value))
                 && process.command.iter().all(|value| valid_token(value))
                 && process.mount_target.starts_with('/')
                 && !process.mount_target.contains("..")
-                && !process.bind_address.is_empty()
-                && process.port != 0
-                && !process.architecture.is_empty()
                 && process.memory_bytes > 0
                 && process.cpu_limit_millis != Some(0)
             {
@@ -461,6 +491,7 @@ impl Spec {
         self.validate_runtime()?;
         self.process
             .as_ref()
+            .filter(|process| process.image_owned.is_none())
             .map(|process| process.configuration.as_str())
             .ok_or(Error::Conflict(
                 "runtime specification has no managed service process",
@@ -480,13 +511,23 @@ impl Spec {
     /// # Errors
     /// Returns validation or serialization errors from `json`.
     pub fn labels(&self) -> Result<HashMap<String, String>, Error> {
-        let mut identity = self.clone();
-        identity.gateway.image_pull_policy = None;
+        self.validate()?;
+        let identity = if self.process.is_some() {
+            let mut identity = serde_json::to_value(self)
+                .map_err(|_| Error::State("cannot serialize process identity"))?;
+            identity.as_object_mut().unwrap().remove("gateway");
+            serde_json::to_string(&identity)
+                .map_err(|_| Error::State("cannot serialize process identity"))?
+        } else {
+            let mut identity = self.clone();
+            identity.gateway.image_pull_policy = None;
+            identity.json()?
+        };
 
         Ok([
             (OWNER_LABEL.into(), self.owner.clone()),
             (GENERATION_LABEL.into(), self.generation.clone()),
-            (SPEC_LABEL.into(), hex(Sha256::digest(identity.json()?))),
+            (SPEC_LABEL.into(), hex(Sha256::digest(identity))),
         ]
         .into())
     }
@@ -553,12 +594,35 @@ impl Spec {
             let process = self.process.as_ref().ok_or(Error::Conflict(
                 "runtime specification has no managed service process",
             ))?;
-            config["Entrypoint"] = json!(process.entrypoint);
-            config["Cmd"] = json!(process.command);
-            config["Env"] = json!([format!(
-                "{RUNTIME_SPEC_ENV}={}",
-                self.runtime_configuration()?
-            )]);
+            if let Some(image) = &process.image_owned {
+                config["User"] = json!(image.user);
+                if let Some(command) = &image.command {
+                    config["Cmd"] = json!(command);
+                }
+                if !image.ulimits.is_empty() {
+                    host["Ulimits"] = json!(
+                        image
+                            .ulimits
+                            .iter()
+                            .map(|(name, limit)| json!({"Name":name,"Soft":limit,"Hard":limit}))
+                            .collect::<Vec<_>>()
+                    );
+                }
+                config["Env"] = json!(
+                    image
+                        .environment
+                        .iter()
+                        .map(|(key, value)| format!("{key}={value}"))
+                        .collect::<Vec<_>>()
+                );
+            } else {
+                config["Entrypoint"] = json!(process.entrypoint);
+                config["Cmd"] = json!(process.command);
+                config["Env"] = json!([format!(
+                    "{RUNTIME_SPEC_ENV}={}",
+                    self.runtime_configuration()?
+                )]);
+            }
             host["NetworkMode"] = json!(self.network());
             host["Mounts"] =
                 json!([{"Type":"volume","Source":self.volume(),"Target":process.mount_target}]);
@@ -575,13 +639,17 @@ impl Spec {
             if process.gpu {
                 host["DeviceRequests"] = json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);
             }
-            host["Ulimits"] = json!(
-                RUNTIME_ULIMITS
-                    .iter()
-                    .map(|(name, limit)| json!({"Name": name, "Soft": limit, "Hard": limit}))
-                    .collect::<Vec<_>>()
-            );
-            host["PortBindings"] = json!({format!("{}/tcp",process.port):[{"HostIp":process.bind_address,"HostPort":process.port.to_string()}]});
+            if process.image_owned.is_none() {
+                host["Ulimits"] = json!(
+                    RUNTIME_ULIMITS
+                        .iter()
+                        .map(|(name, limit)| json!({"Name": name, "Soft": limit, "Hard": limit}))
+                        .collect::<Vec<_>>()
+                );
+            }
+            if process.port != 0 && !process.bind_address.is_empty() {
+                host["PortBindings"] = json!({format!("{}/tcp",process.port):[{"HostIp":process.bind_address,"HostPort":process.port.to_string()}]});
+            }
         }
         config["HostConfig"] = host;
         serde_json::from_value(config)

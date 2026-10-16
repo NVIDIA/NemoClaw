@@ -15,6 +15,7 @@ mod gateway_source;
 mod network;
 mod profile;
 mod provider;
+mod services;
 pub use nemoclaw_openshell::pairs::{inference_rows, web_search_rows};
 pub use nemoclaw_openshell::{policy::policy_json, profile::definition as inference_profile};
 mod inference;
@@ -481,10 +482,18 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
                 "policy_json",
                 "provider_names_json",
                 "driver_config_json",
+                services::FIELD,
             ],
             &[],
         )
-        .optional(&["policy_json", "provider_names_json", "driver_config_json"]),
+        .optional(&[
+            "policy_json",
+            "provider_names_json",
+            "driver_config_json",
+            services::FIELD,
+        ])
+        // The URLs of the sandbox's exposures, which are part of its creation.
+        .computed(services::URLS, nemoclaw_tofu::carry_prior),
     ]
     .map(lifecycle_rules)
     .map(|mut definition| {

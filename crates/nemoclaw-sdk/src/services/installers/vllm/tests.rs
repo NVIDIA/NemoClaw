@@ -195,7 +195,7 @@ fn bearer_docker_install_requires_an_image_that_restricts_routes() {
     let mut service = service();
     let generations = [(super::SERVICE_KIND.into(), "a".repeat(32))].into();
     service.authentication = Some(super::ServiceAuthentication::Bearer);
-    let (_, spec) = super::targets(&document, "qwen", &service, &generations).unwrap();
+    let spec = super::specification(&document, "qwen", &service, &generations).unwrap();
     let labels = spec.process.unwrap().image_labels;
     assert_eq!(
         labels
@@ -210,7 +210,7 @@ fn bearer_docker_install_requires_an_image_that_restricts_routes() {
         Some("openai-v2")
     );
     service.authentication = None;
-    let (_, spec) = super::targets(&document, "qwen", &service, &generations).unwrap();
+    let spec = super::specification(&document, "qwen", &service, &generations).unwrap();
     assert!(
         !spec
             .process

@@ -63,6 +63,7 @@ Its modules run the `nemoclaw` types against fake Docker engines, gateways, mode
 | `service_storage`, `gateway_storage` | Retained service storage and, on Unix, Docker gateway storage against a fake engine |
 | `gateway_readiness` | Managed-gateway exit diagnostics, bootstrap state kept after failure, corrected retry, unchanged-apply rechecks, and teardown without the readiness data source |
 | `runtime_image`, `vllm_runtime` | Runtime image compatibility and, on Unix, the vLLM runtime contract |
+| `host_container_health` | Authored application health reads: an owned healthy container passes and an unhealthy one fails the plan |
 | `discovery` | Discovery plans that read target metadata without mutations |
 | `kubernetes_hcl`, `kubernetes_lifecycle` | Kubernetes planning, and apply, refresh, and teardown against the in-memory API in `crates/test-support/kube_api.rs`; the test writes and deletes the objects Helm would, and the live Kind suite runs the chart itself |
 

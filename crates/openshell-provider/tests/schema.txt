@@ -104,6 +104,7 @@ resource openshell_sandbox (version 2)
   owner: string, optional, computed
   providers: list(object({ registration = string, type = string })), optional
   ref: object({ generation = string, id = string, name = string, owner = string, type = string, workspace = string }), computed
+  service_urls: map(string), computed
   workspace: object({ name = string, type = string }), required
   block policy: optional
     cluster_grants: list(string), optional
@@ -300,6 +301,13 @@ resource openshell_sandbox (version 2)
                 > Nonempty list of nonempty glob strings.
               value: string, optional
                 > The value itself, instead of the other attributes.
+  block service: list
+    authorization_mode: string, optional
+      > STRIP or BEARER_PASSTHROUGH; OpenShell uses STRIP when omitted.
+    name: string, required
+      > Service name within the sandbox; empty is OpenShell's unnamed endpoint.
+    target_port: number, required
+      > Loopback TCP port the service listens on inside the sandbox.
 
 resource openshell_web_search (version 2)
   binaries: list(string), optional

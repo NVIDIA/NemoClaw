@@ -11,6 +11,43 @@ fn value<'a>(row: &'a Row, field: &str) -> &'a str {
     row.get(field).map(String::as_str).unwrap_or("")
 }
 impl OpenShell {
+    /// Add a sandbox's declared service endpoints and their URLs to its
+    /// observation, written as the reference row writes them. A sandbox being
+    /// removed keeps the reference's: its endpoints go with it.
+    async fn observe_services(
+        &self,
+        row: &mut Row,
+        reference: &Row,
+        removing: bool,
+    ) -> Result<(), ObservationError> {
+        let (services, urls) = if removing {
+            (
+                value(reference, services::FIELD).to_owned(),
+                Some(value(reference, services::URLS))
+                    .filter(|urls| !urls.is_empty())
+                    .unwrap_or("{}")
+                    .to_owned(),
+            )
+        } else {
+            let mut endpoints = Vec::new();
+            for name in services::names(value(reference, services::FIELD))? {
+                if let Some(endpoint) = self
+                    .gateway
+                    .service(value(row, "workspace"), row, &name)
+                    .await?
+                {
+                    endpoints.push(endpoint);
+                }
+            }
+            (
+                services::observed(&endpoints, value(reference, services::FIELD))?,
+                services::urls(&endpoints),
+            )
+        };
+        row.insert(services::FIELD.into(), services);
+        row.insert(services::URLS.into(), urls);
+        Ok(())
+    }
     async fn reconcile(&self, kind: &str, want: &Row) -> Result<Mutation, ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
@@ -40,10 +77,21 @@ impl OpenShell {
                 let id = self.gateway.create(kind, want).await?;
                 let mut row = want.clone();
                 row.insert("id".into(), id);
+                if kind == "sandbox" {
+                    // Until readback, the binding records no URLs.
+                    row.insert(services::URLS.into(), "{}".into());
+                }
                 row
             }
         };
-        match self.observe(kind, workspace, name, false).await {
+        let readback = match self.observe(kind, workspace, name, false).await {
+            Ok(Some(mut row)) if kind == "sandbox" => self
+                .observe_services(&mut row, want, false)
+                .await
+                .map(|()| Some(row)),
+            other => other,
+        };
+        match readback {
             Ok(Some(row)) => {
                 // The mutation response establishes the physical binding even when
                 // the desired row did not yet have an ID. Never adopt a substituted
@@ -53,7 +101,7 @@ impl OpenShell {
                 }
                 if want
                     .iter()
-                    .any(|(key, v)| key != "id" && row.get(key) != Some(v))
+                    .any(|(key, v)| key != "id" && key != services::URLS && row.get(key) != Some(v))
                 {
                     return Ok(Mutation::partial(row, ObservationError::Incomplete));
                 }
@@ -102,7 +150,7 @@ impl Backend for OpenShell {
         removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
         let prior = &nemoclaw_openshell::without_gateway(prior);
-        let observed = self
+        let mut observed = self
             .observe(
                 kind,
                 value(prior, "workspace"),
@@ -124,6 +172,11 @@ impl Backend for OpenShell {
             self.check_sandbox_phase(row)
                 .await
                 .map_err(nemoclaw_backend::Error::into_observation)?;
+        }
+        if kind == "sandbox"
+            && let Some(row) = &mut observed
+        {
+            self.observe_services(row, prior, removing).await?;
         }
         Ok(observed)
     }

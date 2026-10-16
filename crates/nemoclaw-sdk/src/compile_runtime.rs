@@ -256,31 +256,6 @@ pub(crate) fn compiled_runtime(
         dependencies.push(json!("data.openshell_docker_gateway_readiness.current"));
         capabilities["depends_on"] = json!(dependencies);
     }
-    for target in targets
-        .iter()
-        .filter(|target| matches!(target.kind.as_str(), "inference_service" | "ollama_service"))
-    {
-        let container = crate::docker_compute::address(&target.address);
-        let logical = container.split_once('.').unwrap().1;
-        let spec = Spec::from_values(&target.kind, &target.values)?;
-        let literal = |value: &str| value.replace("${", "$${").replace("%{", "%%{");
-        let source = if target.kind == "inference_service" {
-            crate::services::installers::vllm::RUNTIME_DATA_SOURCE
-        } else {
-            crate::services::installers::ollama::RUNTIME_DATA_SOURCE
-        };
-        let readiness = crate::services::provider_types::readiness_type(&target.kind)
-            .expect("service containers have readiness");
-        let source = crate::compile::data_source_type(source);
-        // Readiness checks the contract the container runs with.
-        graph["data"][readiness][logical] = json!({
-            "engine":literal(spec.engine()),
-            "name":literal(&spec.name),
-            "contract":format!("${{data.{source}.{logical}.spec}}"),
-            "container_id":format!("${{{container}.id}}"),
-            "read_trigger":"${timestamp() != \"\"}",
-            "wait_timeout_seconds":9 * 3600
-        });
-    }
+    crate::services::configure_readiness(&mut graph, &targets)?;
     Ok((graph, crate::docker_compute::targets(&targets)?))
 }
