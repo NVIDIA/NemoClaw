@@ -239,6 +239,13 @@ describe("stageRebuildBaseImageResolutionHandoff", () => {
 
 describe("rebuild legacy local route preflight", () => {
   it.each([
+    { agent: "pi", provider: "ollama-local", createdAt: undefined },
+    {
+      agent: "pi",
+      provider: "ollama-local",
+      createdAt: "2026-09-01T00:00:00Z",
+      pendingRouteReservation: true,
+    },
     {
       agent: "langchain-deepagents-code",
       provider: "ollama-local",
@@ -261,7 +268,7 @@ describe("rebuild legacy local route preflight", () => {
       pendingRouteReservation: true,
     },
   ])(
-    "blocks legacy $provider rebuild with createdAt=$createdAt",
+    "blocks legacy $agent $provider rebuild with createdAt=$createdAt",
     ({ agent, provider, createdAt, ...state }) => {
       const error = vi.spyOn(console, "error").mockImplementation(() => {});
       const bail = vi.fn((message: string): never => {

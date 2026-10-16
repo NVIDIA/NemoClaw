@@ -4,7 +4,10 @@
 import path from "node:path";
 
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
-import { hasLegacySharedLocalInferenceRoute } from "../../inference/selection";
+import {
+  hasLegacySharedLocalInferenceRoute,
+  isPersistedPiSharedLocalInferenceRoute,
+} from "../../inference/selection";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DCODE_AUTO_APPROVAL_FEATURE } from "../../onboard/dcode-auto-approval";
@@ -139,7 +142,10 @@ export function blockRebuildOnLegacySharedLocalRoute(
   sandboxEntry: RebuildSandboxEntry,
   bail: RebuildBail,
 ): boolean {
-  if (sandboxEntry.agent === "pi" || !hasLegacySharedLocalInferenceRoute(sandboxEntry))
+  if (
+    !hasLegacySharedLocalInferenceRoute(sandboxEntry) ||
+    isPersistedPiSharedLocalInferenceRoute(sandboxEntry)
+  )
     return false;
   printRebuildPreflightFailure(
     `sandbox '${sandboxName}' uses a legacy shared local inference route without a native provider attachment.`,
