@@ -23,10 +23,6 @@ fn mutation_constructors_preserve_success_failure_and_partial_bindings() {
     assert_eq!(partial.error(), Some(ObservationError::Incomplete));
     assert_eq!(
         partial.into_parts(),
-        (Some(row.clone()), Some(ObservationError::Incomplete))
+        (Some(row), Some(ObservationError::Incomplete))
     );
-    // A stopped resource keeps complete state; its reason is not an error.
-    let stopped = Mutation::stopped(row.clone(), ObservationError::Incomplete);
-    assert_eq!(stopped.warning(), Some(ObservationError::Incomplete));
-    assert_eq!(stopped.into_parts(), (Some(row), None));
 }

@@ -16,7 +16,7 @@ async fn existing_spark_runtime_bindings_are_observed_without_mutations() {
     for resource in state["resources"].as_array().unwrap() {
         if !matches!(
             resource["type"].as_str(),
-            Some("nemoclaw_managed_gateway" | "docker_container")
+            Some("openshell_podman_gateway" | "docker_container")
         ) {
             continue;
         }
@@ -72,7 +72,7 @@ async fn retained_inference_credentials_preserve_their_reference_binding() {
     let state: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let mut observed = 0;
     for resource in state["resources"].as_array().unwrap() {
-        if resource["type"] != "nemoclaw_inference_storage" {
+        if resource["type"] != "vllm_credential_storage" {
             continue;
         }
         let instances = resource["instances"].as_array().unwrap();
@@ -106,7 +106,7 @@ async fn retained_gateway_storage_preserves_its_reference_binding() {
     let state: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let mut observed = 0;
     for resource in state["resources"].as_array().unwrap() {
-        if resource["type"] != "nemoclaw_gateway_storage" {
+        if resource["type"] != "openshell_gateway_storage" {
             continue;
         }
         let instances = resource["instances"].as_array().unwrap();

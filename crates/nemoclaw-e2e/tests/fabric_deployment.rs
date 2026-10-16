@@ -155,10 +155,7 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
         let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
         let planned = deployment.plan(&changed_model, &cancel).await.unwrap();
         assert_eq!(planned.changes.len(), 1, "{harness}");
-        assert_eq!(
-            planned.changes[0].resource,
-            "fabric_agent_configuration.assistant"
-        );
+        assert_eq!(planned.changes[0].resource, "fabric_agent.assistant");
         assert_eq!(
             writes(),
             initial_writes,
@@ -210,11 +207,10 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
                 serde_json::json!("${runtime.value} %{native}"),
             );
         let planned = deployment.plan(&changed_model, &cancel).await.unwrap();
-        assert!(planned.changes.iter().any(|change| change.resource
-            == format!(
-                "fabric_agent_configuration.{}",
-                document.spec.sandboxes[0].name
-            )));
+        assert!(
+            planned.changes.iter().any(|change| change.resource
+                == format!("fabric_agent.{}", document.spec.sandboxes[0].name))
+        );
         assert_eq!(writes(), initial_writes, "plan must not configure Pi");
         let before = fs::read(directory.path().join("terraform.tfstate")).unwrap();
         let state = fixture.state.clone();
@@ -417,8 +413,8 @@ async fn missing_runtime_declaration_stops_planning_without_recreation() {
     let mut state: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     for resource in state["resources"].as_array_mut().unwrap() {
         let field = match resource["type"].as_str().unwrap() {
-            "openshell_provider_registration" => "provider_type",
-            "openshell_sandbox" => "agent_runtime",
+            "openshell_inference" => "api",
+            "openshell_sandbox" => "launch_json",
             _ => continue,
         };
         resource["instances"][0]["attributes"]

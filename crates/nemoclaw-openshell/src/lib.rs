@@ -11,10 +11,12 @@ mod inputs;
 mod lifecycle;
 mod names;
 mod observation;
+pub mod pairs;
 pub mod policy;
 pub mod profile;
 pub mod runtime;
 pub mod search;
+mod wait;
 
 pub use capabilities::{GatewayCapabilities, OPENSHELL_VERSION};
 pub use connection::{
@@ -23,11 +25,13 @@ pub use connection::{
 };
 pub use driver::ComputeDriver;
 pub use inputs::{
-    GATEWAY_FIELDS, GATEWAY_TYPE, export, flatten, gateway_reference, references,
-    structured_inputs, without_gateway,
+    GATEWAY_FIELDS, GATEWAY_TYPE, INFERENCE_SERVER_TYPE, export, flatten, gateway_reference,
+    references, structured_inputs, without_gateway,
 };
 pub use lifecycle::{
-    OpenShellLifecycle, RESOURCE_TYPES, object_kind, openshell_lifecycle, resource_type, type_name,
+    INSTALLATION_TYPES, OpenShellLifecycle, PROVIDER_TYPE, RESOURCE_TYPES, installation_type,
+    object_kind, openshell_lifecycle, ref_type, registration_name, resource_type, type_name,
 };
 pub use names::{NAME_PATTERN, valid_name};
 pub use observation::GatewayObservation;
+pub use wait::observe_with_wait;

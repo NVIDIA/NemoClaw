@@ -479,10 +479,10 @@
                 "default": "unix:///var/run/docker.sock"
               },
               "image": {
-                "default": "ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6",
+                "default": "ghcr.io/nvidia/openshell/gateway@sha256:bdb4fe248070032c88be78f029dad9325cb698480e90486e1413a674a5d8edc8",
                 "enum": [
                   "",
-                  "ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6"
+                  "ghcr.io/nvidia/openshell/gateway@sha256:bdb4fe248070032c88be78f029dad9325cb698480e90486e1413a674a5d8edc8"
                 ]
               },
               "networkCIDR": {
@@ -507,7 +507,7 @@
           "properties": {
             "endpoint": {
               "default": "http://127.0.0.1:17681",
-              "description": "Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; commands forward that local port to the owned gateway.",
+              "description": "Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; providers forward free local ports of their own to the owned gateway, so this port is not bound.",
               "type": "string",
               "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS loopback endpoint and port."
             },
@@ -518,7 +518,7 @@
               "x-nemoclaw-default-rule": "With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes."
             },
             "image": {
-              "default": "ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6",
+              "default": "ghcr.io/nvidia/openshell/gateway@sha256:bdb4fe248070032c88be78f029dad9325cb698480e90486e1413a674a5d8edc8",
               "description": "Managed local gateway image pinned by the SDK. Excluded by kubernetes, whose component images are also SDK-pinned.",
               "type": "string",
               "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the SDK default. Excluded by kubernetes."
@@ -529,7 +529,7 @@
             },
             "kubernetes": {
               "$ref": "#/$defs/ManagedKubernetes",
-              "description": "Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings. Managed vLLM and Ollama services require their own kubernetes capacity and scheduling settings."
+              "description": "Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services."
             },
             "management": {
               "const": "managed",
@@ -1062,73 +1062,6 @@
       ],
       "type": "object"
     },
-    "KubernetesService": {
-      "additionalProperties": false,
-      "description": "One GPU model service in the managed gateway's namespace. Storage survives destroy.",
-      "properties": {
-        "cpuRequestMillis": {
-          "description": "Requested CPU capacity in millicores. Must not exceed container.cpuLimitMillis.",
-          "format": "uint32",
-          "minimum": 1,
-          "type": "integer"
-        },
-        "imageMetadata": {
-          "$ref": "#/$defs/Credential",
-          "description": "Environment reference to an absolute local OCI metadata bundle for the service image. Plan and apply verify its digest, Linux architecture, and runtime labels before changing cluster resources. Destroy does not read it."
-        },
-        "memoryRequestGiB": {
-          "description": "Requested container memory in GiB. Must not exceed container.memoryLimitGiB.",
-          "format": "uint64",
-          "maximum": 8589934591,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "nodeSelector": {
-          "additionalProperties": {
-            "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)?$(?![\\s\\S])",
-            "type": "string"
-          },
-          "description": "Required node labels in addition to the model's declared CPU architecture.",
-          "propertyNames": {
-            "pattern": "^(?:(?=[^/]{1,253}/)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*/)?[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$(?![\\s\\S])"
-          },
-          "type": "object"
-        },
-        "runtimeClassName": {
-          "description": "Existing RuntimeClass to use for the model Pod.",
-          "maxLength": 253,
-          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$(?![\\s\\S])",
-          "type": "string"
-        },
-        "storageClass": {
-          "description": "StorageClass for retained volumes. Omission selects the cluster default.",
-          "maxLength": 253,
-          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$(?![\\s\\S])",
-          "type": "string"
-        },
-        "storageGiB": {
-          "description": "Retained model-volume capacity in GiB. Must cover prepared data plus a 16 GiB working reserve; allow additional space for model downloads and retained snapshots.",
-          "format": "uint64",
-          "maximum": 8589934591,
-          "minimum": 16,
-          "type": "integer"
-        },
-        "tolerations": {
-          "description": "Node taints the model Pod may tolerate.",
-          "items": {
-            "$ref": "#/$defs/ServiceToleration"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "imageMetadata",
-        "cpuRequestMillis",
-        "memoryRequestGiB",
-        "storageGiB"
-      ],
-      "type": "object"
-    },
     "ManagedKubernetes": {
       "additionalProperties": false,
       "description": "Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context, and installs nothing cluster-wide: Agent Sandbox and a default StorageClass must already exist. `runtime.provider: openshift` selects the OpenShift profile.",
@@ -1251,7 +1184,7 @@
           }
         },
         "namespace": {
-          "description": "Namespace for this deployment's gateway, cluster model services, and generated development authentication resources.",
+          "description": "Namespace for this deployment's gateway and generated development authentication resources.",
           "maxLength": 63,
           "minLength": 1,
           "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\\s\\S])",
@@ -2251,7 +2184,7 @@
       "properties": {
         "provider": {
           "default": "docker",
-          "description": "Docker, Podman, Kubernetes, or OpenShift profile. Kubernetes and OpenShift require an external gateway or an explicit managed cluster target; cluster model services require a managed target and explicit service kubernetes settings. OpenShift uses the upstream Kubernetes driver with namespace-assigned identities. A managed service with Podman requires explicit service placement.",
+          "description": "Docker, Podman, Kubernetes, or OpenShift profile. Kubernetes and OpenShift require an external gateway or an explicit managed cluster target, and external inference endpoints. OpenShift uses the upstream Kubernetes driver with namespace-assigned identities. A managed service with Podman requires explicit service placement.",
           "enum": [
             "docker",
             "podman",
@@ -2373,7 +2306,7 @@
       "type": "string"
     },
     "ServiceAuthentication": {
-      "description": "Generated bearer authentication for a managed inference service.",
+      "description": "Bearer authentication for a managed inference service.",
       "enum": [
         "bearer"
       ],
@@ -2384,7 +2317,7 @@
       "description": "Managed inference CPU and memory limits, IPC, and shared-memory settings.",
       "properties": {
         "cpuLimitMillis": {
-          "description": "CPU usage limit in millicores. Omission leaves Docker CPU usage unrestricted; Kubernetes and OpenShift services require an explicit limit. Changing the limit replaces the model container or Pod.",
+          "description": "CPU usage limit in millicores. Omission leaves Docker CPU usage unrestricted. Changing the limit replaces the model container.",
           "format": "uint32",
           "maximum": 4294967295,
           "minimum": 1,
@@ -2395,7 +2328,7 @@
           "description": "IPC namespace. Omission uses private; host shares the execution host's IPC namespace."
         },
         "memoryLimitGiB": {
-          "description": "Container memory limit in GiB, independent of the model's GPU budget. Omission retains Docker's 104 GiB limit; Kubernetes and OpenShift services require an explicit limit. Changing the limit replaces the model container or Pod.",
+          "description": "Container memory limit in GiB, independent of the model's GPU budget. Omission retains Docker's 104 GiB limit. Changing the limit replaces the model container.",
           "format": "uint64",
           "maximum": 8589934591,
           "minimum": 1,
@@ -2478,49 +2411,6 @@
                   }
                 ]
               }
-            },
-            {
-              "if": {
-                "required": [
-                  "kubernetes"
-                ]
-              },
-              "then": {
-                "allOf": [
-                  {
-                    "properties": {
-                      "container": {
-                        "properties": {
-                          "cpuLimitMillis": {}
-                        },
-                        "required": [
-                          "cpuLimitMillis"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "container"
-                    ],
-                    "x-nemoclaw-error": "cluster model services require container.cpuLimitMillis"
-                  },
-                  {
-                    "properties": {
-                      "container": {
-                        "properties": {
-                          "memoryLimitGiB": {}
-                        },
-                        "required": [
-                          "memoryLimitGiB"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "container"
-                    ],
-                    "x-nemoclaw-error": "cluster model services require container.memoryLimitGiB"
-                  }
-                ]
-              }
             }
           ],
           "dependentRequired": {
@@ -2535,7 +2425,7 @@
           "properties": {
             "container": {
               "$ref": "#/$defs/ServiceContainer",
-              "description": "Container CPU and memory limits, IPC, and shared memory for Docker, Kubernetes, and OpenShift. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
+              "description": "Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
             },
             "hardware": {
               "$ref": "#/$defs/ServiceHardware",
@@ -2560,11 +2450,6 @@
               "description": "Supported installer selected by this service definition.",
               "type": "string"
             },
-            "kubernetes": {
-              "$ref": "#/$defs/KubernetesService",
-              "description": "Image metadata, scheduling requests, and retained-volume settings for managed Kubernetes or OpenShift only. Rejected for Docker and Podman.",
-              "x-nemoclaw-required": "With a managed Kubernetes or OpenShift gateway"
-            },
             "memory": {
               "$ref": "#/$defs/OllamaMemory",
               "description": "GPU budget and resident memory-protection thresholds."
@@ -2588,7 +2473,7 @@
             "updatePolicy": {
               "$ref": "#/$defs/ServiceUpdatePolicy",
               "default": "Preserve",
-              "description": "Preserve refuses replacement of a running Docker model container or a cluster Pod that may be serving. Recreate permits sequential replacement and possible downtime until removed or changed."
+              "description": "Preserve refuses replacement of a running Docker model container. Recreate permits sequential replacement and possible downtime until removed or changed."
             }
           },
           "required": [
@@ -2814,49 +2699,6 @@
                   }
                 ]
               }
-            },
-            {
-              "if": {
-                "required": [
-                  "kubernetes"
-                ]
-              },
-              "then": {
-                "allOf": [
-                  {
-                    "properties": {
-                      "container": {
-                        "properties": {
-                          "cpuLimitMillis": {}
-                        },
-                        "required": [
-                          "cpuLimitMillis"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "container"
-                    ],
-                    "x-nemoclaw-error": "cluster model services require container.cpuLimitMillis"
-                  },
-                  {
-                    "properties": {
-                      "container": {
-                        "properties": {
-                          "memoryLimitGiB": {}
-                        },
-                        "required": [
-                          "memoryLimitGiB"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "container"
-                    ],
-                    "x-nemoclaw-error": "cluster model services require container.memoryLimitGiB"
-                  }
-                ]
-              }
             }
           ],
           "dependentRequired": {
@@ -2887,11 +2729,11 @@
           "properties": {
             "authentication": {
               "$ref": "#/$defs/ServiceAuthentication",
-              "description": "Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving."
+              "description": "Optional native bearer authentication. The runtime uses a key supplied in NEMOCLAW_INFERENCE_KEY, or generates and retains one in its credential storage; omission preserves unauthenticated serving."
             },
             "container": {
               "$ref": "#/$defs/ServiceContainer",
-              "description": "Container CPU and memory limits, IPC, and shared memory for Docker, Kubernetes, and OpenShift. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
+              "description": "Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
             },
             "hardware": {
               "$ref": "#/$defs/ServiceHardware",
@@ -2916,11 +2758,6 @@
               "const": "vllm",
               "description": "Supported installer selected by this service definition.",
               "type": "string"
-            },
-            "kubernetes": {
-              "$ref": "#/$defs/KubernetesService",
-              "description": "Image metadata, scheduling requests, and retained-volume settings for managed Kubernetes or OpenShift only. Rejected for Docker and Podman.",
-              "x-nemoclaw-required": "With a managed Kubernetes or OpenShift gateway"
             },
             "memory": {
               "$ref": "#/$defs/Memory",
@@ -2952,7 +2789,7 @@
             "updatePolicy": {
               "$ref": "#/$defs/ServiceUpdatePolicy",
               "default": "Preserve",
-              "description": "Preserve refuses replacement of a running Docker model container or a cluster Pod that may be serving. Recreate permits sequential replacement and possible downtime until removed or changed."
+              "description": "Preserve refuses replacement of a running Docker model container. Recreate permits sequential replacement and possible downtime until removed or changed."
             }
           },
           "required": [
@@ -3116,96 +2953,6 @@
       "required": [
         "endpoint",
         "bindAddress"
-      ],
-      "type": "object"
-    },
-    "ServiceToleration": {
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "else": {
-            "properties": {
-              "key": {
-                "minLength": 1
-              }
-            },
-            "required": [
-              "key"
-            ]
-          },
-          "if": {
-            "properties": {
-              "operator": {
-                "const": "Exists"
-              }
-            },
-            "required": [
-              "operator"
-            ]
-          },
-          "then": {
-            "properties": {
-              "value": {
-                "const": ""
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "required": [
-              "tolerationSeconds"
-            ]
-          },
-          "then": {
-            "properties": {
-              "effect": {
-                "const": "NoExecute"
-              }
-            },
-            "required": [
-              "effect"
-            ]
-          }
-        }
-      ],
-      "description": "One explicit Kubernetes node-taint toleration.",
-      "properties": {
-        "effect": {
-          "$ref": "#/$defs/TolerationEffect",
-          "description": "Omission matches all taint effects."
-        },
-        "key": {
-          "anyOf": [
-            {
-              "const": ""
-            },
-            {
-              "pattern": "^(?:(?=[^/]{1,253}/)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*/)?[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$(?![\\s\\S])"
-            }
-          ],
-          "description": "Taint key. An empty key requires Exists and matches every key.",
-          "type": "string"
-        },
-        "operator": {
-          "$ref": "#/$defs/TolerationOperator",
-          "description": "Match the taint's value with Equal, or its presence with Exists."
-        },
-        "tolerationSeconds": {
-          "description": "Optional eviction delay, valid only for NoExecute tolerations.",
-          "format": "uint64",
-          "maximum": 9223372036854775807,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "value": {
-          "description": "Value matched by Equal; Exists requires an empty value.",
-          "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)?$(?![\\s\\S])",
-          "type": "string"
-        }
-      },
-      "required": [
-        "operator"
       ],
       "type": "object"
     },
@@ -3580,23 +3327,6 @@
       ],
       "type": "object"
     },
-    "TolerationEffect": {
-      "description": "Node-taint effect matched by a toleration.",
-      "enum": [
-        "NoSchedule",
-        "PreferNoSchedule",
-        "NoExecute"
-      ],
-      "type": "string"
-    },
-    "TolerationOperator": {
-      "description": "How a toleration matches a node taint.",
-      "enum": [
-        "Equal",
-        "Exists"
-      ],
-      "type": "string"
-    },
     "Tool": {
       "additionalProperties": false,
       "description": "Executable identity inside the runtime image; this is not a shell command.",
@@ -3876,27 +3606,6 @@
       }
     },
     {
-      "else": {
-        "properties": {
-          "spec": {
-            "properties": {
-              "services": {
-                "additionalProperties": {
-                  "not": {
-                    "anyOf": [
-                      {
-                        "required": [
-                          "kubernetes"
-                        ]
-                      }
-                    ]
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
       "if": {
         "properties": {
           "spec": {
@@ -3987,96 +3696,18 @@
             ]
           },
           {
-            "else": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "services": {
-                      "maxProperties": 0
-                    }
-                  }
-                }
-              }
-            },
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "gateway": {
-                      "properties": {
-                        "management": {
-                          "const": "managed"
-                        }
-                      },
-                      "required": [
-                        "management"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "gateway"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "services": {
-                      "additionalProperties": {
-                        "allOf": [
-                          {
-                            "not": {
-                              "anyOf": [
-                                {
-                                  "required": [
-                                    "placement"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "publication"
-                                  ]
-                                }
-                              ]
-                            }
-                          },
-                          {
-                            "properties": {
-                              "container": {
-                                "properties": {
-                                  "ipc": {
-                                    "const": "private"
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        ],
-                        "properties": {
-                          "kind": {
-                            "enum": [
-                              "vllm",
-                              "ollama"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "kubernetes"
-                        ]
-                      }
-                    }
+            "properties": {
+              "spec": {
+                "properties": {
+                  "services": {
+                    "maxProperties": 0
                   }
                 }
               }
             }
           }
         ],
-        "x-nemoclaw-error": "cluster model services require a managed Kubernetes target, explicit service kubernetes settings, and private IPC without Docker placement or publication"
+        "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
       }
     }
   ],
@@ -4111,8 +3742,8 @@
   "type": "object",
   "x-nemoclaw-parser-checks": [
     "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
-    "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
-    "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and development authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields are excluded; gateway.runtime.provider is kubernetes or openshift. Managed vLLM and Ollama services require explicit kubernetes capacity, storage, and scheduling settings; Docker placement, publication, and host IPC are excluded. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
+    "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
+    "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and development authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
     "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",

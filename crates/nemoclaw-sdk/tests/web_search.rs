@@ -7,6 +7,24 @@ use nemoclaw_sdk::{
 };
 use serde_json::{Value, json};
 
+/// The OpenShell registration a web search target registers.
+fn registration(target: &nemoclaw_sdk::compile::Target) -> String {
+    nemoclaw_openshell::registration_name(&target.kind, &target.values).unwrap()
+}
+
+/// The OpenShell profile a web search target owns.
+fn profile_name(target: &nemoclaw_sdk::compile::Target) -> String {
+    let provider =
+        nemoclaw_openshell::search::SearchProvider::from_name(&target.values["provider_type"])
+            .unwrap();
+    nemoclaw_openshell::search::web_search_names(
+        provider,
+        &target.values["credential_env"],
+        &target.values["name"],
+    )
+    .0
+}
+
 fn input() -> Value {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
@@ -32,41 +50,29 @@ fn search_uses_owned_profile_and_provider_without_exporting_secrets() {
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let rows = targets(&doc, &generations).unwrap();
-    assert_eq!(rows.len(), 7);
-    let search = rows
-        .iter()
-        .find(|r| {
-            r.kind == "provider" && r.values.get("provider_type").is_some_and(|v| v == "brave")
-        })
-        .unwrap();
+    assert_eq!(rows.len(), 5);
+    let search = rows.iter().find(|r| r.kind == "web_search").unwrap();
     assert_eq!(search.values["credential_env"], "SEARCH_KEY");
     assert_eq!(search.values["provider_type"], "brave");
     let graph = compile(&doc, &generations, "0.1.0").unwrap();
     assert!(
-        provider_scope::resource(
-            &graph["resource"]["openshell_provider_registration"],
-            "local"
-        )
-        .is_object()
+        provider_scope::resource(&graph["resource"]["openshell_inference"], "local").is_object()
     );
+    // One resource owns the search profile and registration. Its executables
+    // come from the sandbox's harness, and its owner from its workspace.
+    let resource =
+        &graph["resource"]["openshell_web_search"][search.address.split_once('.').unwrap().1];
     assert_eq!(
-        graph["resource"]["openshell_provider_registration"]
-            [search.address.split_once('.').unwrap().1]["depends_on"],
-        json!([
-            rows.iter()
-                .find(|row| row.kind == "provider_profile"
-                    && row.values["name"] == search.values["profile_name"])
-                .unwrap()
-                .address,
-            "data.openshell_gateway.apply"
-        ])
+        resource["binaries"],
+        json!("${jsondecode(data.fabric_harnesses.sandbox_0.binaries_json)}")
     );
+    assert!(resource.get("owner").is_none());
     assert_eq!(
         graph["resource"]["openshell_sandbox"]["assistant"]["depends_on"],
         json!([
             provider_scope::address(
-                &graph["resource"]["openshell_provider_registration"],
-                "provider",
+                &graph["resource"]["openshell_inference"],
+                "inference",
                 "local"
             ),
             search.address,
@@ -127,8 +133,8 @@ fn shared_integration_references_grant_only_the_selected_agents() {
         graph["resource"]["openshell_sandbox"]["reader"]["depends_on"],
         json!([
             provider_scope::address(
-                &graph["resource"]["openshell_provider_registration"],
-                "provider",
+                &graph["resource"]["openshell_inference"],
+                "inference",
                 "local"
             ),
             "data.openshell_gateway.apply"
@@ -136,11 +142,7 @@ fn shared_integration_references_grant_only_the_selected_agents() {
     );
     let rows = targets(&doc, &generations).unwrap();
     assert_eq!(
-        rows.iter()
-            .filter(|row| row
-                .address
-                .starts_with("openshell_provider_profile.web_search_"))
-            .count(),
+        rows.iter().filter(|row| row.kind == "web_search").count(),
         1
     );
     for row in rows.iter().filter(|row| row.kind == "sandbox") {
@@ -239,7 +241,7 @@ fn unused_definitions_create_no_search_resources_policy_or_secret_requirements()
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let rows = targets(&doc, &generations).unwrap();
-    assert_eq!(rows.len(), 5);
+    assert_eq!(rows.len(), 4);
     assert!(!serde_json::to_string(&rows).unwrap().contains("brave"));
     assert!(!doc.credential_names().contains(&"SEARCH_KEY"));
     assert!(doc.yaml().unwrap().contains("SEARCH_KEY"));
@@ -339,11 +341,7 @@ fn sandboxes_share_search_registration_only_for_the_same_credential() {
     assert_eq!(
         resources
             .iter()
-            .filter(|row| row.kind == "provider"
-                && row
-                    .values
-                    .get("provider_type")
-                    .is_some_and(|v| v == "brave"))
+            .filter(|row| row.kind == "web_search")
             .count(),
         1
     );
@@ -354,9 +352,7 @@ fn sandboxes_share_search_registration_only_for_the_same_credential() {
     let resources = targets(&doc, &generations).unwrap();
     let search: Vec<_> = resources
         .iter()
-        .filter(|r| {
-            r.kind == "provider" && r.values.get("provider_type").is_some_and(|v| v == "brave")
-        })
+        .filter(|r| r.kind == "web_search")
         .collect();
     assert_eq!(search.len(), 2);
     let graph = compile(&doc, &generations, "0.1.0").unwrap();
@@ -369,8 +365,8 @@ fn sandboxes_share_search_registration_only_for_the_same_credential() {
             graph["resource"]["openshell_sandbox"][sandbox]["depends_on"],
             json!([
                 provider_scope::address(
-                    &graph["resource"]["openshell_provider_registration"],
-                    "provider",
+                    &graph["resource"]["openshell_inference"],
+                    "inference",
                     "local"
                 ),
                 selected.address,
@@ -378,7 +374,7 @@ fn sandboxes_share_search_registration_only_for_the_same_credential() {
             ])
         );
     }
-    assert_ne!(search[0].values["name"], search[1].values["name"]);
+    assert_ne!(registration(search[0]), registration(search[1]));
     assert_ne!(
         search[0].values["credential_env"],
         search[1].values["credential_env"]
@@ -432,29 +428,16 @@ fn tavily_preserves_openclaw_and_hermes_intent_and_credential_references() {
         let rows = targets(&doc, &generations).unwrap();
         let provider = rows
             .iter()
-            .find(|row| {
-                row.kind == "provider"
-                    && row
-                        .values
-                        .get("provider_type")
-                        .is_some_and(|kind| kind == "tavily")
-            })
+            .find(|row| row.kind == "web_search" && row.values["provider_type"] == "tavily")
             .unwrap();
-        assert_eq!(provider.values["endpoint"], "https://api.tavily.com");
         assert_eq!(provider.values["credential_env"], "SEARCH_KEY");
-        assert!(provider.values["name"].starts_with("tavily-search-"));
-        let profile = rows
-            .iter()
-            .find(|row| {
-                row.address
-                    .starts_with("openshell_provider_profile.web_search_tavily_")
-            })
-            .unwrap();
-        assert!(profile.values["name"].starts_with("nemoclaw-tavily-"));
+        assert!(registration(provider).starts_with("tavily-search-"));
+        let profile = profile_name(provider);
+        assert!(profile.starts_with("nemoclaw-tavily-"));
         let sandbox = rows.iter().find(|row| row.kind == "sandbox").unwrap();
         let providers: Vec<String> =
             serde_json::from_str(&sandbox.values["provider_names_json"]).unwrap();
-        assert!(providers.contains(&provider.values["name"]));
+        assert!(providers.contains(&registration(provider)));
         let policy: Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
         assert!(
             !policy["managed"]
@@ -463,11 +446,8 @@ fn tavily_preserves_openclaw_and_hermes_intent_and_credential_references() {
                 .keys()
                 .any(|key| key.starts_with("nemoclaw-brave-"))
         );
-        assert_eq!(
-            policy["managed"][&profile.values["name"]]["binaries"],
-            json!([])
-        );
-        let endpoint = &policy["managed"][&profile.values["name"]]["endpoints"][0];
+        assert_eq!(policy["managed"][&profile]["binaries"], json!([]));
+        let endpoint = &policy["managed"][&profile]["endpoints"][0];
         assert_eq!(endpoint["host"], "api.tavily.com");
         assert_ne!(endpoint["request_body_credential_rewrite"], true);
         assert!(endpoint.get("tls").is_none());
@@ -480,10 +460,9 @@ fn tavily_preserves_openclaw_and_hermes_intent_and_credential_references() {
             ])
         );
         let graph = compile(&doc, &generations, "0.1.0").unwrap();
-        assert_eq!(
-            graph["resource"]["openshell_provider_registration"]
-                [provider.address.split_once('.').unwrap().1]["depends_on"],
-            json!([profile.address, "data.openshell_gateway.apply"])
+        assert!(
+            graph["resource"]["openshell_web_search"][provider.address.split_once('.').unwrap().1]
+                .is_object()
         );
     }
 }
@@ -587,17 +566,11 @@ fn different_search_providers_keep_distinct_bindings_for_the_same_credential_ref
     }
     let providers: Vec<_> = rows
         .iter()
-        .filter(|row| {
-            row.kind == "provider"
-                && row
-                    .values
-                    .get("credential_env")
-                    .is_some_and(|name| name == "SEARCH_KEY")
-        })
+        .filter(|row| row.kind == "web_search" && row.values["credential_env"] == "SEARCH_KEY")
         .collect();
     assert_eq!(providers.len(), 2);
     assert_ne!(providers[0].address, providers[1].address);
-    assert_ne!(providers[0].values["name"], providers[1].values["name"]);
+    assert_ne!(registration(providers[0]), registration(providers[1]));
     assert_eq!(doc.credential_names(), vec!["SEARCH_KEY"]);
 }
 

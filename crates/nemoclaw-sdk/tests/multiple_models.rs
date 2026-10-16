@@ -38,23 +38,19 @@ fn multiple_models_preserve_named_choices_and_each_agents_default() {
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let rows = targets(&doc, &generations).unwrap();
-    assert_eq!(rows.iter().filter(|row| row.kind == "provider").count(), 1);
-    let runtime: Value = serde_json::from_str(
-        &rows
-            .iter()
-            .find(|row| row.kind == "agent_configuration")
-            .unwrap()
-            .values["config_json"],
+    assert_eq!(rows.iter().filter(|row| row.kind == "inference").count(), 1);
+    let runtime: Value = nemoclaw_fabric::agent::compose(
+        &rows.iter().find(|row| row.kind == "agent").unwrap().values,
     )
     .unwrap();
     assert_eq!(runtime["models"]["default"]["model"], "fast-model");
     assert_eq!(runtime["models"]["default"], runtime["models"]["fast"]);
-    let other_runtime: Value = serde_json::from_str(
+    let other_runtime: Value = nemoclaw_fabric::agent::compose(
         &rows
             .iter()
-            .find(|row| row.kind == "agent_configuration" && row.values["name"] == "other")
+            .find(|row| row.kind == "agent" && row.values["sandbox"] == "other")
             .unwrap()
-            .values["config_json"],
+            .values,
     )
     .unwrap();
     assert_eq!(
@@ -111,14 +107,9 @@ fn pi_choices_preserve_native_metadata_and_provider_credentials() {
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let rows = targets(&doc, &generations).unwrap();
-    let settings: Value = serde_json::from_str(
-        &rows
-            .iter()
-            .find(|t| t.kind == "agent_configuration")
-            .unwrap()
-            .values["config_json"],
-    )
-    .unwrap();
+    let settings: Value =
+        nemoclaw_fabric::agent::compose(&rows.iter().find(|t| t.kind == "agent").unwrap().values)
+            .unwrap();
     let choices = &settings["models"];
     assert_eq!(choices["smart"]["model"], "custom-smart");
     assert_eq!(
@@ -130,7 +121,7 @@ fn pi_choices_preserve_native_metadata_and_provider_credentials() {
         format!(
             "NEMOCLAW_INFERENCE_{}_KEY",
             rows.iter()
-                .find(|row| row.kind == "provider" && row.values["name"].starts_with("hosted-"))
+                .find(|row| row.kind == "inference" && row.values["name"].starts_with("hosted-"))
                 .unwrap()
                 .values["name"]
                 .replace('-', "_")

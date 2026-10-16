@@ -10,8 +10,8 @@ pub type Row = BTreeMap<String, String>;
 
 /// A mutation can establish identity before a later step fails. Retain that
 /// state together with the diagnostic; never hide an established binding.
-/// Construct outcomes through `complete`, `failed`, `partial`, or `stopped` so
-/// an outcome cannot lack both state and a diagnostic.
+/// Construct outcomes through `complete`, `failed`, or `partial` so an outcome
+/// cannot lack both state and a diagnostic.
 ///
 /// ```compile_fail
 /// use nemoclaw_backend::Mutation;
@@ -20,7 +20,6 @@ pub type Row = BTreeMap<String, String>;
 pub struct Mutation {
     state: Option<Row>,
     error: Option<ObservationError>,
-    warning: Option<ObservationError>,
 }
 
 impl Mutation {
@@ -28,22 +27,7 @@ impl Mutation {
         Self {
             state: Some(state),
             error: Some(error),
-            warning: None,
         }
-    }
-    /// Complete state for a resource that is not running, with the reason as a
-    /// warning. OpenTofu taints a created resource whose apply reports an
-    /// error; a warning keeps it updatable, so a resource whose `running`
-    /// postcondition fails can resume on the next apply.
-    pub fn stopped(state: Row, reason: ObservationError) -> Self {
-        Self {
-            state: Some(state),
-            error: None,
-            warning: Some(reason),
-        }
-    }
-    pub fn warning(&self) -> Option<ObservationError> {
-        self.warning.clone()
     }
     pub fn state(&self) -> Option<&Row> {
         self.state.as_ref()
@@ -58,14 +42,12 @@ impl Mutation {
         Self {
             state: Some(state),
             error: None,
-            warning: None,
         }
     }
     pub fn failed(error: ObservationError) -> Self {
         Self {
             state: None,
             error: Some(error),
-            warning: None,
         }
     }
 }

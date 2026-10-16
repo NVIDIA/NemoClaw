@@ -8,4 +8,4 @@ pub(crate) use runtime::GatewayRuntimeDataSource;
 
 pub(crate) use readiness::GatewayReadinessDataSource;
 
-use openshell_provider::observe_with_wait;
+use nemoclaw_openshell::observe_with_wait;

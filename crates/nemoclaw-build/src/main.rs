@@ -64,6 +64,15 @@ enum Action {
         /// One step: tools, fmt, clippy, build, test, schema, bundle, or lifecycle;
         /// archive, live-docker, and live-kind run only when named.
         step: Option<String>,
+        /// Override the detected PR base (fallback: origin/v1), including local edits.
+        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images"])]
+        base: Option<String>,
+        /// Run every local check without impact analysis or PR discovery.
+        #[arg(long, conflicts_with_all = ["base", "step", "partition", "archive_file", "images"])]
+        full: bool,
+        /// Print the selected steps and their plan as JSON without running checks.
+        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images"])]
+        dry_run: bool,
         /// Nextest partition for an explicitly selected lifecycle run (for example slice:1/2).
         #[arg(long)]
         partition: Option<String>,
@@ -80,12 +89,16 @@ enum Action {
         #[command(subcommand)]
         action: ImageAction,
     },
-    /// Print whether changes from a base revision to HEAD can affect a CI workflow.
+    /// Select expensive validation from changes since a base revision.
     ///
-    /// Writes `WORKFLOW=true` or `WORKFLOW=false` to standard output and the reason to
-    /// standard error. A failed analysis prints `true`, so the workflow runs.
+    /// `plan` writes JSON decisions with reasons. Single workflows write
+    /// `WORKFLOW=true` or `WORKFLOW=false`, with reasons on standard error.
+    /// Analysis failures select all requested checks.
     Changes {
         workflow: ChangedWorkflow,
+        /// Include staged, unstaged, and untracked files in the validation plan.
+        #[arg(long)]
+        worktree: bool,
         /// Base revision, such as the pull request base commit.
         #[arg(long)]
         base: String,
@@ -106,6 +119,8 @@ enum Action {
 }
 #[derive(Clone, clap::ValueEnum)]
 enum ChangedWorkflow {
+    /// All expensive validation, as JSON decisions with reasons.
+    Plan,
     /// `CI / Images`.
     Images,
     /// `Live / Docker` and `Live / Kind`.
@@ -328,20 +343,33 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
     let version = nemoclaw_build::BUILDER_SOURCE_VERSION.to_owned();
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     let target = target(platform)?;
-    build(&["nemoclaw-cli", "nemoclaw-provider"], target)?;
+    build(
+        &[
+            "nemoclaw-cli",
+            "nemoclaw-provider",
+            "openshell-provider",
+            "fabric-provider",
+        ],
+        target,
+    )?;
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     fs::create_dir_all("dist")?;
     let temporary = tempfile::tempdir_in("dist")?;
     let root = temporary.path();
     fs::create_dir_all(root.join("bin"))?;
     fs::create_dir_all(root.join("libexec"))?;
-    let provider = format!("providers/registry.opentofu.org/nvidia/nemoclaw/{version}/{platform}");
-    fs::create_dir_all(root.join(&provider))?;
     let openshell =
         format!("providers/registry.opentofu.org/nvidia/openshell/{version}/{platform}");
     fs::create_dir_all(root.join(&openshell))?;
     let fabric = format!("providers/registry.opentofu.org/nvidia/fabric/{version}/{platform}");
     fs::create_dir_all(root.join(&fabric))?;
+    // The vllm, ollama, and host providers build from the nemoclaw-provider package.
+    let vllm = format!("providers/registry.opentofu.org/nvidia/vllm/{version}/{platform}");
+    fs::create_dir_all(root.join(&vllm))?;
+    let ollama = format!("providers/registry.opentofu.org/nvidia/ollama/{version}/{platform}");
+    fs::create_dir_all(root.join(&ollama))?;
+    let host = format!("providers/registry.opentofu.org/nvidia/host/{version}/{platform}");
+    fs::create_dir_all(root.join(&host))?;
     let extension = if platform.starts_with("windows") {
         ".exe"
     } else {
@@ -361,16 +389,24 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
             format!("bin/nemoclaw{extension}"),
         ),
         (
-            format!("terraform-provider-nemoclaw{extension}"),
-            format!("{provider}/terraform-provider-nemoclaw_v{version}{extension}"),
-        ),
-        (
-            format!("terraform-provider-nemoclaw-openshell{extension}"),
+            format!("terraform-provider-openshell{extension}"),
             format!("{openshell}/terraform-provider-openshell_v{version}{extension}"),
         ),
         (
-            format!("terraform-provider-nemoclaw-fabric{extension}"),
+            format!("terraform-provider-fabric{extension}"),
             format!("{fabric}/terraform-provider-fabric_v{version}{extension}"),
+        ),
+        (
+            format!("terraform-provider-vllm{extension}"),
+            format!("{vllm}/terraform-provider-vllm_v{version}{extension}"),
+        ),
+        (
+            format!("terraform-provider-ollama{extension}"),
+            format!("{ollama}/terraform-provider-ollama_v{version}{extension}"),
+        ),
+        (
+            format!("terraform-provider-host{extension}"),
+            format!("{host}/terraform-provider-host_v{version}{extension}"),
         ),
     ] {
         fs::copy(
@@ -503,8 +539,22 @@ async fn main() -> Result<()> {
             .map_err(|error| format!("--shards must be a JSON list of numbers: {error}"))?;
         return run_ci::report_lifecycle_suite(directory, platform, &shards);
     }
-    if let Action::Changes { workflow, base } = &cli.command {
+    if let Action::Changes {
+        workflow,
+        base,
+        worktree,
+    } = &cli.command
+    {
+        if matches!(workflow, ChangedWorkflow::Plan) {
+            let plan = nemoclaw_build::changes::plan(Path::new("."), base, *worktree);
+            println!("{}", serde_json::to_string_pretty(&plan)?);
+            return Ok(());
+        }
+        if *worktree {
+            return Err("--worktree requires changes plan".into());
+        }
         let (workflow, name) = match workflow {
+            ChangedWorkflow::Plan => unreachable!(),
             ChangedWorkflow::Images => (nemoclaw_build::changes::Workflow::Images, "images"),
             ChangedWorkflow::Live => (nemoclaw_build::changes::Workflow::Live, "live"),
         };
@@ -513,23 +563,75 @@ async fn main() -> Result<()> {
         println!("{name}={}", decision.run);
         return Ok(());
     }
-    let pins: Pins = serde_json::from_slice(&fs::read("versions.json")?)?;
     if let Action::Ci {
         step,
         partition,
         archive_file,
         images,
-    } = cli.command
+        base,
+        full,
+        dry_run,
+    } = &cli.command
     {
+        if partition.is_some() && step.as_deref() != Some("lifecycle") {
+            return Err("--partition requires ci lifecycle".into());
+        }
+        if archive_file.is_some()
+            && !matches!(
+                step.as_deref(),
+                Some("lifecycle" | "live-docker" | "live-kind")
+            )
+        {
+            return Err("--archive-file requires ci lifecycle, live-docker, or live-kind".into());
+        }
+        if images.is_some() && !matches!(step.as_deref(), Some("live-docker" | "live-kind")) {
+            return Err("--images requires ci live-docker or live-kind".into());
+        }
+        let plan = if *full {
+            Some(nemoclaw_build::changes::Plan::full("explicit --full"))
+        } else if step.is_none() {
+            let (base, reason) = match base {
+                Some(base) => (base.clone(), "explicit --base".into()),
+                None => nemoclaw_build::changes::default_base(Path::new("."))?,
+            };
+            eprintln!("validation base: {base} ({reason})");
+            Some(nemoclaw_build::changes::plan(Path::new("."), &base, true))
+        } else {
+            None
+        };
+        if *dry_run {
+            let steps: Vec<_> = nemoclaw_build::ci::planned_steps(plan.as_ref())
+                .into_iter()
+                .map(nemoclaw_build::ci::Step::name)
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({"steps": steps, "plan": plan}))?
+            );
+            return Ok(());
+        }
+        if let Some(plan) = &plan {
+            for (name, decision) in [("bundle", &plan.bundle), ("lifecycle", &plan.lifecycle)] {
+                eprintln!(
+                    "{name}: {} ({})",
+                    if decision.run { "run" } else { "skip" },
+                    decision.reason
+                );
+            }
+        }
+        let pins: Pins = serde_json::from_slice(&fs::read("versions.json")?)?;
         return run_ci::run_steps(
             &pins,
             step.as_deref(),
             partition.as_deref(),
             archive_file.as_deref(),
             images.as_deref(),
+            plan.as_ref(),
         )
         .await;
     }
+    let pins: Pins = serde_json::from_slice(&fs::read("versions.json")?)?;
+
     let version = cargo().arg("--version").output()?;
     if !version.status.success()
         || !String::from_utf8(version.stdout)?.starts_with(&format!("cargo {} ", pins.rust))

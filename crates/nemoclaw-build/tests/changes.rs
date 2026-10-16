@@ -7,6 +7,8 @@ use std::{fs, path::Path, process::Command};
 
 const RULES: &str = include_str!("../../../.config/determinator-images.toml");
 const LIVE_RULES: &str = include_str!("../../../.config/determinator-live.toml");
+const BUNDLE_RULES: &str = include_str!("../../../.config/determinator-bundle.toml");
+const LIFECYCLE_RULES: &str = include_str!("../../../.config/determinator-lifecycle.toml");
 
 fn manifest(name: &str, dependencies: &str) -> String {
     format!(
@@ -84,6 +86,11 @@ impl Repo {
             ),
             (".config/determinator-images.toml", RULES.to_owned()),
             (".config/determinator-live.toml", LIVE_RULES.to_owned()),
+            (".config/determinator-bundle.toml", BUNDLE_RULES.to_owned()),
+            (
+                ".config/determinator-lifecycle.toml",
+                LIFECYCLE_RULES.to_owned(),
+            ),
             (".config/nextest.toml", "\n".into()),
             (
                 ".github/workflows/bundle-platform.yml",
@@ -116,6 +123,7 @@ impl Repo {
             "openshell-provider",
             "fabric-provider",
             "nemoclaw-onboarding",
+            "nemoclaw-fixture-provider",
         ] {
             write(
                 dir.path(),
@@ -308,4 +316,596 @@ fn live_build_packages_and_their_inputs_run_live_suites() {
     ] {
         assert_eq!(live(&[(path, Some("# changed\n"))]), "live=true", "{path}");
     }
+}
+
+impl Repo {
+    fn plan(&self, base: &str, worktree: bool) -> serde_json::Value {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"));
+        command.args(["changes", "plan", "--base", base]);
+        if worktree {
+            command.arg("--worktree");
+        }
+        let output = command
+            .current_dir(self.0.path())
+            .env("CARGO", cargo())
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("HOME", self.0.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    }
+}
+
+#[test]
+fn documentation_changes_skip_bundle_lifecycle_images_and_live_work() {
+    let repo = Repo::new();
+    let base = repo.base();
+    repo.decide(&[("docs/guide.md", Some("# Changed\n"))], None);
+    let plan = repo.plan(&base, false);
+    for step in ["bundle", "lifecycle", "images", "live"] {
+        assert_eq!(plan[step]["run"], false, "{step}: {plan}");
+        assert!(
+            !plan[step]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("could not analyze")
+        );
+    }
+}
+
+#[test]
+fn local_preview_skips_expensive_steps_without_installing_tools() {
+    let repo = Repo::new();
+    write(repo.0.path(), "docs/guide.md", "# Local edits\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
+        .args(["ci", "--base", "HEAD", "--dry-run"])
+        .current_dir(repo.0.path())
+        .env("CARGO", cargo())
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let preview: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let steps = preview["steps"].as_array().unwrap();
+    assert!(steps.iter().any(|step| step == "test"), "{preview}");
+    assert!(
+        !steps
+            .iter()
+            .any(|step| step == "bundle" || step == "lifecycle"),
+        "{preview}"
+    );
+    assert!(!repo.0.path().join(".tools").exists());
+}
+
+fn no_fallback(plan: &serde_json::Value) {
+    for step in ["bundle", "lifecycle", "images", "live"] {
+        assert!(
+            !plan[step]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("could not analyze"),
+            "{plan}"
+        );
+    }
+}
+
+#[test]
+fn local_plans_include_staged_unstaged_and_untracked_runtime_inputs() {
+    for state in ["staged", "unstaged", "untracked"] {
+        let repo = Repo::new();
+        let path = if state == "untracked" {
+            "crates/nemoclaw-sdk/src/new.rs"
+        } else {
+            "crates/nemoclaw-sdk/src/lib.rs"
+        };
+        write(repo.0.path(), path, "pub fn changed() {}\n");
+        if state == "staged" {
+            succeed(repo.0.path(), "git", &["add", path]);
+        }
+        let plan = repo.plan("HEAD", true);
+        no_fallback(&plan);
+        for step in ["bundle", "lifecycle", "live"] {
+            assert_eq!(plan[step]["run"], true, "{state}: {plan}");
+        }
+        assert_eq!(plan["images"]["run"], false, "{state}: {plan}");
+    }
+}
+
+#[test]
+fn packages_outside_lifecycle_still_rebuild_the_bundled_source_archive() {
+    let repo = Repo::new();
+    write(
+        repo.0.path(),
+        "crates/nemoclaw-onboarding/src/lib.rs",
+        "pub fn changed() {}\n",
+    );
+    let plan = repo.plan("HEAD", true);
+    no_fallback(&plan);
+    assert_eq!(plan["bundle"]["run"], true, "{plan}");
+    assert_eq!(plan["lifecycle"]["run"], false, "{plan}");
+}
+
+#[test]
+fn unknown_inputs_and_missing_bases_select_all_expensive_checks() {
+    let repo = Repo::new();
+    write(repo.0.path(), "Makefile", "all:\n");
+    let unknown = repo.plan("HEAD", true);
+    no_fallback(&unknown);
+    let missing = repo.plan("not-a-revision", true);
+    for plan in [&unknown, &missing] {
+        for step in ["bundle", "lifecycle", "images", "live"] {
+            assert_eq!(plan[step]["run"], true, "{plan}");
+        }
+    }
+    assert!(
+        missing["bundle"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("could not analyze")
+    );
+}
+
+#[test]
+fn committed_plans_refuse_to_skip_work_from_a_dirty_checkout() {
+    let repo = Repo::new();
+    write(
+        repo.0.path(),
+        "crates/nemoclaw-sdk/src/lib.rs",
+        "pub fn changed() {}\n",
+    );
+    let plan = repo.plan("HEAD", false);
+    for step in ["bundle", "lifecycle", "images", "live"] {
+        assert_eq!(plan[step]["run"], true, "{plan}");
+        assert!(
+            plan[step]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("clean checkout"),
+            "{plan}"
+        );
+    }
+}
+
+#[test]
+fn moved_runtime_files_keep_their_old_consumers_selected() {
+    let repo = Repo::new();
+    fs::rename(
+        repo.0.path().join("crates/nemoclaw-sdk/src/extra.rs"),
+        repo.0.path().join("docs/extra.rs"),
+    )
+    .unwrap();
+    let plan = repo.plan("HEAD", true);
+    no_fallback(&plan);
+    assert_eq!(plan["lifecycle"]["run"], true, "{plan}");
+}
+
+#[test]
+fn changing_selection_rules_exercises_all_suites() {
+    let repo = Repo::new();
+    write(
+        repo.0.path(),
+        ".config/determinator-bundle.toml",
+        &format!("{BUNDLE_RULES}\n# changed\n"),
+    );
+    let plan = repo.plan("HEAD", true);
+    no_fallback(&plan);
+    for step in ["bundle", "lifecycle", "images", "live"] {
+        assert_eq!(plan[step]["run"], true, "{step}: {plan}");
+    }
+}
+
+#[test]
+fn lockfile_only_git_dependency_updates_select_their_consumers() {
+    let dependency = tempfile::tempdir().unwrap();
+    write(
+        dependency.path(),
+        "Cargo.toml",
+        &manifest("plan-dependency", ""),
+    );
+    write(
+        dependency.path(),
+        "src/lib.rs",
+        "pub fn version() -> u8 { 1 }\n",
+    );
+    succeed(dependency.path(), "git", &["init", "-q"]);
+    succeed(dependency.path(), "git", &["add", "-A"]);
+    succeed(dependency.path(), "git", &["commit", "-q", "-m", "first"]);
+    let repo = Repo::new();
+    // Cargo fetches only this local file URL. Keep its cache outside Git inputs.
+    write(repo.0.path(), ".gitignore", ".cargo/\n");
+    write(
+        repo.0.path(),
+        "crates/nemoclaw-sdk/Cargo.toml",
+        &manifest(
+            "nemoclaw-sdk",
+            &format!(
+                "plan-dependency = {{ git = \"file://{}\" }}\n",
+                dependency.path().display()
+            ),
+        ),
+    );
+    succeed(repo.0.path(), &cargo(), &["generate-lockfile"]);
+    succeed(repo.0.path(), "git", &["add", "-A"]);
+    succeed(repo.0.path(), "git", &["commit", "-q", "-m", "dependency"]);
+    let base = repo.base();
+    write(
+        dependency.path(),
+        "src/lib.rs",
+        "pub fn version() -> u8 { 2 }\n",
+    );
+    succeed(dependency.path(), "git", &["add", "-A"]);
+    succeed(dependency.path(), "git", &["commit", "-q", "-m", "second"]);
+    succeed(
+        repo.0.path(),
+        &cargo(),
+        &["update", "-p", "plan-dependency"],
+    );
+    succeed(repo.0.path(), "git", &["add", "Cargo.lock"]);
+    succeed(
+        repo.0.path(),
+        "git",
+        &["commit", "-q", "-m", "update lockfile"],
+    );
+    assert_eq!(
+        succeed(
+            repo.0.path(),
+            "git",
+            &["diff", "--name-only", &base, "HEAD"]
+        )
+        .trim(),
+        "Cargo.lock"
+    );
+    let plan = repo.plan(&base, false);
+    no_fallback(&plan);
+    assert_eq!(plan["images"]["run"], false, "{plan}");
+    assert_eq!(plan["bundle"]["run"], true, "{plan}");
+    for step in ["lifecycle", "live"] {
+        assert_eq!(plan[step]["run"], true, "{plan}");
+        assert!(
+            plan[step]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("dependencies or features changed"),
+            "{plan}"
+        );
+    }
+}
+
+#[test]
+fn enabling_a_dependency_feature_changes_image_selection() {
+    let repo = Repo::new();
+    let base = repo.base();
+    // The SDK is not in the image build until the build tool's disabled feature
+    // is enabled by the proxy's normal dependency edge.
+    let proxy = manifest(
+        "nemoclaw-ollama-proxy",
+        "nemoclaw-runtime = { path = \"../nemoclaw-runtime\" }\nnemoclaw-build = { path = \"../nemoclaw-build\" }\n",
+    );
+    write(
+        repo.0.path(),
+        "crates/nemoclaw-ollama-proxy/Cargo.toml",
+        &proxy,
+    );
+    succeed(repo.0.path(), &cargo(), &["generate-lockfile", "--offline"]);
+    succeed(repo.0.path(), "git", &["add", "-A"]);
+    succeed(repo.0.path(), "git", &["commit", "-q", "-m", "enable sdk"]);
+    let enabled = repo.plan(&base, false);
+    no_fallback(&enabled);
+    assert_eq!(enabled["images"]["run"], true, "{enabled}");
+    let base = repo.base();
+    repo.decide(
+        &[(
+            "crates/nemoclaw-sdk/src/lib.rs",
+            Some("pub fn changed() {}\n"),
+        )],
+        None,
+    );
+    let changed = repo.plan(&base, false);
+    no_fallback(&changed);
+    assert_eq!(changed["images"]["run"], true, "{changed}");
+}
+
+#[test]
+fn local_execution_skips_bundle_and_lifecycle_but_keeps_ordinary_checks() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new();
+    let tools = tempfile::tempdir().unwrap();
+    for (name, script) in [
+        ("protoc", "#!/bin/sh\necho 'libprotoc 36.1'\n"),
+        (
+            "cargo",
+            r#"#!/bin/sh
+if [ "$1" = metadata ]; then exec "$REAL_CARGO" "$@"; fi
+if [ "$1 $2" = 'nextest --version' ]; then echo 'cargo-nextest 0.9.144'; exit 0; fi
+printf '%s\n' "$*" >> "$CHECK_LOG"
+if [ "$1" = build ]; then
+  mkdir -p target/debug
+  printf '#!/bin/sh\n[ "$1 $2" = "schema --check" ]\n' > target/debug/nemoclaw-build
+  chmod +x target/debug/nemoclaw-build
+fi
+if [ "$1" = nextest ]; then
+  case "$*" in *lifecycle*) exit 91 ;; esac
+fi
+"#,
+        ),
+    ] {
+        let path = tools.path().join(name);
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    write(
+        repo.0.path(),
+        "versions.json",
+        include_str!("../../../versions.json"),
+    );
+    write(repo.0.path(), ".gitignore", "target/\n");
+    succeed(repo.0.path(), "git", &["add", "-A"]);
+    succeed(repo.0.path(), "git", &["commit", "-q", "-m", "tools"]);
+    write(repo.0.path(), "docs/guide.md", "# Changed\n");
+    let log = tools.path().join("checks.log");
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
+        .args(["ci", "--base", "HEAD"])
+        .current_dir(repo.0.path())
+        .env("CARGO", tools.path().join("cargo"))
+        .env("REAL_CARGO", cargo())
+        .env("PROTOC", tools.path().join("protoc"))
+        .env(
+            "PATH",
+            std::env::join_paths(
+                std::iter::once(tools.path().to_path_buf())
+                    .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+            )
+            .unwrap(),
+        )
+        .env("CHECK_LOG", &log)
+        .env("CARGO_NET_OFFLINE", "true")
+        .env_remove("GITHUB_ENV")
+        .env_remove("GITHUB_PATH")
+        .env_remove("GITHUB_STEP_SUMMARY")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log = fs::read_to_string(log).unwrap();
+    assert!(log.contains("fmt --check"), "{log}");
+    assert!(log.contains("clippy"), "{log}");
+    assert!(log.contains("nextest run"), "{log}");
+    assert!(log.contains("--doc"), "{log}");
+    assert!(!log.contains("lifecycle"), "{log}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("bundle: skip") && stderr.contains("lifecycle: skip"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn lockfile_content_changes_rebuild_the_retained_source_even_without_dependency_changes() {
+    let repo = Repo::new();
+    let lockfile = fs::read_to_string(repo.0.path().join("Cargo.lock")).unwrap();
+    write(
+        repo.0.path(),
+        "Cargo.lock",
+        &format!("{lockfile}\n# changed\n"),
+    );
+    let plan = repo.plan("HEAD", true);
+    no_fallback(&plan);
+    assert_eq!(plan["bundle"]["run"], true, "{plan}");
+    assert_eq!(plan["lifecycle"]["run"], false, "{plan}");
+}
+
+#[test]
+fn default_ci_selects_changes_against_origin_v1() {
+    let repo = Repo::new();
+    succeed(
+        repo.0.path(),
+        "git",
+        &["update-ref", "refs/remotes/origin/v1", "HEAD"],
+    );
+    succeed(repo.0.path(), "git", &["checkout", "--detach", "-q"]);
+    write(repo.0.path(), "docs/guide.md", "# Changed\n");
+    let output = run(
+        repo.0.path(),
+        env!("CARGO_BIN_EXE_nemoclaw-build"),
+        &["ci", "--dry-run"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let preview: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    no_fallback(&preview["plan"]);
+    assert_eq!(preview["plan"]["bundle"]["run"], false, "{preview}");
+    assert_eq!(preview["plan"]["lifecycle"]["run"], false, "{preview}");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("origin/v1"));
+}
+
+fn preview_with_pr(
+    repo: &Repo,
+    response: serde_json::Value,
+    args: &[&str],
+) -> (std::process::Output, bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let tools = tempfile::tempdir().unwrap();
+    let gh = tools.path().join("gh");
+    fs::write(&gh, "#!/bin/sh\ntouch \"$PR_CALL\"\ncat \"$PR_RESPONSE\"\n").unwrap();
+    fs::set_permissions(gh, fs::Permissions::from_mode(0o755)).unwrap();
+    let response_file = tools.path().join("response.json");
+    fs::write(&response_file, serde_json::to_vec(&response).unwrap()).unwrap();
+    let call = tools.path().join("called");
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
+        .args(args)
+        .current_dir(repo.0.path())
+        .env("CARGO", cargo())
+        .env("CARGO_NET_OFFLINE", "true")
+        .env("PR_RESPONSE", response_file)
+        .env("PR_CALL", &call)
+        .env(
+            "PATH",
+            std::env::join_paths(
+                std::iter::once(tools.path().to_path_buf())
+                    .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+            )
+            .unwrap(),
+        )
+        .output()
+        .unwrap();
+    (output, call.exists())
+}
+
+#[test]
+fn default_ci_uses_the_open_pr_parent_for_a_stack() {
+    let repo = Repo::new();
+    succeed(
+        repo.0.path(),
+        "git",
+        &["update-ref", "refs/remotes/origin/v1", "HEAD"],
+    );
+    repo.decide(
+        &[(
+            "crates/nemoclaw-sdk/src/lib.rs",
+            Some("// Parent changes\n"),
+        )],
+        None,
+    );
+    let parent = repo.base();
+    succeed(
+        repo.0.path(),
+        "git",
+        &["checkout", "-q", "-b", "stack-child"],
+    );
+    write(repo.0.path(), "docs/guide.md", "# Child edits\n");
+    let (output, called) = preview_with_pr(
+        &repo,
+        serde_json::json!({"state":"OPEN", "baseRefName":"stack-parent", "baseRefOid":parent}),
+        &["ci", "--dry-run"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let preview: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    no_fallback(&preview["plan"]);
+    assert_eq!(preview["plan"]["lifecycle"]["run"], false, "{preview}");
+    assert_eq!(preview["plan"]["bundle"]["run"], false, "{preview}");
+    assert!(called);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("stack-parent"));
+}
+
+#[test]
+fn full_ci_explicitly_selects_every_step_without_pr_discovery() {
+    let repo = Repo::new();
+    let (output, called) = preview_with_pr(
+        &repo,
+        serde_json::Value::Null,
+        &["ci", "--full", "--dry-run"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let preview: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        preview["steps"],
+        serde_json::json!([
+            "tools",
+            "fmt",
+            "clippy",
+            "build",
+            "test",
+            "schema",
+            "bundle",
+            "lifecycle"
+        ])
+    );
+    assert!(!called);
+}
+
+#[test]
+fn missing_default_base_requires_a_choice_instead_of_accidentally_running_everything() {
+    let repo = Repo::new();
+    succeed(repo.0.path(), "git", &["checkout", "--detach", "-q"]);
+    let output = run(
+        repo.0.path(),
+        env!("CARGO_BIN_EXE_nemoclaw-build"),
+        &["ci", "--dry-run"],
+    );
+    assert!(
+        !output.status.success(),
+        "missing default must not silently select all checks"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("origin/v1") && stderr.contains("--base") && stderr.contains("--full"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn unavailable_or_closed_pr_metadata_falls_back_to_origin_v1() {
+    let repo = Repo::new();
+    succeed(
+        repo.0.path(),
+        "git",
+        &["update-ref", "refs/remotes/origin/v1", "HEAD"],
+    );
+    write(repo.0.path(), "docs/guide.md", "# Changed\n");
+    for response in [
+        serde_json::Value::Null,
+        serde_json::json!({"state":"CLOSED", "baseRefName":"old-parent", "baseRefOid":repo.base()}),
+        serde_json::json!({"state":"MERGED", "baseRefName":"old-parent", "baseRefOid":repo.base()}),
+        serde_json::json!({"state":"OPEN", "baseRefName":"unfetched-parent", "baseRefOid":"a".repeat(40)}),
+        serde_json::json!({"state":"OPEN", "baseRefName":"invalid-parent", "baseRefOid":"HEAD"}),
+    ] {
+        let (output, called) = preview_with_pr(&repo, response, &["ci", "--dry-run"]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(called);
+        let preview: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        no_fallback(&preview["plan"]);
+        assert_eq!(preview["plan"]["bundle"]["run"], false, "{preview}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("origin/v1") && stderr.contains("fallback"),
+            "{stderr}"
+        );
+    }
+}
+
+#[test]
+fn explicit_base_bypasses_pr_discovery() {
+    let repo = Repo::new();
+    write(repo.0.path(), "docs/guide.md", "# Changed\n");
+    let (output, called) = preview_with_pr(
+        &repo,
+        serde_json::Value::Null,
+        &["ci", "--base", "HEAD", "--dry-run"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!called);
+    let preview: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    no_fallback(&preview["plan"]);
+    assert_eq!(preview["plan"]["bundle"]["run"], false, "{preview}");
 }

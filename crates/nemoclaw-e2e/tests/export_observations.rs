@@ -108,7 +108,7 @@ async fn export_uses_provider_observations_without_resolving_inference_credentia
     let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
     for provider in fixture.state.lock().unwrap().providers.values_mut() {
         provider.metadata.as_mut().unwrap().labels.insert(
-            nemoclaw_provider::openshell::CREDENTIAL.into(),
+            openshell_provider::CREDENTIAL.into(),
             "CHANGED_EXPORT_REFERENCE".into(),
         );
     }
@@ -288,7 +288,7 @@ async fn mixed_search_export_preserves_scopes_shared_registrations_and_state_on_
                     .as_ref()
                     .unwrap()
                     .labels
-                    .get(nemoclaw_provider::openshell::CREDENTIAL)
+                    .get(openshell_provider::CREDENTIAL)
                     .map(String::as_str)
                     == Some(reference))
                 .unwrap()
@@ -304,7 +304,7 @@ async fn mixed_search_export_preserves_scopes_shared_registrations_and_state_on_
                 let observed = state.providers.get_mut(&key).unwrap();
                 if field == "credential" {
                     observed.metadata.as_mut().unwrap().labels.insert(
-                        nemoclaw_provider::openshell::CREDENTIAL.into(),
+                        openshell_provider::CREDENTIAL.into(),
                         "FOREIGN_SEARCH_KEY".into(),
                     );
                 } else {

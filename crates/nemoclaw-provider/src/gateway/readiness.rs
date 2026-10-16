@@ -229,7 +229,7 @@ impl DataSource for GatewayReadinessDataSource {
             ..Default::default()
         };
         let result =
-            match nemoclaw_openshell::client(&connection, &crate::openshell::EnvironmentSecrets) {
+            match nemoclaw_openshell::client(&connection, &nemoclaw_backend::EnvironmentSecrets) {
                 Ok(client) => {
                     managed
                         .observe(timeout, || nemoclaw_openshell::health(&client))

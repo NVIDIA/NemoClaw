@@ -51,12 +51,10 @@ binaries:
   fabric-provider::contract:
     summed_seconds: 40
     test_seconds: 22
-  # Measured with 29 tests, which only the 3 latest runs had: at most 80 s
-  # summed; slowest test 6.9 s. The 8 cluster model tests added 43.6 s summed
-  # (slowest 7.5 s) in a local linux_arm64 run that took 117.1 s for the 29,
-  # about 30 s at CI speed. The binary now has 37 tests.
+  # 29 tests, which only the 3 latest runs had: at most 80 s summed; slowest
+  # test 6.9 s.
   nemoclaw-provider::contract:
-    summed_seconds: 150
+    summed_seconds: 110
     test_seconds: 10
   # 44 tests: at most 142 s summed; slowest test 8.1 s.
   openshell-provider::contract:

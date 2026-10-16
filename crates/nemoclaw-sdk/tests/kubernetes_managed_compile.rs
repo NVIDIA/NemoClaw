@@ -65,15 +65,15 @@ fn managed_gateway_uses_a_pinned_helm_provider_between_auth_and_readiness() {
     assert_eq!(release["wait"], true);
     assert_eq!(release["wait_for_jobs"], true);
     assert_eq!(
-        graph["resource"]["nemoclaw_kubernetes_auth"]["runtime"]["depends_on"],
-        json!(["nemoclaw_kubernetes_storage.runtime"])
+        graph["resource"]["openshell_kubernetes_auth"]["runtime"]["depends_on"],
+        json!(["openshell_kubernetes_storage.runtime"])
     );
     assert_eq!(
         release["depends_on"],
-        json!(["nemoclaw_kubernetes_auth.runtime"])
+        json!(["openshell_kubernetes_auth.runtime"])
     );
     assert_eq!(
-        graph["resource"]["nemoclaw_kubernetes_gateway"]["runtime"]["depends_on"],
+        graph["resource"]["openshell_kubernetes_gateway"]["runtime"]["depends_on"],
         json!(["helm_release.gateway"])
     );
     assert_eq!(
@@ -85,9 +85,9 @@ fn managed_gateway_uses_a_pinned_helm_provider_between_auth_and_readiness() {
             .collect::<Vec<_>>(),
         [
             "helm_release",
-            "nemoclaw_kubernetes_auth",
-            "nemoclaw_kubernetes_gateway",
-            "nemoclaw_kubernetes_storage",
+            "openshell_kubernetes_auth",
+            "openshell_kubernetes_gateway",
+            "openshell_kubernetes_storage",
         ],
         "one native release owns chart resources; prerequisites and readiness stay separate"
     );
@@ -127,7 +127,7 @@ fn openshift_chart_values_wait_for_the_observed_namespace_identity() {
     assert_eq!(values.as_array().unwrap().len(), 2);
     assert_eq!(
         values[1],
-        "${nemoclaw_kubernetes_auth.runtime.gateway_values}"
+        "${openshell_kubernetes_auth.runtime.gateway_values}"
     );
     assert_eq!(
         values[0],
@@ -156,17 +156,15 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
             .iter()
             .all(|target| target.kind.starts_with("kubernetes_") || target.kind == "helm_release")
     );
-    // The platform stage has no gateway, so it omits the gateway providers.
-    assert_eq!(platform["provider"]["nemoclaw"], json!({}));
-    for provider in ["openshell", "fabric"] {
-        assert!(platform["provider"].get(provider).is_none(), "{provider}");
-        assert!(
-            platform["terraform"]["required_providers"]
-                .get(provider)
-                .is_none(),
-            "{provider}"
-        );
-    }
+    // The platform stage installs the gateway: openshell serves the Kubernetes
+    // gateway types; fabric needs a running gateway, so the stage omits it.
+    assert_eq!(platform["provider"]["openshell"], json!({}));
+    assert!(platform["provider"].get("fabric").is_none());
+    assert!(
+        platform["terraform"]["required_providers"]
+            .get("fabric")
+            .is_none()
+    );
     assert!(platform.get("data").is_none());
     assert!(
         platform["terraform"]["required_providers"]
@@ -174,17 +172,17 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
             .is_none()
     );
     assert_eq!(
-        platform["resource"]["nemoclaw_kubernetes_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
+        platform["resource"]["openshell_kubernetes_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
         true
     );
     assert_eq!(
-        platform["resource"]["nemoclaw_kubernetes_gateway"]["runtime"]["depends_on"],
+        platform["resource"]["openshell_kubernetes_gateway"]["runtime"]["depends_on"],
         json!(["helm_release.gateway"])
     );
     for kind in [
-        "nemoclaw_kubernetes_storage",
-        "nemoclaw_kubernetes_auth",
-        "nemoclaw_kubernetes_gateway",
+        "openshell_kubernetes_storage",
+        "openshell_kubernetes_auth",
+        "openshell_kubernetes_gateway",
     ] {
         assert_eq!(
             platform["resource"][kind]["runtime"]["lifecycle"]["postcondition"][0]["condition"],
@@ -193,9 +191,9 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
     }
     // Every platform resource takes the cluster target as typed attributes.
     for kind in [
-        "nemoclaw_kubernetes_storage",
-        "nemoclaw_kubernetes_auth",
-        "nemoclaw_kubernetes_gateway",
+        "openshell_kubernetes_storage",
+        "openshell_kubernetes_auth",
+        "openshell_kubernetes_gateway",
     ] {
         let resource = &platform["resource"][kind]["runtime"];
         assert!(resource.get("spec").is_none(), "{kind}");
@@ -209,26 +207,38 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
         assert!(resource.get("environment").is_none(), "{kind}");
     }
     let agents = compile(&document, &generations, "0.1.0").unwrap();
-    // The managed gateway's credentials reach the gateway data source, whose
-    // ref every object takes.
-    for (field, expected) in [
-        ("credential_env", "NEMOCLAW_MANAGED_K8S_TOKEN"),
-        ("tls_ca_env", "NEMOCLAW_MANAGED_K8S_CA"),
-        ("tls_certificate_env", "NEMOCLAW_MANAGED_K8S_CERT"),
-        ("tls_key_env", "NEMOCLAW_MANAGED_K8S_KEY"),
+    // The gateway data source, whose ref every object takes, carries the
+    // managed gateway's specification. Providers connect to the gateway with
+    // it, so no connection variables are named.
+    let gateway = &agents["data"]["openshell_gateway"]["current"];
+    for field in [
+        "credential_env",
+        "tls_ca_env",
+        "tls_certificate_env",
+        "tls_key_env",
     ] {
-        assert_eq!(
-            agents["data"]["openshell_gateway"]["current"][field], expected,
-            "{field}"
-        );
+        assert!(gateway.get(field).is_none(), "{field}");
     }
-    for provider in ["nemoclaw", "openshell", "fabric"] {
+    let spec: nemoclaw_sdk::kubernetes::Spec =
+        serde_json::from_str(gateway["kubernetes"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        Some(spec),
+        nemoclaw_sdk::kubernetes::gateway_spec(&document, &generations).unwrap()
+    );
+    for provider in ["openshell", "fabric"] {
         assert_eq!(agents["provider"][provider], json!({}), "{provider}");
     }
+    // One graph installs the gateway and creates the objects it serves; the
+    // gateway read waits for the installation.
+    assert_eq!(
+        gateway["depends_on"],
+        json!(["openshell_kubernetes_gateway.runtime"])
+    );
     assert!(
-        agents["resource"]
-            .get("nemoclaw_kubernetes_gateway")
-            .is_none()
+        agents["data"]["openshell_gateway"]["apply"]["depends_on"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("openshell_kubernetes_gateway.runtime"))
     );
     assert!(agents["provider"].get("docker").is_none());
 }
@@ -246,19 +256,18 @@ fn managed_kubernetes_discovery_never_uses_a_local_container_engine() {
     .map(|kind| (kind.into(), "a".repeat(32)))
     .into();
     let agents = compile(&document, &generations, "0.1.0").unwrap();
-    for data_source in ["nemoclaw_engine_capabilities", "nemoclaw_target_hardware"] {
-        assert!(
-            agents["data"].get(data_source).is_none(),
-            "Kubernetes discovery must not contact the client engine: {data_source}"
-        );
-    }
+    assert!(
+        agents["data"].get("host_engine").is_none(),
+        "Kubernetes discovery must not contact the client engine"
+    );
     assert!(agents["data"].get("openshell_gateway").is_some());
+    // The SDK reads model catalogs itself, outside the graph.
     assert!(
         agents["data"]
             .get("nemoclaw_inference_capabilities")
-            .is_some()
+            .is_none()
     );
-    let image = &agents["data"]["fabric_capabilities"]["sandbox_0"];
+    let image = &agents["data"]["fabric_harnesses"]["sandbox_0"];
     assert_eq!(image["engine"], "");
     assert_eq!(image["metadata_env"], "TEST_IMAGE_METADATA");
     assert!(image.get("architecture").is_none());

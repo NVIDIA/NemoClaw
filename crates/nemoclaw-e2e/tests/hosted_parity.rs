@@ -202,7 +202,7 @@ mod live {
     fn state_bindings(directory: &Path) -> (BTreeMap<String, String>, Option<Row>) {
         let mut ids = BTreeMap::new();
         let mut sandbox = None;
-        for relative in ["terraform.tfstate", "runtime/terraform.tfstate"] {
+        for relative in ["terraform.tfstate"] {
             let path = directory.join(relative);
             if !path.exists() {
                 continue;
@@ -248,25 +248,14 @@ mod live {
     }
 
     fn initial_plan(document: &Document) -> OperationResult {
-        let runtime = runtime_resources(document);
         OperationResult {
             outcome: Outcome::Planned,
             connection: Some(nemoclaw_sdk::DeploymentConnection {
                 gateway_endpoint: document.spec.gateway.endpoint().into(),
                 workspace: document.workspace(),
             }),
-            changes: changes(
-                &runtime.iter().map(String::as_str).collect::<Vec<_>>(),
-                "create",
-            ),
-            deferred: vec!["OpenShell registration and sandbox require the managed gateway".into()],
-            deferred_resources: vec![
-                "fabric_agent_configuration.assistant".into(),
-                "openshell_provider_registration.inference_hosted-nvidia-prod".into(),
-                "openshell_provider_profile.inference_hosted-nvidia-prod".into(),
-                "openshell_sandbox.assistant".into(),
-                "openshell_workspace.deployment".into(),
-            ],
+            changes: initial_changes(document),
+            deferred: vec![],
             resource_sources: Default::default(),
             unverified: vec![],
             retained: vec![],
@@ -278,9 +267,8 @@ mod live {
     fn removed_resources(document: &Document) -> Vec<Change> {
         let mut removed = changes(
             &[
-                "fabric_agent_configuration.assistant",
-                "openshell_provider_registration.inference_hosted-nvidia-prod",
-                "openshell_provider_profile.inference_hosted-nvidia-prod",
+                "fabric_agent.assistant",
+                "openshell_inference.inference_hosted-nvidia-prod",
                 "openshell_sandbox.assistant",
             ],
             "delete",
@@ -289,7 +277,7 @@ mod live {
         removed.extend(changes(
             &runtime
                 .iter()
-                .filter(|address| address.as_str() != "nemoclaw_gateway_storage.runtime")
+                .filter(|address| address.as_str() != "openshell_gateway_storage.runtime")
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
             "delete",
@@ -300,8 +288,27 @@ mod live {
     fn retained_resources() -> Vec<String> {
         vec![
             "openshell_workspace.deployment".into(),
-            "nemoclaw_gateway_storage.runtime".into(),
+            "openshell_gateway_storage.runtime".into(),
         ]
+    }
+
+    /// One plan creates the runtime and the objects it serves, in address order.
+    fn initial_changes(document: &Document) -> Vec<Change> {
+        let mut addresses = runtime_resources(document);
+        addresses.extend(
+            [
+                "fabric_agent.assistant",
+                "openshell_inference.inference_hosted-nvidia-prod",
+                "openshell_sandbox.assistant",
+                "openshell_workspace.deployment",
+            ]
+            .map(String::from),
+        );
+        addresses.sort();
+        changes(
+            &addresses.iter().map(String::as_str).collect::<Vec<_>>(),
+            "create",
+        )
     }
 
     async fn apply_initial(
@@ -314,31 +321,12 @@ mod live {
         let mut expected = initial_plan(document);
         expected.discovery = plan.discovery.clone();
         // Optional capability observations may remain unresolved before deployment.
-        assert!(
-            plan.deferred
-                .iter()
-                .any(|message| message == &expected.deferred[0])
-        );
         expected.deferred = plan.deferred.clone();
         expected.unverified = plan.unverified.clone();
         assert_eq!(plan, expected);
         let applied = deployment.apply(document, cancel).await.unwrap();
         assert_eq!(applied.outcome, Outcome::Succeeded);
-        let runtime = runtime_resources(document);
-        let mut expected = changes(
-            &runtime.iter().map(String::as_str).collect::<Vec<_>>(),
-            "create",
-        );
-        expected.extend(changes(
-            &[
-                "fabric_agent_configuration.assistant",
-                "openshell_provider_registration.inference_hosted-nvidia-prod",
-                "openshell_provider_profile.inference_hosted-nvidia-prod",
-                "openshell_sandbox.assistant",
-                "openshell_workspace.deployment",
-            ],
-            "create",
-        ));
+        let expected = initial_changes(document);
         assert_eq!(applied.changes, expected);
         assert!(applied.deferred.is_empty());
         assert!(applied.retained.is_empty());
@@ -362,7 +350,6 @@ mod live {
                 connection: None,
                 changes: removed.clone(),
                 deferred: vec![],
-                deferred_resources: vec![],
                 resource_sources: Default::default(),
                 unverified: vec![],
                 retained: retained.clone(),
@@ -377,7 +364,6 @@ mod live {
                 connection: None,
                 changes: removed,
                 deferred: vec![],
-                deferred_resources: vec![],
                 resource_sources: Default::default(),
                 unverified: vec![],
                 retained: retained.clone(),
@@ -438,9 +424,8 @@ mod live {
         let mut expected = runtime_resources(&document);
         expected.extend(
             [
-                "fabric_agent_configuration.assistant",
-                "openshell_provider_registration.inference_hosted-nvidia-prod",
-                "openshell_provider_profile.inference_hosted-nvidia-prod",
+                "fabric_agent.assistant",
+                "openshell_inference.inference_hosted-nvidia-prod",
                 "openshell_sandbox.assistant",
                 "openshell_workspace.deployment",
             ]

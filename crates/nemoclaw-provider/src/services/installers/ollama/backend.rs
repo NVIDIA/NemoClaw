@@ -32,7 +32,7 @@ fn diagnostic(error: &Error) -> ObservationError {
 impl Backend for ProxyBackend {
     async fn plan(&self, kind: &str, desired: &Row, prior: Option<&Row>) -> Result<(), Error> {
         if prior.is_none() {
-            self.proxy_read(kind, desired, false, false).await?;
+            self.proxy_read(kind, desired, false).await?;
         }
         Ok(())
     }
@@ -40,14 +40,14 @@ impl Backend for ProxyBackend {
         &self,
         kind: &str,
         prior: &Row,
-        removing: bool,
+        _removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
-        self.proxy_read(kind, prior, false, removing)
+        self.proxy_read(kind, prior, false)
             .await
             .map_err(|error| diagnostic(&error))
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
-        match self.proxy_read(kind, desired, true, false).await {
+        match self.proxy_read(kind, desired, true).await {
             Ok(Some(row)) => Mutation::complete(row),
             Ok(None) => Mutation::failed(ObservationError::Incomplete),
             Err(error) => Mutation::failed(diagnostic(&error)),
@@ -56,7 +56,7 @@ impl Backend for ProxyBackend {
     async fn remove(
         &self,
         kind: &str,
-        prior: &Row,
+        _prior: &Row,
         destroying: bool,
     ) -> Result<(), ObservationError> {
         if !Self::supports(kind) {
@@ -67,7 +67,7 @@ impl Backend for ProxyBackend {
                 "proxy deletion requires explicit destroy",
             ));
         }
-        self.proxy_remove(kind, prior)
+        self.proxy_remove(kind)
             .await
             .map_err(|error| diagnostic(&error))
     }

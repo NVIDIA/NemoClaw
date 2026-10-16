@@ -312,6 +312,9 @@ impl tower::Service<http::Request<Body>> for Service {
                 "/openshell.v1.OpenShell/UpdateProvider" => {
                     unary(request, state, update_provider).await
                 }
+                "/openshell.v1.OpenShell/DeleteWorkspace" => {
+                    unary(request, state, delete_workspace).await
+                }
                 "/openshell.v1.OpenShell/DeleteProvider" => {
                     unary(request, state, |state, request| {
                         delete_provider(state, &request)
@@ -467,6 +470,26 @@ fn update_provider(
     Ok(p::ProviderResponse {
         provider: Some(provider),
         ..Default::default()
+    })
+}
+/// Delete an empty workspace, as OpenShell refuses one that still holds objects.
+fn delete_workspace(
+    state: &mut State,
+    q: p::DeleteWorkspaceRequest,
+) -> Result<p::DeleteWorkspaceResponse, Status> {
+    if !state.workspaces.contains_key(&q.name) {
+        return Err(Status::not_found("absent"));
+    }
+    let prefix = format!("{}/", q.name);
+    if state.sandboxes.keys().any(|key| key.starts_with(&prefix))
+        || state.providers.keys().any(|key| key.starts_with(&prefix))
+        || state.profiles.keys().any(|key| key.starts_with(&prefix))
+    {
+        return Err(Status::failed_precondition("workspace is not empty"));
+    }
+    state.workspaces.remove(&q.name);
+    Ok(p::DeleteWorkspaceResponse {
+        outcome: p::DeletionOutcome::Completed.into(),
     })
 }
 fn delete_provider(
@@ -995,8 +1018,20 @@ pub fn contract_rows(
         .and_then(|body| body["name"].as_str())
         .unwrap()
         .to_owned();
+    let owner = fixture["resource"]["openshell_workspace"]
+        .as_object()
+        .and_then(|bodies| bodies.values().next())
+        .and_then(|body| body["owner"].as_str())
+        .unwrap_or_default()
+        .to_owned();
     let mut rows = Vec::new();
-    for kind in ["workspace", "provider_profile", "provider", "sandbox"] {
+    // Inference and web search resources expand to the profile and
+    // registration they own; registrations follow every profile.
+    let mut registrations = Vec::new();
+    for kind in ["workspace", "inference", "web_search", "sandbox"] {
+        if kind == "sandbox" {
+            rows.append(&mut registrations);
+        }
         let resource = nemoclaw_openshell::resource_type(kind).unwrap();
         let structured = nemoclaw_openshell::structured_inputs(kind);
         let references = nemoclaw_openshell::references(kind);
@@ -1013,7 +1048,11 @@ pub fn contract_rows(
                 .unwrap()
                 .to_owned()
         };
-        for body in fixture["resource"][&resource].as_object().unwrap().values() {
+        for body in fixture["resource"][&resource]
+            .as_object()
+            .into_iter()
+            .flat_map(|bodies| bodies.values())
+        {
             let mut row = std::collections::BTreeMap::new();
             for (attribute, value) in body.as_object().unwrap() {
                 if matches!(attribute.as_str(), "depends_on" | "lifecycle") {
@@ -1023,13 +1062,20 @@ pub fn contract_rows(
                     .iter()
                     .find(|reference| reference.attribute == attribute)
                 {
+                    // Generated graphs pass a server as a literal ref.
+                    if reference.kind == nemoclaw_openshell::INFERENCE_SERVER_TYPE {
+                        for (attribute, field) in &reference.fields {
+                            let text = value[*attribute].as_str().unwrap_or_default();
+                            row.insert((*field).into(), text.replace("$${", "${"));
+                        }
+                        continue;
+                    }
                     // These rows reach a gateway client directly, which never
                     // sees the connection the resource adapter carries.
                     if reference.kind == nemoclaw_openshell::GATEWAY_TYPE {
-                        assert!(
-                            value
-                                .as_str()
-                                .is_some_and(|text| text.starts_with("${data.openshell_gateway.")),
+                        assert_eq!(
+                            value["type"],
+                            nemoclaw_openshell::GATEWAY_TYPE,
                             "{name}: {value} is not a gateway ref"
                         );
                         continue;
@@ -1047,6 +1093,9 @@ pub fn contract_rows(
                         referenced_name(value)
                     };
                     row.insert(field.into(), carried);
+                    if reference.fields.iter().any(|(_, field)| *field == "owner") {
+                        row.insert("owner".into(), owner.clone());
+                    }
                     continue;
                 }
                 if let Some(input) = structured.iter().find(|input| input.attribute == attribute) {
@@ -1062,7 +1111,17 @@ pub fn contract_rows(
                     .replace("$${", "${");
                 row.insert(attribute.clone(), text);
             }
-            rows.push((kind, row));
+            let pair = match kind {
+                "inference" => nemoclaw_openshell::pairs::inference_rows(&row),
+                "web_search" => nemoclaw_openshell::pairs::web_search_rows(&row),
+                _ => {
+                    rows.push((kind, row));
+                    continue;
+                }
+            };
+            let (profile, registration) = pair.unwrap_or_else(|| panic!("{name}: invalid {kind}"));
+            rows.push(("provider_profile", profile));
+            registrations.push(("provider", registration));
         }
     }
     rows

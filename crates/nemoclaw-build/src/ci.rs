@@ -307,3 +307,16 @@ pub fn install_nextest(
     })?;
     Ok(destination.join(name))
 }
+
+/// Keep ordinary checks and select expensive steps from the shared plan.
+/// Without a plan, retain every step for callers that request full validation.
+pub fn planned_steps(plan: Option<&crate::changes::Plan>) -> Vec<Step> {
+    Step::ALL
+        .into_iter()
+        .filter(|step| match (plan, step) {
+            (Some(plan), Step::Bundle) => plan.bundle.run,
+            (Some(plan), Step::Lifecycle) => plan.lifecycle.run,
+            _ => true,
+        })
+        .collect()
+}

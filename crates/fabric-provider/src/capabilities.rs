@@ -7,6 +7,7 @@ use nemoclaw_backend::{EnvironmentSecrets, ObservationStatus};
 use nemoclaw_docker::Engines;
 use nemoclaw_fabric::{FabricRequirements, capabilities::Support, judge_image, observe_fabric};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tf_provider::{
     DataSource, Diagnostics,
@@ -24,7 +25,7 @@ impl Default for FabricCapabilitiesDataSource {
     }
 }
 
-/// Inputs and outputs of `fabric_capabilities`. OpenTofu requires every
+/// Inputs and outputs of `fabric_harnesses`. OpenTofu requires every
 /// declared attribute, including absent optional values.
 #[derive(Default, Serialize, Deserialize)]
 pub struct FabricCapabilitiesState {
@@ -37,6 +38,8 @@ pub struct FabricCapabilitiesState {
     operating_system: Value<String>,
     compatibility_status: Value<String>,
     runtime_json: Value<String>,
+    /// The generic sandbox launch for the configured agent.
+    launch_json: Value<String>,
     binaries_json: Value<String>,
     observation_json: Value<String>,
     available: Value<bool>,
@@ -58,6 +61,7 @@ impl FabricCapabilitiesState {
         self.status = Value::Unknown;
         self.compatibility_status = Value::Unknown;
         self.runtime_json = Value::Unknown;
+        self.launch_json = Value::Unknown;
         self.binaries_json = Value::Unknown;
         self
     }
@@ -151,6 +155,7 @@ impl DataSource for FabricCapabilitiesDataSource {
                     ("status", String, Computed),
                     ("compatibility_status", String, Computed),
                     ("runtime_json", String, Computed),
+                    ("launch_json", String, Computed),
                     ("binaries_json", String, Computed),
                 ]
                 .into_iter()
@@ -211,6 +216,7 @@ impl DataSource for FabricCapabilitiesDataSource {
         }
         let (engine, image) = (engine.clone(), image.clone());
         config.runtime_json = Value::Value(String::new());
+        config.launch_json = Value::Value(String::new());
         config.binaries_json = Value::Value("[]".into());
         let mut observation = if let Value::Value(name) = &config.metadata_env {
             nemoclaw_fabric::image_metadata::observe(&EnvironmentSecrets, name, &image)
@@ -232,6 +238,12 @@ impl DataSource for FabricCapabilitiesDataSource {
                         adapter_id: adapter_id.into(),
                     };
                     config.runtime_json = Value::Value(serde_json::to_string(&binding).ok()?);
+                    // The configured agent's name selects what the bridge serves.
+                    let agent = requirements.configuration["metadata"]["name"]
+                        .as_str()
+                        .unwrap_or("");
+                    config.launch_json =
+                        Value::Value(serde_json::to_string(&binding.launch(agent)).ok()?);
                     config.binaries_json =
                         Value::Value(serde_json::to_string(binding.binaries()).ok()?);
                 }
@@ -271,6 +283,172 @@ impl DataSource for FabricCapabilitiesDataSource {
                 diags.root_error_short("Discovery observation could not be encoded");
                 return None;
             }
+        }
+        Some(config)
+    }
+}
+
+/// Selects one harness from an image by adapter: the launch that starts it for
+/// an agent, and a `ref` naming the harness.
+pub struct FabricHarnessDataSource(pub Arc<dyn Engines>);
+
+impl Default for FabricHarnessDataSource {
+    fn default() -> Self {
+        Self(FabricCapabilitiesDataSource::default().0)
+    }
+}
+
+/// Inputs and outputs of `fabric_harness`.
+#[derive(Default, Serialize, Deserialize)]
+pub struct FabricHarnessState {
+    engine: Value<String>,
+    image: Value<String>,
+    metadata_env: Value<String>,
+    adapter_id: Value<String>,
+    agent_name: Value<String>,
+    launch_json: Value<String>,
+    observation_json: Value<String>,
+    available: Value<bool>,
+    status: Value<String>,
+    #[serde(rename = "ref")]
+    reference: Value<BTreeMap<String, Value<String>>>,
+}
+
+/// The type `fabric_harness` refs carry.
+pub use nemoclaw_fabric::agent::HARNESS_TYPE;
+
+/// The image catalog's records for one adapter, which agents are planned against.
+fn adapter_catalog(observation: &Value<String>, adapter_id: &str) -> Option<String> {
+    let Value::Value(observation) = observation else {
+        return None;
+    };
+    let observation: serde_json::Value = serde_json::from_str(observation).ok()?;
+    let catalog =
+        nemoclaw_fabric::catalog::FabricCatalog::from_json(&observation["catalog"].to_string())
+            .ok()?;
+    serde_json::to_string(&catalog.for_adapter(adapter_id)).ok()
+}
+
+impl FabricHarnessState {
+    /// The image read `fabric_harnesses` performs for this adapter and agent.
+    fn catalog_read(&self) -> FabricCapabilitiesState {
+        let config = match (&self.adapter_id, &self.agent_name) {
+            (Value::Value(adapter), Value::Value(agent)) => Value::Value(
+                serde_json::json!({
+                    "schema_version": "fabric.agent/v1alpha1",
+                    "metadata": {"name": agent},
+                    "harness": {"adapter_id": adapter},
+                })
+                .to_string(),
+            ),
+            _ => Value::Unknown,
+        };
+        FabricCapabilitiesState {
+            engine: self.engine.clone(),
+            image: self.image.clone(),
+            metadata_env: self.metadata_env.clone(),
+            config_json: config,
+            ..Default::default()
+        }
+    }
+}
+
+#[async_trait]
+impl DataSource for FabricHarnessDataSource {
+    type State<'a> = FabricHarnessState;
+    type ProviderMetaState<'a> = ValueEmpty;
+
+    fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
+        use AttributeConstraint::{Computed, Optional, Required};
+        use AttributeType::{Bool, String};
+        let reference = AttributeType::Object(
+            [
+                nemoclaw_tofu::REF_TYPE,
+                "adapter_id",
+                "image",
+                "catalog_json",
+            ]
+            .into_iter()
+            .map(|name| (name.to_owned(), String))
+            .collect(),
+        );
+        Some(Schema {
+            version: 0,
+            block: Block {
+                attributes: [
+                    ("engine", String, Optional),
+                    ("image", String, Required),
+                    ("metadata_env", String, Optional),
+                    ("adapter_id", String, Required),
+                    ("agent_name", String, Required),
+                    ("launch_json", String, Computed),
+                    ("observation_json", String, Computed),
+                    ("available", Bool, Computed),
+                    ("status", String, Computed),
+                    ("ref", reference, Computed),
+                ]
+                .into_iter()
+                .map(|(name, attr_type, constraint)| {
+                    (
+                        name.into(),
+                        Attribute {
+                            attr_type,
+                            constraint,
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect(),
+                ..Default::default()
+            },
+        })
+    }
+
+    async fn read<'a>(
+        &self,
+        diags: &mut Diagnostics,
+        mut config: FabricHarnessState,
+        meta: ValueEmpty,
+    ) -> Option<FabricHarnessState> {
+        let observed = FabricCapabilitiesDataSource(self.0.clone())
+            .read(diags, config.catalog_read(), meta)
+            .await?;
+        config.observation_json = observed.observation_json;
+        config.available = observed.available;
+        config.status = observed.status;
+        config.launch_json = observed.launch_json;
+        let catalog = match &config.adapter_id {
+            Value::Value(adapter) => adapter_catalog(&config.observation_json, adapter),
+            _ => None,
+        };
+        config.reference = match (
+            &config.adapter_id,
+            &config.image,
+            &config.launch_json,
+            &catalog,
+        ) {
+            (Value::Value(adapter), Value::Value(image), Value::Value(_), Some(catalog)) => {
+                Value::Value(
+                    [
+                        (nemoclaw_tofu::REF_TYPE, HARNESS_TYPE),
+                        ("adapter_id", adapter.as_str()),
+                        ("image", image.as_str()),
+                        ("catalog_json", catalog.as_str()),
+                    ]
+                    .into_iter()
+                    .map(|(name, value)| (name.to_owned(), Value::Value(value.to_owned())))
+                    .collect(),
+                )
+            }
+            _ => Value::Unknown,
+        };
+        // A known image without this adapter's runtime cannot launch it.
+        if matches!(&config.launch_json, Value::Value(launch) if launch.is_empty()) {
+            diags.root_error(
+                "Harness unavailable",
+                "The image declares no runtime for this adapter; select an image that installs it",
+            );
+            return None;
         }
         Some(config)
     }
@@ -462,26 +640,6 @@ mod tests {
 
     #[test]
     fn requirements_are_the_configuration_and_the_policy_reads_as_separate_inputs() {
-        let schema = FabricCapabilitiesDataSource::default()
-            .schema(&mut Diagnostics::default())
-            .unwrap();
-        let attribute = |name: &str| {
-            schema
-                .block
-                .attributes
-                .get(name)
-                .map(|a| (format!("{:?}", a.attr_type), format!("{:?}", a.constraint)))
-        };
-        assert!(!schema.block.attributes.contains_key("requirements_json"));
-        assert_eq!(
-            attribute("config_json"),
-            Some(("String".into(), "Optional".into()))
-        );
-        assert_eq!(
-            attribute("filesystem_read"),
-            Some(("List(String)".into(), "Optional".into()))
-        );
-
         let mut config = fabric_config();
         config.config_json = Value::Value(r#"{"harness":{"adapter_id":"a"}}"#.into());
         config.filesystem_read = Value::Value(vec![Value::Value("/srv".into())]);
@@ -498,5 +656,113 @@ mod tests {
         assert!(requirements(&config).unwrap().is_none());
         config.config_json = Value::Value(r#"{"harness":{}}"#.into());
         assert!(requirements(&config).is_err(), "an adapter_id is required");
+    }
+
+    // The fake engine listens on a Unix socket, as the test above.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_harness_selects_one_adapter_and_launches_the_named_agent() {
+        use nemoclaw_fabric::catalog::{BridgeCapabilities, FabricCatalog, IMAGE_CATALOG_LABEL};
+        let mut catalog = FabricCatalog::bundled();
+        catalog.bridge = Some(BridgeCapabilities {
+            interface_version: 1,
+            operations: [
+                "validate",
+                "prepare",
+                "configure",
+                "check",
+                "invoke",
+                "serve",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+            health_checks: Vec::new(),
+        });
+        // The image runtime lists executables for every adapter it installs.
+        catalog
+            .adapters
+            .retain(|adapter| adapter.adapter_id() == "nvidia.fabric.pi");
+        let mut runtime: serde_json::Value =
+            serde_json::from_str(include_str!("../../../image/fabric/runtime.json")).unwrap();
+        runtime["command"] = serde_json::json!(["/srv/python3.99", "-I", "/srv/bridge.py"]);
+        runtime["binaries"] = serde_json::json!({"nvidia.fabric.pi":["/srv/python3.99","/srv/pi"]});
+        catalog.runtime = Some(serde_json::from_value(runtime).unwrap());
+        let label = serde_json::to_string(&catalog).unwrap();
+        let digest = format!("registry/agent@sha256:{}", "a".repeat(64));
+        let served = digest.clone();
+        let fixture = crate::fixture::Fixture::start(move |_| {
+            let image = serde_json::json!({"Id":"sha256:config", "Architecture":"arm64", "Os":"linux", "RepoDigests":[served], "Config":{"Labels":{IMAGE_CATALOG_LABEL:label}}});
+            Some((200, serde_json::to_vec(&image).unwrap()))
+        })
+        .await;
+        let source = FabricHarnessDataSource::default();
+        let harness = |adapter: &str| FabricHarnessState {
+            engine: Value::Value(fixture.endpoint.clone()),
+            image: Value::Value(digest.clone()),
+            adapter_id: Value::Value(adapter.into()),
+            agent_name: Value::Value("travel".into()),
+            ..Default::default()
+        };
+        let mut diagnostics = Diagnostics::default();
+        let output = source
+            .read(
+                &mut diagnostics,
+                harness("nvidia.fabric.pi"),
+                ValueEmpty::default(),
+            )
+            .await;
+        let output = output.unwrap_or_else(|| panic!("{diagnostics:?}"));
+        assert!(diagnostics.errors.is_empty(), "{diagnostics:?}");
+        let launch =
+            nemoclaw_openshell::runtime::Launch::from_json(known(&output.launch_json).unwrap())
+                .unwrap();
+        assert_eq!(
+            launch.command,
+            [
+                "/srv/python3.99",
+                "-I",
+                "/srv/bridge.py",
+                "serve",
+                "--agent",
+                "travel"
+            ]
+        );
+        assert_eq!(launch.binaries, ["/srv/python3.99", "/srv/pi"]);
+        let Value::Value(reference) = &output.reference else {
+            panic!("the harness has a ref")
+        };
+        assert_eq!(reference["type"], Value::Value(HARNESS_TYPE.into()));
+        assert_eq!(
+            reference["adapter_id"],
+            Value::Value("nvidia.fabric.pi".into())
+        );
+        assert_eq!(reference["image"], Value::Value(digest.clone()));
+        // Agents using the harness are planned against its catalog records.
+        let Value::Value(catalog) = &reference["catalog_json"] else {
+            panic!("the harness ref carries its catalog")
+        };
+        let catalog = nemoclaw_fabric::catalog::FabricCatalog::from_json(catalog).unwrap();
+        assert_eq!(
+            catalog
+                .adapters
+                .iter()
+                .map(|adapter| adapter.adapter_id())
+                .collect::<Vec<_>>(),
+            ["nvidia.fabric.pi"]
+        );
+        // An adapter the image does not install has no launch.
+        let mut diagnostics = Diagnostics::default();
+        assert!(
+            source
+                .read(
+                    &mut diagnostics,
+                    harness("nvidia.fabric.codex"),
+                    ValueEmpty::default()
+                )
+                .await
+                .is_none()
+        );
+        assert!(format!("{diagnostics:?}").contains("Harness unavailable"));
     }
 }

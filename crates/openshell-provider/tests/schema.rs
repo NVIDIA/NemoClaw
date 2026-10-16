@@ -17,8 +17,10 @@ fn schema_matches_the_checked_in_snapshot() {
     );
 }
 
+/// Every resource generates an omitted generation, and an omitted owner
+/// unless a reference carries it, as a workspace reference carries its owner.
 #[test]
-fn every_resource_generates_an_omitted_owner_and_generation() {
+fn every_resource_generates_or_carries_its_owner_and_generation() {
     let mut diagnostics = Diagnostics::default();
     let resources = OpenShellProvider::default()
         .get_resources(&mut diagnostics)
@@ -26,6 +28,18 @@ fn every_resource_generates_an_omitted_owner_and_generation() {
     for (kind, resource) in &resources {
         let schema = resource.schema(&mut diagnostics).unwrap();
         for attribute in ["owner", "generation"] {
+            if attribute == "owner" && !schema.block.attributes.contains_key("owner") {
+                assert!(
+                    nemoclaw_openshell::references(kind)
+                        .iter()
+                        .any(|reference| reference
+                            .fields
+                            .iter()
+                            .any(|(_, field)| *field == "owner")),
+                    "{kind}.owner must be generated or carried by a reference"
+                );
+                continue;
+            }
             assert!(
                 matches!(
                     schema

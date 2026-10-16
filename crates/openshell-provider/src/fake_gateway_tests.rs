@@ -432,7 +432,7 @@ async fn sandbox_exec_uses_the_bound_workspace_and_rejects_substituted_identity(
     assert_ne!(binding["workspace"], "default");
     let command = vec!["fixture".into()];
     let mut incomplete = binding.clone();
-    incomplete.remove("runtime_json");
+    incomplete.remove("launch_json");
     assert!(
         client
             .exec_bound(&incomplete, command.clone(), Default::default(), 5)
@@ -561,7 +561,7 @@ async fn explicit_policy_reaches_the_gateway_and_detects_drift() {
         .spec
         .clone()
         .unwrap();
-    let expected = nemoclaw_openshell::runtime::RuntimeBinding::from_json(&sandbox["runtime_json"])
+    let expected = nemoclaw_openshell::runtime::Launch::from_json(&sandbox["launch_json"])
         .unwrap()
         .policy(&serde_json::from_str(&sandbox["policy_json"]).unwrap())
         .unwrap();

@@ -11,19 +11,14 @@ use serde::{Deserialize, Serialize};
 #[serde(default, deny_unknown_fields)]
 /// Managed GPU Ollama service with an immutable runtime and model snapshot.
 pub struct ManagedOllama {
-    /// Preserve refuses replacement of a running Docker model container or a cluster Pod that may be serving. Recreate permits sequential replacement and possible downtime until removed or changed.
+    /// Preserve refuses replacement of a running Docker model container. Recreate permits sequential replacement and possible downtime until removed or changed.
     #[serde(
         rename = "updatePolicy",
         default,
         skip_serializing_if = "crate::services::ServiceUpdatePolicy::is_preserve"
     )]
     pub update_policy: crate::services::ServiceUpdatePolicy,
-    /// Image metadata, scheduling requests, and retained-volume settings for managed Kubernetes or OpenShift only. Rejected for Docker and Podman.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "crate::services::KubernetesService")]
-    #[schemars(extend("x-nemoclaw-required" = "With a managed Kubernetes or OpenShift gateway"))]
-    pub kubernetes: Option<crate::services::KubernetesService>,
-    /// Container CPU and memory limits, IPC, and shared memory for Docker, Kubernetes, and OpenShift. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory.
+    /// Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServiceContainer")]
     pub container: Option<ServiceContainer>,

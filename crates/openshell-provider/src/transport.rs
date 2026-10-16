@@ -407,7 +407,7 @@ impl ConnectedOpenShellGateway {
             row_value(binding, "name"),
             false,
         )?;
-        for field in ["runtime_json", "agent_name", "agent_runtime"] {
+        for field in ["launch_json"] {
             if binding.get(field) != observed.get(field) {
                 return Err(ObservationError::BindingMismatch.into());
             }

@@ -30,41 +30,24 @@
     }
   },
   "resource": {
-    "openshell_provider_profile": {
+    "openshell_inference": {
       "inference_local-7761fdd381c7cf8bfbd7f964": {
-        "authenticated": "true",
+        "api": "openai-completions",
         "binaries": [
           "/usr/local/bin/python3.99"
         ],
         "depends_on": [
           "data.openshell_gateway.apply"
         ],
-        "endpoint": "https://inference-api.nousresearch.com/v1",
-        "gateway": "${data.openshell_gateway.current.ref}",
-        "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "lifecycle": {
-          "precondition": [
-            {
-              "condition": "${data.openshell_gateway.current.compatible}",
-              "error_message": "${format(\"Gateway is incompatible with this configuration: %s. Retain state, correct the gateway or the configuration, and reapply.\", data.openshell_gateway.current.incompatibility)}"
-            }
-          ]
+        "gateway": {
+          "credential_env": "",
+          "endpoint": "${var.endpoint}",
+          "kubernetes": "",
+          "tls_ca_env": "",
+          "tls_certificate_env": "",
+          "tls_key_env": "",
+          "type": "openshell_gateway"
         },
-        "name": "nemoclaw-inference-local-7761fdd381c7cf8bfbd7f964",
-        "owner": "c659b251-29b2-4666-b191-8b27106f8102",
-        "provider_type": "",
-        "workspace": "${openshell_workspace.deployment.ref}"
-      }
-    },
-    "openshell_provider_registration": {
-      "inference_local-7761fdd381c7cf8bfbd7f964": {
-        "credential_env": "NOUS_API_KEY",
-        "depends_on": [
-          "openshell_provider_profile.inference_local-7761fdd381c7cf8bfbd7f964",
-          "data.openshell_gateway.apply"
-        ],
-        "endpoint": "https://inference-api.nousresearch.com/v1",
-        "gateway": "${data.openshell_gateway.current.ref}",
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "lifecycle": {
           "precondition": [
@@ -75,22 +58,33 @@
           ]
         },
         "name": "local-7761fdd381c7cf8bfbd7f964",
-        "owner": "c659b251-29b2-4666-b191-8b27106f8102",
-        "provider_type": "",
+        "server": {
+          "credential_env": "NOUS_API_KEY",
+          "credential_source": "",
+          "endpoint": "https://inference-api.nousresearch.com/v1",
+          "type": "inference_server"
+        },
         "workspace": "${openshell_workspace.deployment.ref}"
       }
     },
     "openshell_sandbox": {
       "assistant": {
-        "agent_name": "main",
-        "agent_runtime": "fabric",
         "depends_on": [
-          "openshell_provider_registration.inference_local-7761fdd381c7cf8bfbd7f964",
+          "openshell_inference.inference_local-7761fdd381c7cf8bfbd7f964",
           "data.openshell_gateway.apply"
         ],
-        "gateway": "${data.openshell_gateway.current.ref}",
+        "gateway": {
+          "credential_env": "",
+          "endpoint": "${var.endpoint}",
+          "kubernetes": "",
+          "tls_ca_env": "",
+          "tls_certificate_env": "",
+          "tls_key_env": "",
+          "type": "openshell_gateway"
+        },
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "image": "local-fabric-hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "launch_json": "{\"command\":[\"/usr/local/bin/fabric-agent\",\"serve\",\"--agent\",\"main\"],\"environment\":{\"ADAPTER_PYTHON\":\"/opt/fabric/bin/python\",\"HOME\":\"/sandbox\",\"NEMOCLAW_AGENT_NAME\":\"main\",\"NEMOCLAW_ANONYMOUS_API_KEY\":\"unused\",\"NODE_EXTRA_CA_CERTS\":\"/etc/ssl/certs/ca-certificates.crt\",\"PATH\":\"/opt/fabric/bin:/usr/local/bin:/usr/bin:/bin\",\"PYTHONDONTWRITEBYTECODE\":\"1\",\"SSL_CERT_FILE\":\"/etc/ssl/certs/ca-certificates.crt\",\"TMPDIR\":\"/sandbox/tmp\",\"XDG_CACHE_HOME\":\"/sandbox/.cache\"},\"policy\":{\"version\":1,\"filesystem_policy\":{\"include_workdir\":false,\"read_only\":[\"/usr\",\"/bin\",\"/sbin\",\"/lib\",\"/lib64\",\"/etc\",\"/app\",\"/opt\",\"/proc\"],\"read_write\":[\"/sandbox\",\"/tmp\",\"/dev/null\",\"/dev/urandom\",\"/home/node\"]},\"landlock\":{\"compatibility\":\"best_effort\"},\"process\":{\"run_as_user\":\"10001\",\"run_as_group\":\"10001\"},\"network_policies\":{}},\"binaries\":[\"/usr/local/bin/python3.99\"],\"metadata\":{\"nemoclaw.nvidia.com/agent\":\"main\",\"nemoclaw.nvidia.com/agent-runtime\":\"fabric\",\"nemoclaw.nvidia.com/runtime\":\"{\\\"runtime\\\":{\\\"schema_version\\\":1,\\\"command\\\":[\\\"/usr/local/bin/fabric-agent\\\"],\\\"environment\\\":{\\\"ADAPTER_PYTHON\\\":\\\"/opt/fabric/bin/python\\\",\\\"HOME\\\":\\\"/sandbox\\\",\\\"NEMOCLAW_ANONYMOUS_API_KEY\\\":\\\"unused\\\",\\\"NODE_EXTRA_CA_CERTS\\\":\\\"/etc/ssl/certs/ca-certificates.crt\\\",\\\"PATH\\\":\\\"/opt/fabric/bin:/usr/local/bin:/usr/bin:/bin\\\",\\\"PYTHONDONTWRITEBYTECODE\\\":\\\"1\\\",\\\"SSL_CERT_FILE\\\":\\\"/etc/ssl/certs/ca-certificates.crt\\\",\\\"TMPDIR\\\":\\\"/sandbox/tmp\\\",\\\"XDG_CACHE_HOME\\\":\\\"/sandbox/.cache\\\"},\\\"required_paths\\\":[\\\"/opt/fabric\\\",\\\"/opt/nemoclaw\\\"],\\\"policy\\\":{\\\"version\\\":1,\\\"filesystem_policy\\\":{\\\"include_workdir\\\":false,\\\"read_only\\\":[\\\"/usr\\\",\\\"/bin\\\",\\\"/sbin\\\",\\\"/lib\\\",\\\"/lib64\\\",\\\"/etc\\\",\\\"/app\\\",\\\"/opt\\\",\\\"/proc\\\"],\\\"read_write\\\":[\\\"/sandbox\\\",\\\"/tmp\\\",\\\"/dev/null\\\",\\\"/dev/urandom\\\",\\\"/home/node\\\"]},\\\"landlock\\\":{\\\"compatibility\\\":\\\"best_effort\\\"},\\\"process\\\":{\\\"run_as_user\\\":\\\"10001\\\",\\\"run_as_group\\\":\\\"10001\\\"},\\\"network_policies\\\":{}},\\\"binaries\\\":{\\\"nvidia.fabric.hermes\\\":[\\\"/usr/local/bin/python3.99\\\"]}},\\\"adapter_id\\\":\\\"nvidia.fabric.hermes\\\"}\"}}",
         "lifecycle": {
           "precondition": [
             {
@@ -120,9 +114,8 @@
           }
         },
         "providers": [
-          "${openshell_provider_registration.inference_local-7761fdd381c7cf8bfbd7f964.ref}"
+          "${openshell_inference.inference_local-7761fdd381c7cf8bfbd7f964.ref}"
         ],
-        "runtime_json": "{\"runtime\":{\"schema_version\":1,\"command\":[\"/usr/local/bin/fabric-agent\"],\"environment\":{\"ADAPTER_PYTHON\":\"/opt/fabric/bin/python\",\"HOME\":\"/sandbox\",\"NEMOCLAW_ANONYMOUS_API_KEY\":\"unused\",\"NODE_EXTRA_CA_CERTS\":\"/etc/ssl/certs/ca-certificates.crt\",\"PATH\":\"/opt/fabric/bin:/usr/local/bin:/usr/bin:/bin\",\"PYTHONDONTWRITEBYTECODE\":\"1\",\"SSL_CERT_FILE\":\"/etc/ssl/certs/ca-certificates.crt\",\"TMPDIR\":\"/sandbox/tmp\",\"XDG_CACHE_HOME\":\"/sandbox/.cache\"},\"required_paths\":[\"/opt/fabric\",\"/opt/nemoclaw\"],\"policy\":{\"version\":1,\"filesystem_policy\":{\"include_workdir\":false,\"read_only\":[\"/usr\",\"/bin\",\"/sbin\",\"/lib\",\"/lib64\",\"/etc\",\"/app\",\"/opt\",\"/proc\"],\"read_write\":[\"/sandbox\",\"/tmp\",\"/dev/null\",\"/dev/urandom\",\"/home/node\"]},\"landlock\":{\"compatibility\":\"best_effort\"},\"process\":{\"run_as_user\":\"10001\",\"run_as_group\":\"10001\"},\"network_policies\":{}},\"binaries\":{\"nvidia.fabric.hermes\":[\"/usr/local/bin/python3.99\"]}},\"adapter_id\":\"nvidia.fabric.hermes\"}",
         "workspace": "${openshell_workspace.deployment.ref}"
       }
     },
@@ -131,7 +124,15 @@
         "depends_on": [
           "data.openshell_gateway.apply"
         ],
-        "gateway": "${data.openshell_gateway.current.ref}",
+        "gateway": {
+          "credential_env": "",
+          "endpoint": "${var.endpoint}",
+          "kubernetes": "",
+          "tls_ca_env": "",
+          "tls_certificate_env": "",
+          "tls_key_env": "",
+          "type": "openshell_gateway"
+        },
         "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "lifecycle": {
           "precondition": [

@@ -70,7 +70,6 @@ OpenShell uses that address for sandbox-only callbacks while keeping its user AP
 Every managed gateway uses one compute driver; use separate deployments to select different drivers.
 Native managed inference on Podman remains unsupported.
 A Podman gateway can consume managed vLLM or Ollama through explicit SSH Docker placement and publication; see [remote services](remote-service.md).
-Service `kubernetes` settings apply only to managed Kubernetes and OpenShift gateways and are rejected for Docker and Podman.
 
 Podman's changing compatibility `/info.ID` is not a durable identity.
 Gateway bindings use the retained owned network UUID, volume creation identity, container ID, and persisted signing keys.
@@ -123,7 +122,7 @@ Destroy removes the owned provider registration, but retained gateway storage re
 
 Caller-supplied inference credentials require HTTPS.
 The managed Ollama proxy uses its private HTTP endpoint and a deployment-generated bearer key.
-Uncredentialed inference HTTP endpoints must be literal private or loopback addresses; plaintext gateway addresses must be loopback.
+OpenShell decides which inference destinations a sandbox can reach; plaintext gateway addresses must be loopback.
 The isolated policy permits inference routing without general egress and uses `best_effort` Landlock; unavailable kernel restrictions are not enforced.
 See [sandbox policy configuration](sandbox-network.md) for changes and [security](security.md) for qualification limits.
 
@@ -224,9 +223,9 @@ Use separate deployments when you need independent teardown.
 |---|---|
 | Models, settings, or public Fabric configuration within the selected adapter | After successful runtime observation, reconciles the owned agent-configuration resource and restarts the runtime inside the existing sandbox when its image, provider attachments, and policy remain unchanged; in-memory conversations can be lost |
 | External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes a selected provider's profile and registration; changes to an existing sandbox's launch specification still require a separate deployment |
-| Harness adapter, sandbox image, agent identity, or provider attachments | Changes the immutable sandbox specification; apply refuses replacement; use a separate deployment with a fresh UID and state |
+| Harness adapter, sandbox image, driver configuration, agent identity, or provider attachments | Changes the immutable sandbox specification; apply refuses replacement; use a separate deployment with a fresh UID and state |
 | Sandbox network policy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
-| Managed vLLM or Ollama image, container limits, or serving specification | Replaces the Docker container or cluster Pod. Service-level `updatePolicy: Preserve` blocks replacement of a running Docker container or a cluster Pod that may be serving; set `Recreate` only when accepting sequential replacement and downtime. Review the plan, [container limits and update policy](inference.md#set-container-limits-and-update-policy), and [model constraints](models.md) |
+| Managed vLLM or Ollama image, container limits, or serving specification | Replaces the Docker container. Service-level `updatePolicy: Preserve` blocks replacement of a running Docker container; set `Recreate` only when accepting sequential replacement and downtime. Review the plan, [container limits and update policy](inference.md#set-container-limits-and-update-policy), and [model constraints](models.md) |
 | Ollama proxy image or serving specification | Docker-provider reconciliation may replace the proxy container while retaining its independently bound credential storage |
 | Deployment UID, established gateway endpoint, or bound credential/gateway engine | Cannot retarget the existing state; create a separate deployment |
 | Remove an unused inference provider definition | Changes the desired document only; the SDK creates registrations for selected definitions, so unused definitions have no resources to delete |
@@ -302,27 +301,25 @@ If the error still reports an unfinished creation, preserve that resource's orig
 Reapply successfully before removing or changing that unresolved resource or requesting teardown; the server may have created it without returning its identity.
 Older unfinished records without per-resource recovery evidence still require the exact configuration from the unfinished operation.
 If managed gateway or inference runtime apply fails, revised intent or teardown can proceed using recorded bindings and the existing ownership checks.
-During an unfinished Kubernetes platform apply, revisions may change only model workloads: gateway prerequisites, retained storage, and the compiled OpenShell deployment must remain unchanged.
-This permits restoring a working model digest after a failed rollout; it does not permit renaming or replacing a sandbox, changing its policy, or moving the gateway.
 The same applies when an OpenShell-graph apply only observes resources, updates or deletes established bindings, or changes disposable compute.
 Runtime recovery does not clear pending OpenShell creations.
 An OpenShell create rejection without a saved resource identity still leaves the pending-creation guard in place; automatic cleanup after a definitive rejection is not implemented.
 Preserve that record and its original bundle rather than deleting state or attempting adoption from another state directory.
-Export remains unavailable during pending creation recovery, unfinished managed-runtime apply, or unfinished teardown.
-If an OpenShell-stage apply planned no non-disposable resource creations, a later export can verify its established bindings without another successful apply; incomplete or inconsistent observations still fail export.
+Export remains unavailable during pending creation recovery or unfinished teardown.
+If an apply planned no non-disposable OpenShell creations, a later export can verify its established bindings without another successful apply; incomplete or inconsistent observations still fail export.
 If readiness fails after resource creation, provider state and persistent data remain recorded.
 A later explicit apply may replace or recreate disposable service compute.
 Authentication, transport, and incomplete observations remain failures; missing or changed bound credentials and gateway storage never authorize their automatic recreation.
 A missing model-cache volume may be recreated during apply, followed by model download and preparation; its separate credential volume must still match.
 
 To retire instead of recover after an interrupted apply, first run `nemoclaw plan --destroy` with the same state directory.
-A failed first OpenShell apply can be destroyed when every pending creation has a matching saved binding, including agent configuration accounted for by its parent sandbox.
+A failed first apply can be destroyed when every pending creation has a matching saved binding, including agent configuration accounted for by its parent sandbox.
 The preview leaves retained intent and resource state unchanged; unavailable or foreign observations still stop teardown.
-After unfinished managed-runtime apply, this path requires nonempty validated runtime bindings and fresh teardown plans; it does not require the failed apply's plan file.
-An OpenShell-stage apply that planned no non-disposable resource creations leaves reconciliation of its established bindings to OpenTofu; it does not add a pending-creation guard.
-OpenShell bindings established before a failed runtime stage may remain; every recorded binding must belong to the current intent, each saved storage specification must match, and a recorded managed process also requires its independent storage binding.
-Empty applicable state during managed-runtime recovery, undeclared or drifted bindings, a process without its storage binding, and ambiguous unfinished creations still require recovery before destroy.
-Destroy changes the operation to resumable teardown only after both resource graphs are planned, so a planning failure leaves the unfinished-apply recovery state in place.
+Teardown uses current bindings and a fresh plan; it does not require the failed apply's plan file.
+An apply tracks pending creations only for OpenShell and Fabric objects, and after a failure keeps only those OpenTofu started; an apply that planned none leaves reconciliation of its established bindings to OpenTofu.
+Every recorded binding must belong to the current intent, each saved storage specification must match, and a recorded managed process also requires its independent storage binding.
+Undeclared or drifted bindings, a process without its storage binding, and ambiguous unfinished creations still require recovery before destroy.
+Destroy changes the operation to resumable teardown only after its plan is checked, so a planning failure leaves the unfinished-apply recovery state in place.
 
 Export requires complete observations and agent configuration checks, but does not invoke inference.
 It preserves references and desired settings, not model weights, histories, native settings, or agent files.
@@ -343,7 +340,7 @@ Its supported replacement path is whole-deployment destroy followed by reapplyin
 
 **Destroy deletes every bound sandbox's files and conversation history, including those of other agents in this deployment.**
 Preserve any native data you need before choosing removal; configuration export does not back it up and can fail while runtime observation is incomplete.
-Managed model and credential storage remain tracked, including the cluster model and credential PVCs; those PVCs do not preserve sandbox files.
+Managed model and credential storage remain tracked; that storage does not preserve sandbox files.
 Keep the original YAML, matching bundle, credential references, and entire state directory.
 Do not replace the state directory or change the deployment UID to bypass the failure.
 
@@ -378,7 +375,7 @@ Check the recreated runtime before using the [exact OpenClaw request](agents.md#
 This procedure applies to managed Kubernetes and OpenShift deployments.
 
 During destroy, the pinned Helm provider can lose a release binding when its release lookup fails, even though the release remains in the cluster.
-Before removing a bound release, NemoClaw saves a private checkpoint at `runtime/helm-recovery.json` under the deployment state directory.
+Before removing a bound release, NemoClaw saves a private checkpoint at `helm-recovery.json` in the deployment state directory.
 If removal fails or is interrupted, recovery can restore only that missing binding while preserving the current authentication and storage bindings and any completed removals.
 Restoring the binding does not reinstall the release or undo cluster changes.
 If authentication cleanup already confirmed that the release and gateway are absent, recovery does not restore the deleted binding.

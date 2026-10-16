@@ -44,10 +44,7 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | Ownership, generation, or durable identity mismatch | Inspect the selected gateway/engine and retained deployment identity; do not adopt or replace a different resource |
 | Provider-profile identity mismatch after upgrading a bundle | Check the [gateway profile format break](provider.md#gateway-profile-format-upgrade); old `profile-v1` profiles require the original bundle for teardown or a separate deployment |
 | Plan would remove or replace a resource | Check [update constraints](usage.md#updates-and-recovery) and the relevant configuration guide before choosing a new deployment |
-| Managed cluster model update rejected at full namespace quota | Follow [quota recovery](kubernetes.md#recover-a-quota-rejection-during-a-model-update); replacement admission needs temporary headroom while the existing workload remains |
-| Managed model replacement is refused by `updatePolicy: Preserve` | The update requires replacing a running Docker container or a cluster Pod that may be serving. Keep the current configuration, or explicitly choose `spec.services.<name>.updatePolicy: Recreate` after reviewing the [downtime and recovery limits](inference.md#set-container-limits-and-update-policy) |
-| Managed cluster model update requires permission to list nodes (cluster scope) | Ask the platform operator to grant the kubeconfig identity `list` on `nodes`, or keep the current scheduling settings; the current Pod was not replaced |
-| Managed cluster model Pod cannot be scheduled | Review the named Pod's scheduling reason and the [replacement checks and recovery limits](kubernetes.md#run-a-managed-model-service); correct constraints or capacity, then apply with the retained state |
+| Managed model replacement is refused by `updatePolicy: Preserve` | The update requires replacing a running Docker model container. Keep the current configuration, or explicitly choose `spec.services.<name>.updatePolicy: Recreate` after reviewing the [downtime and recovery limits](inference.md#set-container-limits-and-update-policy) |
 | Interrupted apply | Resolve the cause and reapply the original YAML with its retained state |
 | Unfinished destroy | Resume destroy with the same state; other operations refuse unfinished teardown |
 | `adapter/<id> compatibility rejected` | Read the named sandbox and canonical field; for `models.<role>.max_tokens`, remove that route's `overrides.maxTokens` or choose an adapter that accepts it, then plan again |
@@ -96,7 +93,7 @@ If OpenShell resources were already created, their refresh and deletion still re
 
 Use [inference verification](inference.md#verify-the-result) to distinguish configuration readiness from a successful reply.
 For stopped Ollama, use [the managed Ollama procedure](inference.md#run-managed-ollama); a failed inventory must not be treated as an absent model.
-For a managed model or watchdog stop, inspect its status and logs with the [Docker](models.md#diagnose-and-recover-a-stopped-runtime) or [cluster](kubernetes.md#diagnose-a-stopped-model-pod) procedure.
+For a managed model or watchdog stop, inspect [retained status and logs](models.md#diagnose-and-recover-a-stopped-runtime).
 For an external Ollama digest mismatch, use [the proxy guide](inference.md#use-external-ollama-through-a-managed-proxy).
 
 | Observation | What it establishes | Next check |
@@ -105,7 +102,7 @@ For an external Ollama digest mismatch, use [the proxy guide](inference.md#use-e
 | Apply succeeds | Declared resources and agent configuration pass readiness checks | Verify inference and a native agent turn through the intended interface |
 | Agent configuration drift | Native settings differ from retained intent | Restore expected settings; checks do not overwrite them |
 | Dashboard cannot connect | Native service, forwarding, authentication, or browser pairing may be incomplete | Follow [interface diagnosis](interfaces.md#diagnose-failures); keep local forwarding ports consistent |
-| Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect status and logs with the [Docker](models.md#diagnose-and-recover-a-stopped-runtime) or [cluster](kubernetes.md#diagnose-a-stopped-model-pod) procedure and correct capacity or startup conditions before reapplying |
+| Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect [retained status and logs](models.md#diagnose-and-recover-a-stopped-runtime) and correct capacity/startup conditions before explicit recovery |
 
 Terminal sandbox apply errors name the sandbox and report the OpenShell phase, a recognized failure reason, and the main process exit code, or `unknown` when unavailable.
 Recognized reasons are `ControlSupervisorExited`, `ContainerExited`, `IdentityResolutionFailed`, and `ControlSupervisorStartFailed`; other backend reasons appear as `unknown`.
@@ -121,18 +118,8 @@ This rejection reporting applies to Docker, Podman, and cluster gateways.
 Use the OpenShell inspection and log collection procedure below before cleanup.
 If startup requires a different image or policy, follow the [sandbox change procedure](usage.md#choose-the-change-path); apply protects the existing sandbox from replacement.
 A failed first apply can be [destroyed](usage.md#destroy) when the retained state accounts for its resource identities.
-An unresolved creation without a saved identity still requires its original pending intent; a validation rejection alone does not retire that guard.
 
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.
-
-For a managed cluster model, readiness names the Pod and its namespace and reports recognized Pod or container stop reasons and the exit code when available.
-Pod reasons such as eviction take precedence over a container's generic `Error`; permanent `ErrImageNeverPull` and `InvalidImageName` failures report that the runtime cannot start, since there may be no process logs.
-Transient status-read failures retry for up to 30 seconds; a temporary `CreateContainerConfigError` does not by itself trigger an immediate stop.
-Runtime-status freshness compares the Pod's start and update timestamps, without comparing them with the CLI host clock.
-The model Pod uses `FallbackToLogsOnError`, which can copy a raw log tail into Kubernetes Pod status.
-NemoClaw displays only the final runtime `stopped:` detail, bounded to 1024 printable-ASCII characters with credential and token-like content redacted.
-Raw Pod status and logs remain separate diagnostic sources; restrict their access and redact them before sharing.
-Collect them with the [stopped model Pod procedure](kubernetes.md#diagnose-a-stopped-model-pod), and see [cluster model recovery](kubernetes.md#run-a-managed-model-service) and [timeout budgets](inference.md#understand-timeout-budgets) before changing the configuration.
 
 ## Inspect an OpenShell Sandbox Failure
 

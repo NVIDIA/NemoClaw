@@ -137,7 +137,7 @@ fn needs_restore(
         // Successful auth deletion independently verified release and gateway
         // absence. Restoring here would undo a confirmed deletion.
         if current.contains_key(ADDRESS)
-            || current.contains_key("nemoclaw_kubernetes_gateway.runtime")
+            || current.contains_key("openshell_kubernetes_gateway.runtime")
         {
             return Err(Error::Conflict(
                 "Helm recovery found incomplete prerequisite state; retain state and checkpoint",
@@ -166,7 +166,7 @@ impl Deployment {
             ));
         }
         let targets = compile::runtime_targets(&record.document, &record.generations)?;
-        runtime_bindings(&targets, &bindings)?;
+        runtime_bindings(&targets, &runtime_saved(record, &bindings)?)?;
         let state = read_state(store)?;
         header(&state)?;
         validate_helm_provider(&state, true)?;
@@ -203,11 +203,14 @@ impl Deployment {
         let checkpoint: Checkpoint = serde_json::from_slice(&bytes)
             .map_err(|_| Error::State("invalid Helm recovery checkpoint; retain it and state"))?;
         checkpoint.validate(&bundle.manifest.version, record, &read_state(store)?)?;
-        let (graph, targets) = compile::compiled_runtime(
+        // The checkpoint holds the deployment's whole state, so OpenTofu needs
+        // every provider the deployment's graph declares to read it.
+        let compiled = compile::deployment_graph(
             &record.document,
             &record.generations,
             &bundle.manifest.version,
         )?;
+        let (graph, targets) = (compiled.graph, compiled.runtime);
         self.initialize(bundle, store, &graph, cancel).await?;
         let temporary = tempfile::Builder::new()
             .prefix(".helm-recovery-")
@@ -225,7 +228,7 @@ impl Deployment {
                 "Helm recovery checkpoint has no release binding",
             ));
         }
-        runtime_bindings(&targets, &saved)?;
+        runtime_bindings(&targets, &runtime_saved(record, &saved)?)?;
         let current = store.bindings(&bundle.tofu(), cancel).await?;
         let restore = needs_restore(&saved, &current)?;
         if restore && preview {

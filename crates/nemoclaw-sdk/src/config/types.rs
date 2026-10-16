@@ -129,7 +129,7 @@ pub struct ManagedGateway {
     pub runtime: Runtime,
     #[serde(rename = "endpoint")]
     #[schemars(default)]
-    /// Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; commands forward that local port to the owned gateway.
+    /// Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; providers forward free local ports of their own to the owned gateway, so this port is not bound.
     pub endpoint: String,
     #[serde(rename = "engine", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
@@ -153,7 +153,7 @@ pub struct ManagedGateway {
     pub network_cidr: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::ManagedKubernetes")]
-    /// Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings. Managed vLLM and Ollama services require their own kubernetes capacity and scheduling settings.
+    /// Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services.
     pub kubernetes: Option<super::ManagedKubernetes>,
 }
 
@@ -292,7 +292,7 @@ pub struct Image {
 pub struct Runtime {
     #[serde(rename = "provider")]
     #[schemars(default)]
-    /// Docker, Podman, Kubernetes, or OpenShift profile. Kubernetes and OpenShift require an external gateway or an explicit managed cluster target; cluster model services require a managed target and explicit service kubernetes settings. OpenShift uses the upstream Kubernetes driver with namespace-assigned identities. A managed service with Podman requires explicit service placement.
+    /// Docker, Podman, Kubernetes, or OpenShift profile. Kubernetes and OpenShift require an external gateway or an explicit managed cluster target, and external inference endpoints. OpenShift uses the upstream Kubernetes driver with namespace-assigned identities. A managed service with Podman requires explicit service placement.
     pub provider: super::ComputeDriver,
 }
 

@@ -11,6 +11,8 @@
 # Inputs the live tests and the bundle read outside crates.
 [[path-rule]]
 globs = [
+    ".config/determinator-*.toml",
+    ".github/workflows/validation-plan.yml",
     "examples/**",
     "image/**",
     "runtimes/**",

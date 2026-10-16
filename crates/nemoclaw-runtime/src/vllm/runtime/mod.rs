@@ -40,8 +40,16 @@ pub(crate) async fn run(
     lock.try_lock().map_err(|_| {
         Error::Conflict("persistent storage already has a writer or locking failed")
     })?;
-    // Credentials retain their own writer lock even if the model cache is replaced.
-    let _credentials_lock = if spec.authentication.is_some() {
+    // A platform may supply the key; otherwise the runtime generates one in its
+    // credential storage, which keeps its own writer lock even if the model
+    // cache is replaced.
+    let supplied = authentication::supplied(std::env::var_os(crate::INFERENCE_KEY_ENV))?;
+    if supplied.is_some() && spec.authentication.is_none() {
+        return Err(Error::Conflict(
+            "an inference key was supplied, but the runtime contract has no authentication",
+        ));
+    }
+    let _credentials_lock = if spec.authentication.is_some() && supplied.is_none() {
         let file = fs::OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -57,7 +65,7 @@ pub(crate) async fn run(
     } else {
         None
     };
-    let result = run_owned(spec, cancel, trip).await;
+    let result = run_owned(spec, supplied, cancel, trip).await;
     if let Err(error) = &result {
         // Only the holder of the persistent writer lock may publish status.
         let _ = report("stopped", &error.to_string(), 0);
@@ -66,13 +74,15 @@ pub(crate) async fn run(
 }
 async fn run_owned(
     spec: &Service,
+    supplied: Option<String>,
     cancel: &CancellationToken,
     trip: &CancellationToken,
 ) -> Result<(), Error> {
-    let credential = spec
-        .authentication
-        .map(|_| authentication::load(Path::new("/credentials")))
-        .transpose()?;
+    let credential = match (spec.authentication, supplied) {
+        (None, _) => None,
+        (Some(_), Some(key)) => Some(key),
+        (Some(_), None) => Some(authentication::load(Path::new("/credentials"))?),
+    };
     let prepared = recipe::prepare(spec, Path::new(ROOT), cancel).await?;
     if trip.is_cancelled() {
         return Err(Error::Conflict(

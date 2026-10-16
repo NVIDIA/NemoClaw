@@ -31,12 +31,6 @@ pub(super) fn export_and_load(
         tempfile::NamedTempFile::new_in(archive.parent().ok_or("archive directory missing")?)?;
     run(Command::new(docker)
         .args(["buildx", "build", "--provenance=false"])
-        .arg("--label")
-        .arg(format!(
-            "{}={}",
-            nemoclaw_runtime::SPEC_VERSION_LABEL,
-            nemoclaw_runtime::SPEC_VERSION
-        ))
         .arg(format!("--platform={}", recipe.platform.replace('_', "/")))
         .arg("--output")
         .arg(format!(
@@ -77,15 +71,6 @@ pub(super) fn export_and_load(
             "loaded runtime image does not match the exported identity and platform".into(),
         );
     }
-    if pinned
-        .config
-        .labels
-        .get(nemoclaw_runtime::SPEC_VERSION_LABEL)
-        .map(String::as_str)
-        != Some(nemoclaw_runtime::SPEC_VERSION)
-    {
-        return Err("loaded runtime image lacks the required runtime specification label; rebuild the image".into());
-    }
     Ok(reference.clone())
 }
 
@@ -96,14 +81,6 @@ struct Image {
     repo_digests: Vec<String>,
     os: String,
     architecture: String,
-    #[serde(default)]
-    config: ImageConfig,
-}
-#[derive(Default, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct ImageConfig {
-    #[serde(default)]
-    labels: std::collections::BTreeMap<String, String>,
 }
 fn inspect(docker: &Path, reference: &str) -> Result<Image> {
     let output = Command::new(docker)
@@ -268,15 +245,7 @@ mod fixture_tests {
     #[test]
     fn runtime_load_requires_the_exported_digest_and_platform() {
         for failure in [
-            "",
-            "build",
-            "metadata",
-            "load",
-            "digest",
-            "identity",
-            "platform",
-            "missing_version",
-            "wrong_version",
+            "", "build", "metadata", "load", "digest", "identity", "platform",
         ] {
             let root = tempfile::tempdir().unwrap();
             let docker = fake_docker(root.path());
@@ -288,19 +257,13 @@ mod fixture_tests {
                 serde_json::json!({"containerimage.digest":digest}).to_string(),
             )
             .unwrap();
-            let loaded = serde_json::json!({"Id":"image", "RepoDigests":[reference], "Os":"linux", "Architecture":"arm64", "Config":{"Labels":{"org.nemoclaw.runtime.spec":"v1"}}});
+            let loaded = serde_json::json!({"Id":"image", "RepoDigests":[reference], "Os":"linux", "Architecture":"arm64", "Config":{"Labels":{}}});
             let mut pinned = loaded.clone();
             if failure == "identity" {
                 pinned["Id"] = serde_json::json!("other");
             }
             if failure == "platform" {
                 pinned["Architecture"] = serde_json::json!("amd64");
-            }
-            if failure == "missing_version" {
-                pinned["Config"]["Labels"] = serde_json::json!({});
-            }
-            if failure == "wrong_version" {
-                pinned["Config"]["Labels"]["org.nemoclaw.runtime.spec"] = serde_json::json!("v0");
             }
             fs::write(root.path().join("tag.json"), loaded.to_string()).unwrap();
             fs::write(root.path().join("digest.json"), pinned.to_string()).unwrap();
@@ -322,7 +285,7 @@ mod fixture_tests {
                 assert_eq!(result.unwrap(), reference);
                 let calls = fs::read_to_string(root.path().join("calls")).unwrap();
                 assert!(calls.contains("type=oci,"));
-                assert!(calls.contains("--label org.nemoclaw.runtime.spec=v1"));
+                assert!(!calls.contains("--label"));
                 assert!(calls.contains(&format!(
                     "image inspect --format {{{{json .}}}} {reference}"
                 )));

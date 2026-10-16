@@ -4,13 +4,12 @@
 
 use crate::client::{GatewayClient, GatewaySettings};
 use async_trait::async_trait;
-use nemoclaw_backend::ObservationError;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
-use std::{future::Future, time::Duration};
 use tf_provider::{
     AttributePath, DataSource, Diagnostics,
     schema::{Attribute, AttributeConstraint, AttributeType, Block, Schema},
@@ -27,6 +26,9 @@ pub struct GatewayState {
     tls_ca_env: Value<String>,
     tls_certificate_env: Value<String>,
     tls_key_env: Value<String>,
+    /// A managed Kubernetes gateway's specification, from which providers
+    /// connect to it themselves.
+    kubernetes: Value<String>,
     /// How resources reach this gateway, which they take as `gateway`.
     #[serde(rename = "ref")]
     reference: Value<BTreeMap<String, Value<String>>>,
@@ -51,6 +53,7 @@ impl GatewayState {
             tls_ca_env: &self.tls_ca_env,
             tls_certificate_env: &self.tls_certificate_env,
             tls_key_env: &self.tls_key_env,
+            kubernetes: &self.kubernetes,
         }
     }
     /// The `ref` naming this connection; unknown inputs leave it unknown.
@@ -68,6 +71,7 @@ impl GatewayState {
             &self.tls_ca_env,
             &self.tls_certificate_env,
             &self.tls_key_env,
+            &self.kubernetes,
         ];
         Value::Value(
             std::iter::once((
@@ -122,27 +126,7 @@ fn requirements(diags: &mut Diagnostics, config: &GatewayState) -> Option<()> {
     Some(())
 }
 
-/// Retry transport failures until `timeout`; any other failure ends the wait.
-pub async fn observe_with_wait<T, F: Future<Output = Result<T, ObservationError>>>(
-    timeout: Duration,
-    mut observe: impl FnMut() -> F,
-) -> Result<T, ObservationError> {
-    if timeout.is_zero() {
-        return observe().await;
-    }
-    tokio::time::timeout(timeout, async {
-        loop {
-            match observe().await {
-                Err(ObservationError::Transport) => {
-                    tokio::time::sleep(Duration::from_millis(200)).await
-                }
-                result => return result,
-            }
-        }
-    })
-    .await
-    .unwrap_or(Err(ObservationError::Transport))
-}
+pub use nemoclaw_openshell::observe_with_wait;
 
 #[async_trait]
 impl DataSource for GatewayDataSource {
@@ -176,6 +160,11 @@ impl DataSource for GatewayDataSource {
                     ),
                     (
                         "tls_key_env",
+                        AttributeType::String,
+                        AttributeConstraint::Optional,
+                    ),
+                    (
+                        "kubernetes",
                         AttributeType::String,
                         AttributeConstraint::Optional,
                     ),
@@ -309,7 +298,7 @@ impl DataSource for GatewayDataSource {
             }
         };
         config.reference = config.reference();
-        let observed = match self.0.connect(&connection) {
+        let observed = match self.0.connect(&connection).await {
             Err(error) => {
                 diags.root_error("Gateway connection", error);
                 return None;
@@ -404,6 +393,7 @@ mod tests {
 #[cfg(test)]
 mod wait_tests {
     use super::*;
+    use nemoclaw_backend::ObservationError;
     use std::sync::atomic::{AtomicUsize, Ordering};
     #[tokio::test]
     async fn wait_timeout_is_optional_deferred_or_bounded() {

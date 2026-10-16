@@ -18,6 +18,7 @@ client = ["dep:nemoclaw-docker", "dep:tokio"]
 nemoclaw-backend = { path = "../nemoclaw-backend" }
 nemoclaw-docker = { path = "../nemoclaw-docker", optional = true }
 nemoclaw-openshell = { path = "../nemoclaw-openshell" }
+nemoclaw-tofu = { path = "../nemoclaw-tofu" }
 nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "24f068c895e5cbc30286bc743498be4e5014d658" }
 serde.workspace = true
 serde_json.workspace = true

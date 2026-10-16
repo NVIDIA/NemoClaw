@@ -63,7 +63,7 @@ pub(crate) fn service_address(name: &str) -> String {
 }
 
 fn address(kind: &str, name: &str) -> String {
-    format!("nemoclaw_{kind}.inference_{name}")
+    format!("{}.inference_{name}", crate::compile::resource_type(kind))
 }
 
 fn targets(
@@ -85,10 +85,6 @@ fn targets(
         .map(|recipe| recipe.compatibility.image_labels.clone())
         .unwrap_or_default();
     image_labels.insert("org.nemoclaw.backend".into(), "vllm".into());
-    image_labels.insert(
-        nemoclaw_runtime::SPEC_VERSION_LABEL.into(),
-        nemoclaw_runtime::SPEC_VERSION.into(),
-    );
     if service.authentication.is_some() {
         image_labels.insert(
             "org.nemoclaw.inference.authentication".into(),
@@ -116,9 +112,9 @@ fn targets(
             runtime_service,
         )))
         .map_err(|_| Error::State("cannot serialize service runtime configuration"))?,
-        entrypoint: vec!["/usr/local/bin/nemoclaw-runtime".into()],
+        entrypoint: vec![crate::managed::RUNTIME_ENTRYPOINT.into()],
         command: Vec::new(),
-        mount_target: "/data".into(),
+        mount_target: crate::managed::RUNTIME_DATA_PATH.into(),
         bind_address: placed.bind_address,
         port: service.serving.port as u16,
         shared_memory_bytes: resources.shared_memory_bytes,
@@ -189,7 +185,7 @@ impl Installer for Service {
             service_dependencies.push(address(STORAGE_KIND, &format!("{name}_auth")));
         }
         if document.spec.gateway.as_managed().is_some() && self.placement.is_none() {
-            service_dependencies.insert(0, "nemoclaw_managed_gateway.runtime".into());
+            service_dependencies.insert(0, "openshell_podman_gateway.runtime".into());
         }
         Ok(InstallPlan {
             targets,

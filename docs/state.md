@@ -18,8 +18,7 @@ They are implementation details for identifying retained state, not a manual edi
 | `deployment.lock` | Excludes concurrent NemoClaw operations on this state directory |
 | `terraform.tfstate` | OpenTofu resource state and durable bindings |
 | `main.tf.json`, `providers.tfrc` | SDK-generated graph and provider configuration |
-| `runtime/` | Separate managed-runtime stage and its retained state, when applicable |
-| `runtime/helm-recovery.json` | Private checkpoint for a bound Helm release during destroy; keep it with the runtime state until recovery or removal completes |
+| `helm-recovery.json` | Private checkpoint for a bound Helm release during destroy; keep it with the OpenTofu state until recovery or removal completes |
 | `kubernetes/` | Managed Kubernetes ownership receipt, development issuer key material, and gateway client credentials |
 
 The [state store](../crates/nemoclaw-sdk/src/state/mod.rs), [deployment lifecycle](../crates/nemoclaw-sdk/src/deployment/mod.rs), and [OpenTofu configuration](../crates/nemoclaw-sdk/src/deployment/opentofu.rs) define these files.
@@ -75,9 +74,9 @@ To retire a deployment whose retained resources are on Docker engines, follow [R
 | Deployment provider profiles and registrations, including declared Brave integration resources | Removed; upstream keys are not revoked |
 | External gateway, inference service, external Ollama daemon/model, and externally owned engine/network | Remain under their operators' control |
 | OpenShell workspace | Retained and tracked; does not preserve the deleted sandbox's files |
-| Managed vLLM/Ollama compute and service-owned networks | Docker containers/networks or cluster Pods/Services/NetworkPolicies/ConfigMaps removed; model storage remains tracked |
-| Managed model downloads and prepared data | Docker volumes or cluster model PVCs retained by default; missing Docker caches may be reconstructed separately from credentials, while cluster PVC bindings must remain intact |
-| Managed vLLM credentials | Separate tracked Docker credential volume or cluster credential PVC retained |
+| Managed vLLM/Ollama process containers and service-owned networks | Removed; model storage remains tracked |
+| Managed model downloads and prepared data | Native Docker volumes retained by default; missing caches may be reconstructed separately from credentials |
+| Managed vLLM credentials | Separate tracked credential volume retained |
 | Managed Ollama proxy | Container removed; tracked credential volume retained |
 | Managed Docker or Podman gateway | Process removed; database, signing/encryption keys, bridge, and stopped initializer retained |
 | Managed Kubernetes gateway | Release and development issuer removed; namespace, credential key Secret, and the gateway's persistent volumes retained |

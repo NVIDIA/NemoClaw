@@ -90,29 +90,9 @@ impl OpenShell {
 }
 #[async_trait]
 impl Backend for OpenShell {
-    async fn plan(
-        &self,
-        kind: &str,
-        desired: &Row,
-        prior: Option<&Row>,
-    ) -> Result<(), nemoclaw_backend::Error> {
-        let desired = &nemoclaw_openshell::without_gateway(desired);
-        let prior = prior.map(nemoclaw_openshell::without_gateway);
-        let prior = prior.as_ref();
-        // Bound resources were refreshed by OpenTofu. New resources still need
-        // an ownership check: their names may already exist in the gateway.
-        if prior.is_none()
-            && let Some(observed) = self
-                .observe(
-                    kind,
-                    value(desired, "workspace"),
-                    value(desired, "name"),
-                    false,
-                )
-                .await?
-        {
-            verify_identity(desired, &observed)?;
-        }
+    /// Planning reaches no gateway; `reconcile` checks who owns an existing
+    /// name before it changes anything.
+    async fn plan(&self, _: &str, _: &Row, _: Option<&Row>) -> Result<(), nemoclaw_backend::Error> {
         Ok(())
     }
     async fn read(
@@ -132,7 +112,7 @@ impl Backend for OpenShell {
             .await?;
         if kind == "sandbox"
             && let Some(row) = &observed
-            && prior.get("runtime_json") != row.get("runtime_json")
+            && prior.get("launch_json") != row.get("launch_json")
         {
             return Err(ObservationError::BindingMismatch);
         }
@@ -159,7 +139,7 @@ impl Backend for OpenShell {
                 "generation",
                 "workspace",
                 "image",
-                "agent_name",
+                "launch_json",
             ],
             _ => return Mutation::failed(ObservationError::Query),
         };
@@ -186,7 +166,11 @@ impl Backend for OpenShell {
         if !matches!(
             openshell_lifecycle(kind),
             Some(OpenShellLifecycle::Reconstructible)
-        ) && !(destroying && openshell_lifecycle(kind) == Some(OpenShellLifecycle::Stateful))
+        ) && !(destroying
+            && matches!(
+                openshell_lifecycle(kind),
+                Some(OpenShellLifecycle::Stateful | OpenShellLifecycle::Retained)
+            ))
         {
             return Err(ObservationError::Query);
         }

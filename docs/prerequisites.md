@@ -31,8 +31,8 @@ Prepare these inputs before running apply:
 - An authenticated OpenShell CLI for native access, configured for the same gateway and the deployment's workspace.
 - A fresh deployment UUID, a separate state directory, and resources you control.
 
-Use OpenShell **0.1.3** for the gateway and native CLI.
-The client, gateway, and supervisor are pinned to commit `e1f3c82caa3ed3b65de22889ae7ef32a774878ef`, the v0.1.3 release.
+Use OpenShell **0.1.4** for the gateway and native CLI.
+The client, gateway, and supervisor are pinned to commit `5a7728c304b5528e954e9ae900cf21f84e1a12b1`, the v0.1.4 release.
 The gateway check verifies version and compute driver.
 Select a compatible [inference API](inference.md) and verify an actual agent reply; endpoint reachability alone is insufficient.
 

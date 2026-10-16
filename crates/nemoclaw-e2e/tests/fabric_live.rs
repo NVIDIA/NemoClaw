@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 use fabric_provider::AgentBridge as _;
 
-use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
 use nemoclaw_sdk::{
     CancellationToken, Deployment, OperationResult, Outcome,
     backend::Row,
     config::{Document, Gateway},
 };
+use openshell_provider::{EnvironmentSecrets, OpenShell};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -88,7 +88,7 @@ fn bindings(directory: &Path) -> (Value, Row) {
     (Value::Object(ids), sandbox.unwrap())
 }
 fn managed_bindings(directory: &Path) -> Value {
-    let path = directory.join("runtime/terraform.tfstate");
+    let path = directory.join("terraform.tfstate");
     if !path.exists() {
         return json!({});
     }

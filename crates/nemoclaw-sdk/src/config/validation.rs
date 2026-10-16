@@ -18,7 +18,7 @@ pub(super) fn credential(value: &Option<Credential>) -> Result<(), ConfigError> 
     Ok(())
 }
 
-pub use nemoclaw_backend::validate_endpoint;
+pub use nemoclaw_backend::{validate_endpoint, validate_endpoint_url};
 
 pub fn is_fabric_harness(harness: &str) -> bool {
     harness.parse::<super::HarnessKind>().is_ok()
@@ -131,7 +131,8 @@ impl super::ManagedGateway {
 impl Document {
     fn validate_provider(&self, provider: &InferenceProvider) -> Result<(), ConfigError> {
         match provider.target()? {
-            InferenceTarget::External { endpoint, .. } => validate_endpoint(endpoint, false)?,
+            // OpenShell checks the destination when sandboxes connect.
+            InferenceTarget::External { endpoint, .. } => validate_endpoint_url(endpoint)?,
             InferenceTarget::Service { .. } => {
                 crate::services::validate_provider(self, provider)?;
             }

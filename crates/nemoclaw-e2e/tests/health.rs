@@ -3,8 +3,8 @@
 use fabric_provider::AgentBridge as _;
 
 use nemoclaw_e2e::openshell::Fixture;
-use nemoclaw_provider::openshell::OpenShell;
 use nemoclaw_sdk::{backend::Backend, config::Document};
+use openshell_provider::OpenShell;
 use std::{collections::BTreeMap, sync::Arc};
 
 async fn sandbox() -> (Fixture, OpenShell, nemoclaw_sdk::backend::Row) {
@@ -31,14 +31,15 @@ async fn sandbox_with_runtime(
         .collect::<BTreeMap<_, _>>();
     let mut targets = nemoclaw_e2e::image_runtime::targets(&doc, &generations).unwrap();
     if let Some(runtime) = runtime {
+        let agent = doc.spec.sandboxes[0].agent.name.clone();
         targets
             .iter_mut()
             .find(|target| target.kind == "sandbox")
             .unwrap()
             .values
             .insert(
-                "runtime_json".into(),
-                serde_json::to_string(&runtime).unwrap(),
+                "launch_json".into(),
+                serde_json::to_string(&runtime.launch(&agent)).unwrap(),
             );
     }
     for target in targets.iter().filter(|target| {
@@ -56,7 +57,8 @@ async fn sandbox_with_runtime(
         .unwrap();
     let mutation = client.ensure("sandbox", &target.values).await;
     assert!(mutation.error().is_none(), "{:?}", mutation.error());
-    let binding = mutation.into_parts().0.unwrap();
+    // The bridge reads the agent and runtime binding from the launch metadata.
+    let binding = fabric_provider::fabric_binding(mutation.into_parts().0.unwrap()).unwrap();
     (fixture, client, binding)
 }
 
@@ -154,10 +156,18 @@ async fn fixture_generations_are_scoped_to_each_sandbox_host() {
     let mut desired = first.clone();
     desired.remove("id");
     desired.insert("name".into(), "second".into());
-    desired.insert("agent_name".into(), "second".into());
+    let runtime =
+        nemoclaw_sdk::image_runtime::RuntimeBinding::from_json(&first["runtime_json"]).unwrap();
+    desired.insert(
+        "launch_json".into(),
+        serde_json::to_string(&runtime.launch("second")).unwrap(),
+    );
+    for field in ["agent_name", "agent_runtime", "runtime_json"] {
+        desired.remove(field);
+    }
     let created = client.ensure("sandbox", &desired).await;
     assert!(created.error().is_none(), "{:?}", created.error());
-    let second = created.into_parts().0.unwrap();
+    let second = fabric_provider::fabric_binding(created.into_parts().0.unwrap()).unwrap();
     let first_generation = client
         .agent_snapshot(&first)
         .await

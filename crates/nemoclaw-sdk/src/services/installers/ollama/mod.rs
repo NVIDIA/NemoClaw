@@ -101,7 +101,9 @@ impl OllamaProxy {
             }),
             "proxy engine must be a local Unix socket",
         )?;
-        crate::config::validate_endpoint(&self.endpoint, false)?;
+        // Sandboxes reach the proxy's endpoint, which OpenShell checks; the
+        // proxy itself connects to its upstream.
+        crate::config::validate_endpoint_url(&self.endpoint)?;
         crate::config::validate_endpoint(&self.upstream.endpoint, false)?;
         let upstream = Url::parse(&self.upstream.endpoint)
             .map_err(|_| crate::config::ConfigError::new("invalid Ollama upstream"))?;
@@ -132,7 +134,7 @@ pub(crate) fn service_address(name: &str) -> String {
 }
 
 fn address(kind: &str, name: &str) -> String {
-    format!("nemoclaw_{kind}.{name}")
+    format!("{}.{name}", crate::compile::resource_type(kind))
 }
 
 pub const SERVICE_KIND: &str = "ollama_service";
@@ -179,20 +181,14 @@ fn managed_targets(
         network_cidr: placed.network_cidr.clone(),
         create_network: placed.explicit,
         architecture: service.architecture()?.into(),
-        image_labels: BTreeMap::from([
-            ("org.nemoclaw.backend".into(), "ollama".into()),
-            (
-                nemoclaw_runtime::SPEC_VERSION_LABEL.into(),
-                nemoclaw_runtime::SPEC_VERSION.into(),
-            ),
-        ]),
+        image_labels: BTreeMap::from([("org.nemoclaw.backend".into(), "ollama".into())]),
         pull_image: false,
         image_pull_policy: None,
         configuration: serde_json::to_string(&runtime)
             .map_err(|_| Error::State("cannot serialize Ollama runtime configuration"))?,
-        entrypoint: vec!["/usr/local/bin/nemoclaw-runtime".into()],
+        entrypoint: vec![crate::managed::RUNTIME_ENTRYPOINT.into()],
         command: Vec::new(),
-        mount_target: "/data".into(),
+        mount_target: crate::managed::RUNTIME_DATA_PATH.into(),
         bind_address: placed.bind_address,
         port: service.serving.port as u16,
         shared_memory_bytes: resources.shared_memory_bytes,
@@ -249,7 +245,7 @@ impl Installer for ManagedOllama {
         let service = address(SERVICE_KIND, name);
         let mut dependencies = vec![address(STORAGE_KIND, name)];
         if document.spec.gateway.as_managed().is_some() && self.placement.is_none() {
-            dependencies.insert(0, "nemoclaw_managed_gateway.runtime".into());
+            dependencies.insert(0, "openshell_podman_gateway.runtime".into());
         }
         Ok(InstallPlan {
             targets: managed_targets(document, name, self, generations)?,
@@ -280,10 +276,7 @@ impl Installer for OllamaProxy {
         let service = address(proxy::PROXY, name);
         Ok(InstallPlan {
             targets: proxy::targets(document, name, self, generations)?,
-            dependencies: BTreeMap::from([(
-                service,
-                vec![address(proxy::STORAGE, name), address(proxy::MODEL, name)],
-            )]),
+            dependencies: BTreeMap::from([(service, vec![address(proxy::STORAGE, name)])]),
         })
     }
 

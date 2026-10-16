@@ -174,7 +174,21 @@ async fn bridge(
     seconds: u32,
     stdin: Vec<u8>,
 ) -> Result<Response, Error> {
-    let runtime = openshell::agent::binding(binding)?;
+    // The agent and runtime binding must be the ones the sandbox launch
+    // records; the gateway checks that launch against the live sandbox.
+    let recorded = crate::configuration::fabric_binding(binding.clone())?;
+    if ["agent_name", "runtime_json"]
+        .iter()
+        .any(|field| recorded.get(*field) != binding.get(*field))
+    {
+        return Err(ObservationError::BindingMismatch.into());
+    }
+    let runtime = nemoclaw_openshell::runtime::RuntimeBinding::from_json(
+        binding
+            .get("runtime_json")
+            .map(String::as_str)
+            .unwrap_or_default(),
+    )?;
     let (exit, output) = client
         .exec_input(
             binding,
@@ -315,10 +329,13 @@ impl AgentBridge for OpenShell {
 
     async fn configuration(&self, binding: &Row) -> Result<(), Error> {
         let snapshot = self.agent_snapshot(binding).await?;
-        let desired: Value = serde_json::from_str(value(binding, "config_json"))
-            .map_err(|_| ObservationError::Query)?;
-        if snapshot.runtime_state != "running" || snapshot.applied_config.as_ref() != Some(&desired)
-        {
+        // The agent applied the document whose digest its ref carries.
+        let desired = value(binding, nemoclaw_fabric::agent::CONFIG_SHA256);
+        let applied = snapshot
+            .applied_config
+            .as_ref()
+            .map(nemoclaw_fabric::agent::digest);
+        if snapshot.runtime_state != "running" || applied.as_deref() != Some(desired) {
             return Err(Error::Conflict(
                 "agent configuration cannot be independently established",
             ));

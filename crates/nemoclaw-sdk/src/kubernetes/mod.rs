@@ -14,7 +14,6 @@ pub mod gateway;
 pub mod issuer;
 pub mod operations;
 pub mod receipt;
-pub mod services;
 pub mod storage;
 
 use crate::{Error, ObservationError, config::ManagedGateway};
@@ -272,25 +271,20 @@ pub async fn connect(target: &ClusterTarget) -> Result<kube::Client, Observation
 
 pub use connection::Connection;
 
-/// Open the command-scoped connection to a deployment's managed Kubernetes
-/// gateway. `state_directory` is the deployment's state directory; the
-/// gateway's receipt and client files live in its `kubernetes` directory.
-pub async fn connection(
+/// The managed Kubernetes gateway's specification, or `None` for other
+/// gateways. Providers connect to the gateway with it.
+pub fn gateway_spec(
     document: &crate::config::Document,
     generations: &crate::compile::Generations,
-    state_directory: &std::path::Path,
-    secrets: &dyn crate::Secrets,
-    cancel: &crate::CancellationToken,
-) -> Result<Connection, Error> {
-    let settings = document
+) -> Result<Option<Spec>, Error> {
+    let Some(settings) = document
         .spec
         .gateway
         .as_managed()
-        .ok_or(ObservationError::Query)?;
-    let target = settings
-        .kubernetes
-        .as_ref()
-        .ok_or(ObservationError::Query)?;
+        .filter(|settings| settings.kubernetes.is_some())
+    else {
+        return Ok(None);
+    };
     let spec = Spec {
         layout: 1,
         kind: GATEWAY_KIND.into(),
@@ -303,26 +297,7 @@ pub async fn connection(
         settings: settings.clone(),
     };
     spec.validate()?;
-    let cluster = ClusterTarget {
-        kubeconfig: kubeconfig_path(&secrets.resolve(&target.kubeconfig.env)?)?,
-        context: target.context.clone(),
-    };
-    let state = std::path::absolute(state_directory)
-        .map_err(|_| Error::State("cannot resolve Kubernetes state directory"))?
-        .join("kubernetes");
-    let opening = async {
-        let operations = operations::Operations {
-            server: server(&cluster)?,
-            client: connect(&cluster).await?,
-            state,
-            openshift_wait: operations::OPENSHIFT_WAIT,
-        };
-        operations.connect(&spec).await
-    };
-    tokio::select! {
-        () = cancel.cancelled() => Err(Error::Cancelled),
-        result = opening => result,
-    }
+    Ok(Some(spec))
 }
 
 /// The API server URL the target's context selects.

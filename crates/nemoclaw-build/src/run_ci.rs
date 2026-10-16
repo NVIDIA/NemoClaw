@@ -229,6 +229,16 @@ fn run_step(
             command.args(["--filterset", filter]);
         }
         if step == Step::Lifecycle {
+            if std::env::var_os("CI").is_none()
+                && std::env::var_os("GITHUB_ACTIONS").is_none()
+                && std::env::var_os("NEXTEST_TEST_THREADS").is_none()
+            {
+                let workers = std::thread::available_parallelism()
+                    .map_or(4, usize::from)
+                    .clamp(4, 8);
+                command.args(["--test-threads", &workers.to_string()]);
+                eprintln!("lifecycle: using {workers} local test workers");
+            }
             if let Some(partition) = partition {
                 command.args(["--partition", partition]);
             }
@@ -437,25 +447,15 @@ pub(super) async fn run_steps(
     partition: Option<&str>,
     archive_file: Option<&Path>,
     images: Option<&Path>,
+    plan: Option<&nemoclaw_build::changes::Plan>,
 ) -> Result<()> {
-    if partition.is_some() && selected != Some("lifecycle") {
-        return Err("--partition requires ci lifecycle".into());
-    }
-    if archive_file.is_some()
-        && !matches!(selected, Some("lifecycle" | "live-docker" | "live-kind"))
-    {
-        return Err("--archive-file requires ci lifecycle, live-docker, or live-kind".into());
-    }
-    if images.is_some() && !matches!(selected, Some("live-docker" | "live-kind")) {
-        return Err("--images requires ci live-docker or live-kind".into());
-    }
     let tools = Tools {
         pins,
         protobuf: &pins.protobuf,
         nextest: &pins.nextest,
     };
     let steps = match selected {
-        None => Step::ALL.to_vec(),
+        None => ci::planned_steps(plan),
         Some(name) => vec![Step::parse(name).ok_or_else(|| {
             format!(
                 "unknown CI step {name:?}; choose one of: {}",

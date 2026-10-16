@@ -27,11 +27,7 @@ fn kubernetes_compiles_only_openshell_resources_and_checks_the_driver_before_mut
             .all(|target| {
                 matches!(
                     target.kind.as_str(),
-                    "workspace"
-                        | "provider_profile"
-                        | "provider"
-                        | "sandbox"
-                        | "agent_configuration"
+                    "workspace" | "inference" | "sandbox" | "agent"
                 )
             })
     );

@@ -7,8 +7,6 @@
 mod agent_compatibility;
 #[path = "cache_provider.rs"]
 mod cache_provider;
-#[path = "cluster_credentials.rs"]
-mod cluster_credentials;
 #[path = "deployment.rs"]
 mod deployment;
 #[path = "docker_fixture.rs"]
@@ -32,8 +30,6 @@ mod health;
 mod helm_recovery;
 #[path = "hosted_parity.rs"]
 mod hosted_parity;
-#[path = "inference_discovery.rs"]
-mod inference_discovery;
 #[cfg(unix)]
 #[path = "../../test-support/kube_api.rs"]
 mod kube_api;
@@ -62,6 +58,8 @@ mod spark;
 mod tls;
 #[path = "../../test-support/http.rs"]
 mod transport;
+#[path = "travel_example.rs"]
+mod travel_example;
 #[path = "web_search.rs"]
 mod web_search;
 

@@ -8,12 +8,12 @@
 //! not qualify a production adapter's health.
 
 use fabric_provider::AgentBridge as _;
-use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
 use nemoclaw_sdk::{
     CancellationToken, Deployment, OperationResult, Outcome,
     backend::Row,
     config::{ComputeDriver, Document, Gateway},
 };
+use openshell_provider::{EnvironmentSecrets, OpenShell};
 use serde_json::Value;
 use std::{fs, path::Path, process::Command, sync::Arc};
 
@@ -143,17 +143,18 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
 
     let plan = deployment.plan(&document, &cancel).await.unwrap();
     assert_eq!(plan.outcome, Outcome::Planned);
-    // Before the managed gateway exists, plan creates its runtime stage and
-    // defers the sandbox, which needs the gateway.
+    // One plan creates the managed gateway and the sandbox it will serve.
     assert!(
-        plan.deferred_resources.contains(&resource),
-        "plan must defer the sandbox: {:?}",
-        plan.deferred_resources
+        plan.changes
+            .iter()
+            .any(|change| change.resource == resource),
+        "plan must create the sandbox: {:?}",
+        plan.changes
     );
     assert!(
         plan.changes
             .iter()
-            .any(|change| change.resource == "nemoclaw_gateway_storage.runtime"),
+            .any(|change| change.resource == "openshell_gateway_storage.runtime"),
         "plan must create the gateway storage: {:?}",
         plan.changes
     );
@@ -192,7 +193,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
         Arc::new(EnvironmentSecrets),
     )
     .unwrap();
-    let binding = sandbox_binding(&state_path);
+    let binding = fabric_provider::fabric_binding(sandbox_binding(&state_path)).unwrap();
     let runtime = runtime_id(&client, &binding).await;
     let reply = invoke(&client, &binding, &sandbox.agent.name, "dummy-lifecycle").await;
     assert_eq!(reply["status"], "succeeded", "{reply}");
@@ -247,7 +248,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     assert_eq!(
         retained,
         [
-            "nemoclaw_gateway_storage.runtime",
+            "openshell_gateway_storage.runtime",
             "openshell_workspace.deployment"
         ]
     );

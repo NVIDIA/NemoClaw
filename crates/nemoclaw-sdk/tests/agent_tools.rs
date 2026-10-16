@@ -40,15 +40,12 @@ fn separate_sandboxes_preserve_each_agents_restrictions_in_launch_and_yaml() {
             .map(|k| (k.into(), format!("{k}-generation")))
             .into();
         let rows = targets(&d, &g).unwrap();
-        let sandboxes: Vec<_> = rows
-            .iter()
-            .filter(|row| row.kind == "agent_configuration")
-            .collect();
+        let sandboxes: Vec<_> = rows.iter().filter(|row| row.kind == "agent").collect();
         assert_eq!(sandboxes.len(), count);
         for sandbox in sandboxes {
-            let settings: Value = serde_json::from_str(&sandbox.values["config_json"]).unwrap();
+            let settings: Value = nemoclaw_fabric::agent::compose(&sandbox.values).unwrap();
             assert!(!settings["metadata"]["name"].as_str().unwrap().is_empty());
-            if sandbox.values["name"] != "sandbox-0" {
+            if sandbox.values["sandbox"] != "sandbox-0" {
                 assert_eq!(settings["tools"], json!({"enabled":["read"]}));
             }
         }
@@ -113,12 +110,8 @@ fn tool_choices_are_preserved_independently_of_harness_identity() {
             .map(|key| (key.into(), "a".repeat(32)))
             .into();
         let rows = targets(&document, &generations).unwrap();
-        let settings: Value = serde_json::from_str(
-            &rows
-                .iter()
-                .find(|row| row.kind == "agent_configuration")
-                .unwrap()
-                .values["config_json"],
+        let settings: Value = nemoclaw_fabric::agent::compose(
+            &rows.iter().find(|row| row.kind == "agent").unwrap().values,
         )
         .unwrap();
         assert_eq!(settings["tools"], json!({"enabled":["read"]}));
@@ -151,11 +144,11 @@ fn deep_agents_use_separate_sandboxes_with_stable_names_and_independent_models()
     let rows = targets(&doc, &generations).unwrap();
     let sandbox = rows
         .iter()
-        .find(|row| row.kind == "agent_configuration" && row.values["name"] == "sandbox-1")
+        .find(|row| row.kind == "agent" && row.values["sandbox"] == "sandbox-1")
         .unwrap();
-    let configuration: Value = serde_json::from_str(&sandbox.values["config_json"]).unwrap();
+    let configuration: Value = nemoclaw_fabric::agent::compose(&sandbox.values).unwrap();
     assert_eq!(configuration["metadata"]["name"], "agent-1");
-    let settings: Value = serde_json::from_str(&sandbox.values["config_json"]).unwrap();
+    let settings: Value = nemoclaw_fabric::agent::compose(&sandbox.values).unwrap();
     assert_eq!(settings["models"]["default"]["model"], "other-model");
     value["spec"]["sandboxes"].as_array_mut().unwrap().reverse();
     assert_eq!(

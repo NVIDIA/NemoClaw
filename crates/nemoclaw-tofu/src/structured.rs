@@ -8,7 +8,7 @@
 
 use crate::{
     Definition, ResourceAdapter, State,
-    shape::{Dynamic, Fields, Shape, block, dynamic, from_hcl, json, single_blocks, to_hcl},
+    shape::{Dynamic, Fields, Shape, block, dynamic, json, single_blocks},
 };
 use async_trait::async_trait;
 use serde_json::Value as Json;
@@ -242,11 +242,7 @@ impl Structured {
         if value.is_null() {
             return Ok(None);
         }
-        let value = single_blocks(&self.shape, value);
-        let value = match &self.shape {
-            Shape::Object(fields) => from_hcl(fields, &value),
-            _ => value,
-        };
+        let value = crate::shape::inward(&self.shape, &single_blocks(&self.shape, value));
         serde_json::to_string(&value)
             .map(Some)
             .map_err(|_| "cannot encode input")
@@ -254,22 +250,13 @@ impl Structured {
     /// OpenTofu configuration for the row field's JSON, as a graph declares it.
     pub fn configuration(&self, encoded: &str) -> Result<Json, &'static str> {
         let value: Json = serde_json::from_str(encoded).map_err(|_| "invalid input JSON")?;
-        Ok(match &self.shape {
-            Shape::Object(fields) => to_hcl(fields, &value),
-            _ => value,
-        })
+        Ok(crate::shape::outward(&self.shape, &value))
     }
     fn decode(&self, value: &Value<String>) -> Value<Dynamic> {
         match value {
             Value::Value(encoded) if !encoded.is_empty() => {
                 match serde_json::from_str::<Json>(encoded) {
-                    Ok(value) => wire(
-                        &self.shape,
-                        &match &self.shape {
-                            Shape::Object(fields) => to_hcl(fields, &value),
-                            _ => value,
-                        },
-                    ),
+                    Ok(value) => wire(&self.shape, &crate::shape::outward(&self.shape, &value)),
                     Err(_) => Value::Unknown,
                 }
             }
@@ -487,6 +474,18 @@ impl Resource for StructuredAdapter {
                         } else {
                             NestedBlock::Single(block)
                         },
+                    );
+                }
+                Shape::ObjectList(fields) => {
+                    schema.block.blocks.insert(
+                        structured.attribute.into(),
+                        NestedBlock::List(block(fields, "")),
+                    );
+                }
+                Shape::ObjectMap(fields) => {
+                    schema.block.blocks.insert(
+                        structured.attribute.into(),
+                        NestedBlock::Map(block(fields, "")),
                     );
                 }
                 shape => {
@@ -735,6 +734,54 @@ mod tests {
 
     fn value(json: Json) -> Value<Dynamic> {
         serde_json::from_value(json).unwrap()
+    }
+
+    /// Objects keyed by name are labeled blocks, as in other providers.
+    #[test]
+    fn named_objects_are_labeled_blocks() {
+        let model = fields(
+            &json!({"type": "object", "required": ["model"], "properties": {
+                "model": {"type": "string"}, "temperature": {"type": "number"}
+            }}),
+            &[],
+        )
+        .unwrap();
+        let definition = Definition::new("agent", &["name", "models_json"], &[])
+            .optional(&["models_json"])
+            .structured("models", "models_json", Shape::ObjectMap(model));
+        let schema = StructuredAdapter(ResourceAdapter::new(
+            definition,
+            Arc::new(Recorder::default()),
+        ))
+        .schema(&mut Diagnostics::default())
+        .unwrap();
+        assert!(matches!(schema.block.blocks["models"], NestedBlock::Map(_)));
+        assert!(!schema.block.attributes.contains_key("models"));
+    }
+
+    /// JSON text carries an open object; its row field holds the object itself.
+    #[test]
+    fn json_text_inputs_hold_their_object_in_the_row() {
+        let settings = Structured {
+            attribute: "settings",
+            field: "settings_json",
+            shape: Shape::Json,
+        };
+        assert_eq!(
+            settings
+                .row_value(json!("{ \"budget\": 4 }"))
+                .unwrap()
+                .as_deref(),
+            Some(r#"{"budget":4}"#)
+        );
+        assert_eq!(
+            settings.configuration(r#"{"budget":4}"#).unwrap(),
+            json!(r#"{"budget":4}"#)
+        );
+        assert_eq!(
+            settings.decode(&Value::Value(r#"{"budget":4}"#.into())),
+            value(json!(r#"{"budget":4}"#))
+        );
     }
 
     #[test]

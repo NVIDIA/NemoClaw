@@ -48,7 +48,4 @@ pub fn definition(
         .bound_fields
         .retain(|field| fields.contains(field));
     definition
-        .derived
-        .retain(|(field, _)| fields.contains(field));
-    definition
 }

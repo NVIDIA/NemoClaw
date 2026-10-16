@@ -10,18 +10,351 @@ provider fabric (version 0)
   destroy: bool, optional
     > Permit removing this provider's objects during explicit teardown.
 
-resource fabric_agent_configuration (version 1)
-  config_json: string, required
-  gateway: object({ credential_env = string, endpoint = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
-  generation: string, required
+resource fabric_agent (version 0)
+  config_sha256: string, computed
+  description: string, optional, computed
+  gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
+  harness: object({ adapter_id = string, catalog_json = string, image = string, type = string }), required
   id: string, computed
   name: string, required
-  owner: string, required
+  ref: object({ config_sha256 = string, generation = string, name = string, owner = string, sandbox = string, sandbox_id = string, type = string, workspace = string }), computed
   running: string, computed
-  sandbox_id: string, required
-  workspace: string, required
+  sandbox: object({ generation = string, id = string, name = string, owner = string, type = string, workspace = string }), required
+  settings: string, optional
+  block discovery: optional
+    extensions: string, optional
+      > Undeclared properties, as JSON text.
+    local_paths: list(string), optional
+      > Descriptor files or directories, resolved relative to the config base directory.
+  block environment: optional
+    artifacts: string, optional
+      > Artifact path inside or outside the provider.
+    connection: string, optional
+      > Provider connection metadata, such as server URL, credential reference, or namespace.
+    control_location: string, optional
+      > Where NeMo Fabric control code runs relative to the environment.
+    env: map(string), optional
+      > Environment variables visible to the harness and its tools.
+      >
+      > Values are serialized into the run plan and can appear wherever configs
+      > or plans are logged or persisted. Prefer `api_key_env`-style
+      > environment-variable-name indirection for credentials.
+    extensions: string, optional
+      > Undeclared properties, as JSON text.
+    metadata: string, optional
+      > Consumer-provided environment metadata.
+    ownership: string, optional
+      > Whether NeMo Fabric owns the environment resource.
+    provider: string, required
+      > Environment provider, for example `local`, `docker`, `opensandbox`, or `k8s`.
+    settings: string, optional
+      > Provider-specific settings.
+    workspace: string, optional
+      > Workspace path inside or outside the provider.
+  block instructions: optional
+    extensions: string, optional
+      > Undeclared properties, as JSON text.
+    block system: optional
+      > System instructions for the selected harness.
+      content: string, required
+        > Instruction text.
+      extensions: string, optional
+        > Undeclared properties, as JSON text.
+      mode: string, optional
+        > How the instruction is applied.
+  block mcp: optional
+    extensions: string, optional
+      > Undeclared properties, as JSON text.
+    block servers: map
+      > Named MCP servers.
+      allowed_tools: list(string), optional
+        > MCP tool names to expose. `None` exposes every tool discovered from the server.
+      args: list(string), optional
+        > Command-line arguments passed to an MCP stdio server process.
+      blocked_tools: list(string), optional
+        > MCP tool names to block after applying the optional allowlist.
+      custom_headers: map(string), optional
+        > HTTP headers passed to an MCP server when transport is `sse` or `streamable-http`.
+      env: map(string), optional
+        > Environment variables passed to an MCP stdio server process.
+      exposure: string, required
+        > How NeMo Fabric exposes the MCP capability to the harness.
+      extensions: string, optional
+        > Undeclared properties, as JSON text.
+      transport: string, required
+        > MCP transport.
+      url: string, required
+        > MCP server URL or process command (when transport=stdio), depending on transport.
+      block authentication: optional
+        > Authentication used by an HTTP MCP server.
+        authorization_timeout_seconds: number, optional
+          > Maximum time to wait for interactive authorization.
+        client_id: string, optional
+          > Pre-registered OAuth client identifier. Omit to allow dynamic registration.
+        client_name: string, optional
+          > Client name advertised during dynamic registration.
+        client_secret_env: string, optional
+          > Environment variable containing the OAuth client secret.
+        enable_dynamic_registration: bool, optional
+          > Whether the client may register dynamically when `client_id` is omitted.
+        redirect_uri: string, optional
+          > OAuth callback URI for clients that require a pre-registered redirect URI.
+        scopes: list(string), optional
+          > OAuth scopes requested by the MCP client.
+        token_cache_buffer_seconds: number, optional
+          > Refresh the cached token this many seconds before expiry.
+        token_endpoint_auth_method: string, optional
+          > Client authentication method used at the token endpoint.
+        token_url: string, optional
+          > OAuth token endpoint.
+        type: string, optional
+  block models: map
+    api_key_env: string, optional
+      > Optional environment variable containing an API key.
+    base_url: string, optional
+      > Optional provider endpoint URL.
+    extensions: string, optional
+      > Undeclared properties, as JSON text.
+    max_tokens: number, optional
+      > Optional maximum number of response tokens.
+    model: string, required
+      > Provider model identifier.
+    provider: string, required
+      > Model provider name.
+    settings: string, optional
+      > Provider-specific settings.
+    temperature: number, optional
+      > Optional temperature.
+    top_p: number, optional
+      > Optional nucleus sampling probability.
+  block relay: optional
+    extensions: string, optional
+      > Undeclared properties, as JSON text.
+    output_dir: string, optional
+      > Optional Relay output directory.
+    project: string, optional
+      > Optional project name for Relay backends.
+    block components: list
+      > Additional Relay plugin components.
+      config: string, optional
+        > Component-local Relay plugin config.
+      enabled: bool, optional
+        > Whether this Relay component should be activated.
+      extensions: string, optional
+        > Undeclared properties, as JSON text.
+      kind: string, required
+        > Registered Relay plugin kind.
+    block observability: optional
+      > Relay observability component configuration.
+      enable_full_payloads: bool, optional
+        > Retain complete sanitized request data on LLM start events.
+      extensions: string, optional
+        > Undeclared properties, as JSON text.
+      version: number, optional
+        > Relay observability config version.
+      block atif: optional
+        > ATIF export configuration.
+        agent_name: string, optional
+          > Agent name written into ATIF.
+        agent_version: string, optional
+          > Agent version written into ATIF.
+        enabled: bool, optional
+          > Whether ATIF export is enabled.
+        extensions: string, optional
+          > Undeclared properties, as JSON text.
+        extra: string, optional
+          > Extra ATIF metadata.
+        filename_template: string, optional
+          > ATIF file name template.
+        model_name: string, optional
+          > Optional model name override written into ATIF.
+        output_directory: string, optional
+          > Directory used for ATIF files.
+        tool_definitions: list(string), optional
+          > Tool definitions written into ATIF.
+        block storage: list
+          > Optional ATIF remote storage.
+          access_key_id: string, optional
+            > AWS access key id.
+          allow_http: bool, optional
+            > Allow HTTP endpoints for S3-compatible storage.
+          bucket: string, optional
+            > S3 bucket name.
+          endpoint: string, optional
+            > HTTP storage endpoint.
+          endpoint_url: string, optional
+            > S3-compatible endpoint URL.
+          header_env: map(string), optional
+            > Environment-variable-backed HTTP headers.
+          headers: map(string), optional
+            > Static HTTP headers.
+          key_prefix: string, optional
+            > Optional S3 object key prefix.
+          region: string, optional
+            > AWS region.
+          secret_access_key_var: string, optional
+            > Environment variable containing the AWS secret access key.
+          session_token_var: string, optional
+            > Environment variable containing the AWS session token.
+          timeout_millis: number, optional
+            > Request timeout in milliseconds.
+          type: string, optional
+      block atof: optional
+        > ATOF export configuration.
+        enabled: bool, optional
+          > Whether ATOF export is enabled.
+        extensions: string, optional
+          > Undeclared properties, as JSON text.
+        block sinks: list
+          > ATOF file and stream sinks.
+          field_name_policy: string, optional
+            > Field-name handling policy.
+          filename: string, optional
+            > ATOF file name.
+          header_env: map(string), optional
+            > Environment-variable-backed stream headers.
+          headers: map(string), optional
+            > Static stream headers.
+          mode: string, optional
+            > File write mode.
+          name: string, optional
+            > Optional stream sink name.
+          output_directory: string, optional
+            > Directory used for ATOF files.
+          timeout_millis: number, optional
+            > Request timeout in milliseconds.
+          transport: string, optional
+            > Stream transport.
+          type: string, optional
+          url: string, optional
+            > Stream URL.
+      block opentelemetry: optional
+        > OpenTelemetry and OpenInference export configuration.
+        enabled: bool, optional
+          > Whether OpenTelemetry export is enabled.
+        extensions: string, optional
+          > Undeclared properties, as JSON text.
+        block endpoints: list
+          > Typed OTLP destinations.
+          attribute_mappings: list(map(string)), optional
+            > Attribute mapping rules.
+          endpoint: string, required
+            > OTLP endpoint.
+          extensions: string, optional
+            > Undeclared properties, as JSON text.
+          header_env: map(string), optional
+            > Environment-variable-backed OTLP headers.
+          headers: map(string), optional
+            > Static OTLP headers.
+          instrumentation_scope: string, optional
+            > OTLP instrumentation scope.
+          mark_exclude_names: list(string), optional
+            > Event names excluded from mark projection.
+          mark_projection: string, optional
+            > Mark projection policy.
+          resource_attributes: map(string), optional
+            > OTLP resource attributes.
+          service_name: string, optional
+            > OTLP service name.
+          service_namespace: string, optional
+            > OTLP service namespace.
+          service_version: string, optional
+            > OTLP service version.
+          timeout_millis: number, optional
+            > Request timeout in milliseconds.
+          transport: string, optional
+            > OTLP transport.
+          type: string, required
+            > Span projection emitted to this destination.
+      block policy: optional
+        > Relay config validation policy.
+        unknown_component: string, optional
+          > Policy for unknown components.
+        unknown_field: string, optional
+          > Policy for unknown fields.
+        unsupported_value: string, optional
+          > Policy for unsupported values.
+    block policy: optional
+      > Relay plugin validation policy.
+      unknown_component: string, optional
+        > Policy for unknown components.
+      unknown_field: string, optional
+        > Policy for unknown fields.
+      unsupported_value: string, optional
+        > Policy for unsupported values.
+  block runtime: optional
+    artifacts: string, optional
+      > Artifact directory.
+    extensions: string, optional
+      > Undeclared properties, as JSON text.
+    input_schema: string, optional
+      > Input schema label.
+    max_turns: number, optional
+      > Maximum number of harness turns within one invocation.
+    output_schema: string, optional
+      > Output schema label.
+    timeout_seconds: number, optional
+      > Maximum duration of one invocation in seconds.
+  block skills: optional
+    extensions: string, optional
+      > Undeclared properties, as JSON text.
+    paths: list(string), optional
+      > Skill paths resolved relative to the config base directory.
+  block telemetry: optional
+    extensions: string, optional
+      > Undeclared properties, as JSON text.
+    block providers: map
+      > Telemetry providers enabled for this run.
+      config: string, optional
+        > Provider-specific pass-through config.
+      extensions: string, optional
+        > Undeclared properties, as JSON text.
+  block tools: optional
+    blocked: list(string), optional
+      > Adapter-native tool names to block.
+    enabled: list(string), optional
+      > Adapter-native tool names to expose. `None` preserves the harness default.
+    extensions: string, optional
+      > Undeclared properties, as JSON text.
+    block definitions: map
+      > Named tool and tool-group definitions resolved by the selected adapter.
+      extensions: string, optional
+        > Undeclared properties, as JSON text.
+      kind: string, required
+        > Portable definition category, such as `function` or `function_group`.
+      ref: string, required
+        > Adapter-resolved component or factory reference.
+      settings: string, optional
+        > Definition-specific construction settings validated by the adapter descriptor.
+  block workflow: optional
+    extensions: string, optional
+      > Undeclared properties, as JSON text.
+    settings: string, optional
+      > Workflow-specific construction settings.
+    target_id: string, required
+      > Registered Adapter Target Descriptor id.
 
-data fabric_capabilities (version 0)
+data fabric_agent_readiness (version 0)
+  agent: object({ config_sha256 = string, generation = string, name = string, owner = string, sandbox = string, sandbox_id = string, type = string, workspace = string }), required
+  error_message: string, computed
+  gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
+  health_json: string, computed
+  read_trigger: string, optional
+  ready: bool, computed
+
+data fabric_harness (version 0)
+  adapter_id: string, required
+  agent_name: string, required
+  available: bool, computed
+  engine: string, optional
+  image: string, required
+  launch_json: string, computed
+  metadata_env: string, optional
+  observation_json: string, computed
+  ref: object({ adapter_id = string, catalog_json = string, image = string, type = string }), computed
+  status: string, computed
+
+data fabric_harnesses (version 0)
   architecture: string, optional
   available: bool, computed
   binaries_json: string, computed
@@ -30,24 +363,9 @@ data fabric_capabilities (version 0)
   engine: string, required
   filesystem_read: list(string), optional
   image: string, required
+  launch_json: string, computed
   metadata_env: string, optional
   observation_json: string, computed
   operating_system: string, optional
   runtime_json: string, computed
   status: string, computed
-
-data fabric_sandbox_readiness (version 0)
-  agent_name: string, required
-  agent_runtime: string, required
-  config_json: string, required
-  error_message: string, computed
-  gateway: object({ credential_env = string, endpoint = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
-  generation: string, required
-  health_json: string, computed
-  id: string, required
-  name: string, required
-  owner: string, required
-  read_trigger: string, optional
-  ready: bool, computed
-  runtime_json: string, required
-  workspace: string, required

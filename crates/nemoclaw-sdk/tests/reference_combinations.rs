@@ -107,11 +107,10 @@ fn example_configurations_pass_the_canonical_fabric_planner() {
         "provider",
         "sandbox",
         "managed_gateway",
-        "kubernetes_gateway",
         "inference_service",
-        "ollama_service",
         "ollama",
         "ollama_proxy",
+        "kubernetes_gateway",
     ]
     .map(|key| (key.into(), "a".repeat(32)))
     .into();

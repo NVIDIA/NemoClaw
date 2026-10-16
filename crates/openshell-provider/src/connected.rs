@@ -21,32 +21,24 @@ pub(super) fn create_sandbox_request(
     want: &Row,
     grants: &network::ClusterGrants,
 ) -> Result<proto::CreateSandboxRequest, ObservationError> {
-    if value(want, "agent_runtime") != "fabric" {
-        return Err(ObservationError::BindingMismatch);
-    }
-    let mut labels = labels(want);
-    labels.insert(AGENT.into(), value(want, "agent_name").into());
-    labels.insert(AGENT_RUNTIME.into(), value(want, "agent_runtime").into());
+    let launch = agent::launch(want)?;
     Ok(proto::CreateSandboxRequest {
         name: value(want, "name").into(),
         workspace_scope: Some(proto::workspace_selector(value(want, "workspace"))),
-        labels,
+        labels: labels(want),
         annotations: [
-            (agent::RUNTIME.into(), value(want, "runtime_json").into()),
+            (agent::LAUNCH.into(), value(want, "launch_json").into()),
             (agent::POLICY.into(), value(want, "policy_json").into()),
         ]
         .into(),
         spec: Some(proto::SandboxSpec {
             template: Some(proto::SandboxTemplate {
                 image: value(want, "image").into(),
+                driver_config: crate::driver_config::request(value(want, "driver_config_json"))?,
                 ..Default::default()
             }),
-            command: agent::binding(want)?
-                .command("serve", &["--agent", value(want, "agent_name")]),
-            providers: inference::provider_names(
-                value(want, "provider_names_json"),
-                value(want, "agent_runtime"),
-            )?,
+            command: launch.command,
+            providers: inference::provider_names(value(want, "provider_names_json"))?,
             environment: inference_environment(want)?.into_iter().collect(),
             policy: Some(network::granted_row_policy(want, grants)?),
             ..Default::default()
@@ -334,6 +326,16 @@ impl ConnectedOpenShellGateway {
                     allow_missing: false,
                     id: name.into(),
                     workspace_scope: Some(proto::workspace_selector(workspace)),
+                    ..Default::default()
+                }))
+                .await
+                .map(|_| ()),
+            "workspace" => self
+                .client
+                .raw_grpc()
+                .delete_workspace(self.request(proto::DeleteWorkspaceRequest {
+                    allow_missing: false,
+                    name: name.into(),
                     ..Default::default()
                 }))
                 .await

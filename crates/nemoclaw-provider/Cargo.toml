@@ -17,12 +17,10 @@ name = "contract"
 path = "tests/contract/main.rs"
 
 [dependencies]
-fabric-provider = { path = "../fabric-provider" }
 nemoclaw-backend = { path = "../nemoclaw-backend" }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
 nemoclaw-openshell = { path = "../nemoclaw-openshell" }
 nemoclaw-docker = { path = "../nemoclaw-docker" }
-openshell-provider = { path = "../openshell-provider" }
 nemoclaw-discovery = { path = "../nemoclaw-discovery" }
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
@@ -53,11 +51,13 @@ tonic.workspace = true
 rustix = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]
+# Schema and planning tests compare rules across the bundled providers.
+openshell-provider = { path = "../openshell-provider", default-features = false }
+fabric-provider = { path = "../fabric-provider" }
 nemoclaw-test-fixtures = { path = "../nemoclaw-test-fixtures" }
 prost.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
-tokio-tungstenite = "0.29.0"
 
 [target.'cfg(windows)'.dev-dependencies]
 widestring = "1"
@@ -66,13 +66,13 @@ widestring = "1"
 workspace = true
 
 [[bin]]
-name = "terraform-provider-nemoclaw"
-path = "src/main.rs"
+name = "terraform-provider-vllm"
+path = "src/bin/vllm.rs"
 
 [[bin]]
-name = "terraform-provider-nemoclaw-openshell"
-path = "src/openshell_main.rs"
+name = "terraform-provider-ollama"
+path = "src/bin/ollama.rs"
 
 [[bin]]
-name = "terraform-provider-nemoclaw-fabric"
-path = "src/fabric_main.rs"
+name = "terraform-provider-host"
+path = "src/bin/host.rs"

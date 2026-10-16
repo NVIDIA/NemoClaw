@@ -11,10 +11,7 @@ use std::{
 };
 
 const OWNER: &str = "302ff5e1-088d-42ce-959f-4ff4c3570c13";
-const KINDS: [&str; 2] = [
-    "nemoclaw_inference_storage",
-    "nemoclaw_ollama_service_storage",
-];
+const KINDS: [&str; 1] = ["vllm_credential_storage"];
 
 #[derive(Default)]
 struct Volumes {
@@ -78,11 +75,13 @@ fn configure(
         format!(
             r#"terraform {{
   required_providers {{
-    nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw" }}
+    vllm     = {{ source = "registry.opentofu.org/nvidia/vllm" }}
+    ollama   = {{ source = "registry.opentofu.org/nvidia/ollama" }}
   }}
 }}
 
-provider "nemoclaw" {{}}
+provider "vllm" {{}}
+provider "ollama" {{}}
 
 resource "{kind}" "credentials" {{
   name       = "{name}"
@@ -112,16 +111,10 @@ fn success(workspace: &TofuWorkspace, args: &[&str]) -> std::process::Output {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn authored_service_storage_applies_refreshes_and_names_invalid_attributes() {
-    for (kind, name) in [
-        (
-            "nemoclaw_inference_storage",
-            "nc-0123456789abcdef-inference-qwen-auth",
-        ),
-        (
-            "nemoclaw_ollama_service_storage",
-            "nc-0123456789abcdef-ollama-local-auth",
-        ),
-    ] {
+    for (kind, name) in [(
+        "vllm_credential_storage",
+        "nc-0123456789abcdef-inference-qwen-auth",
+    )] {
         let (engine, volumes) = volume_engine().await;
         let workspace = workspace();
         let generation = "b".repeat(32);
@@ -378,7 +371,7 @@ async fn omitted_proxy_storage_identity_is_generated_and_labels_its_credential_v
     let workspace = workspace();
     configure(
         &workspace,
-        "nemoclaw_ollama_proxy_storage",
+        "ollama_proxy_credential_storage",
         "authored-proxy",
         None,
         &engine.endpoint,
@@ -424,90 +417,76 @@ async fn upstream(digest: Arc<Mutex<String>>) -> Fixture {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker and Ollama fixtures"]
-async fn authored_external_model_shares_proxy_identity_and_rechecks_its_digest() {
-    let (engine, volumes) = volume_engine().await;
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Ollama fixture"]
+async fn ollama_model_checks_its_digest_while_planning() {
     let digest = Arc::new(Mutex::new("a".repeat(64)));
     let upstream = upstream(digest.clone()).await;
     let workspace = workspace();
-    fs::write(
-        workspace.path().join("main.tf"),
-        format!(
-            r#"terraform {{
+    let configure = |upstream: &str, name: &str| {
+        fs::write(
+            workspace.path().join("main.tf"),
+            format!(
+                r#"terraform {{
   required_providers {{
-    nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw" }}
+    ollama = {{ source = "registry.opentofu.org/nvidia/ollama" }}
   }}
 }}
 
-provider "nemoclaw" {{}}
+provider "ollama" {{}}
 
-resource "nemoclaw_ollama_proxy_storage" "credentials" {{
-  name   = "nc-0123456789abcdef-ollama-proxy-local"
-  engine = "{engine}"
+data "ollama_model" "local" {{
+  upstream = "{upstream}/v1"
+  name     = "{name}"
+  digest   = "{digest}"
 }}
 
-# The model shares its proxy's identity, so a new proxy re-verifies it.
-resource "nemoclaw_ollama_external_model" "model" {{
-  name       = nemoclaw_ollama_proxy_storage.credentials.name
-  owner      = nemoclaw_ollama_proxy_storage.credentials.owner
-  generation = nemoclaw_ollama_proxy_storage.credentials.generation
-  engine     = "{engine}"
-  upstream   = "{upstream}/v1"
-  model      = "qwen3:0.6b"
-  digest     = "{digest}"
+output "model" {{
+  value = data.ollama_model.local.ref
 }}
 "#,
-            engine = engine.endpoint,
-            upstream = upstream.endpoint,
-            digest = "a".repeat(64),
-        ),
-    )
-    .unwrap();
+                digest = "a".repeat(64),
+            ),
+        )
+        .unwrap();
+    };
+    configure(&upstream.endpoint, "qwen3:0.6b");
     success(
         &workspace,
         &["apply", "-input=false", "-auto-approve", "-no-color"],
     );
-    assert!(
-        volumes
-            .lock()
-            .unwrap()
-            .volumes
-            .contains_key("nc-0123456789abcdef-ollama-proxy-local-auth")
-    );
-    let state: Value =
-        serde_json::from_slice(&fs::read(workspace.path().join("terraform.tfstate")).unwrap())
-            .unwrap();
-    let attributes = |kind: &str| {
-        state["resources"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|resource| resource["type"] == kind)
-            .unwrap()["instances"][0]["attributes"]
-            .clone()
-    };
-    let (storage, model) = (
-        attributes("nemoclaw_ollama_proxy_storage"),
-        attributes("nemoclaw_ollama_external_model"),
-    );
-    assert_eq!(model["owner"], storage["owner"]);
+    let output = success(&workspace, &["output", "-json", "model"]);
+    let model: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
-        model["id"],
-        format!(
-            "{}/{}/{}",
-            storage["owner"].as_str().unwrap(),
-            storage["generation"].as_str().unwrap(),
-            "a".repeat(64)
-        )
+        model,
+        json!({
+            "type": "ollama_model",
+            "upstream": format!("{}/v1", upstream.endpoint),
+            "name": "qwen3:0.6b",
+            "digest": "a".repeat(64),
+        })
     );
     success(
         &workspace,
         &["plan", "-input=false", "-no-color", "-detailed-exitcode"],
     );
-    // A changed upstream digest stops planning and names the service's upstream.
+    // A changed upstream digest stops planning and names the model.
     *digest.lock().unwrap() = "b".repeat(64);
     let output = run(&workspace, &["plan", "-input=false", "-no-color"]);
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("services.local.upstream"), "{stderr}");
+    assert!(stderr.contains("qwen3:0.6b"), "{stderr}");
+    assert!(stderr.contains("digest changed"), "{stderr}");
+    // An absent model is an error, never an install.
+    *digest.lock().unwrap() = "a".repeat(64);
+    configure(&upstream.endpoint, "absent:latest");
+    let output = run(&workspace, &["plan", "-input=false", "-no-color"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("absent"), "{stderr}");
+    // Only local upstreams are read; others fail validation.
+    configure("http://192.0.2.1:11434", "qwen3:0.6b");
+    let output = run(&workspace, &["validate", "-no-color"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("loopback"), "{stderr}");
 }

@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The selected container engine's prerequisites for a compute driver.
+//! Whether an engine meets a managed gateway's prerequisites for a compute
+//! driver. `host_engine` reads the engine's facts.
 
 use crate::provider::ConfiguredBackend;
 use async_trait::async_trait;
-use nemoclaw_discovery::observe_engine;
+use nemoclaw_discovery::observe_gateway_prerequisites;
 use nemoclaw_sdk::discovery::{DiscoveryRequest, ObservationStatus};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -14,11 +15,12 @@ use tf_provider::{
     value::{Value, ValueEmpty},
 };
 
-/// Data source for whether an engine can run a compute driver.
-pub(crate) struct EngineCapabilitiesDataSource(pub Arc<ConfiguredBackend>);
+/// Data source for whether an engine can host a managed gateway with a
+/// compute driver. The gateway installation types enforce the same check.
+pub(crate) struct GatewayPrerequisitesDataSource(pub Arc<ConfiguredBackend>);
 
 #[derive(Default, Serialize, Deserialize)]
-pub(crate) struct EngineCapabilitiesState {
+pub(crate) struct GatewayPrerequisitesState {
     engine: Value<String>,
     compute_driver: Value<String>,
     observation_json: Value<String>,
@@ -26,39 +28,37 @@ pub(crate) struct EngineCapabilitiesState {
     status: Value<String>,
 }
 
-fn valid(config: &EngineCapabilitiesState) -> bool {
-    let engine_valid = match &config.engine {
+fn engine_valid(engine: &Value<String>) -> bool {
+    match engine {
         Value::Unknown => true,
         Value::Value(engine) => crate::config::validate_engine_endpoint(engine).is_ok(),
         Value::Null => false,
-    };
-    let driver_valid = match &config.compute_driver {
+    }
+}
+
+fn driver_valid(driver: &Value<String>) -> bool {
+    match driver {
         Value::Unknown => true,
         Value::Value(driver) => driver == "docker" || driver == "podman",
         Value::Null => false,
-    };
-    engine_valid && driver_valid
+    }
 }
 
-#[async_trait]
-impl DataSource for EngineCapabilitiesDataSource {
-    type State<'a> = EngineCapabilitiesState;
-    type ProviderMetaState<'a> = ValueEmpty;
-
-    fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
-        use AttributeConstraint::{Computed, Required};
-        use AttributeType::{Bool, String};
-        Some(Schema {
-            version: 0,
-            block: Block {
-                attributes: [
-                    ("engine", String, Required),
-                    ("compute_driver", String, Required),
+/// Required string `inputs`, then the observation every engine read reports.
+fn schema(inputs: &[&str]) -> Schema {
+    use AttributeConstraint::{Computed, Required};
+    use AttributeType::{Bool, String};
+    Schema {
+        version: 0,
+        block: Block {
+            attributes: inputs
+                .iter()
+                .map(|name| (*name, String, Required))
+                .chain([
                     ("observation_json", String, Computed),
                     ("available", Bool, Computed),
                     ("status", String, Computed),
-                ]
-                .into_iter()
+                ])
                 .map(|(name, attr_type, constraint)| {
                     (
                         name.into(),
@@ -70,20 +70,57 @@ impl DataSource for EngineCapabilitiesDataSource {
                     )
                 })
                 .collect(),
-                ..Default::default()
-            },
-        })
+            ..Default::default()
+        },
+    }
+}
+
+/// The observation's outputs: its JSON, whether it is available, and its status.
+type Outputs = (Value<String>, Value<bool>, Value<String>);
+
+fn outputs<T: Serialize>(
+    diags: &mut Diagnostics,
+    observation: &T,
+    status: ObservationStatus,
+) -> Option<Outputs> {
+    let Ok(json) = serde_json::to_string(observation) else {
+        diags.root_error_short("Discovery observation could not be encoded");
+        return None;
+    };
+    let name = match status {
+        ObservationStatus::Available => "available",
+        ObservationStatus::Unavailable => "unavailable",
+        ObservationStatus::Unknown => "unknown",
+    };
+    Some((
+        Value::Value(json),
+        Value::Value(status == ObservationStatus::Available),
+        Value::Value(name.into()),
+    ))
+}
+
+fn invalid(diags: &mut Diagnostics) {
+    diags.root_error_short("Invalid discovery target or selection");
+}
+
+#[async_trait]
+impl DataSource for GatewayPrerequisitesDataSource {
+    type State<'a> = GatewayPrerequisitesState;
+    type ProviderMetaState<'a> = ValueEmpty;
+
+    fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
+        Some(schema(&["engine", "compute_driver"]))
     }
 
     async fn validate<'a>(
         &self,
         diags: &mut Diagnostics,
-        config: EngineCapabilitiesState,
+        config: GatewayPrerequisitesState,
     ) -> Option<()> {
-        if valid(&config) {
+        if engine_valid(&config.engine) && driver_valid(&config.compute_driver) {
             Some(())
         } else {
-            diags.root_error_short("Invalid discovery target or selection");
+            invalid(diags);
             None
         }
     }
@@ -91,11 +128,11 @@ impl DataSource for EngineCapabilitiesDataSource {
     async fn read<'a>(
         &self,
         diags: &mut Diagnostics,
-        mut config: EngineCapabilitiesState,
+        mut config: GatewayPrerequisitesState,
         _: ValueEmpty,
-    ) -> Option<EngineCapabilitiesState> {
-        if !valid(&config) {
-            diags.root_error_short("Invalid discovery target or selection");
+    ) -> Option<GatewayPrerequisitesState> {
+        if !engine_valid(&config.engine) || !driver_valid(&config.compute_driver) {
+            invalid(diags);
             return None;
         }
         let (Value::Value(engine), Value::Value(driver)) = (&config.engine, &config.compute_driver)
@@ -105,7 +142,7 @@ impl DataSource for EngineCapabilitiesDataSource {
             config.status = Value::Unknown;
             return Some(config);
         };
-        let observation = observe_engine(
+        let observation = observe_gateway_prerequisites(
             self.0.connections(),
             &DiscoveryRequest {
                 engine: engine.clone(),
@@ -113,22 +150,8 @@ impl DataSource for EngineCapabilitiesDataSource {
             },
         )
         .await;
-        config.available = Value::Value(observation.status == ObservationStatus::Available);
-        config.status = Value::Value(
-            match observation.status {
-                ObservationStatus::Available => "available",
-                ObservationStatus::Unavailable => "unavailable",
-                ObservationStatus::Unknown => "unknown",
-            }
-            .into(),
-        );
-        match serde_json::to_string(&observation) {
-            Ok(json) => config.observation_json = Value::Value(json),
-            Err(_) => {
-                diags.root_error_short("Discovery observation could not be encoded");
-                return None;
-            }
-        }
+        (config.observation_json, config.available, config.status) =
+            outputs(diags, &observation, observation.status)?;
         Some(config)
     }
 }
@@ -137,66 +160,59 @@ impl DataSource for EngineCapabilitiesDataSource {
 mod tests {
     use super::*;
 
-    fn engine_config() -> EngineCapabilitiesState {
-        EngineCapabilitiesState {
-            engine: Value::Value("unix:///does-not-exist/nemoclaw.sock".into()),
-            compute_driver: Value::Value("docker".into()),
+    const UNREACHABLE: &str = "unix:///does-not-exist/nemoclaw.sock";
+
+    fn prerequisites_config(driver: &str) -> GatewayPrerequisitesState {
+        GatewayPrerequisitesState {
+            engine: Value::Value(UNREACHABLE.into()),
+            compute_driver: Value::Value(driver.into()),
             ..Default::default()
         }
     }
 
-    #[tokio::test]
-    async fn unavailable_transport_returns_completed_unknown_observation_without_provider_error() {
-        let source = EngineCapabilitiesDataSource(Arc::new(ConfiguredBackend::default()));
-        let mut diagnostics = Diagnostics::default();
-        let result = source
-            .read(&mut diagnostics, engine_config(), ValueEmpty::default())
-            .await
-            .unwrap();
-        assert!(diagnostics.errors.is_empty());
-        assert!(matches!(result.available, Value::Value(false)));
-        assert!(matches!(result.status,Value::Value(ref status) if status=="unknown"));
-        let Value::Value(json) = result.observation_json else {
+    fn status(json: &Value<String>) -> serde_json::Value {
+        let Value::Value(json) = json else {
             panic!("completed observation")
         };
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&json).unwrap()["status"],
-            "unknown"
-        );
+        serde_json::from_str::<serde_json::Value>(json).unwrap()["status"].clone()
+    }
+
+    #[tokio::test]
+    async fn unavailable_transport_returns_completed_unknown_observation_without_provider_error() {
+        let mut diagnostics = Diagnostics::default();
+        let prerequisites = GatewayPrerequisitesDataSource(Arc::new(ConfiguredBackend::default()))
+            .read(
+                &mut diagnostics,
+                prerequisites_config("podman"),
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(prerequisites.available, Value::Value(false)));
+        assert_eq!(status(&prerequisites.observation_json), "unknown");
+        assert!(diagnostics.errors.is_empty());
     }
 
     #[tokio::test]
     async fn unknown_inputs_validate_without_connecting_and_invalid_values_do_not_leak() {
-        let source = EngineCapabilitiesDataSource(Arc::new(ConfiguredBackend::default()));
+        let prerequisites = GatewayPrerequisitesDataSource(Arc::new(ConfiguredBackend::default()));
         let mut diagnostics = Diagnostics::default();
-        let mut unknown = engine_config();
+        let mut unknown = prerequisites_config("docker");
         unknown.engine = Value::Unknown;
         unknown.compute_driver = Value::Unknown;
-        assert!(source.validate(&mut diagnostics, unknown).await.is_some());
-        let mut invalid = engine_config();
-        invalid.engine = Value::Value("PRIVATE_SENTINEL".into());
-        assert!(source.validate(&mut diagnostics, invalid).await.is_none());
-        assert!(!format!("{diagnostics:?}").contains("PRIVATE_SENTINEL"));
-    }
-
-    #[test]
-    fn engine_schema_has_no_fabric_inputs() {
-        let schema = EngineCapabilitiesDataSource(Arc::new(ConfiguredBackend::default()))
-            .schema(&mut Diagnostics::default())
-            .unwrap();
-        for field in [
-            "image",
-            "metadata_env",
-            "config_json",
-            "filesystem_read",
-            "compatibility_status",
-        ] {
-            assert!(!schema.block.attributes.contains_key(field), "{field}");
-        }
-        let serialized = serde_json::to_value(engine_config()).unwrap();
-        assert_eq!(
-            serialized.as_object().unwrap().len(),
-            schema.block.attributes.len()
+        assert!(
+            prerequisites
+                .validate(&mut diagnostics, unknown)
+                .await
+                .is_some()
         );
+        let invalid = prerequisites_config("PRIVATE_SENTINEL");
+        assert!(
+            prerequisites
+                .validate(&mut diagnostics, invalid)
+                .await
+                .is_none()
+        );
+        assert!(!format!("{diagnostics:?}").contains("PRIVATE_SENTINEL"));
     }
 }

@@ -13,7 +13,7 @@ Follow [WRITING.md](WRITING.md) for all prose, including messages and pull reque
 ## Changes
 
 - For behavior changes and bug fixes, write a behavioral test and observe it fail before implementing; the `test-driven-development` skill routes other work.
-- Before pushing, run checks appropriate to the change; see [local validation](docs/contributing/testing.md#choose-local-validation). Use targeted checks for prose, declarative configuration, and isolated code changes. Run `cargo ci` for changes to bundle construction, provider contracts, lifecycle behavior, or broad workspace dependencies, or when narrower checks cannot establish confidence.
+- Before pushing, run checks appropriate to the change; see [local validation](docs/contributing/testing.md#choose-local-validation). Use targeted checks for prose, declarative configuration, and isolated code changes. Run `cargo ci --full` for changes to bundle construction, provider contracts, lifecycle behavior, or broad workspace dependencies, or when narrower checks cannot establish confidence.
 - Report which checks ran and which were deferred to CI, with the reason. `cargo test` alone skips the bundle lifecycle tests.
 - Write tooling and tests in Rust; Python belongs only inside images whose workload runs on it.
 - Pull requests are squash-merged: use a Conventional Commits title, and explain the failure, decision, and validation in the body.

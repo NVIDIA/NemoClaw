@@ -37,7 +37,9 @@ impl From<PlannedResourceChange> for ResourceChange {
             && let Some((kind, _)) = planned.address.split_once('.')
         {
             nemoclaw_openshell::flatten(kind, &mut change.before);
+            nemoclaw_fabric::agent::flatten(kind, &mut change.before);
             nemoclaw_openshell::flatten(kind, &mut change.after);
+            nemoclaw_fabric::agent::flatten(kind, &mut change.after);
         }
         Self {
             mode: planned.mode,
@@ -200,7 +202,7 @@ pub(super) fn check_plan(
             .get(&change.address)
             .ok_or(Error::Conflict("plan contains an undeclared resource"))?;
         let replacement = change.change.actions == ["delete", "create"]
-            && change.address.starts_with("nemoclaw_managed_gateway.")
+            && change.address.starts_with("openshell_podman_gateway.")
             && bindings.contains_key(&change.address);
         if !seen.insert(&change.address)
             || (!replacement
@@ -279,7 +281,7 @@ pub(super) fn check_destroy_plan(
             // The Helm provider can report absence after a release lookup
             // failure. Require the authentication resource's independent
             // Secret-metadata observation before retiring this binding.
-            let auth_address = "nemoclaw_kubernetes_auth.runtime";
+            let auth_address = "openshell_kubernetes_auth.runtime";
             let confirmed = plan.resource_changes.iter().any(|change| {
                 change.address == auth_address
                     && change.mode.as_deref() == Some("managed")
@@ -510,7 +512,7 @@ mod native_helm_tests {
                 .len(),
             1
         );
-        let auth_address = "nemoclaw_kubernetes_auth.runtime";
+        let auth_address = "openshell_kubernetes_auth.runtime";
         let auth = json!({"id":"auth-uid", "spec":"retained-auth-spec"});
         allowed.insert(
             auth_address.into(),
@@ -609,9 +611,9 @@ mod kubernetes_replacement_tests {
             .filter(|target| !target.address.starts_with("data."))
             .collect();
         for platform in [
-            "nemoclaw_kubernetes_storage.runtime",
-            "nemoclaw_kubernetes_auth.runtime",
-            "nemoclaw_kubernetes_gateway.runtime",
+            "openshell_kubernetes_storage.runtime",
+            "openshell_kubernetes_auth.runtime",
+            "openshell_kubernetes_gateway.runtime",
         ] {
             assert!(
                 targets.iter().any(|target| target.address == platform),
@@ -646,7 +648,7 @@ mod kubernetes_replacement_tests {
                 .collect();
             serde_json::from_value(json!({"resource_changes": changes})).unwrap()
         };
-        let accepted = runtime::check_runtime_plan(&planned(None), &expected, &bindings);
+        let accepted = crate::deployment::plan::check_plan(&planned(None), &expected, &bindings);
         assert!(
             accepted.as_ref().is_ok_and(Vec::is_empty),
             "a plan with no changes must be accepted: {accepted:?}"
@@ -654,7 +656,7 @@ mod kubernetes_replacement_tests {
         for target in &targets {
             for actions in [["delete", "create"], ["create", "delete"]] {
                 let plan = planned(Some((&target.address, actions)));
-                let result = runtime::check_runtime_plan(&plan, &expected, &bindings);
+                let result = crate::deployment::plan::check_plan(&plan, &expected, &bindings);
                 assert!(
                     matches!(
                         result,
@@ -680,11 +682,7 @@ pub(super) mod discovery_tests {
     /// The deferrals a plan reports, as `plan` and `apply` compute them.
     pub(in crate::deployment) fn deferred(plan: &Plan) -> Vec<String> {
         let report = plan
-            .discovery_report(
-                DiscoveryScope::Deployment,
-                &BTreeMap::new(),
-                &BTreeSet::new(),
-            )
+            .discovery_report(&BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new())
             .unwrap();
         plan.discovery_deferred(&report)
     }
@@ -743,12 +741,12 @@ mod reporting_tests {
     use super::*;
     #[test]
     fn inventory_reports_validated_actions_and_retention_without_copying_private_state() {
-        let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"mode":"managed","address":"nemoclaw_gateway_storage.runtime","change":{"actions":["no-op"],"before":{"id":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL"},"after":{"id":"PRIVATE_SENTINEL"}}}],"resource_drift":[{"mode":"managed","address":"nemoclaw_gateway_storage.runtime","change":{"actions":["update"],"before":{},"after":{}}}]})).unwrap();
+        let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"mode":"managed","address":"openshell_gateway_storage.runtime","change":{"actions":["no-op"],"before":{"id":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL"},"after":{"id":"PRIVATE_SENTINEL"}}}],"resource_drift":[{"mode":"managed","address":"openshell_gateway_storage.runtime","change":{"actions":["update"],"before":{},"after":{}}}]})).unwrap();
         let report = plan
             .discovery_report(
-                super::super::DiscoveryScope::Runtime,
+                &BTreeSet::from(["openshell_gateway_storage.runtime".into()]),
                 &BTreeMap::new(),
-                &BTreeSet::from(["nemoclaw_gateway_storage.runtime".into()]),
+                &BTreeSet::from(["openshell_gateway_storage.runtime".into()]),
             )
             .unwrap();
         assert_eq!(report.resources.len(), 1);
@@ -763,13 +761,11 @@ mod reporting_tests {
         );
     }
     #[test]
-    fn unknown_gateway_preserves_hardware_deferrals_without_blocking_on_catalogs() {
+    fn unknown_gateway_preserves_hardware_deferrals() {
         use super::discovery_tests::{deferred, encoded};
-        let catalog = encoded(crate::inference_discovery::EndpointObservation::unknown(""));
         let hardware = encoded(crate::hardware_discovery::HardwareObservation::unknown());
-        let plan:Plan=serde_json::from_value(json!({"planned_values":{"outputs":{"discovery":{"sensitive":false}},"root_module":{"resources":[{"address":"data.nemoclaw_inference_capabilities.endpoint_0","values":{"observation_json":catalog}},{"address":"data.nemoclaw_target_hardware.target_0","values":{"observation_json":hardware}},{"address":"data.openshell_gateway.current","values":{"observation_json":null}}]}}})).unwrap();
+        let plan:Plan=serde_json::from_value(json!({"planned_values":{"outputs":{"discovery":{"sensitive":false}},"root_module":{"resources":[{"address":"data.host_engine.target_0","values":{"observation_json":hardware}},{"address":"data.openshell_gateway.current","values":{"observation_json":null}}]}}})).unwrap();
         let messages = deferred(&plan);
-        assert!(!messages.iter().any(|message| message.contains("Inference")));
         assert!(messages.iter().any(|message| message.contains("hardware")));
         assert!(messages.iter().any(|message| message.contains("Gateway")));
     }

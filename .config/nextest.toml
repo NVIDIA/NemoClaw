@@ -30,15 +30,14 @@ slow-timeout = { period = "90s", terminate-after = 2 }
 # ignored test does the same for the provider protocol tests.
 default-filter = '''
 ((package(nemoclaw-provider) | package(openshell-provider) | package(fabric-provider)) & binary(=contract))
-| (package(nemoclaw-sdk) & test(plan_and_apply_refuse_cluster_port_changes_with_separate_state_files))
 | (package(nemoclaw-test-fixtures) & binary(=ssh_relay))
 | (package(nemoclaw-fixture-provider) & binary(=archive))
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^sandbox_readiness::/) | test(/^deployment::/)
-    | test(/^cluster_credentials::bundled_/)
     | test(/^export_observations::/) | test(/^fabric_deployment::/)
     | test(/^multiple_providers::/) | test(/^remote_service::/)
     | test(/^inference_discovery::/) | test(/^helm_recovery::/)
+    | test(/^travel_example::/)
 ))
 '''
 

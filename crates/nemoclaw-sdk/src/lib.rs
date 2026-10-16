@@ -25,7 +25,7 @@
 pub mod fabric_capabilities;
 pub use nemoclaw_fabric::catalog as fabric_catalog;
 pub mod fabric_config;
-pub mod image_metadata;
+pub use nemoclaw_fabric::image_metadata;
 pub mod image_runtime;
 pub mod json_schema;
 
@@ -78,5 +78,6 @@ pub mod discovery;
 
 mod discovery_graph;
 
+mod inference_catalog;
 /// Read-only inference metadata and direct credential availability.
 pub mod inference_discovery;

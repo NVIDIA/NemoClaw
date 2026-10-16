@@ -3,22 +3,16 @@
 
 use super::OpenShell;
 use nemoclaw_backend::{Error, ObservationError, Row};
-use nemoclaw_openshell::runtime::RuntimeBinding;
+use nemoclaw_openshell::runtime::Launch;
 
-/// Annotation carrying a sandbox's runtime binding.
-pub const RUNTIME: &str = "nemoclaw.nvidia.com/runtime-v1";
+/// Annotation carrying a sandbox's launch.
+pub const LAUNCH: &str = "nemoclaw.nvidia.com/launch-v1";
 /// Annotation carrying a sandbox's policy input.
 pub const POLICY: &str = "nemoclaw.nvidia.com/policy-input-v1";
 
-/// The runtime binding of a Fabric sandbox row.
-pub fn binding(row: &Row) -> Result<RuntimeBinding, ObservationError> {
-    if row.get("agent_runtime").map(String::as_str) != Some("fabric") {
-        return Err(ObservationError::BindingMismatch);
-    }
-    RuntimeBinding::from_json(
-        row.get("runtime_json")
-            .ok_or(ObservationError::Incomplete)?,
-    )
+/// How a sandbox row starts and what its runtime needs from the policy.
+pub fn launch(row: &Row) -> Result<Launch, ObservationError> {
+    Launch::from_json(row.get("launch_json").ok_or(ObservationError::Incomplete)?)
 }
 
 impl OpenShell {

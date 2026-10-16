@@ -19,7 +19,7 @@ Its [bridge protocol](../../image/fabric/bridge_protocol.py) owns command parsin
 | Fabric | Adapter discovery, schemas, native validation, native mapping and execution |
 | Authoring | Generic questions from owner schemas, accepted intent and unresolved work |
 
-`fabric_agent_configuration` applies the public Fabric document after sandbox creation and route setup.
+`fabric_agent` applies the public Fabric document its typed inputs compose after sandbox creation and route setup.
 Unchanged configuration preserves the active handle; a changed document stops the previous runtime before its replacement starts.
 A host process restart waits for explicit apply before starting Fabric so that persisted configuration cannot outrun current gateway routes.
 This resource is reconstructible and separate from immutable sandbox identity and retained deployment bindings.
@@ -51,7 +51,7 @@ A timeout, malformed response, or disconnection leaves the outcome unconfirmed; 
 Prepare and configure compare a generation token atomically before changing the runtime.
 Lifecycle attempts invalidate the token even when they fail; rejected requests and confirmed no-ops preserve it.
 Snapshot reads remain available during invocation and stop.
-Apply uses configure directly; prepare is a separate bridge operation.
+Apply uses configure directly; removing an agent uses prepare to stop its runtime.
 OpenTofu orders dependency changes before agent configuration through its resource graph.
 The protocol adds no separate maintenance gate, consumer inventory, or requirement to stop agents before dependency updates.
 The deployment’s existing apply lock and resource ownership checks still apply.

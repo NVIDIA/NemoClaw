@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use crate::discovery::{EngineObservation, GATEWAY_PREREQUISITES};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -39,19 +40,17 @@ impl OperationResult {
     pub(super) fn describe_sources(&mut self, document: &Document) -> Result<(), Error> {
         for provider in document.selected_providers()? {
             if provider.key != provider.definition.name {
-                for kind in ["provider", "provider_profile"] {
-                    self.resource_sources.insert(
-                        format!(
-                            "{}.inference_{}",
-                            crate::compile::resource_type(kind),
-                            provider.key
-                        ),
-                        ResourceSource {
-                            name: provider.definition.name.clone(),
-                            path: provider.path.clone(),
-                        },
-                    );
-                }
+                self.resource_sources.insert(
+                    format!(
+                        "{}.inference_{}",
+                        crate::compile::resource_type("inference"),
+                        provider.key
+                    ),
+                    ResourceSource {
+                        name: provider.definition.name.clone(),
+                        path: provider.path.clone(),
+                    },
+                );
             }
         }
         Ok(())
@@ -196,24 +195,22 @@ impl DiscoveryReport {
             );
         }
     }
-    pub(super) fn extend(&mut self, other: Self) {
-        self.targets.extend(other.targets);
-        self.observations.extend(other.observations);
-        self.resources.extend(other.resources);
-        self.credentials.extend(other.credentials);
-    }
+}
+/// The prerequisite read's observation name, for its address.
+fn prerequisites(address: &str) -> Option<String> {
+    let source = crate::compile::data_source_type(GATEWAY_PREREQUISITES);
+    (address == format!("data.{source}.current")).then(|| GATEWAY_PREREQUISITES.to_owned())
 }
 fn observation_name(address: &str) -> Option<String> {
-    if address == "data.nemoclaw_engine_capabilities.current" {
+    if address == "data.host_engine.current" {
         Some("engine".into())
     } else if address == "data.openshell_gateway.current" {
         Some("gateway".into())
     } else {
         [
-            "data.fabric_capabilities.",
-            "data.nemoclaw_runtime_image.",
-            "data.nemoclaw_target_hardware.",
-            "data.nemoclaw_inference_capabilities.",
+            "data.fabric_harnesses.",
+            "data.host_image.",
+            "data.host_engine.",
         ]
         .iter()
         .find_map(|prefix| address.strip_prefix(prefix).map(str::to_owned))
@@ -271,11 +268,13 @@ impl Plan {
                 let Some(address) = resource["address"].as_str() else {
                     continue;
                 };
-                if let Some(name) = observation_name(address) {
+                if let Some(name) = observation_name(address).or_else(|| prerequisites(address)) {
                     result
                         .entry(name)
                         .or_insert_with(|| resource["values"]["observation_json"].clone());
-                } else if let Some(name) = address.strip_prefix("data.nemoclaw_service_readiness.")
+                } else if let Some(name) = crate::services::provider_types::READINESS_TYPES
+                    .iter()
+                    .find_map(|(_, source)| address.strip_prefix(&format!("data.{source}.")))
                 {
                     result.insert(
                         format!("service_{name}"),
@@ -286,11 +285,33 @@ impl Plan {
         }
         for change in &self.resource_changes {
             if change.mode.as_deref() == Some("data")
-                && let Some(name) = observation_name(&change.address)
+                && let Some(name) =
+                    observation_name(&change.address).or_else(|| prerequisites(&change.address))
             {
                 result
                     .entry(name)
                     .or_insert_with(|| change.change.after["observation_json"].clone());
+            }
+        }
+        // A managed gateway's engine facts and its prerequisites are separate
+        // reads, reported as one engine observation; until both complete the
+        // engine is unresolved.
+        if let Some(prerequisites) = result.remove(GATEWAY_PREREQUISITES) {
+            let engine = result
+                .get("engine")
+                .and_then(Value::as_str)
+                .and_then(|engine| serde_json::from_str::<EngineObservation>(engine).ok());
+            if let Some(engine) = engine {
+                let merged = prerequisites
+                    .as_str()
+                    .and_then(|encoded| serde_json::from_str(encoded).ok())
+                    .map(|prerequisites| {
+                        Value::String(
+                            serde_json::to_string(&engine.with_prerequisites(prerequisites))
+                                .expect("engine observation"),
+                        )
+                    });
+                result.insert("engine".into(), merged.unwrap_or(Value::Null));
             }
         }
         result
@@ -298,7 +319,7 @@ impl Plan {
     /// Called only after the existing ownership, drift and transition checks pass.
     pub(super) fn discovery_report(
         &self,
-        scope: DiscoveryScope,
+        runtime: &BTreeSet<String>,
         bindings: &BTreeMap<String, StateBinding>,
         retained: &BTreeSet<String>,
     ) -> Result<DiscoveryReport, Error> {
@@ -373,13 +394,17 @@ impl Plan {
                 .any(|drift| drift.address == change.address && drift.change.actions != ["no-op"]);
             report.resources.push(ResourceInventoryEntry {
                 address: change.address.clone(),
-                scope,
+                scope: if runtime.contains(&change.address) {
+                    DiscoveryScope::Runtime
+                } else {
+                    DiscoveryScope::Deployment
+                },
                 existed,
                 planned_actions: change.change.actions.clone(),
                 drifted,
                 agent_running: change
                     .address
-                    .starts_with("fabric_agent_configuration.")
+                    .starts_with("fabric_agent.")
                     .then(|| {
                         change.change.before["running"]
                             .as_str()
@@ -417,7 +442,7 @@ mod tests {
         let document = Document::parse(input.to_string().as_bytes()).unwrap();
         let mut result = OperationResult::planned(Vec::new());
         result.describe_sources(&document).unwrap();
-        assert_eq!(result.resource_sources.len(), 2);
+        assert_eq!(result.resource_sources.len(), 1);
         assert!(
             result
                 .resource_sources
@@ -440,7 +465,7 @@ mod tests {
         let document = Document::parse(input.to_string().as_bytes()).unwrap();
         let mut result = OperationResult::planned(Vec::new());
         result.describe_sources(&document).unwrap();
-        assert_eq!(result.resource_sources.len(), 2);
+        assert_eq!(result.resource_sources.len(), 1);
         assert!(
             result
                 .resource_sources
@@ -491,27 +516,98 @@ mod tests {
 
     #[test]
     fn query_provenance_copies_only_safe_inputs_not_provider_payloads() {
-        let plan:Plan=serde_json::from_value(json!({"planned_values":{"root_module":{"resources":[{"address":"data.nemoclaw_inference_capabilities.endpoint_0","values":{"endpoint":"https://example.com/v1","api":"openai-completions","credential_env":"API_KEY","credential":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL","observation_json":null}}]}}})).unwrap();
+        let plan:Plan=serde_json::from_value(json!({"planned_values":{"root_module":{"resources":[{"address":"data.host_engine.target_0","values":{"engine":"unix:///var/run/docker.sock","credential":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL","observation_json":null}}]}}})).unwrap();
         let report = plan
-            .discovery_report(
-                DiscoveryScope::Deployment,
-                &BTreeMap::new(),
-                &BTreeSet::new(),
-            )
+            .discovery_report(&BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new())
             .unwrap();
         assert_eq!(
-            report.targets["endpoint_0"].endpoint.as_deref(),
-            Some("https://example.com/v1")
-        );
-        assert_eq!(
-            report.targets["endpoint_0"].credential_env.as_deref(),
-            Some("API_KEY")
+            report.targets["target_0"].engine.as_deref(),
+            Some("unix:///var/run/docker.sock")
         );
         assert!(
             !serde_json::to_string(&report)
                 .unwrap()
                 .contains("PRIVATE_SENTINEL")
         );
+    }
+}
+
+#[cfg(test)]
+mod prerequisite_tests {
+    use super::*;
+    use crate::discovery::{EngineObservation, GatewayPrerequisitesObservation, ObservationStatus};
+
+    fn reported(discovery: Value) -> DiscoveryReport {
+        let plan: Plan = serde_json::from_value(
+            json!({"planned_values":{"outputs":{"discovery":{"value":discovery}}}}),
+        )
+        .unwrap();
+        plan.discovery_report(&BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new())
+            .unwrap()
+    }
+
+    fn facts() -> String {
+        let mut engine = EngineObservation::unknown("");
+        engine.status = ObservationStatus::Available;
+        engine.reason = None;
+        engine.architecture = Some("arm64".into());
+        serde_json::to_string(&engine).unwrap()
+    }
+
+    fn prerequisites(status: ObservationStatus, reason: Option<&str>) -> String {
+        serde_json::to_string(&GatewayPrerequisitesObservation {
+            status,
+            reason: reason.map(str::to_owned),
+        })
+        .unwrap()
+    }
+
+    fn engine(report: &DiscoveryReport) -> EngineObservation {
+        match &report.observations["engine"] {
+            ReportedObservation::Discovery(DiscoveryObservation::Engine(engine)) => engine.clone(),
+            other => panic!("engine observation: {other:?}"),
+        }
+    }
+
+    /// The engine's facts and a managed gateway's prerequisites are separate
+    /// reads; the report states them as one engine observation, whose status
+    /// is the less available of the two.
+    #[test]
+    fn unmet_gateway_prerequisites_make_the_engine_unavailable() {
+        let reason = "Podman sandbox driver requires a Podman engine socket";
+        let report = reported(json!({
+            "engine": facts(),
+            "gateway_prerequisites": prerequisites(ObservationStatus::Unavailable, Some(reason)),
+        }));
+        let engine = engine(&report);
+        assert_eq!(engine.status, ObservationStatus::Unavailable);
+        assert_eq!(engine.reason.as_deref(), Some(reason));
+        assert_eq!(engine.architecture.as_deref(), Some("arm64"));
+        assert!(!report.observations.contains_key("gateway_prerequisites"));
+        let met = reported(json!({
+            "engine": facts(),
+            "gateway_prerequisites": prerequisites(ObservationStatus::Available, None),
+        }));
+        assert_eq!(engine_status(&met), ObservationStatus::Available);
+    }
+
+    fn engine_status(report: &DiscoveryReport) -> ObservationStatus {
+        engine(report).status
+    }
+
+    /// Until its prerequisites are read, a managed gateway's engine is unverified.
+    #[test]
+    fn unread_gateway_prerequisites_leave_the_engine_unresolved() {
+        let report = reported(json!({"engine": facts(), "gateway_prerequisites": null}));
+        assert!(
+            matches!(
+                &report.observations["engine"],
+                ReportedObservation::Plan(PlanObservation::Unresolved { category }) if category == "engine"
+            ),
+            "{:?}",
+            report.observations
+        );
+        assert!(!report.observations.contains_key("gateway_prerequisites"));
     }
 }
 
@@ -525,42 +621,11 @@ mod encoding_tests {
     fn every_observation_kind_keeps_its_report_encoding() {
         let expected = json!({"observations": {
             "engine": {"kind": "engine", "observation": serde_json::to_value(EngineObservation::unknown("unreachable")).unwrap()},
-            "runtime_image_0": {"kind": "runtime_image", "observation": {"status": "available", "source": "engine_image_inspect", "required_version": "1"}},
+            "runtime_image_0": {"kind": "runtime_image", "observation": {"status": "available", "source": "engine_image_inspect"}},
             "service_model": {"kind": "service", "observation": {"ready": null, "source": "service_readiness"}},
             "gateway": {"kind": "unresolved", "observation": {"category": "gateway"}}
         }});
         let report: DiscoveryReport = serde_json::from_value(expected.clone()).unwrap();
         assert_eq!(serde_json::to_value(&report).unwrap(), expected);
-    }
-}
-
-#[cfg(test)]
-mod freshness_tests {
-    use super::*;
-    #[test]
-    fn newer_observation_replaces_an_earlier_unverified_fact_and_its_deferral() {
-        let mut earlier = DiscoveryReport::default();
-        earlier.observations.insert(
-            "gateway".into(),
-            ReportedObservation::Plan(PlanObservation::Unresolved {
-                category: "gateway".into(),
-            }),
-        );
-        assert_eq!(earlier.deferred().len(), 1);
-        let mut later = DiscoveryReport::default();
-        later.observations.insert(
-            "gateway".into(),
-            ReportedObservation::Discovery(DiscoveryObservation::Gateway(
-                crate::discovery::GatewayObservation {
-                    status: crate::discovery::ObservationStatus::Available,
-                    reason: None,
-                    source: "openshell_gateway_info".into(),
-                    capabilities: None,
-                    compatible: Some(true),
-                },
-            )),
-        );
-        earlier.extend(later);
-        assert!(earlier.deferred().is_empty());
     }
 }

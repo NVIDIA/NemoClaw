@@ -60,7 +60,7 @@ fn runtime_targets_with_plans(
             };
             Ok(Target {
                 kind: kind.into(),
-                address: format!("nemoclaw_{kind}.runtime"),
+                address: format!("{}.runtime", crate::compile::resource_type(kind)),
                 values: spec.row()?,
             })
         })
@@ -79,7 +79,6 @@ fn runtime_targets_with_plans(
                 ("chart".into(), crate::kubernetes::gateway::CHART.into()),
             ]),
         });
-        targets.extend(service_plans.targets().cloned());
         return Ok(targets);
     }
     let Some(settings) = document.spec.gateway.as_managed() else {
@@ -106,7 +105,7 @@ fn runtime_targets_with_plans(
         }
         Ok(Target {
             kind: kind.into(),
-            address: format!("nemoclaw_{kind}.runtime"),
+            address: format!("{}.runtime", crate::compile::resource_type(kind)),
             values,
         })
     };
@@ -128,18 +127,17 @@ pub(crate) fn runtime_graph(
         generations,
         crate::services::InstallStage::Runtime,
     )?;
-    let mut graph = graph_base(document, version)?;
+    let mut graph = graph_base(document, generations, version)?;
     if document.spec.gateway.as_kubernetes().is_some() {
-        // Platform resources must be plannable before their gateway credentials
-        // exist, so this stage omits the providers that need them. The
-        // following deployment stage verifies the authenticated API.
-        for name in crate::compile::GATEWAY_PROVIDERS {
-            graph["provider"].as_object_mut().unwrap().remove(name);
-            graph["terraform"]["required_providers"]
-                .as_object_mut()
-                .unwrap()
-                .remove(name);
-        }
+        // Platform resources must be plannable before the gateway exists. The
+        // openshell provider installs it here; the fabric provider only
+        // reaches a running gateway, so this stage omits it. The following
+        // deployment stage verifies the authenticated API.
+        graph["provider"].as_object_mut().unwrap().remove("fabric");
+        graph["terraform"]["required_providers"]
+            .as_object_mut()
+            .unwrap()
+            .remove("fabric");
         graph.as_object_mut().unwrap().remove("data");
         graph.as_object_mut().unwrap().remove("output");
         graph["resource"] = json!({});
@@ -160,23 +158,14 @@ pub(crate) fn runtime_graph(
             }
             attributes["lifecycle"] = json!({"postcondition": [{
                 "condition": "${self.running == \"true\"}",
-                "error_message": if target.kind == crate::kubernetes::services::SERVICE_KIND {
-                    "Managed cluster model reconciliation is incomplete; retain state and storage, correct only the model workload, then run apply again. Gateway, storage, and sandbox intent must remain unchanged."
-                } else {
-                    "Managed Kubernetes reconciliation is incomplete; retain the same configuration and state directory, resolve prerequisites, then run apply again."
-                }
+                "error_message": "Managed Kubernetes reconciliation is incomplete; retain the same configuration and state directory, resolve prerequisites, then run apply again."
             }]});
-            if target.kind == crate::kubernetes::STORAGE_KIND
-                || crate::services::resource_behavior(&target.kind).retained_storage
-            {
+            if target.kind == crate::kubernetes::STORAGE_KIND {
                 attributes["lifecycle"]["prevent_destroy"] = json!(true);
             } else if target.kind == crate::kubernetes::AUTH_KIND {
-                attributes["depends_on"] = json!(["nemoclaw_kubernetes_storage.runtime"]);
+                attributes["depends_on"] = json!(["openshell_kubernetes_storage.runtime"]);
             } else {
                 attributes["depends_on"] = json!([crate::kubernetes::gateway::ADDRESS]);
-            }
-            if let Some(dependencies) = service_plans.dependencies(&target.address) {
-                attributes["depends_on"] = json!(dependencies);
             }
             let (kind, name) = target.address.split_once('.').unwrap();
             graph["resource"][kind][name] = attributes;
@@ -198,7 +187,7 @@ pub(crate) fn runtime_graph(
         "error_message":super::gateway_error_message("self")
     }]});
     if document.spec.gateway.as_managed().is_some() {
-        readiness["depends_on"] = json!(["nemoclaw_managed_gateway.runtime"]);
+        readiness["depends_on"] = json!(["openshell_podman_gateway.runtime"]);
     }
     let targets = runtime_targets_with_plans(document, generations, &service_plans)?;
     for target in &targets {
@@ -218,7 +207,7 @@ pub(crate) fn runtime_graph(
             attrs["lifecycle"] = json!({"prevent_destroy":true});
         }
         if target.kind == GATEWAY_KIND {
-            attrs["depends_on"] = json!(["nemoclaw_gateway_storage.runtime"]);
+            attrs["depends_on"] = json!(["openshell_gateway_storage.runtime"]);
         }
         if let Some(dependencies) = service_plans.dependencies(&target.address) {
             attrs["depends_on"] = json!(dependencies);
@@ -251,7 +240,7 @@ pub(crate) fn compiled_runtime(
         // read; its readiness fails quickly when the container stops.
         let spec = Spec::from_values(GATEWAY_KIND, &gateway.values)?;
         let literal = |value: &str| json!(value.replace("${", "$${").replace("%{", "%%{"));
-        graph["data"]["nemoclaw_gateway_readiness"]["current"] = json!({
+        graph["data"]["openshell_docker_gateway_readiness"]["current"] = json!({
             "engine": literal(spec.engine()),
             "container_id": "${docker_container.managed_gateway_runtime.id}",
             "name": literal(&spec.name),
@@ -264,7 +253,7 @@ pub(crate) fn compiled_runtime(
             .as_array()
             .cloned()
             .unwrap_or_default();
-        dependencies.push(json!("data.nemoclaw_gateway_readiness.current"));
+        dependencies.push(json!("data.openshell_docker_gateway_readiness.current"));
         capabilities["depends_on"] = json!(dependencies);
     }
     for target in targets
@@ -280,11 +269,14 @@ pub(crate) fn compiled_runtime(
         } else {
             crate::services::installers::ollama::RUNTIME_DATA_SOURCE
         };
+        let readiness = crate::services::provider_types::readiness_type(&target.kind)
+            .expect("service containers have readiness");
+        let source = crate::compile::data_source_type(source);
         // Readiness checks the contract the container runs with.
-        graph["data"]["nemoclaw_service_readiness"][logical] = json!({
+        graph["data"][readiness][logical] = json!({
             "engine":literal(spec.engine()),
             "name":literal(&spec.name),
-            "contract":format!("${{data.nemoclaw_{source}.{logical}.spec}}"),
+            "contract":format!("${{data.{source}.{logical}.spec}}"),
             "container_id":format!("${{{container}.id}}"),
             "read_trigger":"${timestamp() != \"\"}",
             "wait_timeout_seconds":9 * 3600

@@ -8,11 +8,14 @@ mod tests;
 
 pub mod agent;
 mod client;
+mod composite;
 mod connected;
+mod driver_config;
 mod gateway_source;
 mod network;
 mod profile;
 mod provider;
+pub use nemoclaw_openshell::pairs::{inference_rows, web_search_rows};
 pub use nemoclaw_openshell::{policy::policy_json, profile::definition as inference_profile};
 mod inference;
 use inference::{PROVIDERS_ENV, inference_environment};
@@ -21,7 +24,10 @@ mod gateway;
 mod transport;
 use nemoclaw_backend::{ObservationError, Row};
 
-pub use client::{GatewayClient, GatewayConfig, GatewaySettings, OpenShellBackend};
+pub use client::{
+    GatewayClient, GatewayConfig, GatewayConnection, GatewaySettings, KubernetesConnection,
+    KubernetesConnector, OpenShellBackend,
+};
 pub use gateway_source::{GatewayDataSource, GatewayState, observe_with_wait};
 pub use nemoclaw_backend::{EnvironmentSecrets, Secrets};
 use nemoclaw_openshell::credential_metadata;
@@ -228,22 +234,15 @@ fn sandbox_row(
         .metadata
         .as_ref()
         .ok_or(ObservationError::Incomplete)?;
-    let agent = meta
-        .labels
-        .get(AGENT)
-        .filter(|v| !v.is_empty())
-        .ok_or(ObservationError::Incomplete)?;
-    let runtime = meta.labels.get(AGENT_RUNTIME).cloned().unwrap_or_default();
-    if runtime != "fabric" {
-        return Err(ObservationError::Incomplete);
-    }
     let spec = sandbox.spec.ok_or(ObservationError::Incomplete)?;
-    let image = spec.template.ok_or(ObservationError::Incomplete)?.image;
+    let template = spec.template.ok_or(ObservationError::Incomplete)?;
+    let driver_config = driver_config::observed(template.driver_config.as_ref());
+    let image = template.image;
     let environment: Row = spec.environment.into_iter().collect();
     let inference = environment.get(PROVIDERS_ENV).cloned().unwrap_or_default();
-    let runtime_json = meta
+    let launch_json = meta
         .annotations
-        .get(agent::RUNTIME)
+        .get(agent::LAUNCH)
         .ok_or(ObservationError::Incomplete)?
         .clone();
     let policy_input = meta
@@ -251,26 +250,23 @@ fn sandbox_row(
         .get(agent::POLICY)
         .ok_or(ObservationError::Incomplete)?
         .clone();
-    let binding = nemoclaw_openshell::runtime::RuntimeBinding::from_json(&runtime_json)?;
+    let launch = nemoclaw_openshell::runtime::Launch::from_json(&launch_json)?;
     let input: nemoclaw_openshell::runtime::PolicyInput =
         serde_json::from_str(&policy_input).map_err(|_| ObservationError::Incomplete)?;
-    let mut expected_environment = binding.environment(agent);
+    let mut expected_environment = launch.environment.clone();
     if !inference.is_empty() {
         expected_environment.insert(PROVIDERS_ENV.into(), inference.clone());
     }
     let observed_policy = spec.policy.as_ref().ok_or(ObservationError::Incomplete)?;
     let grants = network::recorded_grants(&input, observed_policy)?;
-    if policy_json(observed_policy)? != policy_json(&binding.granted_policy(&input, &grants)?)? {
+    if policy_json(observed_policy)? != policy_json(&launch.granted_policy(&input, &grants)?)? {
         return Err(ObservationError::BindingMismatch);
     }
-    let expected_providers = inference::provider_names(&inference, &runtime)?;
+    let expected_providers = inference::provider_names(&inference)?;
     if spec.providers != expected_providers {
         return Err(ObservationError::BindingMismatch);
     }
-    if image.is_empty()
-        || spec.command != binding.command("serve", &["--agent", agent])
-        || environment != expected_environment
-    {
+    if image.is_empty() || spec.command != launch.command || environment != expected_environment {
         return Err(ObservationError::BindingMismatch);
     }
     let phase = sandbox.status.ok_or(ObservationError::Incomplete)?.phase;
@@ -280,12 +276,11 @@ fn sandbox_row(
     }
     let ready = phase == proto::SandboxPhase::Ready && meta.deletion_time.is_none();
     let mut row = base(sandbox.metadata.clone(), name, removing)?;
-    row.insert("agent_name".into(), agent.clone());
-    row.insert("agent_runtime".into(), runtime);
     row.insert("provider_names_json".into(), inference);
     row.insert("image".into(), image);
+    row.insert("driver_config_json".into(), driver_config);
     row.insert("policy_json".into(), policy_input);
-    row.insert("runtime_json".into(), runtime_json);
+    row.insert("launch_json".into(), launch_json);
     // Phase is used by active checks, but is not a Terraform schema attribute.
     Ok((row, ready, grants))
 }
@@ -345,114 +340,25 @@ pub fn verify_identity(expected: &Row, observed: &Row) -> Result<(), Observation
     Ok(())
 }
 
-/// OpenShell objects and their planning rules.
-pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
-    use nemoclaw_tofu::Definition;
-    [
-        Definition::new("workspace", &["name", "owner", "generation"], &[]),
-        Definition::new(
-            "provider",
-            &[
-                "workspace",
-                "name",
-                "owner",
-                "generation",
-                "endpoint",
-                "credential_env",
-                "provider_type",
-                "credential_source",
-                "profile_name",
-            ],
-            // Endpoint and authentication-mode changes also replace the
-            // imported profile. Delete the registration first so the API
-            // permits profile deletion; ordinary key rotation stays mutable.
-            &["credential_env"],
-        )
-        .optional(&[
-            "credential_env",
-            "provider_type",
-            "credential_source",
-            "profile_name",
-        ])
-        // Omission selects the default, not the previous selection.
-        .reset_when_omitted(&["credential_env", "credential_source", "provider_type"])
-        .replaces(authentication_mode_changes),
-        Definition::new(
-            "provider_profile",
-            &[
-                "workspace",
-                "name",
-                "owner",
-                "generation",
-                "endpoint",
-                "provider_type",
-                "authenticated",
-                "binaries_json",
-                "cluster_source",
-            ],
-            &[],
-        )
-        .optional(&[
-            "endpoint",
-            "provider_type",
-            "authenticated",
-            "cluster_source",
-        ])
-        .reset_when_omitted(&["provider_type", "cluster_source"])
-        .bound_fields(&["cluster_source"]),
-        Definition::new(
-            "sandbox",
-            &[
-                "workspace",
-                "name",
-                "owner",
-                "generation",
-                "image",
-                "agent_name",
-                "agent_runtime",
-                "policy_json",
-                "runtime_json",
-                "provider_names_json",
-            ],
-            &[],
-        )
-        .optional(&["agent_runtime", "policy_json", "provider_names_json"]),
-    ]
-    .map(lifecycle_rules)
-    .map(|mut definition| {
-        // Each object names the gateway that holds it; the gateway does not
-        // observe how it was reached, so rows carry the connection.
-        let gateway = nemoclaw_openshell::GATEWAY_FIELDS.map(|(_, field)| field);
-        definition.fields.extend(gateway);
-        // Credential and TLS references rotate in place; another endpoint is
-        // another gateway, which retained objects refuse.
-        definition.mutable.extend(&gateway[1..]);
-        definition.optional.extend(&gateway[1..]);
-        definition.carried.extend(gateway);
-        definition.structured = nemoclaw_openshell::structured_inputs(definition.kind);
-        definition.export = nemoclaw_openshell::export(definition.kind);
-        definition.references = nemoclaw_openshell::references(definition.kind);
-        // Version 1 takes refs instead of names; earlier state is rejected.
-        definition
-            .schema_version(1)
-            .generated("owner", nemoclaw_backend::generate_owner)
-            .generated("generation", nemoclaw_backend::generate_generation)
-    })
+/// A profile's executables change in place only when its observation reported
+/// them empty: the profile was missing, and recreating it leaves the
+/// registration a sandbox attaches in place. Any other change replaces the
+/// resource.
+fn binaries_changes(field: &str, prior: &nemoclaw_tofu::State, _: &nemoclaw_tofu::State) -> bool {
+    use tf_provider::value::Value;
+    field == "binaries_json"
+        && !matches!(prior.get(field), Some(Value::Null) | None)
+        && !matches!(prior.get(field), Some(Value::Value(value)) if value.is_empty() || value == "[]")
 }
 
-/// Retained and stateful objects keep their bindings and refuse replacement.
-fn lifecycle_rules(definition: nemoclaw_tofu::Definition) -> nemoclaw_tofu::Definition {
-    use nemoclaw_openshell::{OpenShellLifecycle, openshell_lifecycle};
-    use nemoclaw_tofu::Protection;
-    match openshell_lifecycle(definition.kind) {
-        Some(OpenShellLifecycle::Retained) => {
-            definition.protect(Protection::Always).refuse_replacement()
-        }
-        Some(OpenShellLifecycle::Stateful) => definition
-            .protect(Protection::UnlessDestroying)
-            .refuse_replacement(),
-        Some(OpenShellLifecycle::Reconstructible) | None => definition,
-    }
+/// An inference resource's replacement rule: authentication mode, then
+/// executables.
+fn inference_changes(
+    field: &str,
+    prior: &nemoclaw_tofu::State,
+    proposed: &nemoclaw_tofu::State,
+) -> bool {
+    authentication_mode_changes(field, prior, proposed) || binaries_changes(field, prior, proposed)
 }
 
 /// Credential references rotate in place; adding or removing authentication
@@ -476,4 +382,147 @@ fn authentication_mode(state: &nemoclaw_tofu::State) -> Option<bool> {
         }
     }
     Some(authenticated)
+}
+
+/// The registration a provider row registers: its name.
+fn provider_registration(known: &Row, unknown: &[&str]) -> Option<String> {
+    (!unknown.contains(&"name")).then(|| known.get("name").cloned().unwrap_or_default())
+}
+
+/// The registration a web search row registers, derived from the inputs that
+/// name it.
+fn web_search_registration(known: &Row, unknown: &[&str]) -> Option<String> {
+    if ["name", "provider_type", "credential_env"]
+        .iter()
+        .any(|field| unknown.contains(field))
+    {
+        return None;
+    }
+    nemoclaw_openshell::registration_name(composite::WEB_SEARCH, known)
+}
+
+/// OpenShell objects and their planning rules.
+pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
+    use nemoclaw_tofu::Definition;
+    [
+        Definition::new("workspace", &["name", "owner", "generation"], &[]),
+        // A web search provider's profile and registration, as one resource
+        // whose owner is its workspace's. Every input names them, so changes
+        // replace. `credential_env` and `binaries` are required by plans,
+        // not the schema: an observation reports them empty when their half
+        // of the pair is missing, which shows as drift.
+        Definition::new(
+            composite::WEB_SEARCH,
+            &[
+                "workspace",
+                "name",
+                "owner",
+                "generation",
+                "provider_type",
+                "credential_env",
+                "binaries_json",
+            ],
+            &["binaries_json"],
+        )
+        .optional(&["credential_env", "binaries_json"])
+        // Omission selects the default, not the previous value.
+        .reset_when_omitted(&["credential_env", "binaries_json"])
+        .replaces(binaries_changes)
+        .derived("registration", web_search_registration),
+        // An inference server's profile and registration, as one resource
+        // whose owner is its workspace's and whose endpoint and credential
+        // come from the server's ref. A rotated credential reference updates
+        // in place, since OpenShell refuses to delete a registration a sandbox
+        // attaches; adding or removing authentication, or any other change,
+        // replaces them. The schema lists the server's fields and `binaries` as
+        // optional, and plans require them, for the same reason as web
+        // search's.
+        Definition::new(
+            composite::INFERENCE,
+            &[
+                "workspace",
+                "name",
+                "owner",
+                "generation",
+                "endpoint",
+                "credential_env",
+                "credential_source",
+                "api",
+                "binaries_json",
+                "cluster_source",
+            ],
+            &["credential_env", "binaries_json"],
+        )
+        .optional(&[
+            "endpoint",
+            "credential_env",
+            "credential_source",
+            "binaries_json",
+            "cluster_source",
+        ])
+        // Omission selects the default, not the previous value.
+        .reset_when_omitted(&[
+            "credential_env",
+            "credential_source",
+            "binaries_json",
+            "cluster_source",
+        ])
+        .replaces(inference_changes)
+        .derived("registration", provider_registration),
+        Definition::new(
+            "sandbox",
+            &[
+                "workspace",
+                "name",
+                "owner",
+                "generation",
+                "image",
+                "launch_json",
+                "policy_json",
+                "provider_names_json",
+                "driver_config_json",
+            ],
+            &[],
+        )
+        .optional(&["policy_json", "provider_names_json", "driver_config_json"]),
+    ]
+    .map(lifecycle_rules)
+    .map(|mut definition| {
+        // Each object names the gateway that holds it; the gateway does not
+        // observe how it was reached, so rows carry the connection.
+        let gateway = nemoclaw_openshell::GATEWAY_FIELDS.map(|(_, field)| field);
+        definition.fields.extend(gateway);
+        // Credential and TLS references rotate in place; another endpoint is
+        // another gateway, which retained objects refuse.
+        definition.mutable.extend(&gateway[1..]);
+        definition.optional.extend(&gateway[1..]);
+        definition.carried.extend(gateway);
+        definition.structured = nemoclaw_openshell::structured_inputs(definition.kind);
+        definition.export = nemoclaw_openshell::export(definition.kind);
+        definition.references = nemoclaw_openshell::references(definition.kind);
+        // Version 1 took refs instead of names; version 2 takes a generic
+        // launch instead of a Fabric runtime binding. Earlier state is rejected.
+        definition
+            .schema_version(2)
+            .generated("owner", nemoclaw_backend::generate_owner)
+            .generated("generation", nemoclaw_backend::generate_generation)
+    })
+}
+
+/// Retained and stateful objects keep their bindings and refuse replacement.
+fn lifecycle_rules(definition: nemoclaw_tofu::Definition) -> nemoclaw_tofu::Definition {
+    use nemoclaw_openshell::{OpenShellLifecycle, openshell_lifecycle};
+    use nemoclaw_tofu::Protection;
+    match openshell_lifecycle(definition.kind) {
+        // OpenTofu's prevent_destroy retains a workspace; generated graphs set
+        // it. Without it, explicit teardown may delete the workspace, as it may
+        // a sandbox.
+        Some(OpenShellLifecycle::Retained) => definition
+            .protect(Protection::UnlessDestroying)
+            .refuse_replacement(),
+        Some(OpenShellLifecycle::Stateful) => definition
+            .protect(Protection::UnlessDestroying)
+            .refuse_replacement(),
+        Some(OpenShellLifecycle::Reconstructible) | None => definition,
+    }
 }

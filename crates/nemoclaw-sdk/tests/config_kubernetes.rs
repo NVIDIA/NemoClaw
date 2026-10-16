@@ -487,7 +487,7 @@ fn kubernetes_rejects_local_managed_gateways_without_an_explicit_target() {
 }
 
 #[test]
-fn kubernetes_services_require_cluster_settings_even_when_no_route_selects_them() {
+fn kubernetes_rejects_managed_services_even_when_no_route_selects_them() {
     let managed =
         Document::parse(include_bytes!("fixtures/config/managed-ollama.yaml").as_slice()).unwrap();
     for mut input in [external_document(), managed_document()] {
@@ -497,103 +497,6 @@ fn kubernetes_services_require_cluster_settings_even_when_no_route_selects_them(
         assert!(!jsonschema::is_valid(&schema::input_schema(), &input));
         document.spec.services = managed.spec.services.clone();
         assert!(document.validate().is_err());
-    }
-}
-
-/// The managed Ollama fixture's services, with complete cluster settings and
-/// optionally the container limits a cluster service needs.
-fn services_with_cluster_settings(limits: bool) -> Value {
-    let managed =
-        Document::parse(include_bytes!("fixtures/config/managed-ollama.yaml").as_slice()).unwrap();
-    let mut services = serde_json::to_value(managed.spec.services).unwrap();
-    services["ollama-server"]["kubernetes"] = json!({
-        "imageMetadata": {"env": "SERVICE_IMAGE_METADATA"},
-        "cpuRequestMillis": 1000,
-        "memoryRequestGiB": 32,
-        "storageGiB": 20
-    });
-    if limits {
-        services["ollama-server"]["container"] =
-            json!({"cpuLimitMillis": 4000, "memoryLimitGiB": 64});
-    }
-    services
-}
-
-#[test]
-fn managed_cluster_gateways_accept_complete_cluster_settings_that_external_gateways_reject() {
-    let mut openshift = managed_document();
-    openshift["spec"]["gateway"]["runtime"] = json!({"provider": "openshift"});
-    for gateway in [managed_document(), openshift] {
-        let mut input = gateway.clone();
-        input["spec"]["services"] = services_with_cluster_settings(true);
-        assert!(jsonschema::is_valid(&schema::input_schema(), &input));
-        Document::parse(input.to_string().as_bytes()).unwrap();
-
-        input["spec"]["services"] = services_with_cluster_settings(false);
-        let error = Document::parse(input.to_string().as_bytes())
-            .unwrap_err()
-            .to_string();
-        assert!(
-            error.starts_with("configuration violates schema at spec.services.ollama-server (")
-                && error.ends_with("cluster model services require container.cpuLimitMillis"),
-            "{error}"
-        );
-    }
-    // An external gateway cannot provision a model service, even a complete one.
-    let mut input = external_document();
-    input["spec"]["services"] = services_with_cluster_settings(true);
-    let error = Document::parse(input.to_string().as_bytes())
-        .unwrap_err()
-        .to_string();
-    assert!(
-        error.starts_with("configuration violates schema at spec.services ("),
-        "{error}"
-    );
-    assert!(!jsonschema::is_valid(&schema::input_schema(), &input));
-    let mut document = Document::parse(external_document().to_string().as_bytes()).unwrap();
-    document.spec.services = serde_json::from_value(services_with_cluster_settings(true)).unwrap();
-    let error = document.validate().unwrap_err().to_string();
-    assert!(
-        error.starts_with("configuration violates schema at spec.services:"),
-        "{error}"
-    );
-}
-
-#[test]
-fn local_engine_gateways_reject_cluster_service_settings() {
-    let source = include_bytes!("fixtures/config/managed-ollama.yaml");
-    let docker = serde_json::to_value(Document::parse(source.as_slice()).unwrap()).unwrap();
-    for limits in [true, false] {
-        let mut input = docker.clone();
-        input["spec"]["services"] = services_with_cluster_settings(limits);
-        let error = Document::parse(input.to_string().as_bytes())
-            .unwrap_err()
-            .to_string();
-        assert!(
-            error.starts_with("configuration violates schema at spec.services.ollama-server ("),
-            "{error}"
-        );
-        assert!(!jsonschema::is_valid(&schema::input_schema(), &input));
-
-        let mut document = Document::parse(source.as_slice()).unwrap();
-        document.spec.services =
-            serde_json::from_value(services_with_cluster_settings(limits)).unwrap();
-        let error = document.validate().unwrap_err().to_string();
-        assert!(
-            error.starts_with("configuration violates schema at spec.services.ollama-server:"),
-            "{error}"
-        );
-        // With its limits, the service fails only because of its cluster settings.
-        if limits {
-            assert!(!error.contains("container"), "{error}");
-        }
-
-        // The same service without its cluster settings is a valid Docker service.
-        input["spec"]["services"]["ollama-server"]
-            .as_object_mut()
-            .unwrap()
-            .remove("kubernetes");
-        Document::parse(input.to_string().as_bytes()).unwrap();
     }
 }
 

@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nemoclaw_provider::openshell::{OpenShell, verify_identity};
 use nemoclaw_sdk::{
     ObservationError, Secrets,
     backend::{Backend, Row},
     config::{Gateway, SearchProvider, search_provider_name},
 };
+use openshell_provider::{OpenShell, verify_identity};
 use openshell_sdk::raw::proto;
 use std::sync::Arc;
 
@@ -31,6 +31,7 @@ async fn revision(client: &OpenShellClient, sandbox: &SandboxRef) -> u64 {
         .get_sandbox_provider_environment(proto::GetSandboxProviderEnvironmentRequest {
             sandbox_id: sandbox.id.clone(),
             supports_static_credential_bindings: true,
+            supports_stable_placeholder_environment_keys: false,
         })
         .await
         .unwrap()

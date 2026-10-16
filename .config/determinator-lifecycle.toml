@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Runtime inputs and build/test environment outside the lifecycle packages.
+# Unclassified inputs run all checks, including shared fixtures outside packages.
+[[path-rule]]
+globs = ["examples/**", "runtimes/**", "image/**", "schemas/**", "LICENSE", "versions.json", "rust-toolchain.toml", ".cargo/**", ".config/**", ".github/actions/**", ".github/workflows/rust.yml", ".github/workflows/bundle-platform.yml", ".github/workflows/validation-plan.yml"]
+mark-changed = "all"
+
+[[path-rule]]
+globs = ["docs/**", "fern/**", "tools/**", ".github/**", ".agents/**", ".claude/**", "deny.toml", ".pre-commit-config.yaml", "AGENTS.md", "WRITING.md"]
+mark-changed = []

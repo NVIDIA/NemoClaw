@@ -6,32 +6,30 @@
 pub use nemoclaw_tofu::*;
 
 mod capacity;
-pub mod cluster_services;
 mod discovery;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "../../test-support/executable.rs"]
 mod executable;
 mod gateway;
 pub mod hardware;
-mod hardware_data;
-mod inference_discovery;
+mod host_engine;
+mod host_image;
 pub mod kubernetes;
+mod ollama_model;
 mod provider;
 mod readiness;
 mod runtime_contract;
-mod runtime_image;
-pub use provider::NemoClawProvider;
+pub use provider::{GatewayInstallation, HostProvider, ServiceProvider};
 
-/// The definition this provider serves for a resource kind.
+/// The definition this crate implements for a resource kind, whichever
+/// provider serves it.
 pub fn resource_definition(kind: &str) -> Option<Definition> {
-    provider::definitions()
+    provider::all_definitions()
         .into_iter()
         .find(|definition| definition.kind == kind)
 }
 
 /// OpenShell resource operations owned by this provider.
-pub use openshell_provider as openshell;
-
 pub mod docker;
 pub mod hardware_observation;
 pub mod managed;

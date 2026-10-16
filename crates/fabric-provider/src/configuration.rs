@@ -89,14 +89,64 @@ async fn configuration_parent(
     let mut expected = want.clone();
     expected.insert("id".into(), value(want, "sandbox_id").into());
     verify_identity(&expected, &parent)?;
-    if value(&parent, "agent_runtime") != "fabric" || value(want, "sandbox_id").is_empty() {
+    if value(want, "sandbox_id").is_empty() {
         return Err(ObservationError::BindingMismatch);
     }
-    Ok(Some(parent))
+    fabric_binding(parent).map(Some)
+}
+
+/// The sandbox `want` names by identity, with the Fabric agent and runtime
+/// binding its launch metadata records.
+pub(crate) async fn bound_sandbox(client: &OpenShell, want: &Row) -> Result<Row, ObservationError> {
+    configuration_parent(client, want, false)
+        .await?
+        .ok_or(ObservationError::BindingMismatch)
+}
+
+/// A sandbox row with the Fabric agent name and runtime binding its launch
+/// metadata records; a sandbox that Fabric did not launch is refused.
+pub fn fabric_binding(mut sandbox: Row) -> Result<Row, ObservationError> {
+    use nemoclaw_openshell::runtime::{LAUNCH_AGENT, LAUNCH_AGENT_RUNTIME, LAUNCH_RUNTIME, Launch};
+    let launch = Launch::from_json(
+        sandbox
+            .get("launch_json")
+            .ok_or(ObservationError::Incomplete)?,
+    )?;
+    let metadata = |key: &str| {
+        launch
+            .metadata
+            .get(key)
+            .filter(|value| !value.is_empty())
+            .cloned()
+            .ok_or(ObservationError::BindingMismatch)
+    };
+    if metadata(LAUNCH_AGENT_RUNTIME)? != "fabric" {
+        return Err(ObservationError::BindingMismatch);
+    }
+    sandbox.insert("agent_name".into(), metadata(LAUNCH_AGENT)?);
+    sandbox.insert("agent_runtime".into(), "fabric".into());
+    sandbox.insert("runtime_json".into(), metadata(LAUNCH_RUNTIME)?);
+    Ok(sandbox)
 }
 pub(crate) async fn plan(client: &OpenShell, want: &Row) -> Result<(), Error> {
-    configuration(value(want, "config_json"))?;
-    configuration_parent(client, want, false).await?;
+    let config = configuration(value(want, "config_json"))?;
+    let sandbox = configuration_parent(client, want, false)
+        .await?
+        .ok_or(ObservationError::BindingMismatch)?;
+    // The sandbox launches one agent with one harness; configure only that.
+    if config["metadata"]["name"] != value(&sandbox, "agent_name") {
+        return Err(Error::Conflict(
+            "the agent name must match the agent its sandbox launches",
+        ));
+    }
+    let binding: Value = serde_json::from_str(value(&sandbox, "runtime_json"))
+        .map_err(|_| ObservationError::BindingMismatch)?;
+    let image = value(want, "harness_image");
+    if binding["adapter_id"] != config["harness"]["adapter_id"]
+        || (!image.is_empty() && image != value(&sandbox, "image"))
+    {
+        return Err(Error::Conflict("the sandbox does not launch this harness"));
+    }
     Ok(())
 }
 pub(crate) async fn read(
@@ -179,9 +229,32 @@ pub(crate) async fn remove(
     prior: &Row,
     _destroying: bool,
 ) -> Result<(), ObservationError> {
-    read(client, prior, true).await?;
-    // The sandbox owns this runtime. Forgetting its configuration binding
-    // must not mutate or delete a runtime independently of that sandbox.
+    // A sandbox that is already gone took its agent with it.
+    let Some(parent) = configuration_parent(client, prior, true).await? else {
+        return Ok(());
+    };
+    if value(prior, "id") != value(&parent, "id") {
+        return Err(ObservationError::BindingMismatch);
+    }
+    // Removing the agent stops it, as removing an attachment does: Fabric stops
+    // its runtime and the host forgets the configuration. The sandbox stays.
+    let snapshot = client
+        .agent_snapshot(&parent)
+        .await
+        .map_err(Error::into_observation)?;
+    if snapshot.runtime_state == "stopped" && snapshot.applied_config.is_none() {
+        return Ok(());
+    }
+    let generation = snapshot.generation.ok_or(ObservationError::Incomplete)?;
+    let config: Value =
+        serde_json::from_str(value(prior, "config_json")).map_err(|_| ObservationError::Query)?;
+    let response =
+        crate::bridge::bridge_input(client, &parent, "prepare", &config, Some(&generation))
+            .await
+            .map_err(Error::into_observation)?;
+    if response.status != "succeeded" {
+        return Err(ObservationError::Incomplete);
+    }
     Ok(())
 }
 pub(crate) async fn configure_agent(client: &OpenShell, binding: &Row) -> Result<(), Error> {

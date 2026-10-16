@@ -7,7 +7,9 @@
 
 use serde_json::Value;
 use std::{
+    collections::BTreeMap,
     fs,
+    io::Read,
     path::Path,
     process::{Command, Stdio},
     time::Duration,
@@ -62,14 +64,30 @@ fn status(command: &mut Command, what: &str) -> Result<()> {
 /// `platform`, and that manifest's config, each kept as its exact bytes.
 /// Layers and attestations are left out, so the bundle stays small.
 pub fn metadata_bundle(archive: &[u8], platform: &str) -> Result<Vec<u8>> {
-    use sha2::{Digest, Sha256};
-    use std::{collections::BTreeMap, io::Read};
-    let (os, architecture) = platform
-        .split_once('/')
-        .ok_or("platform must be os/architecture")?;
-    let mut files = BTreeMap::new();
     let mut tar = tar::Archive::new(archive);
-    for entry in tar.entries().map_err(|_| "invalid image archive")? {
+    let files = metadata_files(tar.entries().map_err(|_| "invalid image archive")?)?;
+    Ok(bundle_from_files(files, platform, None)?.1)
+}
+
+/// Read a named image's metadata from a saved OCI archive, seeking past layers.
+/// Returns its root digest and the verified metadata bundle.
+pub fn archived_image_metadata(
+    archive: &Path,
+    image: &str,
+    platform: &str,
+) -> Result<(String, Vec<u8>)> {
+    let file = fs::File::open(archive).map_err(|_| "cannot open image archive")?;
+    let mut tar = tar::Archive::new(file);
+    let files = metadata_files(
+        tar.entries_with_seek()
+            .map_err(|_| "invalid image archive")?,
+    )?;
+    bundle_from_files(files, platform, Some(image))
+}
+
+fn metadata_files<R: Read>(entries: tar::Entries<'_, R>) -> Result<BTreeMap<String, Vec<u8>>> {
+    let mut files = BTreeMap::new();
+    for entry in entries {
         let mut entry = entry.map_err(|_| "invalid image archive entry")?;
         let path = entry
             .path()
@@ -85,6 +103,18 @@ pub fn metadata_bundle(archive: &[u8], platform: &str) -> Result<Vec<u8>> {
             files.insert(path, bytes);
         }
     }
+    Ok(files)
+}
+
+fn bundle_from_files(
+    files: BTreeMap<String, Vec<u8>>,
+    platform: &str,
+    image: Option<&str>,
+) -> Result<(String, Vec<u8>)> {
+    use sha2::{Digest, Sha256};
+    let (os, architecture) = platform
+        .split_once('/')
+        .ok_or("platform must be os/architecture")?;
     let blob = |digest: &str| -> Result<String> {
         let hex = digest
             .strip_prefix("sha256:")
@@ -105,12 +135,21 @@ pub fn metadata_bundle(archive: &[u8], platform: &str) -> Result<Vec<u8>> {
             .get("index.json")
             .ok_or("image archive lacks index.json")?,
     ))?;
-    let [entry] = outer["manifests"]
+    let entries = outer["manifests"]
         .as_array()
         .map(Vec::as_slice)
-        .unwrap_or_default()
-    else {
-        return Err("image archive must hold exactly one image".into());
+        .unwrap_or_default();
+    let matching: Vec<_> = entries
+        .iter()
+        .filter(|entry| {
+            image.is_none_or(|name| entry["annotations"]["io.containerd.image.name"] == name)
+        })
+        .collect();
+    let [entry] = matching.as_slice() else {
+        return Err(match image {
+            Some(name) => format!("image archive must hold exactly one entry for {name}"),
+            None => "image archive must hold exactly one image".into(),
+        });
     };
     let root = entry["digest"]
         .as_str()
@@ -150,10 +189,11 @@ pub fn metadata_bundle(archive: &[u8], platform: &str) -> Result<Vec<u8>> {
         return Err(format!("image manifest config does not match {platform}"));
     }
     blobs.insert(config, config_raw);
-    serde_json::to_vec(
+    let bundle = serde_json::to_vec(
         &serde_json::json!({"schema_version": 1, "manifest_digest": manifest, "blobs": blobs}),
     )
-    .map_err(|_| "cannot encode the image metadata bundle".into())
+    .map_err(|_| "cannot encode the image metadata bundle")?;
+    Ok((root, bundle))
 }
 
 /// Save `image` from the local Docker engine and write its metadata bundle

@@ -42,10 +42,10 @@ fn declared_services_install_once_and_service_ref_selects_the_inference_connecti
             .any(|target| target.address == "docker_container.ollama_service_unused")
     );
     let graph = compile(&document, &generations, "0.1.0").unwrap();
-    assert_eq!(
-        provider_scope::resource(&graph["resource"]["openshell_provider_profile"], "local")["authenticated"],
-        "false"
-    );
+    let server =
+        &provider_scope::resource(&graph["resource"]["openshell_inference"], "local")["server"];
+    assert_eq!(server["credential_env"], "");
+    assert_eq!(server["credential_source"], "");
     assert_eq!(
         document.inference_endpoint().unwrap(),
         "http://172.20.0.1:18888/v1"
@@ -90,15 +90,14 @@ async fn resolved_backend_can_be_used_directly_and_preserves_explicit_destroy_gu
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
     listener.set_nonblocking(true).unwrap();
     let row = [("engine".into(), format!("unix://{}", socket.display()))].into();
-    for kind in ["ollama_proxy_storage", "ollama_external_model"] {
-        let backend: Box<dyn Backend> = registry.resolve(kind, &row).unwrap().unwrap();
-        assert_eq!(
-            backend.remove(kind, &row, false).await,
-            Err(ObservationError::Backend(
-                "proxy deletion requires explicit destroy"
-            ))
-        );
-    }
+    let kind = "ollama_proxy_storage";
+    let backend: Box<dyn Backend> = registry.resolve(kind, &row).unwrap().unwrap();
+    assert_eq!(
+        backend.remove(kind, &row, false).await,
+        Err(ObservationError::Backend(
+            "proxy deletion requires explicit destroy"
+        ))
+    );
     assert_eq!(
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock

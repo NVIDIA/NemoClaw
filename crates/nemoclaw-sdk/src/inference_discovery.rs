@@ -9,6 +9,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+pub use crate::inference_catalog::observe_endpoint;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EndpointRequest {
     pub endpoint: String,
@@ -41,8 +43,7 @@ impl EndpointRequest {
             credential_env: credential.map(|credential| credential.env.clone()),
         }))
     }
-    pub fn validate(&self) -> Result<(), Error> {
-        crate::config::validate_endpoint(&self.endpoint, false)?;
+    fn validate_credential(&self) -> Result<(), Error> {
         if let Some(reference) = &self.credential_env {
             crate::config::schema::validate_definition(
                 "Credential",
@@ -52,6 +53,10 @@ impl EndpointRequest {
             )?;
         }
         Ok(())
+    }
+    pub fn validate(&self) -> Result<(), Error> {
+        crate::config::validate_endpoint(&self.endpoint, false)?;
+        self.validate_credential()
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

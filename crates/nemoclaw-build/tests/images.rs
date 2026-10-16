@@ -52,11 +52,38 @@ fn the_reference_image_carries_a_catalog_so_deployments_can_select_it() {
 
 #[test]
 fn builds_require_one_of_the_qualified_platforms() {
-    assert_eq!(PLATFORMS, ["linux/arm64", "linux/amd64"]);
     // Rejected before Docker runs, so this needs no daemon.
     let error = plan(Path::new("."), "linux/riscv64", &["agents".into()]).unwrap_err();
     assert!(error.contains("--platform"), "{error}");
+    for platform in PLATFORMS {
+        assert!(error.contains(platform), "{error}");
+    }
 }
+
+/// A Bake file whose `agents` group builds `armonly` only for linux/arm64.
+const PLATFORM_BAKE: &str = r#"variable "AGENT_PLATFORM" {
+  default = "linux/arm64"
+}
+
+group "agents" {
+  targets = AGENT_PLATFORM == "linux/amd64" ? ["shared"] : ["armonly", "shared"]
+}
+
+target "shared" {
+  platforms = [AGENT_PLATFORM]
+  tags      = ["fixture/shared:local"]
+}
+
+target "armonly" {
+  platforms = [AGENT_PLATFORM]
+  tags      = ["fixture/armonly:local"]
+}
+
+target "reference" {
+  platforms = [AGENT_PLATFORM]
+  tags      = ["fixture/reference:local"]
+}
+"#;
 
 #[test]
 fn harnesses_missing_from_the_selected_platform_name_the_platforms_that_build_them() {
@@ -69,22 +96,24 @@ fn harnesses_missing_from_the_selected_platform_name_the_platforms_that_build_th
         eprintln!("skipping: docker buildx is unavailable");
         return;
     }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let error = plan(&root, "linux/amd64", &["openclaw".into(), "hermes".into()]).unwrap_err();
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("docker-bake.hcl"), PLATFORM_BAKE).unwrap();
+    let root = directory.path();
+    let error = plan(root, "linux/amd64", &["shared".into(), "armonly".into()]).unwrap_err();
     assert_eq!(
         error,
-        "hermes is built only for linux/arm64; linux/amd64 builds deepagents, openclaw (docs/build.md#build-agent-images)"
+        "armonly is built only for linux/arm64; linux/amd64 builds shared (docs/build.md#build-agent-images)"
     );
     let planned = |platform, name: &str| {
-        plan(&root, platform, &[name.into()])
+        plan(root, platform, &[name.into()])
             .unwrap()
             .into_iter()
             .map(|(target, _)| target)
             .collect::<Vec<_>>()
     };
-    assert_eq!(planned("linux/amd64", "openclaw"), ["openclaw"]);
-    assert_eq!(planned("linux/arm64", "hermes"), ["hermes"]);
+    assert_eq!(planned("linux/amd64", "shared"), ["shared"]);
+    assert_eq!(planned("linux/arm64", "armonly"), ["armonly"]);
     // Selections that are not harnesses keep Bake's own resolution.
-    assert_eq!(planned("linux/amd64", "dummy"), ["dummy"]);
-    assert!(plan(&root, "linux/amd64", &["no-such-target".into()]).is_err());
+    assert_eq!(planned("linux/amd64", "reference"), ["reference"]);
+    assert!(plan(root, "linux/amd64", &["no-such-target".into()]).is_err());
 }

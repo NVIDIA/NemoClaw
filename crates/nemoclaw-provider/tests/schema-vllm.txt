@@ -1,0 +1,198 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The vllm provider's schema, rendered by nemoclaw-test-fixtures.
+# Regenerate it after an intended change:
+#   NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-provider --test integration schema::
+# Lines starting with > quote descriptions; tf-provider's placeholder
+# description `empty` is omitted. Blocks are version 1 unless shown.
+
+provider vllm (version 0)
+  destroy: bool, optional
+
+resource vllm_credential_storage (version 0)
+  engine: string, required
+  generation: string, optional, computed
+  id: string, computed
+  name: string, required
+  owner: string, optional, computed
+
+data vllm_capacity (version 0)
+  compatible: bool, computed
+  contracts: list(string), required
+  engine: string, required
+  observed_bytes: number, computed
+  required_bytes: number, computed
+
+data vllm_readiness (version 0)
+  container_id: string, optional
+  contract: string, required
+  endpoint: string, optional
+  engine: string, optional
+  name: string, optional
+  read_trigger: bool, optional
+  ready: bool, computed
+  ref: object({ credential_env = string, credential_source = string, endpoint = string, model = string, type = string }), computed
+  sandbox_endpoint: string, optional
+  wait_timeout_seconds: number, optional
+
+data vllm_runtime (version 0)
+  > Computes a runtime contract from typed settings without contacting any host.
+  authentication: string, optional
+    > Optional native bearer authentication. The runtime uses a key supplied in NEMOCLAW_INFERENCE_KEY, or generates and retains one in its credential storage; omission preserves unauthenticated serving.
+  launch: object({ command = list(string), data_path = string, entrypoint = list(string), environment = map(string), key_env = string, port = number }), computed
+    > What any platform runs: entrypoint, command, environment (including the contract), the port the server listens on, the path for its data, and key_env, the variable an authenticated server reads a supplied API key from (empty without authentication). Place it with any container platform.
+  requirements: object({ gpu = bool, shared_memory_bytes = number, ulimits = map(number) }), computed
+    > What the runtime needs from its platform: a GPU, shared memory (a recommended minimum), and process limits by name, where -1 is unlimited. Platforms that cannot set process limits leave them to the node.
+  spec: string, computed
+    > Validated runtime specification for the container's NEMOCLAW_RUNTIME_SPEC environment variable.
+  block hardware: optional
+    > Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe.
+    architecture: string, optional
+      > CPU architecture; this dedicated-memory contract requires amd64.
+    min_compute_capability: number, optional
+      > Minimum NVIDIA compute capability, encoded as major times ten plus minor; 90 means 9.0.
+    min_driver_major: number, optional
+      > Minimum installed NVIDIA driver major version.
+    min_gpu_memory_bytes: number, optional
+      > Minimum total dedicated GPU memory in bytes. Host RAM is measured separately.
+    profile: string, optional
+      > GPU family and memory architecture. Every profile requires observed compute capability and driver major 580 or newer. Unified-memory profiles budget host RAM; dedicated-memory profiles require GPU total/free counters.
+  block memory: optional
+    > GPU budget and resident watchdog thresholds. Omission selects the SDK defaults.
+    consecutive_samples: number, optional
+      > Consecutive low-memory samples before the watchdog stops the owned process.
+    free_gate_gib: number, optional
+      > Available-memory gate in GiB for minFreeGiB. Must be at least minAvailableGiB after defaults.
+    gpu_memory_gib: number, optional
+      > Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.
+    gpu_memory_utilization: number, optional
+      > Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.
+    host_reserve_gib: number, optional
+      > Host memory reserve in GiB excluded from the serving budget.
+    kv_cache_gib: number, optional
+      > KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.
+    min_available_gib: number, optional
+      > Available-memory threshold in GiB that contributes a low-memory sample.
+    min_free_gib: number, optional
+      > Free-memory threshold in GiB, used when available memory is below freeGateGiB.
+  block model: single
+    > Public Hugging Face repository and immutable commit.
+    repository: string, required
+      > Public Hugging Face owner/repository name.
+    revision: string, required
+      > Full lowercase 40-hex commit revision; branches and tags are rejected.
+  block recipe: optional
+    > Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware.
+    api_version: string, required
+      > Inline recipe protocol version.
+    licenses: list(string), required
+      > Nonempty list of absolute paths to retained license files inside the image.
+    source_notices: list(string), required
+      > Nonempty list of absolute paths to retained source notices inside the image.
+    block compatibility: single
+      > Required execution host and image capabilities; declaring them does not establish live qualification.
+      architecture: string, required
+        > Execution host CPU architecture.
+      gpu: string, required
+        > GPU name that must equal the observed device name.
+      image_labels: map(string), required
+        > Required org.nemoclaw.* labels. org.nemoclaw.recipe.protocol must equal v1.
+      min_driver_major: number, required
+        > Minimum NVIDIA driver major version.
+      min_host_memory_gib: number, required
+        > Minimum total host memory in GiB.
+    block preparation: single
+      > Executable that prepares candidate model data.
+      executable: string, required
+        > Absolute path to the executable inside the image. Traversal and empty path components are rejected.
+      sha256: string, required
+        > Lowercase SHA-256 of the executable file.
+    block resources: single
+      > Preparation capacity, GPU budget, and startup headroom.
+      gpu_memory_bytes: number, required
+        > Total serving GPU budget in bytes, including model, caches, and other allocations.
+      preparation_memory_gib: number, required
+        > Preparation memory requirement in GiB, in addition to the service host reserve.
+      prepared_bytes: number, required
+        > Maximum total prepared-data bytes.
+      startup_headroom_gib: number, required
+        > Additional available-memory headroom in GiB required at startup.
+    block reuse: optional
+      > Optional cache import. The new recipe must verify the imported data before accepting it.
+      preparation_key: string, required
+        > SHA-256 preparation key identifying previously prepared data.
+      snapshot_directory: string, required
+        > Existing snapshot directory relative to /data. Traversal, backslashes, and empty path components are rejected.
+    block serving: single
+      > Recipe-specific vLLM settings.
+      chunked_prefill: bool, optional
+        > Enable chunked prefill.
+      environment: map(string), optional
+        > Literal VLLM_* environment values for serving. Do not place credentials here.
+      kv_cache_dtype: string, optional
+        > KV cache dtype understood by the pinned vLLM image. Empty omits the flag.
+      lazy_loading: bool, optional
+        > Enable the lazy safetensors loading strategy.
+      mamba_cache_dtype: string, optional
+        > Mamba SSM cache dtype understood by the pinned vLLM image. Empty omits the flag.
+      model_name: string, required
+        > Model identifier advertised by vLLM. The primary route model must match it.
+      prepared_environment: map(string), optional
+        > VLLM_* variables mapped to paths beneath verified prepared data; . selects its root. Names must not also appear in environment.
+      reasoning_parser: string, optional
+        > Native vLLM reasoning parser supplied by the runtime image. Empty omits the flag.
+      tool_parser: string, optional
+        > Native vLLM tool parser supplied by the runtime image. Empty omits the flag.
+      block compilation: optional
+        > Optional typed compilation settings. Omission selects compilation mode 0 for recipe serving.
+        capture_sizes: list(number), required
+          > Nonempty list of CUDA graph capture sizes.
+        cudagraph_mode: string, required
+          > CUDA graph execution mode.
+        mode: number, required
+          > Compilation mode understood by the pinned vLLM image.
+    block snapshot: optional
+      > Optional pinned file manifest. When omitted, the SDK resolves the model inventory.
+      > When present, its repository and revision must match service.model.
+      repository: string, required
+        > Repository identity, which must match service.model.repository when used in a recipe.
+      revision: string, required
+        > Immutable commit, which must match service.model.revision when used in a recipe.
+      block files: list
+        > Nonempty inventory of pinned model files.
+        name: string, required
+          > Relative file path. Traversal and reserved NemoClaw metadata names are rejected.
+        sha256: string, required
+          > Lowercase SHA-256 of the complete file.
+        size: number, required
+          > Expected file length in bytes; zero is rejected.
+    block verification: single
+      > Executable that independently verifies prepared data before publication.
+      executable: string, required
+        > Absolute path to the executable inside the image. Traversal and empty path components are rejected.
+      sha256: string, required
+        > Lowercase SHA-256 of the executable file.
+  block serving: optional
+    > Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options.
+    batch_tokens: number, optional
+      > Maximum tokens in a scheduled batch.
+    context_tokens: number, optional
+      > Maximum model context length in tokens.
+    enforce_eager: bool, optional
+      > Without a recipe, omission or true enables eager execution; false leaves compilation and CUDA graphs at vLLM's native defaults.
+    mamba_backend: string, optional
+      > Native Mamba backend without a recipe. Empty uses vLLM's default; flashinfer selects the pinned image's FlashInfer backend.
+    max_sequences: number, optional
+      > Maximum concurrent sequences.
+    model_name: string, optional
+      > Optional advertised model name without a recipe. Omission uses the model repository; routes must match the advertised name.
+    port: number, optional
+      > Inference listening port. Explicit publication must use this port.
+    reasoning_parser: string, optional
+      > Native vLLM reasoning parser used when no recipe is declared. Empty omits the parser flag.
+    speculative_tokens: number, optional
+      > MTP speculative tokens. Must be zero without a recipe.
+    startup_timeout_seconds: number, optional
+      > Seconds allowed for backend readiness before startup fails.
+    tool_parser: string, optional
+      > Native vLLM tool-call parser used when no recipe is declared. Empty omits the parser flag.

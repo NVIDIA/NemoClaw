@@ -377,7 +377,7 @@ const PREPARE: &[&str] = &[
     "-input=false",
     "-no-color",
     "-auto-approve",
-    "-target=nemoclaw_kubernetes_auth.runtime",
+    "-target=openshell_kubernetes_auth.runtime",
 ];
 
 /// Import starts without the dependency edges a normal installation records.
@@ -463,10 +463,7 @@ impl Fixture {
             name,
             namespace,
         };
-        fixture
-            .deployment
-            .scenario_interrupt_runtime_apply(&document)
-            .unwrap();
+        fixture.deployment.scenario_save_record(&document).unwrap();
         fixture
     }
 
@@ -490,7 +487,7 @@ impl Fixture {
     }
 
     fn stage(&self) -> PathBuf {
-        self.directory.path().join("state/runtime")
+        self.directory.path().join("state")
     }
 
     /// The managed Kubernetes ownership receipt (`kubernetes/receipt.json`).
@@ -555,7 +552,7 @@ impl Fixture {
                 .keys()
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
-            ["nemoclaw_kubernetes_storage.runtime"]
+            ["openshell_kubernetes_storage.runtime"]
         );
         let objects = &self.api.objects;
         assert!(
@@ -687,7 +684,7 @@ async fn cancellation_after_successful_apply_retains_a_resumable_destroy_checkpo
             .keys()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["nemoclaw_kubernetes_storage.runtime"]
+        ["openshell_kubernetes_storage.runtime"]
     );
     let mutations = fixture.api.mutations();
     fixture.finish().await;
@@ -739,8 +736,12 @@ async fn an_interrupted_destroy_recovers_on_retry_without_mutating_during_previe
     let snapshot = |directory: &Path| -> BTreeMap<String, Vec<u8>> {
         files(directory)
             .into_iter()
-            // Preview regenerates the OpenTofu configuration; it is not state.
-            .filter(|name| name != "main.tf.json" && directory.join(name).is_file())
+            // Preview regenerates the OpenTofu configuration and its provider
+            // lock; neither is state.
+            .filter(|name| {
+                !matches!(name.as_str(), "main.tf.json" | ".terraform.lock.hcl")
+                    && directory.join(name).is_file()
+            })
             .map(|name| {
                 let bytes = fs::read(directory.join(&name)).unwrap();
                 (name, bytes)

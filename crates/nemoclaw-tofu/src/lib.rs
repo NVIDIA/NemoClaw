@@ -23,11 +23,17 @@ pub type ValidateSpec = fn(kind: &str, encoded: &str) -> Result<(), nemoclaw_bac
 pub type ValidateAttribute =
     fn(attribute: &str, value: &str) -> Result<(), std::borrow::Cow<'static, str>>;
 
+/// Checks inputs that constrain each other: the known ones, and the names of
+/// those still unknown. Explains a rejection without echoing values.
+pub type ValidateInputs =
+    fn(known: &Row, unknown: &[&str]) -> Result<(), std::borrow::Cow<'static, str>>;
+
+/// Computes an attribute from the known inputs, given the names of those still
+/// unknown; `None` while the inputs it needs are unknown.
+pub type Derive = fn(known: &Row, unknown: &[&str]) -> Option<String>;
+
 /// Generates a value for an omitted identity attribute when a resource is created.
 pub type Generate = fn() -> Result<String, nemoclaw_backend::Error>;
-
-/// Derive an attribute from known inputs, or return `None` while its source is unknown.
-pub type Derive = fn(&Row) -> Result<Option<String>, nemoclaw_backend::ObservationError>;
 
 /// Adds resource context to a diagnostic from the resource's known attributes.
 pub type Describe = fn(error: String, attributes: &Row) -> String;
@@ -63,9 +69,6 @@ pub struct Definition {
     /// Optional inputs the provider generates on create when omitted, then
     /// keeps in state.
     pub generated: Vec<(&'static str, Generate)>,
-    /// Optional inputs whose values must agree with their known source fields.
-    /// Derivation also exposes identities retained by schemas that predate these attributes.
-    pub derived: Vec<(&'static str, Derive)>,
     pub protection: Protection,
     /// Refuse replacement because it would discard retained identity or files.
     pub refuse_replacement: bool,
@@ -75,6 +78,9 @@ pub struct Definition {
     pub replaces: Option<Replaces>,
     pub validate_spec: Option<ValidateSpec>,
     pub validate_attribute: Option<ValidateAttribute>,
+    pub validate_inputs: Option<ValidateInputs>,
+    /// Computed attributes that are functions of the inputs.
+    pub derived: Vec<(&'static str, Derive)>,
     pub describe: Option<Describe>,
     /// Typed inputs carried as JSON in row fields.
     pub structured: Vec<crate::Structured>,
@@ -100,13 +106,14 @@ impl Definition {
             bound_fields: Vec::new(),
             computed: Vec::new(),
             generated: Vec::new(),
-            derived: Vec::new(),
             protection: Protection::None,
             refuse_replacement: false,
             keep_running_during_destroy: false,
             replaces: None,
             validate_spec: None,
             validate_attribute: None,
+            validate_inputs: None,
+            derived: Vec::new(),
             describe: None,
             structured: Vec::new(),
             export: None,
@@ -135,13 +142,6 @@ impl Definition {
         self.generated.push((name, generate));
         self
     }
-    pub fn derived(mut self, name: &'static str, derive: Derive) -> Self {
-        if !self.fields.contains(&name) {
-            self.fields.push(name);
-        }
-        self.derived.push((name, derive));
-        self
-    }
     pub fn protect(mut self, protection: Protection) -> Self {
         self.protection = protection;
         self
@@ -164,6 +164,17 @@ impl Definition {
     }
     pub fn validate_attribute(mut self, validate: ValidateAttribute) -> Self {
         self.validate_attribute = Some(validate);
+        self
+    }
+    pub fn validate_inputs(mut self, validate: ValidateInputs) -> Self {
+        self.validate_inputs = Some(validate);
+        self
+    }
+    /// Compute `name` from the inputs: known while planning once the inputs
+    /// it needs are, and recomputed from every observation.
+    pub fn derived(mut self, name: &'static str, derive: Derive) -> Self {
+        self.computed.push((name, carry_prior));
+        self.derived.push((name, derive));
         self
     }
     /// Expose row `field`, which holds JSON, as the typed input `attribute`.
@@ -246,9 +257,6 @@ impl Definition {
     }
     pub fn is_generated(&self, field: &str) -> bool {
         self.generated.iter().any(|(name, _)| *name == field)
-    }
-    pub fn is_derived(&self, field: &str) -> bool {
-        self.derived.iter().any(|(name, _)| *name == field)
     }
     pub fn is_computed(&self, field: &str) -> bool {
         self.computed.iter().any(|(name, _)| *name == field)
