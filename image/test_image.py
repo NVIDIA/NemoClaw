@@ -97,6 +97,8 @@ class AgentImage(unittest.TestCase):
                     self.assertTrue(os.access(path, os.R_OK | os.X_OK), path)
 
     def test_label_matches_the_image_declarations(self):
+        # The image's own catalog code, which is not on the agent's import path.
+        sys.path.insert(0, "/opt/nemoclaw")
         from catalog import installed
 
         provenance = json.loads(Path("/opt/nemoclaw/provenance.json").read_text())
