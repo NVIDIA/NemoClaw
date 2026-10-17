@@ -12,7 +12,7 @@ See [Fabric's license](fabric/FABRIC-LICENSE) and the notices beside its adapter
 
 Except Hermes, image dependency installation exports Fabric's pinned root `uv.lock` with `uv export --frozen --no-default-groups --no-emit-local`, selecting the Python adapter's extra when present.
 These images install Fabric's locally built wheels alongside the export without independently resolving dependency versions.
-Hermes retains `fabric/hermes-dependencies.lock` because Fabric's Hermes extra excludes the native checkout and its build dependencies.
+Hermes retains `fabric/hermes-dependencies.lock` because Fabric's Hermes extra excludes the native checkout, its build dependencies, and Hermes's `mcp` extra, which MCP servers configured through Fabric need.
 Its image applies Fabric's exact upstream patch; [the Hermes source notice](fabric/HERMES-NOTICE.md) records the revisions and modification.
 
 OpenClaw installs the pinned search plugin archives through its native installer; the image packages them in OpenClaw’s bundled-plugin directory.

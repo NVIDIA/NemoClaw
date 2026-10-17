@@ -127,6 +127,17 @@ class AgentImage(unittest.TestCase):
             versions = {item["version"] for item in packages if item["name"] == package["name"]}
             self.assertIn(installed, versions, package["name"])
 
+    @unittest.skipUnless(os.environ.get("NEMOCLAW_TEST_HARNESS") == "hermes", "Hermes image only")
+    def test_hermes_can_reach_mcp_servers(self):
+        # Fabric's Hermes adapter configures MCP servers natively. Without
+        # Hermes's mcp extra, a server's toolset loads with no tools and no error.
+        sys.path.insert(0, "/opt/hermes")
+        from tools import mcp_tool
+
+        # Hermes loads the MCP SDK on first use.
+        self.assertTrue(mcp_tool._ensure_mcp_sdk(), "Hermes's mcp extra is missing")
+        self.assertTrue(mcp_tool._MCP_HTTP_AVAILABLE, "Hermes can't reach MCP servers over HTTP")
+
     @unittest.skipUnless(os.environ.get("NEMOCLAW_TEST_HARNESS") == "pi", "Pi image only")
     def test_pi_installs_packed_adapters_without_source_tests(self):
         root = Path("/opt/fabric-source")
