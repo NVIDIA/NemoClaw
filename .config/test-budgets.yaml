@@ -56,8 +56,7 @@ binaries:
   nemoclaw-provider::contract:
     summed_seconds: 110
     test_seconds: 10
-  # 62 tests: at most 197 s summed (linux_amd64; 175 s on linux_arm64);
-  # slowest test 7.5 s.
+  # 44 tests: at most 142 s summed; slowest test 8.1 s.
   openshell-provider::contract:
-    summed_seconds: 250
+    summed_seconds: 190
     test_seconds: 12
