@@ -1,4 +1,7 @@
-/target/
+# Any Cargo target directory, including a vendored crate's own.
+target/
+# The vendored tf-provider's own tests make a lockfile NOTICE.md omits.
+/crates/vendor/tf-provider/Cargo.lock
 /.tools/
 /.local/
 /.build/

@@ -140,7 +140,17 @@ impl Fixture {
             server
                 .add_service(InferenceService(service.clone()))
                 .add_service(service)
-                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+                // gRPC replies are small writes; without TCP_NODELAY, each
+                // waits on Nagle's algorithm and the provider's delayed
+                // acknowledgment, about 40 ms per call on Linux.
+                .serve_with_incoming(tokio_stream::StreamExt::map(
+                    tokio_stream::wrappers::TcpListenerStream::new(listener),
+                    |stream| {
+                        let stream = stream?;
+                        stream.set_nodelay(true)?;
+                        Ok::<_, std::io::Error>(stream)
+                    },
+                ))
                 .await
                 .unwrap();
         });
