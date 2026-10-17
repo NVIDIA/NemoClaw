@@ -4846,7 +4846,6 @@ dependencies = [
 [[package]]
 name = "tf-provider"
 version = "0.2.2"
-source = "git+https://github.com/aneoconsulting/tf-provider?rev=d4d1501e5e35d7d8d18184a319192c3f775d25f3#d4d1501e5e35d7d8d18184a319192c3f775d25f3"
 dependencies = [
  "anyhow",
  "async-stream",
