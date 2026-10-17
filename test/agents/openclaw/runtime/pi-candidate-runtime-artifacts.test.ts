@@ -254,11 +254,50 @@ describe("Pi managed model catalog generation", () => {
       try {
         expect(status).not.toBe(0);
         expect(fs.readFileSync(path.join(home, ".pi/agent/settings.json"), "utf8")).toBe(settings);
+        expect(fs.existsSync(path.join(home, ".pi/agent/models.json"))).toBe(false);
       } finally {
         fs.rmSync(home, { recursive: true, force: true });
       }
     },
   );
+
+  it("preserves the previous Pi catalog when settings sync fails (#13362)", () => {
+    const selected = {
+      NEMOCLAW_MODEL: "previous-model",
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+      NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+    };
+    const { home, status, stderr } = generate(selected);
+    try {
+      expect(status, stderr).toBe(0);
+      const configDir = path.join(home, ".pi/agent");
+      const modelsPath = path.join(configDir, "models.json");
+      const settingsPath = path.join(configDir, "settings.json");
+      const previousCatalog = fs.readFileSync(modelsPath);
+      fs.writeFileSync(settingsPath, "{invalid json");
+
+      const failed = spawnSync(
+        process.execPath,
+        [path.join(root, "agents/pi/generate-config.ts")],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: {
+            PATH: process.env.PATH ?? "",
+            HOME: home,
+            ...selected,
+            NEMOCLAW_MODEL: "next-model",
+          },
+        },
+      );
+      expect(failed.status).not.toBe(0);
+      expect(fs.readFileSync(modelsPath)).toEqual(previousCatalog);
+      expect(fs.statSync(modelsPath).mode & 0o777).toBe(0o600);
+      expect(fs.readFileSync(settingsPath, "utf8")).toBe("{invalid json");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
 
   it("updates Pi's managed defaults when the native-local model changes and preserves other settings", () => {
     const selected = {
