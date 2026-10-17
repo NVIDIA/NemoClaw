@@ -72,7 +72,10 @@ network_policies:
           - allow: { method: GET, path: "/v1/models/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
+      - { path: /usr/local/bin/hermes.real }
       - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3.13 }
+      - { path: /usr/bin/python3 }
       - { path: /opt/hermes/.venv/bin/python }
 
   nvidia:
