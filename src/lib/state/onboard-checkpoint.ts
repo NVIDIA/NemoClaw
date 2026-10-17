@@ -400,6 +400,7 @@ function parseSandboxRecreateTransaction(
       "sourceRegistryFingerprint",
       "sourceLiveIdentityFingerprint",
       "sourceWorkload",
+      ...(value.freshOnboard === undefined ? [] : ["freshOnboard"]),
       ...(value.reconcileOpenClawInference === undefined ? [] : ["reconcileOpenClawInference"]),
       "targetIntentFingerprint",
       "targetGeneration",
@@ -441,6 +442,7 @@ function parseSandboxRecreateTransaction(
     !SHA256_PATTERN.test(sourceRegistryFingerprint) ||
     sourceLiveIdentityFingerprint === undefined ||
     sourceWorkload === undefined ||
+    (value.freshOnboard !== undefined && value.freshOnboard !== true) ||
     (value.reconcileOpenClawInference !== undefined && value.reconcileOpenClawInference !== true) ||
     !targetIntentFingerprint ||
     !SHA256_PATTERN.test(targetIntentFingerprint) ||
@@ -466,6 +468,7 @@ function parseSandboxRecreateTransaction(
     sourceRegistryFingerprint,
     sourceLiveIdentityFingerprint,
     sourceWorkload,
+    ...(value.freshOnboard === true ? { freshOnboard: true as const } : {}),
     ...(value.reconcileOpenClawInference === true
       ? { reconcileOpenClawInference: true as const }
       : {}),

@@ -1,19 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { ok } from "node:assert/strict";
 import { expect, it, vi } from "vitest";
 
+import { inspectCheckpoint, serializeCheckpoint } from "../../../state/onboard-checkpoint";
 import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-migrate";
 import { createSession, type Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
+import { shouldReconcileRestoredOpenClawSelection } from "../../onboard-recreate-journal";
 import {
   advanceSandboxRecreateTransaction,
   beginSandboxRecreateTransaction,
+  createSandboxRecreateRuntime,
   fingerprintSandboxRecreateValue,
   recordSandboxRecreateTargetCreated,
   type SandboxRecreateObservation,
 } from "../../sandbox-recreate-transaction";
+import type { SandboxCreateIntent } from "../../types";
 import { handleSandboxState } from "./sandbox";
 import { baseOptions, bindJournaledRecreate, createDeps } from "./sandbox-test-fixtures";
 
@@ -738,9 +743,10 @@ it.each([
   { live: false, resume: false, force: false, fresh: true },
   { live: true, resume: false, force: false, fresh: true },
   { live: true, resume: true, force: false, fresh: false },
-  { live: true, resume: false, force: true, fresh: false },
+  { live: true, resume: false, force: true, fresh: true },
+  { live: true, resume: true, force: true, fresh: false },
 ])(
-  "binds fresh journal authority to the current run (live=$live, resume=$resume, force=$force)",
+  "retains the original selection authority across a pre-delete interruption (live=$live, resume=$resume, force=$force)",
   async ({ live, resume, force, fresh }) => {
     const session = createSession({ sandboxName: "fresh", agent: "openclaw" });
     session.checkpoint = {
@@ -772,28 +778,45 @@ it.each([
       state: live ? "not_ready" : "missing",
       liveIdentityFingerprint: live ? fingerprintSandboxRecreateValue("source-id") : null,
     };
-    const createSandbox = vi.fn(async (...args: unknown[]) => {
-      const transaction = session.checkpoint?.sandboxRecreate;
-      expect(transaction).toBeDefined();
-      expect(args.at(-2)).toMatchObject({
-        recreate: true,
-        recreateTransaction: {
-          id: transaction?.id,
-          targetGeneration: transaction?.targetGeneration,
-        },
-      });
-      expect(
-        (args.at(-2) as { recreateTransaction: { freshNonForced?: true } }).recreateTransaction
-          .freshNonForced === true,
-      ).toBe(fresh);
-      advanceSandboxRecreateTransaction(session, transaction!.id, "creating");
-      observation = {
-        state: "ready",
-        liveIdentityFingerprint: fingerprintSandboxRecreateValue("fresh-id"),
-      };
-      recordSandboxRecreateTargetCreated(session, transaction!.id, observation);
-      return "fresh";
-    });
+    const createSandbox = vi
+      .fn(async (...args: unknown[]) => {
+        const transaction = session.checkpoint?.sandboxRecreate;
+        expect(transaction).toBeDefined();
+        expect(args.at(-2)).toMatchObject({
+          recreate: true,
+          recreateTransaction: {
+            id: transaction?.id,
+            targetGeneration: transaction?.targetGeneration,
+          },
+        });
+        const request = (args.at(-2) as SandboxCreateIntent).recreateTransaction;
+        const reconcile = shouldReconcileRestoredOpenClawSelection("openclaw", false, request, {
+          unknown: false,
+          modelChanged: true,
+          providerChanged: false,
+        });
+        const runtime = createSandboxRecreateRuntime(
+          deps,
+          request,
+          "fresh",
+          "nemoclaw",
+          reservation,
+          () => observation,
+          () => undefined,
+        );
+        runtime.beginDelete(reconcile ? true : undefined);
+        expect(session.checkpoint?.sandboxRecreate?.reconcileOpenClawInference === true).toBe(
+          fresh && live,
+        );
+        advanceSandboxRecreateTransaction(session, transaction!.id, "creating");
+        observation = {
+          state: "ready",
+          liveIdentityFingerprint: fingerprintSandboxRecreateValue("fresh-id"),
+        };
+        recordSandboxRecreateTargetCreated(session, transaction!.id, observation);
+        return "fresh";
+      })
+      .mockRejectedValueOnce(new Error("interrupted before deletion"));
     const { deps } = createDeps(
       {
         getSandboxRegistryEntry: () => reservation,
@@ -803,14 +826,24 @@ it.each([
       session,
     );
 
-    await handleSandboxState({
+    const options = {
       ...baseOptions(deps, session),
       sandboxName: "fresh",
       resume,
       recreateSandbox: () => force,
-    });
+    };
+    await expect(handleSandboxState(options)).rejects.toThrow("interrupted before deletion");
+    const journal = session.checkpoint?.sandboxRecreate;
+    expect(journal?.phase).toBe(live ? "planned" : "deleted");
+    expect(journal?.reconcileOpenClawInference).toBeUndefined();
+    const reloaded = inspectCheckpoint(
+      JSON.parse(JSON.stringify(serializeCheckpoint(session.checkpoint!))),
+    );
+    ok(reloaded.status === "loaded");
+    session.checkpoint = reloaded.checkpoint;
+    await handleSandboxState({ ...options, resume: true });
 
-    expect(createSandbox).toHaveBeenCalledOnce();
+    expect(createSandbox).toHaveBeenCalledTimes(2);
     expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
   },
 );

@@ -339,7 +339,16 @@ Use the recovery guidance that matches the reported check:
 - Resolve an incomplete MCP destroy transaction before retrying.
 - Back up the sandbox state and recreate it with `$$nemoclaw onboard` when the record contains multiple agents. Transactional multi-agent rebuild is not supported.
 - Wait for another onboarding or rebuild operation to finish before retrying. If verified stale-lock cleanup is still in progress, wait briefly and rerun the command. Do not delete the lock manually.
-- Set the live OpenShell inference route to the sandbox's recorded provider and model when rebuild reports route drift.
+- For a sandbox with a recorded native provider attachment, preflight verifies the provider identity and attachment on its recorded gateway.
+  If the provider is missing, changed, or detached, rebuild stops before creating a backup or replacing the sandbox.
+  The existing sandbox remains unchanged.
+  Follow the printed sandbox recreation guidance.
+  Changing the shared inference route does not repair native provider ownership.
+  Prepared recovery also verifies a native hosted attachment while the source sandbox exists.
+  Only explicit source absence permits recovery without that attachment check; provider identity, credentials, retained backup, policy, and journal checks still apply.
+  If OpenShell cannot determine source presence, rebuild stops before gateway recovery or sandbox replacement.
+- For a sandbox without a recorded native provider attachment, follow the shared-route recovery guidance when rebuild reports route drift.
+  Set the shared OpenShell inference route to the sandbox's recorded provider and model, then retry `rebuild`.
 
 <AgentOnly variant="openclaw,hermes">
   Prepared backup recovery reuses its digest-verified pre-upgrade policy handoff
@@ -347,7 +356,8 @@ Use the recovery guidance that matches the reported check:
   before deletion if the handoff is missing or changed.
 </AgentOnly>
 
-A gateway that reports no live inference route does not stop the rebuild. Replacement onboarding configures and verifies the recorded route before it recreates the sandbox.
+For a sandbox without a recorded native provider attachment, an absent shared inference route does not stop the rebuild.
+Replacement onboarding configures and verifies the recorded route before it recreates the sandbox.
 
 <AgentOnly variant="openclaw">
   The rebuild command preserves the mounted workspace and carries the complete

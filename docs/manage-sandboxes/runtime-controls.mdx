@@ -61,7 +61,8 @@ For managed OpenClaw sandboxes, NemoClaw records a verified provider or model ch
 After restoring the backup, it applies that recorded selection to native inference configuration before restarting the gateway.
 Resuming the same recreation also applies the selection when its recreation record already authorizes this update.
 It preserves unrelated native configuration.
-This update excludes forced recreation and custom images.
+A fresh `$$nemoclaw onboard --recreate-sandbox` run also applies this update when it opens a new recreation record.
+Custom images and unknown selections remain excluded.
 It does not infer a selection change from a backup or an older recreation record.
 
 Restart and reconnect preserve the current native configuration.

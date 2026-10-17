@@ -396,23 +396,32 @@ describe("checkpoint schema inspection", () => {
     expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
   });
 
-  it("retains the bounded OpenClaw reconciliation marker when reading a checkpoint (#12667)", () => {
+  it("retains selection authority when reading a recreate checkpoint", () => {
     const serialized = serializedRecreateCheckpoint();
-    (serialized.sandboxRecreate as Record<string, unknown>).reconcileOpenClawInference = true;
+    Object.assign(serialized.sandboxRecreate as Record<string, unknown>, {
+      freshOnboard: true,
+      reconcileOpenClawInference: true,
+    });
     expect(inspectCheckpoint(serialized)).toMatchObject({
       status: "loaded",
-      checkpoint: { sandboxRecreate: { reconcileOpenClawInference: true } },
+      checkpoint: { sandboxRecreate: { freshOnboard: true, reconcileOpenClawInference: true } },
     });
   });
 
-  it.each([false, "true", 1, {}])(
-    "rejects malformed OpenClaw reconciliation authority %j (#12667)",
-    (value) => {
-      const serialized = serializedRecreateCheckpoint();
-      (serialized.sandboxRecreate as Record<string, unknown>).reconcileOpenClawInference = value;
-      expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
-    },
-  );
+  it.each([
+    { reconcileOpenClawInference: false },
+    { reconcileOpenClawInference: "true" },
+    { reconcileOpenClawInference: 1 },
+    { reconcileOpenClawInference: {} },
+    { freshOnboard: false },
+    { freshOnboard: "true" },
+    { freshOnboard: 1 },
+    { freshOnboard: {} },
+  ])("rejects malformed recreate selection authority %j", (invalid) => {
+    const serialized = serializedRecreateCheckpoint();
+    Object.assign(serialized.sandboxRecreate as Record<string, unknown>, invalid);
+    expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
+  });
 
   it("rejects malformed recreate journal fingerprints", () => {
     const serialized = serializedRecreateCheckpoint();

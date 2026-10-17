@@ -680,6 +680,7 @@ function assertSameTransaction(
 }
 
 export interface BeginSandboxRecreateTransactionInput {
+  readonly freshOnboard?: true;
   readonly reconcileOpenClawInference?: true;
   readonly sandboxName: string;
   readonly gatewayName: string;
@@ -719,6 +720,7 @@ function newSandboxRecreateTransaction(
       : fingerprintSandboxRecreateValue(null),
     sourceLiveIdentityFingerprint: input.observation.liveIdentityFingerprint,
     sourceWorkload: input.sourceEntry ? checkpointSourceWorkload(input.sourceEntry) : null,
+    ...(input.freshOnboard ? { freshOnboard: true as const } : {}),
     ...(input.reconcileOpenClawInference ? { reconcileOpenClawInference: true as const } : {}),
     targetIntentFingerprint: input.targetIntentFingerprint,
     targetGeneration: input.targetGeneration ?? randomUUID(),
@@ -1177,6 +1179,7 @@ interface SandboxRecreateTransactionOwnerStore extends SandboxRecreateSessionSto
 }
 
 export interface OwnSandboxRecreateTransactionInput {
+  readonly freshOnboard?: true;
   readonly reconcileOpenClawInference?: true;
   readonly sessionStore: SandboxRecreateTransactionOwnerStore;
   readonly sandboxName: string;
@@ -1194,7 +1197,6 @@ export interface OwnSandboxRecreateTransactionInput {
 }
 
 export interface OwnedSandboxRecreateTransaction {
-  readonly openedWithoutPriorTransaction: boolean;
   readonly session: Session;
   readonly transaction: CheckpointSandboxRecreateTransaction;
   readonly recovery: SandboxRecreateRecoveryPlan;
@@ -1277,6 +1279,7 @@ export function ownSandboxRecreateTransaction(
           sandboxName: input.sandboxName,
           gatewayName: input.gatewayName,
           gatewayPort: input.gatewayPort,
+          freshOnboard: expectedOld ? expectedOld.freshOnboard : input.freshOnboard,
           reconcileOpenClawInference: input.reconcileOpenClawInference,
           sourceEntry: freshRegistryEntry,
           observation: freshObservation,
@@ -1315,7 +1318,6 @@ export function ownSandboxRecreateTransaction(
     );
   }
   return {
-    openedWithoutPriorTransaction: expectedOld === null,
     session: storedSession,
     transaction: writtenTransaction,
     recovery,
@@ -1601,7 +1603,7 @@ export function createSandboxRecreateRuntime(
         );
       }
       const begun = beginSandboxRecreateDelete({
-        ...(request.freshNonForced && reconcileOpenClawInference
+        ...(request.freshOnboard && reconcileOpenClawInference
           ? { reconcileOpenClawInference: true as const }
           : {}),
         sessionStore: { ...sessionStore, compareAndSwapSession: compareAndSwap },
