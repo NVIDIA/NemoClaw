@@ -1,0 +1,46 @@
+[package]
+authors = ["Florian Lemaitre <flemaitre@aneo.fr>"]
+description = "Plugin framework for Terraform and ToFu"
+edition = "2021"
+include = ["**/*.rs", "Cargo.toml", "LICENSE", "README.md", "proto/*.proto"]
+license = "Apache-2.0"
+name = "tf-provider"
+readme = "README.md"
+repository = "https://github.com/aneoconsulting/tf-provider"
+version = "0.2.2"
+
+[profile.release]
+strip = "debuginfo"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0"
+async-stream = "0.3"
+async-trait = "0.1"
+base64 = "0.22"
+futures = "0.3"
+prost = "0.14"
+rcgen = "0.14"
+rmp-serde = "1.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1.0"
+time = "0.3"
+tokio = "1.48"
+tokio-stream = { version = "0.1", features = ["net", "sync"] }
+tokio-util = "0.7"
+tonic = { version = "0.14", features = ["tls-ring", "transport"] }
+tonic-prost = { version = "0.14", features = [] }
+tower-http = { version = "0.6", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "json", "std"] }
+
+[build-dependencies]
+tonic-prost-build = "0.14"
+
+[dev-dependencies]
+rand = "0.10"
+
+# Vendored: an independent workspace, not a NemoClaw workspace member.
+[workspace]

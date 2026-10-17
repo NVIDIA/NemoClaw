@@ -89,3 +89,6 @@ guppy = "0.17"
 
 [patch."https://github.com/NVIDIA/OpenShell"]
 openshell-sdk = { path = "crates/vendor/openshell-sdk" }
+
+[patch."https://github.com/aneoconsulting/tf-provider"]
+tf-provider = { path = "crates/vendor/tf-provider" }

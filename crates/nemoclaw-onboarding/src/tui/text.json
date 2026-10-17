@@ -276,6 +276,7 @@
     "/spec/services/*/hardware/profile": {
       "dgx-spark": "DGX Spark",
       "dgx-station": "DGX Station",
+      "rtx-spark": "RTX Spark",
       "rtx-6000-ada": "RTX 6000 Ada",
       "rtx-pro-6000-blackwell": "RTX PRO 6000 Blackwell",
       "rtx-3090": "RTX 3090",
