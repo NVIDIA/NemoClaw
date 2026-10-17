@@ -20,10 +20,10 @@ cargo ci live-kind
 ```
 
 The runner builds Pi on ARM64 or OpenClaw on AMD64, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
-The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
+The gateway test checks authentication, rejection of forged and expired tokens, repeated install/removal, and retained storage without a Helm executable on `PATH`.
 The agent test uses the public SDK to deploy a gateway and sandbox from that image.
 It supplies a caller-relative kubeconfig and expects apply to fail only at `data.fabric_agent_readiness.assistant`, because the pinned Fabric reports agent health as unsupported ([#13031](https://github.com/NVIDIA/NemoClaw/issues/13031)).
-Export must still reproduce the authored configuration without readiness checks; destroy then retains gateway storage.
+Export must still reproduce the authored configuration without readiness checks; destroy then removes the gateway's release and StatefulSet and keeps the namespace, encryption key, and gateway PVC identities.
 The OpenShift-profile test supplies namespace UID-range annotations on kind and checks that gateway and sandbox pods use the assigned UID through the same SDK flow.
 These three live tests request no inference and need no GPU or credentials.
 The two render tests check the Kubernetes gateway UID and observed OpenShift namespace UID and group, with `runAsNonRoot` retained.
@@ -57,7 +57,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
 
 The test runs the compiled runtime and teardown graphs through the bundled OpenTofu and providers.
 Each OpenTofu process has an empty `PATH` and an isolated home, so a host Helm executable cannot satisfy the test.
-The test creates a fresh namespace, installs the gateway, requires an unchanged plan, verifies authenticated `GetGatewayInfo`, and rejects a forged token.
+The test creates a fresh namespace, installs the gateway, requires an unchanged plan, verifies authenticated `GetGatewayInfo`, and checks that the gateway rejects a forged token and an expired one signed by the deployment's own key.
 It removes and reinstalls the Helm release, then removes it again, checking that the namespace, encryption key, and PVC identities survive both removals.
 It creates no agent sandbox and requests no inference.
 
