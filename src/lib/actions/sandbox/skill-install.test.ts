@@ -271,6 +271,19 @@ describe("stateless sandbox skill orchestration", () => {
     expect(process.exitCode).toBe(0);
   });
 
+  it("rejects a 65-character skill name before staging", async () => {
+    selectAgent("openclaw", "/usr/local/bin/openclaw", OPENCLAW);
+    const source = localSkill("a".repeat(65));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await installSandboxSkill("alpha", { command: "install", path: source });
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("at most 64 characters"));
+    expect(captureOpenshell).not.toHaveBeenCalled();
+    expect(sdkCommandExecutor.runStreaming).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["hermes", "/usr/local/bin/hermes", HERMES, false],
     ["langchain-deepagents-code", "/usr/local/bin/dcode", DCODE, true],
