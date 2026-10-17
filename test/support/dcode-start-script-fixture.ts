@@ -9,16 +9,11 @@ const repoRoot = path.join(import.meta.dirname, "..", "..");
 const START_SCRIPT = path.join(repoRoot, "agents", "langchain-deepagents-code", "start.sh");
 const ENTRYPOINT_ENV_WRAPPER = path.join(repoRoot, "scripts", "lib", "entrypoint-env-wrapper.sh");
 
-export type ManagedProxyEndpoint = { host: string; port: string };
-
-export const DEFAULT_MANAGED_PROXY: ManagedProxyEndpoint = { host: "10.200.0.1", port: "3128" };
-
-export type ManagedProxyScriptOptions = {
+export type ManagedScriptOptions = {
   installRlimitHelper?: (rlimitLib: string) => void;
-  managedProxy?: ManagedProxyEndpoint;
 };
 
-export type StartScriptFixtureOptions = ManagedProxyScriptOptions & {
+export type StartScriptFixtureOptions = ManagedScriptOptions & {
   envDir?: string;
   fallbackCaFile?: string;
   liveCaFile?: string;
@@ -43,19 +38,14 @@ function writeReadOnlyFile(file: string, contents: string): void {
   fs.chmodSync(file, 0o444);
 }
 
-export function prepareManagedProxyFixture(
+export function prepareManagedScriptFixture(
   source: string,
   tempDir: string,
-  options: ManagedProxyScriptOptions = {},
+  options: ManagedScriptOptions = {},
 ): string {
-  const managedProxy = options.managedProxy ?? DEFAULT_MANAGED_PROXY;
   const installRlimitHelper = options.installRlimitHelper ?? writeRlimitStub;
   const rlimitLib = path.join(tempDir, "sandbox-rlimits.sh");
-  const hostFile = path.join(tempDir, "trusted-proxy-host");
-  const portFile = path.join(tempDir, "trusted-proxy-port");
   const caFile = path.join(tempDir, "trusted-ca-bundle.pem");
-  writeReadOnlyFile(hostFile, `${managedProxy.host}\n`);
-  writeReadOnlyFile(portFile, `${managedProxy.port}\n`);
   writeReadOnlyFile(caFile, "trusted CA bundle\n");
   installRlimitHelper(rlimitLib);
   return source
@@ -64,20 +54,12 @@ export function prepareManagedProxyFixture(
     .replace("../../scripts/lib/sandbox-rlimits.sh", "missing-dev-sandbox-rlimits.sh")
     .replaceAll("/tmp/nemoclaw-managed-startup-ca-bundle.pem", caFile)
     .replace(
-      'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
-      `readonly MANAGED_PROXY_HOST_FILE="${hostFile}"`,
-    )
-    .replace(
-      'readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/dcode-proxy-port"',
-      `readonly MANAGED_PROXY_PORT_FILE="${portFile}"`,
-    )
-    .replace(
       'readonly MANAGED_FETCH_CA_BUNDLE_FILE="/etc/openshell-tls/ca-bundle.pem"',
       `readonly MANAGED_FETCH_CA_BUNDLE_FILE="${caFile}"`,
     )
     .replace(
-      "readonly MANAGED_PROXY_OWNER_UID=0",
-      `readonly MANAGED_PROXY_OWNER_UID=${process.getuid?.() ?? 0}`,
+      "readonly MANAGED_CA_OWNER_UID=0",
+      `readonly MANAGED_CA_OWNER_UID=${process.getuid?.() ?? 0}`,
     );
 }
 
@@ -106,7 +88,7 @@ export function makeStartScriptFixture(
   assert.ok(original.includes('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"'));
   assert.ok(original.includes("local marker_dir=/sandbox/.deepagents"));
   fs.mkdirSync(envDir, { recursive: true });
-  const envRedirected = prepareManagedProxyFixture(original, tempDir, options)
+  const envRedirected = prepareManagedScriptFixture(original, tempDir, options)
     .replace("local target=/tmp/nemoclaw-proxy-env.sh", `local target="${envFile}"`)
     .replace(
       'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',

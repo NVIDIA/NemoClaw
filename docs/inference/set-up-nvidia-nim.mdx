@@ -12,6 +12,7 @@ content:
 
 NemoClaw can pull, start, and manage a local NVIDIA NIM container on hosts with a NIM-capable NVIDIA GPU.
 This provider is experimental and requires an explicit opt-in.
+Local NVIDIA NIM uses the shared `inference.local` route, which requires OpenShell `0.0.x`. Its OpenShell `0.1.3` migration is incomplete.
 Local NVIDIA NIM is unavailable on N1x.
 NemoClaw omits this provider from onboarding and rejects `NEMOCLAW_PROVIDER=nim-local` on N1x.
 Use the [Deferred managed-vLLM preview](set-up-vllm#use-n1x-express) instead.

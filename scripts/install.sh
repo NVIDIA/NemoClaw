@@ -1122,7 +1122,8 @@ usage() {
   printf "    HUGGING_FACE_HUB_TOKEN        Compatibility alias for HF_TOKEN\n"
   printf "    NEMOCLAW_SINGLE_SESSION=1     Abort if active sandbox sessions exist\n"
   printf "    NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1\n"
-  printf "                                  Allow automatic pre-0.0.37 OpenShell gateway upgrade\n"
+  printf "                                  Allow automatic upgrade only for eligible gateways\n"
+  printf "                                  Registered sandboxes on OpenShell 0.0.x prevent upgrade to 0.1.3\n"
   printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
   printf "                                  Continue only after the current CLI completes strict backup and forward retirement:\n"
   printf "                                  NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 nemoclaw backup-all --retire-legacy-forwards\n"
@@ -3630,6 +3631,10 @@ if (process.argv[3] === "count") {
   process.stdout.write(String(sandboxes.length));
   process.exit(0);
 }
+if (process.argv[3] === "names") {
+  process.stdout.write(JSON.stringify(sandboxes.map(([name]) => name).sort()));
+  process.exit(0);
+}
 if (process.argv[3] === "incompatible-names") {
   const compatiblePattern = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
   const incompatible = sandboxes
@@ -3955,7 +3960,9 @@ installed_openshell_version() {
   command_exists openshell || return 1
   local version_output
   version_output="$(openshell --version 2>/dev/null)" || return 1
-  printf "%s\n" "$version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+  [[ "$version_output" =~ ^openshell\ ([0-9]+\.[0-9]+\.[0-9]+)([.+-][A-Za-z0-9.+-]+)?$ ]] \
+    || return 1
+  printf '%s\n' "${BASH_REMATCH[1]}"
 }
 
 # Fail closed when OpenShell is present but cannot report its version. An absent
@@ -4734,6 +4741,26 @@ preinstall_backup_and_retire_legacy_gateway() {
   _PREEXISTING_SANDBOX_COUNT="$sandbox_count"
   [ "$sandbox_count" -gt 0 ] 2>/dev/null || return 0
   require_openshell_compatible_sandbox_names "$reg_file"
+  local supported_range="" min_openshell_version="" max_openshell_version=""
+  supported_range="$(resolve_current_openshell_version_range)" \
+    || error "Could not resolve the current OpenShell version range. Existing gateway and sandboxes were left unchanged."
+  read -r min_openshell_version max_openshell_version <<<"$supported_range"
+  if version_gte "$max_openshell_version" "0.1.0"; then
+    if ! command_exists openshell; then prefer_user_local_openshell; fi
+    command_exists openshell \
+      || error "Could not verify the installed OpenShell version before the 0.1.x cutover. Existing gateway and sandboxes were left unchanged."
+    local old_cutover_version="" sandbox_names="" scope="selected"
+    old_cutover_version="$(installed_openshell_version || true)"
+    [[ "$old_cutover_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+      || error "Could not verify the installed OpenShell version before the 0.1.x cutover. Existing gateway and sandboxes were left unchanged."
+    if ! version_gte "$old_cutover_version" "0.1.0"; then
+      if [ "$(resolve_nemoclaw_gateway_port)" -eq 8080 ] \
+        || [ "$reg_file" = "${HOME}/.nemoclaw/sandboxes.json" ]; then scope="legacy"; fi
+      sandbox_names="$(inspect_sandbox_registry_for_upgrade "$reg_file" names "$scope")" \
+        || error "Could not inspect legacy sandbox names before the 0.1.x cutover. Existing gateway and sandboxes were left unchanged."
+      error "OpenShell 0.1.x requires sandbox recreation. Refusing to retire gateway ${gateway_name} with registered sandboxes ${sandbox_names} on OpenShell ${old_cutover_version}; existing gateway and sandboxes were left unchanged."
+    fi
+  fi
   if truthy_env "${NEMOCLAW_OPENSHELL_UPGRADE_PREPARED:-}"; then
     if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
       error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with '${_CLI_BIN} <name> destroy' before reinstalling."
@@ -4766,11 +4793,6 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
 
   confirm_legacy_managed_image_recovery "$reg_file"
-  local supported_range="" min_openshell_version="" max_openshell_version=""
-  supported_range="$(resolve_current_openshell_version_range || true)"
-  if [[ -n "$supported_range" ]]; then
-    read -r min_openshell_version max_openshell_version <<<"$supported_range"
-  fi
   local retire_legacy_forwards=false
   if [[ -n "$old_openshell_version" && -n "$supported_range" ]] \
     && { ! version_gte "$old_openshell_version" "$min_openshell_version" \

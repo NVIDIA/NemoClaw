@@ -58,7 +58,6 @@ export function hostedNativeProfileBoundary(
   return {
     profileId: definition.profileId as HostedNativeProfileId,
     ...(pins ? { allowedIps: pins } : {}),
-    ...(custom && endpoint.protocol === "https:" ? { tls: "terminate" as const } : {}),
     credentialEnv: definition.credentialEnv,
     authStyle: definition.api === "anthropic-messages" ? "header" : "bearer",
     headerName: definition.api === "anthropic-messages" ? "x-api-key" : "authorization",

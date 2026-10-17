@@ -33,6 +33,7 @@
     },
     {
       "live": "test/e2e/live/portable-profile-rootless-linux.test.ts",
+      "liveSources": ["test/e2e/live/portable-profile-gateway-proof.ts"],
       "fast": [
         "src/lib/onboard/experimental/hermes-portable-container.test.ts",
         "src/lib/onboard/experimental/hermes-portable-lifecycle.test.ts",
@@ -41,7 +42,8 @@
         "src/lib/onboard/experimental/portable-host-preparation.test.ts",
         "src/lib/onboard/sandbox-prebuild.test.ts",
         "test/agents/hermes/hermes-start.test.ts",
-        "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
+        "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+        "test/e2e/support/portable-profile-gateway-proof.test.ts"
       ]
     },
     {
@@ -128,7 +130,10 @@
     },
     {
       "live": "test/e2e/live/podman-cpu-lifecycle.test.ts",
-      "liveSources": ["test/e2e/live/podman-cpu-lifecycle-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/podman-cpu-lifecycle-artifacts.ts",
+        "test/e2e/live/podman-cpu-lifecycle-helpers.ts"
+      ],
       "fast": [
         "src/lib/adapters/container-engine.test.ts",
         "src/lib/adapters/podman/index.test.ts",
@@ -138,7 +143,9 @@
         "src/lib/onboard/runtime-provider/podman.test.ts",
         "src/lib/onboard/runtime-provider/podman-preflight.test.ts",
         "src/lib/onboard/runtime-provider/podman.test.ts",
-        "test/e2e/support/podman-cpu-proof-workflow.test.ts"
+        "test/e2e/support/podman-cpu-proof-workflow.test.ts",
+        "test/e2e/support/podman-cpu-lifecycle-artifacts.test.ts",
+        "test/e2e/support/podman-cpu-lifecycle-helpers.test.ts"
       ]
     },
     {
@@ -183,6 +190,9 @@
     {
       "live": "test/e2e/live/inference-routing.test.ts",
       "liveSources": [
+        "test/e2e/live/cloudflared-prerequisite.ts",
+        "test/e2e/live/https-pin-compatible-server.ts",
+        "test/e2e/live/runtime-identity-oauth-server.ts",
         "test/e2e/live/inference-routing-helpers.ts",
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/fixtures/admin-approval-connect.ts",
@@ -198,6 +208,8 @@
         "nemoclaw/src/blueprint/runtime-identity.test.ts",
         "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
         "test/onboarding/blueprint-runtime-identity-lifecycle.test.ts",
+        "test/e2e/support/cloudflared-prerequisite.test.ts",
+        "test/e2e/support/e2e-http-protocol.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts",
         "test/onboarding/onboard-inference-gateway-scope.test.ts",
@@ -335,12 +347,16 @@
       "fast": [
         "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
         "test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts",
+        "test/e2e/support/openshell-gateway-auth-sandbox.test.ts",
         "test/e2e/support/openshell-v0116-tls-server-name-source.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/external-gateway-health.test.ts",
-      "liveSources": ["test/e2e/live/external-gateway-health-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/external-gateway-health-helpers.ts",
+        "test/e2e/fixtures/external-gateway-health-config.ts"
+      ],
       "fast": [
         "test/e2e/support/external-gateway-health-helpers.test.ts",
         "test/e2e/support/external-gateway-health-process.test.ts",
@@ -742,6 +758,7 @@
         "test/e2e/live/mcp-provider-rewrite-probe.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
         "test/e2e/live/openshell-driver-config-test-wrapper.ts",
+        "test/e2e/live/openshell-exact-main-driver-config.ts",
         "test/e2e/live/openshell-exact-main-exec.ts",
         "test/e2e/live/openshell-exact-main-runtime-contracts.ts",
         "test/e2e/live/openclaw-stopped-recovery.ts",
@@ -788,6 +805,7 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/messaging-compatible-endpoint-helpers.test.ts",
+        "test/e2e/support/messaging-compatible-native.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts"
       ]
     },

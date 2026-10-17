@@ -368,6 +368,23 @@ describe("inference selection config", () => {
 });
 
 describe("getSandboxInferenceConfig", () => {
+  it("keeps Pi private compatible endpoints on their native custom provider", () => {
+    const endpoint = "http://10.0.0.2:11434/v1";
+    expect(
+      getSandboxInferenceConfig(
+        "selected-model",
+        "compatible-endpoint",
+        "openai-completions",
+        true,
+        endpoint,
+        "pi",
+      ),
+    ).toMatchObject({
+      inferenceBaseUrl: endpoint,
+      inferenceApi: "openai-completions",
+    });
+  });
+
   it("enables streaming usage for ollama-local behind the managed inference route", () => {
     expect(getSandboxInferenceConfig("qwen3.6:35b", "ollama-local")).toEqual({
       providerKey: MANAGED_PROVIDER_ID,

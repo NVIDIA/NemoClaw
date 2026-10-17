@@ -73,7 +73,12 @@ export function prepareNativeLocalProfile(input: NativeLocalBinding) {
         // The provider-neutral onboarding smoke probe uses Python urllib.
         "/usr/bin/python3",
         ...(binding.agent === "hermes"
-          ? ["/opt/hermes/.venv/bin/python", "/opt/hermes/.venv/bin/python3"]
+          ? [
+              "/opt/hermes/.venv/bin/python",
+              "/opt/hermes/.venv/bin/python3",
+              // OpenShell checks the pinned Hermes image's resolved interpreter.
+              "/usr/bin/python3.13",
+            ]
           : []),
         ...(binding.agent === "openclaw" || binding.agent === "pi"
           ? ["/usr/local/bin/node", "/usr/bin/node"]

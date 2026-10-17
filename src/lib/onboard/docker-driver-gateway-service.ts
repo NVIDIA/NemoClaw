@@ -27,7 +27,7 @@ export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE = "nemoclaw-openshell-gatew
 export const OPENSHELL_GATEWAY_HOMEBREW_SERVICE = "openshell";
 export const OPENSHELL_GATEWAY_HOMEBREW_TAP = "nvidia/openshell";
 export const OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256 =
-  "cf00a9441589702ffe006720fd6a9dffc0f0745b337036aad26dc53eb94c1558";
+  "e760d5c41f5d3fd7a430a87e1efdf813c44848689c76a10029c8f65ed4f4eb4b";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER =
   "NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE = `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}`;
@@ -289,7 +289,7 @@ export function checkUpstreamGatewayVersion(
       version,
       message:
         `  Refusing the system OpenShell gateway service: ${binaryPath} is a development build. ` +
-        "Install exact stable OpenShell 0.0.116 before retrying NemoClaw.",
+        "Install exact stable OpenShell 0.1.3 before retrying NemoClaw.",
     };
   }
   const bounds = (opts.getUpstreamGatewayVersionBounds ?? defaultUpstreamGatewayVersionBounds)();

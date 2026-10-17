@@ -785,7 +785,6 @@ describe("runInferenceSet OpenClaw routing", () => {
       "nemoclaw",
     );
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({

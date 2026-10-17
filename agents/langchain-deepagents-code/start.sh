@@ -88,60 +88,13 @@ if ! verify_resource_limits_exact; then
 fi
 unset _NEMOCLAW_SANDBOX_RLIMITS
 
-# Invalid state: OpenShell's sandbox-create environment contains the host proxy
-# seed, including NO_PROXY=inference.local, so dcode bypasses the managed proxy
-# and attempts direct DNS resolution that is not part of the dcode contract.
-# Source boundary: that seed remains correct for OpenShell's host-side proxy
-# chaining; this agent-owned runtime boundary is the first safe place to replace
-# it without changing OpenClaw, Hermes, or global OpenShell route provisioning.
-# Source-fix constraint: inference.local is an L7 managed-proxy route, so adding
-# sandbox DNS/hosts state or changing the shared seed would widen this fix and
-# break the host chaining contract. Direct DNS/hosts resolution is not required.
-# Regression: focused tests and the live check cover login-shell, direct dcode,
-# and connect paths when the direct DNS/hosts lookup is absent.
-# Removal condition: remove this normalization only when OpenShell guarantees
-# the managed proxy and normalized NO_PROXY for every sandbox exec/login process,
-# or when dcode no longer uses inference.local.
-readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"
-readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/dcode-proxy-port"
 if [ -e /etc/openshell-tls/ca-bundle.pem ] \
   || [ -L /etc/openshell-tls/ca-bundle.pem ]; then
   readonly MANAGED_FETCH_CA_BUNDLE_FILE="/etc/openshell-tls/ca-bundle.pem"
 else
   readonly MANAGED_FETCH_CA_BUNDLE_FILE="/tmp/nemoclaw-managed-startup-ca-bundle.pem"
 fi
-readonly MANAGED_PROXY_OWNER_UID=0
-
-managed_proxy_file_metadata() {
-  local file="$1"
-  local metadata
-  if metadata="$(stat -c '%u:%a' "$file" 2>/dev/null)"; then
-    printf '%s' "$metadata"
-  else
-    stat -f '%u:%Lp' "$file" 2>/dev/null
-  fi
-}
-
-read_managed_proxy_value() {
-  local file="$1"
-  local name="$2"
-  local metadata
-  local value
-  if [ ! -f "$file" ] || [ -L "$file" ] || [ ! -r "$file" ]; then
-    printf 'Missing or unsafe trusted managed proxy %s file.\n' "$name" >&2
-    return 1
-  fi
-  metadata="$(managed_proxy_file_metadata "$file")" || {
-    printf 'Cannot inspect trusted managed proxy %s file.\n' "$name" >&2
-    return 1
-  }
-  if [ "$metadata" != "${MANAGED_PROXY_OWNER_UID}:444" ]; then
-    printf 'Unsafe ownership or mode on trusted managed proxy %s file.\n' "$name" >&2
-    return 1
-  fi
-  value="$(<"$file")"
-  printf '%s' "$value"
-}
+readonly MANAGED_CA_OWNER_UID=0
 
 managed_fetch_ca_bundle_metadata() {
   local file="$1"
@@ -174,7 +127,7 @@ validate_managed_fetch_ca_bundle() {
     || [[ ! "$owner" =~ ^[0-9]+$ ]] \
     || [[ ! "$mode" =~ ^[0-7]{3,4}$ ]] \
     || [[ ! "$size" =~ ^[0-9]+$ ]] \
-    || [ "$owner" != "$MANAGED_PROXY_OWNER_UID" ] \
+    || [ "$owner" != "$MANAGED_CA_OWNER_UID" ] \
     || [ "$size" -le 0 ] \
     || (((8#$mode & 0022) != 0)); then
     printf '%s\n' 'Unsafe ownership or mode on managed fetch CA bundle file.' >&2
@@ -182,10 +135,6 @@ validate_managed_fetch_ca_bundle() {
   fi
 }
 
-# Fail closed if the root-owned image contract is missing. Process-level
-# NEMOCLAW_PROXY_* values are not a trusted runtime routing source.
-PROXY_HOST="$(read_managed_proxy_value "$MANAGED_PROXY_HOST_FILE" "host")"
-PROXY_PORT="$(read_managed_proxy_value "$MANAGED_PROXY_PORT_FILE" "port")"
 validate_managed_fetch_ca_bundle
 if [ -e "$MANAGED_FETCH_CA_BUNDLE_FILE" ]; then
   : "${SSL_CERT_FILE:=$MANAGED_FETCH_CA_BUNDLE_FILE}"
@@ -193,54 +142,10 @@ if [ -e "$MANAGED_FETCH_CA_BUNDLE_FILE" ]; then
   : "${NODE_EXTRA_CA_CERTS:=$MANAGED_FETCH_CA_BUNDLE_FILE}"
   export SSL_CERT_FILE REQUESTS_CA_BUNDLE NODE_EXTRA_CA_CERTS
 fi
-unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
-# Generic proxy fallbacks are outside the managed dcode contract and may carry
-# host credentials even after the scheme-specific proxy values are normalized.
-unset ALL_PROXY all_proxy OPENAI_PROXY
-
-# Keep this validator behavior identical to the host-side TypeScript boundary.
-# It is applied only to image-baked values that onboard writes into root-owned
-# files at build time; runtime env is explicitly unset above and never reaches
-# this check. Underscores remain accepted for controlled internal/container
-# aliases such as proxy_name; public DNS hostnames should remain RFC 1123
-# names without them. Schemes, credentials, separators, and whitespace are
-# still rejected.
-is_valid_proxy_host() {
-  local value="$1"
-  [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]]
-}
-
-is_valid_proxy_port() {
-  local value="$1"
-  [[ "$value" =~ ^[0-9]{1,5}$ ]] || return 1
-  ((10#$value >= 1 && 10#$value <= 65535))
-}
-
-if ! is_valid_proxy_host "$PROXY_HOST"; then
-  printf '%s\n' 'Invalid NEMOCLAW_PROXY_HOST for the managed runtime proxy.' >&2
-  exit 1
-fi
-if ! is_valid_proxy_port "$PROXY_PORT"; then
-  printf '%s\n' 'Invalid NEMOCLAW_PROXY_PORT for the managed runtime proxy.' >&2
-  exit 1
-fi
-
-_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
-_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"
-# Deep Agents Code 0.1.71 intentionally ignores environment proxies in
-# fetch_url so it can pin direct DNS results against rebinding. OpenShell's
-# sandbox instead requires all ordinary egress, including DNS resolution for a
-# destination, to stay behind its policy proxy. This explicit variable opts the
-# managed package patch into that trusted proxy boundary without teaching the
-# upstream tool to trust arbitrary ambient HTTP_PROXY values. It is derived
-# only from the root-owned image files validated above.
-export DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL="$_PROXY_URL"
-export HTTP_PROXY="$_PROXY_URL"
-export HTTPS_PROXY="$_PROXY_URL"
-export NO_PROXY="$_NO_PROXY_VAL"
-export http_proxy="$_PROXY_URL"
-export https_proxy="$_PROXY_URL"
-export no_proxy="$_NO_PROXY_VAL"
+# OpenShell 0.1.3 mediates sockets and DNS. Ambient proxies must not replace that route.
+unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
+unset ALL_PROXY all_proxy OPENAI_PROXY grpc_proxy GRPC_PROXY NODE_USE_ENV_PROXY
+unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL
 
 write_export_if_set() {
   local name="$1"
@@ -251,7 +156,7 @@ write_export_if_set() {
 
 prepare_runtime_env() {
   # Unlike prepare_observability_marker below, this file is intentionally
-  # volatile: every stateful start rebuilds it from root-owned proxy inputs.
+  # volatile: every stateful start rebuilds its environment guards.
   local target=/tmp/nemoclaw-proxy-env.sh
   local tmp
   tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"
@@ -273,23 +178,16 @@ prepare_runtime_env() {
     printf '%s\n' 'export LANGCHAIN_TRACING_V2=false'
     printf '%s\n' 'export DEEPAGENTS_CODE_OFFLINE=1'
     printf '%s\n' 'export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system'
-    # Intentionally omit the trusted proxy when unset: its absence signals
-    # unmanaged mode, where the upstream fetch transport remains authoritative.
-    write_export_if_set DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL
     # shellcheck disable=SC2016
     printf '%s\n' 'export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"'
     printf '%s\n' 'unset NEMOCLAW_ATTACHED_PROVIDER_API_KEY'
     # shellcheck disable=SC2016
     printf '%s\n' 'export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"'
-    printf '%s\n' 'unset ALL_PROXY all_proxy OPENAI_PROXY'
-    write_export_if_set HTTP_PROXY
-    write_export_if_set HTTPS_PROXY
-    write_export_if_set NO_PROXY
-    write_export_if_set http_proxy
-    write_export_if_set https_proxy
-    write_export_if_set no_proxy
+    printf '%s\n' 'unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy'
+    printf '%s\n' 'unset ALL_PROXY all_proxy OPENAI_PROXY grpc_proxy GRPC_PROXY NODE_USE_ENV_PROXY'
+    printf '%s\n' 'unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL'
     printf '_nemoclaw_dcode_ca_bundle=%q\n' "$MANAGED_FETCH_CA_BUNDLE_FILE"
-    printf '_nemoclaw_dcode_ca_owner_uid=%q\n' "$MANAGED_PROXY_OWNER_UID"
+    printf '_nemoclaw_dcode_ca_owner_uid=%q\n' "$MANAGED_CA_OWNER_UID"
     cat <<'NEMOCLAW_DCODE_CA_GUARD'
 if [ -L "$_nemoclaw_dcode_ca_bundle" ]; then
   printf "%s\n" "Missing or unsafe managed fetch CA bundle file." >&2

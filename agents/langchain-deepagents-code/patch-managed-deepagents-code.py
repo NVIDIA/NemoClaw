@@ -429,7 +429,7 @@ def _preview_dotenv_environ(*, start_path=None) -> dict[str, str]:
 
 
 def _load_dotenv(*, start_path=None, refresh_loaded=False) -> bool:
-    """Disable all dotenv loading so it cannot supply the trusted fetch proxy."""
+    """Disable project dotenv loading in managed processes."""
     del start_path, refresh_loaded
     _dotenv_loaded_values.clear()
     return False
@@ -503,15 +503,10 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     return kwargs
 '''
 
-# Source-of-truth boundary: upstream Deep Agents Code 0.1.71 resolves and pins
-# destination DNS locally, then disables environment proxies. That is a sound
-# standalone SSRF defense but cannot operate in OpenShell's proxy-only network
-# namespace, where direct DNS and direct target connections are rejected. The
-# managed launcher supplies an explicit, root-owned proxy URL. `trust_env=False`
-# disables every Requests environment-derived session setting (proxy/NO_PROXY,
-# netrc, and CA discovery); each hop receives only the explicit proxy mapping
-# and separately validated fixed CA bundle. The proxy's network policy and SSRF
-# checks remain authoritative.
+# Deep Agents Code 0.1.71 pins DNS locally. OpenShell 0.1.3 provides mediated
+# DNS and validates destinations itself, including every redirect. In managed
+# images, requests uses fixed TLS trust and ignores ambient proxies and netrc.
+# Outside managed images, the upstream transport remains authoritative.
 TOOLS_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code hardening v2.
@@ -519,7 +514,7 @@ _nemoclaw_original_fetch_with_redirects = _fetch_with_redirects
 
 
 def _fetch_with_redirects(url: str, *, timeout: int):
-    """Use only the launcher-delegated OpenShell proxy when configured."""
+    """Use OpenShell network mediation in a managed image."""
     from deepagents_code._nemoclaw_managed import managed_fetch_with_redirects
 
     return managed_fetch_with_redirects(
@@ -1311,6 +1306,20 @@ def _build_server_env() -> dict[str, str]:
     env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"
     env["OTEL_ENABLED"] = "false"
     for name in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "grpc_proxy",
+        "GRPC_PROXY",
+        "NODE_USE_ENV_PROXY",
+        "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL",
+        "NEMOCLAW_PROXY_HOST",
+        "NEMOCLAW_PROXY_PORT",
         "OPENAI_PROXY",
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
@@ -1420,6 +1429,20 @@ SERVER_ENV_OVERRIDES_PATCH = '''            env = _server_env_with_overrides(
             env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"
             env["OTEL_ENABLED"] = "false"
             for name in (
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+                "NO_PROXY",
+                "http_proxy",
+                "https_proxy",
+                "no_proxy",
+                "ALL_PROXY",
+                "all_proxy",
+                "grpc_proxy",
+                "GRPC_PROXY",
+                "NODE_USE_ENV_PROXY",
+                "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL",
+                "NEMOCLAW_PROXY_HOST",
+                "NEMOCLAW_PROXY_PORT",
                 "OPENAI_PROXY",
                 "OTEL_EXPORTER_OTLP_ENDPOINT",
                 "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",

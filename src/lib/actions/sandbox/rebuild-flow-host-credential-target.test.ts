@@ -28,9 +28,10 @@ function createRemoteRebuildHarness() {
     runOpenshell: (args) => {
       const stdout =
         args[1] === "list"
-          ? JSON.stringify([
-              { name: selection.provider, credential_keys: [selection.credentialEnv] },
-            ])
+          ? JSON.stringify({
+              providers: [{ name: selection.provider, credential_keys: [selection.credentialEnv] }],
+              next_page_token: "",
+            })
           : [
               `Name: ${selection.provider}`,
               "Type: openai",

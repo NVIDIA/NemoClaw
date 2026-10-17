@@ -144,7 +144,10 @@ describe("OpenShell provider evidence", () => {
         },
       });
       expect(raw.getProviderProfile).toHaveBeenCalledExactlyOnceWith(
-        { id: profileContract, workspace: "default" },
+        {
+          id: profileContract,
+          workspaceScope: { selection: { case: "workspace", value: "default" } },
+        },
         { signal: input.signal },
       );
       expect(readCredential).not.toHaveBeenCalled();
@@ -177,7 +180,11 @@ describe("OpenShell provider evidence", () => {
       ],
       ["credential refresh", { credentials: [{ ...credential, refresh: {} }] }],
       ["a foreign endpoint", { endpoints: [{ ...endpoint, host: "foreign.example" }] }],
-      ["a read-write access preset", { endpoints: [{ ...endpoint, access: "read-write" }] }],
+      ["a read-write access preset", { endpoints: [{ ...endpoint, access: 2 }] }],
+      ["an unknown access preset", { endpoints: [{ ...endpoint, access: 999 }] }],
+      ["audit-only enforcement", { endpoints: [{ ...endpoint, enforcement: 2 }] }],
+      ["unspecified enforcement", { endpoints: [{ ...endpoint, enforcement: 0 }] }],
+      ["legacy string enforcement", { endpoints: [{ ...endpoint, enforcement: "enforce" }] }],
       [
         "uninspected credentials",
         { endpoints: [{ ...endpoint, allowUninspectedCredentials: true }] },
@@ -241,7 +248,7 @@ describe("OpenShell provider evidence", () => {
       config: { OPENAI_BASE_URL: "https://api.example/v1" },
     });
     expect(raw.getProvider).toHaveBeenCalledWith(
-      { name: "alpha", workspace: "default" },
+      { name: "alpha", workspaceScope: { selection: { case: "workspace", value: "default" } } },
       { signal: input.signal },
     );
     expect(connect).toHaveBeenCalledWith(target);
@@ -312,7 +319,12 @@ describe("OpenShell provider evidence", () => {
         },
       });
       expect(raw.getProviderProfile).toHaveBeenCalledExactlyOnceWith(
-        { id: "brave", workspace: profileWorkspace },
+        {
+          id: "brave",
+          ...(profileWorkspace
+            ? { workspaceScope: { selection: { case: "workspace", value: profileWorkspace } } }
+            : {}),
+        },
         { signal: input.signal },
       );
       expect(readSecret).not.toHaveBeenCalled();
@@ -340,7 +352,7 @@ describe("OpenShell provider evidence", () => {
     { label: "discovery override", change: { discovery: {} } },
     {
       label: "an empty access preset",
-      change: { endpoints: [{ ...managedBraveProfile().endpoints[0], access: "" }] },
+      change: { endpoints: [{ ...managedBraveProfile().endpoints[0], access: 0 }] },
     },
   ])("rejects managed Brave profiles with $label (#10904)", async ({ change }) => {
     const { connect, raw } = fixture();
@@ -367,7 +379,12 @@ describe("OpenShell provider evidence", () => {
       });
       expect(result).toMatchObject({ profileWorkspace: workspace, managedProfile: null });
       expect(raw.getProviderProfile).toHaveBeenCalledWith(
-        { id: "openai", workspace },
+        {
+          id: "openai",
+          ...(workspace
+            ? { workspaceScope: { selection: { case: "workspace", value: workspace } } }
+            : {}),
+        },
         { signal: expect.any(AbortSignal) },
       );
     },
@@ -523,7 +540,12 @@ describe("OpenShell provider evidence", () => {
         builtinInferenceEndpoint: "https://integrate.api.nvidia.com/v1",
       });
       expect(raw.getProviderProfile).toHaveBeenCalledWith(
-        { id: "nvidia", workspace: profileWorkspace },
+        {
+          id: "nvidia",
+          ...(profileWorkspace
+            ? { workspaceScope: { selection: { case: "workspace", value: profileWorkspace } } }
+            : {}),
+        },
         { signal: input.signal },
       );
       expect(connect).toHaveBeenCalledExactlyOnceWith(target);
@@ -756,7 +778,7 @@ describe("OpenShell sandbox export evidence", () => {
     });
     expect(JSON.stringify(result)).not.toContain(canary);
     expect(raw.getSandbox).toHaveBeenCalledWith(
-      { name: "alpha", workspace: "default" },
+      { name: "alpha", workspaceScope: { selection: { case: "workspace", value: "default" } } },
       { signal: input.signal },
     );
   });

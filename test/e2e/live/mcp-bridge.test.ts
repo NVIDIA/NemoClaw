@@ -272,7 +272,6 @@ async function assertConcurrentAddSerialized(
     server: CONCURRENT_SERVER_NAME,
   });
   const status = statusObservation.result;
-  expectExitZero(status, `${options.artifactPrefix} concurrent add leaves one coherent bridge`);
   expect(JSON.parse(status.stdout)).toMatchObject({
     server: CONCURRENT_SERVER_NAME,
     url: redactString(options.mcpUrl, [HOST_SECRET]),

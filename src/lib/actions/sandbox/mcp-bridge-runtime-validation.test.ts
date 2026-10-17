@@ -14,7 +14,7 @@ function matchingOpenshellRuntime() {
     resolveOpenshell: () => "/test/openshell",
     runVersionCommand: () => ({
       status: 0,
-      stdout: `openshell ${MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION}\n`,
+      stdout: "openshell 0.1.3\n",
       stderr: "",
     }),
   };
@@ -42,16 +42,16 @@ describe("MCP credential-boundary runtime validation", () => {
         ...matchingOpenshellRuntime(),
         runVersionCommand: () => ({
           status: 0,
-          stdout: "openshell 0.0.73\n",
+          stdout: "openshell 0.1.2\n",
           stderr: "",
         }),
       });
     const error = captureRuntimeVersionError(mismatch);
     expect(error.message).toContain(
-      `expected ${MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION}, actual 0.0.73 (version mismatch). Install OpenShell ${MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION}, or point NEMOCLAW_OPENSHELL_BIN to that version, then retry.`,
+      `expected ${MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION}, actual 0.1.2 (version mismatch). Install OpenShell ${MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION}, or point NEMOCLAW_OPENSHELL_BIN to that version, then retry.`,
     );
     expect(error).toMatchObject({
-      actualVersion: "0.0.73",
+      actualVersion: "0.1.2",
       detail: "version mismatch",
       reason: "version-mismatch",
     });

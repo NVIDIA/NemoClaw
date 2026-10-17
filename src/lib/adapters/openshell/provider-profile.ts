@@ -48,6 +48,14 @@ function providerProfileBoundary(value: unknown): ProviderProfileBoundary | null
   ) {
     return null;
   }
+  // NemoClaw's owned profiles do not materialize workload files or file-path
+  // environment variables. OpenShell 0.1.3 can, so reject that extra authority.
+  if (
+    profile.files !== undefined &&
+    (!Array.isArray(profile.files) || profile.files.length !== 0)
+  ) {
+    return null;
+  }
   const credentials = profile.credentials.map((value) => {
     const credential = recordValue(value);
     if (

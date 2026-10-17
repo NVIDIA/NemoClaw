@@ -15,6 +15,7 @@ export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 export const OPENSHELL_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
 export const OPENSHELL_SANDBOX_NAMESPACE_LABEL = "openshell.ai/sandbox-namespace";
 export const OPENSHELL_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
+export const OPENSHELL_ISOLATION_ROLE_LABEL = "openshell.ai/isolation-role";
 
 export type OpenShellSandboxOwnershipLabel = {
   readonly label: string;
@@ -96,16 +97,16 @@ type SandboxFailureOutputDeps = Pick<
  * caller owns one; otherwise require exactly one OpenShell-labeled container.
  *
  * SOURCE_OF_TRUTH_REVIEW
- * invalidState: OpenShell 0.0.116 writes supervisor startup failures, such as
- *   a Landlock hard_requirement error, only to the sandbox container's stderr;
- *   neither `openshell logs` nor sandbox status carries the reason (#13178).
+ * invalidState: sandbox create fails before its status provides the startup
+ *   reason, and rollback removes the container's output (#13178).
  * sourceBoundary: captureDockerContainerFailureEvidence owns bounded Docker
  *   inspect, log, and redaction behavior.
- * whyNotSourceFix: the supervisor runs in the pinned external OpenShell
- *   release; OpenShell 0.1.x reports the supervisor log tail in sandbox status.
+ * whyNotSourceFix: OpenShell status can report a supervisor log tail, but a
+ *   failed create may have no readable sandbox status before rollback.
  * regressionTest: openshell-docker-sandbox-containers.test.ts and
  *   onboard-sandbox-create-failure.test.ts.
- * removalCondition: remove once the OpenShell pin reaches 0.1.0.
+ * removalCondition: remove when sandbox status reliably includes startup
+ *   failures before rollback on every supported Docker create path.
  */
 export function captureOpenShellDockerSandboxFailureOutput(
   sandboxName: string,
@@ -295,6 +296,8 @@ export function inspectDockerSandboxNameLabeledContainers(
       managedBy: OPENSHELL_MANAGED_BY_LABEL,
       workspace: OPENSHELL_SANDBOX_WORKSPACE_LABEL,
       sandboxId: OPENSHELL_SANDBOX_ID_LABEL,
+      namespace: OPENSHELL_SANDBOX_NAMESPACE_LABEL,
+      isolationRole: OPENSHELL_ISOLATION_ROLE_LABEL,
     },
     inspect,
   );

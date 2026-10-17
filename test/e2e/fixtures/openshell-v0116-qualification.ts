@@ -9,6 +9,20 @@ export const OPENSHELL_V0116_QUALIFICATION = Object.freeze({
   version: "0.0.116",
 });
 
+export const OPENSHELL_V012_QUALIFICATION = Object.freeze({
+  sourceRevision: "6648bd0c290efbc41ba131ee9831ee45cd431f94",
+  supervisorImage:
+    "ghcr.io/nvidia/openshell/supervisor@sha256:d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a",
+  version: "0.1.2",
+});
+
+export const OPENSHELL_V013_QUALIFICATION = Object.freeze({
+  sourceRevision: "e1f3c82caa3ed3b65de22889ae7ef32a774878ef",
+  supervisorImage:
+    "ghcr.io/nvidia/openshell/supervisor@sha256:4ab2b970cdb02c7518ba4ccbbadb4861ae9a8d0b8770e5b160697f0453b0a8e4",
+  version: "0.1.3",
+});
+
 export function exactGatewayRelease(versionOutput: string): string | null {
   const tokens = versionOutput.match(/(?:^|\s)v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)(?=\s|$)/gu);
   if (tokens?.length !== 1) return null;

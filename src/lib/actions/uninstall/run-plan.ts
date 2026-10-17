@@ -118,11 +118,11 @@ import {
   type OnboardStateLockHandle,
 } from "../../state/onboard-session/lock";
 import {
-  managedHermesStateVolumeContext,
-  type ManagedHermesStateVolumeRuntime,
-  type ManagedHermesStateVolumeContext,
-  removeManagedHermesStateVolumes,
-} from "./hermes-uninstall-cleanup";
+  managedAgentStateVolumeContext,
+  type ManagedAgentStateVolumeRuntime,
+  type ManagedAgentStateVolumeContext,
+  removeManagedStateVolumesForUninstall,
+} from "./managed-state-uninstall-cleanup";
 import {
   stopBedrockRuntimeAdapter,
   stopHttpsPinRuntimeAdapter,
@@ -203,7 +203,7 @@ export interface UninstallRunDeps {
   runHuggingFaceCacheDataCleanup?: (options?: SpawnSyncOptions) => RunResult;
   runLocalModelRuntimeCleanup?: (options?: SpawnSyncOptions) => RunResult;
   runManagedLlamaCppRuntimeCleanup?: (sandboxName: string, gatewayPort: number) => RunResult;
-  runtimeProviders?: ManagedHermesStateVolumeRuntime["runtimeProviders"];
+  runtimeProviders?: ManagedAgentStateVolumeRuntime["runtimeProviders"];
   sleep?: (milliseconds: number) => void;
   hasPortableRuntimeCleanup?: (stateDir: string) => boolean;
   runPortableRuntimeCleanupTransaction?: (
@@ -486,12 +486,16 @@ function removePathExcept(
   const children = fs.readdirSync(target);
   for (const entry of children) {
     if (preserveSet.has(entry)) continue;
-    deps.rmSync(path.join(target, entry), { force: true, recursive: true });
+    const nested = preserve
+      .filter((name) => name.startsWith(`${entry}${path.sep}`))
+      .map((name) => name.slice(entry.length + 1));
+    if (nested.length === 0)
+      deps.rmSync(path.join(target, entry), { force: true, recursive: true });
+    else if (!removePathExcept(path.join(target, entry), nested, deps)) return false;
   }
   // Track preserved order against the declared allowlist so the log line is
   // stable across filesystems with non-deterministic readdir ordering.
-  const childSet = new Set(children);
-  const preserved = preserve.filter((name) => childSet.has(name));
+  const preserved = preserve.filter((name) => pathEntryExists(path.join(target, name), deps));
   if (preserved.length === 0) {
     deps.rmSync(target, { force: true, recursive: true });
     deps.log(`Removed ${target}`);
@@ -550,7 +554,7 @@ interface UninstallRuntime {
   runHuggingFaceCacheDataCleanup: (options?: SpawnSyncOptions) => RunResult;
   runLocalModelRuntimeCleanup: (options?: SpawnSyncOptions) => RunResult;
   runManagedLlamaCppRuntimeCleanup: (sandboxName: string, gatewayPort: number) => RunResult;
-  runtimeProviders: ManagedHermesStateVolumeRuntime["runtimeProviders"];
+  runtimeProviders: ManagedAgentStateVolumeRuntime["runtimeProviders"];
   sleep: (milliseconds: number) => void;
   hasPortableRuntimeCleanup: (stateDir: string) => boolean;
   runPortableRuntimeCleanupTransaction: (
@@ -1471,7 +1475,7 @@ function removeNemoclawOpenShellGatewayEnv(
 
 interface SelectedRegistrySandboxState {
   backupNames: string[];
-  managedHermesStateVolumes: ManagedHermesStateVolumeContext[];
+  managedAgentStateVolumes: ManagedAgentStateVolumeContext[];
   names: string[];
   registrations: Record<string, GatewayRegistryEntry>;
 }
@@ -1484,14 +1488,14 @@ function selectedRegistrySandboxState(
   const home = path.dirname(sharedRoot);
   const registryFile = path.join(paths.nemoclawStateDir, "sandboxes.json");
   if (!pathEntryExists(registryFile, runtime)) {
-    return { backupNames: [], managedHermesStateVolumes: [], names: [], registrations: {} };
+    return { backupNames: [], managedAgentStateVolumes: [], names: [], registrations: {} };
   }
   const registry = readGatewayRegistryFile(home, registryFile);
   if (!registry) {
-    return { backupNames: [], managedHermesStateVolumes: [], names: [], registrations: {} };
+    return { backupNames: [], managedAgentStateVolumes: [], names: [], registrations: {} };
   }
   const backupNames: string[] = [];
-  const managedHermesStateVolumes: ManagedHermesStateVolumeContext[] = [];
+  const managedAgentStateVolumes: ManagedAgentStateVolumeContext[] = [];
   const names: string[] = [];
   const registrations: Record<string, GatewayRegistryEntry> = {};
   for (const [name, entry] of Object.entries(registry.sandboxes)) {
@@ -1507,16 +1511,16 @@ function selectedRegistrySandboxState(
       );
     }
     names.push(name);
-    const managedHermesStateVolume = managedHermesStateVolumeContext(name, entry);
-    if (managedHermesStateVolume.runtimeProviderId !== "podman") {
+    const managedAgentStateVolume = managedAgentStateVolumeContext(name, entry);
+    if (managedAgentStateVolume.runtimeProviderId !== "podman") {
       backupNames.push(name);
     }
     registrations[name] = entry;
-    managedHermesStateVolumes.push(managedHermesStateVolume);
+    managedAgentStateVolumes.push(managedAgentStateVolume);
   }
   return {
     backupNames: backupNames.sort(),
-    managedHermesStateVolumes: managedHermesStateVolumes.sort((left, right) =>
+    managedAgentStateVolumes: managedAgentStateVolumes.sort((left, right) =>
       left.sandboxName.localeCompare(right.sandboxName),
     ),
     names: names.sort(),
@@ -2596,7 +2600,7 @@ function hasDockerSandboxRegistrations(
   registrations: SelectedRegistrySandboxState["registrations"],
 ): boolean {
   return Object.entries(registrations).some(
-    ([name, entry]) => managedHermesStateVolumeContext(name, entry).runtimeProviderId === "docker",
+    ([name, entry]) => managedAgentStateVolumeContext(name, entry).runtimeProviderId === "docker",
   );
 }
 
@@ -3281,7 +3285,7 @@ async function executeOpenShellResourceCleanup(
   scopedToSelectedGateway: boolean,
   sandboxNames: readonly string[],
   sandboxRegistrations: SelectedRegistrySandboxState["registrations"],
-  managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
+  managedAgentStateVolumes: readonly ManagedAgentStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
   interruptedOnboardLock?: OnboardStateLockHandle,
@@ -3355,7 +3359,7 @@ async function executeOpenShellResourceCleanup(
   if (
     !portableRuntimeCleanup &&
     !externallySupervised &&
-    !removeManagedHermesStateVolumes(managedHermesStateVolumes, runtime)
+    !removeManagedStateVolumesForUninstall(managedAgentStateVolumes, runtime)
   ) {
     return false;
   }
@@ -3902,7 +3906,7 @@ async function executePlan(
   otherGatewayPorts: readonly number[],
   sandboxNames: readonly string[],
   sandboxRegistrations: SelectedRegistrySandboxState["registrations"],
-  managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
+  managedAgentStateVolumes: readonly ManagedAgentStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
   portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
@@ -3980,7 +3984,7 @@ async function executePlan(
       otherGatewayPorts,
       sandboxNames,
       sandboxRegistrations,
-      managedHermesStateVolumes,
+      managedAgentStateVolumes,
       teardownAuthority,
       portableRuntimeCleanup,
       portableRetirementEntries,
@@ -4217,6 +4221,9 @@ function recoverAbandonedInterruptedUninstallState(
       return false;
     }
     try {
+      assertGatewayStatePathSafe(runtime.env.HOME || os.homedir(), path.dirname(source));
+      assertGatewayStatePathSafe(runtime.env.HOME || os.homedir(), path.dirname(destination));
+      fs.mkdirSync(path.dirname(destination), { mode: 0o700, recursive: true });
       fs.renameSync(source, destination);
     } catch (error) {
       runtime.warn(
@@ -4394,6 +4401,9 @@ async function removeInterruptedStateRootAfterFinalCleanup(
         return false;
       }
       try {
+        assertGatewayStatePathSafe(runtime.env.HOME || os.homedir(), path.dirname(source));
+        assertGatewayStatePathSafe(runtime.env.HOME || os.homedir(), path.dirname(destination));
+        fs.mkdirSync(path.dirname(destination), { mode: 0o700, recursive: true });
         fs.renameSync(source, destination);
       } catch (error) {
         runtime.warn(
@@ -4452,7 +4462,7 @@ async function executePreparedPlan(
   initialOtherGatewayPorts: readonly number[],
   sandboxNames: readonly string[],
   sandboxRegistrations: SelectedRegistrySandboxState["registrations"],
-  managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
+  managedAgentStateVolumes: readonly ManagedAgentStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
   portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
@@ -4559,7 +4569,7 @@ async function executePreparedPlan(
           scopedToSelectedGateway,
           sandboxNames,
           sandboxRegistrations,
-          managedHermesStateVolumes,
+          managedAgentStateVolumes,
           teardownAuthority,
           false,
           openShellCleanup === "interrupted-pre-gateway" ? interruptedOnboardLock : undefined,
@@ -4935,7 +4945,7 @@ async function prepareUninstallRun(
   let { otherGatewayEnvironmentsRemain: scopedToSelectedGateway } = gatewayInspection;
   let selectedSandboxState: SelectedRegistrySandboxState = {
     backupNames: [],
-    managedHermesStateVolumes: [],
+    managedAgentStateVolumes: [],
     names: [],
     registrations: {},
   };
@@ -5066,7 +5076,7 @@ async function executePreparedUninstall(
       prepared.gatewayInspection.otherGatewayPorts,
       selectedSandboxState.names,
       selectedSandboxState.registrations,
-      selectedSandboxState.managedHermesStateVolumes,
+      selectedSandboxState.managedAgentStateVolumes,
       teardownAuthority,
       portableRuntimeCleanup,
       portableRetirementEntries,

@@ -685,8 +685,21 @@ export function buildProviderNeutralInferenceSandboxSmokeScript(
   const directMethod = JSON.stringify(OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.method);
   const directDenialError = JSON.stringify(OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.error);
   const directDenialDetail = JSON.stringify(
-    `${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.method} ${directAuthority}${deniedPath} ${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.detailSuffix}`,
+    `${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.method} ${local ? "" : directAuthority}${deniedPath} ${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.detailSuffix}`,
   );
+  // OpenShell 0.1.3 reports native REST denials with separate endpoint and request fields.
+  const directDenialFields = local
+    ? {
+        layer: "l7",
+        protocol: "rest",
+        method: OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.method,
+        path: deniedPath,
+        host: new URL(local.endpointUrl).hostname,
+        port: Number(new URL(local.endpointUrl).port || 80),
+        policy: `_provider_${local.providerName.replaceAll("-", "_")}`,
+        rule: `POST ${deniedPath}`,
+      }
+    : {};
   const authSetup = local
     ? `credential = os.environ.get("NEMOCLAW_LOCAL_INFERENCE_TOKEN", "")
 if not re.fullmatch(${JSON.stringify(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN)}, credential):
@@ -742,11 +755,18 @@ def post_inference(payload, label):
                 continue
             print("${endpointLabel} %s proof returned terminal HTTP %s" % (label, error.code), file=sys.stderr)
             sys.exit(1)
-        except urllib.error.URLError:
+        except urllib.error.URLError as error:
             if attempt < 2:
                 time.sleep(5 * (attempt + 1))
                 continue
-            print("${endpointLabel} %s proof transport failed after bounded retries" % label, file=sys.stderr)
+            reason = error.reason
+            error_type = type(reason).__name__ if isinstance(reason, OSError) else "unknown"
+            error_number = reason.errno if isinstance(reason, OSError) and isinstance(reason.errno, int) else "unknown"
+            print(
+                "${endpointLabel} %s proof transport failed after bounded retries (type=%s, errno=%s)"
+                % (label, error_type, error_number),
+                file=sys.stderr,
+            )
             sys.exit(1)
     if not isinstance(response_data, dict) or response_data.get("model") != model:
         print("${endpointLabel} %s proof returned a different model identity" % label, file=sys.stderr)
@@ -833,10 +853,11 @@ if tool_calling_required:
 
 direct_url = ${directUrl}
 direct_method = ${directMethod}
-direct_denial_contract_version = ${String(OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.version)}
+direct_denial_contract_version = ${String(local ? 2 : OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.version)}
 direct_denial_http_status = ${String(OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.httpStatus)}
 direct_denial_error = ${directDenialError}
 direct_denial_detail = ${directDenialDetail}
+direct_denial_fields = ${JSON.stringify(directDenialFields)}
 direct_deny_timeout_seconds = ${String(PROVIDER_NEUTRAL_SMOKE_DIRECT_DENY_TIMEOUT_SECONDS)}
 direct_request = urllib.request.Request(
     direct_url,
@@ -878,7 +899,10 @@ except urllib.error.HTTPError as error:
     ):
         print("direct host inference response was not an OpenShell policy denial", file=sys.stderr)
         sys.exit(1)
-    if detail != direct_denial_detail:
+    if detail != direct_denial_detail or any(
+        type(denial.get(field)) is not type(expected) or denial.get(field) != expected
+        for field, expected in direct_denial_fields.items()
+    ):
         print(
             "direct host inference OpenShell policy-denial contract v%s format drifted"
             % direct_denial_contract_version,

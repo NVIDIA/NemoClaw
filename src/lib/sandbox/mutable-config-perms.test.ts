@@ -8,24 +8,37 @@ import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { capturePrivilegedSandboxCommand, resolveAgentConfig, withMcpLifecycleLockSync } =
-  vi.hoisted(() => ({
-    capturePrivilegedSandboxCommand: vi.fn(),
-    resolveAgentConfig: vi.fn(),
-    withMcpLifecycleLockSync: vi.fn((_name, action) => action()),
-  }));
+const {
+  captureSanitizedResolvedOpenshell,
+  getSandbox,
+  resolveAgentConfig,
+  withMcpLifecycleLockSync,
+} = vi.hoisted(() => ({
+  captureSanitizedResolvedOpenshell: vi.fn(),
+  getSandbox: vi.fn(),
+  resolveAgentConfig: vi.fn(),
+  withMcpLifecycleLockSync: vi.fn((_name, action) => action()),
+}));
 
-vi.mock("./privileged-exec", () => ({
-  capturePrivilegedSandboxCommand,
+vi.mock("../adapters/openshell/sanitized-capture", () => ({
+  captureSanitizedResolvedOpenshell,
 }));
 vi.mock("./agent-config", () => ({ resolveAgentConfig }));
 vi.mock("../state/mcp-lifecycle-lock-acquisition", () => ({ withMcpLifecycleLockSync }));
 
 import type { AgentConfigTarget } from "./agent-config";
 import {
+  inspectMutableHermesConfigPerms,
   mutableHermesConfigProbeCommand,
   verifyMutableHermesConfigForTarget,
 } from "./mutable-config-perms";
+
+// The host has no sandbox account; retain real file ownership and execution identity.
+const localSandboxIdentity = `
+import os, pwd, types
+sandbox_uid, sandbox_gid = os.geteuid(), os.getegid()
+pwd.getpwnam = lambda name: types.SimpleNamespace(pw_uid=sandbox_uid, pw_gid=sandbox_gid)
+`;
 
 const hermesTarget: AgentConfigTarget = {
   agentName: "hermes",
@@ -39,7 +52,59 @@ describe("mutable Hermes config permissions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resolveAgentConfig.mockReturnValue(hermesTarget);
+    getSandbox.mockReturnValue({ name: "hermes-demo", agent: "hermes", gatewayPort: 40808 });
+    captureSanitizedResolvedOpenshell.mockReturnValue({ status: 0, output: "" });
   });
+
+  it("inspects the registered gateway as its native user while holding the lifecycle lock", () => {
+    withMcpLifecycleLockSync.mockImplementationOnce((_name, action) => {
+      expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+      const result = action();
+      expect(captureSanitizedResolvedOpenshell).toHaveBeenCalledOnce();
+      return result;
+    });
+    expect(inspectMutableHermesConfigPerms("hermes-demo", getSandbox)).toEqual({
+      verified: true,
+      errors: [],
+    });
+    expect(withMcpLifecycleLockSync).toHaveBeenCalledWith("hermes-demo", expect.any(Function));
+    expect(captureSanitizedResolvedOpenshell).toHaveBeenCalledWith(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        "hermes-demo",
+        "-g",
+        "nemoclaw-40808",
+        "--no-tty",
+        "--no-login-shell",
+        "--timeout",
+        "15",
+        "--",
+        ...mutableHermesConfigProbeCommand(hermesTarget),
+      ],
+      expect.objectContaining({ timeout: 20_000, maxBuffer: 64 * 1024 }),
+    );
+    expect(mutableHermesConfigProbeCommand(hermesTarget)[0]).toBe("/usr/bin/python3");
+  });
+
+  it.each([
+    { status: 1, output: "" },
+    { status: null, output: "", signal: "SIGTERM" },
+    { status: 0, output: "", error: new Error("transport failed") },
+  ])("rejects an incomplete native permission probe: %j", (result) => {
+    captureSanitizedResolvedOpenshell.mockReturnValue(result);
+    expect(inspectMutableHermesConfigPerms("hermes-demo", getSandbox).verified).toBe(false);
+  });
+
+  it.each([null, { gatewayName: "unregistered-gateway" }])(
+    "rejects missing or invalid registry authority: %j",
+    (entry) => {
+      getSandbox.mockReturnValue(entry);
+      expect(inspectMutableHermesConfigPerms("hermes-demo", getSandbox).verified).toBe(false);
+      expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+    },
+  );
 
   it("claims mutable Hermes posture only after the exact probe succeeds", () => {
     const execute = vi.fn();
@@ -63,7 +128,6 @@ describe("mutable Hermes config permissions", () => {
     const configPath = path.join(configDir, "config.yaml");
     const hashPath = path.join(configDir, ".config-hash");
     const envPath = path.join(configDir, ".env");
-    const commandShim = path.join(root, "run-privileged-command.sh");
     fs.mkdirSync(configDir, { mode: 0o700 });
     fs.chmodSync(configDir, 0o3770);
     fs.writeFileSync(configPath, "fixture\n", { mode: 0o640 });
@@ -72,19 +136,6 @@ describe("mutable Hermes config permissions", () => {
     fs.chmodSync(configPath, 0o640);
     fs.chmodSync(hashPath, 0o640);
     fs.chmodSync(envPath, 0o640);
-    fs.writeFileSync(
-      commandShim,
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        "shift",
-        'while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done',
-        '[ "${1:-}" = "--" ]',
-        "shift",
-        'exec "$@"',
-      ].join("\n"),
-      { mode: 0o700 },
-    );
 
     const fixtureTarget: AgentConfigTarget = {
       ...hermesTarget,
@@ -94,9 +145,14 @@ describe("mutable Hermes config permissions", () => {
     };
     const runProbe = () =>
       verifyMutableHermesConfigForTarget(fixtureTarget, (command) => {
-        const result = spawnSync(commandShim, [...command], {
-          encoding: "utf8",
-        });
+        const codeIndex = command.indexOf("-c") + 1;
+        const result = spawnSync(
+          "python3",
+          ["-I", "-c", localSandboxIdentity + command[codeIndex], ...command.slice(codeIndex + 1)],
+          {
+            encoding: "utf8",
+          },
+        );
         expect(result.error).toBeUndefined();
         expect(result.status, result.stderr).toBe(0);
       });
@@ -144,6 +200,9 @@ describe("mutable Hermes config permissions", () => {
     [0o3770, "append-only-root", false],
     [0o3770, "immutable-artifact", false],
     [0o750, "verified", false],
+    [0o3770, "root", false],
+    [0o3770, "wrong-user", false],
+    [0o3770, "wrong-group", false],
   ] as const)(
     "checks mode %s with %s topology without changing state",
     (mode, topology, expected) => {
@@ -169,6 +228,7 @@ describe("mutable Hermes config permissions", () => {
       // Guard tests exercise its real procfs proof separately.
       // Supply blocking inode flags as external metadata; keep file I/O real.
       const prelude = `
+${localSandboxIdentity}
 import fcntl, os, stat, struct, subprocess, types
 topology = ${JSON.stringify(topology)}
 original_fstat = os.fstat
@@ -190,6 +250,12 @@ def native_flags(fd):
     return types.SimpleNamespace(**fields)
 fcntl.ioctl = inode_flags
 os.fstat = native_flags
+if topology == "root":
+    os.geteuid = lambda: 0
+elif topology == "wrong-user":
+    os.geteuid = lambda: sandbox_uid + 1
+elif topology == "wrong-group":
+    os.getegid = lambda: sandbox_gid + 1
 calls = 0
 def topology_response(args, **kwargs):
     global calls

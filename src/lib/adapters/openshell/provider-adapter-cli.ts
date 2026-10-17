@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { requireSandboxPolicyAuthority } from "./provider-policy";
 import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
@@ -571,62 +572,17 @@ export function createCliOpenShellProviderAdapter(
     async (request) => {
       const targetError = namedGatewayEndpointOverrideError(request.target, environment);
       if (targetError) return failure(targetError);
-      const read = () => {
-        const result = invoke(["settings", "get", "--global", "--json"], request);
-        const error = commandError(result);
-        if (error) return failure<string>(error);
-        try {
-          const document = JSON.parse(bufferOrStringToText(result.stdout));
-          const value = document.settings?.providers_v2_enabled;
-          if (document.scope === "global" && ["true", "false", "<unset>"].includes(value)) {
-            return success<string>(value);
-          }
-        } catch {
-          /* Fail closed on incompatible settings output. */
-        }
-        return failure<string>({
-          kind: "schema",
-          message: "OpenShell did not return the global provider policy setting.",
-        });
-      };
-      const before = read();
-      if (!before.ok) return before;
-      if (before.value === "true") return success(undefined);
-      if (before.value === "false") {
+      try {
+        await requireSandboxPolicyAuthority(async (args) => invoke(args, request));
+        return success(undefined);
+      } catch (error) {
         return failure({
           kind: "command",
-          reason: "conflict",
+          reason: "uncertain",
           message:
-            "Native NVIDIA inference requires provider-derived policy, but providers_v2_enabled is explicitly disabled on this gateway. Ask the gateway administrator to enable it.",
+            error instanceof Error ? error.message : "Could not verify sandbox policy authority.",
         });
       }
-      // OpenShell 0.0.116 defaults this gate off. Preserve explicit administrator
-      // choices; enable only its unset default before publishing a native provider.
-      const updated = invoke(
-        [
-          "settings",
-          "set",
-          "--global",
-          "--key",
-          "providers_v2_enabled",
-          "--value",
-          "true",
-          "--yes",
-        ],
-        request,
-      );
-      const error = commandError(updated);
-      if (error) return failure(error);
-      const after = read();
-      if (!after.ok) return after;
-      return after.value === "true"
-        ? success(undefined)
-        : failure({
-            kind: "command",
-            reason: "uncertain",
-            message:
-              "OpenShell did not confirm provider-derived policy activation. Inspect gateway settings before retrying.",
-          });
     };
 
   const listProviders: OpenShellProviderAdapter["listProviders"] = async (request) => {
@@ -746,19 +702,17 @@ export function createCliOpenShellProviderAdapter(
     }
     if (!request.includeCredentialExpirations) return success(metadata);
 
-    for (
-      let offset = 0;
-      offset < 10 * PROVIDER_INVENTORY_LIMIT;
-      offset += PROVIDER_INVENTORY_LIMIT
-    ) {
+    let pageToken = "";
+    const seenPageTokens = new Set<string>();
+    for (let page = 0; page < 10; page += 1) {
       const inventory = invoke(
         [
           "provider",
           "list",
-          "--limit",
+          "--page-size",
           String(PROVIDER_INVENTORY_LIMIT),
-          "--offset",
-          String(offset),
+          "--page-token",
+          pageToken,
           "--output",
           "json",
         ],
@@ -774,7 +728,17 @@ export function createCliOpenShellProviderAdapter(
         commandStdout(inventory),
         request.providerName,
       );
-      if (credentialState === undefined) continue;
+      if (credentialState && "nextPageToken" in credentialState) {
+        if (seenPageTokens.has(credentialState.nextPageToken)) {
+          return failure({
+            kind: "schema",
+            message: "OpenShell repeated a provider inventory page token.",
+          });
+        }
+        pageToken = credentialState.nextPageToken;
+        seenPageTokens.add(pageToken);
+        continue;
+      }
       return credentialState
         ? success({
             ...metadata,

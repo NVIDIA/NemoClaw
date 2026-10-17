@@ -17,10 +17,8 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   assertSecurityPosture,
-  OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
   parseCapabilitySurfaceReport,
   parseExpectedOpenShellVersion,
-  PODMAN_OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
   type ProcessSecurityIdentity,
   parseSplitProcessSecurityReport,
   SPLIT_PROCESS_SECURITY_PROBE,
@@ -31,9 +29,34 @@ import {
   validateSplitProcessSecurityReport,
 } from "../fixtures/security-posture.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import type { SecurityContainerPair } from "../fixtures/security-posture-containers.ts";
+
+const CONTAINER_PAIR: SecurityContainerPair = {
+  evidence: "container-launch-configuration-and-supervisor-health",
+  workload: {
+    id: "a".repeat(64),
+    image: "b".repeat(64),
+    startedAt: "2026-10-15T00:00:00Z",
+    pid: 100,
+    user: "998:998",
+    entrypoint: ["/.openshell/runtime/openshell-sandbox"],
+    sandboxId: "sandbox-id",
+    namespace: "default",
+  },
+  supervisor: {
+    id: "c".repeat(64),
+    image: "d".repeat(64),
+    startedAt: "2026-10-15T00:00:00Z",
+    pid: 101,
+    user: "65534:65534",
+    entrypoint: ["/openshell-supervisor"],
+    sandboxId: "sandbox-id",
+    namespace: "default",
+  },
+};
 
 const ZERO_CAPABILITIES = "0000000000000000";
-const SUPERVISOR_EXECUTABLE = "/opt/openshell/bin/openshell-sandbox";
+const BOUNDARY_EXECUTABLE = "/.openshell/runtime/openshell-sandbox";
 const SANDBOX_NAME = "secure-sandbox";
 const RESOURCE_HANDLE = "opaque-runtime-resource";
 const MANAGED_IMAGE_REVISION = "a".repeat(40);
@@ -46,10 +69,12 @@ import pwd
 import sys
 import types
 
-probe, proc_root_arg, censuses_json = sys.argv[1:4]
+probe, proc_root_arg, censuses_json, options_json = sys.argv[1:5]
+options = json.loads(options_json)
 real_path = type(pathlib.Path())
 real_scandir = os.scandir
 real_stat = os.stat
+real_readlink = os.readlink
 proc_root = real_path(proc_root_arg)
 censuses = json.loads(censuses_json)
 scan_index = 0
@@ -91,6 +116,20 @@ def controlled_stat(path, *args, **kwargs):
         os.symlink(target, link, target_is_directory=True)
     return real_stat(path, *args, **kwargs)
 
+def controlled_readlink(path, *args, **kwargs):
+    if str(path) == str(proc_root / "1" / "exe"):
+        if options.get("boundaryRead") == "missing":
+            raise FileNotFoundError(2, "fixture missing process")
+        if options.get("boundaryRead") == "readable":
+            return "/.openshell/runtime/openshell-sandbox"
+        raise PermissionError(13, "fixture permission denied")
+    if options.get("denyChildRead"):
+        raise PermissionError(13, "fixture child permission denied")
+    return real_readlink(path, *args, **kwargs)
+
+os.readlink = controlled_readlink
+os.getresuid = lambda: tuple(options.get("observerUids", [1000, 1000, 1000]))
+os.getresgid = lambda: tuple(options.get("observerGids", [1000, 1000, 1000]))
 pathlib.Path = controlled_path
 os.scandir = controlled_scandir
 os.stat = controlled_stat
@@ -147,6 +186,12 @@ function validNemoclawStartProcess({
   };
 }
 
+function setProcessIdentity(process: ProcessSecurityIdentity, id: number): void {
+  process.status.uid = repeatedId(id);
+  process.status.gid = repeatedId(id);
+  process.status.groups = [String(id)];
+}
+
 function validReport(): SplitProcessSecurityReport {
   const childSupervisor = validNemoclawStartProcess();
   return {
@@ -155,26 +200,26 @@ function validReport(): SplitProcessSecurityReport {
     observedProcEntries: 12,
     sandboxGid: 1000,
     sandboxUid: 1000,
-    supervisor: {
-      argv: [SUPERVISOR_EXECUTABLE, "--workdir", "/sandbox"],
-      executable: SUPERVISOR_EXECUTABLE,
+    workloadBoundary: {
+      argv: [BOUNDARY_EXECUTABLE, "--bootstrap", "/.openshell/channel/sandbox/bootstrap.json"],
+      executable: null,
       pid: 1,
       ppid: 0,
       state: "S",
       startTime: "101",
       status: {
         capAmb: ZERO_CAPABILITIES,
-        capBnd: OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
-        capEff: OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
+        capBnd: ZERO_CAPABILITIES,
+        capEff: ZERO_CAPABILITIES,
         capInh: ZERO_CAPABILITIES,
-        capPrm: OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
-        gid: repeatedId(0),
-        groups: ["0", "1000"],
+        capPrm: ZERO_CAPABILITIES,
+        gid: repeatedId(1000),
+        groups: ["1000"],
         noNewPrivs: "1",
-        uid: repeatedId(0),
+        uid: repeatedId(1000),
       },
     },
-    version: 2,
+    version: 3,
   };
 }
 
@@ -220,14 +265,25 @@ function writeProcProcess(root: string, process: ProcessSecurityIdentity): void 
     path.join(processDirectory, "cmdline"),
     Buffer.from(`${process.argv.join("\0")}\0`, "utf8"),
   );
-  symlinkSync(process.executable, path.join(processDirectory, "exe"));
+  process.executable !== null &&
+    symlinkSync(process.executable, path.join(processDirectory, "exe"));
 }
 
-function runSplitProcessProbeWithCensuses(censuses: ControlledCensus[]) {
+function runSplitProcessProbeWithCensuses(
+  censuses: ControlledCensus[],
+  options: {
+    boundaryRead?: "missing" | "readable";
+    boundaryArgv?: string[];
+    denyChildRead?: boolean;
+    observerUids?: number[];
+    observerGids?: number[];
+  } = {},
+) {
   const procRoot = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-security-posture-proc-"));
   const report = validReport();
+  report.workloadBoundary.argv = options.boundaryArgv ?? report.workloadBoundary.argv;
   try {
-    writeProcProcess(procRoot, report.supervisor);
+    writeProcProcess(procRoot, report.workloadBoundary);
     const controlledCensuses = censuses.map((census, index) => {
       const snapshotRoot = path.join(procRoot, "snapshots", String(index));
       const stableRoot = path.join(snapshotRoot, "stable");
@@ -255,6 +311,7 @@ function runSplitProcessProbeWithCensuses(censuses: ControlledCensus[]) {
         SPLIT_PROCESS_SECURITY_PROBE,
         procRoot,
         JSON.stringify(controlledCensuses),
+        JSON.stringify(options),
       ],
       { encoding: "utf8", killSignal: "SIGKILL", timeout: 10_000 },
     );
@@ -342,12 +399,12 @@ afterEach(() => vi.unstubAllEnvs());
 
 describe("security posture fixture", () => {
   it("accepts only the exact stable OpenShell version token", () => {
-    expect(parseExpectedOpenShellVersion(successfulProbe("openshell 0.0.116\n"))).toBe("0.0.116");
-    expect(() =>
-      parseExpectedOpenShellVersion(successfulProbe("openshell 0.0.116-rc.1\n")),
-    ).toThrow(/expected OpenShell 0\.0\.116/u);
-    expect(() => parseExpectedOpenShellVersion(successfulProbe("openshell 0.0.116+dev\n"))).toThrow(
-      /expected OpenShell 0\.0\.116/u,
+    expect(parseExpectedOpenShellVersion(successfulProbe("openshell 0.1.3\n"))).toBe("0.1.3");
+    expect(() => parseExpectedOpenShellVersion(successfulProbe("openshell 0.1.3-rc.1\n"))).toThrow(
+      /expected OpenShell 0\.1\.3/u,
+    );
+    expect(() => parseExpectedOpenShellVersion(successfulProbe("openshell 0.1.3+dev\n"))).toThrow(
+      /expected OpenShell 0\.1\.3/u,
     );
   });
 
@@ -377,8 +434,72 @@ describe("security posture fixture", () => {
     expect(result.error, "python3 is required to run the embedded probe").toBeUndefined();
     expect(result.status, result.stderr).toBe(0);
     const report = parseSplitProcessSecurityReport(result.stdout);
+    expect(report.workloadBoundary.executable).toBeNull();
     expect(report.childSupervisors.map(({ pid }) => pid)).toEqual([42, 43]);
     expect(report.observedChildSupervisors.map(({ pid }) => pid)).toEqual([42, 43]);
+  });
+
+  it.each([
+    {
+      options: { observerUids: [0, 0, 0] },
+      error: /observer must run as the sandbox owner/u,
+      name: "root observer",
+    },
+    {
+      options: { observerUids: [1000, 1000, 0] },
+      error: /observer must run as the sandbox owner/u,
+      name: "saved root identity",
+    },
+    {
+      options: { observerGids: [1001, 1001, 1001] },
+      error: /observer must run as the sandbox owner/u,
+      name: "wrong observer group",
+    },
+    {
+      options: { boundaryRead: "missing" as const },
+      error: /FileNotFoundError/u,
+      name: "missing PID 1 executable",
+    },
+    {
+      options: { denyChildRead: true },
+      error: /child permission denied/u,
+      name: "denied child executable",
+    },
+  ])("rejects $name without fabricating a process report", ({ options, error }) => {
+    const result = runSplitProcessProbeWithCensuses(
+      [{ children: [validNemoclawStartProcess()] }],
+      options,
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(error);
+    expect(result.stdout).toBe("");
+  });
+
+  it("rejects a readable PID 1 executable instead of claiming nondumpable protection", () => {
+    const result = runSplitProcessProbeWithCensuses([{ children: [validNemoclawStartProcess()] }], {
+      boundaryRead: "readable",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(() => parseSplitProcessSecurityReport(result.stdout)).toThrow(
+      /must deny executable-link access/u,
+    );
+  });
+
+  it("rejects an unobserved child executable", () => {
+    const report = validReport();
+    report.childSupervisors[0]!.executable = null;
+    expect(() => validateSplitProcessSecurityReport(report)).toThrow(
+      /expected the system Bash executable/u,
+    );
+  });
+
+  it("rejects unexpected boundary arguments without printing them", () => {
+    const result = runSplitProcessProbeWithCensuses([{ children: [validNemoclawStartProcess()] }], {
+      boundaryArgv: [BOUNDARY_EXECUTABLE, "credential=DO_NOT_LOG"],
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/unexpected OpenShell workload boundary command/u);
+    expect(result.stdout + result.stderr).not.toContain("DO_NOT_LOG");
   });
 
   it("separates the final stable census from every process observed during acquisition", () => {
@@ -597,10 +718,9 @@ describe("security posture fixture", () => {
     });
   });
 
-  it("accepts the expected OpenShell supervisor and non-root nemoclaw-start child supervisor", () => {
+  it("accepts the non-root workload boundary and nemoclaw-start child supervisor", () => {
     const report = validReport();
 
-    expect(OPENSHELL_SUPERVISOR_CAPABILITY_MASK).toBe("00000004a82c35fb");
     expect(validateSplitProcessSecurityReport(report)).toEqual(report);
     expect(parseSplitProcessSecurityReport(JSON.stringify(report))).toEqual(report);
   });
@@ -620,18 +740,18 @@ describe("security posture fixture", () => {
     },
   );
 
-  it("accepts the exact OpenShell supervisor groups in either report order", () => {
-    const report = validReport();
-    report.supervisor.status.groups.reverse();
-
-    expect(validateSplitProcessSecurityReport(report)).toEqual(report);
+  it.each(["unknown", "toString"])("rejects unreviewed runtime provider %s", (providerId) => {
+    expect(() => validateSplitProcessSecurityReport(validReport(), providerId)).toThrow(
+      /no reviewed workload boundary/u,
+    );
   });
 
-  it("accepts a root-only OpenShell supervisor without an engine-added sandbox group", () => {
+  it("rejects a workload boundary with a root supplementary group", () => {
     const report = validReport();
-    report.supervisor.status.groups = ["0"];
-
-    expect(validateSplitProcessSecurityReport(report)).toEqual(report);
+    report.workloadBoundary.status.groups = ["0"];
+    expect(() => validateSplitProcessSecurityReport(report)).toThrow(
+      /Groups expected exactly 1000/u,
+    );
   });
 
   it.each([
@@ -662,7 +782,9 @@ describe("security posture fixture", () => {
       report.observedProcEntries = observedProcEntries;
       report.sandboxUid = 998;
       report.sandboxGid = sandboxGid;
-      report.supervisor.status.groups = ["0", String(sandboxGid)];
+      report.workloadBoundary.status.uid = repeatedId(998);
+      report.workloadBoundary.status.gid = repeatedId(sandboxGid);
+      report.workloadBoundary.status.groups = [String(sandboxGid)];
       setCurrentChildSupervisors(
         report,
         processes.map(({ pid, ppid, startTime }) =>
@@ -690,109 +812,109 @@ describe("security posture fixture", () => {
     {
       error: /expected pid=1 ppid=0/u,
       mutate: (report) => {
-        report.supervisor.ppid = 2;
+        report.workloadBoundary.ppid = 2;
       },
       name: "parent process",
     },
     {
-      error: /does not have the expected OpenShell supervisor command/u,
+      error: /must deny executable-link access/u,
       mutate: (report) => {
-        report.supervisor.executable = "/usr/bin/bash";
+        report.workloadBoundary.executable = "/usr/bin/bash";
       },
       name: "executable",
     },
     {
-      error: /does not have the expected OpenShell supervisor command/u,
+      error: /does not have the expected OpenShell workload boundary command/u,
       mutate: (report) => {
-        report.supervisor.argv.push("--unexpected");
+        report.workloadBoundary.argv.push("--unexpected");
       },
       name: "command arguments",
     },
     {
-      error: /supervisor Uid expected 0/u,
+      error: /workload boundary Uid expected 1000/u,
       mutate: (report) => {
-        report.supervisor.status.uid = repeatedId(1000);
+        report.workloadBoundary.status.uid = repeatedId(0);
       },
       name: "user identity",
     },
     {
-      error: /supervisor Gid expected 0/u,
+      error: /workload boundary Gid expected 1000/u,
       mutate: (report) => {
-        report.supervisor.status.gid = repeatedId(1000);
+        report.workloadBoundary.status.gid = repeatedId(0);
       },
       name: "group identity",
     },
     {
-      error: /supervisor Groups expected exactly 0 or 0 1000/u,
+      error: /workload boundary Groups expected exactly 1000/u,
       mutate: (report) => {
-        report.supervisor.status.groups = ["0", "44"];
+        report.workloadBoundary.status.groups = ["0", "44"];
       },
       name: "wrong sandbox supplementary group",
     },
     {
-      error: /supervisor Groups expected exactly 0 or 0 1000/u,
+      error: /workload boundary Groups expected exactly 1000/u,
       mutate: (report) => {
-        report.supervisor.status.groups = ["0", "1000", "44"];
+        report.workloadBoundary.status.groups = ["0", "1000", "44"];
       },
       name: "extra supplementary group",
     },
     {
-      error: /supervisor Groups expected exactly 0 or 0 1000/u,
+      error: /workload boundary Groups expected exactly 1000/u,
       mutate: (report) => {
-        report.supervisor.status.groups = ["0", "0"];
+        report.workloadBoundary.status.groups = ["0", "0"];
       },
       name: "duplicate supplementary group",
     },
     {
-      error: /supervisor\.state must be one of D, R, S/u,
+      error: /workloadBoundary\.state must be one of D, R, S/u,
       mutate: (report) => {
-        report.supervisor.state = "T";
+        report.workloadBoundary.state = "T";
       },
       name: "process state",
     },
     {
-      error: /supervisor CapInh drifted/u,
+      error: /workload boundary\.capInh expected 0/u,
       mutate: (report) => {
-        report.supervisor.status.capInh = "0000000000000001";
+        report.workloadBoundary.status.capInh = "0000000000000001";
       },
       name: "inheritable capability",
     },
     {
-      error: /supervisor capPrm expected/u,
+      error: /workload boundary\.capPrm expected/u,
       mutate: (report) => {
-        report.supervisor.status.capPrm = ZERO_CAPABILITIES;
+        report.workloadBoundary.status.capPrm = "0000000000000001";
       },
       name: "permitted capability",
     },
     {
-      error: /supervisor capEff expected/u,
+      error: /workload boundary\.capEff expected/u,
       mutate: (report) => {
-        report.supervisor.status.capEff = ZERO_CAPABILITIES;
+        report.workloadBoundary.status.capEff = "0000000000000001";
       },
       name: "effective capability",
     },
     {
-      error: /supervisor capBnd expected/u,
+      error: /workload boundary\.capBnd expected/u,
       mutate: (report) => {
-        report.supervisor.status.capBnd = ZERO_CAPABILITIES;
+        report.workloadBoundary.status.capBnd = "0000000000000001";
       },
       name: "bounding capability",
     },
     {
-      error: /supervisor CapAmb drifted/u,
+      error: /workload boundary\.capAmb expected 0/u,
       mutate: (report) => {
-        report.supervisor.status.capAmb = "0000000000000001";
+        report.workloadBoundary.status.capAmb = "0000000000000001";
       },
       name: "ambient capability",
     },
     {
-      error: /supervisor expected NoNewPrivs=1/u,
+      error: /workload boundary expected NoNewPrivs=1/u,
       mutate: (report) => {
-        report.supervisor.status.noNewPrivs = "0";
+        report.workloadBoundary.status.noNewPrivs = "0";
       },
       name: "NoNewPrivs",
     },
-  ])("rejects OpenShell supervisor $name drift", ({ error, mutate }) => {
+  ])("rejects OpenShell workload boundary $name drift", ({ error, mutate }) => {
     const report = validReport();
     mutate(report);
 
@@ -863,7 +985,7 @@ describe("security posture fixture", () => {
 
   it.each<ReportMutationCase>([
     {
-      error: /must not replace the OpenShell supervisor at PID 1/u,
+      error: /must not replace the OpenShell workload boundary at PID 1/u,
       mutate: (report) => {
         report.childSupervisors[0]!.pid = 1;
       },
@@ -960,10 +1082,10 @@ describe("security posture fixture", () => {
   it("rejects malformed and overflowing split-process reports", () => {
     expect(() => parseSplitProcessSecurityReport("not-json")).toThrow(/emitted invalid JSON/u);
     expect(() => validateSplitProcessSecurityReport({ childSupervisors: [] })).toThrow(
-      /version must be 2/u,
+      /version must be 3/u,
     );
     expect(() => validateSplitProcessSecurityReport({ ...validReport(), version: 1 })).toThrow(
-      /version must be 2/u,
+      /version must be 3/u,
     );
 
     const malformed = { ...validReport(), childSupervisors: "one" };
@@ -1024,34 +1146,43 @@ describe("security posture fixture", () => {
   });
 
   it.each([
-    { capabilityMask: OPENSHELL_SUPERVISOR_CAPABILITY_MASK, providerId: "docker" },
-    { capabilityMask: PODMAN_OPENSHELL_SUPERVISOR_CAPABILITY_MASK, providerId: "podman" },
+    { providerId: "docker", executable: BOUNDARY_EXECUTABLE },
+    { providerId: "podman", executable: "/opt/openshell/bin/openshell-sandbox" },
   ])(
     "checks the split-process report through the selected $providerId provider",
-    async ({ capabilityMask, providerId }) => {
+    async ({ executable, providerId }) => {
       vi.stubEnv("NEMOCLAW_E2E_SECURITY_POSTURE", "1");
       vi.stubEnv("NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS", "1");
       const report = validReport();
-      report.supervisor.status.capBnd = capabilityMask;
-      report.supervisor.status.capEff = capabilityMask;
-      report.supervisor.status.capPrm = capabilityMask;
+      report.workloadBoundary.argv[0] = executable;
+      report.sandboxUid = report.sandboxGid = 998;
+      setProcessIdentity(report.workloadBoundary, 998);
+      setProcessIdentity(report.childSupervisors[0]!, 998);
       const directChildSupervisor = report.childSupervisors[0]!;
       setCurrentChildSupervisors(report, [
         validNemoclawStartProcess({
           pid: 43,
           ppid: directChildSupervisor.pid,
           startTime: "203",
+          sandboxUid: 998,
+          sandboxGid: 998,
         }),
         directChildSupervisor,
       ]);
       const command = vi
         .fn<HostCliClient["command"]>()
         .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
-        .mockResolvedValueOnce(successfulProbe("openshell 0.0.116\n"))
-        .mockResolvedValueOnce(successfulProbe(capabilitySurfaceProof("connect")));
+        .mockResolvedValueOnce(successfulProbe("openshell 0.1.3\n"))
+        .mockResolvedValueOnce(
+          successfulProbe(
+            capabilitySurfaceProof("connect").replace("uid=1000 gid=1000", "uid=998 gid=998"),
+          ),
+        );
       const execShell = vi.fn<SandboxClient["execShell"]>(async (_name, script) =>
         String(script).includes("surface=exec")
-          ? successfulProbe(capabilitySurfaceProof("exec"))
+          ? successfulProbe(
+              capabilitySurfaceProof("exec").replace("uid=1000 gid=1000", "uid=998 gid=998"),
+            )
           : successfulProbe(),
       );
       const host = {
@@ -1070,19 +1201,23 @@ describe("security posture fixture", () => {
         stdout: Buffer.from(JSON.stringify(report), "utf8"),
         stderr: Buffer.alloc(0),
       }));
+      const inspectContainerPair = vi.fn(() => CONTAINER_PAIR);
 
       const summary = await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "openclaw", {
         environment: inlineManagedImageCatalogEnvironment(),
+        inspectContainerPair,
         executePrivilegedCommand,
         resolvePrivilegedTarget,
       });
 
       expect(summary).toEqual({
+        processScope: "workload-container",
+        containerPair: CONTAINER_PAIR,
         capabilitySurfaces: {
           connect: {
             surface: "connect",
-            uid: 1000,
-            gid: 1000,
+            uid: 998,
+            gid: 998,
             capInh: ZERO_CAPABILITIES,
             capPrm: ZERO_CAPABILITIES,
             capEff: ZERO_CAPABILITIES,
@@ -1091,8 +1226,8 @@ describe("security posture fixture", () => {
           },
           entrypoint: {
             surface: "entrypoint",
-            uid: 1000,
-            gid: 1000,
+            uid: 998,
+            gid: 998,
             capInh: ZERO_CAPABILITIES,
             capPrm: ZERO_CAPABILITIES,
             capEff: ZERO_CAPABILITIES,
@@ -1101,8 +1236,8 @@ describe("security posture fixture", () => {
           },
           exec: {
             surface: "exec",
-            uid: 1000,
-            gid: 1000,
+            uid: 998,
+            gid: 998,
             capInh: ZERO_CAPABILITIES,
             capPrm: ZERO_CAPABILITIES,
             capEff: ZERO_CAPABILITIES,
@@ -1116,22 +1251,35 @@ describe("security posture fixture", () => {
         runtimeProxyEnvLocked: true,
         runtimeVersions: {
           managedImageRevision: MANAGED_IMAGE_REVISION,
-          openshell: "0.0.116",
+          openshell: "0.1.3",
         },
         splitProcess: {
           childSupervisor: directChildSupervisor,
-          supervisor: report.supervisor,
+          workloadBoundary: report.workloadBoundary,
         },
         startupLogClean: true,
       });
       expect(command).toHaveBeenCalledTimes(3);
       expect(command.mock.calls[2]?.[1]?.[3]).toMatch(/\nexit 0$/u);
       expect(resolvePrivilegedTarget).toHaveBeenCalledTimes(2);
+      expect(inspectContainerPair.mock.calls).toEqual([
+        [
+          SANDBOX_NAME,
+          { providerId, resourceHandle: RESOURCE_HANDLE },
+          { uid: 998, gid: 998, workdir: "/sandbox" },
+        ],
+        [
+          SANDBOX_NAME,
+          { providerId, resourceHandle: RESOURCE_HANDLE },
+          { uid: 998, gid: 998, workdir: "/sandbox" },
+        ],
+      ]);
       expect(executePrivilegedCommand).toHaveBeenCalledWith(
         SANDBOX_NAME,
         ["/usr/bin/python3", "-I", "-c", SPLIT_PROCESS_SECURITY_PROBE],
         {
           expectedResourceHandle: RESOURCE_HANDLE,
+          sandboxUser: "998:998",
           sanitizeEnvironment: true,
           timeout: 30_000,
         },
@@ -1144,8 +1292,69 @@ describe("security posture fixture", () => {
       expect(
         sandboxScripts.some((script) => script.includes("cannot modify config inside the sandbox")),
       ).toBe(false);
+
+      command
+        .mockReset()
+        .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
+        .mockResolvedValueOnce(successfulProbe("openshell 0.1.3\n"));
+      execShell.mockClear();
+      inspectContainerPair
+        .mockReset()
+        .mockReturnValueOnce(CONTAINER_PAIR)
+        .mockReturnValueOnce({
+          ...CONTAINER_PAIR,
+          supervisor: { ...CONTAINER_PAIR.supervisor, pid: 999 },
+        });
+      await expect(
+        assertSecurityPosture(host, sandbox, SANDBOX_NAME, "openclaw", {
+          environment: inlineManagedImageCatalogEnvironment(),
+          inspectContainerPair,
+          executePrivilegedCommand,
+          resolvePrivilegedTarget,
+        }),
+      ).rejects.toThrow(/container pair changed/u);
+      expect(execShell).not.toHaveBeenCalled();
     },
   );
+
+  it("rejects a report for a different managed-image owner before child commands", async () => {
+    vi.stubEnv("NEMOCLAW_E2E_SECURITY_POSTURE", "1");
+    vi.stubEnv("NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS", "1");
+    const command = vi
+      .fn<HostCliClient["command"]>()
+      .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
+      .mockResolvedValueOnce(successfulProbe("openshell 0.1.3\n"));
+    const execShell = vi.fn<SandboxClient["execShell"]>();
+    const executePrivilegedCommand = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: Buffer.from(JSON.stringify(validReport())),
+      stderr: Buffer.alloc(0),
+    }));
+    await expect(
+      assertSecurityPosture(
+        { command, openshellCommandPath: "/tmp/openshell" } as unknown as HostCliClient,
+        { execShell } as unknown as SandboxClient,
+        SANDBOX_NAME,
+        "hermes",
+        {
+          environment: inlineManagedImageCatalogEnvironment(),
+          inspectContainerPair: () => CONTAINER_PAIR,
+          executePrivilegedCommand,
+          resolvePrivilegedTarget: () => ({
+            providerId: "docker",
+            resourceHandle: RESOURCE_HANDLE,
+          }),
+        },
+      ),
+    ).rejects.toThrow(/different managed-image sandbox identity/u);
+    expect(executePrivilegedCommand).toHaveBeenCalledWith(
+      SANDBOX_NAME,
+      expect.any(Array),
+      expect.objectContaining({ sandboxUser: "998:999", expectedResourceHandle: RESOURCE_HANDLE }),
+    );
+    expect(execShell).not.toHaveBeenCalled();
+  });
 
   it("rejects runtime provider resource identity drift during privileged inspection", async () => {
     vi.stubEnv("NEMOCLAW_E2E_SECURITY_POSTURE", "1");
@@ -1153,7 +1362,7 @@ describe("security posture fixture", () => {
     const command = vi
       .fn<HostCliClient["command"]>()
       .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
-      .mockResolvedValueOnce(successfulProbe("openshell 0.0.116\n"));
+      .mockResolvedValueOnce(successfulProbe("openshell 0.1.3\n"));
     const execShell = vi.fn<SandboxClient["execShell"]>();
     const resolvePrivilegedTarget = vi
       .fn()
@@ -1174,6 +1383,7 @@ describe("security posture fixture", () => {
         "openclaw",
         {
           environment: inlineManagedImageCatalogEnvironment(),
+          inspectContainerPair: () => CONTAINER_PAIR,
           executePrivilegedCommand,
           resolvePrivilegedTarget,
         },
@@ -1191,7 +1401,7 @@ describe("security posture fixture", () => {
     const command = vi
       .fn<HostCliClient["command"]>()
       .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
-      .mockResolvedValueOnce(successfulProbe("openshell 0.0.116\n"));
+      .mockResolvedValueOnce(successfulProbe("openshell 0.1.3\n"));
     const execShell = vi.fn<SandboxClient["execShell"]>();
     const resolvePrivilegedTarget = vi.fn(() => ({
       providerId: "podman",
@@ -1212,6 +1422,7 @@ describe("security posture fixture", () => {
         "openclaw",
         {
           environment: inlineManagedImageCatalogEnvironment(),
+          inspectContainerPair: () => CONTAINER_PAIR,
           executePrivilegedCommand,
           resolvePrivilegedTarget,
         },

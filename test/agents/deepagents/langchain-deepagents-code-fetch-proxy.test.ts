@@ -33,41 +33,34 @@ function readAgentFile(name: string): string {
 
 afterEach(cleanupPackageFixtures);
 
-describe("LangChain Deep Agents Code managed fetch proxy", () => {
-  it("persists the root-owned proxy as the explicit fetch_url delegation", () => {
+describe("LangChain Deep Agents Code managed fetch transport", () => {
+  it("clears obsolete proxy delegation in startup and sourced shell environments", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-fetch-proxy-"));
     try {
       const { envFile, scriptPath } = makeStartScriptFixture(tempDir, {
         markerDir: dcodeStateDir(tempDir),
       });
       const { envFileText, output } = runStartScriptProxyProbe(scriptPath, envFile, {});
-      const managedProxy = "http://10.200.0.1:3128";
+      const managedProxy = "__unset__";
       const outputLines = output.trimEnd().split("\n");
 
       expect(outputLines).toContain(`RUNTIME_${TRUSTED_FETCH_PROXY_ENV_NAME}=${managedProxy}`);
       expect(outputLines).toContain(`SOURCED_${TRUSTED_FETCH_PROXY_ENV_NAME}=${managedProxy}`);
       expect(envFileText.trimEnd().split("\n")).toContain(
-        `export ${TRUSTED_FETCH_PROXY_ENV_NAME}=${managedProxy}`,
+        `unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT ${TRUSTED_FETCH_PROXY_ENV_NAME}`,
       );
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("rejects consistently forged proxy env that differs from root-owned files", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-proxy-root-"));
+  it("rejects an unsafe managed provider identity before fetching", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-fetch-identity-"));
     try {
-      const hostFile = path.join(tempDir, "dcode-proxy-host");
-      const portFile = path.join(tempDir, "dcode-proxy-port");
       const runtimeFile = path.join(tempDir, "managed-dcode-runtime.py");
-      fs.writeFileSync(hostFile, "trusted-proxy.internal\n", { mode: 0o444 });
-      fs.writeFileSync(portFile, "3129\n", { mode: 0o444 });
-      fs.chmodSync(hostFile, 0o444);
-      fs.chmodSync(portFile, 0o444);
       fs.writeFileSync(
         runtimeFile,
         addDarwinFcntlSealConstants(readAgentFile("managed-dcode-runtime.py")),
-        "utf8",
       );
       const result = spawnSync(
         "python3",
@@ -77,53 +70,38 @@ describe("LangChain Deep Agents Code managed fetch proxy", () => {
 import importlib.util
 import os
 from pathlib import Path
-
-spec = importlib.util.spec_from_file_location(
-    "nemoclaw_managed_proxy_test",
-    ${JSON.stringify(runtimeFile)},
-)
+spec = importlib.util.spec_from_file_location("managed", ${JSON.stringify(runtimeFile)})
 runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
-runtime._MANAGED_PROXY_HOST_FILE = Path(${JSON.stringify(hostFile)})
-runtime._MANAGED_PROXY_PORT_FILE = Path(${JSON.stringify(portFile)})
+identity = Path(${JSON.stringify(tempDir)}) / "provider"
+runtime._UPSTREAM_PROVIDER_FILE = identity
 runtime._MANAGED_FILE_OWNER_UID = os.getuid()
-
-for name in (
-    "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "http_proxy",
-    "https_proxy",
-):
-    os.environ[name] = "http://attacker.internal:4444"
-
+assert runtime._managed_fetch_uses_openshell() is False
+identity.write_text("openai\\n")
+identity.chmod(0o444)
+assert runtime._managed_fetch_uses_openshell() is True
+identity.chmod(0o644)
 try:
-    runtime.managed_fetch_proxy_url()
-except RuntimeError as exc:
-    assert str(exc) == "managed fetch URL proxy does not match root-owned proxy"
-    assert "attacker.internal" not in str(exc)
+    runtime.managed_fetch_with_redirects("https://example.com", timeout=3, max_redirects=5,
+        original_fetch=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unsafe fallback")),
+        validation_error=ValueError)
+except ValueError as exc:
+    assert str(exc) == "managed upstream provider file has unsafe ownership or mode"
 else:
-    raise AssertionError("consistently forged proxy environment was accepted")
-
-trusted = "http://trusted-proxy.internal:3129"
-for name in (
-    "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "http_proxy",
-    "https_proxy",
-):
-    os.environ[name] = trusted
-os.environ["NO_PROXY"] = "raw.githubusercontent.com"
-assert runtime.managed_fetch_proxy_url() == trusted
-print("root-owned-proxy-verification-ok")
+    raise AssertionError("writable managed identity was accepted")
+identity.unlink()
+identity.symlink_to(identity.with_name("missing"))
+try:
+    runtime._managed_fetch_uses_openshell()
+except RuntimeError as exc:
+    assert str(exc) == "managed upstream provider file is missing or unsafe"
+else:
+    raise AssertionError("dangling identity symlink was accepted")
 `,
         ],
         { encoding: "utf8", env: { PATH: process.env.PATH } },
       );
-
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("root-owned-proxy-verification-ok");
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -185,7 +163,7 @@ print("root-owned-proxy-verification-ok")
 
     expect(check).toContain("fetch_url_probe_source");
     expect(check).toContain("from deepagents_code.tools import fetch_url");
-    expect(check).toContain(TRUSTED_FETCH_PROXY_ENV_NAME);
+    expect(check).toContain("_managed_fetch_uses_openshell");
     expect(check).toContain("expect_fetch_reached");
     expect(check).toContain("FETCH_SUCCESS:2[0-9]{2}:[1-9][0-9]*");
     expect(check).toContain("https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/README.md");
@@ -264,19 +242,16 @@ sys.modules["requests"] = requests
 from deepagents_code import _nemoclaw_managed, tools
 
 root = Path(${JSON.stringify(tempDir)})
-proxy_host_file = root / "managed-proxy-host"
-proxy_port_file = root / "managed-proxy-port"
+provider_file = root / "managed-provider"
 managed_ca_file = root / "managed-ca.pem"
 attacker_ca_file = root / "attacker-ca.pem"
-proxy_host_file.write_text("managed-proxy.internal\\n", encoding="utf-8")
-proxy_port_file.write_text("3128\\n", encoding="utf-8")
+provider_file.write_text("openai\\n", encoding="utf-8")
 managed_ca_file.write_text("trusted CA bundle\\n", encoding="utf-8")
 attacker_ca_file.write_text("attacker CA bundle\\n", encoding="utf-8")
-for trusted_file in (proxy_host_file, proxy_port_file, managed_ca_file, attacker_ca_file):
+for trusted_file in (provider_file, managed_ca_file, attacker_ca_file):
     trusted_file.chmod(0o444)
 
-_nemoclaw_managed._MANAGED_PROXY_HOST_FILE = proxy_host_file
-_nemoclaw_managed._MANAGED_PROXY_PORT_FILE = proxy_port_file
+_nemoclaw_managed._UPSTREAM_PROVIDER_FILE = provider_file
 _nemoclaw_managed._MANAGED_FETCH_CA_BUNDLE_FILE = managed_ca_file
 _nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid()
 
@@ -364,7 +339,7 @@ print("concurrent-ca-bundle-mutation-ok")
     expect(result.stdout).toContain("concurrent-ca-bundle-mutation-ok");
   });
 
-  it("keeps redirects and concurrent fetches behind the explicit proxy without direct DNS", () => {
+  it("keeps redirects and concurrent fetches on the mediated network without ambient proxies", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     const proxyUrl = "http://managed-proxy.internal:3128";
@@ -435,25 +410,21 @@ requests.exceptions = types.SimpleNamespace(HTTPError=ProxyPolicyDenied, TooMany
 sys.modules["requests"] = requests
 
 from deepagents_code import _nemoclaw_managed, tools
-from deepagents_code._nemoclaw_managed import managed_fetch_proxy_url
 
-proxy_host_file = Path(${JSON.stringify(tempDir)}) / "managed-proxy-host"
-proxy_port_file = Path(${JSON.stringify(tempDir)}) / "managed-proxy-port"
+
+provider_file = Path(${JSON.stringify(tempDir)}) / "managed-provider"
 managed_ca_file = Path(${JSON.stringify(tempDir)}) / "managed-ca.pem"
 attacker_ca_file = Path(${JSON.stringify(tempDir)}) / "attacker-ca.pem"
 writable_ca_file = Path(${JSON.stringify(tempDir)}) / "writable-sensitive-ca.pem"
 symlink_ca_file = Path(${JSON.stringify(tempDir)}) / "symlink-sensitive-ca.pem"
-proxy_host_file.write_text("managed-proxy.internal\\n", encoding="utf-8")
-proxy_port_file.write_text("3128\\n", encoding="utf-8")
+provider_file.write_text("openai\\n", encoding="utf-8")
 managed_ca_file.write_text("test CA bundle\\n", encoding="utf-8")
 attacker_ca_file.write_text("attacker CA bundle\\n", encoding="utf-8")
 writable_ca_file.write_text("unsafe CA bundle\\n", encoding="utf-8")
 writable_ca_file.chmod(0o666)
 symlink_ca_file.symlink_to(managed_ca_file)
-proxy_host_file.chmod(0o444)
-proxy_port_file.chmod(0o444)
-_nemoclaw_managed._MANAGED_PROXY_HOST_FILE = proxy_host_file
-_nemoclaw_managed._MANAGED_PROXY_PORT_FILE = proxy_port_file
+provider_file.chmod(0o444)
+_nemoclaw_managed._UPSTREAM_PROVIDER_FILE = provider_file
 _nemoclaw_managed._MANAGED_FETCH_CA_BUNDLE_FILE = managed_ca_file
 _nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid()
 os.environ["REQUESTS_CA_BUNDLE"] = "relative/../hostile-requests-ca.pem"
@@ -464,7 +435,7 @@ def forbidden_direct_dns(*_args, **_kwargs):
     raise AssertionError("managed fetch attempted direct DNS validation")
 
 tools._validate_url = forbidden_direct_dns
-expected_proxies = {"http": ${JSON.stringify(proxyUrl)}, "https": ${JSON.stringify(proxyUrl)}}
+expected_proxies = {}
 
 def assert_fd_ca_path(candidate):
     assert candidate.startswith(("/proc/self/fd/", "/dev/fd/"))
@@ -505,7 +476,7 @@ assert {
     "timeout": 8,
     "headers": {"User-Agent": "Mozilla/5.0 (compatible; DeepAgents/1.0)"},
     "allow_redirects": False,
-    "proxies": {"http": ${JSON.stringify(proxyUrl)}, "https": ${JSON.stringify(proxyUrl)}},
+    "proxies": {},
 }
 assert_fd_ca_path(call_kwargs["verify"])
 assert sessions[0].ca_contents == ["test CA bundle\\n"]
@@ -640,45 +611,14 @@ for malformed in ("https://[broken", "https://example.com:not-a-port"):
     else:
         raise AssertionError(f"malformed URL escaped validation: {malformed}")
 
+calls.clear()
 os.environ["HTTP_PROXY"] = "http://attacker.internal:4444"
-try:
-    tools._fetch_with_redirects("https://raw.githubusercontent.com/example", timeout=8)
-except tools._UrlValidationError as exc:
-    assert str(exc) == "managed fetch URL proxy does not match runtime proxy"
-    assert "attacker.internal" not in str(exc)
-else:
-    raise AssertionError("proxy-integrity error escaped fetch_url validation")
-
-for invalid_proxy in (
-    "http://user:proxy-secret@proxy.internal:3128",
-    "http://proxy.internal",
-    "http://proxy.internal:0",
-    "http://proxy.internal:70000",
-    "http://proxy.internal:3128/unexpected",
-    "http://proxy.internal:3128?route=unsafe",
-    "http://proxy.internal:3128#fragment",
-    " http://proxy.internal:3128",
-    "http://proxy.internal:3128\\n",
-):
-    os.environ["DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL"] = invalid_proxy
-    for proxy_name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
-        os.environ[proxy_name] = invalid_proxy
-    try:
-        managed_fetch_proxy_url()
-    except RuntimeError as exc:
-        assert str(exc) == "managed fetch URL proxy is invalid"
-        assert "proxy-secret" not in str(exc)
-    else:
-        raise AssertionError(f"invalid managed proxy was accepted: {invalid_proxy!r}")
-
-for proxy_name in (
-    "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "http_proxy",
-    "https_proxy",
-):
-    os.environ[proxy_name] = ${JSON.stringify(proxyUrl)}
+os.environ["HTTPS_PROXY"] = "http://user:secret@attacker.internal:4444"
+os.environ["ALL_PROXY"] = "socks5://attacker.internal:1080"
+os.environ["NO_PROXY"] = "*"
+os.environ["DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL"] = "http://attacker.internal:4444"
+assert tools._fetch_with_redirects("https://raw.githubusercontent.com/example", timeout=8).status_code == 200
+assert_managed_hops(["https://raw.githubusercontent.com/example"])
 
 original_import = builtins.__import__
 def block_requests_import(name, *args, **kwargs):
@@ -813,7 +753,7 @@ print("managed-fetch-proxy-ok")
     expect(result.stdout).toContain("managed-fetch-proxy-ok");
   });
 
-  it("preserves unmanaged fallback when proxy env is absent", () => {
+  it("preserves upstream transport outside the managed image", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
 
@@ -822,7 +762,9 @@ print("managed-fetch-proxy-ok")
       [
         "-c",
         [
-          "from deepagents_code import tools",
+          "from deepagents_code import tools, _nemoclaw_managed",
+          "from pathlib import Path",
+          `_nemoclaw_managed._UPSTREAM_PROVIDER_FILE = Path(${JSON.stringify(path.join(tempDir, "no-managed-provider"))})`,
           'result = tools._fetch_with_redirects("https://example.com", timeout=3)',
           'assert result == {"transport": "direct", "url": "https://example.com", "timeout": 3}',
         ].join("; "),

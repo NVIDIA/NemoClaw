@@ -2,10 +2,54 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 
+import { redactFullWithUrls } from "../../../src/lib/security/redact.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { stripAnsi } from "./json-envelope.ts";
+
+/** Capture failed fixture containers before the owning fixture removes its store. */
+export function recordPortableSandboxDiagnostics(
+  socketPath: string,
+  sandboxName: string,
+  failureStatus: number | null,
+): void {
+  if (failureStatus === 0) return;
+  const capture = (args: string[]) =>
+    spawnSync("podman", ["--url", `unix://${socketPath}`, ...args], {
+      env: process.env,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+      maxBuffer: 512 * 1024,
+    });
+  const listed = capture([
+    "ps",
+    "--all",
+    "--no-trunc",
+    "--filter",
+    `label=openshell.ai/sandbox-name=${sandboxName}`,
+    "--format",
+    "{{.ID}}",
+  ]);
+  console.error(
+    redactFullWithUrls(
+      `Sandbox diagnostic inventory (status ${String(listed.status)}):\n${listed.stdout ?? ""}${listed.stderr ?? ""}${listed.error?.message ?? ""}`,
+    ),
+  );
+  if (listed.status !== 0 || listed.error) return;
+  for (const id of String(listed.stdout).trim().split(/\s+/u)) {
+    if (!/^[a-f0-9]{64}$/u.test(id)) continue;
+    const logs = capture(["logs", id]);
+    console.error(
+      redactFullWithUrls(
+        `Sandbox container ${id} logs (status ${String(logs.status)}):\n${logs.stdout ?? ""}${logs.stderr ?? ""}${logs.error?.message ?? ""}`,
+      ),
+    );
+  }
+}
 
 /** Verify that the pinned gateway accepts the generated rootless Podman configuration. */
 export async function verifyPinnedPodmanGatewayStarts(
@@ -56,5 +100,6 @@ export async function verifyPinnedPodmanGatewayStarts(
     );
   } finally {
     child.kill("SIGTERM");
+    console.error(`Pinned OpenShell gateway diagnostics:\n${redactFullWithUrls(output)}`);
   }
 }

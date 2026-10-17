@@ -33,17 +33,10 @@ export interface RuntimeIdentityResourceRequest {
 }
 
 export interface RuntimeIdentityOAuthServer extends StartedHttpServer {
+  readonly certificate: Buffer;
   tokenRequests(): readonly RuntimeIdentityTokenRequest[];
   resourceRequests(): readonly RuntimeIdentityResourceRequest[];
   secretValues(): readonly string[];
-}
-
-function requireTcpPort(server: https.Server): number {
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("runtime identity OAuth fixture did not bind to a TCP port");
-  }
-  return address.port;
 }
 
 function generateEphemeralTlsMaterial(): {
@@ -67,6 +60,8 @@ function generateEphemeralTlsMaterial(): {
       "1",
       "-subj",
       "/CN=nemoclaw-runtime-identity-e2e",
+      "-addext",
+      "subjectAltName=IP:127.0.0.1",
       "-keyout",
       keyPath,
       "-out",
@@ -215,9 +210,10 @@ export async function startRuntimeIdentityOAuthServer(options: {
     writeJsonResponse(res, 404, { error: "not found" });
   });
 
-  await listenOnRandomPort(server);
+  const port = await listenOnRandomPort(server);
   return {
-    port: requireTcpPort(server),
+    port,
+    certificate: tls.cert,
     tokenRequests: () => tokenRequests,
     resourceRequests: () => resourceRequests,
     secretValues: () => [options.clientId, options.clientSecret, ...accessTokens, ...refreshTokens],

@@ -29,7 +29,6 @@ function response(definition: HostedProviderDefinition) {
   const endpoint = contract.boundary.endpoints[0] as {
     host: string;
     port: number;
-    tls?: string;
     allowed_ips?: string[];
     rules: { allow: { method: string; path: string } }[];
   };
@@ -51,9 +50,9 @@ function response(definition: HostedProviderDefinition) {
           ...base.endpoints[0],
           host: endpoint.host,
           port: endpoint.port,
-          tls: endpoint.tls ?? "",
+          tls: 0,
           allowedIps: endpoint.allowed_ips ?? [],
-          access: "",
+          access: 0,
           rules: endpoint.rules.map((rule) => ({
             allow: {
               ...rule.allow,
@@ -77,6 +76,33 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label profile read boundary", (d
     const value = response(definition);
     expect(isManagedNativeHostedProfileResponse(value, definition.profileId)).toBe(value);
   });
+  it.each([
+    ["disabled TLS inspection", { tls: 1 }],
+    ["removed explicit TLS termination", { tls: 2 }],
+    ["removed TLS passthrough", { tls: 3 }],
+    ["audit-only enforcement", { enforcement: 2 }],
+    ["unspecified enforcement", { enforcement: 0 }],
+    ["unrestricted read-write access", { access: 2 }],
+    ["an unknown access preset", { access: 999 }],
+    ["legacy string enums", { tls: "", enforcement: "enforce", access: "" }],
+  ])("rejects %s", (_label, mutation) => {
+    const value = response(definition);
+    const profile = {
+      ...value.profile,
+      endpoints: [{ ...value.profile.endpoints[0], ...mutation }],
+    };
+    expect(isManagedNativeHostedProfileResponse({ profile }, definition.profileId)).toBeUndefined();
+  });
+  it.each(["/usr/bin/python3*", "/usr/bin/python3.12", "/unapproved"])(
+    "rejects replacing the Hermes interpreter with %s",
+    (path) => {
+      const value = response(definition);
+      value.profile.binaries = value.profile.binaries.map((binary) =>
+        binary.path === "/usr/bin/python3.13" ? { path } : binary,
+      );
+      expect(isManagedNativeHostedProfileResponse(value, definition.profileId)).toBeUndefined();
+    },
+  );
   it("rejects extra egress or executable access", () => {
     const value = response(definition);
     expect(
@@ -165,7 +191,7 @@ it.each([
           endpoints: [
             {
               ...value.profile.endpoints[0],
-              tls: endpointUrl.startsWith("https:") ? "" : "terminate",
+              tls: 1,
             },
           ],
         },

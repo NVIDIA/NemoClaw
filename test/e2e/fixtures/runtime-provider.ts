@@ -138,7 +138,7 @@ export class RuntimeProviderPrerequisite {
         "--filter",
         `label=${SANDBOX_NAME_LABEL}=${sandboxName}`,
         "--format",
-        "{{.ID}}",
+        '{{.ID}}\t{{.Label "openshell.ai/isolation-role"}}',
       ],
       options,
     );
@@ -154,8 +154,19 @@ export class RuntimeProviderPrerequisite {
     }
     const handles = result.stdout
       .split(/\r?\n/u)
-      .map((line) => line.trim().toLowerCase())
-      .filter(Boolean);
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .flatMap((line) => {
+        const [id = "", role = "", ...unexpected] = line.split("\t");
+        if (
+          !CONTAINER_ID.test(id) ||
+          unexpected.length > 0 ||
+          !["", "sandbox", "supervisor"].includes(role)
+        ) {
+          throw new Error(`${this.displayName} returned malformed sandbox resource metadata.`);
+        }
+        return role === "supervisor" ? [] : [id];
+      });
     if (handles.length !== 1 || !CONTAINER_ID.test(handles[0] ?? "")) {
       throw new Error(
         `${this.displayName} sandbox '${sandboxName}' resolved ${String(handles.length)} runtime resources; expected exactly one.`,

@@ -219,12 +219,14 @@ Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced
 
 ### Inference
 
-NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers.
+NVIDIA Endpoints, supported fixed hosted providers, and qualifying custom hosted endpoints use native endpoints through sandbox-attached OpenShell providers.
 OpenShell mediates inference traffic and keeps provider credentials outside the sandbox.
 
 <AgentOnly variant="openclaw">
 
-Local providers and custom endpoints retain the shared `inference.local` route.
+New OpenClaw Ollama, standalone vLLM, and llama.cpp selections use sandbox-attached providers.
+Owned Local NVIDIA NIM and remaining shared custom and local selections retain `inference.local` on OpenShell `0.0.x`.
+Refer to [How Inference Routing Works](../inference/about-inference-routing) for qualification and existing-sandbox boundaries.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -232,7 +234,7 @@ Local providers and custom endpoints retain the shared `inference.local` route.
 New Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers.
 The profile restricts the recorded host, port, methods, paths, and Hermes runtime binaries.
 OpenShell replaces the scoped credential reference at the allowed endpoint; the upstream credential remains outside the sandbox.
-Owned Local NVIDIA NIM, nonqualifying custom endpoints, and retained legacy local routes continue to use `inference.local`.
+Owned Local NVIDIA NIM, remaining custom shared selections, and retained legacy local routes use `inference.local` on OpenShell `0.0.x`.
 Hermes live qualification for the new local lifecycle remains pending.
 Refer to [How Inference Routing Works](../inference/about-inference-routing) for the route boundary.
 
@@ -245,7 +247,7 @@ These local HTTP endpoints do not use TLS termination on port `443`.
 OpenShell replaces the sandbox's credential placeholder at the allowed endpoint.
 For a credentialless upstream, the protected local proxy removes the sentinel authorization header before forwarding the request.
 
-Nonqualifying custom endpoints and owned Local NVIDIA NIM retain the shared `inference.local` route.
+Remaining custom shared selections and owned Local NVIDIA NIM retain `inference.local` on OpenShell `0.0.x`.
 Existing DCode local sandboxes without native authority require explicit recreation; NemoClaw does not migrate them automatically.
 Before recreation, download the state you need to an independently managed location and verify that the download is complete.
 Follow [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually) before deleting the existing sandbox.

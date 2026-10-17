@@ -218,17 +218,26 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function dockerfilePatchCommand(dist: string): string {
+function dockerfilePatchCommand(dist: string, nodeExecutable: string): string {
   return dockerRunCommandBetween(
-    "# Patch OpenClaw media fetch for proxy-only sandbox",
+    "# Patch OpenClaw network boundaries for OpenShell 0.1.3.",
     "# Native OpenClaw restart must reload",
   )
     .replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist)
+    .replaceAll(
+      "node /usr/local/lib/nemoclaw/patch-openclaw-native-network.mts",
+      `${shellQuote(nodeExecutable)} ${shellQuote(path.join(REPO_ROOT, "scripts/lib/patch-openclaw-native-network.mts"))}`,
+    )
     .replaceAll("/usr/local/lib/nemoclaw/extract-semver", shellQuote(OPENCLAW_VERSION_EXTRACTOR));
 }
 
-function runDockerfilePatchBlock(dist: string, tmp: string, version: string) {
-  const command = dockerfilePatchCommand(dist);
+function runDockerfilePatchBlock(
+  dist: string,
+  tmp: string,
+  version: string,
+  nodeExecutable: string,
+) {
+  const command = dockerfilePatchCommand(dist, nodeExecutable);
   const scriptPath = path.join(tmp, "patch-openclaw-dist.sh");
   fs.writeFileSync(
     scriptPath,
@@ -389,7 +398,7 @@ it("bounds reload-proof diagnostics while retaining the final gateway error", as
 
 describe("OpenClaw real patched-dist materialization guard", () => {
   it("maps container-only patch helpers to their repository fixtures", () => {
-    const command = dockerfilePatchCommand("/tmp/reviewed-openclaw-dist");
+    const command = dockerfilePatchCommand("/tmp/reviewed-openclaw-dist", process.execPath);
 
     expect(command).not.toContain("/usr/local/lib/nemoclaw/extract-semver");
     expect(command).toContain(shellQuote(OPENCLAW_VERSION_EXTRACTOR));
@@ -545,27 +554,12 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         const dist = path.join(runtimeRoot, "node_modules", "openclaw", "dist");
         fs.statSync(dist).isDirectory() || runtimeMismatch("not a directory", "directory", dist);
 
-        const dockerPatch = runDockerfilePatchBlock(dist, tmp, version);
+        const dockerPatch = runDockerfilePatchBlock(dist, tmp, version, nodeRuntime.executable);
         requireSpawnSuccess(dockerPatch, "apply Dockerfile OpenClaw patches");
         requireRuntimeIncludes(
           dockerPatch.stdout,
-          `Patch 2 applied to OpenClaw ${version}`,
-          "Patch 2",
-        );
-        requireRuntimeIncludes(
-          dockerPatch.stdout,
-          `Patch 2b applied to OpenClaw ${version}`,
-          "Patch 2b",
-        );
-        requireRuntimeIncludes(
-          dockerPatch.stdout,
-          `Patch 4 applied to OpenClaw ${version}`,
-          "Patch 4",
-        );
-        requireRuntimeIncludes(
-          dockerPatch.stdout,
-          `Patch 6 applied to OpenClaw ${version}`,
-          "Patch 6",
+          `OpenClaw ${version} native network patch applied`,
+          "native network patch",
         );
         const toolCatalogPatch = spawnSync(
           nodeRuntime.executable,
@@ -579,10 +573,8 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           "managed llama.cpp compact tool catalog patch output",
         );
         [
-          "nemoclaw: env-gated bypass",
-          "nemoclaw: OpenShell host gateway for web_fetch trusted env proxy",
-          "nemoclaw: route unconfigured strict fetch through sandbox egress proxy",
-          'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"',
+          "!nemoclawIsSyntheticDnsAnswer(entry.address)",
+          "const nativeResolved = { ...resolved, policy: hostGatewayPolicy };",
           "nemoclaw llama.cpp compact native tool catalog (#11105)",
           "nemoclaw llama.cpp JSON-string tool-call input (#11105)",
         ].forEach((marker) => {

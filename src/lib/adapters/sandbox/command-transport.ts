@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { resolveOpenshellSandboxSshHost } from "../openshell/sandbox-ssh-host";
+import { captureSandboxSshConfigCommand } from "../openshell/command-execution";
+import { resolveOpenshellBinaryOrNull } from "../openshell/resolve-shared";
+import { createTempSshConfig, runWithTempSshConfigCleanup } from "../../sandbox/temp-ssh-config";
 import type {
   OpenShellSandboxBufferedCommandExecutor,
   OpenShellSandboxCommandError,
@@ -138,4 +143,64 @@ export async function executeSandboxExecCommand(
       ...(runtimeEnv ? { runtimeEnv } : {}),
     },
   );
+}
+
+// Maintenance deliberately holds the gateway down. OpenShell exec requires
+// Ready, while its SSH transport remains available to the sandbox owner.
+export async function executeSandboxMaintenanceCommand(
+  sandboxName: string,
+  command: string,
+  timeout: number,
+  options: SandboxExecCommandExecutionOptions = {},
+): Promise<SandboxCommandResult | null> {
+  const deadline = Date.now() + timeout;
+  const binary = resolveOpenshellBinaryOrNull();
+  if (!binary) return null;
+  const environment = buildSandboxCommandEnvironment(options.runtimeSelection, options.runtimeEnv);
+  const config = captureSandboxSshConfigCommand(binary, sandboxName, {
+    env: environment,
+    replaceEnv: true,
+    gatewayName: options.runtimeSelection?.gatewayName,
+    ignoreError: true,
+    timeout: Math.max(1, Math.floor(timeout / 3)),
+  });
+  if (config.status !== 0 || config.error) return null;
+  const host = resolveOpenshellSandboxSshHost(sandboxName, config.output);
+  if (!host) return null;
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return null;
+  const temporary = createTempSshConfig(config.output, "nemoclaw-openclaw-maintenance-");
+  const completed = runWithTempSshConfigCleanup(temporary, () => {
+    const result = spawnSync(
+      "ssh",
+      [
+        "-F",
+        temporary.file,
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "LogLevel=ERROR",
+        host,
+        "/bin/bash --noprofile --norc -p -s",
+      ],
+      {
+        encoding: "utf8",
+        input: `builtin unset OPENCLAW_GATEWAY_TOKEN\n${command}`,
+        env: environment,
+        timeout: remaining,
+        maxBuffer: 1024 * 1024,
+        stdio: ["pipe", "pipe", "pipe"],
+        killSignal: "SIGKILL",
+      },
+    );
+    if (result.error || result.signal || result.status === null || result.status === 255)
+      return null;
+    return { status: result.status, stdout: result.stdout.trim(), stderr: result.stderr.trim() };
+  });
+  if (completed.cleanupError) throw completed.cleanupError;
+  return completed.result;
 }

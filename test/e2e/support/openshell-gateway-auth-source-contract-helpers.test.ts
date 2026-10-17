@@ -78,9 +78,10 @@ describe("OpenShell gateway auth source contract helpers", () => {
     expect(serializedArgs).not.toContain("openshell-gateway.toml");
   });
 
-  it("uses empty stdin for the mTLS-only Docker probe", () => {
+  it("uses empty stdin and the health RPC for the portable mTLS route probe", () => {
     const { args, input } = buildSandboxTokenContainerProbeInvocation({
       dockerBin: "docker",
+      grpcPath: "/openshell.v1.OpenShell/Health",
       networkName: "nemoclaw-auth-source-net",
       payload: Buffer.from("sandbox request"),
       port: 47321,
@@ -91,6 +92,9 @@ describe("OpenShell gateway auth source contract helpers", () => {
       valuesAfterFlag(args, "--env").some((value) => value.startsWith("PROBE_AUTHORIZATION=")),
     ).toBe(false);
     expect(input).toBe("");
+    expect(valuesAfterFlag(args, "--env")).toContain(
+      "PROBE_GRPC_PATH=/openshell.v1.OpenShell/Health",
+    );
   });
 
   it("uses host networking to reach a loopback-only Linux gateway", () => {

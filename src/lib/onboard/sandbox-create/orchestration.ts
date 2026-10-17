@@ -50,11 +50,7 @@ import {
   assertProviderlessInterceptorEnvironment,
   enforceRemovedImmutabilityMigrationBoundary,
 } from "../entry-options";
-import type {
-  ManagedHermesStateVolumeCleanupResult,
-  ManagedHermesStateVolumeContext,
-} from "../managed-workload/hermes-state-volume";
-import { removeManagedHermesStateVolume } from "../managed-workload/hermes-state-volume";
+import { removeManagedAgentStateVolumes } from "../managed-workload/hermes-state-volume";
 import {
   createOnboardRecreateGatewayAuthorityRevalidator,
   shouldReconcileRestoredOpenClawSelection,
@@ -64,7 +60,7 @@ import { managedImageRuntimeIdentity } from "../managed-image/agents";
 import type { ProviderManagedStartupTransaction } from "../managed-startup/provider-root-apply";
 import {
   managedStartupStateRoots,
-  MANAGED_HERMES_STATE_ROOT,
+  type ManagedStartupStateRoot,
 } from "../managed-startup/state-roots";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import { cliName } from "../branding";
@@ -934,63 +930,64 @@ type SandboxRecreateReasonInput = {
   existingSandboxState: string;
 };
 
-type RecreatedSourceHermesStateVolumeCleanupInput = {
+type RecreatedSourceStateVolumeCleanupInput = {
   readonly sandboxName: string;
   readonly sourceEntry: SandboxEntry | null;
-  readonly targetKeepsManagedHermesStateVolume: boolean;
+  readonly targetStateRoots: readonly ManagedStartupStateRoot[];
 };
 
-type RecreatedSourceHermesStateVolumeCleanupDeps = {
+type RecreatedSourceStateVolumeCleanupDeps = {
   readonly normalizeRuntimeProviderIdentity: (driverName: string | null | undefined) => string;
-  readonly removeManagedHermesStateVolume: (
-    context: ManagedHermesStateVolumeContext,
-  ) => ManagedHermesStateVolumeCleanupResult;
+  readonly removeManagedAgentStateVolumes: typeof removeManagedAgentStateVolumes;
   readonly note: (message: string) => void;
   readonly warn: (message: string) => void;
   readonly redact: (message: string) => string;
 };
 
-type RecreatedSourceHermesStateVolumeFinalizationInput =
-  RecreatedSourceHermesStateVolumeCleanupInput & {
-    readonly sourceConfirmedAbsent: boolean;
-  };
+type RecreatedSourceStateVolumeFinalizationInput = RecreatedSourceStateVolumeCleanupInput & {
+  readonly sourceConfirmedAbsent: boolean;
+};
 
-type RecreatedSourceHermesStateVolumeFinalizationDeps =
-  RecreatedSourceHermesStateVolumeCleanupDeps & {
-    readonly removeSourceRegistryEntry: (entry: SandboxEntry, sandboxName: string) => void;
-  };
+type RecreatedSourceStateVolumeFinalizationDeps = RecreatedSourceStateVolumeCleanupDeps & {
+  readonly removeSourceRegistryEntry: (entry: SandboxEntry, sandboxName: string) => void;
+};
 
-export function cleanupRecreatedSourceHermesStateVolume(
-  input: RecreatedSourceHermesStateVolumeCleanupInput,
-  deps: RecreatedSourceHermesStateVolumeCleanupDeps,
+export function cleanupRecreatedSourceStateVolumes(
+  input: RecreatedSourceStateVolumeCleanupInput,
+  deps: RecreatedSourceStateVolumeCleanupDeps,
 ): void {
-  if (!input.sourceEntry || input.targetKeepsManagedHermesStateVolume) return;
+  if (!input.sourceEntry) return;
 
-  const cleanup = deps.removeManagedHermesStateVolume({
+  const results = deps.removeManagedAgentStateVolumes({
     agentName: input.sourceEntry.agent,
     runtimeProviderId: deps.normalizeRuntimeProviderIdentity(input.sourceEntry.openshellDriver),
     sandboxName: input.sandboxName,
     workloadKind: input.sourceEntry.workload?.kind ?? "",
+    retainedRoots: input.targetStateRoots,
   });
-  if (cleanup.status === "failed") {
-    throw new Error(
-      `OpenShell confirmed that sandbox '${input.sandboxName}' is absent, but Docker could not remove its managed Hermes state volume '${cleanup.volumeName}': ${deps.redact(cleanup.detail)}. NemoClaw preserved the sandbox registry entry so a subsequent recreation can retry the volume removal.`,
-    );
-  }
-  if (cleanup.status === "not-owned") {
-    deps.warn(`  Left Docker volume '${cleanup.volumeName}' untouched because ${cleanup.detail}.`);
-  } else if (cleanup.status === "removed") {
-    deps.note(`  Removed managed Hermes state volume for '${input.sandboxName}'.`);
+  for (const cleanup of results) {
+    if (cleanup.status === "failed") {
+      throw new Error(
+        `OpenShell confirmed that sandbox '${input.sandboxName}' is absent, but the runtime could not remove its managed state volume '${cleanup.volumeName}': ${deps.redact(cleanup.detail)}. NemoClaw preserved the sandbox registry entry so a subsequent recreation can retry the volume removal.`,
+      );
+    }
+    if (cleanup.status === "not-owned") {
+      deps.warn(
+        `  Left managed state volume '${cleanup.volumeName}' untouched because ${cleanup.detail}.`,
+      );
+    } else if (cleanup.status === "removed") {
+      deps.note(`  Removed managed state volume for '${input.sandboxName}'.`);
+    }
   }
 }
 
-export function finalizeRecreatedSourceHermesStateVolume(
-  input: RecreatedSourceHermesStateVolumeFinalizationInput,
-  deps: RecreatedSourceHermesStateVolumeFinalizationDeps,
+export function finalizeRecreatedSourceStateVolumes(
+  input: RecreatedSourceStateVolumeFinalizationInput,
+  deps: RecreatedSourceStateVolumeFinalizationDeps,
 ): void {
   if (!input.sourceConfirmedAbsent || !input.sourceEntry) return;
 
-  cleanupRecreatedSourceHermesStateVolume(input, deps);
+  cleanupRecreatedSourceStateVolumes(input, deps);
   deps.removeSourceRegistryEntry(input.sourceEntry, input.sandboxName);
 }
 
@@ -2199,22 +2196,22 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         runtimeProvider: requireManagedWorkloadRuntime().runtimeProvider,
       });
     };
-    const finalizeRecreatedSourceHermesVolume = (
+    const finalizeRecreatedSourceVolumes = (
       sourceConfirmedAbsent: boolean,
       sourceEntry: SandboxEntry | null,
-      targetKeepsManagedHermesStateVolume: boolean,
+      targetStateRoots: readonly ManagedStartupStateRoot[],
     ) =>
-      finalizeRecreatedSourceHermesStateVolume(
+      finalizeRecreatedSourceStateVolumes(
         {
           sandboxName,
           sourceConfirmedAbsent,
           sourceEntry,
-          targetKeepsManagedHermesStateVolume,
+          targetStateRoots,
         },
         {
           normalizeRuntimeProviderIdentity: managedWorkloadOnboard.normalizeRuntimeProviderIdentity,
-          removeManagedHermesStateVolume: (context) =>
-            removeManagedHermesStateVolume(context, {
+          removeManagedAgentStateVolumes: (context) =>
+            removeManagedAgentStateVolumes(context, {
               runtimeProvider: requireManagedWorkloadRuntime().runtimeProvider ?? undefined,
             }),
           removeSourceRegistryEntry: sandboxLifecycle.removeSandboxUnlessSessionReservation,
@@ -2769,13 +2766,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       // Keep the source route published through every pre-delete check. A failure
       // before confirmed deletion must leave the live source route untouched.
       await createIntent?.reservePublishedRouteAfterBackup?.();
-      finalizeRecreatedSourceHermesVolume(
-        true,
-        previousEntry,
-        managedStateVolumeLifecycle.roots.some(
-          (root) => root.mountTarget === MANAGED_HERMES_STATE_ROOT,
-        ),
-      );
+      finalizeRecreatedSourceVolumes(true, previousEntry, managedStateVolumeLifecycle.roots);
       await Promise.all([
         dashboardPortReservationScope.rebindAfterOwnedForwardDelete(),
         hermesApiPortReservationScope.rebindAfterOwnedForwardDelete(hermesApiPortReservationInput),
@@ -2789,13 +2780,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
       managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
-      finalizeRecreatedSourceHermesVolume(
-        !liveExists,
-        existingEntry,
-        managedStateVolumeLifecycle.roots.some(
-          (root) => root.mountTarget === MANAGED_HERMES_STATE_ROOT,
-        ),
-      );
+      finalizeRecreatedSourceVolumes(!liveExists, existingEntry, managedStateVolumeLifecycle.roots);
     }
     if (!liveExists && existingEntry) {
       await createIntent?.reservePublishedRouteAfterBackup?.();

@@ -328,7 +328,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     }
   });
 
-  function verifyManagedRuntimeProxyReplacement() {
+  function verifyManagedRuntimeProxyRemoval() {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
     const { envFile, scriptPath } = makeStartScriptFixture(tempDir, {
       markerDir: dcodeStateDir(tempDir),
@@ -361,8 +361,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
       ...inheritedTracingFlags,
       ...inheritedAnalyticsFlags,
     });
-    const managedProxy = "http://10.200.0.1:3128";
-    const managedNoProxy = "localhost,127.0.0.1,::1,10.200.0.1";
+    const managedProxy = "__unset__";
+    const managedNoProxy = "__unset__";
     const outputLines = output.trimEnd().split("\n");
     const envFileLines = envFileText.trimEnd().split("\n");
     expect(fs.statSync(envFile).mode & 0o777).toBe(0o444);
@@ -370,12 +370,12 @@ describe("LangChain Deep Agents Code image contracts", () => {
     for (const name of PROXY_URL_ENV_NAMES) {
       expect(outputLines).toContain(`RUNTIME_${name}=${managedProxy}`);
       expect(outputLines).toContain(`SOURCED_${name}=${managedProxy}`);
-      expect(envFileLines).toContain(`export ${name}=${managedProxy}`);
+      expect(envFileText).not.toContain(`export ${name}=`);
     }
     for (const name of NO_PROXY_ENV_NAMES) {
       expect(outputLines).toContain(`RUNTIME_${name}=${managedNoProxy}`);
       expect(outputLines).toContain(`SOURCED_${name}=${managedNoProxy}`);
-      expect(envFileLines).toContain(`export ${name}=${managedNoProxy.replaceAll(",", "\\,")}`);
+      expect(envFileText).not.toContain(`export ${name}=`);
     }
     for (const name of TRACING_ENABLE_ENV_NAMES) {
       expect(outputLines).toContain(`RUNTIME_${name}=false`);
@@ -388,7 +388,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(envFileLines).toContain(`export ${name}=1`);
     }
     expect(envFileLines).toContain("unset NEMOCLAW_ATTACHED_PROVIDER_API_KEY");
-    expect(envFileLines).toContain("unset ALL_PROXY all_proxy OPENAI_PROXY");
+    expect(envFileText).toContain("unset ALL_PROXY all_proxy OPENAI_PROXY");
     expect(
       outputLines.filter((line) => /^(?:RUNTIME|SOURCED)_(?:NO_PROXY|no_proxy)=/.test(line)),
     ).not.toEqual(expect.arrayContaining([expect.stringContaining("inference.local")]));
@@ -408,8 +408,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
   }
 
   it(
-    "replaces inherited host proxy values with the managed runtime proxy (#6191)",
-    verifyManagedRuntimeProxyReplacement,
+    "clears inherited host proxy values from the managed runtime",
+    verifyManagedRuntimeProxyRemoval,
   );
 
   it("keeps all Deep Agents Code entry points behind the managed wrapper boundary", () => {
@@ -702,7 +702,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
           quickjsImagePath?.startsWith(`${root}/`),
         ),
       ).toBe(true);
-      expect(defaultPolicy.landlock).toMatchObject({ compatibility: "strict" });
+      expect(defaultPolicy.landlock).toMatchObject({ compatibility: "hard_requirement" });
 
       const githubBinaries = policyBinaryPaths(defaultPolicy, "github");
       expect(githubBinaries).toEqual(

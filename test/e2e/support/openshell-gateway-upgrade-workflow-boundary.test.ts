@@ -20,10 +20,12 @@ import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import {
   captureGatewayUpgradeProbeEvidence,
+  captureLegacyGatewayForward,
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   gatewayCredentialNonExposureScript,
   gatewayUpgradeRecoverySucceeded,
+  gatewayServiceWasPreserved,
   gatewayUpgradeAgentResponseIsSuccessful,
   gatewayUpgradeInstallerCommand,
   prepareGatewayUpgradeUserManager,
@@ -31,6 +33,7 @@ import {
   isolateGatewayUpgradeFixtureEnv,
   legacyGatewayUpgradeBaseImageOverrideEnabled,
   legacyGatewayUpgradeHostFirewallOptions,
+  legacyGatewayForwardIdentity,
   oldGatewayUpgradeInstallerArgs,
   throwGatewayUpgradeSetupFailures,
   upgradeGatewayCleanupScript,
@@ -38,6 +41,102 @@ import {
 } from "../live/openshell-gateway-upgrade-helpers.ts";
 
 describe("OpenShell gateway upgrade boundary", () => {
+  const legacyForwardListing = {
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    stdout: "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 4321 running\n",
+  };
+  const legacyForwardListener = { ...legacyForwardListing, stdout: "4321\n" };
+
+  it("retains the legacy SSH forward identity when its validated PID owns the port (#12558)", () => {
+    expect(
+      legacyGatewayForwardIdentity(legacyForwardListing, legacyForwardListener, "alpha", "18789"),
+    ).toBe("alpha\t127.0.0.1\t18789\t4321\trunning");
+    expect(
+      legacyGatewayForwardIdentity(
+        {
+          ...legacyForwardListing,
+          stdout: legacyForwardListing.stdout.replace("running", "\u001b[32mrunning\u001b[0m"),
+        },
+        { ...legacyForwardListener, stdout: "4321\n4321\n" },
+        "alpha",
+        "18789",
+      ),
+    ).toBe("alpha\t127.0.0.1\t18789\t4321\trunning");
+  });
+
+  it.each([
+    { label: "failed listing", listing: { ...legacyForwardListing, exitCode: 1 } },
+    { label: "listing timeout", listing: { ...legacyForwardListing, timedOut: true } },
+    { label: "listing signal", listing: { ...legacyForwardListing, signal: "SIGTERM" as const } },
+    {
+      label: "missing sandbox",
+      listing: { ...legacyForwardListing, stdout: "beta 127.0.0.1 18789 4321 running" },
+    },
+    {
+      label: "different port",
+      listing: { ...legacyForwardListing, stdout: "alpha 127.0.0.1 18790 4321 running" },
+    },
+    {
+      label: "dead process",
+      listing: { ...legacyForwardListing, stdout: "alpha 127.0.0.1 18789 4321 dead" },
+    },
+    {
+      label: "invalid PID",
+      listing: { ...legacyForwardListing, stdout: "alpha 127.0.0.1 18789 0 running" },
+    },
+    {
+      label: "ambiguous listing",
+      listing: { ...legacyForwardListing, stdout: legacyForwardListing.stdout.repeat(2) },
+    },
+    {
+      label: "extra fields",
+      listing: { ...legacyForwardListing, stdout: "alpha 127.0.0.1 18789 4321 running unexpected" },
+    },
+    { label: "failed listener probe", listener: { ...legacyForwardListener, exitCode: 1 } },
+    { label: "listener timeout", listener: { ...legacyForwardListener, timedOut: true } },
+    {
+      label: "listener signal",
+      listener: { ...legacyForwardListener, signal: "SIGTERM" as const },
+    },
+    { label: "missing listener", listener: { ...legacyForwardListener, stdout: "" } },
+    { label: "foreign listener", listener: { ...legacyForwardListener, stdout: "5678" } },
+    { label: "ambiguous listener", listener: { ...legacyForwardListener, stdout: "4321\n5678" } },
+  ])("rejects a legacy forward with $label (#12558)", ({ listing, listener }) => {
+    expect(
+      legacyGatewayForwardIdentity(
+        listing ?? legacyForwardListing,
+        listener ?? legacyForwardListener,
+        "alpha",
+        "18789",
+      ),
+    ).toBeNull();
+  });
+
+  it("uses the retained runtime and process listener to capture the legacy forward (#12558)", async () => {
+    const command = vi
+      .fn()
+      .mockResolvedValueOnce(legacyForwardListing)
+      .mockResolvedValueOnce(legacyForwardListener);
+    const host = { command, openshellCommandPath: "/legacy/bin/openshell" };
+    const env = { HOME: "/legacy/home" };
+    const result = await captureLegacyGatewayForward(host, "alpha", "18789", env, "legacy");
+    expect(result.identity).toBe("alpha\t127.0.0.1\t18789\t4321\trunning");
+    expect(command.mock.calls).toEqual([
+      [
+        "/legacy/bin/openshell",
+        ["forward", "list"],
+        { artifactName: "legacy-dashboard-forward-list", env, timeoutMs: 15_000 },
+      ],
+      [
+        "lsof",
+        ["-ti", ":18789", "-sTCP:LISTEN"],
+        { artifactName: "legacy-dashboard-forward-listener", env, timeoutMs: 15_000 },
+      ],
+    ]);
+  });
+
   it.each([
     { statuses: ["ok"], expected: true },
     { statuses: ["error"], expected: false },
@@ -65,6 +164,22 @@ describe("OpenShell gateway upgrade boundary", () => {
   });
   const beforeService = service("a".repeat(32));
   const afterService = service("b".repeat(32));
+
+  it("keeps the same active systemd invocation when a 0.1.x cutover is denied (#12558)", () => {
+    const evidence = {
+      before: beforeService,
+      after: beforeService,
+      expectedFragmentPath: fragmentPath,
+    };
+    expect(gatewayServiceWasPreserved(evidence)).toBe(true);
+    expect(gatewayServiceWasPreserved({ ...evidence, after: afterService })).toBe(false);
+    expect(
+      gatewayServiceWasPreserved({
+        ...evidence,
+        after: { ...beforeService, stdout: beforeService.stdout.replace("=active", "=inactive") },
+      }),
+    ).toBe(false);
+  });
 
   it("requires a successful query and a new active service invocation for systemd recovery", () => {
     const evidence = {

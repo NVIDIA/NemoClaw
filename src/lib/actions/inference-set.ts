@@ -50,7 +50,6 @@ import {
 import {
   type AgentConfigTarget,
   readSandboxConfig,
-  recomputeSandboxConfigHash,
   resolveAgentConfig,
   rewriteConfigUrlsWithDnsPinning,
   retireNativeConfigurationTelemetry,
@@ -241,14 +240,9 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   ) => onboardSession.Session;
   resolveAgentConfig: (sandboxName: string) => AgentConfigTarget;
   readSandboxConfig: typeof readSandboxConfig;
-  writeSandboxConfig: (
-    sandboxName: string,
-    target: AgentConfigTarget,
-    config: ConfigObject,
-  ) => void;
+  writeSandboxConfig: typeof writeSandboxConfig;
   setOpenClawConfigValues: typeof setOpenClawConfigValues;
   runtimeProviders?: RuntimeProviderBundleRegistry;
-  recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
   prepareRunOpenshell: () => void;
   inferenceRouteMutator: ReturnType<typeof createDefaultInferenceSetRouteMutator>;
   inferenceRouteObserver: OpenShellInferenceRouteObserver;
@@ -383,7 +377,6 @@ function defaultDeps(): InferenceSetDeps {
     readSandboxConfig,
     writeSandboxConfig,
     setOpenClawConfigValues,
-    recomputeSandboxConfigHash,
     prepareRunOpenshell: () => {
       getOpenshellBinary();
     },
@@ -1471,12 +1464,7 @@ async function runInferenceSetWithoutHostLock(
   // leaving a half-applied switch across the three config layers (#6997).
   // Route finalization has no side effect when metadata is reused; explicit
   // custom routes were capability-checked before finalization above.
-  const config = readInSandboxConfigOrFail(
-    deps,
-    sandboxName,
-    target,
-    agentName === "openclaw" ? preparedRoute.gatewayName : undefined,
-  );
+  const config = readInSandboxConfigOrFail(deps, sandboxName, target, preparedRoute.gatewayName);
   const preMutationInferenceApi =
     explicitPreferredInferenceApi ??
     resolveRuntimeInferenceApi({
@@ -1996,17 +1984,14 @@ async function runInferenceSetWithoutHostLock(
         );
         inSandboxConfigSynced = true;
       } else {
-        deps.writeSandboxConfig(sandboxName, target, config);
-        try {
-          deps.recomputeSandboxConfigHash(sandboxName, target);
-        } catch (hashError) {
-          const detail =
-            hashError instanceof Error && hashError.message ? hashError.message : String(hashError);
-          deps.log(
-            `  Warning: wrote the Hermes config for '${sandboxName}', but failed to refresh its integrity hash: ${detail}.`,
-          );
-          throw hashError;
-        }
+        deps.writeSandboxConfig(sandboxName, target, config, {
+          gatewayName: preparedRoute.gatewayName,
+          // Native attachments require the existing restart owner to activate
+          // refreshed process credentials after all route writes complete.
+          ...(selectingNative || previousNativeAttachment || previousNativeLocalAttachment
+            ? { deferReload: true as const }
+            : {}),
+        });
         inSandboxConfigSynced = true;
       }
     } catch (writeError) {

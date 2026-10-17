@@ -387,6 +387,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "patch-openclaw-tool-catalog.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-openclaw-native-network.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-openclaw-native-network.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "patch-openclaw-npm12-pack-json.mts"),
     path.join(stagedScriptsDir, "lib", "patch-openclaw-npm12-pack-json.mts"),
   );

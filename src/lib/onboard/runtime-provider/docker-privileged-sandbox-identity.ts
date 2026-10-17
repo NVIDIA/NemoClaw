@@ -29,12 +29,19 @@ function parseLabeledSandboxContainers(output: string): LabeledSandboxContainer[
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => {
-      const [id, name, ...unexpected] = line.split("\t");
-      if (!id || !name || unexpected.length > 0 || /\s/u.test(id)) {
+    .flatMap((line) => {
+      const [id, name, role = "", ...unexpected] = line.split("\t");
+      if (
+        !id ||
+        !name ||
+        unexpected.length > 0 ||
+        /\s/u.test(id) ||
+        !["", "sandbox", "supervisor"].includes(role)
+      ) {
         throw new Error("Docker returned malformed OpenShell sandbox container metadata.");
       }
-      return { id, name };
+      // Legacy workloads have no role label; 0.1.3 companions share the sandbox label.
+      return role === "supervisor" ? [] : [{ id, name }];
     });
 }
 

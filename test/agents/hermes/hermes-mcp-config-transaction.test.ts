@@ -165,9 +165,9 @@ if len(errors) != 3:
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual([
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.116",
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.116",
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.116",
+      "Authenticated MCP OpenShell host aliases require an attested driver gateway address",
+      "Authenticated MCP OpenShell host aliases require an attested driver gateway address",
+      "Authenticated MCP OpenShell host aliases require an attested driver gateway address",
     ]);
   });
 

@@ -396,6 +396,15 @@ reject mixed cohorts, another run, a future attempt, and another candidate revis
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
+On OpenShell 0.1.3, the full-suite DNS fixture selects the workload's supervisor by
+sandbox ID and namespace. It backs up and updates that container's engine-owned
+hosts file on the Linux test host without changing the supervisor's read-only
+mounts. Remapping and restoration retain the selected container ID and hosts path;
+a replacement container never receives the old backup. Host DNS restoration is
+mandatory; a vanished ephemeral container is left to the sandbox cleanup owner.
+The trusted-private fixture uses its existing host HTTPS listener for the 0.1.3
+host-network supervisor. Its discovered interface address must be routed-private,
+not the Podman gateway's link-local alias. Legacy bridged workloads retain the relay.
 The trusted-private HTTPS fixture records bounded TLS, request-header, and completed-body counters
 before the status assertion and during final cleanup. TLS errors use fixed code buckets; these
 diagnostics contain no raw errors, request data, or credentials and do not establish successful
@@ -525,7 +534,7 @@ The historical fixtures retain these version boundaries:
 
 | Fixture | Required boundary |
 | --- | --- |
-| `openshell-gateway-upgrade` | Retain the reviewed v0.0.89 and v0.0.123 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Prove credential custody and authenticated agent turns before and after upgrade. Require the survivor to preserve workspace state. Create each fixture-declared stopped sandbox, preserve its workspace state, and restore its stopped phase after a lifecycle check. |
+| `openshell-gateway-upgrade` | Install the reviewed v0.0.89 and v0.0.123 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Attempt the 0.1.x cutover with registered sandboxes and require refusal. Verify the dashboard forward, sandbox phases, workspace marker, credential custody, and authenticated agent turns remain intact. Verify the old gateway service when the fixture provides it. |
 | `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
 
 These targets may restore the shared artifact for the candidate CLI.
@@ -685,7 +694,7 @@ npx tsx tools/e2e/credential-free-tests.mts
 OpenShell target work in issue #9872. The trusted workflow downloads and
 verifies the exact OpenShell SDK archive with package-read permission. The
 candidate job receives the archive but no package credential. It calls a local
-OpenShell 0.0.116 gateway over HTTPS with an explicit CA. The target confirms
+OpenShell 0.1.2 gateway over HTTPS with an explicit CA. The target confirms
 that its configured authentication file path does not exist before and after
 the health request. A successful request proves that public health does not
 require a credential read or make an authenticated gateway call.
@@ -901,6 +910,15 @@ On an exact-revision manual PR run, `NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA` carr
 The standard layout writes product evidence and `evidence-manifest.json` under `e2e-artifacts/live/<target-id>`.
 When `shard` is not `default`, the standard layout adds the shard directory.
 The security-posture matrix uses the reviewed flat-shard layout to preserve its existing artifact names.
+For OpenShell 0.1.3, its process report identifies the non-root workload boundary at PID 1 separately from the `nemoclaw-start` children.
+The probe runs as the managed image's declared sandbox owner and requires zero capabilities and `NoNewPrivs=1`.
+It records denied PID-1 executable-link access as `null`; it does not infer an executable path from the command line.
+Child executable links must remain readable and identify system Bash. Missing processes and denied child inspection fail the probe.
+The report's `processScope: workload-container` identifies the process census; it does not attest the PID-1 executable binary.
+Separate `containerPair` evidence binds engine launch metadata to that workload and its uniquely labelled supervisor before and after the census.
+It checks running identities, entrypoints, non-root users, capability drops, no-new-privileges, and provider-specific network settings.
+The supervisor must use the pinned 0.1.3 image and pass its native health command. Docker also requires its read-only root filesystem.
+The inspection selects metadata fields and excludes environments, supervisor arguments, credentials, and health logs.
 The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets keep the standard layout and select `linux-amd64-gpu-rtxpro6000-latest-1` through the catalogue.
 The llama.cpp target compares the selected model's authenticated `/v1/models` `meta.n_ctx`
 with the generated OpenClaw primary model's context window, with no explicit context override.
@@ -1347,6 +1365,29 @@ published OpenClaw and Hermes digests through `--from-image`. It confirms
 OpenShell readiness, the durable external-image receipt, identity-drift
 rejection before replacement, rebuild from the recorded digest, NemoClaw
 destruction, and shared image retention.
+
+The same Docker and rootless Podman jobs run a separate legacy-volume refusal
+case before agent activation. It creates a disposable owned volume without
+OpenShell attachment approval. The production preflight must reject that volume.
+The test then reads the original marker, ownership, mode, and symlink to verify
+that they remain unchanged. Cleanup removes only the fixture volume and helpers.
+This case needs no inference service, gateway, GPU, or sudo.
+
+The maintainer decision for #12603 removes automatic copying of legacy volumes.
+The live copy-failure, copy-retry, destination-selection, and migrated-state
+attachment checks are therefore removed. Legacy data preservation remains covered
+by the refusal case. Fresh-volume activation, agent turns, lifecycle, security
+refusal, and cleanup remain covered by the activation case.
+
+These earlier removals retain their existing evidence owners:
+
+| Removed live check | Retained evidence owner |
+| --- | --- |
+| Four checks repeated after cleanup polling | The same poll's terminal errors and two-inventory absence condition; negative cases in `support/managed-image-activation-diagnostics.test.ts` |
+| Separate architecture non-null assertion | Per-contract platform parsing still rejects mismatches; architecture cases in `src/lib/onboard/sandbox-workload-preparation.test.ts` |
+| Catalog cohort and extra-key fixture guards | Production catalog validation and positive/negative source tests in `sandbox-workload-preparation.test.ts`; live per-agent digest selection remains |
+| Engine `info` exit assertion | Keep the diagnostic artifact; real onboarding, lifecycle and engine inventory operations establish availability |
+| Constant managed-receipt `shared` field | Receipt construction in `src/lib/onboard/managed-workload/onboard-orchestration.test.ts`; live digest and provenance checks remain |
 
 ## Device-auth health classification
 

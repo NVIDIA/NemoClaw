@@ -29,12 +29,6 @@ _INFERENCE_BASE_URL_FILE = Path(
 _UPSTREAM_PROVIDER_FILE = Path(
     "/usr/local/share/nemoclaw/dcode-upstream-provider"
 )
-_MANAGED_PROXY_HOST_FILE = Path(
-    "/usr/local/share/nemoclaw/dcode-proxy-host"
-)
-_MANAGED_PROXY_PORT_FILE = Path(
-    "/usr/local/share/nemoclaw/dcode-proxy-port"
-)
 _AUTO_APPROVAL_FILE = Path(
     "/usr/local/share/nemoclaw/dcode-auto-approval"
 )
@@ -100,9 +94,6 @@ _OPENSHELL_SUPERVISOR_ONLY_ENV_NAMES = frozenset(
     {"OPENSHELL_TLS_CA", "OPENSHELL_TLS_CERT", "OPENSHELL_TLS_KEY"}
 )
 _UPSTREAM_PROVIDER_ENV = "NEMOCLAW_UPSTREAM_PROVIDER"
-_FETCH_URL_TRUSTED_PROXY_ENV = (
-    "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL"
-)
 _MANAGED_FETCH_CA_BUNDLE_FILE = Path(
     "/etc/openshell-tls/ca-bundle.pem"
 )
@@ -114,11 +105,6 @@ _NVIDIA_DISPLAY_PROVIDER_ALIASES = frozenset(
 )
 _OPENROUTER_DISPLAY_PROVIDER_ALIASES = frozenset({"openrouter", "openrouter-api"})
 _DISPLAY_PROVIDER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
-# Match the launchers' root-owned, image-baked proxy validator. Its deliberate
-# RFC 1123 deviation permits underscores only for controlled internal/container
-# aliases such as `proxy_name`; the cross-boundary cases in
-# test/agents/deepagents/langchain-deepagents-code-proxy-launcher.test.ts prevent validator drift.
-_MANAGED_PROXY_HOST = re.compile(r"[A-Za-z0-9._-]+")
 _MCP_SERVER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
 _MCP_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 _MCP_DNS_NAME = re.compile(
@@ -1082,7 +1068,8 @@ def managed_inference_api_key(base_url: str) -> str:
     """Select the non-secret credential for the validated image-owned route."""
     parsed = urlparse(base_url)
     host = parsed.hostname or ""
-    local_host = host in {"host.openshell.internal", "host.docker.internal"}
+    local_alias = host in {"host.openshell.internal", "host.docker.internal"}
+    local_host = local_alias
     try:
         address = ipaddress.IPv4Address(host)
         local_host = any(address in ipaddress.IPv4Network(network) for network in (
@@ -1092,9 +1079,10 @@ def managed_inference_api_key(base_url: str) -> str:
         # Keep the host-alias result above; every other non-IPv4 name remains untrusted.
         pass
     upstream_provider = _managed_upstream_provider()
-    if parsed.scheme == "http" and local_host and upstream_provider in {
-        "ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"
-    }:
+    if parsed.scheme == "http" and local_host and (
+        upstream_provider in {"ollama-local", "vllm-local", "llama-cpp-local"}
+        or (upstream_provider == "compatible-endpoint" and local_alias)
+    ):
         value = os.environ.get("NEMOCLAW_LOCAL_INFERENCE_TOKEN", "")
         if re.fullmatch(
             r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
@@ -1102,7 +1090,7 @@ def managed_inference_api_key(base_url: str) -> str:
         ) is None:
             raise RuntimeError("native local inference requires an issued OpenShell credential reference")
         return value
-    if base_url == "https://integrate.api.nvidia.com/v1":
+    if base_url == "https://integrate.api.nvidia.com/v1" and upstream_provider in _NVIDIA_DISPLAY_PROVIDER_ALIASES:
         name = "NVIDIA_INFERENCE_API_KEY"
         provider = "NVIDIA"
     elif base_url == "https://openrouter.ai/api/v1" and upstream_provider in (
@@ -1114,6 +1102,28 @@ def managed_inference_api_key(base_url: str) -> str:
             else "OPENROUTER_API_KEY"
         )
         provider = "OpenRouter"
+    elif upstream_provider in {"compatible-endpoint", "compatible-anthropic-endpoint"}:
+        normalized_host = host.lower().rstrip(".")
+        if normalized_host in {
+            "inference.local", "host.openshell.internal", "host.docker.internal",
+            "host.containers.internal", "localhost",
+        } or normalized_host.endswith(".localhost"):
+            return "nemoclaw-managed-inference"
+        try:
+            if ipaddress.ip_address(normalized_host).is_loopback:
+                return "nemoclaw-managed-inference"
+        except ValueError:
+            pass
+        name = (
+            "COMPATIBLE_API_KEY" if upstream_provider == "compatible-endpoint"
+            else "COMPATIBLE_ANTHROPIC_API_KEY"
+        )
+        value = os.environ.get(name, "")
+        if re.fullmatch(
+            rf"openshell:resolve:env:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{name}", value,
+        ) is None:
+            raise RuntimeError("custom hosted inference requires an issued OpenShell credential reference")
+        return value
     else:
         return "nemoclaw-managed-inference"
     value = os.environ.get(name, "")
@@ -1122,53 +1132,12 @@ def managed_inference_api_key(base_url: str) -> str:
     return value
 
 
-def managed_fetch_proxy_url() -> str | None:
-    """Return the explicit OpenShell proxy delegated to managed ``fetch_url``.
-
-    The variable is absent when this helper is imported outside the managed
-    launcher, in which case the upstream direct DNS-pinning transport remains
-    authoritative. When present, every conventional HTTP(S) proxy variable
-    must carry the same launcher-derived value. This prevents a mutable ambient
-    proxy or ``NO_PROXY`` rule from silently replacing the root-owned route.
-    """
-    value = os.environ.get(_FETCH_URL_TRUSTED_PROXY_ENV)
-    if value is None:
-        return None
-    expected_proxy_url = _managed_fetch_proxy_url_from_files()
-    if (
-        not value
-        or len(value) > 2048
-        or value != value.strip()
-        or any(ord(character) < 32 for character in value)
-    ):
-        raise RuntimeError("managed fetch URL proxy is invalid")
-    try:
-        parsed = urlparse(value)
-        port = parsed.port
-    except ValueError as exc:
-        raise RuntimeError("managed fetch URL proxy is invalid") from exc
-    if (
-        parsed.scheme != "http"
-        or not parsed.hostname
-        or port is None
-        or port < 1
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in {"", "/"}
-        or parsed.params
-        or parsed.query
-        or parsed.fragment
-        or _MANAGED_PROXY_HOST.fullmatch(parsed.hostname) is None
-    ):
-        raise RuntimeError("managed fetch URL proxy is invalid")
-    if value != expected_proxy_url:
-        raise RuntimeError(
-            "managed fetch URL proxy does not match root-owned proxy"
-        )
-    for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
-        if os.environ.get(name) != value:
-            raise RuntimeError("managed fetch URL proxy does not match runtime proxy")
-    return value
+def _managed_fetch_uses_openshell() -> bool:
+    """Identify the managed image through its existing root-owned provider file."""
+    if not _UPSTREAM_PROVIDER_FILE.exists() and not _UPSTREAM_PROVIDER_FILE.is_symlink():
+        return False
+    _managed_upstream_provider()
+    return True
 
 
 def _read_managed_file_value(path: Path, label: str) -> str:
@@ -1197,20 +1166,6 @@ def _read_managed_file_value(path: Path, label: str) -> str:
     ):
         raise RuntimeError(f"managed {label} file has invalid contents")
     return value
-
-
-def _managed_fetch_proxy_url_from_files() -> str:
-    """Derive the trusted proxy URL independently from root-owned files."""
-    host = _read_managed_file_value(_MANAGED_PROXY_HOST_FILE, "proxy host")
-    port = _read_managed_file_value(_MANAGED_PROXY_PORT_FILE, "proxy port")
-    if _MANAGED_PROXY_HOST.fullmatch(host) is None:
-        raise RuntimeError("managed proxy host file has invalid contents")
-    if (
-        re.fullmatch(r"[0-9]{1,5}", port) is None
-        or not 1 <= int(port, 10) <= 65535
-    ):
-        raise RuntimeError("managed proxy port file has invalid contents")
-    return f"http://{host}:{port}"
 
 
 def _managed_upstream_provider() -> str:
@@ -1289,20 +1244,17 @@ def managed_fetch_with_redirects(
     original_fetch: Callable[..., Any],
     validation_error: type[ValueError],
 ) -> Any:
-    """Fetch through only the launcher-delegated OpenShell proxy.
+    """Fetch through OpenShell's mediated network with fixed TLS trust.
 
-    Outside the managed launcher, preserve the pinned upstream transport. In
-    the managed image, avoid forbidden direct DNS while keeping requests'
-    ambient proxy discovery and ``NO_PROXY`` disabled. OpenShell's proxy then
-    remains the authoritative network-policy and SSRF boundary for every hop.
+    Outside the managed image, preserve the pinned upstream transport.
+    OpenShell validates destinations on every hop; requests ignores ambient
+    proxies, netrc credentials, and CA overrides.
     """
     try:
-        proxy_url = managed_fetch_proxy_url()
+        managed = _managed_fetch_uses_openshell()
     except RuntimeError as exc:
-        # Keep runtime-integrity failures inside fetch_url's structured
-        # validation result instead of surfacing an opaque tool exception.
         raise validation_error(str(exc)) from exc
-    if proxy_url is None:
+    if not managed:
         return original_fetch(url, timeout=timeout)
 
     try:
@@ -1337,7 +1289,7 @@ def managed_fetch_with_redirects(
         # password. An `@` or `:` after the authority is ordinary path data
         # (including valid repository refs/files), never authentication;
         # rejecting that shape would create false positives. These validation
-        # errors never echo the candidate URL, and the explicit OpenShell proxy
+        # errors never echo the candidate URL, and OpenShell's mediated network
         # remains the destination-policy and SSRF authority for every hop.
         if parsed.username is not None or parsed.password is not None:
             raise validation_error("URL credentials are not allowed")
@@ -1347,12 +1299,12 @@ def managed_fetch_with_redirects(
             raise validation_error("URL hostname is not valid IDNA") from None
 
     current_url = url
-    proxies = {"http": proxy_url, "https": proxy_url}
+    proxies: dict[str, str] = {}
     try:
         with requests.Session() as session:
             # Disable every requests environment-derived session setting, including
             # proxy/NO_PROXY, netrc, and CA-bundle discovery. Each request receives
-            # the sole root-verified proxy mapping explicitly below. The separately
+            # an empty proxy mapping explicitly below. The separately
             # selected CA bundle establishes TLS transport trust only; it cannot
             # choose a proxy or authorize a destination under OpenShell policy.
             session.trust_env = False
@@ -1546,7 +1498,6 @@ def assert_safe_runtime() -> None:
     else:
         os.environ.pop("NEMOCLAW_ATTACHED_PROVIDER_API_KEY", None)
     os.environ[_UPSTREAM_PROVIDER_ENV] = _managed_upstream_provider()
-    managed_fetch_proxy_url()
     base_url = managed_inference_base_url()
     os.environ["OPENAI_BASE_URL"] = base_url
     os.environ["NEMOCLAW_INFERENCE_BASE_URL"] = base_url
@@ -1556,6 +1507,20 @@ def assert_safe_runtime() -> None:
     os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"
     os.environ["OTEL_ENABLED"] = "false"
     for name in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "grpc_proxy",
+        "GRPC_PROXY",
+        "NODE_USE_ENV_PROXY",
+        "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL",
+        "NEMOCLAW_PROXY_HOST",
+        "NEMOCLAW_PROXY_PORT",
         "OPENAI_PROXY",
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",

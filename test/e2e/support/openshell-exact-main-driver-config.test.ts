@@ -11,6 +11,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveOpenShellSiblingComponents } from "../../helpers/openshell-components.ts";
 import { createOpenShellDriverConfigTestWrapper } from "../live/openshell-driver-config-test-wrapper.ts";
 import {
+  assertGatewayListeners,
+  assertRuntimeMounts,
+  requireRunningSandboxContainer,
   EXACT_MAIN_DRIVER_CONFIG_JSON,
   EXACT_MAIN_DRIVER_CONFIG_PROOF_ENV,
   EXACT_MAIN_TMPFS_MOUNT,
@@ -28,6 +31,177 @@ afterEach(() => {
 });
 
 describe("OpenShell driver configuration for main-branch E2E", () => {
+  it.each(["sandbox", "supervisor"] as const)("selects exactly one scoped %s", async (role) => {
+    const command = vi.fn(async (_command: string, _args: string[]) => ({
+      exitCode: 0,
+      stdout: "container-id\n",
+      stderr: "",
+    }));
+    await expect(
+      requireRunningSandboxContainer({ command } as never, "candidate", "gateway-id", role, "test"),
+    ).resolves.toBe("container-id");
+    expect(command.mock.calls[0]?.[1]).toEqual([
+      "ps",
+      "--no-trunc",
+      "--filter",
+      "label=openshell.ai/sandbox-name=candidate",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      "label=openshell.ai/sandbox-namespace=gateway-id",
+      "--filter",
+      "label=openshell.ai/isolation-role=" + role,
+      "--format",
+      "{{.ID}}",
+    ]);
+  });
+
+  it.each(["", "one\ntwo\n"])("rejects a missing or ambiguous role: %j", async (stdout) => {
+    const command = vi.fn(async () => ({ exitCode: 0, stdout, stderr: "" }));
+    await expect(
+      requireRunningSandboxContainer(
+        { command } as never,
+        "candidate",
+        "gateway-id",
+        "sandbox",
+        "test",
+      ),
+    ).rejects.toThrow();
+  });
+
+  function splitRuntimeFixture(fault: string) {
+    const hash = "a".repeat(64);
+    const tmpfs = { Destination: "/run/nemoclaw-dcode-mcp", Type: "tmpfs", RW: true };
+    const channel = {
+      Destination: "/.openshell/channel",
+      Type: "volume",
+      RW: true,
+      Source: "/volumes/channel",
+    };
+    const state = {
+      Destination: "/.openshell/supervisor",
+      Type: "volume",
+      RW: false,
+      Source: "/volumes/auth",
+    };
+    const command = vi.fn(async (_command: string, args: string[]) => {
+      const respond: Record<string, () => { exitCode: number; stdout: string; stderr: string }> = {
+        exec: () => {
+          expect(args).toEqual([
+            "exec",
+            "--user",
+            "0",
+            "workload",
+            "sha256sum",
+            "/.openshell/runtime/openshell-sandbox",
+          ]);
+          return {
+            exitCode: 0,
+            stdout:
+              (fault === "binary" ? "b".repeat(64) : hash) +
+              "  /.openshell/runtime/openshell-sandbox\n",
+            stderr: "",
+          };
+        },
+        inspect: () => {
+          const supervisor = args[3] === "supervisor";
+          let value: unknown;
+          switch (args[2]) {
+            case "{{json .HostConfig.Mounts}}":
+              value = [
+                {
+                  Type: "tmpfs",
+                  Target: tmpfs.Destination,
+                  TmpfsOptions: { Mode: 0o1777, SizeBytes: 1_048_576 },
+                },
+              ];
+              break;
+            case "{{json .HostConfig.Tmpfs}}":
+              value = fault === "legacy tmpfs" ? { [tmpfs.Destination]: "rw" } : null;
+              break;
+            case "{{json .Mounts}}":
+              value = supervisor
+                ? [
+                    {
+                      ...channel,
+                      RW: fault === "writable supervisor",
+                      Source: fault === "channel" ? "/volumes/other" : channel.Source,
+                    },
+                    state,
+                  ]
+                : [tmpfs, channel, ...(fault === "credential exposure" ? [state] : [])];
+              break;
+            case "{{json .HostConfig.Binds}}":
+              value = [];
+              break;
+            case "{{json .NetworkSettings.Networks}}":
+              value = fault === "network attachment" ? { bridge: {} } : { none: {} };
+              break;
+            case "{{json .HostConfig.NetworkMode}}":
+              value = supervisor ? "host" : fault === "network mode" ? "bridge" : "none";
+              break;
+            case "{{json .Config.Labels}}":
+              value = {
+                "openshell.ai/sandbox-id": supervisor && fault === "identity" ? "other" : "same-id",
+              };
+              break;
+            default:
+              throw new Error("Unexpected inspection " + args[2]);
+          }
+          return { exitCode: 0, stdout: JSON.stringify(value), stderr: "" };
+        },
+      };
+      return respond[args[0]!]!();
+    });
+    return {
+      host: { command },
+      proof: { provenance: { artifacts: { standaloneSandbox: { binarySha256: hash } } } },
+    };
+  }
+
+  it("accepts the expected split-runtime mount and network layout", async () => {
+    const { host, proof } = splitRuntimeFixture("");
+    await expect(
+      assertRuntimeMounts(host as never, proof as never, "workload", "supervisor", "test"),
+    ).resolves.toBeUndefined();
+  });
+
+  it.each([
+    "binary",
+    "channel",
+    "writable supervisor",
+    "credential exposure",
+    "network attachment",
+    "network mode",
+    "identity",
+    "legacy tmpfs",
+  ])("rejects split-runtime %s mismatch", async (fault) => {
+    const { host, proof } = splitRuntimeFixture(fault);
+    await expect(
+      assertRuntimeMounts(host as never, proof as never, "workload", "supervisor", "test"),
+    ).rejects.toThrow();
+  });
+
+  function observeGatewayListener(address: string, pid: number) {
+    const command = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: "  LISTEN 0 4096 " + address + " 0.0.0.0:* users:((gateway,pid=" + pid + ",fd=3))\n",
+      stderr: "",
+    }));
+    return assertGatewayListeners({ command } as never, 42, { port: 8080 } as never, "test");
+  }
+
+  it("accepts the gateway's loopback listener", async () => {
+    await expect(observeGatewayListener("127.0.0.1:8080", 42)).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ["0.0.0.0:8080", 42],
+    ["[::]:8080", 42],
+    ["127.0.0.1:8080", 43],
+  ] as const)("rejects gateway listener %s owned by PID %i", async (address, pid) => {
+    await expect(observeGatewayListener(address, pid)).rejects.toThrow();
+  });
   it("resolves one canonical executable set for CLI, gateway, and sandbox (#11547)", () => {
     const rootDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-components-"));
     const installDirectory = path.join(rootDirectory, "install");

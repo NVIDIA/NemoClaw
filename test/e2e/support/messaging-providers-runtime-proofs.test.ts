@@ -22,6 +22,7 @@ import {
   FAKE_API_PROXY_READINESS_SOURCE,
   FAKE_API_PROXY_SOURCE,
   isNvidiaEndpointRateLimitFailure,
+  isUnresolvedPlaceholderRejection,
   messagingEnv,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
@@ -44,6 +45,22 @@ const OPENSHELL_NETWORK_INSPECT = JSON.stringify([
   },
 ]);
 const execFileAsync = promisify(execFile);
+
+it.each([
+  [
+    '500 {"error":"credential_unavailable","message":"Credential placeholder could not be resolved"}',
+    true,
+  ],
+  ['500 {"error":"credential_injection_failed"}', true],
+  ["unresolved credential placeholder", true],
+  ['401 {"error":"bad_auth"}', false],
+  ['200 {"ok":false,"error":"invalid_auth"}', false],
+  ['500 {"error":"internal_server_error"}', false],
+  ['403 {"error":"credential_endpoint_mismatch"}', false],
+  ["TIMEOUT", false],
+])("classifies missing-credential rejection in %s", (response, expected) => {
+  expect(isUnresolvedPlaceholderRejection(response)).toBe(expected);
+});
 
 it("pins the fake messaging API to the reviewed Node runtime", () => {
   expect(FAKE_API_IMAGE).toBe(
@@ -497,10 +514,6 @@ describe("messaging provider installed-runtime proofs", () => {
       "e2e-hermes-discord",
       "--add-endpoint",
       "host.openshell.internal:43117:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
-      "--add-allow",
-      "host.openshell.internal:43117:GET:/**",
-      "--add-allow",
-      "host.openshell.internal:43117:WEBSOCKET_TEXT:/**",
       "--binary",
       allowedBinaries[0],
       "--binary",
@@ -559,10 +572,6 @@ describe("messaging provider installed-runtime proofs", () => {
       "e2e-hermes-discord",
       "--add-endpoint",
       "host.openshell.internal:43118:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
-      "--add-allow",
-      "host.openshell.internal:43118:GET:/**",
-      "--add-allow",
-      "host.openshell.internal:43118:POST:/**",
       "--binary",
       allowedBinaries[0],
       "--wait",
@@ -613,8 +622,6 @@ describe("messaging provider installed-runtime proofs", () => {
       "e2e-telegram",
       "--add-endpoint",
       "host.openshell.internal:43119:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
-      "--add-allow",
-      "host.openshell.internal:43119:POST:/**",
       "--binary",
       "/usr/local/bin/node",
       "--binary",

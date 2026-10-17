@@ -2,9 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { validateName } from "../runner";
+import { captureSanitizedResolvedOpenshell } from "../adapters/openshell/sanitized-capture";
+import {
+  resolveSandboxGatewayName,
+  type SandboxGatewayBinding,
+} from "../onboard/gateway-binding/identity";
 import { withMcpLifecycleLockSync } from "../state/mcp-lifecycle-lock-acquisition";
 import { resolveAgentConfig, type AgentConfigTarget } from "./agent-config";
-import { capturePrivilegedSandboxCommand } from "./privileged-exec";
 
 export interface MutableHermesConfigVerification {
   readonly verified: boolean;
@@ -16,10 +20,16 @@ const MUTABLE_HERMES_CONFIG_PROBE = String.raw`
 import errno
 import fcntl
 import os
+import pwd
 import stat
 import struct
 import subprocess
 import sys
+
+sandbox_identity = pwd.getpwnam("sandbox")
+if (os.geteuid() == 0 or os.geteuid() != sandbox_identity.pw_uid or
+        os.getegid() != sandbox_identity.pw_gid):
+    raise RuntimeError("Hermes config probe requires the non-root sandbox identity")
 
 config_dir = os.path.normpath(sys.argv[1])
 config_paths = [os.path.normpath(value) for value in sys.argv[2:]]
@@ -109,11 +119,6 @@ export function mutableHermesConfigProbeCommand(target: AgentConfigTarget): read
     throw new Error(`agent ${target.agentName} does not use the mutable Hermes config contract`);
   }
   return [
-    "/usr/bin/setpriv",
-    "--reuid=sandbox",
-    "--regid=sandbox",
-    "--init-groups",
-    "--",
     "/usr/bin/python3",
     "-I",
     "-c",
@@ -141,15 +146,42 @@ export function verifyMutableHermesConfigForTarget(
 
 export function inspectMutableHermesConfigPerms(
   sandboxName: string,
+  getSandbox: (name: string) => SandboxGatewayBinding | null,
 ): MutableHermesConfigVerification {
   validateName(sandboxName, "sandbox name");
   return withMcpLifecycleLockSync(sandboxName, () => {
     const target = resolveAgentConfig(sandboxName);
     return verifyMutableHermesConfigForTarget(target, (command) => {
-      capturePrivilegedSandboxCommand(sandboxName, command, {
-        sanitizeEnvironment: true,
-        timeout: MUTABLE_HERMES_CONFIG_PROBE_TIMEOUT_MS,
-      });
+      const sandbox = getSandbox(sandboxName);
+      if (!sandbox) throw new Error("Hermes config probe requires a registered sandbox");
+      const result = captureSanitizedResolvedOpenshell(
+        [
+          "sandbox",
+          "exec",
+          "--name",
+          sandboxName,
+          "-g",
+          resolveSandboxGatewayName(sandbox),
+          "--no-tty",
+          "--no-login-shell",
+          "--timeout",
+          "15",
+          "--",
+          ...command,
+        ],
+        {
+          ignoreError: true,
+          includeStderr: true,
+          includeStreams: true,
+          maxBuffer: 64 * 1024,
+          timeout: MUTABLE_HERMES_CONFIG_PROBE_TIMEOUT_MS,
+        },
+      );
+      if (result.error || result.signal || result.status !== 0) {
+        throw new Error(
+          `Hermes config probe failed (${result.error?.message ?? result.signal ?? `exit ${result.status}`})`,
+        );
+      }
     });
   });
 }

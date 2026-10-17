@@ -3120,7 +3120,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       );
       const finalFlowContext = prepareFinalOnboardFlowContext(coreFlowResult);
       let liveFinalFlowContext: InitialOnboardFlowContext = finalFlowContext;
-      const finalSandboxRegistration = registry.getSandbox(finalFlowContext.sandboxName);
       const finalFlowPhases = createFinalOnboardFlowPhases<
         InitialOnboardFlowContext,
         import("./dashboard/contract").DashboardDeliveryChain,
@@ -3129,7 +3128,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         branchState: agent ? "agent_setup" : "openclaw",
         managedOpenclawStartup: managedWorkloadOnboard.shouldUseManagedOpenclawStartup(
           !agent,
-          finalSandboxRegistration,
+          registry.getSandbox(finalFlowContext.sandboxName),
         ),
         portableRuntimeContext:
           agent?.name === "hermes" ? lockedRuntime.portableRuntimeContext : null,
@@ -3137,6 +3136,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         agentSetupDeps: {
           handleAgentSetup: agentOnboard.handleAgentSetup,
           agentSetupContext: () => ({
+            getSandbox: registry.getSandbox,
             step,
             sandboxCommandExecutor: sandboxExec,
             gatewayName: GATEWAY_NAME!,

@@ -2353,17 +2353,10 @@ restore_hermes_config_permissions_after_dashboard_start() {
 # primary process whose exit status is returned).
 # Each code path below sets these before registering the trap.
 
-# ── Proxy environment ────────────────────────────────────────────
-PROXY_HOST="${NEMOCLAW_PROXY_HOST:-10.200.0.1}"
-PROXY_PORT="${NEMOCLAW_PROXY_PORT:-3128}"
-_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
-_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"
-export HTTP_PROXY="$_PROXY_URL"
-export HTTPS_PROXY="$_PROXY_URL"
-export NO_PROXY="$_NO_PROXY_VAL"
-export http_proxy="$_PROXY_URL"
-export https_proxy="$_PROXY_URL"
-export no_proxy="$_NO_PROXY_VAL"
+# OpenShell 0.1.3 mediates native egress. Clear obsolete application proxy settings.
+unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
+unset ALL_PROXY all_proxy OPENAI_PROXY grpc_proxy GRPC_PROXY
+unset NODE_USE_ENV_PROXY NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 
 # Corporate proxy CA merge (NemoClaw#6210).
 # OpenShell injects SSL_CERT_FILE for its own L7 proxy CA at runtime. When a
@@ -2422,13 +2415,10 @@ _PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
 write_runtime_shell_env() {
   {
     cat <<PROXYEOF
-# Proxy configuration (overrides narrow OpenShell defaults on connect)
-export HTTP_PROXY="$_PROXY_URL"
-export HTTPS_PROXY="$_PROXY_URL"
-export NO_PROXY="$_NO_PROXY_VAL"
-export http_proxy="$_PROXY_URL"
-export https_proxy="$_PROXY_URL"
-export no_proxy="$_NO_PROXY_VAL"
+# OpenShell mediates native egress for connect sessions.
+unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
+unset ALL_PROXY all_proxy OPENAI_PROXY grpc_proxy GRPC_PROXY
+unset NODE_USE_ENV_PROXY NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 export HERMES_HOME="${HERMES_DIR}"
 export HERMES_LAZY_INSTALL_TARGET="${HERMES_SANDBOX_LAZY_INSTALL_TARGET}"
 PROXYEOF

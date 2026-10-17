@@ -341,27 +341,6 @@ function openAiContent(json: unknown): string {
   return "";
 }
 
-function anthropicContent(json: unknown): string {
-  if (!json || typeof json !== "object") return "";
-  const content = (json as { content?: unknown }).content;
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        if (
-          part &&
-          typeof part === "object" &&
-          typeof (part as { text?: unknown }).text === "string"
-        ) {
-          return (part as { text: string }).text;
-        }
-        return "";
-      })
-      .join("")
-      .trim();
-  }
-  return openAiContent(json);
-}
-
 async function expectOpenAiChatThroughSandbox(
   sandbox: SandboxClient,
   sandboxName: string,
@@ -397,44 +376,6 @@ async function expectOpenAiChatThroughSandbox(
   expect(response.exitCode, resultText(response)).toBe(0);
   const content = openAiContent(parseJsonBody(response.stdout, artifactName));
   expect(content, `no chat content in response: ${response.stdout.slice(0, 500)}`).not.toBe("");
-}
-
-async function expectAnthropicMessageThroughSandbox(
-  sandbox: SandboxClient,
-  sandboxName: string,
-  model: string,
-  redactionValues: readonly string[],
-): Promise<void> {
-  const payload = JSON.stringify({
-    model,
-    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-    max_tokens: 50,
-  });
-  const response = await sandbox.exec(
-    sandboxName,
-    [
-      "curl",
-      "-sS",
-      "--max-time",
-      "60",
-      "https://inference.local/v1/messages",
-      "-H",
-      "Content-Type: application/json",
-      "--data-raw",
-      payload,
-    ],
-    {
-      artifactName: "anthropic-inference-local-message",
-      env: buildAvailabilityProbeEnv(),
-      redactionValues: [...redactionValues],
-      timeoutMs: 90_000,
-    },
-  );
-  expect(response.exitCode, resultText(response)).toBe(0);
-  const content = anthropicContent(parseJsonBody(response.stdout, "anthropic inference.local"));
-  expect(content, `no Anthropic content in response: ${response.stdout.slice(0, 500)}`).not.toBe(
-    "",
-  );
 }
 
 export function requireProviderSmokeSelected(provider: "openrouter", skip: SkipFn): void {
@@ -480,7 +421,6 @@ export async function verifyCredentialPlaceholder(
 export {
   CREDENTIAL_CLASSIFICATION_PATTERN,
   cleanupSandbox,
-  expectAnthropicMessageThroughSandbox,
   expectNoActiveSandbox,
   expectOnboardFailure,
   expectOnboardSuccess,

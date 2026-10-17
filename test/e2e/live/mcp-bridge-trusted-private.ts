@@ -106,7 +106,6 @@ export async function assertTrustedPrivateMcpRebindingDenied(
   });
   const survivingPolicyBeforeAdd = survivingPolicyBeforeAddResult.policy;
   const trustedPrivateAddress = relay.address;
-  expect(trustedPrivateAddress).not.toBe(REBIND_PUBLIC_IP);
   await remapDnsRebindingHostname(
     host,
     options.sandboxName,

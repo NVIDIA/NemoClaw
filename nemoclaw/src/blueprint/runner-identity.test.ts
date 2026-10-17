@@ -19,7 +19,7 @@ import {
   MATCHING_INFERENCE_PROVIDER_LISTING,
   MATCHING_INFERENCE_ROUTE_LISTING,
   MATCHING_RUNTIME_PROVIDER_LISTING,
-  providersV2EnabledResult,
+  absentGlobalPolicyResult,
   resultWithBlueprintPolicy,
   successResult,
   TEST_SANDBOX_POLICY,
@@ -79,7 +79,7 @@ const matchingInferenceRoute = MATCHING_INFERENCE_ROUTE_LISTING;
 const runtimeIdentityProfilePath = "/blueprint/provider-profiles/okta-runtime-v1.yaml";
 
 const success = successResult();
-const providersV2Enabled = providersV2EnabledResult();
+const absentGlobalPolicy = absentGlobalPolicyResult();
 const identityPolicyAdditions = {
   identity_api: {
     name: "identity_api",
@@ -110,7 +110,7 @@ function responseQueue(
       { exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" },
     ],
     ["provider get test-provider", { exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
-    ["settings get --global --json", providersV2Enabled],
+    ["policy list --global --page-size 1 --output json", absentGlobalPolicy],
   ]);
   mockExeca.mockImplementation(async (_command: string, args: string[]) => {
     const command = args.join(" ");
@@ -185,7 +185,9 @@ describe("blueprint identity wrapper", () => {
       resultWithBlueprintPolicy(
         args,
         runtimeIdentityProfileExport(args) ??
-          (args.join(" ") === "settings get --global --json" ? providersV2Enabled : success),
+          (args.join(" ") === "policy list --global --page-size 1 --output json"
+            ? absentGlobalPolicy
+            : success),
       ),
     );
     process.env.NEMOCLAW_BLUEPRINT_PATH = "/blueprint";

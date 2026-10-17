@@ -21,13 +21,13 @@ NemoClaw provides two first-class llama.cpp paths.
 You can attach an authenticated server that you operate, or let NemoClaw select and materialize a compatible repository-owned profile.
 Both paths are experimental and use OpenAI Chat Completions.
 
-<AgentOnly variant="openclaw">
-Agent requests use `https://inference.local/v1`.
-</AgentOnly>
-<AgentOnly variant="hermes,deepagents">
-New Deep Agents Code and Hermes sandboxes use the recorded local endpoint through a sandbox-attached OpenShell provider.
+<AgentOnly variant="openclaw,hermes,deepagents">
+New OpenClaw, Hermes, and Deep Agents Code llama.cpp selections use the recorded local endpoint through a sandbox-attached OpenShell provider.
 OpenShell supplies the credential at egress; the sandbox receives only a credential reference.
-Refer to [How Inference Routing Works](../about-inference-routing) for the qualification and existing-sandbox boundaries.
+Refer to [How Inference Routing Works](../about-inference-routing) for qualification and existing-sandbox boundaries.
+</AgentOnly>
+<AgentOnly variant="openclaw">
+Older OpenClaw sandboxes without a native attachment retain their recorded shared route, which requires OpenShell `0.0.x`.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Live qualification of the Hermes native local lifecycle is pending.

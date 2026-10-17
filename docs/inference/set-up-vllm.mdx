@@ -33,13 +33,13 @@ Do not expose the port to your LAN or the internet.
 An authenticated fixed profile publishes the configured host port on exactly two host addresses: `127.0.0.1` and the private IPv4 gateway of the `openshell-docker` bridge. The container continues to listen on its recipe-owned internal port `8000`.
 It never publishes that host port on `0.0.0.0` or `::`.
 OpenShell reaches the server through the private bridge binding.
-<AgentOnly variant="openclaw">
-The provider route remains `https://inference.local` inside the sandbox.
-</AgentOnly>
-<AgentOnly variant="hermes,deepagents">
-New Deep Agents Code and Hermes standalone vLLM selections use the recorded local endpoint through a sandbox-attached OpenShell provider.
+<AgentOnly variant="openclaw,hermes,deepagents">
+New OpenClaw, Hermes, and Deep Agents Code standalone vLLM selections use the recorded local endpoint through a sandbox-attached OpenShell provider.
 OpenShell supplies the credential at egress; the sandbox receives only a credential reference.
 Refer to [How Inference Routing Works](../about-inference-routing) for qualification and existing-sandbox boundaries.
+</AgentOnly>
+<AgentOnly variant="openclaw">
+Older OpenClaw sandboxes without a native attachment retain their recorded shared route, which requires OpenShell `0.0.x`.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Live qualification of the Hermes native local lifecycle is pending.
@@ -671,7 +671,7 @@ On N1x, that setting is explicit preview intent and waives only the pending phys
 Add `NEMOCLAW_EXPERIMENTAL=1` on a generic Linux NVIDIA GPU host.
 Non-interactive runs use the profile default unless you set `NEMOCLAW_VLLM_MODEL`.
 
-The commands above invoke `$$nemoclaw onboard` directly, so a DGX Station run with no model or peer selects the `nemotron-3.5-super-vl-120b` catalog default.
+The commands above invoke `$$nemoclaw onboard` directly, so a DGX Station run with no model or peer selects the experimental `nemotron-3.5-super-vl-120b` catalog default.
 Supplying `NEMOCLAW_PROVIDER=install-vllm` to the shell installer enters the Station host-preparation boundary while retaining that profile default.
 For paired non-interactive setup, follow [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations).
 

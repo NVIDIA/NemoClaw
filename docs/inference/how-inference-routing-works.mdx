@@ -38,9 +38,13 @@ A different destination cannot gain access through a later DNS change.
 
 Existing sandboxes without a native attachment retain their recorded shared route.
 Legacy local routes have the recovery restrictions described under [Credential Boundary](#credential-boundary).
-New Deep Agents Code, Hermes, OpenClaw, and Pi selections for Ollama, standalone vLLM, and llama.cpp use a sandbox-attached provider for the qualified host-local endpoint.
-Deep Agents Code, Hermes, and Pi also use attached providers for qualified host-local compatible endpoints.
-Local NVIDIA NIM, other custom endpoints, Model Router, and unchanged published Pi shared local selections retain the shared route.
+New Deep Agents Code, Hermes, OpenClaw, and Pi selections for Ollama, standalone vLLM, and llama.cpp use sandbox-attached providers for qualified host-local endpoints.
+Deep Agents Code, Hermes, and Pi also use attached providers for qualifying host-local compatible endpoints.
+Qualifying custom hosted endpoints use sandbox-attached providers.
+Local NVIDIA NIM, remaining shared custom selections, Model Router, and unchanged published Pi shared local selections retain the shared route.
+Shared `inference.local` routes require OpenShell `0.0.x`.
+OpenShell `0.1.3` removes that route; migration of the remaining selections is incomplete and blocks this upgrade.
+Native local onboarding on `0.1.3` remains unqualified for this upgrade.
 Hermes live qualification for the new local lifecycle remains pending.
 
 ```text
@@ -51,6 +55,14 @@ Use `$$nemoclaw inference get` to inspect the selected sandbox's recorded route.
 `status`, `doctor`, and startup checks verify its recorded native provider identity before using a native attachment.
 Missing or conflicting ownership stops the operation instead of falling back to the shared route.
 
+<AgentOnly variant="hermes">
+Hermes native local provider profiles include the pinned image's resolved Python interpreter, `/usr/bin/python3.13`.
+An older imported profile that lacks this executable can conflict with the current profile definition.
+NemoClaw stops and leaves an incompatible existing profile unchanged.
+Preserve the profile and provider while a NemoClaw maintainer reviews their ownership and attached sandboxes and chooses an explicit replacement plan.
+Retry only after the profile conflict is resolved.
+</AgentOnly>
+
 ## Credential Boundary
 
 Provider credentials stay on the host and flow through the OpenShell provider system.
@@ -59,10 +71,14 @@ The sandbox does not receive the raw upstream API key.
 Local Ollama and local vLLM routes do not require the host `OPENAI_API_KEY`.
 NemoClaw uses provider-specific local tokens for those routes.
 For retained shared local routes, rebuilds migrate away from stale OpenAI credential requirements.
-Legacy Deep Agents Code local sandboxes without an attachment require a backup and fresh recreation. Existing OpenClaw Ollama, standalone vLLM, and llama.cpp sandboxes without an attachment retain supported model switches on their shared route, but cannot resume or rebuild. Back one up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NVIDIA NIM sandboxes retain the shared route and can resume or rebuild.
+Legacy Deep Agents Code local sandboxes without an attachment require a backup and fresh recreation.
+On OpenShell `0.0.x`, existing OpenClaw Ollama, standalone vLLM, and llama.cpp sandboxes without an attachment retain supported shared-route model switches.
+They cannot resume or rebuild.
+Back one up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`.
+Owned Local NVIDIA NIM sandboxes can resume or rebuild on their shared route with OpenShell `0.0.x`.
 Legacy Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible routes without a native attachment cannot resume or rebuild.
 Back up required sandbox state before running `nemohermes onboard --fresh --name <sandbox-name> --recreate-sandbox` to replace the sandbox with a native attachment.
-Owned Local NVIDIA NIM and nonqualifying custom routes retain their shared route.
+Owned Local NVIDIA NIM and remaining custom shared selections retain their shared route on OpenShell `0.0.x`.
 For an attached Hermes route, startup refreshes the credential reference before starting the gateway.
 Rebuild refreshes only the restored credential references, preserving the selected model and provider settings.
 When a rebuild reuses an automatically bridged compatible-endpoint route without a host API key, NemoClaw reapplies the config-only bridge rewrite without reading or passing the credential stored in OpenShell.

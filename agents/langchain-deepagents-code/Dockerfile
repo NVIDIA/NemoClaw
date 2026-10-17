@@ -239,8 +239,6 @@ ARG NEMOCLAW_DCODE_AUTO_APPROVAL=disabled
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 ARG NEMOCLAW_BUILD_ID=default
 ARG NEMOCLAW_DARWIN_VM_COMPAT=0
-ARG NEMOCLAW_PROXY_HOST=10.200.0.1
-ARG NEMOCLAW_PROXY_PORT=3128
 
 RUN case "$NEMOCLAW_TOOL_DISCLOSURE" in \
         progressive|direct) ;; \
@@ -264,14 +262,12 @@ RUN case "$NEMOCLAW_TOOL_DISCLOSURE" in \
 # hermetic so base-image or builder observability variables cannot mask the
 # diagnostic under test; the post-build workflow probes the real managed chain.
 RUN install -d -m 0755 /usr/local/share/nemoclaw \
-    && printf '%s\n' "$NEMOCLAW_PROXY_HOST" > /usr/local/share/nemoclaw/dcode-proxy-host \
-    && printf '%s\n' "$NEMOCLAW_PROXY_PORT" > /usr/local/share/nemoclaw/dcode-proxy-port \
     && printf '%s\n' "$NEMOCLAW_INFERENCE_BASE_URL" > /usr/local/share/nemoclaw/dcode-inference-base-url \
     && printf '%s\n' "$NEMOCLAW_UPSTREAM_PROVIDER" > /usr/local/share/nemoclaw/dcode-upstream-provider \
     && printf '%s\n' "$NEMOCLAW_DCODE_AUTO_APPROVAL" > /usr/local/share/nemoclaw/dcode-auto-approval \
     && printf '%s\n' "$NEMOCLAW_REASONING_EFFORT" > /usr/local/share/nemoclaw/dcode-reasoning-effort \
-    && chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-upstream-provider /usr/local/share/nemoclaw/dcode-auto-approval /usr/local/share/nemoclaw/dcode-reasoning-effort \
-    && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-upstream-provider /usr/local/share/nemoclaw/dcode-auto-approval /usr/local/share/nemoclaw/dcode-reasoning-effort \
+    && chown root:root /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-upstream-provider /usr/local/share/nemoclaw/dcode-auto-approval /usr/local/share/nemoclaw/dcode-reasoning-effort \
+    && chmod 0444 /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-upstream-provider /usr/local/share/nemoclaw/dcode-auto-approval /usr/local/share/nemoclaw/dcode-reasoning-effort \
     && /opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py \
     && rm -f /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py \
     && unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \

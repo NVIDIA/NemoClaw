@@ -8,25 +8,14 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 
-import { isValidProxyHost, isValidProxyPort } from "../../../src/lib/onboard/dockerfile-patch.ts";
 import { TRUSTED_FETCH_PROXY_ENV_NAME } from "../../helpers/langchain-deepagents-code-headless.ts";
 import {
-  DEFAULT_MANAGED_PROXY,
   dcodeStateDir,
-  type ManagedProxyEndpoint,
   makeStartScriptFixture,
-  prepareManagedProxyFixture,
+  prepareManagedScriptFixture,
 } from "../../support/dcode-start-script-fixture.ts";
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
-const headlessCheckPath = path.join(
-  process.cwd(),
-  "test",
-  "e2e",
-  "e2e-cloud-experimental",
-  "checks",
-  "07-deepagents-code-headless-inference.sh",
-);
 const PROXY_URL_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const;
 const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
 const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy", "OPENAI_PROXY"] as const;
@@ -44,25 +33,17 @@ function readAgentFile(name: string): string {
   return fs.readFileSync(path.join(agentDir, name), "utf8");
 }
 
-function makeLauncherFixtureSource(
-  source: string,
-  tempDir: string,
-  managedProxy: ManagedProxyEndpoint = DEFAULT_MANAGED_PROXY,
-): string {
-  return prepareManagedProxyFixture(
+function makeLauncherFixtureSource(source: string, tempDir: string): string {
+  return prepareManagedScriptFixture(
     source.replace(
       'exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"',
       'exec "$MANAGED_DCODE_WRAPPER" "$@"',
     ),
     tempDir,
-    { managedProxy },
   );
 }
 
-function makeLauncherProxyProbeFixture(
-  tempDir: string,
-  managedProxy: ManagedProxyEndpoint = DEFAULT_MANAGED_PROXY,
-): string {
+function makeLauncherProxyProbeFixture(tempDir: string): string {
   const launcherPath = path.join(tempDir, "dcode-launcher.sh");
   const probePath = path.join(tempDir, "managed-dcode-probe.sh");
   const markerFile = observabilityMarkerPath(tempDir);
@@ -84,7 +65,6 @@ function makeLauncherProxyProbeFixture(
         `readonly MANAGED_OBSERVABILITY_MARKER="${markerFile}"`,
       ),
     tempDir,
-    managedProxy,
   );
   fs.mkdirSync(path.dirname(markerFile), { recursive: true });
   fs.writeFileSync(probePath, probe, "utf8");
@@ -94,15 +74,16 @@ function makeLauncherProxyProbeFixture(
   return launcherPath;
 }
 
-function makeStartProxyProbeFixture(
-  tempDir: string,
-  managedProxy: ManagedProxyEndpoint = DEFAULT_MANAGED_PROXY,
-): { envFile: string; ephemeralDir: string; markerFile: string; scriptPath: string } {
+function makeStartProxyProbeFixture(tempDir: string): {
+  envFile: string;
+  ephemeralDir: string;
+  markerFile: string;
+  scriptPath: string;
+} {
   const ephemeralDir = path.join(tempDir, "ephemeral-tmp");
   const markerFile = observabilityMarkerPath(tempDir);
   const { envFile, scriptPath } = makeStartScriptFixture(tempDir, {
     envDir: ephemeralDir,
-    managedProxy,
     markerDir: path.dirname(markerFile),
   });
   return { envFile, ephemeralDir, markerFile, scriptPath };
@@ -137,19 +118,6 @@ function runLauncher(
   return runCommand("bash", [launcherPath, ...args], {
     env: { PATH: DEFAULT_TEST_PATH, ...env },
   });
-}
-
-async function shellValidatorAccepts(
-  source: string,
-  name: string,
-  value: string,
-): Promise<boolean> {
-  const match = source.match(new RegExp(`${name}\\(\\) \\{[\\s\\S]*?\\n\\}`));
-  expect(match, `${name} must exist`).not.toBeNull();
-  const definition = match?.[0] ?? "";
-  return (
-    (await runCommand("bash", ["-c", `${definition}\n${name} "$1"`, "bash", value])).status === 0
-  );
 }
 
 describe.concurrent("Deep Agents Code direct-exec proxy launcher", () => {
@@ -276,12 +244,9 @@ describe.concurrent("Deep Agents Code direct-exec proxy launcher", () => {
     expect(fs.existsSync(bashEnvMarker)).toBe(false);
   });
 
-  it("normalizes proxy state for direct dcode launcher execution (#6191)", async () => {
+  it("clears ambient proxies before direct dcode execution", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-direct-proxy-"));
-    const launcherPath = makeLauncherProxyProbeFixture(tempDir, {
-      host: "managed-proxy.internal",
-      port: "65535",
-    });
+    const launcherPath = makeLauncherProxyProbeFixture(tempDir);
     const result = await runLauncher(launcherPath, ["-n", "PONG"], {
       HTTP_PROXY: "http://corp-user:corp-password@corp-proxy.example:8080",
       HTTPS_PROXY: "http://corp-user:corp-password@corp-proxy.example:8080",
@@ -296,8 +261,8 @@ describe.concurrent("Deep Agents Code direct-exec proxy launcher", () => {
 
     expect(result.status, result.stderr).toBe(0);
     const lines = result.stdout.trimEnd().split("\n");
-    const managedProxy = "http://managed-proxy.internal:65535";
-    const managedNoProxy = "localhost,127.0.0.1,::1,managed-proxy.internal";
+    const managedProxy = "__unset__";
+    const managedNoProxy = "__unset__";
     expect(
       PROXY_URL_ENV_NAMES.every((name) => lines.includes(`LAUNCHER_${name}=${managedProxy}`)),
     ).toBe(true);
@@ -426,35 +391,10 @@ describe.concurrent("Deep Agents Code direct-exec proxy launcher", () => {
     expect(symlinkedStart.stderr).toContain("Unsafe managed observability marker target");
   });
 
-  it("pins validated proxy overrides into direct dcode execution paths (#6191)", () => {
-    const dockerfile = readAgentFile("Dockerfile");
-    const launcher = readAgentFile("dcode-launcher.sh");
-
-    expect(dockerfile).toContain("ARG NEMOCLAW_PROXY_HOST=10.200.0.1");
-    expect(dockerfile).toContain("ARG NEMOCLAW_PROXY_PORT=3128");
-    expect(dockerfile).toContain("printf '%s\\n' \"$NEMOCLAW_PROXY_HOST\"");
-    expect(dockerfile).toContain("printf '%s\\n' \"$NEMOCLAW_PROXY_PORT\"");
-    expect(dockerfile).toContain("chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host");
-    expect(dockerfile).toContain("chown root:root /usr/local/share/nemoclaw/dcode-proxy-host");
-    expect(dockerfile).not.toContain("    NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST}");
-    expect(dockerfile).not.toContain("    NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT}");
-    expect(launcher).toContain('readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw');
-    expect(launcher).toContain("Runtime env is untrusted and cannot override");
-    expect(launcher).toContain('"${MANAGED_PROXY_OWNER_UID}:444"');
-    expect(launcher).toContain(
-      'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"',
-    );
-    expect(launcher).toContain('export HTTPS_PROXY="$_PROXY_URL"');
-    expect(launcher).toContain('export DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL="$_PROXY_URL"');
-    expect(launcher).toContain('export no_proxy="$_NO_PROXY_VAL"');
-    expect(launcher).toContain("unset ALL_PROXY all_proxy OPENAI_PROXY");
-  });
-
-  it("does not let runtime config override the image-baked dcode proxy (#6191)", async () => {
+  it("clears ambient proxies in startup, sourced shells, and direct execution", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-trusted-proxy-"));
-    const trustedProxy = { host: "trusted-proxy.internal", port: "3129" };
-    const launcherPath = makeLauncherProxyProbeFixture(tempDir, trustedProxy);
-    const { envFile, scriptPath } = makeStartProxyProbeFixture(tempDir, trustedProxy);
+    const launcherPath = makeLauncherProxyProbeFixture(tempDir);
+    const { envFile, scriptPath } = makeStartProxyProbeFixture(tempDir);
     const untrustedEnv = {
       HTTP_PROXY: "http://corp-user:corp-password@corp-proxy.example:8080",
       NO_PROXY: "corp.internal,inference.local",
@@ -472,7 +412,7 @@ describe.concurrent("Deep Agents Code direct-exec proxy launcher", () => {
         scriptPath,
         "bash",
         "-c",
-        'printf \'START_PROXY=%s|%s|%s|%s|%s|%s\\n\' "$HTTPS_PROXY" "$NO_PROXY" "${NEMOCLAW_PROXY_HOST-__unset__}" "${NEMOCLAW_PROXY_PORT-__unset__}" "${ALL_PROXY-__unset__}" "${all_proxy-__unset__}"',
+        'printf \'START_PROXY=%s|%s|%s|%s|%s|%s\\n\' "${HTTPS_PROXY-__unset__}" "${NO_PROXY-__unset__}" "${NEMOCLAW_PROXY_HOST-__unset__}" "${NEMOCLAW_PROXY_PORT-__unset__}" "${ALL_PROXY-__unset__}" "${all_proxy-__unset__}"',
       ],
       {
         env: { PATH: DEFAULT_TEST_PATH, ...untrustedEnv },
@@ -490,77 +430,22 @@ describe.concurrent("Deep Agents Code direct-exec proxy launcher", () => {
     const startNoProxy = startResult.stdout.match(/^START_PROXY=[^|]*\|([^|]*)\|/m)?.[1];
     expect(fs.statSync(envFile).mode & 0o777).toBe(0o444);
     expect(startResult.stdout).toContain(
-      "START_PROXY=http://trusted-proxy.internal:3129|localhost,127.0.0.1,::1,trusted-proxy.internal|__unset__|__unset__|__unset__|__unset__",
+      "START_PROXY=__unset__|__unset__|__unset__|__unset__|__unset__|__unset__",
     );
-    expect(envFileText).toContain("export HTTPS_PROXY=http://trusted-proxy.internal:3129");
     expect(envFileText).toContain(
-      "export DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL=http://trusted-proxy.internal:3129",
+      "unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy",
     );
     expect(launcherResult.stdout).toContain(
-      "LAUNCHER_DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL=http://trusted-proxy.internal:3129",
+      "LAUNCHER_DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL=__unset__",
     );
-    expect(envFileText).toContain(
-      "export NO_PROXY=localhost\\,127.0.0.1\\,::1\\,trusted-proxy.internal",
-    );
-    expect(envFileText).toContain("unset ALL_PROXY all_proxy OPENAI_PROXY");
-    expect(envFileText).not.toMatch(/^export (?:ALL_PROXY|all_proxy|OPENAI_PROXY)=/m);
-    // The two standalone shell boundaries construct the same exclusion list.
-    // TypeScript does not reconstruct NO_PROXY; its connect probe deliberately
-    // sources this persisted value from /tmp/nemoclaw-proxy-env.sh.
-    expect(launcherNoProxy).toBe("localhost,127.0.0.1,::1,trusted-proxy.internal");
+    expect(launcherNoProxy).toBe("__unset__");
     expect(startNoProxy).toBe(launcherNoProxy);
     const combined = `${launcherResult.stdout}\n${launcherResult.stderr}\n${startResult.stdout}\n${startResult.stderr}\n${envFileText}`;
-    expect(combined).toContain("http://trusted-proxy.internal:3129");
-    expect(combined).toContain("localhost,127.0.0.1,::1,trusted-proxy.internal");
     expect(combined).not.toContain("attacker-proxy.internal");
     expect(combined).not.toContain("corp-proxy.example");
     expect(combined).not.toContain("corp-password");
     expect(combined).not.toContain("all-proxy.example");
     expect(combined).not.toContain("all-password");
-  });
-
-  it.each(["trusted-proxy-host", "trusted-proxy-port"])(
-    "fails closed when the image-baked dcode proxy contract is missing [case %#] (#6191)",
-    async (missingFile) => {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-missing-proxy-"));
-      const launcherPath = makeLauncherProxyProbeFixture(tempDir);
-      const { scriptPath } = makeStartProxyProbeFixture(tempDir);
-      fs.unlinkSync(path.join(tempDir, missingFile));
-      const launcherResult = await runLauncher(launcherPath, ["-n", "PONG"], {
-        NEMOCLAW_PROXY_HOST: "attacker-proxy.internal",
-        NEMOCLAW_PROXY_PORT: "4444",
-      });
-      const startResult = await runCommand("bash", [scriptPath, "true"], {
-        env: {
-          PATH: DEFAULT_TEST_PATH,
-          NEMOCLAW_PROXY_HOST: "attacker-proxy.internal",
-          NEMOCLAW_PROXY_PORT: "4444",
-        },
-      });
-
-      expect(launcherResult.status).not.toBe(0);
-      expect(startResult.status).not.toBe(0);
-      const combined = `${launcherResult.stdout}\n${launcherResult.stderr}\n${startResult.stdout}\n${startResult.stderr}`;
-      expect(combined).toContain("trusted managed proxy");
-      expect(combined).not.toContain("attacker-proxy.internal");
-    },
-  );
-
-  it("rejects writable image-baked dcode proxy files (#6191)", async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-proxy-mode-"));
-    const launcherPath = makeLauncherProxyProbeFixture(tempDir);
-    const { scriptPath } = makeStartProxyProbeFixture(tempDir);
-    fs.chmodSync(path.join(tempDir, "trusted-proxy-host"), 0o644);
-    const launcherResult = await runLauncher(launcherPath, ["-n", "PONG"], {});
-    const startResult = await runCommand("bash", [scriptPath, "true"], {
-      env: { PATH: DEFAULT_TEST_PATH },
-    });
-
-    expect(launcherResult.status).not.toBe(0);
-    expect(startResult.status).not.toBe(0);
-    expect(`${launcherResult.stderr}\n${startResult.stderr}`).toContain(
-      "Unsafe ownership or mode on trusted managed proxy host file",
-    );
   });
 
   const expectManagedCaBundleRejection = async ({
@@ -654,94 +539,6 @@ describe.concurrent("Deep Agents Code direct-exec proxy launcher", () => {
         expected: "Missing or unsafe managed fetch CA bundle file",
         mutate: (caFile: string) => fs.chmodSync(caFile, 0o000),
       });
-    },
-  );
-
-  it.each([
-    "10.200.0.1",
-    "managed-proxy.internal",
-    "proxy_name",
-    "http://proxy.internal",
-    "user:password@proxy.internal",
-    "proxy.internal/path",
-    "proxy internal",
-    "proxy.internal\ninjected",
-    "",
-  ])("keeps dcode shell proxy host validation aligned [%s] (#6191)", async (value) => {
-    const start = readAgentFile("start.sh");
-    const launcher = readAgentFile("dcode-launcher.sh");
-    const expected = isValidProxyHost(value);
-    expect(await shellValidatorAccepts(start, "is_valid_proxy_host", value), value).toBe(expected);
-    expect(await shellValidatorAccepts(launcher, "is_valid_proxy_host", value), value).toBe(
-      expected,
-    );
-  });
-
-  it.each(["1", "3128", "65535", "00001", "0", "65536", "000001", "12a", ""])(
-    "keeps dcode shell proxy port validation aligned [%s] (#6191)",
-    async (value) => {
-      const start = readAgentFile("start.sh");
-      const launcher = readAgentFile("dcode-launcher.sh");
-      const expected = isValidProxyPort(value);
-      expect(await shellValidatorAccepts(start, "is_valid_proxy_port", value), value).toBe(
-        expected,
-      );
-      expect(await shellValidatorAccepts(launcher, "is_valid_proxy_port", value), value).toBe(
-        expected,
-      );
-    },
-  );
-
-  it.each([
-    "# Invalid state:",
-    "# Source boundary:",
-    "# Source-fix constraint:",
-    "# Regression:",
-    "# Removal condition:",
-  ])("documents the proxy-only source boundary and removal condition [%s] (#6191)", (marker) => {
-    const start = readAgentFile("start.sh");
-    const launcher = readAgentFile("dcode-launcher.sh");
-    const headlessCheck = fs.readFileSync(headlessCheckPath, "utf8");
-
-    expect(start).toContain(marker);
-
-    expect(start).toContain("Direct DNS/hosts resolution is not required");
-    expect(launcher).toContain("Remove it only when OpenShell normalizes every sandbox exec/login");
-    expect(headlessCheck).toContain("getent hosts inference.local >/dev/null 2>&1");
-    expect(headlessCheck).toContain("direct inference.local DNS/hosts is absent");
-    expect(headlessCheck).toContain('stat -c "%u:%a"');
-    expect(headlessCheck).toContain(
-      "direct-exec dcode -n reached ${route_contract:-unknown} inference",
-    );
-    expect(headlessCheck).toContain(
-      "connect --probe-only accepted the ${route_contract:-unknown} inference route",
-    );
-  });
-
-  it.each([
-    { host: "corp-user:corp-password@proxy.example", port: "3128" },
-    { host: "proxy.example/path", port: "3128" },
-    { host: "10.200.0.1", port: "0" },
-    { host: "10.200.0.1", port: "65536" },
-  ])(
-    "rejects unsafe direct dcode proxy overrides before managed code runs [case %#] (#6191)",
-    async (managedProxy) => {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-launch-invalid-"));
-      const launcherPath = makeLauncherProxyProbeFixture(tempDir, managedProxy);
-      const { scriptPath } = makeStartProxyProbeFixture(tempDir, managedProxy);
-      const result = await runLauncher(launcherPath, ["-n", "PONG"], {});
-      const startResult = await runCommand("bash", [scriptPath, "true"], {
-        env: { PATH: DEFAULT_TEST_PATH },
-      });
-
-      expect(result.status).not.toBe(0);
-      expect(startResult.status).not.toBe(0);
-      expect(result.stdout).not.toContain("LAUNCHER_");
-      expect(
-        Object.values(managedProxy).every(
-          (value) => !`${result.stdout}\n${result.stderr}\n${startResult.stderr}`.includes(value),
-        ),
-      ).toBe(true);
     },
   );
 });

@@ -100,6 +100,12 @@ Onboarding retries any other 404 within its startup budget, then reports the mis
 Confirm the provider and model configuration and restore the endpoint's `/v1/models` route.
 Run `$$nemoclaw onboard --resume` to verify the retained session again without rebuilding a healthy sandbox.
 
+For native local inference smoke checks, an HTTP `403` alone does not prove that OpenShell denied the forbidden request.
+The denial must match the requested route and its provider policy.
+If a model request fails after bounded retries, the transport diagnostic reports the exception type and numeric error code when available.
+It omits raw exception text to avoid exposing credentials.
+Verification remains failed; preserve the diagnostic for investigation instead of bypassing the check.
+
 Provider setup still performs its own model, credential, and endpoint validation before this final route check.
 Use the status command and a short agent request after onboarding to verify ongoing availability and model responses.
 

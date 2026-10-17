@@ -610,6 +610,8 @@ describe("restored Hermes native route projection", () => {
       });
       expect(f.events).toEqual(["lock", "read", "write", "unlock"]);
       expect(f.deps.writeSandboxConfig).toHaveBeenLastCalledWith("alpha", f.target, f.config, {
+        gatewayName: "gateway-a",
+        deferReload: true,
         restoreNativeLocalCredential: true,
       });
       expect(f.deps.restartGateway).not.toHaveBeenCalled();

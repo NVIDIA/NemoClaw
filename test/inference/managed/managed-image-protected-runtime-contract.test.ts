@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { runInNewContext } from "node:vm";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -20,6 +21,7 @@ import {
   withManagedImageLocalInferenceProfile,
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
+  assertExactSandboxImage,
   assertOpenClawHeartbeatStart,
   createBootstrapCompletionFailureInjection,
   managedOpenClawHeartbeatLogProbe,
@@ -31,6 +33,7 @@ import {
   managedImageOpenShellProbe,
   managedOpenClawHeartbeatProbe,
   parseManagedImageOpenShellE2eInputs,
+  printExactContainerFailureState,
   protectedManagedStateRootDriverConfig,
   removeManagedImageGatewayStateIfSafe,
   resolveManagedImageOnboardModule,
@@ -41,9 +44,125 @@ import {
 } from "../../../src/lib/onboard/managed-startup/profile.ts";
 import { createManagedStartupRootApplyRequest } from "../../../src/lib/onboard/managed-startup/root-apply.ts";
 import type { RuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/contract.ts";
+import { gatewayIdForStateDir } from "../../../src/lib/onboard/gateway/process-environment.ts";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
 const VALID_SANDBOX = "managed-openclaw";
+
+it("captures bounded owner startup logs and redacts secrets before cleanup", () => {
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const runner = vi.fn<ManagedImageCommandRunner>(() => ({
+    status: 0,
+    stdout: "fixture-api-secret",
+    stderr: "",
+  }));
+  try {
+    printExactContainerFailureState("c".repeat(64), { API_KEY: "fixture-api-secret" }, runner);
+    const [argv, env, timeout] = runner.mock.calls[2];
+    expect(argv.slice(0, 7)).toEqual([
+      "docker",
+      "exec",
+      "--user",
+      "sandbox",
+      "c".repeat(64),
+      "/usr/local/bin/node",
+      "-e",
+    ]);
+    expect(env.API_KEY).toBe("fixture-api-secret");
+    expect(timeout).toBe(5000);
+    expect(String(error.mock.calls.at(-1))).not.toContain("fixture-api-secret");
+    const writes: unknown[] = [];
+    const close = vi.fn();
+    const read = vi.fn((_fd, bytes) => {
+      bytes.write("safe");
+      return 4;
+    });
+    const open = vi
+      .fn()
+      .mockReturnValueOnce(1)
+      .mockImplementationOnce(() => {
+        throw new Error("symlink");
+      })
+      .mockReturnValueOnce(3);
+    runInNewContext(argv[7], {
+      Buffer,
+      process: { stdout: { write: (value: unknown) => writes.push(value) } },
+      require: () => ({
+        constants: { O_RDONLY: 0, O_NOFOLLOW: 2, O_NONBLOCK: 4 },
+        openSync: open,
+        fstatSync: (fd: number) => ({ isFile: () => true, size: fd === 1 ? 4 : 262145 }),
+        readSync: read,
+        closeSync: close,
+      }),
+    });
+    expect(open.mock.calls).toEqual(
+      ["/tmp/nemoclaw-start.log", "/tmp/gateway.log", "/tmp/dashboard.log"].map((file) => [
+        file,
+        6,
+      ]),
+    );
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(close.mock.calls).toEqual([[1], [3]]);
+    expect(writes.map(String).join("")).toContain("safe");
+    expect(writes.filter((value) => value === "diagnostic log unavailable\n")).toHaveLength(2);
+    runner.mockClear();
+    printExactContainerFailureState("short-id", {}, runner);
+    expect(runner).not.toHaveBeenCalled();
+  } finally {
+    error.mockRestore();
+  }
+});
+
+function observeWorkload(scenario: string): string {
+  const stateDir = path.join(os.tmpdir(), "managed-workload-owner");
+  const containerId = "c".repeat(64);
+  const contentId = `sha256:${"d".repeat(64)}`;
+  const runCommand: ManagedImageCommandRunner = (argv) => {
+    const stdout =
+      argv[1] === "image"
+        ? contentId
+        : argv[1] === "ps"
+          ? argv.includes("label=openshell.ai/isolation-role=sandbox") && scenario !== "duplicate"
+            ? containerId
+            : `${containerId}\n${"e".repeat(64)}`
+          : JSON.stringify([
+              {
+                Image: scenario === "image" ? "sha256:wrong" : contentId,
+                Config: {
+                  Labels: {
+                    "openshell.ai/managed-by": "openshell",
+                    "openshell.ai/sandbox-name": VALID_SANDBOX,
+                    "openshell.ai/sandbox-namespace":
+                      scenario === "namespace" ? "other" : gatewayIdForStateDir(stateDir),
+                    "openshell.ai/isolation-role": scenario === "role" ? "supervisor" : "sandbox",
+                  },
+                },
+                HostConfig: { NetworkMode: scenario === "network" ? "bridge" : "none" },
+              },
+            ]);
+    return { status: 0, stdout, stderr: "" };
+  };
+  return assertExactSandboxImage(
+    { agent: "openclaw", image: IMAGE, sandbox: VALID_SANDBOX },
+    stateDir,
+    {},
+    runCommand,
+  );
+}
+
+it("accepts one exact isolated workload", () => {
+  expect(observeWorkload("valid")).toBe("c".repeat(64));
+});
+
+it.each(["namespace", "role", "image", "network", "duplicate"])(
+  "rejects a workload with mismatched %s evidence",
+  (scenario) => {
+    expect(() => observeWorkload(scenario)).toThrow(
+      "exactly one running harness-owned PR image container",
+    );
+  },
+);
+
 const MANAGED_IMAGE_ONBOARD = resolveManagedImageOnboardModule(
   await import("../../../src/lib/onboard.ts"),
 );

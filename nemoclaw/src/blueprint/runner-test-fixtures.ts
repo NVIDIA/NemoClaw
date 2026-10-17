@@ -283,7 +283,8 @@ export function createMutableIdentityPolicyResult(options: {
   const policyResult = createMutableSandboxPolicyResult(options.readMergedPolicy);
   return (args) => {
     const command = args.join(" ");
-    if (command === "settings get --global --json") return providersV2EnabledResult();
+    if (command === "policy list --global --page-size 1 --output json")
+      return absentGlobalPolicyResult();
     if (command === "provider get test-provider") return failureResult("provider not found");
     if (command === "provider get acme-okta-runtime") {
       runtimeProviderReads += 1;
@@ -338,8 +339,8 @@ export const MATCHING_INFERENCE_ROUTE_LISTING = [
   "",
 ].join("\n");
 
-/** A `settings get` payload with gateway providers v2 enabled. */
-export function providersV2EnabledResult(): {
+/** An empty page of global policy history from OpenShell 0.1.3. */
+export function absentGlobalPolicyResult(): {
   exitCode: number;
   stdout: string;
   stderr: string;
@@ -347,9 +348,8 @@ export function providersV2EnabledResult(): {
   return {
     exitCode: 0,
     stdout: JSON.stringify({
-      scope: "global",
-      settings_revision: 1,
-      settings: { providers_v2_enabled: "true" },
+      revisions: [],
+      next_page_token: "",
     }),
     stderr: "",
   };

@@ -30,17 +30,23 @@ type SdkSandboxRef = Readonly<{ id: string; phase: string }>;
 type SdkSandboxMutationResponse = Readonly<{
   sandbox?: Readonly<{ metadata?: Readonly<{ id?: string }> }>;
 }>;
+type SdkSandboxMutationRequest = Readonly<{
+  name: string;
+  workspaceScope: Readonly<{
+    selection: Readonly<{ case: "workspace"; value: "default" }>;
+  }>;
+}>;
 type SdkClient = Readonly<{
   sandbox: Readonly<{
     get(name: string, options: CallOptions): Promise<SdkSandboxRef>;
   }>;
   raw: Readonly<{
     startSandbox(
-      request: Readonly<{ name: string; workspace: string }>,
+      request: SdkSandboxMutationRequest,
       options: CallOptions,
     ): Promise<SdkSandboxMutationResponse>;
     stopSandbox(
-      request: Readonly<{ name: string; workspace: string }>,
+      request: SdkSandboxMutationRequest,
       options: CallOptions,
     ): Promise<SdkSandboxMutationResponse>;
   }>;
@@ -55,7 +61,10 @@ export type SdkOpenShellSandboxStateLifecycleDeps = Readonly<{
   waitForStopPoll?: (signal: AbortSignal) => Promise<void>;
 }>;
 
-const DEFAULT_MUTATION_TIMEOUT_MS = 75_000;
+const DEFAULT_START_TIMEOUT_MS = 75_000;
+// OpenShell 0.1.3 stops two Podman containers sequentially (45s each), then
+// allows 50s to observe the workload exit. Reserve time for SDK connection too.
+const DEFAULT_STOP_TIMEOUT_MS = 150_000;
 
 function lifecycleError(
   error: unknown,
@@ -133,7 +142,7 @@ async function mutate(
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
-    request.timeoutMs ?? DEFAULT_MUTATION_TIMEOUT_MS,
+    request.timeoutMs ?? (action === "stop" ? DEFAULT_STOP_TIMEOUT_MS : DEFAULT_START_TIMEOUT_MS),
   );
   const aborted = new Promise<never>((_resolve, reject) => {
     controller.signal.addEventListener(
@@ -165,7 +174,13 @@ async function mutate(
     observedPhase = observed.phase;
     const operation = action === "start" ? client.raw.startSandbox : client.raw.stopSandbox;
     const mutation = await Promise.race([
-      operation({ name: request.sandboxName, workspace: "default" }, { signal: controller.signal }),
+      operation(
+        {
+          name: request.sandboxName,
+          workspaceScope: { selection: { case: "workspace", value: "default" } },
+        },
+        { signal: controller.signal },
+      ),
       aborted,
     ]);
     if (

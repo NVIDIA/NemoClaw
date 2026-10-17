@@ -43,7 +43,15 @@ The `langchain-deepagents-code` agent manifest declares the expected Deep Agents
 Run the maintained installer to update the host CLI and reconcile registered sandboxes.
 
 <Warning>
-The maintained OpenShell 0.0.116 pin limits a routed sandbox name to 19 characters and rejects consecutive hyphens.
+If registered sandboxes use an OpenShell `0.0.x` gateway, the installer cannot replace it with OpenShell `0.1.3` through this path.
+After sandbox-name validation passes, the installer lists the registered sandbox names and exits before backup or gateway retirement.
+It leaves the existing gateway and sandboxes unchanged.
+Keep the existing installation available until you can recreate those sandboxes through an approved migration path.
+`NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` and `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` do not bypass this stop.
+</Warning>
+
+<Warning>
+NemoClaw limits a routed sandbox name to 19 characters and rejects consecutive hyphens.
 A NemoClaw sandbox name must contain 1 to 19 characters.
 It must start with a lowercase letter, use lowercase letters, numbers, and single internal hyphens, and end with a letter or number.
 Before the OpenShell upgrade, the installer checks registered sandboxes for the selected gateway.
@@ -52,7 +60,7 @@ If the installer finds incompatible names, it lists each name and exits before i
 - Prepare the NemoClaw CLI for the upgrade.
 - Start a backup of the registered sandboxes.
 - Retire the selected OpenShell gateway.
-- Install OpenShell 0.0.116.
+- Install OpenShell 0.1.3.
 - Recreate a sandbox.
 
 NemoClaw does not automatically truncate or change the sandbox name.
@@ -80,7 +88,7 @@ If a support workflow asks you to pass the maintained tag explicitly, clear any 
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=lkg bash
 ```
 
-During the automatic upgrade path, the installer prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox.
+For an eligible gateway, the automatic upgrade path prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox.
 If any sandbox is skipped or fails, the installer exits before it changes the gateway.
 For a failed required pre-upgrade backup, NemoClaw removes the incomplete timestamped backup directory so it cannot appear as a recovery point.
 If that removal fails, the installer reports the retained path; preserve it and do not use it for recovery.
@@ -88,6 +96,10 @@ After backup, the installer requires any existing OpenShell executable it will u
 Before it retires an out-of-range gateway, the installer retires every applicable registered legacy forward through its exact sandbox, bind, port, process, gateway, and workspace identity, including Hermes dashboard, active messaging, and declared agent forwards.
 If it cannot prove that retirement, it exits before retiring the gateway and preserves every completed backup.
 It retires the running gateway before replacing an out-of-range OpenShell installation, keeps the gateway when the installed version is supported, and stops without retiring it when the installed version or supported range cannot be validated.
+Reusing OpenShell also requires the installed components to pass identity and capability checks.
+Before replacing components, the installer requires a complete empty sandbox inventory from every registered OpenShell gateway.
+If that check fails, it stops before downloading replacement components.
+Preserve the gateway registrations and sandbox data while resolving the reported failure.
 If OpenShell lifecycle commands cannot retire the gateway, the installer can use verified service or PID-file evidence on Linux and macOS.
 For the default gateway on port `8080`, Linux first checks verified systemd service evidence for `nemoclaw-openshell-gateway.service`, while macOS first checks verified Homebrew gateway service evidence.
 On either platform, the installer can then use a verified NemoClaw-managed gateway PID file for the configured gateway port.
@@ -100,10 +112,19 @@ This mandatory installation applies to source and managed install modes and cann
 After the installer replaces the packaged gateway, it waits up to 30 seconds for the gateway port to bind before sandbox recovery begins.
 If the gateway does not bind, the installer stops and preserves the backups.
 If the forced installation fails, the installer does not stage a gateway service or start sandbox recovery, preserves the backups, and reports how to retry.
+<AgentOnly variant="openclaw,hermes">
+
+If an existing managed state volume lacks OpenShell attachment approval for the selected workspace, recreation stops before sandbox deletion or changes to that volume.
+Keep the existing sandbox and volume available; refer to [Legacy Managed State Volumes](../state-and-backups/create-and-restore-snapshots#legacy-managed-state-volumes).
+
+</AgentOnly>
 
 ## Resume a Manually Prepared Upgrade
 
 Use this path only with the current release CLI.
+This path cannot replace an OpenShell `0.0.x` gateway while it has registered sandboxes.
+The installer checks the installed OpenShell version before it accepts `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1`.
+Do not retire that gateway with the manual commands below; the installer cannot recover its registered sandboxes on OpenShell `0.1.3`.
 If the installer has not already reported that it prepared the current CLI, start the supported automatic flow first:
 
 ```bash

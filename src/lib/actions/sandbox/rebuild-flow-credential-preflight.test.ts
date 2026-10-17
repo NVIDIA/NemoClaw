@@ -64,15 +64,16 @@ function providerRuntime(
     return { status: 0, output, stdout: output, stderr: "" };
   };
   const missingProvider = { status: 1, output: "", stdout: "", stderr: "provider not found" };
-  const inventoryOutput = JSON.stringify(
-    registeredProviders.map((provider) => ({
+  const inventoryOutput = JSON.stringify({
+    providers: registeredProviders.map((provider) => ({
       name: provider,
       credential_keys: providerCredentialKeys(provider),
       ...(credentialExpiresAtMs[provider]
         ? { credential_expires_at_ms: credentialExpiresAtMs[provider] }
         : {}),
     })),
-  );
+    next_page_token: "",
+  });
   return (args: string[]) => {
     const provider = args[0] === "provider" && args[1] === "get" ? args[2] : undefined;
     return args[0] === "provider" && args[1] === "list"

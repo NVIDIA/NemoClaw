@@ -85,11 +85,10 @@ function save(exitCode, stdout = "", stderr = "") {
   process.exit(exitCode);
 }
 
-if (args.join(" ") === "settings get --global --json") {
+if (args.join(" ") === "policy list --global --page-size 1 --output json") {
   save(0, JSON.stringify({
-    scope: "global",
-    settings_revision: 1,
-    settings: { providers_v2_enabled: "true" },
+    revisions: [],
+    next_page_token: "",
   }));
 }
 

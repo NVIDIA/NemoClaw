@@ -795,12 +795,15 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           typeof currentSandboxEntry.credentialEnv === "string"
             ? currentSandboxEntry.credentialEnv
             : "COMPATIBLE_API_KEY";
-        const output = JSON.stringify([
-          {
-            name: provider,
-            credential_keys: credentialEnv ? [credentialEnv] : [],
-          },
-        ]);
+        const output = JSON.stringify({
+          providers: [
+            {
+              name: provider,
+              credential_keys: credentialEnv ? [credentialEnv] : [],
+            },
+          ],
+          next_page_token: "",
+        });
         return { status: 0, output, stdout: output, stderr: "" };
       }
       return argv[0] === "provider" && argv[1] === "get"

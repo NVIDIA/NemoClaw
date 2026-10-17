@@ -77,10 +77,7 @@ export async function captureManagedMcpPolicy(
   };
   const networkPolicies = document.network_policies ?? {};
   const policy = networkPolicies[options.policyKey];
-  if (!policy) {
-    throw new Error(`${options.label}: managed MCP policy '${options.policyKey}' is absent`);
-  }
-  const endpoint = policy.endpoints?.[0];
+  const endpoint = policy?.endpoints?.[0];
   const expectedHost = new URL(options.url).hostname;
   if (endpoint?.host !== expectedHost) {
     throw new Error(`${options.label}: expected managed MCP host '${expectedHost}'`);

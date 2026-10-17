@@ -15,7 +15,6 @@ import {
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { printSandboxCreateRecoveryHints } from "../build-context";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
-import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
 import {
@@ -47,6 +46,7 @@ import { SANDBOX_RECREATE_PROBE_TIMEOUT_MS } from "./sandbox-recreate-probe";
 import type { CreatedSandboxReadyIdentityCheck } from "./sandbox-readiness-tracing";
 import * as sandboxReadinessTracing from "./sandbox-readiness-tracing";
 import { addTraceEvent } from "./tracing";
+import { managedStartupCreateReadiness } from "./managed-startup/hold";
 
 type NativeRuntimeSnapshot = Readonly<{
   imageId: string | null;
@@ -804,14 +804,14 @@ export function createSandboxGpuCreateAttemptRunner(
                 if (!deferRestartSafeCutover) void runtimePatch.maybeApplyDuringCreate();
               },
             }),
-        readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent({
+        ...managedStartupCreateReadiness({
+          startupCommand: attemptRequest.startupCommand,
           isTerminalAgent: input.terminalAgent,
-          startupRunsDuringCreate: true,
           env: input.sandboxEnv,
+          deferPostCreateEffects: deferRestartSafeCutover || deferPostCreateEffects,
         }),
         failureCheck: runtimePatch.createFailureMessage,
         traceEvent: addTraceEvent,
-        waitForReadyTermination: deferRestartSafeCutover || deferPostCreateEffects,
         initialPhase:
           compatibility && (input.prebuild.imageRef || state.compatibilityRequest)
             ? "create"

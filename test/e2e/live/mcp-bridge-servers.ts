@@ -326,9 +326,6 @@ export function parseTryCloudflareOrigin(log: string): string | null {
 }
 
 export function buildCloudflaredQuickTunnelArgs(port: number): string[] {
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`invalid local MCP HTTPS port: ${port}`);
-  }
   return [
     "tunnel",
     "--no-autoupdate",

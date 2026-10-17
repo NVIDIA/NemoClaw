@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DOCKER_ENGINE_27_MINIMUM_CLEANUP_PROCESS_TIMEOUT_MS,
   DOCKER_ENGINE_27_MINIMUM_PROBE_TIMEOUT_MS,
+  cleanupDockerEngine27ReceiptDaemon,
   dockerEngine27ReceiptDaemonName,
   dockerEngine27ReceiptIdentityArguments,
   finalizeDockerEngine27ReceiptProbe,
@@ -22,9 +23,12 @@ import {
 } from "../live/managed-image-multiarch-startup-helpers.ts";
 
 const sha = "a".repeat(40);
+const docker = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process", () => ({ spawnSync: docker }));
 let temporaryRoot = "";
 
 beforeEach(() => {
+  docker.mockReset();
   temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-multiarch-helper-"));
   const artifacts = path.join(temporaryRoot, "artifacts");
   fs.mkdirSync(artifacts);
@@ -47,6 +51,37 @@ afterEach(() => {
 });
 
 describe("protected managed-image startup helpers", () => {
+  it("removes the owned daemon with its anonymous data volumes and verifies absence", () => {
+    const name = dockerEngine27ReceiptDaemonName(123, 1, "linux/amd64");
+    docker
+      .mockReturnValueOnce({ status: 0, stdout: name, stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: name, stderr: "" })
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: `No such container: ${name}` });
+
+    cleanupDockerEngine27ReceiptDaemon(name);
+
+    expect(docker.mock.calls.map((call) => call[1])).toEqual([
+      [
+        "container",
+        "inspect",
+        "--format",
+        '{{ index .Config.Labels "io.nvidia.nemoclaw.e2e.docker27-receipt" }}',
+        name,
+      ],
+      ["rm", "-f", "--volumes", name],
+      ["container", "inspect", name],
+    ]);
+  });
+
+  it("preserves a daemon and its volumes when the ownership label differs", () => {
+    docker.mockReturnValueOnce({ status: 0, stdout: "another-run", stderr: "" });
+
+    expect(() =>
+      cleanupDockerEngine27ReceiptDaemon(dockerEngine27ReceiptDaemonName(123, 1, "linux/amd64")),
+    ).toThrow("mismatched ownership");
+    expect(docker).toHaveBeenCalledOnce();
+  });
+
   it("preserves the probe failure and attempts fixture cleanup after daemon cleanup fails", () => {
     const cleanupFixture = vi.fn();
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import http from "node:http";
+import https from "node:https";
 import { describe, expect, it } from "vitest";
 import {
   closeServer,
@@ -10,8 +11,60 @@ import {
   writeJsonResponse,
   writeSseEvents,
 } from "../fixtures/http-protocol.ts";
+import { startFakeHttpsCompatibleServer } from "../live/https-pin-compatible-server.ts";
+import { startRuntimeIdentityOAuthServer } from "../live/runtime-identity-oauth-server.ts";
 
 describe("fake provider HTTP protocol", () => {
+  it.each([
+    {
+      name: "compatible HTTPS",
+      start: () => startFakeHttpsCompatibleServer({ apiKey: "fixture-only", model: "test" }),
+      path: "/v1/models",
+      method: "GET",
+      headers: { authorization: "Bearer fixture-only" },
+      status: 200,
+    },
+    {
+      name: "OAuth HTTPS",
+      start: () =>
+        startRuntimeIdentityOAuthServer({
+          clientId: "fixture-client",
+          clientSecret: "fixture-secret",
+          initialRefreshToken: "fixture-refresh",
+        }),
+      path: "/resource",
+      method: "HEAD",
+      headers: {},
+      status: 401,
+    },
+  ])("returns the listening TCP port for the $name fixture", async (scenario) => {
+    const fixture = await scenario.start();
+    try {
+      const status = await new Promise<number | undefined>((resolve, reject) => {
+        const request = https.request(
+          {
+            hostname: "127.0.0.1",
+            port: fixture.port,
+            path: scenario.path,
+            method: scenario.method,
+            headers: scenario.headers,
+            ca: fixture.certificate,
+          },
+          (response) => {
+            response.resume();
+            response.on("end", () => resolve(response.statusCode));
+            response.on("error", reject);
+          },
+        );
+        request.on("error", reject);
+        request.end();
+      });
+      expect(status).toBe(scenario.status);
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("reads request bodies and writes JSON responses", async () => {
     let body = "";
     const server = http.createServer(async (req, res) => {

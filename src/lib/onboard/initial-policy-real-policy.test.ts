@@ -138,6 +138,7 @@ describe("initial sandbox policy real preset merge", () => {
         { path: "/usr/bin/node" },
         { path: "/opt/hermes/.venv/bin/python" },
         { path: "/opt/hermes/.venv/bin/python3" },
+        { path: "/usr/bin/python3.13" },
         { path: "/opt/venv/bin/python3" },
         { path: "/usr/local/bin/curl" },
         { path: "/usr/bin/curl" },

@@ -183,9 +183,8 @@ describe("sandbox create failure diagnostics", () => {
     );
   });
 
-  // OpenShell 0.0.116 prints supervisor startup failures only to the sandbox
-  // container's stderr; neither `openshell logs` nor sandbox status carry the
-  // reason (#13178). Remove once the OpenShell pin reaches 0.1.0.
+  // Preserve startup output when create fails before sandbox status is readable
+  // and rollback removes the container (#13178).
   it("captures, saves, and prints redacted sandbox container output through Docker (#13178)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-container-"));
     const homeDir = path.join(tmp, "home");

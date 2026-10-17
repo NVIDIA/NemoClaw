@@ -89,7 +89,7 @@ When systemd returns the service identity, NemoClaw requires trusted package pat
 It then checks the effective binary's version against the blueprint range (`min_openshell_version` through `max_openshell_version`).
 This check prevents a supported user-local OpenShell install from hiding an out-of-range binary selected by the package unit's absolute `ExecStart`.
 NemoClaw rejects a known version below the minimum, above the maximum, or identified as a development build.
-Managed installations require exact stable OpenShell 0.0.116; the development channel is not eligible.
+Managed installations require exact stable OpenShell 0.1.3; the development channel is not eligible.
 An undetermined version or an unsupported version stops package-unit adoption.
 When the systemd identity query reports a recognized unavailable user manager, NemoClaw checks the standard user unit paths before standalone fallback.
 It checks `.wants`, `.requires`, and `.upholds` activation links for both gateway service names.
@@ -359,7 +359,7 @@ Inside the sandbox:
 ## Inference Routing
 
 Agent inference follows one of two OpenShell-managed paths.
-Owned Local NVIDIA NIM, other custom shared routes, Pi local selections, and retained legacy shared local routes use `inference.local` through the OpenShell gateway:
+Owned Local NVIDIA NIM, retained shared custom endpoints, unchanged published Pi shared local selections, and retained legacy shared local routes use `inference.local` through an OpenShell `0.0.x` gateway:
 
 ```text
 Supported agent runtime (sandbox)  ──▶  inference.local  ──▶  OpenShell gateway  ──▶  Provider endpoint

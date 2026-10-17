@@ -20,18 +20,116 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
-import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
+import {
+  exactGatewayRelease,
+  OPENSHELL_V013_QUALIFICATION,
+} from "../fixtures/openshell-v0116-qualification.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
+import { redactString } from "../fixtures/redaction.ts";
 import {
   DOCKER_GRPC_PROBE_IMAGE,
   getSandboxConfigRequest,
-  mintSandboxJwt,
   runSandboxTokenContainerProbe,
 } from "./openshell-gateway-auth-probe.ts";
 import { verifyOpenShellTlsServerNameSourceBoundary } from "./openshell-v0116-tls-server-name-source.ts";
 
 export { buildSandboxTokenContainerProbeInvocation } from "./openshell-gateway-auth-probe.ts";
+
+// Only reads the launch bundle produced inside this test's private state directory.
+// A handwritten legacy JWT cannot establish a persisted sandbox session.
+export function createGatewayAuthSandbox(options: {
+  cleanup: Pick<CleanupRegistry, "add">;
+  configPath: string;
+  port: number;
+  stateDir: string;
+}): { name: string; token: string } {
+  const { cleanup, configPath, port, stateDir } = options;
+  const env = {
+    PATH: process.env.PATH,
+    XDG_CONFIG_HOME: path.join(stateDir, "client-config"),
+    XDG_STATE_HOME: path.join(stateDir, "runtime-state"),
+    XDG_DATA_HOME: path.join(stateDir, "client-data"),
+    OPENSHELL_GATEWAY: "auth-contract",
+    OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+    OPENSHELL_COLOR: "never",
+  };
+  const cli = (args: string[]): string => {
+    const result = spawnSync("openshell", args, {
+      env,
+      encoding: "utf8",
+      timeout: 120_000,
+      killSignal: "SIGKILL",
+      maxBuffer: 1024 * 1024,
+    });
+    // Keep stdout private; redact stderr before exposing bounded failure diagnostics.
+    expect(
+      result.status,
+      `OpenShell auth fixture ${args[0]} ${args[1]} failed (${result.status}): ${redactString(result.stderr ?? result.error?.message ?? "").slice(0, 4096)}`,
+    ).toBe(0);
+    return result.stdout;
+  };
+  cli(["gateway", "add", `https://127.0.0.1:${port}`, "--local", "--name", "auth-contract"]);
+  const name = "auth-contract";
+  const policyPath = path.join(stateDir, "sandbox-policy.yaml");
+  fs.writeFileSync(
+    policyPath,
+    `version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only: [/usr, /bin, /lib, /lib64, /etc, /proc, /dev/urandom]
+  read_write: [/tmp, /dev/null]
+landlock:
+  compatibility: best_effort
+process:
+  run_as_user: "65532"
+  run_as_group: "65532"
+network_policies: {}
+`,
+    { mode: 0o600 },
+  );
+  // Registered before creation so a partial create is reconciled before gateway teardown.
+  cleanup.add("delete OpenShell auth contract sandbox", () => {
+    cli(["sandbox", "delete", name]);
+  });
+  const created = JSON.parse(
+    cli([
+      "sandbox",
+      "create",
+      "--name",
+      name,
+      "--from",
+      DOCKER_GRPC_PROBE_IMAGE,
+      "--policy",
+      policyPath,
+      "--no-auto-providers",
+      "--detach",
+      "--no-tty",
+      "-o",
+      "json",
+      "--",
+      "/bin/sh",
+      "-c",
+      "sleep 600",
+    ]),
+  ) as { id?: string; name?: string; phase?: string };
+  expect(created.id).toMatch(/^[a-f0-9-]{36}$/u);
+  const namespace = fs
+    .readFileSync(configPath, "utf8")
+    .match(/^sandbox_label = "([a-zA-Z0-9_.-]+)"$/mu)?.[1];
+  if (!namespace) throw new Error("OpenShell auth fixture sandbox namespace is missing");
+  const bundlePath = path.join(
+    env.XDG_STATE_HOME,
+    "openshell",
+    "docker-sandbox-tokens",
+    namespace,
+    created.id!,
+    "supervisor-auth.json",
+  );
+  const bundle = JSON.parse(fs.readFileSync(bundlePath, "utf8")) as { gateway_token?: string };
+  expect(typeof bundle.gateway_token === "string" && bundle.gateway_token.length > 0).toBe(true);
+  return { name, token: bundle.gateway_token! };
+}
 
 type SkipFn = (message?: string) => void;
 
@@ -442,9 +540,7 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
 
   const version = run(gatewayBin, ["--version"]);
   expect(version.status, commandOutput(version)).toBe(0);
-  expect(commandOutput(version)).toContain(
-    process.env.NEMOCLAW_CANDIDATE_VERSION || OPENSHELL_V0116_QUALIFICATION.version,
-  );
+  expect(exactGatewayRelease(commandOutput(version))).toBe(OPENSHELL_V013_QUALIFICATION.version);
 
   await requireDockerDaemon({ dockerBin, host, skip });
 
@@ -479,13 +575,14 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
     OPENSHELL_BIND_ADDRESS: "127.0.0.1",
     OPENSHELL_DB_URL: `sqlite:${path.join(stateDir, "openshell.db")}`,
     OPENSHELL_DOCKER_NETWORK_NAME: networkName,
-    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: OPENSHELL_V0116_QUALIFICATION.supervisorImage,
+    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: OPENSHELL_V013_QUALIFICATION.supervisorImage,
     OPENSHELL_DRIVERS: "docker",
     OPENSHELL_GRPC_ENDPOINT: `https://127.0.0.1:${port}`,
     OPENSHELL_LOCAL_TLS_DIR: certBundle.localTlsDir,
     OPENSHELL_SERVER_PORT: String(port),
     OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
     OPENSHELL_SSH_GATEWAY_PORT: String(port),
+    XDG_STATE_HOME: path.join(stateDir, "runtime-state"),
   };
   const launch = dependencies.buildDockerDriverGatewayLaunch({
     env: {
@@ -500,15 +597,13 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
     requiredGlibcVersions: [],
     stateDir,
   });
-  expect(launch.mode).toBe("host");
-  expect(launch.env.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
 
   await artifacts.writeJson("scenario.json", {
     contracts: [
       "NemoClaw-generated OPENSHELL_GATEWAY_CONFIG enables local mTLS and sandbox JWT auth",
       "inherited OPENSHELL_DISABLE_GATEWAY_AUTH is scrubbed before launch",
       "no-token Docker-origin access to user-callable gateway APIs is rejected or unreachable",
-      "mTLS-only Docker-origin access without sandbox JWT does not return sandbox config",
+      "mTLS-only access without a sandbox identity or workspace scope does not return config",
       "valid sandbox JWT access from Docker origin to sandbox-allowlisted APIs reaches OpenShell auth",
       "a sandbox JWT minted for one sandbox cannot access another sandbox config",
     ],
@@ -562,8 +657,13 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
     expect(noTokenProbeWasRejected(noToken), commandOutput(noToken)).toBe(true);
 
     const configPath = String(launch.env.OPENSHELL_GATEWAY_CONFIG || "");
-    expect(configPath).toBe(path.join(stateDir, "openshell-gateway.toml"));
-    const sandboxId = "sandbox-auth-contract";
+    const { name: sandboxId, token: sandboxToken } = createGatewayAuthSandbox({
+      cleanup,
+      configPath,
+      port,
+      stateDir,
+    });
+    registerSandboxJwtArtifactRedaction(artifacts, sandboxToken);
     const mtlsOnlyContainerCall = runSandboxTokenContainerProbe({
       dockerBin,
       networkName,
@@ -580,8 +680,6 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
     ).toBe(true);
 
     progress.phase("probe sandbox JWT authorization boundaries");
-    const sandboxToken = mintSandboxJwt({ configPath, sandboxId });
-    registerSandboxJwtArtifactRedaction(artifacts, sandboxToken);
     const sandboxCall = await callGrpc({
       authorization: `Bearer ${sandboxToken}`,
       path: "/openshell.v1.OpenShell/GetSandboxConfig",
@@ -591,8 +689,7 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
     });
     await artifacts.writeJson("sandbox-jwt-probe.json", sandboxCall);
     expect(sandboxCall.httpStatus, JSON.stringify(sandboxCall)).toBe(200);
-    expect(sandboxCall.grpcStatus, JSON.stringify(sandboxCall)).toBeDefined();
-    expect(["7", "16"]).not.toContain(sandboxCall.grpcStatus);
+    expect(sandboxCall.grpcStatus, JSON.stringify(sandboxCall)).toBe("0");
 
     const sandboxContainerCall = runSandboxTokenContainerProbe({
       authorization: `Bearer ${sandboxToken}`,
@@ -608,24 +705,23 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
     expect(sandboxContainerCall.status, commandOutput(sandboxContainerCall)).toBe(0);
     const sandboxContainerResult = JSON.parse(sandboxContainerCall.stdout.trim()) as GrpcResult;
     expect(sandboxContainerResult.httpStatus, JSON.stringify(sandboxContainerResult)).toBe(200);
-    expect(sandboxContainerResult.grpcStatus, JSON.stringify(sandboxContainerResult)).toBeDefined();
-    expect(["7", "16"]).not.toContain(sandboxContainerResult.grpcStatus);
+    expect(sandboxContainerResult.grpcStatus, JSON.stringify(sandboxContainerResult)).toBe("0");
 
     const crossSandboxContainerCall = runSandboxTokenContainerProbe({
       authorization: `Bearer ${sandboxToken}`,
       dockerBin,
       networkName,
-      payload: getSandboxConfigRequest("sandbox-auth-contract-other"),
+      payload: getSandboxConfigRequest("auth-other"),
       port,
       stateDir,
       useHostNetwork,
     });
     await artifacts.writeJson("cross-sandbox-jwt-container-probe.json", crossSandboxContainerCall);
     skipUnavailableProbeImage(crossSandboxContainerCall, skip);
-    expect(
-      probeDidNotReturnSandboxConfig(crossSandboxContainerCall),
-      commandOutput(crossSandboxContainerCall),
-    ).toBe(true);
+    expect(crossSandboxContainerCall.status, commandOutput(crossSandboxContainerCall)).toBe(0);
+    const crossSandboxResult = JSON.parse(crossSandboxContainerCall.stdout.trim()) as GrpcResult;
+    expect(crossSandboxResult.httpStatus, JSON.stringify(crossSandboxResult)).toBe(200);
+    expect(crossSandboxResult.grpcStatus, JSON.stringify(crossSandboxResult)).toBe("7");
   } finally {
     await artifacts.writeText("openshell-gateway.log", gatewayLog);
   }

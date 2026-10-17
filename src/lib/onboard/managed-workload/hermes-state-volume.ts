@@ -7,6 +7,7 @@ import {
   managedHermesStateVolumeName,
   managedStartupStateRoots,
   MANAGED_HERMES_STATE_ROOT,
+  type ManagedStartupStateRoot,
 } from "../managed-startup/state-roots";
 import type {
   RuntimeProviderBundle,
@@ -126,6 +127,7 @@ function genericDeps(
   const runtimeProvider =
     deps.runtimeProvider ?? selectedRuntimeProvider(runtimeProviderId, deps.runtimeProviders);
   return {
+    workspace: deps.workspace,
     ...(deps.runDocker && !runtimeProvider ? { runContainerEngine: deps.runDocker } : {}),
     ...(runtimeProvider ? { runtimeProvider } : {}),
     ...(deps.registerExitCleanup ? { registerExitCleanup: deps.registerExitCleanup } : {}),
@@ -151,7 +153,7 @@ export function prepareManagedHermesStateVolume(
   return {
     mount: scope.mounts[0] as ManagedHermesStateVolumeMount,
     reused: scope.reused[0] === true,
-    volumeName: root.resourceIdentity,
+    volumeName: scope.mounts[0].source,
     cleanupIncompleteCreate: () =>
       scope.cleanupIncompleteCreate()[0] ?? { status: "not-applicable" },
     commit: () => scope.commit(),
@@ -162,7 +164,7 @@ export function removeManagedHermesStateVolume(
   context: ManagedHermesStateVolumeContext,
   deps: Pick<
     ManagedHermesStateVolumeDeps,
-    "runDocker" | "runtimeProvider" | "runtimeProviders"
+    "runDocker" | "workspace" | "runtimeProvider" | "runtimeProviders"
   > = {},
 ): ManagedHermesStateVolumeCleanupResult {
   if (!requiresManagedHermesStateVolume(context, deps.runtimeProviders, deps.runtimeProvider)) {
@@ -177,10 +179,12 @@ export function removeManagedHermesStateVolume(
 }
 
 export function removeManagedAgentStateVolumes(
-  context: ManagedHermesStateVolumeContext,
+  context: ManagedHermesStateVolumeContext & {
+    readonly retainedRoots?: readonly ManagedStartupStateRoot[];
+  },
   deps: Pick<
     ManagedHermesStateVolumeDeps,
-    "runDocker" | "runtimeProvider" | "runtimeProviders"
+    "runDocker" | "workspace" | "runtimeProvider" | "runtimeProviders"
   > = {},
 ): readonly ManagedAgentStateVolumeCleanupResult[] {
   const runtimeProvider = selectedRuntimeProvider(
@@ -194,7 +198,14 @@ export function removeManagedAgentStateVolumes(
       : supportsContainerEngineOperation(runtimeProvider, "workload-cleanup");
   if (!hasCleanupAuthority) return [];
   return removeManagedStateVolumes(
-    { roots: managedAgentStateRoots(context) },
+    {
+      roots: managedAgentStateRoots(context).filter(
+        (source) =>
+          !context.retainedRoots?.some(
+            (target) => target.resourceIdentity === source.resourceIdentity,
+          ),
+      ),
+    },
     genericDeps(deps, context.runtimeProviderId),
   );
 }

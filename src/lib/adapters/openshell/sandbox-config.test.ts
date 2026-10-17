@@ -66,7 +66,6 @@ describe("SDK policy document conversion", () => {
   it("preserves untouched policy fields without mutating the input", () => {
     const endpoint = {
       protocol: "mcp",
-      tls: "terminate",
       allowed_ips: ["192.0.2.1"],
       json_rpc_max_body_bytes: 4096,
       mcp: { strict_tool_names: false },
@@ -74,7 +73,6 @@ describe("SDK policy document conversion", () => {
     const before = structuredClone(endpoint);
     expect(exportedEndpoint(endpoint)).toEqual({
       protocol: "mcp",
-      tls: "terminate",
       allowed_ips: ["192.0.2.1"],
       mcp: { strict_tool_names: false, max_body_bytes: 4096 },
     });
@@ -113,7 +111,6 @@ describe("SDK policy document conversion", () => {
         host: "api.example",
         port: 443,
         protocol: "rest",
-        tls: "terminate",
         rules: [
           {
             allow: {
@@ -129,7 +126,6 @@ describe("SDK policy document conversion", () => {
       host: "api.example",
       port: 443,
       protocol: "rest",
-      tls: "terminate",
       rules: [
         {
           allow: {

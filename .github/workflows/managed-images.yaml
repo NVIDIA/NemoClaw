@@ -1792,7 +1792,7 @@ jobs:
       # correctly. Start the published digest through its declared entrypoint
       # with no command, matching a real launch,
       # and prove PID 1 drops to the sandbox user, hardens its resource limits,
-      # and persists the trusted proxy environment before it holds the sandbox
+      # and persists the TLS environment before it holds the sandbox
       # open.
       - name: Exercise the Pi candidate through its declared entrypoint
         shell: bash
@@ -1889,20 +1889,15 @@ jobs:
             )) process.exit(1);
           ' "$merged_ca"
           docker exec --user 999:999 "$entrypoint_container" /bin/bash -ceu '
-            unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
             unset SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS
             source /tmp/nemoclaw-proxy-env.sh
-            proxy_url=http://10.200.0.1:3128
-            for proxy_variable in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do
-              if [ "${!proxy_variable}" != "$proxy_url" ]; then
-                echo "ERROR: an independent Pi shell did not load $proxy_variable from the runtime environment." >&2
-                exit 1
-              fi
-            done
-            no_proxy_value=localhost,127.0.0.1,::1,10.200.0.1
-            for no_proxy_variable in NO_PROXY no_proxy; do
-              if [ "${!no_proxy_variable}" != "$no_proxy_value" ]; then
-                echo "ERROR: an independent Pi shell did not load $no_proxy_variable from the runtime environment." >&2
+            for proxy_variable in \
+              HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy \
+              ALL_PROXY all_proxy OPENAI_PROXY grpc_proxy GRPC_PROXY NODE_USE_ENV_PROXY \
+              NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
+            do
+              if [ "${!proxy_variable+x}" = x ]; then
+                echo "ERROR: an independent Pi shell retained $proxy_variable after loading the runtime environment." >&2
                 exit 1
               fi
             done

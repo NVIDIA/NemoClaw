@@ -13,13 +13,17 @@ import * as policy from "../../../src/lib/policy";
 import { testTimeout } from "../../helpers/timeouts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   assertManagedMcpPolicySurvivedRemoval,
   buildMcpDnsRebindingProbeScript,
+  captureManagedMcpPolicy,
   hostAddressForSandbox,
   hostPrivateAddressForSandbox,
   isExpectedMcpCurlPolicyDenial,
   restoreDnsRebindingHostsFixture,
+  setupDnsRebindingHostsFixture,
+  remapDnsRebindingHostname,
 } from "../live/mcp-bridge-sandbox.ts";
 import {
   assertRawOpenShellAllowedIpsRebindingDenied,
@@ -34,6 +38,20 @@ import {
 
 const SUITE_OPTIONS = { timeout: testTimeout(15_000) };
 const tempDirs: string[] = [];
+const WORKLOAD_ID = "a".repeat(64);
+const SUPERVISOR_ID = "b".repeat(64);
+
+function resolverRecord(id: string, role: string | null, name = "test-sandbox") {
+  return {
+    id,
+    role,
+    name,
+    sandboxId: "sandbox-id",
+    namespace: "default",
+    running: true,
+    hostsPath: `/var/lib/docker/containers/${id}/hosts`,
+  };
+}
 
 afterEach(() => {
   for (const tempDir of tempDirs.splice(0)) {
@@ -69,7 +87,11 @@ function denialResult(
   };
 }
 
-async function captureRestoreCommand(hostBackupPath: string, sandboxBackupPath: string) {
+async function captureRestoreCommand(
+  hostBackupPath: string,
+  sandboxBackupPath: string,
+  containerHostsPath = `/var/lib/docker/containers/${SUPERVISOR_ID}/hosts`,
+) {
   let restoreArgs: string[] = [];
   let restoreScript = "";
   const host = {
@@ -84,11 +106,107 @@ async function captureRestoreCommand(hostBackupPath: string, sandboxBackupPath: 
     hostname: "mcp-rebind.example.test",
     hostBackupPath,
     sandboxBackupPath,
+    containerId: SUPERVISOR_ID,
+    containerHostsPath,
   });
   return { restoreArgs, restoreScript };
 }
 
 describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
+  it.each([
+    {},
+    { managed: {} },
+    { managed: { endpoints: [{ host: "other.example.test", allowed_ips: ["10.0.0.2"] }] } },
+    { managed: { endpoints: [{ host: "mcp.example.test", allowed_ips: [] }] } },
+  ])("rejects missing or mismatched managed endpoint evidence %j", async (networkPolicies) => {
+    const sandbox = {
+      openshell: async () => ({
+        ...denialResult(),
+        stdout: YAML.stringify({ version: 1, network_policies: networkPolicies }),
+      }),
+    } as unknown as SandboxClient;
+    await expect(
+      captureManagedMcpPolicy(sandbox, {
+        artifactName: "managed-policy",
+        label: "capture managed policy",
+        policyKey: "managed",
+        sandboxName: "test-sandbox",
+        url: "https://mcp.example.test/mcp",
+      }),
+    ).rejects.toThrow(/expected managed MCP host|expected at least one managed MCP address pin/);
+  });
+
+  it.each([null, "sandbox"])("binds DNS backup and remapping to resolver role %s", async (role) => {
+    const id = role === null ? WORKLOAD_ID : SUPERVISOR_ID;
+    const command = vi.fn(
+      async (_command: string, args: string[], options?: { artifactName?: string }) => {
+        const stdout =
+          {
+            "dns-rebinding-workload-resource": `${WORKLOAD_ID}\t${role ?? ""}\n`,
+            "dns-rebinding-supervisor-resource": `${SUPERVISOR_ID}\n`,
+            "dns-rebinding-resolver-identity": JSON.stringify(
+              resolverRecord(args.at(-1)!, args.at(-1) === WORKLOAD_ID ? role : "supervisor"),
+            ),
+          }[options?.artifactName ?? ""] ?? "";
+        return { ...denialResult(), stdout };
+      },
+    );
+    const host = { command } as unknown as HostCliClient;
+    const fixture = await setupDnsRebindingHostsFixture(
+      host,
+      "test-sandbox",
+      "rebind.example.test",
+    );
+    expect(fixture).toMatchObject({
+      containerId: id,
+      containerHostsPath: `/var/lib/docker/containers/${id}/hosts`,
+    });
+    await remapDnsRebindingHostname(host, "test-sandbox", fixture, "10.20.30.40", "remap");
+    const script = command.mock.calls.at(-1)![1][1];
+    expect(script).toContain(`container_id='${id}'`);
+    expect(script).toContain('sudo -n tee "$container_hosts"');
+    expect(script).not.toContain("container exec");
+    expect(script).not.toContain("container ps");
+    expect(script).toContain("verify_resolver_hosts ||");
+  });
+
+  it.each(["duplicate", "wrong-namespace", "wrong-path", "stopped"])(
+    "rejects %s resolver evidence before backing up or modifying hosts files",
+    async (failure) => {
+      const command = vi.fn(
+        async (_command: string, args: string[], options?: { artifactName?: string }) => {
+          const id = args.at(-1)!;
+          const supervisorOverrides = {
+            duplicate: {},
+            "wrong-namespace": { namespace: "other" },
+            "wrong-path": { hostsPath: "/etc/hosts" },
+            stopped: { running: false },
+          }[failure];
+          const record = {
+            ...resolverRecord(id, id === WORKLOAD_ID ? "sandbox" : "supervisor"),
+            ...(id === SUPERVISOR_ID ? supervisorOverrides : {}),
+          };
+          const stdout =
+            {
+              "dns-rebinding-workload-resource": `${WORKLOAD_ID}\tsandbox\n`,
+              "dns-rebinding-supervisor-resource":
+                failure === "duplicate" ? `${SUPERVISOR_ID}\n${SUPERVISOR_ID}` : SUPERVISOR_ID,
+              "dns-rebinding-resolver-identity": JSON.stringify(record),
+            }[options?.artifactName ?? ""] ?? `${WORKLOAD_ID}\tsandbox\n`;
+          return { ...denialResult(), stdout };
+        },
+      );
+      await expect(
+        setupDnsRebindingHostsFixture(
+          { command } as unknown as HostCliClient,
+          "test-sandbox",
+          "rebind.example.test",
+        ),
+      ).rejects.toThrow();
+      expect(command.mock.calls.some(([name]) => name === "bash")).toBe(false);
+    },
+  );
+
   it("separates the managed endpoint alias from the concrete rebinding address", async () => {
     let probeScript = "";
     const host = {
@@ -173,15 +291,16 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     });
   });
 
-  it("pins the resolve-validate-connect source contract to OpenShell v0.0.116", () => {
-    const commit = "d1155aa70042d3e2ee49dbfa15346b108b7c1d92";
+  it("pins the resolve-validate-connect source contract to OpenShell v0.1.2", () => {
+    const commit = "6648bd0c290efbc41ba131ee9831ee45cd431f94";
     const sourcePath = "crates/openshell-supervisor-network/src/proxy.rs";
+    const sourceUrl = `https://github.com/NVIDIA/OpenShell/blob/${commit}/${sourcePath}`;
     const citations = [
-      `${sourcePath}:3857-3886`,
-      `${sourcePath}:3911-3951`,
-      `${sourcePath}:3983-4043`,
-      `${sourcePath}:3998-4031`,
-      `${sourcePath}:5613-5655`,
+      `${sourceUrl}#L4201-L4230`,
+      `${sourceUrl}#L4255-L4295`,
+      `${sourceUrl}#L4327-L4388`,
+      `${sourceUrl}#L4342-L4375`,
+      `${sourceUrl}#L5967-L6037`,
     ];
 
     const docsPath = "docs/deployment/set-up-mcp-bridge.mdx";
@@ -256,6 +375,7 @@ network_policies:
     const binDir = fakeCurlPath();
     const script = buildRawOpenShellAllowedIpsRebindingProbeScript(
       `http://${RAW_OPENSHELL_REBIND_HOSTNAME}:31337/mcp`,
+      binDir,
     );
     const run = (status: string, curlRc = "0") =>
       spawnSync("/bin/bash", ["-c", script], {
@@ -298,7 +418,14 @@ network_policies:
     const host = {
       command: async (_command: string, _args: string[], options?: { artifactName?: string }) => ({
         ...denialResult(),
-        stdout: options?.artifactName === "host-address-for-sandbox" ? "route 10.20.30.40\n" : "",
+        stdout:
+          {
+            "host-address-for-sandbox": "route 10.20.30.40\n",
+            "dns-rebinding-workload-resource": `${WORKLOAD_ID}\n`,
+            "dns-rebinding-resolver-identity": JSON.stringify(
+              resolverRecord(WORKLOAD_ID, null, "raw-proof"),
+            ),
+          }[options?.artifactName ?? ""] ?? "",
       }),
     } as unknown as HostCliClient;
     const openshellCalls: string[][] = [];
@@ -402,7 +529,7 @@ network_policies:
     expect(restoreScript).toContain("for attempt in 1 2 3; do");
     expect(restoreScript).toContain('runtime_command=("$@")');
     expect(restoreScript).toContain(
-      '"${runtime_command[@]}" container exec --user 0 --interactive "$container_id"',
+      "container inspect --format '{{.HostsPath}}' \"$container_id\"",
     );
     expect(restoreScript).toContain(
       "::warning::could not restore ephemeral sandbox /etc/hosts; cleanup will destroy the sandbox",
@@ -416,6 +543,7 @@ network_policies:
     const hostBackupPath = path.join(tempDir, "host-backup");
     const sandboxBackupPath = path.join(tempDir, "sandbox-backup");
     const fakeHostsPath = path.join(tempDir, "hosts");
+    const containerHostsPath = path.join(tempDir, "container-hosts");
     fs.mkdirSync(binDir);
     const writeExecutable = (name: string, source: string) => {
       const target = path.join(binDir, name);
@@ -423,7 +551,7 @@ network_policies:
     };
     writeExecutable(
       "sudo",
-      '#!/bin/sh\n[ "${FAKE_SUDO_STATUS:-0}" -eq 0 ] || exit "$FAKE_SUDO_STATUS"\ncat > "$FAKE_HOSTS_PATH"\n',
+      '#!/bin/sh\n[ "${FAKE_SUDO_STATUS:-0}" -eq 0 ] || exit "$FAKE_SUDO_STATUS"\nshift\ncase "$1" in\n test) exit 0 ;;\n cmp) exit 0 ;;\n tee) shift; target="$1"; [ "$target" != /etc/hosts ] || target="$FAKE_HOSTS_PATH"; cat > "$target" ;;\n *) exit 64 ;;\nesac\n',
     );
     writeExecutable("cmp", '#!/bin/sh\nexit "${FAKE_CMP_STATUS:-0}"\n');
     writeExecutable("sleep", "#!/bin/sh\nexit 0\n");
@@ -432,11 +560,12 @@ network_policies:
       const { restoreArgs, restoreScript } = await captureRestoreCommand(
         hostBackupPath,
         sandboxBackupPath,
+        containerHostsPath,
       );
       const runtimeCommand = restoreArgs[1] ?? "missing-runtime-command";
       writeExecutable(
         runtimeCommand,
-        '#!/bin/sh\nif [ "$1" = container ] && [ "$2" = ps ]; then echo fake-container; exit 0; fi\nif [ "$1" = container ] && [ "$2" = exec ]; then cat >/dev/null; exit "${FAKE_RUNTIME_EXEC_STATUS:-0}"; fi\nexit 64\n',
+        '#!/bin/sh\nif [ "$1" = container ] && [ "$2" = inspect ]; then [ "${FAKE_RUNTIME_INSPECT_STATUS:-0}" -eq 0 ] || exit 1; echo "$FAKE_CONTAINER_HOSTS_PATH"; exit 0; fi\nexit 64\n',
       );
       const runRestore = (extraEnv: Record<string, string> = {}) =>
         spawnSync("/bin/bash", ["-c", restoreScript, ...restoreArgs], {
@@ -445,6 +574,7 @@ network_policies:
             ...process.env,
             PATH: `${binDir}:${process.env.PATH ?? ""}`,
             FAKE_HOSTS_PATH: fakeHostsPath,
+            FAKE_CONTAINER_HOSTS_PATH: containerHostsPath,
             ...extraEnv,
           },
         });
@@ -459,8 +589,20 @@ network_policies:
       expect(success.stdout).toContain("restored host /etc/hosts");
       expect(success.stdout).toContain("restored sandbox /etc/hosts");
       expect(success.stdout).toContain("removed DNS rebinding hosts backups");
+      expect(fs.readFileSync(fakeHostsPath, "utf8")).toBe("original host entries\n");
+      expect(fs.readFileSync(containerHostsPath, "utf8")).toBe("original sandbox entries\n");
       expect(fs.existsSync(hostBackupPath)).toBe(false);
       expect(fs.existsSync(sandboxBackupPath)).toBe(false);
+
+      resetBackups();
+      const replacedHostsPath = path.join(tempDir, "replacement-hosts");
+      fs.writeFileSync(replacedHostsPath, "replacement must remain unchanged\n");
+      const replacement = runRestore({ FAKE_CONTAINER_HOSTS_PATH: replacedHostsPath });
+      expect(replacement.status, replacement.stderr).toBe(0);
+      expect(replacement.stderr).toContain("could not restore ephemeral sandbox");
+      expect(fs.readFileSync(replacedHostsPath, "utf8")).toBe(
+        "replacement must remain unchanged\n",
+      );
 
       resetBackups();
       const hostFailure = runRestore({ FAKE_SUDO_STATUS: "1" });
@@ -470,7 +612,7 @@ network_policies:
       expect(fs.existsSync(sandboxBackupPath)).toBe(true);
 
       resetBackups();
-      const sandboxFailure = runRestore({ FAKE_RUNTIME_EXEC_STATUS: "1" });
+      const sandboxFailure = runRestore({ FAKE_RUNTIME_INSPECT_STATUS: "1" });
       expect(sandboxFailure.status, sandboxFailure.stderr).toBe(0);
       expect(sandboxFailure.stderr).toContain(
         "::warning::could not restore ephemeral sandbox /etc/hosts; cleanup will destroy the sandbox",

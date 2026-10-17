@@ -12,6 +12,7 @@ import {
   fingerprintOpenShellSandboxId,
   fingerprintOpenShellSandboxLiveIdentity,
   observeOpenShellSandboxId,
+  parseStrictOpenShellSandboxListJson,
 } from "../../adapters/openshell/sandbox-identity";
 import {
   classifyOpenShellSandboxPresence,
@@ -30,6 +31,7 @@ import type { SandboxEntry } from "../../state/registry/types";
 import { SANITIZED_PRIVILEGED_ENV } from "../runtime-provider/privileged-sandbox-environment";
 import { PinnedSandboxResourceIdentityChangedError } from "../runtime-provider/privileged-sandbox-control-errors";
 import {
+  PODMAN_ISOLATION_ROLE_LABEL,
   PODMAN_MANAGED_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
   PODMAN_SANDBOX_WORKSPACE,
@@ -41,6 +43,7 @@ import {
   assertCurrentHermesPortableContainer,
   createHermesPortableContainerInspectionTiming,
   observeHermesPortableAuthenticatedHealth,
+  prepareHermesPortableSupervisorStopCheck,
   type HermesPortableContainerDeps,
   type HermesPortableContainerInspection,
   type HermesPortablePodmanResult,
@@ -607,6 +610,7 @@ interface QualifiedHermesPortableLifecycle {
   readonly capturePolicy: HermesPortablePolicyCapture;
   readonly rawCapture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>;
   readonly openShellPhase: string;
+  readonly openShellErrorRestartable: boolean;
   readonly commandBudget?: (maximumMs: number) => number;
   readonly hasTransactionAuthority: boolean;
   readonly assertTransactionCurrent: () => void;
@@ -865,6 +869,7 @@ function observeOpenShellIdentity(
   readonly sandboxId: string;
   readonly liveIdentityFingerprint: string;
   readonly phase: string;
+  readonly errorRestartable: boolean;
 } {
   const gateway = capture(
     ["sandbox", "list", "-g", receipt.gatewayName, "-o", "json"],
@@ -905,7 +910,51 @@ function observeOpenShellIdentity(
   ) {
     fail("OpenShell sandbox identity disagrees with the receipt container");
   }
-  return { sandboxId, liveIdentityFingerprint, phase: listed.phase };
+  const row = parseStrictOpenShellSandboxListJson(String(gateway.stdout))?.find(
+    (candidate) => candidate.id === sandboxId && candidate.name === receipt.sandboxName,
+  );
+  return {
+    sandboxId,
+    liveIdentityFingerprint,
+    phase: listed.phase,
+    errorRestartable: isRestartableOpenShellError(row),
+  };
+}
+
+function isRestartableOpenShellError(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  if (row.phase !== "Error" || row.workspace !== PODMAN_SANDBOX_WORKSPACE) return false;
+  const provisioning = row.provisioning;
+  if (provisioning && typeof provisioning === "object" && !Array.isArray(provisioning)) {
+    const record = provisioning as Record<string, unknown>;
+    if (record.timeout_time != null) {
+      return (
+        typeof record.timeout_time === "string" &&
+        Number.isFinite(Date.parse(record.timeout_time)) &&
+        typeof record.cleanup_completed_time === "string" &&
+        Number.isFinite(Date.parse(record.cleanup_completed_time))
+      );
+    }
+  }
+  // Match the pinned gateway's failed-main-process predicate; it rechecks under its lifecycle lock.
+  return (
+    typeof row.exit_code === "number" &&
+    Number.isInteger(row.exit_code) &&
+    Array.isArray(row.conditions) &&
+    row.conditions.some(
+      (condition: unknown) =>
+        !!condition &&
+        typeof condition === "object" &&
+        "type" in condition &&
+        condition.type === "Ready" &&
+        "status" in condition &&
+        typeof condition.status === "string" &&
+        condition.status.toLowerCase() === "false" &&
+        "reason" in condition &&
+        condition.reason === "MainProcessFailed",
+    )
+  );
 }
 
 function policyCapture(
@@ -1099,6 +1148,7 @@ async function qualify(
     rawCapture,
     capturePolicy,
     openShellPhase: liveIdentity.phase,
+    openShellErrorRestartable: liveIdentity.errorRestartable,
     commandBudget: options.commandBudget,
     hasTransactionAuthority,
     assertTransactionCurrent,
@@ -1286,7 +1336,15 @@ async function rollbackStartedHermesPortableRecovery(
       qualified.assertTransactionCurrent();
     }
     failureClass = "container-stop-settlement";
-    if (qualified.openShellPhase === "Stopped") {
+    const supervisorStopped = prepareHermesPortableSupervisorStopCheck(
+      qualified.receipt,
+      qualified.containerDeps,
+      qualified.container,
+    );
+    if (
+      qualified.openShellPhase === "Stopped" &&
+      qualified.container.labels[PODMAN_ISOLATION_ROLE_LABEL] !== "sandbox"
+    ) {
       armOpenShellV0116StopAssist(qualified);
     }
     captureRetainedLifecycleCommand(
@@ -1296,7 +1354,14 @@ async function rollbackStartedHermesPortableRecovery(
       OPENSHELL_LIFECYCLE_MUTATION_TIMEOUT_MS,
     );
     failureClass = "openshell-terminal-settlement";
-    await settleStoppedHermesPortableLifecycle(sandboxName, context, deps, qualified, timing);
+    await settleStoppedHermesPortableLifecycle(
+      sandboxName,
+      context,
+      deps,
+      qualified,
+      timing,
+      supervisorStopped,
+    );
   } catch (error) {
     throw new HermesPortableRollbackAttemptError(failureClass, error);
   }
@@ -1307,7 +1372,8 @@ async function settleStoppedHermesPortableLifecycle(
   context: PortableDemoLifecycleContext,
   deps: HermesPortableLifecycleDeps,
   authority: QualifiedHermesPortableLifecycle,
-  timing?: HermesPortableLifecycleTimingRecorder,
+  timing: HermesPortableLifecycleTimingRecorder | undefined,
+  supervisorStopped: () => boolean,
 ): Promise<QualifiedHermesPortableLifecycle> {
   let stopped: QualifiedHermesPortableLifecycle | null = null;
   const settled = await waitFor(STOP_SETTLEMENT_TIMEOUT_MS, deps, async () => {
@@ -1330,7 +1396,13 @@ async function settleStoppedHermesPortableLifecycle(
       if (container.authority.running || container.status !== "exited") return false;
       return false;
     }
-    if (current.container.authority.running || current.container.status !== "exited") return false;
+    const companionExited = supervisorStopped();
+    if (
+      current.container.authority.running ||
+      current.container.status !== "exited" ||
+      !companionExited
+    )
+      return false;
     if (current.openShellPhase === "Error" || current.openShellPhase === "Stopped") {
       stopped = current;
       return true;
@@ -1624,18 +1696,19 @@ export async function recoverHermesPortableSandboxLifecycle(
   }
   primaryFailureClass = "container-start";
   const wasRunning = qualified.container.authority.running;
-  const needsStart = !wasRunning || qualified.openShellPhase === "Stopped";
+  const needsStart =
+    !wasRunning || qualified.openShellPhase === "Stopped" || qualified.openShellErrorRestartable;
   timing.setContainerAction(wasRunning ? "reused" : "unknown");
   let rollbackAuthority = qualified;
   let startedByRecovery = false;
   try {
     if (
-      qualified.openShellPhase === "Error" ||
+      (qualified.openShellPhase === "Error" && !qualified.openShellErrorRestartable) ||
       (!wasRunning && qualified.openShellPhase === "Ready")
     ) {
       fail(
         `cannot recover saved OpenShell phase ${qualified.openShellPhase} with receipt-owned container ${qualified.container.status}. ` +
-          "The current OpenShell start API requires Stopped and cannot repair this mismatch. " +
+          "No supported OpenShell start transition was established for this state. " +
           "Preserve startup diagnostics and resolve the saved state through OpenShell before retrying launch.",
       );
     }
@@ -2336,6 +2409,11 @@ export async function stopHermesPortableSandboxLifecycle(
     "Error",
     "Stopped",
   ]);
+  const supervisorStopped = prepareHermesPortableSupervisorStopCheck(
+    qualified.receipt,
+    qualified.containerDeps,
+    qualified.container,
+  );
   if (!qualified.container.authority.running && qualified.container.status === "exited") {
     if (qualified.openShellPhase === "Ready") {
       qualified.capture(
@@ -2343,13 +2421,21 @@ export async function stopHermesPortableSandboxLifecycle(
         OPENSHELL_LIFECYCLE_MUTATION_TIMEOUT_MS,
       );
     }
-    await settleStoppedHermesPortableLifecycle(sandboxName, context, deps, qualified);
+    await settleStoppedHermesPortableLifecycle(
+      sandboxName,
+      context,
+      deps,
+      qualified,
+      undefined,
+      supervisorStopped,
+    );
     return { kind: "already-stopped" };
   }
   if (qualified.container.authority.running && qualified.openShellPhase === "Stopped") {
     fail("OpenShell Stopped phase disagrees with the running receipt container");
   }
   if (qualified.container.authority.running) beforeStop();
+  supervisorStopped();
   qualified = await qualify(sandboxName, context, deps, qualified.snapshot, [
     "Ready",
     "Error",
@@ -2358,7 +2444,10 @@ export async function stopHermesPortableSandboxLifecycle(
   if (qualified.container.authority.running && qualified.openShellPhase === "Stopped") {
     fail("OpenShell Stopped phase disagrees with the running receipt container");
   }
-  if (qualified.openShellPhase === "Ready") {
+  if (
+    qualified.openShellPhase === "Ready" &&
+    qualified.container.labels[PODMAN_ISOLATION_ROLE_LABEL] !== "sandbox"
+  ) {
     // OpenShell 0.0.116's rootless Podman supervisor drops CAP_KILL, so its
     // SIGTERM cannot reach the sandbox-UID workload (OpenShell #3036). Arm one
     // same-UID, exact-entrypoint signal before the authenticated stop request;
@@ -2369,7 +2458,14 @@ export async function stopHermesPortableSandboxLifecycle(
     openshellLifecycleMutationArgs(qualified.receipt, "stop"),
     OPENSHELL_LIFECYCLE_MUTATION_TIMEOUT_MS,
   );
-  await settleStoppedHermesPortableLifecycle(sandboxName, context, deps, qualified);
+  await settleStoppedHermesPortableLifecycle(
+    sandboxName,
+    context,
+    deps,
+    qualified,
+    undefined,
+    supervisorStopped,
+  );
   return { kind: "stopped" };
 }
 

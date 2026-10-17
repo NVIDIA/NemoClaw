@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import assert from "node:assert/strict";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
 import { createHermesStateVolumeDockerHarness as dockerHarness } from "../__test-helpers__/hermes-state-volume";
@@ -16,7 +17,7 @@ import {
   managedStartupStateRoots,
 } from "../managed-startup/state-roots";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
-import { prepareManagedStateVolumes } from "./managed-state-volumes";
+import { preflightManagedStateVolumes, prepareManagedStateVolumes } from "./managed-state-volumes";
 import {
   managedHermesStateVolumeName,
   removeManagedAgentStateVolumes,
@@ -32,6 +33,115 @@ const context = {
 } as const;
 
 describe("managed Hermes state volume", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([
+    [undefined, undefined],
+    ["team-ml", undefined],
+    ["other", "selected"],
+  ])("approves a new volume for ambient %s and selected workspace %s", (workspace, selected) => {
+    vi.stubEnv("OPENSHELL_WORKSPACE", workspace);
+    const docker = dockerHarness();
+    const scope = prepareManagedHermesStateVolume(context, {
+      workspace: selected,
+      runDocker: docker.runDocker as never,
+      registerExitCleanup: () => () => undefined,
+    });
+    expect(docker.volume?.labels).toMatchObject({
+      "openshell.ai/sandbox-attachable": "true",
+      "openshell.ai/sandbox-attachable-workspace": selected ?? workspace ?? "default",
+    });
+    expect(scope?.reused).toBe(false);
+  });
+
+  it.each([
+    ["missing", {}],
+    [
+      "other workspace",
+      {
+        "openshell.ai/sandbox-attachable": "true",
+        "openshell.ai/sandbox-attachable-workspace": "another",
+      },
+    ],
+    [
+      "not approved",
+      {
+        "openshell.ai/sandbox-attachable": "false",
+        "openshell.ai/sandbox-attachable-workspace": "default",
+      },
+    ],
+  ] as const)("preserves an owned retained volume with %s approval", (_problem, approval) => {
+    vi.stubEnv("OPENSHELL_WORKSPACE", "default");
+    const created = dockerHarness();
+    prepareManagedHermesStateVolume(context, {
+      runDocker: created.runDocker as never,
+      registerExitCleanup: () => () => undefined,
+    })!.commit();
+    const retained = created.volume!;
+    delete retained.labels["openshell.ai/sandbox-attachable"];
+    delete retained.labels["openshell.ai/sandbox-attachable-workspace"];
+    Object.assign(retained.labels, approval);
+    const docker = dockerHarness(retained);
+    const before = JSON.stringify(docker.volume);
+    expect(() =>
+      prepareManagedHermesStateVolume(context, { runDocker: docker.runDocker as never }),
+    ).toThrow("Retained data was not changed");
+    expect(JSON.stringify(docker.volume)).toBe(before);
+    expect(docker.calls.every((args) => args[0] === "inspect")).toBe(true);
+    expect(
+      removeManagedHermesStateVolume(context, { runDocker: docker.runDocker as never }),
+    ).toEqual({
+      status: "removed",
+    });
+  });
+
+  it.each(["openclaw", "hermes"] as const)(
+    "rejects legacy %s state through the provider without changing the volume",
+    (agent) => {
+      const roots = managedStartupStateRoots({
+        agent,
+        sandboxName: "alpha",
+        agentIdentity: managedImageRuntimeIdentity(agent),
+      });
+      const root = roots[0]!;
+      const docker = dockerHarness({
+        name: root.resourceIdentity,
+        labels: { ...root.ownershipLabels },
+      });
+      const provider = createDockerRuntimeProviderBundle();
+      assert(provider.containerEngine.supported, "Docker engine is unavailable");
+      vi.spyOn(provider.containerEngine, "capture").mockImplementation((_operation, args) => {
+        expect(args[0]).toBe("volume");
+        const result = docker.runDocker(args.slice(1));
+        return {
+          status: result.status,
+          stdout: String(result.stdout ?? ""),
+          stderr: String(result.stderr ?? ""),
+        };
+      });
+      const before = JSON.stringify(docker.volume);
+      expect(() => preflightManagedStateVolumes({ roots }, { runtimeProvider: provider })).toThrow(
+        "lacks OpenShell attachment approval",
+      );
+      expect(() => prepareManagedStateVolumes({ roots }, { runtimeProvider: provider })).toThrow(
+        "lacks OpenShell attachment approval",
+      );
+      expect(JSON.stringify(docker.volume)).toBe(before);
+      expect(docker.calls.every((args) => args[0] === "inspect")).toBe(true);
+    },
+  );
+
+  it.each(["", " default", "default\n"])(
+    "rejects invalid workspace %j before effects",
+    (workspace) => {
+      vi.stubEnv("OPENSHELL_WORKSPACE", workspace);
+      const docker = dockerHarness();
+      expect(() =>
+        prepareManagedHermesStateVolume(context, { runDocker: docker.runDocker as never }),
+      ).toThrow("exact OpenShell workspace");
+      expect(docker.calls).toEqual([]);
+    },
+  );
   it("creates and mounts one labeled writable volume for managed Docker Hermes", () => {
     const docker = dockerHarness();
     let exitCleanup: (() => void) | null = null;
@@ -212,38 +322,63 @@ describe("managed Hermes state volume", () => {
     expect(foreign.volume).not.toBeNull();
   });
 
-  it("projects and retires the declared OpenClaw state root through the generic volume path", () => {
-    const docker = dockerHarness();
-    const roots = managedStartupStateRoots({
-      agent: "openclaw",
-      sandboxName: "alpha",
-      agentIdentity: managedImageRuntimeIdentity("openclaw"),
-    });
-    const scope = prepareManagedStateVolumes(
-      { roots },
-      {
-        runContainerEngine: docker.runDocker as never,
-        registerExitCleanup: () => () => undefined,
-      },
-    );
+  it.each([
+    ["openclaw", null],
+    ["openclaw", "hermes"],
+    ["openclaw", "openclaw"],
+    ["hermes", "openclaw"],
+    ["hermes", "hermes"],
+  ] as const)(
+    "retires only %s source roots not owned by the recreated target %s",
+    (sourceAgent, targetAgent) => {
+      const docker = dockerHarness();
+      const roots = managedStartupStateRoots({
+        agent: sourceAgent,
+        sandboxName: "alpha",
+        agentIdentity: managedImageRuntimeIdentity(sourceAgent),
+      });
+      const scope = prepareManagedStateVolumes(
+        { roots },
+        {
+          runContainerEngine: docker.runDocker as never,
+          registerExitCleanup: () => () => undefined,
+        },
+      );
 
-    expect(scope?.mounts).toEqual([
-      {
-        type: "volume",
-        source: "nemoclaw-openclaw-state-v1-alpha",
-        target: MANAGED_OPENCLAW_STATE_ROOT,
-        read_only: false,
-      },
-    ]);
-    scope!.commit();
-    expect(
-      removeManagedAgentStateVolumes(
-        { ...context, agentName: "openclaw" },
-        { runDocker: docker.runDocker as never },
-      ),
-    ).toEqual([{ status: "removed" }]);
-    expect(docker.volume).toBeNull();
-  });
+      expect(scope?.mounts).toEqual([
+        {
+          type: "volume",
+          source: `nemoclaw-${sourceAgent}-state-v1-alpha`,
+          target:
+            sourceAgent === "openclaw" ? MANAGED_OPENCLAW_STATE_ROOT : MANAGED_HERMES_STATE_ROOT,
+          read_only: false,
+        },
+      ]);
+      scope!.commit();
+      expect(
+        removeManagedAgentStateVolumes(
+          {
+            ...context,
+            agentName: sourceAgent,
+            retainedRoots: targetAgent
+              ? managedStartupStateRoots({
+                  agent: targetAgent,
+                  sandboxName: "alpha",
+                  agentIdentity: managedImageRuntimeIdentity(targetAgent),
+                })
+              : [],
+          },
+          { runDocker: docker.runDocker as never },
+        ),
+      ).toEqual(targetAgent === sourceAgent ? [] : [{ status: "removed" }]);
+      expect(docker.volume?.name ?? null).toBe(
+        targetAgent === sourceAgent ? `nemoclaw-${sourceAgent}-state-v1-alpha` : null,
+      );
+      expect(docker.calls.filter((args) => args[0] === "rm")).toEqual(
+        targetAgent === sourceAgent ? [] : [["rm", `nemoclaw-${sourceAgent}-state-v1-alpha`]],
+      );
+    },
+  );
 
   it.each([
     ["agent", { ...context, agentName: "openclaw" }],

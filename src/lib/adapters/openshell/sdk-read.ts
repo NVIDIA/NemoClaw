@@ -18,15 +18,24 @@ export type ReadRequest = Readonly<{
 }>;
 
 type Options = Readonly<{ signal: AbortSignal }>;
+type WorkspaceScope = Readonly<{
+  selection: Readonly<{ case: "workspace"; value: string }>;
+}>;
 /** Only SDK reads used by configuration export. Integration tests check the SDK boundary. */
 export interface OpenShellReadClient {
   readonly raw: {
-    getProvider(request: { name: string; workspace: string }, options: Options): Promise<unknown>;
-    getProviderProfile(
-      request: { id: string; workspace: string },
+    getProvider(
+      request: { name: string; workspaceScope: WorkspaceScope },
       options: Options,
     ): Promise<unknown>;
-    getSandbox(request: { name: string; workspace: string }, options: Options): Promise<unknown>;
+    getProviderProfile(
+      request: { id: string; workspaceScope?: WorkspaceScope },
+      options: Options,
+    ): Promise<unknown>;
+    getSandbox(
+      request: { name: string; workspaceScope: WorkspaceScope },
+      options: Options,
+    ): Promise<unknown>;
     getSandboxConfig(request: { sandboxId: string }, options: Options): Promise<unknown>;
   };
 }

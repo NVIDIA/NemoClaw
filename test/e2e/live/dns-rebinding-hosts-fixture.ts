@@ -14,6 +14,8 @@ export interface DnsRebindingHostsFixture {
   hostname: string;
   hostBackupPath: string;
   sandboxBackupPath: string;
+  containerId: string;
+  containerHostsPath: string;
 }
 
 function assertHostFixtureProbeSucceeded(result: ShellProbeResult, label: string): void {
@@ -22,9 +24,101 @@ function assertHostFixtureProbeSucceeded(result: ShellProbeResult, label: string
 }
 
 function runtimeInvocation(host: HostCliClient) {
-  return new RuntimeProviderPrerequisite(host, (reason) => {
-    throw new Error(reason);
-  }).hostInvocation([]);
+  return new RuntimeProviderPrerequisite(host).hostInvocation([]);
+}
+
+async function resolveResolverHosts(host: HostCliClient, sandboxName: string) {
+  const runtime = new RuntimeProviderPrerequisite(host);
+  const inspect = async (id: string) => {
+    if (!/^[a-f0-9]{64}$/u.test(id)) throw new Error("DNS fixture requires one full container ID");
+    const result = await runtime.command(
+      [
+        "container",
+        "inspect",
+        "--format",
+        '{"id":{{json .Id}},"name":{{json (index .Config.Labels "openshell.ai/sandbox-name")}},"role":{{json (index .Config.Labels "openshell.ai/isolation-role")}},"sandboxId":{{json (index .Config.Labels "openshell.ai/sandbox-id")}},"namespace":{{json (index .Config.Labels "openshell.ai/sandbox-namespace")}},"running":{{json .State.Running}},"hostsPath":{{json .HostsPath}}}',
+        id,
+      ],
+      { artifactName: "dns-rebinding-resolver-identity", timeoutMs: 30_000 },
+    );
+    assertHostFixtureProbeSucceeded(result, "inspect DNS resolver container");
+    const record = JSON.parse(result.stdout) as Record<string, unknown>;
+    if (record.id !== id || record.name !== sandboxName || record.running !== true) {
+      throw new Error("DNS resolver container identity or running state changed");
+    }
+    return record;
+  };
+  let id = await runtime.resolveSandboxResourceHandle(sandboxName, {
+    artifactName: "dns-rebinding-workload-resource",
+    timeoutMs: 30_000,
+  });
+  let record = await inspect(id);
+  if (record.role === "sandbox") {
+    const { sandboxId, namespace } = record;
+    if (
+      typeof sandboxId !== "string" ||
+      !/^[a-zA-Z0-9_-]{1,128}$/u.test(sandboxId) ||
+      typeof namespace !== "string" ||
+      !/^[a-zA-Z0-9_-]{1,128}$/u.test(namespace)
+    ) {
+      throw new Error("DNS fixture requires the workload's sandbox identity");
+    }
+    const supervisor = await runtime.command(
+      [
+        "container",
+        "ps",
+        "--no-trunc",
+        "--filter",
+        `label=openshell.ai/sandbox-id=${sandboxId}`,
+        "--filter",
+        `label=openshell.ai/sandbox-namespace=${namespace}`,
+        "--filter",
+        "label=openshell.ai/isolation-role=supervisor",
+        "--format",
+        "{{.ID}}",
+      ],
+      { artifactName: "dns-rebinding-supervisor-resource", timeoutMs: 30_000 },
+    );
+    assertHostFixtureProbeSucceeded(supervisor, "discover DNS supervisor");
+    id = supervisor.stdout.trim();
+    record = await inspect(id);
+    if (
+      record.role !== "supervisor" ||
+      record.sandboxId !== sandboxId ||
+      record.namespace !== namespace
+    ) {
+      throw new Error("DNS supervisor does not belong to the selected workload");
+    }
+  } else if (record.role !== null && record.role !== "") {
+    throw new Error("DNS fixture found an unsupported isolation role");
+  }
+  const hostsPath = record.hostsPath;
+  if (
+    typeof hostsPath !== "string" ||
+    !path.isAbsolute(hostsPath) ||
+    path.normalize(hostsPath) !== hostsPath ||
+    !hostsPath.includes(`/${id}/`) ||
+    path.basename(hostsPath) !== "hosts" ||
+    /[\u0000-\u001f\u007f]/u.test(hostsPath)
+  ) {
+    throw new Error("DNS fixture requires the engine-owned container hosts file");
+  }
+  return { containerId: id, containerHostsPath: hostsPath };
+}
+
+function resolverHostsGuard(fixture: DnsRebindingHostsFixture): string[] {
+  // Docker mounts a read-only supervisor's hosts file read-only too. Modify its
+  // engine-owned host file in place; never remount or relax the container.
+  // Pin the ID and path across backup, remapping and restoration. A replacement
+  // container must not receive an earlier container's hosts backup.
+  return [
+    `container_id=${shellQuote(fixture.containerId)}`,
+    `container_hosts=${shellQuote(fixture.containerHostsPath)}`,
+    "verify_resolver_hosts() {",
+    '  [ "$("${runtime_command[@]}" container inspect --format \'{{.HostsPath}}\' "$container_id")" = "$container_hosts" ] &&',
+    '  sudo -n test -f "$container_hosts" && sudo -n test ! -L "$container_hosts"',
+    "}",
+  ];
 }
 
 export async function setupDnsRebindingHostsFixture(
@@ -38,6 +132,7 @@ export async function setupDnsRebindingHostsFixture(
     hostname,
     hostBackupPath: path.join(tempDir, `nemoclaw-rebind-hosts-host-${suffix}`),
     sandboxBackupPath: path.join(tempDir, `nemoclaw-rebind-hosts-sandbox-${suffix}`),
+    ...(await resolveResolverHosts(host, sandboxName)),
   };
   const runtime = runtimeInvocation(host);
   const result = await host.command(
@@ -47,16 +142,15 @@ export async function setupDnsRebindingHostsFixture(
       [
         "set -euo pipefail",
         'runtime_command=("$@")',
-        `sandbox_name=${shellQuote(sandboxName)}`,
+        ...resolverHostsGuard(fixture),
         `hostname=${shellQuote(hostname)}`,
         `host_backup=${shellQuote(fixture.hostBackupPath)}`,
         `sandbox_backup=${shellQuote(fixture.sandboxBackupPath)}`,
-        'container_id="$("${runtime_command[@]}" container ps --filter "label=openshell.ai/sandbox-name=${sandbox_name}" --format \'{{.ID}}\' | head -n 1)"',
-        '[ -n "$container_id" ] || { echo "OpenShell sandbox container not found" >&2; exit 1; }',
+        'verify_resolver_hosts || { echo "DNS resolver hosts identity changed" >&2; exit 1; }',
         "sudo -n true",
         'rm -f "$host_backup" "$sandbox_backup"',
         'sudo -n cat /etc/hosts > "$host_backup"',
-        '"${runtime_command[@]}" container exec "$container_id" cat /etc/hosts > "$sandbox_backup"',
+        'sudo -n cat "$container_hosts" > "$sandbox_backup"',
         'if grep -Fq "$hostname" "$host_backup" || grep -Fq "$hostname" "$sandbox_backup"; then rm -f "$host_backup" "$sandbox_backup"; echo "DNS rebinding fixture hostname already exists in /etc/hosts" >&2; exit 1; fi',
       ].join("\n"),
       "dns-rebinding-backup-hosts",
@@ -78,7 +172,7 @@ export async function setupDnsRebindingHostsFixture(
 
 export async function remapDnsRebindingHostname(
   host: HostCliClient,
-  sandboxName: string,
+  _sandboxName: string,
   fixture: DnsRebindingHostsFixture,
   address: string,
   artifactName: string,
@@ -101,20 +195,19 @@ export async function remapDnsRebindingHostname(
       [
         "set -euo pipefail",
         'runtime_command=("$@")',
-        `sandbox_name=${shellQuote(sandboxName)}`,
+        ...resolverHostsGuard(fixture),
         `hostname=${shellQuote(fixture.hostname)}`,
         `expected_ip=${shellQuote(address)}`,
         `host_backup=${shellQuote(fixture.hostBackupPath)}`,
         `sandbox_backup=${shellQuote(fixture.sandboxBackupPath)}`,
         '[ -s "$host_backup" ] && [ -s "$sandbox_backup" ] || { echo "DNS rebinding hosts backups are missing" >&2; exit 1; }',
-        'container_id="$("${runtime_command[@]}" container ps --filter "label=openshell.ai/sandbox-name=${sandbox_name}" --format \'{{.ID}}\' | head -n 1)"',
-        '[ -n "$container_id" ] || { echo "OpenShell sandbox container not found" >&2; exit 1; }',
+        'verify_resolver_hosts || { echo "DNS resolver hosts identity changed" >&2; exit 1; }',
         'sudo -n tee /etc/hosts < "$host_backup" >/dev/null',
         'printf "\\n%s %s\\n" "$expected_ip" "$hostname" | sudo -n tee -a /etc/hosts >/dev/null',
-        '"${runtime_command[@]}" container exec --user 0 --interactive "$container_id" sh -c \'cat > /etc/hosts\' < "$sandbox_backup"',
-        'printf "\\n%s %s\\n" "$expected_ip" "$hostname" | "${runtime_command[@]}" container exec --user 0 --interactive "$container_id" tee -a /etc/hosts >/dev/null',
+        'sudo -n tee "$container_hosts" < "$sandbox_backup" >/dev/null',
+        'printf "\\n%s %s\\n" "$expected_ip" "$hostname" | sudo -n tee -a "$container_hosts" >/dev/null',
         `node -e ${shellQuote(resolverCheck)} "$hostname" "$expected_ip"`,
-        '"${runtime_command[@]}" container exec "$container_id" grep -F "$expected_ip $hostname" /etc/hosts >/dev/null',
+        'sudo -n grep -F "$expected_ip $hostname" "$container_hosts" >/dev/null',
       ].join("\n"),
       "dns-rebinding-remap-hosts",
       runtime.command,
@@ -131,7 +224,7 @@ export async function remapDnsRebindingHostname(
 
 export async function restoreDnsRebindingHostsFixture(
   host: HostCliClient,
-  sandboxName: string,
+  _sandboxName: string,
   fixture: DnsRebindingHostsFixture,
 ): Promise<void> {
   const runtime = runtimeInvocation(host);
@@ -145,7 +238,7 @@ export async function restoreDnsRebindingHostsFixture(
         // exit 1 with empty stdout/stderr, which defeats the cleanup artifact.
         "set -uo pipefail",
         'runtime_command=("$@")',
-        `sandbox_name=${shellQuote(sandboxName)}`,
+        ...resolverHostsGuard(fixture),
         `host_backup=${shellQuote(fixture.hostBackupPath)}`,
         `sandbox_backup=${shellQuote(fixture.sandboxBackupPath)}`,
         'if [ ! -f "$host_backup" ] && [ ! -f "$sandbox_backup" ]; then echo "DNS rebinding hosts backups already absent"; exit 0; fi',
@@ -164,8 +257,7 @@ export async function restoreDnsRebindingHostsFixture(
         'if [ -f "$sandbox_backup" ]; then',
         "  sandbox_restored=0",
         "  for attempt in 1 2 3; do",
-        '    container_id="$("${runtime_command[@]}" container ps --filter "label=openshell.ai/sandbox-name=${sandbox_name}" --format \'{{.ID}}\' 2>/dev/null | head -n 1 || true)"',
-        '    if [ -n "$container_id" ] && "${runtime_command[@]}" container exec --user 0 --interactive "$container_id" sh -c \'cat > /etc/hosts\' < "$sandbox_backup"; then sandbox_restored=1; break; fi',
+        '    if verify_resolver_hosts && sudo -n tee "$container_hosts" < "$sandbox_backup" >/dev/null && sudo -n cmp -s "$sandbox_backup" "$container_hosts"; then sandbox_restored=1; break; fi',
         '    [ "$attempt" -eq 3 ] || sleep 1',
         "  done",
         '  if [ "$sandbox_restored" -eq 1 ]; then echo "restored sandbox /etc/hosts"; else echo "::warning::could not restore ephemeral sandbox /etc/hosts; cleanup will destroy the sandbox" >&2; fi',

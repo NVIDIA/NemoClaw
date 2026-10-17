@@ -5,6 +5,28 @@ import { createCliOpenShellSandboxLifecycleFromRunner } from "../../src/lib/adap
 import { createDockerGpuDiagnosticRedactor } from "../../src/lib/onboard/docker-gpu-diagnostic-redaction.ts";
 import type { ShippedManagedImageAgent } from "../../src/lib/onboard/managed-image/contract.ts";
 import type { ManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
+import { gatewayIdForStateDir } from "../../src/lib/onboard/gateway/process-environment.ts";
+
+export function isManagedImageHarnessWorkload(
+  record:
+    | {
+        Config?: { Labels?: Record<string, string> };
+        Image?: string;
+        HostConfig?: { NetworkMode?: string };
+      }
+    | undefined,
+  expected: { sandbox: string; stateDir: string; imageContentId: string },
+): boolean {
+  const labels = record?.Config?.Labels;
+  return (
+    labels?.["openshell.ai/managed-by"] === "openshell" &&
+    labels["openshell.ai/sandbox-name"] === expected.sandbox &&
+    labels["openshell.ai/isolation-role"] === "sandbox" &&
+    labels["openshell.ai/sandbox-namespace"] === gatewayIdForStateDir(expected.stateDir) &&
+    record?.Image === expected.imageContentId &&
+    record.HostConfig?.NetworkMode === "none"
+  );
+}
 
 export {
   PROTECTED_MANAGED_IMAGE_AGENTS,

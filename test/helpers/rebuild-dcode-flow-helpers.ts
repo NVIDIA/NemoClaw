@@ -59,9 +59,10 @@ export function setGatewayProviderMetadata(harness: RebuildFlowHarness, stdout: 
       };
     }
     if (argv[0] === "provider" && argv[1] === "list") {
-      const output = JSON.stringify([
-        { name: "compatible-endpoint", credential_keys: ["COMPATIBLE_API_KEY"] },
-      ]);
+      const output = JSON.stringify({
+        providers: [{ name: "compatible-endpoint", credential_keys: ["COMPATIBLE_API_KEY"] }],
+        next_page_token: "",
+      });
       return { status: 0, output, stdout: output, stderr: "" };
     }
     return argv[0] === "provider" && argv[1] === "get"

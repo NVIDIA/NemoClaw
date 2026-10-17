@@ -14,6 +14,10 @@ content:
 The direct OpenClaw blueprint runner can attach a provider-neutral runtime identity to a sandbox.
 The shipped blueprint and normal `nemoclaw onboard` do not enable or configure this experimental capability.
 
+<Warning>
+The direct runner's identity apply path is not qualified for OpenShell 0.1.3. It still invokes `openshell inference set`, which the 0.1.3 CLI rejects before contacting the gateway. Keep this experimental flow disabled until the inference compatibility work in [NemoClaw#12558](https://github.com/NVIDIA/NemoClaw/issues/12558) and its conformance tests are complete.
+</Warning>
+
 The bundled Okta and Microsoft Entra profiles are data-only implementations of the component.
 The blueprint schema describes the OpenShell provider binding and OAuth refresh inputs without using the identity provider as a schema discriminator.
 
@@ -35,7 +39,7 @@ Runtime identity profiles may use DNS-backed HTTPS only within a provider type's
 NemoClaw resolves every destination before import and rejects private or internal addresses.
 OpenShell performs connect-time server-side request forgery (SSRF) and L7 enforcement before it injects the provider credential.
 
-OpenShell 0.0.116 verifies the original hostname's certificate but does not pin the address that NemoClaw resolved during import.
+OpenShell 0.1.3's gateway refresh client verifies the HTTPS hostname but does not pin the address that NemoClaw resolved during import. The 0.1.3 identity apply path remains unqualified.
 Only identity-platform-controlled DNS namespaces such as `okta.com`, `login.microsoftonline.com`, and `graph.microsoft.com` belong in this trust table.
 An attacker-controlled or customer-controlled suffix requires a pinning-capable upstream refresh boundary and new conformance evidence.
 </Warning>
@@ -45,7 +49,7 @@ An attacker-controlled or customer-controlled suffix requires a pinning-capable 
 The deterministic `TC-INF-12` and `TC-INF-13` protected end-to-end (E2E) scenarios are the conformance gates for this boundary.
 Both run the real blueprint runner against a real OpenShell gateway and sandbox.
 
-The scenarios enable provider-derived policy and restore its prior setting.
+The scenarios require attached-provider policy composition without an active global policy override.
 They exchange a refresh token through a public HTTPS OAuth endpoint and prove that the sandbox sees only opaque placeholders.
 They prove that the existing placeholder resolves to the refreshed bearer after credential rotation.
 They prove that OpenShell rejects unreviewed credential delivery before the bearer reaches the protected resource.
@@ -60,15 +64,14 @@ Expanding the trusted hostname policy requires upstream pinning and new conforma
 
 ## Enable Provider-Derived Policy
 
-Enable provider-derived policy on the target gateway before you apply the blueprint.
+OpenShell `0.1.3` composes attached-provider policies automatically when no active global policy overrides them.
+The `providers_v2_enabled` setting no longer exists.
+Use a gateway without an active global policy override for this experimental flow.
+Ask the gateway operator to review an existing override before retrying; changing global policy can affect other sandboxes.
 
-```bash
-openshell settings set --global --key providers_v2_enabled --value true --yes
-```
-
-Apply reads the gateway-global setting before identity mutation and again before attachment.
-It stops unless the JSON value is exactly `true`.
-This check prevents an attachment whose provider-derived network policy and credential injection are inactive.
+Apply inspects global policy history and the current global policy before identity mutation and again before attachment.
+It stops if an override is active or the response cannot be verified.
+Apply does not change gateway settings.
 
 ## Configure the Okta Reference Profile
 

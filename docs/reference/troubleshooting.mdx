@@ -461,7 +461,10 @@ Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and 
 
 ### Older-glibc gateway compatibility container
 
-OpenShell 0.0.116 directly supports Linux hosts with glibc 2.39 or newer. On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container. Leave it unset on supported hosts.
+NemoClaw compares the installed OpenShell gateway binary's required glibc version with the Linux host's glibc version.
+If the host's version is older, startup stops and requires an explicit compatibility choice.
+On a trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` opts into NemoClaw's compatibility container.
+Leave it unset when the host meets the installed binary's requirements.
 
 The compatibility container uses host networking and mounts the host Docker socket read-only. A read-only socket mount still permits privileged Docker API operations and can control the host, so do not enable this mode on an untrusted or shared host. The gateway remains loopback-bound, and startup fails closed unless the configured Unix socket answers as a Docker daemon. See [Gateway Compatibility Container](../security/security-controls/gateway-authentication-controls#gateway-compatibility-container) for the container boundary and removal conditions.
 
@@ -822,7 +825,12 @@ Rerunning onboarding with a different provider recreates the sandbox because the
 
 ### Sandbox containers cannot reach the gateway
 
-On native Linux Docker-driver hosts, `$$nemoclaw onboard` verifies the route that sandbox containers use to reach the OpenShell gateway. If a host firewall blocks that path, onboarding exits with output like:
+OpenShell `0.1.3` Docker supervisors use host networking, and their workloads have no direct network interface.
+Onboarding skips the legacy bridge-to-gateway probe for this runtime, even when an old `openshell-docker` network remains.
+This check does not remove the retained network or change firewall rules.
+
+For runtimes that use bridge-based gateway access, a host firewall can block the route.
+Apply the following guidance only when onboarding reports this bridge diagnostic:
 
 ```text
 ✗ Sandbox containers cannot reach the gateway at host.openshell.internal:8080.
@@ -1615,8 +1623,10 @@ credential projection, but must not add the retired NemoClaw gateway controller.
 
 ### Hermes config reports a mutation already in progress
 
-Hermes host config writes and lifecycle seals use the same root-only mutation lock.
-A host-side config write binds to the SHA-256 digest of the matching read, installs fresh config inodes, refreshes both config hashes, and restores mutable access before releasing that lock.
+This diagnostic applies to legacy root-owned configuration and lifecycle transactions.
+Current host-side Hermes `config set` uses a guarded transaction as the sandbox user through the recorded OpenShell gateway.
+It binds the write to the matching read, refreshes the integrity hashes, and verifies a gateway reload; it does not use the legacy root-only seal.
+For transaction failure and rollback checks, refer to [Hermes Runtime Changes](../manage-sandboxes/configure-sandboxes/understand-runtime-changes#hermes-runtime-changes).
 If a concurrent command reports `Hermes config mutation is already in progress`, do not remove `/run/nemoclaw/hermes-config-mutation.lock` manually.
 Wait for the active config, recovery, or restart command to finish, then retry.
 
@@ -2506,25 +2516,49 @@ NemoClaw rejects an explicit custom endpoint when it resolves a public HTTPS hos
 
 Use an HTTPS IP-literal endpoint whose certificate is valid for that address. If your deployment permits non-TLS provider traffic, you can instead use a public HTTP endpoint that NemoClaw can rewrite to a DNS-pinned address. Do not bypass the check with a private or internal address or by editing the persisted sandbox config directly. For the full endpoint rules, refer to [Meet Custom Endpoint Security Requirements](../inference/custom-endpoints/custom-endpoint-security).
 
-### Agent cannot reach external hosts through a proxy
+<a id="agent-cannot-reach-external-hosts-through-a-proxy"></a>
 
-NemoClaw uses a default proxy address of `10.200.0.1:3128` (the OpenShell-injected gateway). If your environment uses a different proxy, set `NEMOCLAW_PROXY_HOST` and `NEMOCLAW_PROXY_PORT` before onboarding:
+### Agent Cannot Reach External Hosts
 
-```bash
-export NEMOCLAW_PROXY_HOST=proxy.example.com
-export NEMOCLAW_PROXY_PORT=8080
-$$nemoclaw onboard
-```
+<AgentOnly variant="deepagents">
 
-These are build-time settings baked into the sandbox image. Changing them after onboarding requires re-running `$$nemoclaw onboard` to rebuild the image.
+For managed Deep Agents Code on OpenShell `0.1.3`, check the sandbox network policy and recent denial logs when an external request fails.
+The launchers clear inherited proxy variables, and OpenShell mediates the request.
+Do not set `NEMOCLAW_PROXY_HOST` or `NEMOCLAW_PROXY_PORT` to repair this route.
+Rebuild an older Deep Agents sandbox to install the updated launchers.
 
-When `HTTP_PROXY` or `HTTPS_PROXY` is set on the host, NemoClaw adds `localhost`, `127.0.0.1`, `::1`, `0.0.0.0`, the container-host aliases `host.docker.internal` and `host.containers.internal`, and the managed inference hostname `inference.local` to `NO_PROXY` for host-side subprocesses and for the env forwarded into `openshell sandbox create`. This keeps local Ollama health checks, model pulls, and managed inference traffic from being chained through a corporate or desktop proxy at the sandbox-create boundary, while preserving the proxy for external hosts. For the local provider validation probe, NemoClaw removes `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY` from the probe process and sets `NO_PROXY=*` instead. A host proxy therefore cannot answer for the local endpoint, including the `host.docker.internal` alias used for Windows-host Ollama. Inside the running sandbox, processes continue to use the OpenShell L7 proxy for `inference.local` so OpenShell's internal routing, DNS, and audit boundaries stay intact.
+</AgentOnly>
+<AgentOnly variant="openclaw">
+
+For managed OpenClaw on OpenShell `0.1.3`, check the sandbox network policy and recent denial logs when an external request fails.
+OpenClaw starts without application proxy settings, and OpenShell mediates outbound requests.
+Normal sandbox startup clears inherited proxy variables and removes obsolete global and Telegram proxy settings from restored configuration.
+Do not set `NEMOCLAW_PROXY_HOST` or `NEMOCLAW_PROXY_PORT` to repair this route.
+If the gateway already runs OpenShell `0.1.3`, rebuild the OpenClaw sandbox to remove previous proxy settings.
+Rebuilding a registered sandbox on an OpenShell `0.0.x` gateway does not upgrade that gateway; follow [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before planning replacement.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+For managed Hermes on OpenShell `0.1.3`, check the sandbox network policy and recent denial logs when an external request fails.
+Hermes startup and managed connect shells clear inherited proxy variables, and OpenShell mediates outbound requests.
+Do not set `NEMOCLAW_PROXY_HOST` or `NEMOCLAW_PROXY_PORT` to repair this route.
+If the gateway already runs OpenShell `0.1.3`, rebuild the Hermes sandbox to install the updated startup and shell environment.
+Rebuilding a registered sandbox on an OpenShell `0.0.x` gateway does not upgrade that gateway; follow [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before planning replacement.
+
+Corporate certificate authority (CA) trust remains separate from application proxy settings.
+If an enterprise proxy re-signs TLS, follow [Configure Corporate CA Trust](../security/configure-corporate-ca-trust) before onboarding or rebuilding.
+On a successful merge, Hermes appends the validated corporate CA without replacing the OpenShell trust bundle.
+
+When `HTTP_PROXY` or `HTTPS_PROXY` is set on the host, NemoClaw adds `localhost`, `127.0.0.1`, `::1`, `0.0.0.0`, the container-host aliases `host.docker.internal` and `host.containers.internal`, and the managed inference hostname `inference.local` to `NO_PROXY` for host-side subprocesses and for the env forwarded into `openshell sandbox create`. This keeps local Ollama health checks, model pulls, and managed inference traffic from being chained through a corporate or desktop proxy at the sandbox-create boundary, while preserving the proxy for external hosts. For the local provider validation probe, NemoClaw removes `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY` from the probe process and sets `NO_PROXY=*` instead. A host proxy therefore cannot answer for the local endpoint, including the `host.docker.internal` alias used for Windows-host Ollama.
+
+</AgentOnly>
 
 ### Agent cannot reach a host-side HTTP service
 
 When a sandbox needs to call an HTTP service running on the host, use the normal OpenShell network policy path. Expose the service on a host IP address that the OpenShell gateway can reach, create a custom NemoClaw policy preset for that IP and port, and apply it with `$$nemoclaw <sandbox> policy add --from-file`. The sandbox request then flows through the OpenShell proxy while NemoClaw preserves the existing live policy entries.
 
-Do not rely on `host.docker.internal` or `host.openshell.internal` as a general-purpose host-service path. Those names may appear in the sandbox's `/etc/hosts`, but in OpenShell's sandbox network they are not guaranteed to point at a reachable host gateway. Bypassing the proxy with `--noproxy '*'` also bypasses network policy enforcement and audit.
+Do not rely on `host.docker.internal` or `host.openshell.internal` as a general-purpose host-service path. Those names may appear in the sandbox's `/etc/hosts`, but in OpenShell's sandbox network they are not guaranteed to point at a reachable host gateway.
 
 First, make sure the host-side service listens on a non-loopback address. For example, a health endpoint on port `50001` should be reachable from the host IP, not only from `127.0.0.1`:
 
@@ -3313,7 +3347,7 @@ Confirm a real Hermes search after rebuilding.
 Do not replace an OpenShell placeholder with a raw Langfuse key in `~/.hermes/.env`.
 That workaround bypasses the sandbox credential boundary.
 
-OpenShell 0.0.116 resolves static credentials only at endpoints declared by their provider profile.
+Since OpenShell 0.1.2, static credentials resolve only at endpoints declared by their provider profile.
 Older provider-backed Langfuse setups could rely on destination-independent placeholder rewriting, so they can stop working after a NemoClaw upgrade or sandbox rebuild even though the Hermes placeholder validator still accepts the value.
 
 For Langfuse Cloud, register the two keys through the checked-in endpoint profile and rebuild the sandbox:

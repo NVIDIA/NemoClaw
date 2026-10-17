@@ -92,7 +92,7 @@ async function setFixtureProviderPolicyBinding(
     };
     readonly expectedBinaries?: readonly string[];
     readonly removeBinding?: boolean;
-    readonly restMethods?: readonly ("GET" | "POST")[];
+    readonly allowMethods?: readonly ("GET" | "POST" | "WEBSOCKET_TEXT")[];
   },
 ): Promise<void> {
   const policy = await host.command(
@@ -120,7 +120,7 @@ async function setFixtureProviderPolicyBinding(
       options.endpoint.host,
       options.endpoint.port,
       options.endpoint.protocol,
-      options.restMethods,
+      options.allowMethods,
     );
     if (options.expectedBinaries) {
       assertFixtureProviderPolicyEndpointBinaries(
@@ -162,6 +162,7 @@ export async function rebindFixtureProviderPolicyEndpoint(
   options: {
     readonly artifactName: string;
     readonly credentialEnv: string;
+    readonly allowMethods?: readonly ("GET" | "POST" | "WEBSOCKET_TEXT")[];
     readonly endpoint: {
       readonly host: string;
       readonly port: number | string;
@@ -199,6 +200,7 @@ export async function rebindFixtureProviderPolicyEndpoint(
     ...commandOptions,
     artifactName: `${options.artifactName}-policy-rebound`,
     endpoint: { ...options.endpoint, port: endpointPort },
+    allowMethods: options.allowMethods,
   });
 }
 
@@ -236,7 +238,7 @@ export async function applyFixtureProviderPolicyEndpoint(
   });
 
   const policyHost = "host.openshell.internal";
-  const methods =
+  const methods: readonly ("GET" | "POST" | "WEBSOCKET_TEXT")[] =
     options.protocol === "rest"
       ? (options.restMethods ?? ["GET", "POST"])
       : ["GET", "WEBSOCKET_TEXT"];
@@ -247,8 +249,6 @@ export async function applyFixtureProviderPolicyEndpoint(
     "--add-endpoint",
     `${policyHost}:${String(endpointPort)}:read-write:${options.protocol}:enforce:${options.rewrite},allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
   ];
-  for (const method of methods)
-    args.push("--add-allow", `${policyHost}:${String(endpointPort)}:${method}:/**`);
   args.push(...allowedBinaries.flatMap((binary) => ["--binary", binary]), "--wait");
   await runFixtureOpenShell(host, args, commandOptions);
   await setFixtureProviderPolicyBinding(host, sandboxName, {
@@ -256,7 +256,7 @@ export async function applyFixtureProviderPolicyEndpoint(
     artifactName: `${options.artifactName}-credential-binding`,
     endpoint: { host: policyHost, port: endpointPort, protocol: options.protocol },
     expectedBinaries: allowedBinaries,
-    restMethods: options.protocol === "rest" ? (options.restMethods ?? ["GET", "POST"]) : undefined,
+    allowMethods: methods,
   });
 }
 

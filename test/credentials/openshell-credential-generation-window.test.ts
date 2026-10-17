@@ -174,7 +174,6 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     expect(liveTarget).toContain("HOSTED_INFERENCE_CREDENTIAL_ENV");
     expect(liveTarget).toContain("credential-window-source-sandbox-after-expired-rebuild");
     expect(liveTarget).toContain("parseOpenShellSandboxId");
-    expect(liveTarget).toContain("Backing up sandbox state|Deleting old sandbox");
     expect(liveTarget).toContain('expect(providerName).toBe("e2e-cred-window-mcp-fake")');
     expect(liveTarget).toContain('!request.auth.includes("openshell:resolve:env")');
   });

@@ -60,7 +60,11 @@ For OpenClaw, NemoClaw updates the provider namespace and selected model in the 
 It adds or updates the requested model entry without removing other model entries in that provider.
 For NVIDIA Endpoints, native hosted providers, and native local providers, it writes the attached provider's scoped OpenShell credential reference into the native configuration.
 This reference is not a raw provider credential.
-A switch to a local provider without a matching sandbox-owned attachment stops before changing the shared route. Back up the sandbox and create a fresh one with the local selection. Existing shared-route local sandboxes can still change models through their recorded shared route where its owner supports that operation.
+When switching to a different Ollama, standalone vLLM, or llama.cpp provider, NemoClaw prepares and attaches a provider for the selected local runtime.
+The switch verifies existing attachment ownership and leaves the shared route unchanged.
+Existing shared-route local sandboxes that keep the same provider can still use supported model switches on OpenShell `0.0.x`.
+Older Ollama, standalone vLLM, and llama.cpp sandboxes without an attachment cannot resume or rebuild.
+Back them up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`.
 After any changed configuration sync, NemoClaw restarts only the OpenClaw gateway and verifies its health.
 The sandbox remains running, but agent requests are briefly interrupted.
 After every changed synchronized route, NemoClaw verifies that the local CLI device has the managed gateway's required pairing scopes before it reports success.
@@ -75,7 +79,8 @@ Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 
 For Hermes, NemoClaw updates the native `/sandbox/.hermes/config.yaml`, including the model, base URL, API-family mode, and managed API-key value.
 Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers without changing the shared route.
-Owned Local NVIDIA NIM and nonqualifying custom endpoints retain the shared route.
+Qualifying custom hosted endpoints also use sandbox-attached providers.
+Owned Local NVIDIA NIM and remaining custom shared selections retain `inference.local` on OpenShell `0.0.x`.
 A legacy local sandbox without a valid Hermes attachment must be recreated before a native local switch: back up required state, then run `nemohermes onboard --fresh --name <sandbox-name> --recreate-sandbox`.
 Live qualification of the Hermes native local lifecycle is pending.
 `inference.local` uses the OpenShell proxy rewrite sentinel.

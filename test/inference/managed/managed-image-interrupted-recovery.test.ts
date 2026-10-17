@@ -13,6 +13,7 @@ import {
   prepareManagedImageOpenShellState,
 } from "../../../scripts/checks/run-managed-image-openshell-e2e";
 import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../../src/lib/adapters/openshell/sandbox-identity";
+import { gatewayIdForStateDir } from "../../../src/lib/onboard/gateway/process-environment";
 
 const mocks = vi.hoisted(() => ({
   stopGateway: vi.fn(),
@@ -75,7 +76,7 @@ let scope: { owner: string; stateDir: string; networkName: string };
 let commands: ReturnType<typeof vi.spyOn>;
 
 beforeEach(async () => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "managed-recovery-"));
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "managed-recovery-")));
   const owner = "llama-cpp-dgx-spark-42-2";
   scope = {
     owner,
@@ -142,7 +143,7 @@ beforeEach(async () => {
       ([command, args]: [string, readonly string[]]) =>
         command === "openshell" && args[0] === "sandbox" && args[1] === "delete",
     )
-      ? "[]"
+      ? JSON.stringify({ sandboxes: [], next_page_token: "" })
       : sandboxObservation(),
   );
 });
@@ -175,6 +176,8 @@ it("recovers only the marked isolated sandbox, gateway, volumes and network", as
       "label=openshell.ai/managed-by=openshell",
       "--filter",
       `label=openshell.ai/sandbox-name=${input.sandbox}`,
+      "--filter",
+      "label=openshell.ai/isolation-role=sandbox",
     ],
     ["docker", "network", "rm", scope.networkName],
     ["docker", "network", "inspect", scope.networkName],
@@ -396,6 +399,8 @@ it("continues cleanup after a post-deletion failure without deleting the sandbox
       "label=openshell.ai/managed-by=openshell",
       "--filter",
       `label=openshell.ai/sandbox-name=${input.sandbox}`,
+      "--filter",
+      "label=openshell.ai/isolation-role=sandbox",
     ],
     ["docker", "network", "rm", scope.networkName],
     ["docker", "network", "inspect", scope.networkName],
@@ -423,8 +428,17 @@ it("rejects a forged deletion marker before any external cleanup", async () => {
   expect(mocks.stopGateway).not.toHaveBeenCalled();
 });
 
-it("retains recovery state if absence cannot be confirmed after deletion", async () => {
-  mocks.capture.mockReturnValue(sandboxObservation());
+it.each([
+  ["a remaining sandbox", sandboxObservation()],
+  ["an incomplete page", JSON.stringify({ sandboxes: [], next_page_token: "more" })],
+  ["missing pagination metadata", JSON.stringify({ sandboxes: [] })],
+  ["invalid JSON", "not-json"],
+])("retains recovery state after deletion with %s", async (_reason, observation) => {
+  const capture = mocks.capture.getMockImplementation()!;
+  mocks.capture.mockImplementation((...args) => {
+    const result = capture(...args);
+    return result === JSON.stringify({ sandboxes: [], next_page_token: "" }) ? observation : result;
+  });
   await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
     "sandbox identity or deletion is unproven",
   );
@@ -455,7 +469,7 @@ it("records the nonce-bound immutable identity from successful creation", () => 
       `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}`,
       "--output",
       "json",
-      "--limit",
+      "--page-size",
       "2",
     ],
     expect.objectContaining({ ignoreError: false, timeout: 30000 }),
@@ -663,9 +677,13 @@ it("removes the exact leftover container without removing a foreign container", 
         Labels: {
           "openshell.ai/managed-by": "openshell",
           "openshell.ai/sandbox-name": input.sandbox,
+          "openshell.ai/isolation-role": "sandbox",
+          "openshell.ai/sandbox-namespace": gatewayIdForStateDir(
+            path.join(scope.stateDir, "gateway-state"),
+          ),
         },
       },
-      NetworkSettings: { Networks: { [scope.networkName]: {} } },
+      HostConfig: { NetworkMode: "none" },
     },
   ]);
   const foreign = JSON.stringify([
@@ -675,9 +693,11 @@ it("removes the exact leftover container without removing a foreign container", 
         Labels: {
           "openshell.ai/managed-by": "openshell",
           "openshell.ai/sandbox-name": input.sandbox,
+          "openshell.ai/isolation-role": "sandbox",
+          "openshell.ai/sandbox-namespace": gatewayIdForStateDir(scope.stateDir),
         },
       },
-      NetworkSettings: { Networks: { "foreign-network": {} } },
+      HostConfig: { NetworkMode: "none" },
     },
   ]);
   commands
@@ -707,6 +727,21 @@ it("removes the exact leftover container without removing a foreign container", 
       stderr: `Error: No such network: ${scope.networkName}`,
     } as any);
   await cleanupInterruptedManagedImageOpenShellE2e(input, scope);
+  expect(mocks.capture).toHaveBeenLastCalledWith(
+    [
+      "sandbox",
+      "list",
+      "-g",
+      "nemoclaw",
+      "--selector",
+      `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}`,
+      "--output",
+      "json",
+      "--page-size",
+      "2",
+    ],
+    expect.objectContaining({ ignoreError: false, timeout: 30000 }),
+  );
   expect(commands).toHaveBeenCalledWith(
     "docker",
     ["rm", "--force", "owned-container"],

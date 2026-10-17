@@ -322,45 +322,6 @@ async function runRuntimeIdentityE2EScenario(
     env: openshellEnv,
     timeoutMs: 30_000,
   });
-  const settingsBefore = await sandbox.openshell(["settings", "get", "--global", "--json"], {
-    artifactName: `${artifactPrefix}-provider-policy-setting-before`,
-    env: openshellEnv,
-    timeoutMs: 30_000,
-  });
-  expect(settingsBefore.exitCode, resultText(settingsBefore)).toBe(0);
-  const settingsDocument = JSON.parse(settingsBefore.stdout) as {
-    settings?: Record<string, string>;
-  };
-  const priorProvidersV2Setting = settingsDocument.settings?.providers_v2_enabled;
-  const restoreSettingArgs = new Map<string, string[]>([
-    ["<unset>", ["settings", "delete", "--global", "--key", "providers_v2_enabled", "--yes"]],
-    [
-      "false",
-      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "false", "--yes"],
-    ],
-    [
-      "true",
-      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "true", "--yes"],
-    ],
-  ]).get(priorProvidersV2Setting ?? "");
-  expect(restoreSettingArgs).toBeDefined();
-  cleanup.add("restore OpenShell provider-derived policy setting", async () => {
-    const restored = await sandbox.openshell(restoreSettingArgs!, {
-      artifactName: `${artifactPrefix}-provider-policy-setting-restore`,
-      env: openshellEnv,
-      timeoutMs: 30_000,
-    });
-    expect(restored.exitCode, resultText(restored)).toBe(0);
-  });
-  const enableProviderPolicy = await sandbox.openshell(
-    ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "true", "--yes"],
-    {
-      artifactName: `${artifactPrefix}-provider-policy-setting-enable`,
-      env: openshellEnv,
-      timeoutMs: 30_000,
-    },
-  );
-  expect(enableProviderPolicy.exitCode, resultText(enableProviderPolicy)).toBe(0);
   progress.phase("start the public OAuth issuer and protected resource");
   const oauth = await startRuntimeIdentityOAuthServer({
     clientId,

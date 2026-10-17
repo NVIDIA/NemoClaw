@@ -172,7 +172,7 @@ function providerConfigLines(
   const nativeHosted = nativeHostedAgentConfig(upstreamProvider, baseUrl);
   const apiKeyEnv = nativeLocalCredentialReference(upstreamProvider, baseUrl)
     ? NATIVE_LOCAL_CREDENTIAL_ENV
-    : baseUrl === NVIDIA_HOSTED_NATIVE_ENDPOINT
+    : upstreamProvider === "nvidia-prod" && baseUrl === NVIDIA_HOSTED_NATIVE_ENDPOINT
       ? ATTACHED_PROVIDER_API_KEY_ENV
       : (nativeHosted?.credentialEnv ?? MANAGED_INFERENCE_API_KEY_ENV);
   return [

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { stripVTControlCharacters } from "node:util";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -31,6 +32,61 @@ const MANAGED_IMAGE_QUALIFICATION_ENV_KEYS = [
   "NEMOCLAW_E2E_MANAGED_IMAGE_REVISION",
 ] as const;
 export const GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS = 35 * 60_000;
+
+/** The pinned legacy CLI validates the SSH process against its sandbox and port. */
+export function legacyGatewayForwardIdentity(
+  listing: Pick<ShellProbeResult, "exitCode" | "stdout" | "signal" | "timedOut">,
+  listener: Pick<ShellProbeResult, "exitCode" | "stdout" | "signal" | "timedOut">,
+  sandboxName: string,
+  port: string,
+): string | null {
+  if (
+    [listing, listener].some((result) => result.exitCode !== 0 || result.signal || result.timedOut)
+  )
+    return null;
+  const rows = stripVTControlCharacters(listing.stdout)
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim().split(/\s+/))
+    .filter((fields) => fields[0] === sandboxName && fields[2] === port);
+  if (rows.length !== 1) return null;
+  const row = rows[0]!;
+  const pid = row[3] ?? "";
+  if (
+    row.length !== 5 ||
+    row[4] !== "running" ||
+    !/^[1-9]\d*$/.test(pid) ||
+    !Number.isSafeInteger(Number(pid))
+  )
+    return null;
+  const listeners = [...new Set(listener.stdout.trim().split(/\s+/))];
+  return listeners.length === 1 && listeners[0] === pid ? row.join("\t") : null;
+}
+
+export async function captureLegacyGatewayForward(
+  host: Pick<HostCliClient, "command" | "openshellCommandPath">,
+  sandboxName: string,
+  port: string,
+  env: NodeJS.ProcessEnv,
+  phase: string,
+): Promise<{ identity: string | null; output: string }> {
+  const [listing, listener] = await Promise.all([
+    host.command(host.openshellCommandPath, ["forward", "list"], {
+      artifactName: `${phase}-dashboard-forward-list`,
+      env,
+      timeoutMs: 15_000,
+    }),
+    host.command("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"], {
+      artifactName: `${phase}-dashboard-forward-listener`,
+      env,
+      timeoutMs: 15_000,
+    }),
+  ]);
+  return {
+    identity: legacyGatewayForwardIdentity(listing, listener, sandboxName, port),
+    output: [listing, listener].map(resultText).join("\n"),
+  };
+}
 
 /** Apply path spelling at the installer boundary, after login-shell startup. */
 export function gatewayUpgradeInstallerCommand(args: readonly string[], home?: string): string {
@@ -122,6 +178,13 @@ function gatewayServiceWasReplaced(evidence: GatewayUpgradeServiceEvidence): boo
   const before = activeServiceInvocation(evidence.before, evidence.expectedFragmentPath);
   const after = activeServiceInvocation(evidence.after, evidence.expectedFragmentPath);
   return before !== null && after !== null && before !== after;
+}
+
+/** A denied cutover must leave the same active gateway service in place. */
+export function gatewayServiceWasPreserved(evidence: GatewayUpgradeServiceEvidence): boolean {
+  const before = activeServiceInvocation(evidence.before, evidence.expectedFragmentPath);
+  const after = activeServiceInvocation(evidence.after, evidence.expectedFragmentPath);
+  return before !== null && before === after;
 }
 
 export async function captureGatewayUpgradeFailureDiagnostics(

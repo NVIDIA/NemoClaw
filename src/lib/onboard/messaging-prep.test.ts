@@ -62,7 +62,7 @@ describe("prepareCreateSandboxMessaging", () => {
     const providerMatchesGatewayCredential = vi.fn(
       (name: string, type: string, credentialKey: string) =>
         name === "demo-slack-bridge" &&
-        type === "nemoclaw-mcp-v1" &&
+        type === "nemoclaw-messaging-v1" &&
         credentialKey === "SLACK_BOT_TOKEN",
     );
 
@@ -88,7 +88,7 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.reusableMessagingChannels).toEqual(["slack"]);
     expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
       "demo-slack-bridge",
-      "nemoclaw-mcp-v1",
+      "nemoclaw-messaging-v1",
       "SLACK_BOT_TOKEN",
     );
   });
@@ -97,7 +97,7 @@ describe("prepareCreateSandboxMessaging", () => {
     const providerMatchesGatewayCredential = vi.fn(
       (name: string, type: string, credentialKey: string) =>
         name === "demo-discord-bridge" &&
-        type === "nemoclaw-mcp-v1" &&
+        type === "nemoclaw-messaging-v1" &&
         credentialKey === "DISCORD_BOT_TOKEN",
     );
 
@@ -115,13 +115,13 @@ describe("prepareCreateSandboxMessaging", () => {
       expect.arrayContaining([
         expect.objectContaining({
           name: "demo-discord-bridge",
-          providerType: "nemoclaw-mcp-v1",
+          providerType: "nemoclaw-messaging-v1",
         }),
       ]),
     );
     expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
       "demo-discord-bridge",
-      "nemoclaw-mcp-v1",
+      "nemoclaw-messaging-v1",
       "DISCORD_BOT_TOKEN",
     );
   });
@@ -452,17 +452,17 @@ describe("prepareCreateSandboxMessaging", () => {
       {
         name: "demo-discord-bridge",
         envKey: "DISCORD_BOT_TOKEN",
-        providerType: "nemoclaw-mcp-v1",
+        providerType: "nemoclaw-messaging-v1",
       },
       {
         name: "demo-slack-bridge",
         envKey: "SLACK_BOT_TOKEN",
-        providerType: "nemoclaw-mcp-v1",
+        providerType: "nemoclaw-messaging-v1",
       },
       {
         name: "demo-slack-app",
         envKey: "SLACK_APP_TOKEN",
-        providerType: "nemoclaw-mcp-v1",
+        providerType: "nemoclaw-messaging-v1",
       },
     ]);
   });

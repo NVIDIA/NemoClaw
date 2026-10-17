@@ -25,6 +25,7 @@ type SandboxEntry = import("../state/registry").SandboxEntry;
 
 export interface PrivilegedSandboxCommandOptions {
   readonly input?: string | Buffer;
+  readonly sandboxUser?: string;
   readonly sanitizeEnvironment?: boolean;
   readonly expectedResourceHandle?: string;
   readonly timeout?: number;
@@ -124,7 +125,7 @@ export function executePrivilegedSandboxCommand(
       : Buffer.isBuffer(options.input)
         ? Buffer.from(options.input)
         : Buffer.from(options.input, "utf8");
-  return control.execute({
+  const request = {
     registeredSandboxNames: registeredSandboxNames(sandboxName),
     sandbox,
     sandboxName,
@@ -136,7 +137,14 @@ export function executePrivilegedSandboxCommand(
       ? { expectedResourceHandle: options.expectedResourceHandle }
       : {}),
     ...(options.maxOutputBytes ? { maxOutputBytes: options.maxOutputBytes } : {}),
-  });
+  };
+  if (options.sandboxUser !== undefined) {
+    if (!control.executeAsSandboxUser) {
+      throw new Error("The selected runtime provider cannot execute as the sandbox owner.");
+    }
+    return control.executeAsSandboxUser({ ...request, sandboxUser: options.sandboxUser });
+  }
+  return control.execute(request);
 }
 
 /** Retained Docker CLI compatibility for portable and Docker-specific probes. */

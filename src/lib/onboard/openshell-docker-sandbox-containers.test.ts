@@ -148,8 +148,8 @@ function querySnapshot(fields: unknown, nvidiaVisibleDevices?: string) {
   };
 }
 
-// OpenShell 0.0.116 sends supervisor startup failures only to the sandbox
-// container's stderr (#13178). Remove once the OpenShell pin reaches 0.1.0.
+// Preserve startup output when create fails before sandbox status is readable
+// and rollback removes the container (#13178).
 describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
   const CONTAINER_ID = "f".repeat(64);
   const STARTUP_FAILURE =

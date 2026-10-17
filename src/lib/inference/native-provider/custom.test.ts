@@ -142,6 +142,7 @@ describe("custom native endpoint ownership", () => {
           (rule: { allow: { path: string } }) => !rule.allow.path.includes("*"),
         ),
       ).toBe(true);
+      expect(profile.endpoints[0]).not.toHaveProperty("tls");
       expect(profile.binaries).not.toContain("*");
       expect(profile.credentials[0].env_vars).toEqual([definition.credentialEnv]);
       const config = getSandboxInferenceConfig("selected-model", provider, api, true, endpointUrl);

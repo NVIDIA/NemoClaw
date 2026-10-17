@@ -297,7 +297,9 @@ export function parseRuntimeProofPort(rawPort: string): number {
 }
 
 export function isUnresolvedPlaceholderRejection(text: string): boolean {
-  return /credential_injection_failed|unresolved credential placeholder/i.test(text);
+  return /credential_unavailable|credential_injection_failed|unresolved credential placeholder/i.test(
+    text,
+  );
 }
 
 export function isNvidiaEndpointRateLimitFailure(text: string): boolean {
@@ -1319,10 +1321,6 @@ export async function applyRestRewritePolicy(
       SANDBOX_NAME,
       "--add-endpoint",
       `host.openshell.internal:${api.port}:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:GET:/**`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:POST:/**`,
       "--binary",
       "/usr/local/bin/node",
       "--binary",
@@ -1365,10 +1363,6 @@ export async function applyWebSocketRewritePolicy(
       SANDBOX_NAME,
       "--add-endpoint",
       `host.openshell.internal:${api.port}:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:GET:/**`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:WEBSOCKET_TEXT:/**`,
       "--binary",
       "/usr/local/bin/node",
       "--binary",
@@ -1406,6 +1400,7 @@ async function bindFixturePolicyEndpoint(
   await rebindFixtureProviderPolicyEndpoint(host, SANDBOX_NAME, {
     artifactName: `bind-${api.kind}-${protocol}-credential`,
     credentialEnv: credentialKey,
+    allowMethods: protocol === "rest" ? ["GET", "POST"] : ["GET", "WEBSOCKET_TEXT"],
     endpoint: {
       host: "host.openshell.internal",
       port: api.port,

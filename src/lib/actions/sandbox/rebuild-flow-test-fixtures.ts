@@ -164,13 +164,16 @@ export function nativeProviderRebuildScenario(replaced: boolean, provider = "nvi
           "Resource version: 1",
         ].join("\n");
       } else if (args[1] === "list") {
-        stdout = JSON.stringify([
-          {
-            name: providerName,
-            credential_keys: [definition.credentialEnv],
-            credential_expires_at_ms: {},
-          },
-        ]);
+        stdout = JSON.stringify({
+          providers: [
+            {
+              name: providerName,
+              credential_keys: [definition.credentialEnv],
+              credential_expires_at_ms: {},
+            },
+          ],
+          next_page_token: "",
+        });
       } else return undefined;
       return { status: 0, stdout, output: stdout, stderr: "" };
     },

@@ -512,6 +512,79 @@ def _startup_process_identity_is_live(
             os.close(proc_root_fd)
 
 
+def _capability_free_supervisor_matches(
+    cmdline: bytes,
+    status_bytes: bytes,
+    status_metadata: os.stat_result,
+    expected_uid: int,
+) -> bool:
+    # OpenShell 0.1.2's workload boundary runs without saved root IDs or
+    # capabilities, using bootstrap directly or Podman's rootless launcher.
+    # It becomes nondumpable before reading bootstrap material, which
+    # makes its proc status file root-owned and prevents same-user ptrace/argv
+    # replacement. Accept only that pinned launch contract, not arbitrary
+    # same-user supervisors. PID/parent, lifetime and unique child checks remain
+    # in the descriptor-pinned callers below; argv alone is never authority.
+    try:
+        sandbox = pwd.getpwnam("sandbox")
+    except KeyError:
+        return False
+    if (
+        expected_uid <= 0
+        or sandbox.pw_uid != expected_uid
+        or sandbox.pw_gid <= 0
+        or not stat.S_ISREG(status_metadata.st_mode)
+        or status_metadata.st_uid != 0
+        or status_metadata.st_gid != 0
+    ):
+        return False
+    rootless_argv = (
+        OPENSHELL_SUPERVISOR_ARGV0,
+        b"launch-capability-free",
+        str(expected_uid).encode("ascii"),
+        str(sandbox.pw_gid).encode("ascii"),
+        b"/.openshell/channel/sandbox/bootstrap.json",
+        b"/sandbox",
+    )
+    bootstrap = b"/.openshell/channel/sandbox/bootstrap.json"
+    expected_argvs = (
+        rootless_argv,
+        (OPENSHELL_SUPERVISOR_ARGV0, b"--bootstrap", bootstrap),
+        (b"/.openshell/runtime/openshell-sandbox", b"--bootstrap", bootstrap),
+    )
+    if cmdline not in tuple(b"\0".join(argv) + b"\0" for argv in expected_argvs):
+        return False
+    expected_fields = {
+        "Uid": [str(expected_uid)] * 4,
+        "Gid": [str(sandbox.pw_gid)] * 4,
+        "Groups": [],
+        "NoNewPrivs": ["1"],
+        **{name: ["0000000000000000"] for name in (
+            "CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"
+        )},
+    }
+    observed: dict[str, list[str]] = {}
+    try:
+        for line in status_bytes.decode("ascii").splitlines():
+            name, separator, value = line.partition(":")
+            if separator and name in expected_fields:
+                if name in observed:
+                    return False
+                observed[name] = value.split()
+    except UnicodeDecodeError:
+        return False
+    # The 0.1.2 Docker driver preserves the named OCI user's primary group
+    # membership. The trusted rootless launcher instead clears supplementary
+    # groups. A duplicate primary group grants no authority beyond the exact
+    # Gid already required; do not admit other groups or relax launcher checks.
+    if (
+        cmdline != b"\0".join(rootless_argv) + b"\0"
+        and observed.get("Groups") == [str(sandbox.pw_gid)]
+    ):
+        expected_fields["Groups"] = [str(sandbox.pw_gid)]
+    return observed == expected_fields
+
+
 def _openshell_supervisor_identity(
     expected_effective_uid: int,
 ) -> tuple[str, int | None] | None:
@@ -521,12 +594,18 @@ def _openshell_supervisor_identity(
         proc_root_fd = _open_proc_root()
         proc_pid_fd = _open_proc_pid(proc_root_fd, 1)
         pinned_before = os.fstat(proc_pid_fd)
+        # Linux deliberately leaves the world-readable /proc/<pid> directory
+        # owned by the effective UID even for a nondumpable process. Its status
+        # entry follows task_dump_owner's nondumpable ownership rule instead.
+        # Resolve it without symlinks beneath the already-pinned PID directory.
+        first_status_metadata = os.stat("status", dir_fd=proc_pid_fd, follow_symlinks=False)
         first_cmdline = _read_proc_pid_file(
             proc_pid_fd, "cmdline", f"{PROC_ROOT}/1/cmdline"
         )
-        first_status = _process_status_identity(
-            _read_proc_pid_file(proc_pid_fd, "status", f"{PROC_ROOT}/1/status")
+        first_status_bytes = _read_proc_pid_file(
+            proc_pid_fd, "status", f"{PROC_ROOT}/1/status"
         )
+        first_status = _process_status_identity(first_status_bytes)
         first_stat = _read_proc_pid_file(
             proc_pid_fd, "stat", f"{PROC_ROOT}/1/stat"
         )
@@ -535,18 +614,36 @@ def _openshell_supervisor_identity(
         second_cmdline = _read_proc_pid_file(
             proc_pid_fd, "cmdline", f"{PROC_ROOT}/1/cmdline"
         )
-        second_status = _process_status_identity(
-            _read_proc_pid_file(proc_pid_fd, "status", f"{PROC_ROOT}/1/status")
+        second_status_bytes = _read_proc_pid_file(
+            proc_pid_fd, "status", f"{PROC_ROOT}/1/status"
         )
+        second_status = _process_status_identity(second_status_bytes)
         second_stat = _read_proc_pid_file(
             proc_pid_fd, "stat", f"{PROC_ROOT}/1/stat"
         )
         second_start_time = _parse_process_start_time(second_stat)
         second_namespace_inode = _proc_pid_namespace_inode(proc_pid_fd)
+        second_status_metadata = os.stat("status", dir_fd=proc_pid_fd, follow_symlinks=False)
         pinned_after = os.fstat(proc_pid_fd)
+        if expected_effective_uid == 0:
+            supervisor_matches = (
+                _cmdline_is_openshell_supervisor(first_cmdline)
+                and _cmdline_is_openshell_supervisor(second_cmdline)
+            )
+        else:
+            supervisor_matches = (
+                first_cmdline == second_cmdline
+                and first_status_metadata.st_dev == second_status_metadata.st_dev
+                and first_status_metadata.st_ino == second_status_metadata.st_ino
+                and _capability_free_supervisor_matches(
+                    first_cmdline, first_status_bytes, first_status_metadata, expected_effective_uid
+                )
+                and _capability_free_supervisor_matches(
+                    second_cmdline, second_status_bytes, second_status_metadata, expected_effective_uid
+                )
+            )
         if not (
-            _cmdline_is_openshell_supervisor(first_cmdline)
-            and _cmdline_is_openshell_supervisor(second_cmdline)
+            supervisor_matches
             and first_status is not None
             and second_status is not None
             and first_status[0] == expected_effective_uid
@@ -664,7 +761,11 @@ def _openshell_supervised_nonroot_start_is_live(
     expected_sandbox_uid: int,
     required_pid: int | None = None,
 ) -> bool:
-    supervisor_identity = _openshell_supervisor_identity(expected_root_uid)
+    supervisor_uid = expected_root_uid
+    supervisor_identity = _openshell_supervisor_identity(supervisor_uid)
+    if supervisor_identity is None and expected_root_uid == 0 and expected_sandbox_uid > 0:
+        supervisor_uid = expected_sandbox_uid
+        supervisor_identity = _openshell_supervisor_identity(supervisor_uid)
     if supervisor_identity is None:
         return False
     proc_root_fd = -1
@@ -693,7 +794,7 @@ def _openshell_supervised_nonroot_start_is_live(
         return bool(
             matches == 1
             and (required_pid is None or matched_pid == required_pid)
-            and _openshell_supervisor_identity(expected_root_uid)
+            and _openshell_supervisor_identity(supervisor_uid)
             == supervisor_identity
         )
     except OSError:
@@ -2869,17 +2970,10 @@ def _recover_restored_native_local_source(state_file: str) -> None:
         os.close(parent_fd)
 
 
-def _adopt_restored_native_local_source(
-    hermes_dir: str, hash_file: str, state_file: str,
-    expected_config_sha256: str | None, candidate_bytes: bytes,
-    hermes_meta: dict[str, int], file_states: dict[str, dict[str, object]],
-) -> None:
-    """Accept only a restored mutable source for an exact local-reference update.
-
-    The namespace is already frozen by seal_restart. General config writes keep
-    their strict-anchor requirement; this operation cannot change route or user
-    settings and must validate the restored environment before adopting it.
-    """
+def _validate_restored_native_local_source(
+    hermes_dir: str, expected_config_sha256: str | None, candidate_bytes: bytes,
+) -> tuple[str, FileSnapshot, str, FileSnapshot]:
+    """Validate archived inputs and an exact three-slot credential replacement."""
     config_path = os.path.join(hermes_dir, "config.yaml")
     env_path = os.path.join(hermes_dir, ".env")
     source_text, config_snapshot = _read_text(config_path, MAX_CONFIG_INPUT_BYTES)
@@ -2933,6 +3027,25 @@ def _adopt_restored_native_local_source(
     if os.path.abspath(__file__) != INSTALLED_RUNTIME_CONFIG_GUARD:
         validator = os.path.join(os.path.dirname(os.path.abspath(__file__)), "validate-env-secret-boundary.py")
     _validate_env_text_with_boundary(env_text, validator, isolated=True)
+    return source_text, config_snapshot, env_text, env_snapshot
+
+
+def _adopt_restored_native_local_source(
+    hermes_dir: str, hash_file: str, state_file: str,
+    expected_config_sha256: str | None, candidate_bytes: bytes,
+    hermes_meta: dict[str, int], file_states: dict[str, dict[str, object]],
+) -> None:
+    """Accept only a restored mutable source for an exact local-reference update.
+
+    The namespace is already frozen by seal_restart. General config writes keep
+    their strict-anchor requirement; this operation cannot change route or user
+    settings and must validate the restored environment before adopting it.
+    """
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    env_path = os.path.join(hermes_dir, ".env")
+    source_text, config_snapshot, env_text, env_snapshot = _validate_restored_native_local_source(
+        hermes_dir, expected_config_sha256, candidate_bytes,
+    )
     for path, expected_snapshot in ((config_path, config_snapshot), (env_path, env_snapshot)):
         opened = _open_regular(path)
         try:

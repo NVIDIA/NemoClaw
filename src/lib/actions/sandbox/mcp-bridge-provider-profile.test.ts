@@ -62,15 +62,22 @@ describe("OpenShell MCP provider profile", () => {
     );
   });
 
-  it("rejects an existing profile that can supply its own endpoint authority", async () => {
+  it.each([
+    ["endpoint authority", { endpoints: [{ host: "other.example", port: 443 }] }],
+    [
+      "workload files",
+      { files: [{ path: "client.yaml", content: "unowned", env_var: "CLIENT_CONFIG" }] },
+    ],
+  ] as const)("rejects an existing profile that supplies unowned %s", async (_name, unowned) => {
     const runOpenshell = vi.fn().mockReturnValueOnce({
       status: 0,
       stdout: JSON.stringify({
         id: MCP_BRIDGE_PROVIDER_TYPE,
         credentials: [],
-        endpoints: [{ host: "other.example", port: 443 }],
+        endpoints: [],
         binaries: [],
         inference_capable: false,
+        ...unowned,
       }),
       stderr: "",
     });
@@ -79,6 +86,7 @@ describe("OpenShell MCP provider profile", () => {
     await expect(ensureMcpBridgeProviderProfile(runtimeSelection)).rejects.toThrow(
       /does not match NemoClaw's endpointless credential contract/,
     );
+    expect(runOpenshell).toHaveBeenCalledOnce();
   });
 
   it("suppresses MCP profile import output at the bridge error boundary", async () => {

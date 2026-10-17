@@ -117,12 +117,12 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "nemoclaw-blueprint/provider-profiles/entra-runtime-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/langfuse-hermes-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/nemoclaw-mcp-v1.yaml", mode: "100644" },
+  { path: "nemoclaw-blueprint/provider-profiles/nemoclaw-messaging-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/okta-runtime-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/tavily-hermes-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/tavily.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/router/llm-router", mode: "160000" },
   { path: "nemoclaw-blueprint/router/pool-config.yaml", mode: "100644" },
-  { path: "nemoclaw-blueprint/scripts/http-proxy-fix.js", mode: "100644" },
   { path: "nemoclaw-blueprint/scripts/nemotron-inference-fix.js", mode: "100644" },
   { path: "nemoclaw-blueprint/scripts/sandbox-safety-net.js", mode: "100644" },
   { path: "nemoclaw-blueprint/tsconfig.json", mode: "100644" },
@@ -141,7 +141,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/patch-bundled-npm-tar.mts", mode: "100755" },
   { path: "scripts/upgrade-bundled-npm.mts", mode: "100755" },
   {
-    path: "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json",
+    path: "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.3.json",
     mode: "100644",
   },
   { path: "src/lib/hermes-managed-route.ts", mode: "100644" },
@@ -227,14 +227,6 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   },
   {
     path: "src/lib/messaging/channels/googlechat/runtime/googlechat-outbound-auth.ts",
-    mode: "100644",
-  },
-  {
-    path: "src/lib/messaging/channels/googlechat/runtime/googlechat-trusted-proxy-fetch.test.ts",
-    mode: "100644",
-  },
-  {
-    path: "src/lib/messaging/channels/googlechat/runtime/googlechat-trusted-proxy-fetch.ts",
     mode: "100644",
   },
   { path: "src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py", mode: "100644" },

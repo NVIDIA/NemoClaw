@@ -487,6 +487,19 @@ describe("managed Podman runtime provider", () => {
       9000,
       undefined,
     );
+    const privateInput = Buffer.from("synthetic private snapshot");
+    control.executeAsSandboxUser?.({ ...input, input: privateInput, maxOutputBytes: 2048 });
+    expect(runtime.lifecycle.capture).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        "--interactive",
+        "--user",
+        DEEP_AGENTS_CODE_SANDBOX_USER,
+        CONTAINER_ID,
+      ]),
+      9000,
+      privateInput,
+      { maxInputBytes: privateInput.length, maxOutputBytes: 2048 },
+    );
     expect(() =>
       control.executeAsSandboxUser?.({
         ...input,

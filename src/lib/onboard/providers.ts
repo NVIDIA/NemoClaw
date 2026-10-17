@@ -435,7 +435,7 @@ function identityCheckedRunner(runOpenshell, revalidateSandboxIdentity, operatio
  * the provider is detached from any live sandbox before opting in: OpenShell
  * rejects `provider delete` on attached providers.
  * @param {string} name - Provider name (e.g. "discord-bridge", "inference").
- * @param {string} type - Provider type (for example, "openai", "brave", or "nemoclaw-mcp-v1").
+ * @param {string} type - Provider type (for example, "openai", "brave", or "nemoclaw-messaging-v1").
  * @param {string} credentialEnv - Environment variable name for the credential.
  * @param {string|null} baseUrl - Optional base URL for the provider endpoint.
  * @param {Record<string, string>} env - Environment variables for the openshell command.

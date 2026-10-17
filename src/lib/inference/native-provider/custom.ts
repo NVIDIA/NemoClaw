@@ -166,7 +166,6 @@ export function boundCustomNativeProfile(
       port: Number(endpoint.port || (endpoint.protocol === "https:" ? 443 : 80)),
       ...(expected.allowedIps ? { allowed_ips: expected.allowedIps } : {}),
       protocol: "rest",
-      ...(endpoint.protocol === "https:" ? { tls: "terminate" } : {}),
       enforcement: "enforce",
       rules: [
         { allow: { method: "GET", path: `${apiPrefix}/models` } },

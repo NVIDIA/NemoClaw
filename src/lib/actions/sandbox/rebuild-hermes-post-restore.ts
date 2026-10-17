@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+import type { SandboxEntry } from "../../state/registry/types";
+import { observeSandboxOnGateway } from "../../onboard/sandbox-recreate-probe";
+import { createRegisteredSandboxIdentityRevalidation } from "../../onboard/sandbox-recreate-transaction";
+import { initializeExternalHermesInferenceRoute } from "../../onboard/machine/handlers/initial-hermes-inference-route";
 import { CLI_NAME } from "../../cli/branding";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime";
 import { fingerprintOpenShellSandboxLiveIdentity } from "../../adapters/openshell/sandbox-identity";
@@ -9,7 +14,6 @@ import {
   createInitialHermesInferenceRoute,
   type InitialHermesInferenceRouteDeps,
 } from "../../onboard/hermes/initial-inference-route";
-import { createRegisteredSandboxIdentityRevalidation } from "../../onboard/sandbox-recreate-transaction";
 import { isDirectSandboxFallbackUnavailableError } from "../../sandbox/privileged-exec";
 import type { GatewayRestartResult } from "./gateway-restart";
 import {
@@ -748,6 +752,39 @@ export async function runHermesCronRestoreTransaction<T extends { restoreSucceed
   }
   validateHermesCronRestore(sandboxName, identity);
   return { result, identity };
+}
+
+export async function restoreExternalHermesInference(
+  entry: SandboxEntry,
+  runtimeSelection: OpenShellRuntimeSelection | undefined,
+  readRegistration: (name: string) => SandboxEntry | null,
+): Promise<void> {
+  const revalidate = createRegisteredSandboxIdentityRevalidation(entry, {
+    readRegistration: readRegistration,
+    observe: (sandboxName, gatewayName) =>
+      observeSandboxOnGateway({ sandboxName, gatewayName }, undefined, runtimeSelection, 15_000),
+  });
+  if (!revalidate || !entry.gatewayName || !entry.provider || !entry.model) {
+    throw new Error(
+      "Restored Hermes inference requires its registered sandbox and route identity.",
+    );
+  }
+  const registered = structuredClone(entry);
+  await initializeExternalHermesInferenceRoute({
+    sandboxName: entry.name,
+    gatewayName: entry.gatewayName,
+    getSandbox: readRegistration,
+    model: entry.model,
+    provider: entry.provider,
+    preferredInferenceApi: entry.preferredInferenceApi ?? null,
+    revalidateSandboxIdentity: (operation) => {
+      revalidate(operation);
+      const current = readRegistration(entry.name);
+      if (!isDeepStrictEqual(current, registered)) {
+        throw new Error("Restored Hermes inference selection changed before configuration write.");
+      }
+    },
+  });
 }
 
 /** Rebind restored native references; the post-restore phase owns the restart. */

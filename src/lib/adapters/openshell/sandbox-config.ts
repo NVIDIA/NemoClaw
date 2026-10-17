@@ -147,8 +147,40 @@ function compactEndpointPorts(endpoint: PolicyDocument, ports: PolicyEndpointJso
   }
 }
 
+const POLICY_ENDPOINT_MODES = {
+  tls: {
+    NETWORK_TLS_MODE_UNSPECIFIED: "",
+    NETWORK_TLS_MODE_SKIP: "skip",
+  },
+  enforcement: {
+    NETWORK_ENFORCEMENT_MODE_UNSPECIFIED: "",
+    NETWORK_ENFORCEMENT_MODE_ENFORCE: "enforce",
+    NETWORK_ENFORCEMENT_MODE_AUDIT: "audit",
+  },
+  access: {
+    NETWORK_ACCESS_PRESET_UNSPECIFIED: "",
+    NETWORK_ACCESS_PRESET_READ_ONLY: "read-only",
+    NETWORK_ACCESS_PRESET_READ_WRITE: "read-write",
+    NETWORK_ACCESS_PRESET_FULL: "full",
+  },
+} as const;
+
+function convertEndpointModes(endpoint: PolicyDocument): void {
+  for (const [field, values] of Object.entries(POLICY_ENDPOINT_MODES)) {
+    const value = endpoint[field];
+    if (value === undefined) continue;
+    if (typeof value !== "string" || !Object.hasOwn(values, value)) {
+      throw new OpenShellReadError("schema");
+    }
+    const authored = (values as Readonly<Record<string, string>>)[value];
+    if (authored === "") delete endpoint[field];
+    else endpoint[field] = authored;
+  }
+}
+
 function convertEndpoint(value: PolicyEndpointJson): PolicyDocument {
   const endpoint: PolicyDocument = { ...value };
+  convertEndpointModes(endpoint);
   const mcp = value.protocol?.toLowerCase() === "mcp";
   const options: NonNullable<PolicyEndpointJson["mcp"]> & { max_body_bytes?: number } = {
     ...value.mcp,
