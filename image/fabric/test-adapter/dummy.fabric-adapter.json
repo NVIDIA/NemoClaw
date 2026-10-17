@@ -3,7 +3,7 @@
   "adapter_id": "org.nemoclaw.dummy",
   "adapter_kind": "python",
   "runner": {
-    "module": "backend"
+    "module": "nemoclaw_test_adapter.adapter"
   },
   "capabilities": {
     "cancellation": false,
@@ -29,10 +29,6 @@
       "reply": {
         "type": "string",
         "description": "Reply to every invocation instead of echoing its message."
-      },
-      "ready": {
-        "type": "boolean",
-        "description": "Whether the ready health check succeeds."
       },
       "fail_start": {
         "type": "boolean",

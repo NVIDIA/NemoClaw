@@ -6,7 +6,9 @@
 The catalog pairs the adapters the image build installed with their descriptors
 from Fabric's own adapter catalog package. Each harness stage declares its
 adapters, their files, and their executables in /opt/nemoclaw/adapters.json;
-Fabric's package supplies the descriptors, unmodified. Run with the interpreter
+Fabric's package supplies the descriptors, unmodified. An adapter Fabric's
+package does not publish, such as NemoClaw's test-only adapter, declares the
+descriptor file its package installed. Run with the interpreter
 that has the matching nemo-fabric-adapter-catalog installed.
 """
 
@@ -29,8 +31,19 @@ def read_adapters(path):
     if not isinstance(declared, dict) or not declared:
         raise ValueError(f"{path} must declare at least one adapter")
     for adapter_id, entry in declared.items():
-        if not adapter_id or not isinstance(entry, dict) or set(entry) != {"files", "binaries"}:
+        if (
+            not adapter_id
+            or not isinstance(entry, dict)
+            or not {"files", "binaries"} <= set(entry) <= {"files", "binaries", "descriptor"}
+        ):
             raise ValueError(f"{path} must give {adapter_id!r} its files and binaries")
+        descriptor = entry.get("descriptor")
+        if descriptor is not None and not (
+            isinstance(descriptor, str)
+            and descriptor.startswith("/")
+            and ".." not in descriptor.split("/")
+        ):
+            raise ValueError(f"{path} must give {adapter_id!r} an absolute descriptor path")
         files, binaries = entry["files"], entry["binaries"]
         if not isinstance(files, list) or not all(
             isinstance(file, str) and file.startswith("/") and ".." not in file.split("/")
@@ -44,11 +57,31 @@ def read_adapters(path):
     return declared
 
 
-def records(adapter_ids):
-    """Return each adapter's descriptor from Fabric's catalog, in ID order."""
+def record(adapter_id, descriptor_path=None):
+    """Return an adapter's descriptor: Fabric's, or the file its package installed."""
+    if descriptor_path is None:
+        return {"descriptor": get_adapter_descriptor(adapter_id), "provenance": PROVENANCE}
+    descriptor = json.loads(Path(descriptor_path).read_text())
+    if descriptor.get("adapter_id") != adapter_id:
+        raise ValueError(f"{descriptor_path} does not describe {adapter_id}")
+    return {
+        "descriptor": descriptor,
+        "provenance": [{"source": "explicit_local", "path": descriptor_path}],
+    }
+
+
+def records(adapters):
+    """Return each adapter's descriptor, in ID order.
+
+    adapters maps adapter IDs to their declarations, or is a list of IDs whose
+    descriptors all come from Fabric's catalog.
+    """
+    declared = (
+        adapters if isinstance(adapters, dict) else {adapter_id: {} for adapter_id in adapters}
+    )
     return [
-        {"descriptor": get_adapter_descriptor(adapter_id), "provenance": PROVENANCE}
-        for adapter_id in sorted(adapter_ids)
+        record(adapter_id, declared[adapter_id].get("descriptor"))
+        for adapter_id in sorted(declared)
     ]
 
 
@@ -64,15 +97,12 @@ def snapshot(revision, source_sha256, adapter_ids):
 
 
 def installed(revision, source_sha256, *, adapters=ADAPTERS, runtime_manifest=RUNTIME_MANIFEST):
-    """Return an image's catalog: its declared adapters, bridge, and runtime."""
+    """Return an image's catalog: its declared adapters and runtime."""
     # Imported here so the bundled snapshot needs only Fabric's catalog package.
-    from backend import HEALTH_CHECKS
-    from bridge_contract import capabilities
     from runtime_metadata import read_runtime
 
     declared = read_adapters(adapters)
     catalog = snapshot(revision, source_sha256, declared)
-    catalog["bridge"] = capabilities(HEALTH_CHECKS)
     catalog["runtime"] = read_runtime(
         runtime_manifest,
         {adapter_id: entry["binaries"] for adapter_id, entry in declared.items()},

@@ -1,6 +1,8 @@
 {
   "schema_version": 1,
-  "command": ["/usr/local/bin/fabric-agent"],
+  "command": [
+    "/opt/fabric/bin/fabric-agent-ctl"
+  ],
   "environment": {
     "ADAPTER_PYTHON": "/opt/fabric/bin/python",
     "HOME": "/sandbox",
@@ -12,16 +14,39 @@
     "PYTHONDONTWRITEBYTECODE": "1",
     "PATH": "/opt/fabric/bin:/usr/local/bin:/usr/bin:/bin"
   },
-  "required_paths": ["/opt/fabric", "/opt/nemoclaw"],
+  "required_paths": [
+    "/opt/fabric"
+  ],
   "policy": {
     "version": 1,
     "filesystem_policy": {
-      "read_only": ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/app", "/opt", "/proc"],
-      "read_write": ["/sandbox", "/tmp", "/dev/null", "/dev/urandom", "/home/node"],
+      "read_only": [
+        "/usr",
+        "/bin",
+        "/sbin",
+        "/lib",
+        "/lib64",
+        "/etc",
+        "/app",
+        "/opt",
+        "/proc"
+      ],
+      "read_write": [
+        "/sandbox",
+        "/tmp",
+        "/dev/null",
+        "/dev/urandom",
+        "/home/node"
+      ],
       "include_workdir": false
     },
-    "landlock": {"compatibility": "best_effort"},
-    "process": {"run_as_user": "10001", "run_as_group": "10001"},
+    "landlock": {
+      "compatibility": "best_effort"
+    },
+    "process": {
+      "run_as_user": "10001",
+      "run_as_group": "10001"
+    },
     "network_policies": {}
   }
 }

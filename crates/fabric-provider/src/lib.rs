@@ -4,7 +4,6 @@
 //! sandboxes, reached through the sandbox's Fabric host.
 
 mod agent;
-mod agent_readiness;
 mod bridge;
 mod capabilities;
 mod configuration;
@@ -15,8 +14,7 @@ mod fixture;
 mod provider;
 
 pub use agent::{AgentBackend, definitions};
-pub use agent_readiness::{AgentReadinessDataSource, AgentReadinessState};
-pub use bridge::{AgentBridge, AgentSnapshot};
+pub use bridge::AgentBridge;
 pub use capabilities::{
     FabricCapabilitiesDataSource, FabricCapabilitiesState, FabricHarnessDataSource,
     FabricHarnessState, HARNESS_TYPE,

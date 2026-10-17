@@ -8,7 +8,6 @@ fn catalog() -> FabricCatalog {
         schema_version: 2,
         fabric_revision: FabricCatalog::bundled().fabric_revision,
         source_sha256: "b".repeat(64),
-        bridge: None,
         targets: Vec::new(),
         adapters: vec![FabricAdapter {
             provenance: json!([{"source":"explicit_local","path":"/image/fixture.fabric-adapter.json","root":"/image"}]),
@@ -126,8 +125,10 @@ fn explicit_filesystem_policy_must_allow_the_image_runtime_directory() {
     );
 }
 
+/// Images run Fabric's own `fabric-agent-ctl`, which reports interface
+/// mismatches itself, so compatibility needs no bridge record.
 #[test]
-fn image_compatibility_requires_a_matching_bridge_contract() {
+fn image_compatibility_needs_no_bridge_record() {
     use nemoclaw_sdk::fabric_capabilities::{
         FabricRequirements, ImageMetadata, Support, assess_image,
     };
@@ -140,34 +141,11 @@ fn image_compatibility_requires_a_matching_bridge_contract() {
         configuration: config(),
         filesystem_read: None,
     };
-    let bridge = json!({
-        "interface_version": 1,
-        "operations": ["validate", "prepare", "configure", "check", "invoke", "serve"],
-        "health_checks": []
-    });
-    let mut raw = serde_json::to_value(catalog()).unwrap();
-    let status = |raw: &serde_json::Value| {
-        let catalog = FabricCatalog::from_json(&raw.to_string()).unwrap();
-        assess_image(Some(&catalog), &request, &image, &reference, None, None).status
-    };
-    assert_eq!(status(&raw), Support::Unknown);
-    raw["bridge"] = bridge.clone();
-    assert_eq!(status(&raw), Support::Supported);
-    // Interface version 1 is one exact shape; images built for another are rebuilt.
-    raw["bridge"]["input_sources"] = json!(["file", "stdin"]);
-    assert!(FabricCatalog::from_json(&raw.to_string()).is_err());
-    raw["bridge"] = bridge.clone();
-    raw["bridge"]["interface_version"] = 2.into();
-    assert_eq!(status(&raw), Support::Unknown);
-    raw["bridge"] = bridge.clone();
-    raw["bridge"]["operations"] = json!(["configure", "check"]);
-    assert_eq!(status(&raw), Support::Unknown);
-    raw["bridge"] = bridge.clone();
-    raw["bridge"]["health_checks"] = json!(["ready"]);
-    assert_eq!(status(&raw), Support::Unknown);
-    raw["bridge"] = bridge;
-    raw["bridge"]["health_checks"] = json!(["live", "active", "ready"]);
-    assert_eq!(status(&raw), Support::Supported);
+    let catalog = catalog();
+    assert_eq!(
+        assess_image(Some(&catalog), &request, &image, &reference, None, None).status,
+        Support::Supported
+    );
 }
 
 #[test]

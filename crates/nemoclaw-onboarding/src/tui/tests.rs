@@ -846,7 +846,7 @@ fn missing_catalog_key_does_not_occupy_the_error_slot_or_hide_engine_failures() 
     use nemoclaw_sdk::{
         discovery::{FabricObservation, ObservationStatus, plan_queries},
         fabric_capabilities::{CompatibilityReport, ImageMetadata, Support},
-        fabric_catalog::{BridgeCapabilities, FabricCatalog},
+        fabric_catalog::FabricCatalog,
         inference_discovery::AuthenticationStatus,
     };
     let capabilities = Capabilities::available();
@@ -874,22 +874,7 @@ fn missing_catalog_key_does_not_occupy_the_error_slot_or_hide_engine_failures() 
         .clone();
     let mut wizard = JourneyWizard::new(capabilities, state);
     wizard.started = true;
-    let mut catalog = FabricCatalog::bundled();
-    catalog.bridge = Some(BridgeCapabilities {
-        interface_version: 1,
-        operations: [
-            "validate",
-            "prepare",
-            "configure",
-            "check",
-            "invoke",
-            "serve",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect(),
-        health_checks: Vec::new(),
-    });
+    let catalog = FabricCatalog::bundled();
     let engine_query = plan_queries(&document)
         .unwrap()
         .into_iter()

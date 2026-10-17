@@ -40,7 +40,6 @@ pub mod backend;
 pub mod compile;
 pub mod config;
 pub use nemoclaw_backend::{EnvironmentSecrets, Secrets};
-pub use nemoclaw_backend::{RuntimeHealth, SandboxHealth};
 pub use nemoclaw_tofu::shape as hcl_schema;
 mod gateway_observation;
 #[doc(hidden)]

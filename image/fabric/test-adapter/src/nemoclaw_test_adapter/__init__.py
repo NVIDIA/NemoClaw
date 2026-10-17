@@ -1,4 +1,3 @@
-#!/bin/sh
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-exec /opt/fabric/bin/python /opt/nemoclaw/fabric.py "$@"
+"""NemoClaw's test-only Fabric adapter."""

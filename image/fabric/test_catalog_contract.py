@@ -24,11 +24,13 @@ class CatalogContract(unittest.TestCase):
         executable.chmod(0o755)
         (self.root / "bun").symlink_to(executable)
         self.executable = executable
-        bridge = self.root / "bridge.py"
-        bridge.write_text("# runtime bridge\n")
+        # A stand-in for fabric-agent-ctl: a console script for this interpreter.
+        ctl = self.root / "fabric-agent-ctl"
+        ctl.write_text(f"#!{sys.executable}\n")
+        ctl.chmod(0o755)
         self.layout = {
             "schema_version": 1,
-            "command": [sys.executable, str(bridge)],
+            "command": [str(ctl)],
             "environment": {"PATH": str(self.root), "ADAPTER_PYTHON": sys.executable},
             "required_paths": [str(self.root)],
             "policy": {
@@ -63,10 +65,6 @@ class CatalogContract(unittest.TestCase):
         )
         self.assertEqual(catalog["targets"], [])
         self.assertEqual(catalog["runtime_files"], {ADAPTER_ID: ["/opt/runtime"]})
-        self.assertEqual(
-            catalog["bridge"]["operations"],
-            ["validate", "prepare", "configure", "check", "invoke", "serve"],
-        )
         self.assertEqual(catalog["runtime"]["command"], self.layout["command"])
         self.assertEqual(catalog["runtime"]["policy"], self.layout["policy"])
         self.assertEqual(
@@ -81,12 +79,34 @@ class CatalogContract(unittest.TestCase):
             [ADAPTER_ID, "nvidia.fabric.pi"],
         )
         self.assertEqual(catalog["targets"], [])
-        for field in ("bridge", "runtime", "runtime_files"):
+        for field in ("runtime", "runtime_files"):
             self.assertNotIn(field, catalog)
 
     def test_an_adapter_fabric_does_not_catalog_fails_the_snapshot(self):
         with self.assertRaises(KeyError):
             snapshot("a" * 40, "b" * 64, ["org.fixture.unknown"])
+
+    def test_a_declared_descriptor_file_describes_an_adapter_fabric_does_not_catalog(self):
+        descriptor = {
+            "adapter_id": "org.fixture.local",
+            "contract_version": "fabric.adapter/v1alpha2",
+        }
+        path = self.root / "local.fabric-adapter.json"
+        path.write_text(json.dumps(descriptor))
+        catalog = self.installed(
+            {"org.fixture.local": {"files": [], "binaries": [], "descriptor": str(path)}}
+        )
+        self.assertEqual(
+            catalog["adapters"],
+            [
+                {
+                    "descriptor": descriptor,
+                    "provenance": [{"source": "explicit_local", "path": str(path)}],
+                }
+            ],
+        )
+        with self.assertRaisesRegex(ValueError, "does not describe"):
+            self.installed({ADAPTER_ID: {"files": [], "binaries": [], "descriptor": str(path)}})
 
     def test_an_adapter_without_files_adds_no_runtime_files(self):
         catalog = self.installed({ADAPTER_ID: {"files": [], "binaries": []}})
@@ -103,6 +123,11 @@ class CatalogContract(unittest.TestCase):
             ({ADAPTER_ID: {"files": ["/opt/../etc"], "binaries": []}}, "absolute paths"),
             ({ADAPTER_ID: {"files": {"/opt": True}, "binaries": []}}, "absolute paths"),
             ({ADAPTER_ID: {"files": [], "binaries": ["/usr/bin/bun"]}}, "executable names"),
+            (
+                {ADAPTER_ID: {"files": [], "binaries": [], "descriptor": "local.json"}},
+                "absolute descriptor",
+            ),
+            ({ADAPTER_ID: {"files": [], "binaries": [], "unknown": True}}, "files and binaries"),
         ]:
             with self.subTest(declared=declared), self.assertRaisesRegex(ValueError, message):
                 read_adapters(self.declare(declared))
@@ -125,7 +150,7 @@ class CatalogContract(unittest.TestCase):
         for field, invalid in [
             ("schema_version", True),
             ("command", [str(self.root)]),
-            ("command", ["relative/bridge"]),
+            ("command", ["relative/fabric-agent-ctl"]),
             ("required_paths", [str(self.root / "absent")]),
             ("environment", {"ADAPTER_PYTHON": str(self.root)}),
             ("environment", {"NEMOCLAW_PROVIDER_NAMES": "injected"}),

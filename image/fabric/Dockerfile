@@ -78,10 +78,9 @@ COPY --from=harness-wheels /requirements.txt /opt/nemoclaw/source/requirements.t
 COPY --from=harness-wheels --chmod=0644 /sources/fabric.tar.gz /opt/nemoclaw/source/
 COPY --from=harness-wheels /build /opt/nemoclaw/source/local/
 COPY --from=harness-wheels /provenance.json /opt/nemoclaw/provenance.json
-COPY image/fabric/backend.py image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/bridge_protocol.py image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
-COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent
-ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python
-RUN /opt/fabric/bin/python /opt/nemoclaw/bridge_contract.py > /opt/nemoclaw/bridge.json
+COPY image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
+# Fabric runs Python adapters with this interpreter.
+ENV ADAPTER_PYTHON=/opt/fabric/bin/python
 
 FROM runtime-base AS generic
 ARG ADAPTER_ID
@@ -170,29 +169,24 @@ COPY image/fabric/ /catalog/image/fabric/
 RUN uv pip install --python /opt/fabric/bin/python /wheels/nemo_fabric_runtime-*.whl /wheels/nemo_fabric_adapter_contract-*.whl /wheels/nemo_fabric_adapters_common-*.whl /wheels/nemo_fabric_adapter_catalog-*.whl \
     && uv pip install --python /opt/fabric/bin/python PyYAML==6.0.3
 COPY image/fabric/ /tests/
-ENV ADAPTER_PYTHON=/opt/fabric/bin/python
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'
 
-# A small executable specification with no native agent or model dependencies.
-FROM ${PYTHON_IMAGE} AS dummy
-RUN groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
-    && python3 -m venv --without-pip /opt/fabric \
-    && install -d -m 0755 -o 10001 -g 10001 /sandbox /sandbox/tmp
-ARG FABRIC_REVISION
-ARG FABRIC_SHA256
-COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/bridge_protocol.py image/fabric/runtime.json image/fabric/runtime_metadata.py image/fabric/dummy_catalog.py image/fabric/dummy.fabric-adapter.json /opt/nemoclaw/
-COPY image/fabric/dummy_backend.py /opt/nemoclaw/backend.py
-COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent
-ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python PYTHONDONTWRITEBYTECODE=1 HOME=/sandbox
-RUN /opt/fabric/bin/python /opt/nemoclaw/bridge_contract.py > /opt/nemoclaw/bridge.json \
-    && /opt/fabric/bin/python -c 'import json, os; print(json.dumps({"fabric_revision": os.environ["FABRIC_REVISION"], "source_sha256": os.environ["FABRIC_SHA256"]}))' > /opt/nemoclaw/contract.json
+# NemoClaw's test-only adapter, packaged and installed like Fabric's own.
+FROM harness-wheels AS dummy-wheels
+COPY image/fabric/test-adapter /src/test-adapter
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv build --python /usr/local/bin/python3 --wheel --out-dir /test-wheels /src/test-adapter \
+    && uv pip install --python /opt/fabric/bin/python --no-deps /test-wheels/*.whl
+
+# The reference agent: Fabric's runtime and fabric-agent-ctl, with only
+# NemoClaw's test adapter, which needs no model or native harness.
+FROM runtime-base AS dummy
+COPY --from=dummy-wheels /opt/fabric /opt/fabric
+RUN printf '%s\n' '{"org.nemoclaw.dummy": {"files": [], "binaries": [], "descriptor": "/opt/fabric/share/nemo-fabric/adapters/nemoclaw-dummy/dummy.fabric-adapter.json"}}' > /opt/nemoclaw/adapters.json
 LABEL io.nemoclaw.fabric.reference="dummy"
 USER node
-HEALTHCHECK NONE
-ENTRYPOINT ["/usr/local/bin/fabric-agent"]
-CMD ["serve", "--agent", "main"]
 
 FROM dummy AS reference-tests
-COPY image/fabric/test_reference.py image/fabric/test_protocol.py image/fabric/test_dummy_catalog.py image/fabric/dummy_backend.py /tests/
+COPY image/fabric/test_reference.py /tests/
 ENV NEMOCLAW_REFERENCE_TESTS=1
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'

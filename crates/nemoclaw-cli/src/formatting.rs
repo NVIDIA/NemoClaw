@@ -222,7 +222,6 @@ pub(crate) fn resource_label(address: &str) -> String {
                 ),
                 ("docker_volume.inference_storage_inference_", "model cache/"),
                 ("openshell_sandbox.", "sandbox/"),
-                ("data.fabric_agent_readiness.", "sandbox readiness/"),
                 ("openshell_inference.inference_", "provider/"),
                 ("docker_image.", "image binding/"),
             ];
@@ -343,13 +342,6 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             output.push_str(&format!("  {action}  {label}\n"));
             if context.verbose && label != change.resource {
                 output.push_str(&format!("    {}\n", terminal_text(&change.resource)));
-            }
-            if planned
-                && result.discovery.resources.iter().any(|resource| {
-                    resource.address == change.resource && resource.agent_running == Some(false)
-                })
-            {
-                output.push_str("    Agent runtime is not running; apply restarts it.\n");
             }
             if change.resource.starts_with("openshell_sandbox.")
                 && change.actions.iter().any(|action| action == "delete")
@@ -507,18 +499,6 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         for reason in &result.unverified {
             output.push_str(&format!("  {}\n", terminal_text(reason)));
         }
-    }
-    for health in &result.health {
-        let runtime = &health.health;
-        let status = context.output_palette.paint("unsupported", Tone::Warning);
-        output.push_str(&format!(
-            "\nFabric health · sandbox/{}: {status}",
-            terminal_text(&health.sandbox)
-        ));
-        if let Some(reason) = &runtime.reason_code {
-            output.push_str(&format!(" ({})", terminal_text(reason)));
-        }
-        output.push('\n');
     }
     if planned {
         output.push_str("\nNo runtime resources changed.\n");
@@ -794,7 +774,7 @@ mod tests {
         ], "resourceSources": {
             "openshell_inference.inference_local-1234":{"name":"responses", "path":"spec.sandboxes[host].inferenceProviders[responses]"}
         }, "deferred":["Gateway is required"], "discovery":{"resources":[
-            {"address":"fabric_agent.host", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":true, "retained":false, "reusePlanned":false, "agentRunning":false},
+            {"address":"fabric_agent.host", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":true, "retained":false, "reusePlanned":false},
             {"address":"openshell_inference.inference_local-1234", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":false, "retained":false, "reusePlanned":false},
             {"address":"docker_container.managed_gateway_runtime", "scope":"runtime", "existed":true, "plannedActions":["no-op"], "drifted":true, "retained":false, "reusePlanned":false}
         ]}});
@@ -806,7 +786,6 @@ mod tests {
             "inference credentials/tiny",
             "ollama proxy/local",
             "proxy credentials/local",
-            "Agent runtime is not running; apply restarts it.",
             "Resources: 3 established (1 unchanged, 2 with planned changes); 0 new.",
             "Refresh differences: 2 resources; may include computed metadata.",
         ] {
@@ -825,7 +804,6 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(json["resourceSources"], result["resourceSources"]);
-        assert_eq!(json["discovery"]["resources"][0]["agentRunning"], false);
     }
 
     #[test]
@@ -972,13 +950,11 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_health_is_not_healthy_and_json_keeps_sdk_facts() {
-        let result = json!({"outcome":"succeeded","changes":[],"health":[{"sandbox":"assistant","agents":[],"supported":false,"report":null,"reason_code":"fabric_health_unsupported"}]});
+    fn a_completed_apply_does_not_claim_responses_and_json_keeps_sdk_facts() {
+        let result = json!({"outcome":"succeeded","changes":[]});
         let text = render(&["nemoclaw", "apply", "spark.yaml"], result.clone());
         assert!(text.contains("Apply complete"));
-        assert!(text.contains("unsupported"));
         assert!(text.contains("responses were not tested"));
-        assert!(!text.contains("readiness confirmed"));
         let json: Value = serde_json::from_str(&render(
             &["nemoclaw", "apply", "spark.yaml", "-o", "json"],
             result.clone(),

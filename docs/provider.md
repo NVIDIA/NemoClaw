@@ -6,7 +6,7 @@
 The native bundle includes the NemoClaw, OpenShell, Fabric, Docker, and Helm OpenTofu providers.
 The SDK compiles desired-state YAML into resource graphs and runs bundled OpenTofu.
 OpenShell manages workspaces, provider registrations and profiles, and sandboxes through a gateway's API.
-Fabric configures the Fabric host in each agent sandbox and waits for its runtime, through the same gateway.
+Fabric starts and stops the one agent runtime in each sandbox through Fabric's `fabric-agent-ctl`, through the same gateway.
 Docker manages disposable service compute and Docker gateway processes; Helm installs the managed Kubernetes gateway chart; OpenShell installs Podman gateway processes, Kubernetes gateway prerequisites, initialization, and retained gateway bridges; NemoClaw manages durable data bindings for inference services.
 Use [the SDK](sdk.md) or [CLI](reference/cli.md) for the documented deployment workflow.
 
@@ -290,17 +290,16 @@ The storage volume, bridge network, and initialization labels derive from `name`
 | Type | Manages or observes |
 |---|---|
 | `fabric_agent` | The [agent a sandbox launches](#fabric-agents) and its Fabric configuration |
-| `fabric_agent_readiness` data source | [Sandbox completion](#sandbox-completion) |
 | `fabric_harnesses` data source | [Fabric image catalog and compatibility](#engine-and-fabric-discovery) |
 | `fabric_harness` data source | One harness in an image, selected by `adapter_id`: the `launch_json` that starts it for `agent_name`, and a `ref` naming the harness (`type`, `adapter_id`, `image`, and `catalog_json`, the image catalog's records for the adapter); fails when the image installs no runtime for the adapter |
 
-The `fabric` provider also takes only `destroy`; `fabric_agent` and `fabric_agent_readiness` take the same `gateway` ref as the sandbox they configure.
+The `fabric` provider also takes only `destroy`; `fabric_agent` takes the same `gateway` ref as the sandbox it starts.
 It also accepts `destroy`, but no Fabric type requires it: removing an agent stops it and leaves its sandbox.
-It reaches each sandbox's Fabric host by running commands in the sandbox through the gateway; `fabric_harnesses` instead reads the container engine named on it.
+It runs Fabric's `fabric-agent-ctl` in each sandbox through the gateway; `fabric_harnesses` instead reads the container engine named on it.
 
 #### Fabric Agents
 
-`fabric_agent` configures the agent a sandbox launches.
+`fabric_agent` starts the agent in a sandbox, through the `fabric-agent-ctl serve` process the sandbox runs.
 It takes the sandbox as `sandbox = openshell_sandbox.<name>.ref`, the harness that sandbox launches as `harness = data.fabric_harness.<name>.ref`, and `gateway`.
 `name` is the agent's name, Fabric's `metadata.name`, and optional `description` is `metadata.description`.
 `settings` is the harness's `harness.settings`.
@@ -335,7 +334,7 @@ resource "fabric_agent" "travel" {
 ```
 
 Planning rejects a configuration Fabric cannot parse, naming the field but not its value.
-Whether the harness accepts a configuration is Fabric's to decide, inside the sandbox when the agent is configured: Pi, for example, replaces system instructions and cannot append to them, so asking it to append fails during apply ([#13319](https://github.com/NVIDIA/NemoClaw/issues/13319)).
+Whether the harness accepts a configuration is Fabric's to decide, inside the sandbox when the agent starts: Pi, for example, replaces system instructions and cannot append to them, so asking it to append fails during apply ([#13319](https://github.com/NVIDIA/NemoClaw/issues/13319)).
 Once the sandbox is known, planning refuses a `name` or harness other than the agent and harness the sandbox launches.
 Any change replaces the agent, and a changed agent needs a new sandbox, so planning refuses to replace an agent while its sandbox stays the same.
 Replace the sandbox with the agent through a `terraform_data` holding the agent's configuration, as generated graphs do:
@@ -355,12 +354,24 @@ resource "openshell_sandbox" "assistant" {
 
 Triggering on the `fabric_agent` itself would be a cycle, because the agent refers to its sandbox.
 Keep the input to values known while planning: a value known only during apply, such as a read postponed to apply, replaces the sandbox on every apply.
-Fabric reports no applied configuration, so a configuration changed inside the sandbox outside OpenTofu is not reported as drift.
 Replacing a sandbox deletes its files and conversation history; keep data that must survive on a [mounted volume](agents.md#skills-on-a-mounted-volume).
-Removing the resource stops the agent, as removing an attachment does: Fabric stops its runtime through the host's `prepare` operation and the host forgets the configuration, while the sandbox stays.
-If the sandbox is already gone, removal succeeds; if stopping fails, the binding is kept so the next apply or destroy retries.
 
-`fabric_agent` exports a `ref` with its sandbox's `workspace`, `sandbox` name, `sandbox_id`, `owner`, and `generation`, its own `name`, and `config_sha256`.
+A Fabric sandbox runs one agent runtime in its lifetime.
+Once its agent stops, or a start fails or loses its reply, the sandbox cannot start another, and creating the agent there again fails with guidance to replace the sandbox: `tofu apply -replace=openshell_sandbox.<name>`.
+Generated graphs need no such step: when a plan would create an agent in a sandbox that already exists, the SDK plans again with that sandbox replaced, and the plan shows it.
+
+Starting an agent waits for its sandbox to be ready and for `fabric-agent-ctl serve` to answer.
+An explicit `Rejected` OpenShell configuration admission stops the wait even while the sandbox is `Starting`.
+The diagnostic names the sandbox and includes only recognized gateway reasons; unknown backend text becomes a fixed repair message.
+See [runtime policy rejection recovery](sandbox-network.md#recover-from-runtime-policy-rejection).
+
+Fabric reports neither the configuration a runtime applied nor whether it is still running ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)).
+So refresh checks only the sandbox: a configuration changed inside the sandbox outside OpenTofu is not reported as drift, and a runtime that stops is found when it is next invoked.
+Removing the resource stops the agent through `fabric-agent-ctl stop`, as removing an attachment does, and the sandbox stays.
+A runtime that already stopped, or a sandbox already gone, counts as removed; if stopping fails, the binding is kept so the next apply or destroy retries.
+
+`fabric_agent` exports `runtime_id`, the ID Fabric gave the runtime, for invoking it with `fabric-agent-ctl invoke --runtime-id`.
+It also exports a `ref` with its sandbox's `workspace`, `sandbox` name, `sandbox_id`, `owner`, and `generation`, its own `name`, and `config_sha256`.
 `config_sha256` is `sha256:<hex>` over the composed document's JSON with object keys sorted; it is known while planning once the agent's inputs are.
 
 ### vLLM and Ollama Types
@@ -628,7 +639,7 @@ Teardown omits the capability gates so a version or driver mismatch alone does n
 
 [OpenShell contract tests](../crates/openshell-provider/tests/contract) exercise the production provider and pinned OpenTofu without SDK orchestration: early planning errors, saved-plan drift, unchanged apply, failed observation, recovery, and teardown.
 [Deployment fixtures](../crates/nemoclaw-e2e/tests/deployment.rs) and [Fabric lifecycle fixtures](../crates/nemoclaw-e2e/tests/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
-Fabric configuration writes are owned by `fabric_agent`; unchanged apply preserves the active runtime handle.
+Starting and stopping agent runtimes is owned by `fabric_agent`; an unchanged apply leaves the running runtime alone.
 Its inputs compose the canonical public Fabric configuration, separate from immutable sandbox identity.
 
 ## vLLM Runtime Contract
@@ -810,35 +821,6 @@ The SDK runs no readiness loop of its own.
 The [standalone readiness fixture](contributing/integration-tests.md#standalone-service-readiness) exercises this contract without SDK deployment orchestration.
 A failed read retains managed bindings, and SDK teardown omits readiness gates.
 See [runtime ownership](design/runtime.md) and [recovery](models.md#diagnose-and-recover-a-stopped-runtime).
-
-## Sandbox Completion
-
-The OpenShell graph uses `fabric_agent_readiness` after sandbox creation and any runtime configuration resource.
-It takes `agent = fabric_agent.<name>.ref` and the same `gateway` ref.
-The agent's ref carries its sandbox's identity, the agent's `name`, and `config_sha256`, the digest of the document its inputs compose.
-The provider checks that the sandbox still has that identity and launches that agent, waits for startup, and confirms the host applied a document with that digest before requesting the packaged bridge's health response.
-It does not invoke an agent or model.
-The optional string `read_trigger` uses `uuid()` in generated graphs, making the read unknown during planning and recording a fresh token on every apply.
-
-Agent configuration and sandbox completion inspect the bound sandbox's OpenShell configuration admission before executing runtime commands.
-An explicit `Rejected` admission stops the startup wait even while the sandbox is `Starting`.
-The diagnostic names the sandbox and includes only recognized gateway reasons; unknown backend text becomes a fixed repair message.
-Passive refresh retains a rejected nonterminal sandbox so apply can repair attached providers, and teardown does not require admission.
-See [runtime policy rejection recovery](sandbox-network.md#recover-from-runtime-policy-rejection).
-
-The data source returns `ready`, nullable `health_json`, and nullable `error_message`.
-Runtime observation failures return `ready: false` with an error message.
-The pinned bridge's explicit unsupported response is retained in `health_json`; unrecognized reports are errors.
-The graph must enforce `ready` with a lifecycle postcondition: a data-source observation alone does not reject an unsuccessful result.
-Failed postconditions retain observations and resource bindings for recovery.
-The SDK reads these values through OpenTofu JSON and includes the unsupported bridge response in successful apply results.
-Failures preserve execution or observation errors without an unverified health payload.
-SDK-generated graphs defer health until apply; export and teardown omit the observation.
-Standalone configurations with known inputs may read during planning unless the trigger defers them.
-Existing sandbox resource refresh still verifies configuration.
-
-The [standalone sandbox fixture](contributing/integration-tests.md#standalone-sandbox-completion) checks this contract through the production provider without SDK deployment orchestration.
-The shared backend compares public Fabric configuration and runtime handle state; fresh native configuration and health remain subject to [Fabric observation limits](design/fabric-management.md#observation-limits).
 
 ## Service Capacity
 

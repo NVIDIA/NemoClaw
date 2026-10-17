@@ -278,17 +278,6 @@ pub fn assess_image(
             checks: vec![check("fabric_catalog", Support::Unknown)],
         },
     };
-    report.checks.push(check(
-        "bridge_interface",
-        if catalog
-            .and_then(|catalog| catalog.bridge.as_ref())
-            .is_some_and(|bridge| bridge.supports_interface())
-        {
-            Support::Supported
-        } else {
-            Support::Unknown
-        },
-    ));
     report
         .checks
         .extend(assess_image_digest(image, reference).checks);

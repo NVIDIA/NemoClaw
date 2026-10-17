@@ -107,7 +107,7 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
             .filter(|command| {
                 command
                     .get(1)
-                    .is_some_and(|arg| matches!(arg.as_str(), "configure" | "prepare" | "invoke"))
+                    .is_some_and(|arg| matches!(arg.as_str(), "start" | "stop" | "invoke"))
             })
             .count()
     };
@@ -163,14 +163,10 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
                 .any(|change| change.resource == "fabric_agent.assistant"
                     && change.actions == ["delete", "create"])
         );
-        assert_eq!(
-            writes(),
-            initial_writes,
-            "plan must not configure {harness}"
-        );
+        assert_eq!(writes(), initial_writes, "plan must not start {harness}");
         let applied = deployment.apply(&changed_model, &cancel).await.unwrap();
         assert_eq!(applied.changes, planned.changes);
-        // The old agent is stopped and the new one configured.
+        // The old agent is stopped and the new one started.
         assert_eq!(writes(), initial_writes + 2);
         assert_ne!(fixture.state.lock().unwrap().sandboxes, sandboxes);
         let _ = effects;
@@ -236,11 +232,11 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
         );
         // Replacing the agent stops the old one first: OpenTofu destroys
         // before it creates, and destroys wait on no gateway check. The
-        // check then blocks configuring the new one.
+        // check then blocks starting the new one.
         assert_eq!(
             writes(),
             initial_writes + 1,
-            "incompatible gateway must block configuring Pi"
+            "incompatible gateway must block starting Pi"
         );
         let _ = before;
         fixture.state.lock().unwrap().driver = None;
@@ -260,9 +256,9 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
         let configured = calls
             .iter()
             .rev()
-            .find(|command| command.get(1).is_some_and(|arg| arg == "configure"))
+            .find(|command| command.get(1).is_some_and(|arg| arg == "start"))
             .unwrap();
-        assert_eq!(configured[0], "/usr/local/bin/fabric-agent");
+        assert_eq!(configured[0], "/opt/fabric/bin/fabric-agent-ctl");
         assert!(configured.iter().any(|arg| arg == "--config"));
         let config = fixture
             .state
@@ -286,7 +282,7 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
         assert_eq!(
             calls
                 .iter()
-                .filter(|command| command.get(1).is_some_and(|arg| arg == "prepare"))
+                .filter(|command| command.get(1).is_some_and(|arg| arg == "stop"))
                 .count(),
             1
         );
@@ -488,18 +484,18 @@ async fn failed_configuration_reports_safe_runtime_state_and_recovers_on_the_nex
         .overrides
         .model = "changed-model".into();
     fixture.state.lock().unwrap().configuration_error = Some(serde_json::json!({
-        "error": {"stage":"start", "code":"lifecycle_adapter_start_failed", "runtime_state":"unavailable", "message":"native-secret-must-not-escape"}
+        "error": {"stage":"start", "code":"start_failed", "message":"native-secret-must-not-escape"}
     }));
     let error = deployment
         .apply(&document, &cancel)
         .await
         .unwrap_err()
         .to_string();
-    assert!(error.contains("lifecycle_adapter_start_failed"), "{error}");
+    assert!(error.contains("start_failed"), "{error}");
     assert!(error.contains("sandbox/assistant"), "{error}");
-    assert!(error.contains("agent runtime is unavailable"), "{error}");
+    assert!(error.contains("agent runtime is unknown"), "{error}");
     assert!(!error.contains("native-secret"), "{error}");
-    // The changed agent was configured in a new sandbox, where it failed.
+    // The changed agent was started in a new sandbox, where it failed.
     let current = || {
         let state = fixture.state.lock().unwrap();
         assert_eq!(state.sandboxes.len(), 1);
@@ -525,17 +521,19 @@ async fn failed_configuration_reports_safe_runtime_state_and_recovers_on_the_nex
             .contains(&replaced)
     );
     let _ = (original, effects);
-    // The next apply configures it again in the same new sandbox.
+    // The failed start may have used that sandbox's one runtime, so the next
+    // apply starts the agent in yet another new sandbox.
     fixture.state.lock().unwrap().configuration_error = None;
     deployment.apply(&document, &cancel).await.unwrap();
-    assert_eq!(current(), replaced);
+    let recovered = current();
+    assert_ne!(recovered, replaced);
     assert!(
-        !fixture
+        fixture
             .state
             .lock()
             .unwrap()
-            .fabric_stopped
-            .contains(&replaced)
+            .fabric_configurations
+            .contains_key(&recovered)
     );
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     deployment.destroy(&cancel).await.unwrap();

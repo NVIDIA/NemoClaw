@@ -55,7 +55,7 @@ jobs:
         if: needs.plan.outputs.images == 'true'
         run: |
           cargo images build --platform "$AGENT_PLATFORM" dummy
-          cargo images qualify nc-fabric:dummy --lifecycle dummy --require-ready
+          cargo images qualify nc-fabric:dummy --lifecycle dummy
       - name: Check packaging and generic Fabric lifecycle
         if: needs.plan.outputs.images == 'true'
         run: docker buildx bake check

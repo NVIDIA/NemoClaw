@@ -9,7 +9,7 @@ use nemoclaw_sdk::{
         FabricObservation, ObservationStatus, plan_queries,
     },
     fabric_capabilities::{CapabilityCheck, CompatibilityReport, ImageMetadata, Support},
-    fabric_catalog::{BridgeCapabilities, FabricCatalog},
+    fabric_catalog::FabricCatalog,
 };
 
 /// The engine, compute driver, and image a document's target is read through.
@@ -56,25 +56,9 @@ pub fn found_local_engines(
     observations
 }
 
-/// Observed images must advertise the Fabric bridge to be compatible.
+/// The catalog an observed image publishes.
 pub fn installed_catalog() -> FabricCatalog {
-    let mut catalog = FabricCatalog::bundled();
-    catalog.bridge = Some(BridgeCapabilities {
-        interface_version: 1,
-        operations: [
-            "validate",
-            "prepare",
-            "configure",
-            "check",
-            "invoke",
-            "serve",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect(),
-        health_checks: Vec::new(),
-    });
-    catalog
+    FabricCatalog::bundled()
 }
 
 /// An engine that is available and runs the example's ARM64 Linux image.

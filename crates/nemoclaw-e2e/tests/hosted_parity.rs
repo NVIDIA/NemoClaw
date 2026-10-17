@@ -258,7 +258,6 @@ mod live {
             resource_sources: Default::default(),
             unverified: vec![],
             retained: vec![],
-            health: vec![],
             discovery: Default::default(),
         }
     }
@@ -329,10 +328,6 @@ mod live {
         assert_eq!(applied.changes, expected);
         assert!(applied.deferred.is_empty());
         assert!(applied.retained.is_empty());
-        assert_eq!(applied.health.len(), 1);
-        assert_eq!(applied.health[0].sandbox, "assistant");
-        assert_eq!(applied.health[0].agents, ["primary"]);
-        assert!(applied.health[0].health.allows_apply_completion());
     }
 
     async fn destroy(
@@ -352,7 +347,6 @@ mod live {
                 resource_sources: Default::default(),
                 unverified: vec![],
                 retained: retained.clone(),
-                health: vec![],
                 discovery: Default::default(),
             }
         );
@@ -366,7 +360,6 @@ mod live {
                 resource_sources: Default::default(),
                 unverified: vec![],
                 retained: retained.clone(),
-                health: vec![],
                 discovery: Default::default(),
             }
         );
@@ -390,7 +383,6 @@ mod live {
         assert_eq!(plan.outcome, Outcome::Planned);
         assert!(plan.changes.is_empty());
         assert!(plan.retained.is_empty());
-        assert!(plan.health.is_empty());
         assert!(!plan.discovery.resources.is_empty());
         let exported = deployment.export(&cancel).await.unwrap();
         assert_eq!(exported, document);
@@ -439,7 +431,6 @@ mod live {
         assert_eq!(plan.outcome, Outcome::Planned);
         assert!(plan.changes.is_empty());
         assert!(plan.retained.is_empty());
-        assert!(plan.health.is_empty());
         assert!(!plan.discovery.resources.is_empty());
         let unchanged = deployment.apply(&document, &cancel).await.unwrap();
         assert_eq!(unchanged.outcome, Outcome::Succeeded);

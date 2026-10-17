@@ -10,7 +10,6 @@ mod capabilities;
 #[cfg(unix)]
 #[path = "../../../test-support/http.rs"]
 mod http;
-mod readiness;
 
 use nemoclaw_test_fixtures::{Bundle, openshell::Fixture, tofu::TofuWorkspace};
 use serde_json::{Value, json};
@@ -113,11 +112,11 @@ fn every_fabric_type_has_a_contract_test() {
         sources += &fs::read_to_string(entry.unwrap().path()).unwrap();
     }
     sources += include_str!("capabilities.rs");
-    let used: BTreeSet<&str> = ["fabric_agent", "fabric_agent_readiness", "fabric_harnesses"]
+    let used: BTreeSet<&str> = ["fabric_agent", "fabric_harnesses"]
         .into_iter()
         .filter(|kind| sources.contains(&format!("\"{kind}\"")))
         .collect();
-    assert_eq!(used.len(), 3, "types with a contract test: {used:?}");
+    assert_eq!(used.len(), 2, "types with a contract test: {used:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -164,13 +163,13 @@ async fn a_changed_pi_configuration_replaces_the_sandbox() {
             .filter(|command| {
                 command
                     .get(1)
-                    .is_some_and(|arg| arg == "configure" || arg == "prepare")
+                    .is_some_and(|arg| arg == "start" || arg == "stop")
             })
             .count()
     };
     assert_eq!(writes(), 1);
     tofu.noop();
-    assert_eq!(writes(), 1, "no-op must not reconfigure Pi");
+    assert_eq!(writes(), 1, "no-op must not restart Pi");
     let first = sandbox_id(&fixture);
     tofu.run(
         &[
@@ -181,53 +180,16 @@ async fn a_changed_pi_configuration_replaces_the_sandbox() {
         ],
         true,
     );
-    assert_eq!(writes(), 1, "plan must not configure Pi");
+    assert_eq!(writes(), 1, "plan must not start Pi");
     tofu.run(&["apply", "-input=false", "change.plan"], true);
     // The changed agent runs in a new sandbox: Pi is stopped in the old one,
-    // then configured in the new one.
+    // then started in the new one.
     assert_ne!(sandbox_id(&fixture), first);
     assert_eq!(writes(), 3);
     let _ = effects;
-    // A stopped host is observed as drift; explicit apply reconfigures it.
-    let sandbox_id = fixture
-        .state
-        .lock()
-        .unwrap()
-        .sandboxes
-        .values()
-        .next()
-        .unwrap()
-        .metadata
-        .as_ref()
-        .unwrap()
-        .id
-        .clone();
-    fixture
-        .state
-        .lock()
-        .unwrap()
-        .fabric_stopped
-        .insert(sandbox_id.clone());
-    tofu.run(
-        &[
-            "apply",
-            "-auto-approve",
-            "-input=false",
-            "-var=model=second-model",
-        ],
-        true,
-    );
-    assert_eq!(writes(), 4);
-    assert!(
-        !fixture
-            .state
-            .lock()
-            .unwrap()
-            .fabric_stopped
-            .contains(&sandbox_id)
-    );
-    // Lose the exec response after the host accepted a new agent's
-    // configuration. Apply fails without retrying; the agent is left tainted.
+    // Lose the reply to a new agent's start. Apply fails without retrying and
+    // the agent is left tainted. The runtime may have started, so the sandbox
+    // can't start another: replacing the sandbox recovers.
     tofu.run(
         &[
             "plan",
@@ -237,30 +199,28 @@ async fn a_changed_pi_configuration_replaces_the_sandbox() {
         ],
         true,
     );
-    fixture.state.lock().unwrap().lose_configure_reply = true;
+    fixture.state.lock().unwrap().lose_start_reply = true;
     tofu.run(&["apply", "-input=false", "ambiguous.plan"], false);
-    assert_eq!(writes(), 6);
-    assert!(!fixture.state.lock().unwrap().lose_configure_reply);
+    assert_eq!(writes(), 5);
+    assert!(!fixture.state.lock().unwrap().lose_start_reply);
     tofu.run(
         &[
             "apply",
             "-auto-approve",
             "-input=false",
             "-var=model=third-model",
+            "-replace=openshell_sandbox.agent[0]",
         ],
         true,
     );
-    assert_eq!(
-        writes(),
-        7,
-        "the next apply creates the tainted agent again, configuring it once"
-    );
+    assert_eq!(writes(), 6, "the replaced sandbox starts the agent once");
+    // Reading an agent runs nothing in its sandbox, so a reply that would be
+    // cut off cannot fail a plan or change state.
     let prior = tofu.state();
     fixture.state.lock().unwrap().exec_truncated = true;
-    tofu.run(&["plan", "-input=false", "-var=model=second-model"], false);
+    tofu.run(&["plan", "-input=false", "-var=model=third-model"], true);
     assert_eq!(tofu.state(), prior);
-    assert_eq!(writes(), 7);
-    assert!(!fixture.state.lock().unwrap().lose_configure_reply);
+    assert_eq!(writes(), 6);
     fixture.state.lock().unwrap().exec_truncated = false;
     tofu.run(
         &[
@@ -275,8 +235,8 @@ async fn a_changed_pi_configuration_replaces_the_sandbox() {
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
     assert_eq!(
         writes(),
-        8,
-        "destroy stops Pi once before removing its sandbox, and never reconfigures it"
+        7,
+        "destroy stops Pi once before removing its sandbox"
     );
 }
 
@@ -327,9 +287,9 @@ fn sandbox_id(fixture: &Fixture) -> String {
         .clone()
 }
 
-/// Removing an agent stops it and clears its configuration, as removing an
-/// attachment does, and leaves its sandbox. A sandbox that is already gone
-/// took its agent with it.
+/// Removing an agent stops it, as removing an attachment does, and leaves its
+/// sandbox. The sandbox can't start another runtime, so adding the agent back
+/// needs a new sandbox. A sandbox that is already gone took its agent with it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
 async fn removing_an_agent_stops_it_and_keeps_its_sandbox() {
@@ -365,9 +325,22 @@ async fn removing_an_agent_stops_it_and_keeps_its_sandbox() {
         );
         assert_eq!(state.sandboxes.len(), 1, "the sandbox stays");
     }
-    // The sandbox's own provider refuses a vanished stateful sandbox when it
-    // refreshes; skip refresh so the removal itself meets the missing sandbox.
-    tofu.apply();
+    let readded = tofu.run(&["apply", "-auto-approve", "-input=false"], false);
+    assert!(
+        String::from_utf8_lossy(&readded.stderr).contains("replace the sandbox"),
+        "{}",
+        String::from_utf8_lossy(&readded.stderr)
+    );
+    tofu.run(
+        &[
+            "apply",
+            "-auto-approve",
+            "-input=false",
+            "-replace=openshell_sandbox.agent[0]",
+        ],
+        true,
+    );
+    // Skip refresh so the removal itself meets the missing sandbox.
     fixture.state.lock().unwrap().sandboxes.clear();
     tofu.run(&[&remove_agent[..], &["-refresh=false"]].concat(), true);
 }

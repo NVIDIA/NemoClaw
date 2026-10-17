@@ -862,28 +862,7 @@ fn compile_with_plans(
         "condition":"${self.compatible}",
         "error_message":gateway_error_message("self")
     }]});
-    let agent_readiness: BTreeMap<_, _> = document
-        .spec
-        .sandboxes
-        .iter()
-        .map(|sandbox| {
-            // The agent's ref names its sandbox and the document it applied.
-            let readiness = json!({
-                "gateway": gateway.clone(),
-                "agent": format!("${{{}.{}.ref}}", nemoclaw_fabric::agent::RESOURCE_TYPE, sandbox.name),
-                // uuid() is unknown in a saved plan and records a unique observation
-                // token, so failed applies cannot report stale health as a new result.
-                "read_trigger": "${uuid()}",
-                "lifecycle": {"postcondition":[{
-                    "condition":"${self.ready}",
-                    "error_message":"${self.error_message != null ? self.error_message : \"Fabric readiness could not be established; resources retained\"}"
-                }]},
-            });
-            (sandbox.name.clone(), readiness)
-        })
-        .collect();
     graph["resource"] = resources;
-    graph["data"]["fabric_agent_readiness"] = json!(agent_readiness);
     graph["data"]["openshell_gateway"]["apply"] = apply_readiness;
     Ok(graph)
 }

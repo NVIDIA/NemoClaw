@@ -21,9 +21,6 @@ pub struct ResourceInventoryEntry {
     pub planned_actions: Vec<String>,
     /// OpenTofu refresh differences, including computed metadata changes.
     pub drifted: bool,
-    /// Observed pre-apply Fabric runtime status, only for agent configuration resources.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_running: Option<bool>,
     /// The owner's teardown compiler retains this established resource.
     pub retained: bool,
     /// An established resource has an unchanged plan and no reported drift.
@@ -402,15 +399,6 @@ impl Plan {
                 existed,
                 planned_actions: change.change.actions.clone(),
                 drifted,
-                agent_running: change
-                    .address
-                    .starts_with("fabric_agent.")
-                    .then(|| {
-                        change.change.before["running"]
-                            .as_str()
-                            .and_then(|value| value.parse().ok())
-                    })
-                    .flatten(),
                 retained: retained.contains(&change.address),
                 reuse_planned: existed && !drifted && change.change.actions == ["no-op"],
             });

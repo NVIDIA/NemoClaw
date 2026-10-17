@@ -275,7 +275,6 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
         provider,
         sandbox,
         &resources["fabric_agent"]["worker"],
-        &graph["data"]["fabric_agent_readiness"]["worker"],
     ] {
         assert_eq!(
             resource["gateway"]["type"], "openshell_gateway",

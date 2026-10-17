@@ -22,9 +22,6 @@ pub struct FabricCatalog {
     /// That revision's source archive checksum. The reference image records
     /// it without containing the archive.
     pub source_sha256: String,
-    /// Present only when the selected image advertises its bridge contract.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bridge: Option<BridgeCapabilities>,
     pub adapters: Vec<FabricAdapter>,
     #[serde(default)]
     pub targets: Vec<serde_json::Value>,
@@ -36,39 +33,6 @@ pub struct FabricCatalog {
     /// Present only for an installed image, never inferred from the bundled descriptors.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<Box<ImageRuntime>>,
-}
-
-/// Image-owned bridge metadata, separate from Fabric adapter descriptors.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BridgeCapabilities {
-    pub interface_version: u32,
-    pub operations: Vec<String>,
-    pub health_checks: Vec<String>,
-}
-
-impl BridgeCapabilities {
-    pub fn supports_interface(&self) -> bool {
-        let operations = [
-            "validate",
-            "prepare",
-            "configure",
-            "check",
-            "invoke",
-            "serve",
-        ];
-        self.interface_version == 1
-            && self.operations.len() == operations.len()
-            && operations
-                .iter()
-                .all(|operation| self.operations.iter().any(|value| value == operation))
-            && self.health_checks.len() <= 3
-            && self
-                .health_checks
-                .iter()
-                .zip(["live", "active", "ready"])
-                .all(|(actual, expected)| actual == expected)
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -224,7 +188,7 @@ mod tests {
             .collect();
         let runtime = serde_json::json!({
             "schema_version": 1,
-            "command": ["/srv/python3.99", "/srv/bridge.py"],
+            "command": ["/srv/fabric-agent-ctl"],
             "environment": {"ADAPTER_PYTHON":"/srv/python3.99", "PATH":"/srv"},
             "required_paths": ["/srv"],
             "policy": {"version":1,"filesystem_policy":{"read_only":["/srv"],"read_write":["/data"]},"process":{"run_as_user":"1234","run_as_group":"1234"},"network_policies":{}},

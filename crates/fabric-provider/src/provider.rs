@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The `fabric` provider's configuration, resources, and data sources.
 
-use crate::{
-    AgentBackend, AgentReadinessDataSource, FabricCapabilitiesDataSource, FabricHarnessDataSource,
-};
+use crate::{AgentBackend, FabricCapabilitiesDataSource, FabricHarnessDataSource};
 use async_trait::async_trait;
 use nemoclaw_backend::{Backend, Error, Mutation, ObservationError, Row};
 use nemoclaw_tofu::{ResourceAdapter, StructuredAdapter};
@@ -123,11 +121,6 @@ impl Provider for FabricProvider {
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
         Some(HashMap::from([
-            (
-                "agent_readiness".into(),
-                Box::new(AgentReadinessDataSource(self.client.clone()))
-                    as Box<dyn DynamicDataSource>,
-            ),
             (
                 "harnesses".into(),
                 Box::new(FabricCapabilitiesDataSource::default()) as Box<dyn DynamicDataSource>,

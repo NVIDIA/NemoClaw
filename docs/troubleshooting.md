@@ -49,7 +49,7 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | Unfinished destroy | Resume destroy with the same state; other operations refuse unfinished teardown |
 | `adapter/<id> compatibility rejected` | Read the named sandbox and canonical field; for `models.<role>.max_tokens`, remove that route's `overrides.maxTokens` or choose an adapter that accepts it, then plan again |
 | Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](interfaces.md#diagnose-failures); retained public configuration checks do not audit native files or tokens |
-| After a malformed OpenClaw request: `runtime_unavailable`, bridge `runtime_state: unknown`, then `observation is incomplete` | Apply cannot recover the unknown runtime, including through configuration edits; review the [reported failure and whole-deployment replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime), including loss of all sandbox files and history |
+| After a malformed OpenClaw request: `runtime_unavailable` | The runtime is unusable and only a new sandbox recovers it; change the agent's configuration, or follow the [whole-deployment replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime), including loss of sandbox files and history |
 
 For proxy policies, the pinned OpenShell supervisor can add read-only `/var/log` access to the loaded policy.
 NemoClaw accepts that runtime addition while preserving the authored policy; other loaded-policy differences still fail observation.
@@ -99,7 +99,7 @@ For an external Ollama digest mismatch, use [the proxy guide](inference.md#use-e
 | Observation | What it establishes | Next check |
 |---|---|---|
 | Model appears in the endpoint inventory | The service reports that model | Confirm API compatibility and an inference request |
-| Apply succeeds | Declared resources and agent configuration pass readiness checks | Verify inference and a native agent turn through the intended interface |
+| Apply succeeds | Declared resources pass readiness checks and each agent started | Verify inference and a native agent turn through the intended interface |
 | Agent configuration changed inside the sandbox | Not reported: Fabric reports no applied configuration | Change the configuration in the deployment and apply, which replaces the sandbox |
 | Forwarded native service cannot connect | Native service, forwarding, or authentication may be incomplete | Follow [interface diagnosis](interfaces.md#diagnose-failures); keep local forwarding ports consistent |
 | Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect [retained status and logs](models.md#diagnose-and-recover-a-stopped-runtime) and correct capacity/startup conditions before explicit recovery |

@@ -102,7 +102,7 @@ Installed discovery also requires the image-owned runtime manifest and resolves 
 If catalog generation reports a missing runtime manifest, required path, or executable, correct the image recipe before retrying.
 See the [image metadata contract](design/fabric-management.md#image-metadata) before changing the image layout.
 
-Plan requires the selected image's runtime metadata to supply its bridge command, environment, default policy, and executable grants.
+Plan requires the selected image's runtime metadata to supply its `fabric-agent-ctl` command, environment, default policy, and executable grants.
 For an external gateway, also set `spec.gateway.engine` to the engine containing that same immutable sandbox image; NemoClaw does not assume the client host's Docker socket.
 This engine is used only for image inspection and does not authorize managing the external gateway.
 A missing image, missing metadata, or omitted external engine stops planning with a diagnostic; load a matching image or rebuild it, then retry.
@@ -154,22 +154,22 @@ The snapshot holds canonical descriptors and provenance only; it does not change
 
 ### Reference Contract Image
 
-Build the dummy `fabric-agent` image to exercise the provisioning interface without Fabric, a native agent, credentials, or a model.
-It uses the same command host as all ten interim adapter images and supplies a deterministic reference backend.
+Build the dummy image to exercise the provisioning interface with Fabric's real runtime and `fabric-agent-ctl`, but no native agent, credentials, or model.
+It installs NemoClaw's test-only Fabric adapter, a deterministic agent, the way the production images install Fabric's adapters.
 It is a test fixture, excluded from the production `agents` target and the bundled catalog.
-Its image catalog lists one [explicit descriptor](../image/fabric/dummy.fabric-adapter.json), so a deployment can run it by setting `harness.kind: org.nemoclaw.dummy` and the image's immutable reference; the [Docker live suite](contributing/live-tests.md#dummy-agent-lifecycle) deploys it that way.
+Its image catalog lists the adapter's [descriptor](../image/fabric/test-adapter/dummy.fabric-adapter.json), so a deployment can run it by setting `harness.kind: org.nemoclaw.dummy` and the image's immutable reference; the [Docker live suite](contributing/live-tests.md#dummy-agent-lifecycle) deploys it that way.
 On Linux ARM64, run from the repository root:
 
 ```sh
 IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 dummy
-cargo images qualify nc-contract:dummy --lifecycle dummy --require-ready
+cargo images qualify nc-contract:dummy --lifecycle dummy
 ```
 
 Use `linux/amd64` on a native AMD64 host.
 The qualifier uses the inspected image ID and an owned disposable container with networking disabled, a read-only root filesystem, and temporary writable sandbox storage.
 It removes that container on success, failure, or timeout; the built image remains local.
-The suite exercises standalone validation and all six commands, including generation conflicts and readiness failure that preserves the configured runtime.
-The [contract description](design/fabric-management.md#image-contract-and-reference-implementation) defines the dummy's settings and the real adapter backend boundary.
+The suite starts, invokes, and stops one runtime through `fabric-agent-ctl`, and checks that the image refuses a second runtime.
+The [contract description](design/fabric-management.md#image-contract-and-reference-implementation) defines the dummy's settings.
 
 To roll the same interface into all ten production adapter images on a native Linux ARM64 host, run:
 
@@ -189,16 +189,13 @@ cargo images qualify nc-contract:deepagents
 cargo images qualify nc-contract:openclaw --lifecycle openclaw
 ```
 
-The build adds a versioned `io.nemoclaw.fabric.bridge` label to every image, matching `/opt/nemoclaw/bridge.json`.
-Production images additionally retain their Fabric discovery catalog.
+The build adds the `io.nemoclaw.fabric.catalog` label to every image.
 The `--lifecycle` profile selects adapter configuration and invocation input; the lifecycle assertions are shared with the dummy.
 OpenClaw, Hermes, and Pi run their installed native adapters against an owned loopback inference server inside the network-isolated container.
-The suite checks configuration, generation conflicts, unchanged configuration, two native replies, and explicit preparation without bypassing the image's command entrypoint.
-Other production images run command conformance only and report the unselected lifecycle scenario as skipped.
+The suite starts one runtime through `fabric-agent-ctl`, checks a native reply, stops it, and checks that the image refuses a second runtime.
+Other production images report the unselected lifecycle scenario as skipped.
 The dummy selects its lifecycle profile automatically; an explicit profile makes the intended coverage visible in CI.
-Native readiness is a separate test: an image without ready-health support reports that test as skipped, while `--require-ready` makes missing support fail qualification.
-The dummy-only readiness-failure scenario remains separate because its failure controls are not native adapter settings.
-A passing command contract does not establish native readiness: production backends still report unsupported health at the pinned Fabric revision.
+A passing lifecycle does not establish that a runtime stays healthy: Fabric reports no runtime status.
 See [upstream ownership](design/fabric-management.md#upstream-ownership) for the remaining Fabric and OpenShell work.
 
 ## Build a Runtime Image

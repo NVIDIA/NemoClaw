@@ -382,7 +382,6 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
         "create",
     );
     assert!(plan.retained.is_empty());
-    assert!(plan.health.is_empty());
     assert_eq!(docker_inventory(), before_plan, "plan mutated Docker");
 
     let executable = bundle
@@ -418,8 +417,6 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     );
     assert!(applied.deferred.is_empty());
     assert!(applied.retained.is_empty());
-    assert_eq!(applied.health.len(), 1);
-    assert!(applied.health[0].health.allows_apply_completion());
 
     let client = OpenShell::connect(
         &document.spec.gateway.connection(),
@@ -494,7 +491,6 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     assert_changes(&destroy_plan.changes, &removed, "delete");
     assert!(destroy_plan.deferred.is_empty());
     assert_eq!(destroy_plan.retained, retained);
-    assert!(destroy_plan.health.is_empty());
     let destroyed = deployment.destroy(&cancel).await.unwrap();
     assert_eq!(destroyed.outcome, Outcome::Destroyed);
     assert_changes(&destroyed.changes, &removed, "delete");
@@ -506,7 +502,6 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
             String::from("openshell_gateway_storage.runtime"),
         ]
     );
-    assert!(destroyed.health.is_empty());
     fs::write(
         directory.join("brev-proof.json"),
         serde_json::to_vec_pretty(&json!({

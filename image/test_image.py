@@ -9,7 +9,6 @@ import json
 import os
 import platform
 import shutil
-import subprocess
 import sys
 import tarfile
 import tomllib
@@ -44,24 +43,12 @@ def satisfies(version, specifier):
 
 
 class AgentImage(unittest.TestCase):
-    def test_bridge_entrypoint_reports_argument_errors_as_one_json_response(self):
+    def test_runtime_command_is_fabric_agent_ctl(self):
+        # OpenShell launches `fabric-agent-ctl serve`, Fabric's own sandbox bridge.
         command = json.loads(os.environ["NEMOCLAW_TEST_CATALOG"])["runtime"]["command"]
-        self.assertEqual(command, ["/usr/local/bin/fabric-agent"])
+        self.assertEqual(command, ["/opt/fabric/bin/fabric-agent-ctl"])
         self.assertTrue(Path(command[0]).is_file())
         self.assertTrue(os.access(command[0], os.X_OK))
-        result = subprocess.run(
-            [*command, "check", "--agent", "image-contract", "--unknown"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        self.assertEqual(result.returncode, 1)
-        self.assertTrue(result.stdout.endswith("\n"))
-        response = json.loads(result.stdout)
-        self.assertEqual(set(response), {"operation", "status", "changed", "result", "error"})
-        self.assertEqual(response["operation"], "check")
-        self.assertEqual(response["status"], "failed")
-        self.assertEqual(response["error"]["effects"], "none")
 
     def test_shared_python_satisfies_every_pinned_fabric_adapter(self):
 

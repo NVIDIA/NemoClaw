@@ -251,12 +251,7 @@ resource "fabric_agent" "travel" {
   }
 }
 
-data "fabric_agent_readiness" "travel" {
-  gateway      = local.gateway
-  agent        = fabric_agent.travel.ref
-  read_trigger = fabric_agent.travel.id
-}
-
-output "ready" {
-  value = data.fabric_agent_readiness.travel.ready
+# The running agent's ID, for invoking it through fabric-agent-ctl.
+output "runtime_id" {
+  value = fabric_agent.travel.runtime_id
 }

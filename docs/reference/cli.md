@@ -82,15 +82,13 @@ Service readiness scheduled for apply appears under `unverified`, without making
 Failures refreshing managed-resource identity or required gateway observations still return a nonzero exit code.
 Text output partitions established resources into unchanged plans and planned changes, and reports new resources separately.
 Refresh differences have a separate count: they can include computed metadata even when no resource action is planned.
-An observed stopped Fabric runtime has an explicit note that apply restarts it; this is not a model-response or health check.
 Text output also summarizes advertised models and credential-reference availability; `--verbose` adds observation statuses.
 JSON output preserves the full discovery report, including query provenance and separate runtime/deployment resource scopes.
 
-Apply summarizes actual changes and reported Fabric health.
-Unsupported health remains unsupported; a successful operation does not establish working model or agent responses.
+Apply summarizes actual changes; a successful operation does not establish working model or agent responses.
 Destroy distinguishes removed resources from retained storage and warns that retaining the OpenShell workspace does not preserve sandbox files or conversations.
 The retained list describes tracked resources, not every surviving host file or external service.
-See [apply health](../usage.md#fabric-health-during-apply) and [retention](../state.md#deletion-and-retention).
+See [agent runtimes during apply](../usage.md#agent-runtimes-during-apply) and [retention](../state.md#deletion-and-retention).
 
 Progress goes to stderr independently of the result format.
 The default inline Ratatui display uses the normal terminal screen, preserving completed milestones in scrollback.
@@ -129,7 +127,6 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 | `resourceSources` | Authored provider `name` and definition `path`, keyed by opaque scoped resource address; intent metadata, not proof of an established resource; omitted when empty |
 | `unverified` | Apply-time service-readiness checks; does not change `complete`; omitted when empty |
 | `discovery` | Plan query targets, typed observations, credential-reference availability, and resource inventory; see the [SDK report contract](../sdk.md#read-plan-discovery-and-resource-inventory); omitted when empty |
-| `health` | Apply health responses from the packaged Fabric bridge; currently unsupported; omitted for other operations |
 | `retained` | Retained resource addresses reported by the operation; omitted when empty and not an inventory of every surviving file or external service |
 
 Handled operation errors use the selected format: text on stderr, or one JSON result on stdout with `outcome: failed` or `outcome: interrupted`.

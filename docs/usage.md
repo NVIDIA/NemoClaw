@@ -77,27 +77,18 @@ A missing or replaced bound network is a conflict, not permission to recreate it
 Destroy retains that network and gateway storage.
 Removing them from Podman is not covered yet ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 
-## Fabric Health During Apply
+## Agent Runtimes During Apply
 
-Apply requests the packaged bridge's health report after configuration and infrastructure readiness checks, including on unchanged applies.
-It does not invoke agents, send generation requests, repair failures, or replay work.
-Plan and export read host snapshots through `check --live` without requiring passing health.
-Destroy does not run readiness checks.
+Apply starts each new agent through Fabric's `fabric-agent-ctl` in its sandbox, and completes once the runtime has started.
+It does not invoke agents, send generation requests, or replay work.
+Fabric reports no runtime status or health, so neither a plan nor an unchanged apply checks that a started runtime is still running; a runtime that stops is found at its next invocation ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)).
 
-The provider requests `check --ready` through OpenShell.
-The pinned Fabric has no health API, so a production adapter image's bridge returns unsupported with its host snapshot and no health report.
-The SDK records `supported: false`, `report: null`, and `reason_code: fabric_health_unsupported`.
-**Apply fails its health check at this pin**, including on unchanged applies, while preserving completed resource changes, state, and agent files.
-A reachable bridge or remembered runtime handle does not establish agent health.
-Real adapters report health as unsupported until Fabric's health API is pinned ([#13031](https://github.com/NVIDIA/NemoClaw/issues/13031)).
-The [reference dummy image](build.md#reference-contract-image) reports health without Fabric, so apply completes with it; it runs no agent and does not establish a production adapter's health.
-
-Use an [agent image built from this revision](build.md#build-agent-images); an image without matching bridge metadata leaves compatibility unknown.
+Use an [agent image built from this revision](build.md#build-agent-images).
 Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.
 
-Unexpected health reports, transport failures, and malformed responses fail apply and retain resources.
+A failed start, transport failure, or malformed response fails apply and retains resources.
 The CLI exits with status 1 and reports the failure in the selected [output format](reference/cli.md#output-and-failure).
-Keep state, diagnose the failure, and reapply after recovery.
+Keep state, diagnose the failure, and reapply after recovery; see [recovering an interrupted operation](#recover-an-interrupted-operation).
 
 ## Configuration and Credentials
 
@@ -259,8 +250,7 @@ Removing or replacing a sandbox deletes its files and conversation history, and 
 | Remove retained storage or a protected gateway binding | Apply refuses removal; assess a separate deployment and explicit retirement of the original |
 | Change a credential value behind the same environment reference | Unchanged apply does not detect rotation; see [credential lifecycle](security.md#credentials-and-authentication) |
 
-Configuration edits do not recover a runtime whose bridge snapshot reports `runtime_state: unknown`.
-The provider rejects that observation before reconciling agent configuration; see [replacement after an unusable OpenClaw runtime](#replace-workloads-after-an-unusable-openclaw-runtime).
+A runtime that stopped or became unusable recovers only in a new sandbox: changing the agent's configuration replaces it, or see [replacement after an unusable OpenClaw runtime](#replace-workloads-after-an-unusable-openclaw-runtime).
 
 For OpenClaw model and native-setting updates, use an [agent image built from this revision](build.md#build-agent-images).
 Rebuilding the CLI bundle alone does not update the adapter in an existing sandbox image; changing that image replaces the sandbox.
@@ -307,13 +297,11 @@ There is no lost-state adoption, migration, pruning, or purge command.
 After an interrupted apply, keep the original YAML and entire state directory, including `runtime/`, and reapply.
 For records with per-resource recovery evidence, plan, apply, and destroy compare pending creations with saved OpenTofu bindings.
 A saved ID with matching name, workspace, owner, and generation removes that resource from the pending-creation guard; live provider observations and plan checks still verify its identity before mutation.
-A failed agent configuration can use its saved parent sandbox binding because that sandbox owns the runtime and any partial configuration effects.
-For configuration rejected before a lifecycle change, correct the settings and explicitly apply the revised YAML when the sandbox remains available and its launch specification is unchanged.
-With the current bundle and bridge image, configuration failures report a fixed stage, failure code, and agent runtime state without forwarding native error text.
-A failed restart retains the sandbox and its files.
-When Fabric cannot confirm that startup left no processes, the bridge reports `unknown` and refuses another lifecycle change; this protocol does not provide recovery for that state.
-An `unknown` runtime state does not establish that the old process stopped.
-An invocation failure can also leave the runtime `unknown`; apply cannot reach configuration reconciliation while that observation remains incomplete.
+A failed agent start keeps its sandbox binding.
+Start failures report a fixed stage, failure code, and agent runtime state without forwarding native error text.
+A sandbox runs one agent runtime, and a failed start may have used it, so the next apply creates the agent in a new sandbox and deletes the old sandbox's files.
+When Fabric rejected the configuration, correct the settings before reapplying.
+An invocation failure can also leave a runtime unusable; NemoClaw cannot detect that, and an unchanged apply leaves it alone.
 For the operator-reported OpenClaw failure, see [workload replacement](#replace-workloads-after-an-unusable-openclaw-runtime).
 A sandbox in `Error` can still block apply, but its saved identity permits [teardown](#destroy) without a successful reapply.
 Changing a rejected sandbox policy or image does not authorize replacement; follow the [change constraints](#choose-the-change-path).
@@ -354,13 +342,13 @@ Destroy uses native provider compute/cache state and separately verified credent
 
 ### Replace Workloads After an Unusable OpenClaw Runtime
 
-Use this path when an OpenClaw runtime remains `unknown` after an invocation failure and you choose to replace its sandbox.
+Use this path when an OpenClaw runtime is unusable after an invocation failure and you choose to replace its sandbox.
 The [reported malformed-request failure](agents.md#run-one-headless-openclaw-request) required sandbox replacement; the exact inputs that trigger it and recovery inside the existing sandbox remain unqualified ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 The CLI has no targeted sandbox replacement or runtime-reset command.
 Its supported replacement path is whole-deployment destroy followed by reapplying the original configuration.
 
 **Destroy deletes every bound sandbox's files and conversation history, including those of other agents in this deployment.**
-Preserve any native data you need before choosing removal; configuration export does not back it up and can fail while runtime observation is incomplete.
+Preserve any native data you need before choosing removal; configuration export does not back it up.
 Managed model and credential storage remain tracked; that storage does not preserve sandbox files.
 Keep the original YAML, matching bundle, credential references, and entire state directory.
 Do not replace the state directory or change the deployment UID to bypass the failure.
@@ -371,7 +359,7 @@ From the directory containing the original `deployment.yaml`, with the matching 
 nemoclaw plan --destroy --state-dir .local/deployment
 ```
 
-Teardown verifies the parent sandbox's identity without requiring a successful agent-runtime snapshot or health check.
+Teardown verifies the parent sandbox's identity; it does not need the agent runtime to answer.
 It still requires gateway access, matching ownership, and saved bindings for pending creations; if the preview fails, retain state and resolve that error before proceeding.
 After reviewing the whole-deployment removal and accepting its data loss, run:
 
@@ -388,7 +376,7 @@ nemoclaw apply --state-dir .local/deployment deployment.yaml
 ```
 
 This procedure follows the implemented CLI lifecycle; recovery from arbitrary malformed inputs remains unqualified.
-The [Fabric health limitation](#fabric-health-during-apply) still applies after recreation.
+Recreation starts the runtime but does not check that it answers.
 Check the recreated runtime before using the [exact OpenClaw request](agents.md#run-one-headless-openclaw-request); do not replay an invocation whose effects are unknown merely to test recovery.
 
 ### Recover an Interrupted Helm Removal

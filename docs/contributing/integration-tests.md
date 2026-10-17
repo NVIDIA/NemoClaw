@@ -99,8 +99,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p fabric-provider --test contract -- --ignored
 ```
 
-`fabric_agent` applies a Pi agent from `tests/contract/fixtures` to a sandbox: an invalid configuration fails validation at its field without repeating the value, one the harness cannot apply fails at plan, the configuration updates without replacing the sandbox, a stopped host is reconfigured, and a lost reply is not retried.
-`fabric_agent_readiness` reports the configured agent ready, and not ready while its health fails, without writing to the sandbox.
+`fabric_agent` starts a Pi agent from `tests/contract/fixtures` in a sandbox: an invalid configuration fails validation at its field without repeating the value, a changed configuration replaces the sandbox, a lost start reply is not retried and recovers in a replaced sandbox, and removing the agent stops it and keeps its sandbox.
 On Unix, `fabric_harnesses` reads a fake Docker engine's image metadata: a compatible image reports its runtime binaries; another platform, or a read policy without the runtime's paths, is unsupported; a missing image is unknown.
 `every_fabric_type_has_a_contract_test` requires a contract test for every Fabric type.
 
@@ -120,12 +119,12 @@ The fixtures return protocol responses; they do not establish agent inference, n
 
 | Module | Checks |
 |---|---|
-| `deployment` | Configuration lifecycles through the SDK and CLI: shared state, interrupted creation, unchanged apply, readiness failure without replacement, failed observation without state loss, export and reapply, policy and tool drift, web search, credential redaction, startup failure messages, and destroy |
+| `deployment` | Configuration lifecycles through the SDK and CLI: shared state, interrupted creation, unchanged apply, startup failure recovered in a new sandbox, failed observation without state loss, export and reapply, policy and tool drift, web search, credential redaction, startup failure messages, and destroy |
 | `export_observations` | Export through provider refresh without applying, without inference or search credentials, rejection of observed drift without changes to saved state, and a Pi model changed inside the sandbox, which export ignores |
 | `fabric_deployment` | One harness test each for OpenClaw and Pi, where a changed configuration replaces the agent with its sandbox, and missing or failed runtime declarations |
 | `multiple_providers` | Two deployments' provider attachments, export and reapply, drift, and destroy, each scoped to its sandbox |
 | `inference_discovery` | Optional catalog failures that keep complete unchanged plans and report uncertainty |
-| `sandbox_readiness` | Standalone sandbox completion; see [below](#standalone-sandbox-completion) |
+| `fabric_bridge` | The provider's `fabric-agent-ctl` client: the image's own command and environment, input on stdin, and uncertain invocations never replayed |
 | `remote_service` | Services on simulated SSH hosts; see [SSH service fixtures](#ssh-service-fixtures) |
 | `travel_example` | `examples/hcl/travel` applied unchanged as plain HCL from the bundle's provider mirror: Ollama placed from its runtime launch on a simulated SSH engine, endpoint readiness against a fake model server, OpenShell objects and the Pi agent on the fixture gateway, agent readiness, and an unchanged second plan |
 | `helm_recovery` | On Unix, destroy and its recovery against an in-memory Kubernetes API, after failures, a second destroy, and cancellation; see [below](#helm-release-recovery) |
@@ -159,12 +158,6 @@ Each test that makes destroy fail or stop ends by removing the cause, if any, an
 | `helm_recovery::release_record` | A Helm release record with no binding stops destroy before it deletes any issuer object, and apply and export stay refused; destroy finishes once the record is gone |
 | `helm_recovery::destroy_faults` | A second destroy launches no plan or apply; an authentication failure (HTTP 401) before planning, after the saved plan, or after it on the issuer's ConfigMap reads alone stops destroy, keeps the issuer, and lets a retry finish; cancelling at the first refresh returns promptly while the API is unreachable and changes nothing |
 
-### Standalone Sandbox Completion
-
-On Unix, run `cargo test -p nemoclaw-e2e --test integration sandbox_readiness:: -- --ignored` with the bundle set as above; the test runs the bundle's providers.
-It runs the sandbox completion data source through OpenTofu against the local gRPC fixture, without SDK orchestration.
-It checks deferred health reads, failed postconditions with retained observations and bindings, unchanged-apply rechecks, prompt configuration-admission rejection with safe sandbox context, and teardown without readiness.
-
 ### SSH Service Fixtures
 
 Run `cargo test -p nemoclaw-e2e --test integration remote_service:: -- --ignored` with the bundle set as above.
@@ -194,7 +187,7 @@ The [Docker-provider lifecycle fixture](live-tests.md#docker-provider-lifecycle)
 
 The OpenShell and Fabric backends' tests against the fake gateway, in each provider's `src/fake_gateway_tests.rs`, run in the default workspace suite; they include bound exec identity and a deadline for an exec stream that never finishes.
 Launch compatibility runs there too.
-`agent_compatibility` checks passive launch mode, caller identity, harness selection, and default policy restrictions without frozen launch snapshots.
+`agent_compatibility` checks that the launch serves Fabric's bridge without naming an agent, harness selection, and default policy restrictions without frozen launch snapshots.
 The separately scheduled Fabric lifecycle cases and installed-adapter image tests exercise the supported harnesses.
 The `tls` test generates certificates and verifies both trust directions and bearer references through a real TLS connection.
 
@@ -228,15 +221,14 @@ The fixture checks that the supervisor runs independently of the CLI; it does no
 
 ### Fabric Discovery and Execution
 
-The image `unit-tests` stage installs Fabric's `tests/fixtures/discovery` adapter beside the pinned Fabric runtime.
-Its tests package that adapter's installed discovery output and deliver its settings to Fabric's installed runner through the bridge host.
+The image's [reference tests](../../image/fabric/test_reference.py) run NemoClaw's test adapter through Fabric's real `fabric-agent-ctl`.
 The SDK's [compatibility tests](../../crates/nemoclaw-sdk/tests/fabric_compatibility.rs) check an image catalog's adapters, revision and filesystem requirements; NemoClaw doesn't plan adapter settings.
 
 
 ### Inference API Fixtures
 
 Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/5574117feb4be948c1b03f4c36a2fe9a11af910d/tests), alongside the implementation.
-The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging and the generic host separately.
+The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging separately.
 
 
 ### Hermes Relay Tracing Fixture

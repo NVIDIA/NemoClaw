@@ -90,15 +90,17 @@ target "proxy-tests" {
   tags = []
 }
 
-# The reference image has no Fabric dependency or production adapter.
+# The reference image runs Fabric with only NemoClaw's test adapter, no production one.
 target "dummy" {
   inherits = ["_fabric"]
   target = "dummy"
+  args = { HARNESS = "dummy" }
   tags = ["${IMAGE_PREFIX}:dummy"]
 }
 
 target "reference-tests" {
   inherits = ["_fabric"]
   target = "reference-tests"
+  args = { HARNESS = "dummy" }
   output = ["type=cacheonly"]
 }

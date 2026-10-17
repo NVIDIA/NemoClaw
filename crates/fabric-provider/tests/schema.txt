@@ -18,7 +18,7 @@ resource fabric_agent (version 0)
   id: string, computed
   name: string, required
   ref: object({ config_sha256 = string, generation = string, name = string, owner = string, sandbox = string, sandbox_id = string, type = string, workspace = string }), computed
-  running: string, computed
+  runtime_id: string, computed
   sandbox: object({ generation = string, id = string, name = string, owner = string, type = string, workspace = string }), required
   settings: string, optional
   block discovery: optional
@@ -341,14 +341,6 @@ resource fabric_agent (version 0)
       > Workflow-specific construction settings.
     target_id: string, required
       > Registered Adapter Target Descriptor id.
-
-data fabric_agent_readiness (version 0)
-  agent: object({ config_sha256 = string, generation = string, name = string, owner = string, sandbox = string, sandbox_id = string, type = string, workspace = string }), required
-  error_message: string, computed
-  gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
-  health_json: string, computed
-  read_trigger: string, optional
-  ready: bool, computed
 
 data fabric_harness (version 0)
   adapter_id: string, required

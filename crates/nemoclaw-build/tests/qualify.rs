@@ -5,16 +5,8 @@
 use nemoclaw_build::images::{Lifecycle, qualify_arguments};
 use std::path::Path;
 
-fn arguments(lifecycle: Option<Lifecycle>, require_ready: bool) -> Vec<String> {
-    qualify_arguments(
-        Path::new("/repo"),
-        "name",
-        "sha256:image",
-        "{}",
-        "",
-        lifecycle,
-        require_ready,
-    )
+fn arguments(lifecycle: Option<Lifecycle>) -> Vec<String> {
+    qualify_arguments(Path::new("/repo"), "name", "sha256:image", "", lifecycle)
 }
 
 fn environment(arguments: &[String]) -> Vec<&str> {
@@ -27,7 +19,7 @@ fn environment(arguments: &[String]) -> Vec<&str> {
 
 #[test]
 fn without_a_lifecycle_the_contract_runs_offline_and_read_only() {
-    let arguments = arguments(None, false);
+    let arguments = arguments(None);
     for required in ["--network=none", "--read-only", "--runtime=runc"] {
         assert!(
             arguments.iter().any(|argument| argument == required),
@@ -36,7 +28,6 @@ fn without_a_lifecycle_the_contract_runs_offline_and_read_only() {
     }
     let environment = environment(&arguments);
     assert!(environment.contains(&"NEMOCLAW_TEST_LIFECYCLE="));
-    assert!(environment.contains(&"NEMOCLAW_TEST_REQUIRE_READY=0"));
     assert_eq!(arguments.last().map(String::as_str), Some("/test.py"));
 }
 
@@ -44,10 +35,9 @@ fn without_a_lifecycle_the_contract_runs_offline_and_read_only() {
 /// sandbox, so it needs the native helper, a home directory and a test key.
 #[test]
 fn a_lifecycle_profile_gets_the_native_helper_home_and_key() {
-    let arguments = arguments(Some(Lifecycle::Hermes), true);
+    let arguments = arguments(Some(Lifecycle::Hermes));
     let environment = environment(&arguments);
     assert!(environment.contains(&"NEMOCLAW_TEST_LIFECYCLE=hermes"));
-    assert!(environment.contains(&"NEMOCLAW_TEST_REQUIRE_READY=1"));
     assert!(environment.contains(&"HOME=/sandbox"));
     assert!(environment.contains(&"FABRIC_NATIVE_TEST_KEY=fabric-native-key"));
     assert!(

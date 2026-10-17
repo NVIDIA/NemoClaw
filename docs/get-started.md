@@ -113,10 +113,7 @@ Proceed only when the plan is complete and reports no deferred prerequisites; ex
 nemoclaw apply -o json --progress off --state-dir .local/first-deployment/state .local/first-deployment/deployment.yaml
 ```
 
-Apply computes its own checked plan, creates the deployment resources, and checks agent configuration and readiness.
-With the pinned Fabric, apply exits with status 1 at `data.fabric_agent_readiness.assistant` after creating every resource: Fabric has no health API yet, so readiness cannot be established ([#13031](https://github.com/NVIDIA/NemoClaw/issues/13031)).
-Until that is fixed, this revision cannot complete a first deployment.
-Export still works; whether the agent then answers requests has not been verified.
+Apply computes its own checked plan, creates the deployment resources, and starts the agent.
 Apply does not request a model or agent response; verify a native conversation in the next step.
 On failure, keep the YAML, bundle, and state directory and follow [troubleshooting](troubleshooting.md).
 
@@ -135,12 +132,14 @@ See [unchanged apply and recovery](usage.md#updates-and-recovery) before using i
 [Select the gateway and workspace](interfaces.md#select-the-gateway-and-workspace), then send the agent a short prompt from the client host:
 
 ```sh
-openshell sandbox exec -n assistant --no-tty -- fabric-agent invoke --agent assistant --input - <<'JSON'
+RUNTIME_ID=$(jq -r '.resources[] | select(.type == "fabric_agent") | .instances[].attributes | select(.name == "assistant") | .runtime_id' .local/first-deployment/state/terraform.tfstate)
+openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent assistant --runtime-id "$RUNTIME_ID" --input - <<'JSON'
 "Reply with a short greeting."
 JSON
 ```
 
-Verify an agent reply in `result.fabric_result.output`; it tests this endpoint, model, and harness together beyond readiness.
+The first command reads the agent's runtime ID from the deployment's state with `jq`.
+Verify an agent reply in `result.output`; it tests this endpoint, model, and harness together.
 It does not establish general model quality or tool reliability.
 The request may incur inference charges and is added to the agent's conversation history.
 A rehearsed procedure is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).

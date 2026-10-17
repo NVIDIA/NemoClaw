@@ -4,7 +4,6 @@
 #[cfg(test)]
 mod tests;
 
-mod apply;
 mod context_advisory;
 mod export;
 mod opentofu;
@@ -110,8 +109,6 @@ pub struct OperationResult {
     pub unverified: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retained: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub health: Vec<crate::SandboxHealth>,
     #[serde(default, skip_serializing_if = "DiscoveryReport::is_empty")]
     pub discovery: DiscoveryReport,
 }
@@ -125,7 +122,6 @@ impl OperationResult {
             resource_sources: BTreeMap::new(),
             unverified: Vec::new(),
             retained: Vec::new(),
-            health: Vec::new(),
             discovery: DiscoveryReport::default(),
         }
     }
@@ -353,44 +349,12 @@ impl Deployment {
                 store.save(&record)?;
             }
         }
-        if mutations_settled {
-            // Persist known mutation completion before an interruptible health read.
-            record.finish_apply();
-            store.save(&record)?;
-        }
-        let applied = match applied {
-            Err(error) if apply::readiness_failures(&error).is_none() => return Err(error),
-            applied => applied,
-        };
-        let observations = self
-            .sandbox_observations(&bundle, &store, &document, &plan, cancel)
-            .await;
-        let health = match apply::ApplyOutcome::classify(applied, observations) {
-            apply::ApplyOutcome::Unsettled(error) => return Err(error),
-            apply::ApplyOutcome::Settled(health) => health,
-        };
-        if !mutations_settled {
-            record.finish_apply();
-            store.save(&record)?;
-        }
-        result.health = health?;
+        applied?;
+        record.finish_apply();
         record.mark_succeeded();
         store.save(&record)?;
         result.outcome = Outcome::Succeeded;
         Ok(result)
-    }
-    async fn sandbox_observations(
-        &self,
-        bundle: &Bundle,
-        store: &Store,
-        document: &Document,
-        plan: &Plan,
-        cancel: &CancellationToken,
-    ) -> Result<apply::Readiness, Error> {
-        let bytes = self
-            .tofu(bundle, store, document, &["show", "-json"], cancel)
-            .await?;
-        apply::Readiness::decode(document, plan, &bytes)
     }
     async fn state_bindings(
         &self,

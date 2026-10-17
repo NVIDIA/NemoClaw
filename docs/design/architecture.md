@@ -168,12 +168,10 @@ See [provider discovery](../provider.md#engine-and-fabric-discovery) for observa
 
 Native interface, tool-disclosure, and reasoning settings are authored through Fabric's configuration and adapter settings.
 Managed search credentials, endpoint protocols, and network grants remain SDK deployment behavior.
-The reconstructible `fabric_agent` resource applies canonical Fabric configuration after provider routes are established.
-It restarts the Fabric runtime inside its retained sandbox when configuration changes; it does not replace the sandbox.
-A restarted host waits for explicit apply before starting a runtime, because persisted intent does not prove that current gateway routes match.
-The host calls Fabric's public plan/start/invoke/stop APIs.
-The bridge reports health as unsupported for the pinned Fabric revision.
-Native model or agent probes with no Fabric contract remain unavailable.
+The reconstructible `fabric_agent` resource starts the agent's Fabric runtime after provider routes are established.
+A sandbox runs one runtime, so a configuration change replaces the sandbox rather than restarting the runtime inside it.
+Fabric's `fabric-agent-ctl` calls Fabric's public start, invoke, and stop APIs.
+Fabric reports no runtime status or health, and native model or agent probes with no Fabric contract remain unavailable.
 
 Authoring question resolution and the OpenTofu execution graph have different jobs.
 The former chooses questions and reopens dependent answers; the latter schedules provider reads and resource operations for concrete desired state.
@@ -190,7 +188,7 @@ flowchart LR
     Validate[Validate and lock deployment] --> Plan[Plan and check the deployment graph]
     Plan --> Runtime[Apply gateway, inference services, and storage]
     Runtime -->|Gateway and service readiness| Shell[Apply registrations, sandboxes, and agents]
-    Shell -->|Sandbox completion| Done[Record success]
+    Shell -->|Agents started| Done[Record success]
 ```
 
 The SDK checks one saved plan before applying it.
@@ -261,10 +259,8 @@ The [retention reference](../state.md#deletion-and-retention) lists what survive
 
 ## Readiness and Export
 
-Required service and sandbox readiness runs through provider data sources in the graph, including on unchanged applies.
-Sandbox completion checks deployment configuration and runtime startup, then requests the packaged bridge's health response without invoking an agent or model.
-The pinned bridge reports health as unsupported; unrecognized responses fail completion.
-A remembered active handle does not establish fresh native health or native file validation; see [observation limits](fabric-management.md#observation-limits).
+Required service readiness runs through provider data sources in the graph, including on unchanged applies.
+Agent runtimes are started, not probed: Fabric reports no runtime status or health; see [observation limits](fabric-management.md#observation-limits).
 The SDK reports the fresh OpenTofu observations; it does not repeat those probes.
 Only failures proven to be exclusively completion observations can clear the pending-mutation guard.
 Readiness failure retains resource state and persistent data.

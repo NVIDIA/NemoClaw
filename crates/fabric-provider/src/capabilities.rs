@@ -238,7 +238,7 @@ impl DataSource for FabricCapabilitiesDataSource {
                         adapter_id: adapter_id.into(),
                     };
                     config.runtime_json = Value::Value(serde_json::to_string(&binding).ok()?);
-                    // The configured agent's name selects what the bridge serves.
+                    // The agent's name is recorded in the launch for the provider.
                     let agent = requirements.configuration["metadata"]["name"]
                         .as_str()
                         .unwrap_or("");
@@ -523,29 +523,14 @@ mod tests {
     #[tokio::test]
     async fn selected_image_checks_the_adapter_platform_and_missing_metadata_without_starting_containers()
      {
-        use nemoclaw_fabric::catalog::{BridgeCapabilities, FabricCatalog, IMAGE_CATALOG_LABEL};
+        use nemoclaw_fabric::catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
         let mut catalog = FabricCatalog::bundled();
-        catalog.bridge = Some(BridgeCapabilities {
-            interface_version: 1,
-            operations: [
-                "validate",
-                "prepare",
-                "configure",
-                "check",
-                "invoke",
-                "serve",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
-            health_checks: Vec::new(),
-        });
         catalog
             .adapters
             .retain(|adapter| adapter.adapter_id() == "nvidia.fabric.langchain.deepagents");
         let mut runtime: serde_json::Value =
             serde_json::from_str(include_str!("../../../image/fabric/runtime.json")).unwrap();
-        runtime["command"] = serde_json::json!(["/srv/python3.99", "-I", "/srv/bridge.py"]);
+        runtime["command"] = serde_json::json!(["/srv/fabric-agent-ctl"]);
         runtime["binaries"] = serde_json::json!({"nvidia.fabric.langchain.deepagents":["/srv/python3.99","/srv/bun"]});
         catalog.runtime = Some(serde_json::from_value(runtime).unwrap());
         let label = serde_json::to_string(&catalog).unwrap();
@@ -609,7 +594,7 @@ mod tests {
                 .unwrap();
                 assert_eq!(
                     retained.command("status", &[]),
-                    ["/srv/python3.99", "-I", "/srv/bridge.py", "status"]
+                    ["/srv/fabric-agent-ctl", "status"]
                 );
                 assert_eq!(
                     serde_json::from_str::<Vec<String>>(known(&output.binaries_json).unwrap())
@@ -663,30 +648,15 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn a_harness_selects_one_adapter_and_launches_the_named_agent() {
-        use nemoclaw_fabric::catalog::{BridgeCapabilities, FabricCatalog, IMAGE_CATALOG_LABEL};
+        use nemoclaw_fabric::catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
         let mut catalog = FabricCatalog::bundled();
-        catalog.bridge = Some(BridgeCapabilities {
-            interface_version: 1,
-            operations: [
-                "validate",
-                "prepare",
-                "configure",
-                "check",
-                "invoke",
-                "serve",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
-            health_checks: Vec::new(),
-        });
         // The image runtime lists executables for every adapter it installs.
         catalog
             .adapters
             .retain(|adapter| adapter.adapter_id() == "nvidia.fabric.pi");
         let mut runtime: serde_json::Value =
             serde_json::from_str(include_str!("../../../image/fabric/runtime.json")).unwrap();
-        runtime["command"] = serde_json::json!(["/srv/python3.99", "-I", "/srv/bridge.py"]);
+        runtime["command"] = serde_json::json!(["/srv/fabric-agent-ctl"]);
         runtime["binaries"] = serde_json::json!({"nvidia.fabric.pi":["/srv/python3.99","/srv/pi"]});
         catalog.runtime = Some(serde_json::from_value(runtime).unwrap());
         let label = serde_json::to_string(&catalog).unwrap();
@@ -718,17 +688,7 @@ mod tests {
         let launch =
             nemoclaw_openshell::runtime::Launch::from_json(known(&output.launch_json).unwrap())
                 .unwrap();
-        assert_eq!(
-            launch.command,
-            [
-                "/srv/python3.99",
-                "-I",
-                "/srv/bridge.py",
-                "serve",
-                "--agent",
-                "travel"
-            ]
-        );
+        assert_eq!(launch.command, ["/srv/fabric-agent-ctl", "serve"]);
         assert_eq!(launch.binaries, ["/srv/python3.99", "/srv/pi"]);
         let Value::Value(reference) = &output.reference else {
             panic!("the harness has a ref")

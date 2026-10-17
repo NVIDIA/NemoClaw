@@ -1,232 +1,127 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Exercise the reference backend through the same host used by real images."""
+"""Run the dummy reference agent through Fabric's own fabric-agent-ctl.
 
-import asyncio
-import copy
-import io
+The reference image installs NemoClaw's test-only adapter into Fabric. These
+tests start a real fabric-agent-ctl server, as an OpenShell sandbox does, and
+drive it as NemoClaw's provider does. They cover the test adapter and its
+packaging; fabric-agent-ctl's own behavior is Fabric's to test.
+"""
+
 import json
+import os
+import subprocess
 import tempfile
+import time
 import unittest
-from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
 
-import bridge_protocol
-import fabric
-from dummy_backend import Backend
-
-CONFIG = {"metadata": {"name": "main"}, "harness": {"adapter_id": "org.nemoclaw.dummy"}}
+CTL = "/opt/fabric/bin/fabric-agent-ctl"
+AGENT = "main"
 
 
-class ReferenceContract(unittest.IsolatedAsyncioTestCase):
+def config(**settings):
+    harness = {"adapter_id": "org.nemoclaw.dummy"}
+    if settings:
+        harness["settings"] = settings
+    return {
+        "schema_version": "fabric.agent/v1alpha1",
+        "metadata": {"name": AGENT},
+        "harness": harness,
+    }
+
+
+@unittest.skipUnless(os.environ.get("NEMOCLAW_REFERENCE_TESTS"), "runs in the reference image only")
+class ReferenceAgent(unittest.TestCase):
     def setUp(self):
-        self.host = fabric.RuntimeHost("main", backend=Backend())
-
-    async def call(self, operation, **fields):
-        if operation in ("validate", "prepare", "configure"):
-            fields.setdefault("config", copy.deepcopy(CONFIG))
-        if operation in ("prepare", "configure"):
-            fields.setdefault("expected_generation", self.host.generation)
-        return await self.host.handle({"operation": operation, "agent": "main", **fields})
-
-    async def test_validation_needs_neither_fabric_revision_nor_runtime(self):
-        before = self.host.snapshot()
-        response = await self.call("validate")
-        self.assertEqual(response["status"], "succeeded")
-        self.assertTrue(response["result"]["valid"])
-        # The dummy has no Fabric, so no Fabric revision validated anything.
-        self.assertIsNone(response["result"]["fabric_revision"])
-        self.assertEqual(self.host.snapshot(), before)
-        invalid = await self.call(
-            "validate", config={**CONFIG, "harness": {"adapter_id": "absent"}}
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        socket = Path(self.directory.name) / "fabric.sock"
+        self.environment = {**os.environ, "FABRIC_HOST_SOCKET": str(socket)}
+        self.server = subprocess.Popen(
+            [CTL, "serve"],
+            env=self.environment,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
-        self.assertIs(invalid["result"]["valid"], False)
-        self.assertEqual(invalid["error"]["effects"], "none")
+        self.addCleanup(self.stop_server)
+        deadline = time.monotonic() + 30
+        while not socket.exists():
+            if self.server.poll() is not None or time.monotonic() > deadline:
+                self.fail("fabric-agent-ctl serve did not create its socket")
+            time.sleep(0.05)
 
-    async def test_lifecycle_readiness_invocation_and_noops(self):
-        stopped = await self.call("check", level="ready")
-        self.assertEqual(stopped["status"], "failed")
-        self.assertEqual(stopped["result"]["runtime_state"], "stopped")
-        started = await self.call("configure")
-        self.assertEqual(started["status"], "succeeded")
-        for level in ("live", "active", "ready"):
-            checked = await self.call("check", level=level)
-            self.assertEqual(checked["status"], "succeeded")
-            self.assertEqual(checked["result"]["runtime_id"], started["result"]["runtime_id"])
-            self.assertEqual(checked["result"]["health"]["source"], "org.nemoclaw.dummy")
-            self.assertEqual(checked["result"]["health"]["level"], level)
-            self.assertFalse(checked["changed"])
-        same = await self.call("configure")
-        self.assertFalse(same["changed"])
-        self.assertEqual(same["result"], started["result"])
-        invoked = await self.call("invoke", input={"message": "hello"})
-        self.assertEqual(invoked["result"]["fabric_result"]["output"], {"message": "hello"})
-        self.assertIsNone(invoked["changed"])
-        prepared = await self.call("prepare")
-        self.assertTrue(prepared["result"]["prepared"])
-        self.assertIsNone(prepared["result"]["applied_config"])
-        self.assertNotEqual(prepared["result"]["generation"], started["result"]["generation"])
-        self.assertFalse((await self.call("prepare"))["changed"])
-
-    async def test_rejected_and_stale_changes_preserve_the_running_runtime(self):
-        before = (await self.call("configure"))["result"]
-        bad = copy.deepcopy(CONFIG)
-        bad["harness"]["settings"] = {"ready": "PRIVATE"}
-        rejected = await self.call("configure", config=bad)
-        self.assertEqual(rejected["status"], "failed")
-        self.assertFalse(rejected["changed"])
-        self.assertNotIn("PRIVATE", json.dumps(rejected))
-        stale = await self.call("prepare", expected_generation="old")
-        self.assertEqual(stale["error"]["code"], "stale_generation")
-        self.assertEqual(self.host.snapshot(), before)
-
-    async def test_failed_start_advances_generation_and_never_publishes_configuration(self):
-        before = self.host.generation
-        config = copy.deepcopy(CONFIG)
-        config["harness"]["settings"] = {"fail_start": True}
-        failed = await self.call("configure", config=config)
-        self.assertEqual(failed["status"], "failed")
-        self.assertEqual(failed["error"]["effects"], "unknown")
-        self.assertNotEqual(failed["result"]["generation"], before)
-        self.assertIsNone(failed["result"]["applied_config"])
-        self.assertEqual(failed["result"]["runtime_state"], "unknown")
-
-    async def test_failed_health_preserves_configuration_and_never_invokes(self):
-        config = copy.deepcopy(CONFIG)
-        config["harness"]["settings"] = {"ready": False}
-        before = (await self.call("configure", config=config))["result"]
-        self.assertEqual((await self.call("check", level="active"))["status"], "succeeded")
-        failed = await self.call("check", level="ready")
-        self.assertEqual(failed["status"], "failed")
-        self.assertEqual(failed["error"]["code"], "fabric_health_failed")
-        self.assertEqual(self.host.snapshot(), before)
-        self.assertEqual(self.host.runtime.invocations, 0)
-        self.assertEqual((await self.call("check", level="operational"))["status"], "unsupported")
-        self.assertEqual(self.host.runtime.invocations, 0)
-
-    async def test_failed_stop_keeps_association_and_prevents_a_second_runtime(self):
-        config = copy.deepcopy(CONFIG)
-        config["harness"]["settings"] = {"fail_stop": True}
-        before = (await self.call("configure", config=config))["result"]
-        stopped = await self.call("prepare")
-        self.assertEqual(stopped["status"], "failed")
-        self.assertEqual(stopped["result"]["runtime_state"], "unknown")
-        self.assertEqual(stopped["result"]["runtime_id"], before["runtime_id"])
-        self.assertEqual(stopped["result"]["applied_config"], config)
-        self.assertNotEqual(stopped["result"]["generation"], before["generation"])
-        restarted = await self.call("configure")
-        self.assertEqual(restarted["status"], "failed")
-        self.assertEqual(restarted["result"]["runtime_id"], before["runtime_id"])
-        checked = await self.call("check", level="ready")
-        self.assertEqual(checked["status"], "failed")
-        self.assertEqual(checked["result"]["health"]["checks"][0]["status"], "unknown")
-
-    async def test_health_deadline_preserves_snapshot_and_does_not_retry(self):
-        await self.call("configure")
-        calls = []
-
-        async def check(runtime, level):
-            calls.append((runtime, level))
-            await asyncio.Event().wait()
-
-        self.host.backend.check = check
-        before = self.host.snapshot()
-        with patch("fabric.HEALTH_SECONDS", 0.01):
-            result = await asyncio.wait_for(self.call("check", level="ready"), 1)
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error"]["code"], "fabric_health_failed")
-        self.assertEqual(result["result"], {**before, "health": None})
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(self.host.snapshot(), before)
-
-    async def test_health_during_invocation_does_not_wait_for_the_mutation_lock(self):
-        await self.call("configure")
-        runtime = self.host.runtime
-        entered, finish = asyncio.Event(), asyncio.Event()
-        original = runtime.invoke
-
-        async def invoke(**kwargs):
-            entered.set()
-            await finish.wait()
-            return await original(**kwargs)
-
-        runtime.invoke = invoke
-        task = asyncio.create_task(self.call("invoke", input={"message": "hello"}))
+    def stop_server(self):
+        self.server.terminate()
         try:
-            await asyncio.wait_for(entered.wait(), 1)
-            checked = await asyncio.wait_for(self.call("check", level="ready"), 1)
-            self.assertEqual(checked["status"], "succeeded")
-            finish.set()
-            self.assertEqual((await task)["status"], "succeeded")
-        finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            self.server.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.server.kill()
+            self.server.wait()
 
-    async def test_health_cannot_be_associated_with_a_replaced_runtime(self):
-        await self.call("configure")
-        entered, finish = asyncio.Event(), asyncio.Event()
-        original = self.host.backend.check
+    def ctl(self, *arguments, stdin=None):
+        completed = subprocess.run(
+            [CTL, *arguments],
+            env=self.environment,
+            input=json.dumps(stdin).encode() if stdin is not None else None,
+            capture_output=True,
+            timeout=120,
+        )
+        envelope = json.loads(completed.stdout)
+        self.assertEqual(completed.returncode, 0 if envelope["status"] == "succeeded" else 1)
+        return envelope
 
-        async def check(runtime, level):
-            report = await original(runtime, level)
-            entered.set()
-            await finish.wait()
-            return report
+    def start(self, agent_config):
+        return self.ctl("start", "--agent", AGENT, "--config", "-", stdin=agent_config)
 
-        self.host.backend.check = check
-        task = asyncio.create_task(self.call("check", level="ready"))
-        try:
-            await asyncio.wait_for(entered.wait(), 1)
-            await self.call("prepare")
-            finish.set()
-            checked = await task
-            self.assertEqual(checked["status"], "failed")
-            self.assertIsNone(checked["result"]["health"])
-            self.assertEqual(checked["result"]["runtime_state"], "stopped")
-        finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+    def invoke(self, runtime_id, value):
+        return self.ctl(
+            "invoke", "--agent", AGENT, "--runtime-id", runtime_id, "--input", "-", stdin=value
+        )
 
+    def stop(self, runtime_id):
+        return self.ctl("stop", "--agent", AGENT, "--runtime-id", runtime_id)
 
-class StandaloneValidation(unittest.TestCase):
-    def test_invocation_input_is_any_json_value_from_files_and_stdin(self):
-        prompt = {"text": "Hello\n世界"}
-        encoded = json.dumps(prompt).encode()
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "prompt.json"
-            path.write_bytes(encoded)
-            request = bridge_protocol.parse_command(
-                ["invoke", "--agent", "main", "--input", str(path)]
-            )
-            self.assertEqual(request["input"], prompt)
-            with io.TextIOWrapper(io.BytesIO(encoded)) as stream, patch("sys.stdin", stream):
-                request = bridge_protocol.parse_command(
-                    ["invoke", "--agent", "main", "--input", "-"]
-                )
-            self.assertEqual(request["input"], prompt)
-            for value in ("Hello", [], None, 42, True):
-                path.write_text(json.dumps(value))
-                with self.subTest(value=value):
-                    request = bridge_protocol.parse_command(
-                        ["invoke", "--agent", "main", "--input", str(path)]
-                    )
-                    self.assertEqual(request["input"], value)
+    def test_echoes_invocations_until_stopped(self):
+        started = self.start(config())
+        self.assertEqual(started["status"], "succeeded", started["error"])
+        self.assertEqual(started["result"]["adapter_id"], "org.nemoclaw.dummy")
+        runtime_id = started["result"]["runtime_id"]
 
-    def test_validate_does_not_connect_to_a_host_or_start_a_runtime(self):
-        with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / "config.json"
-            config.write_text(json.dumps(CONFIG))
-            output = io.StringIO()
-            with (
-                patch("fabric.load_backend", return_value=Backend()),
-                patch("fabric.client", side_effect=AssertionError("must not connect")),
-                redirect_stdout(output),
-            ):
-                code = fabric.main(["validate", "--agent", "main", "--config", str(config)])
-            self.assertEqual(code, 0)
-            self.assertTrue(json.loads(output.getvalue())["result"]["valid"])
-            self.assertEqual(sorted(p.name for p in Path(directory).iterdir()), ["config.json"])
+        text = self.invoke(runtime_id, "hello")
+        self.assertEqual(text["status"], "succeeded", text["error"])
+        self.assertEqual(text["result"]["status"], "succeeded")
+        self.assertEqual(text["result"]["output"], {"message": "hello"})
+        message = self.invoke(runtime_id, {"message": "again"})
+        self.assertEqual(message["result"]["output"], {"message": "again"})
+        failed = self.invoke(runtime_id, {"fail": True})
+        self.assertEqual(failed["result"]["status"], "failed")
+        self.assertEqual(failed["result"]["error"]["code"], "dummy_invocation_failed")
+
+        self.assertEqual(self.stop(runtime_id)["status"], "succeeded")
+        # One runtime lifecycle per server: a new one needs a new sandbox.
+        self.assertEqual(self.start(config())["error"]["code"], "runtime_exists")
+
+    def test_replies_with_the_configured_text(self):
+        runtime_id = self.start(config(reply="fixed"))["result"]["runtime_id"]
+        self.assertEqual(self.invoke(runtime_id, "hello")["result"]["output"], {"message": "fixed"})
+
+    def test_fabric_validates_settings_against_the_descriptor(self):
+        response = self.start(config(unknown=True))
+        self.assertEqual(response["status"], "failed")
+        self.assertEqual(response["error"]["code"], "validation_failed")
+        self.assertEqual(response["error"]["effects"], "none")
+
+    def test_reports_a_failed_start(self):
+        response = self.start(config(fail_start=True))
+        self.assertEqual(response["status"], "failed")
+        self.assertEqual(response["error"]["code"], "start_failed")
+
+    def test_reports_a_failed_stop(self):
+        runtime_id = self.start(config(fail_stop=True))["result"]["runtime_id"]
+        response = self.stop(runtime_id)
+        self.assertEqual(response["status"], "failed")
+        self.assertEqual(response["error"]["code"], "stop_failed")
 
 
 if __name__ == "__main__":

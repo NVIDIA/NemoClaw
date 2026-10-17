@@ -52,10 +52,6 @@ fn assert_applied(result: &OperationResult, expected_changes: &[Change]) {
     assert_eq!(result.changes, expected_changes);
     assert!(result.deferred.is_empty());
     assert!(result.retained.is_empty());
-    assert_eq!(result.health.len(), 1);
-    assert_eq!(result.health[0].sandbox, "assistant");
-    assert_eq!(result.health[0].agents, ["assistant"]);
-    assert!(result.health[0].health.allows_apply_completion());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -99,7 +95,6 @@ async fn spark_yaml_plans_and_applies_expected_resources() {
     assert_eq!(plan.outcome, Outcome::Planned);
     assert_eq!(plan.changes, expected);
     assert!(plan.retained.is_empty());
-    assert!(plan.health.is_empty());
     assert!(!plan.discovery.resources.is_empty());
 
     let applied = deployment.apply(&document, &cancel).await.unwrap();
@@ -109,7 +104,6 @@ async fn spark_yaml_plans_and_applies_expected_resources() {
     assert_eq!(unchanged.outcome, Outcome::Planned);
     assert!(unchanged.changes.is_empty());
     assert!(unchanged.retained.is_empty());
-    assert!(unchanged.health.is_empty());
     assert!(!unchanged.discovery.resources.is_empty());
     let reapplied = deployment.apply(&document, &cancel).await.unwrap();
     assert_applied(&reapplied, &[]);
@@ -167,7 +161,6 @@ async fn spark_image_change_plans_and_applies_replacement() {
     assert_eq!(plan.outcome, Outcome::Planned);
     assert_eq!(plan.changes, expected_changes);
     assert!(plan.retained.is_empty());
-    assert!(plan.health.is_empty());
     assert!(!plan.discovery.resources.is_empty());
     let applied = deployment.apply(&document, &cancel).await.unwrap();
     assert_applied(&applied, &expected_changes);

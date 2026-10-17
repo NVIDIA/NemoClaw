@@ -39,10 +39,9 @@ pub struct State {
     pub sandbox_conditions: Vec<p::SandboxCondition>,
     pub configuration_admission: Option<p::SandboxConfigurationAdmission>,
     pub exec_exit: i32,
-    pub health_report: Option<serde_json::Value>,
     pub inference_exit: i32,
     pub exec_truncated: bool,
-    pub lose_configure_reply: bool,
+    pub lose_start_reply: bool,
     pub exec_stalled: bool,
     pub exec_calls: Vec<Vec<String>>,
     pub exec_environments: Vec<HashMap<String, String>>,
@@ -52,8 +51,8 @@ pub struct State {
     pub exec_stdin: Vec<Vec<u8>>,
     /// Files present in the fake sandbox for bridge commands that name a path.
     pub sandbox_files: HashMap<String, Vec<u8>>,
-    pub fabric_generations: HashMap<String, usize>,
-    pub host_unavailable_checks: usize,
+    /// Start requests answered as though `serve` were not yet listening.
+    pub host_unavailable_starts: usize,
     pub exec_response: Option<Vec<u8>>,
     pub configuration_error: Option<serde_json::Value>,
     pub effects: usize,
@@ -826,7 +825,8 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
         }
         let sandbox_id = sandbox.metadata.as_ref().unwrap().id.clone();
         let launch = &sandbox.spec.as_ref().unwrap().command;
-        let operation_index = launch.len() - 3;
+        // The launch is `fabric-agent-ctl serve`; operations replace `serve`.
+        let operation_index = launch.len() - 1;
         let is_bridge = request.command.starts_with(&launch[..operation_index]);
 
         if state.exec_stalled {
@@ -848,123 +848,94 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                     .find(|args| args[0] == name)
                     .map(|args| args[1].as_str())
             };
+            let failure = |code: &str, stage: &str, effects: &str| serde_json::json!({"code":code, "stage":stage, "message":"fixture failure", "effects":effects});
+            let runtime_id = format!("fixture-runtime-{sandbox_id}");
+            let running = state.fabric_configurations.contains_key(&sandbox_id)
+                && !state.fabric_stopped.contains(&sandbox_id);
             let mut error = None;
-            let mut changed = false;
-            // Like the image host, read `-` from stdin and any other value as a sandbox file.
-            let config = match flag("--config") {
-                Some("-") => serde_json::from_slice::<serde_json::Value>(&request.stdin).ok(),
-                Some(path) => state
-                    .sandbox_files
-                    .get(path)
-                    .and_then(|payload| serde_json::from_slice(payload).ok()),
-                None => None,
-            };
-            if matches!(operation, "configure" | "prepare") && exit == 0 {
-                if flag("--expected-generation")
-                    != Some(
-                        format!(
-                            "fixture:{}",
+            let mut changed = None;
+            let mut result = serde_json::Value::Null;
+            match operation {
+                // Like fabric-agent-ctl: one runtime lifecycle per sandbox.
+                "start" => {
+                    if state.host_unavailable_starts > 0 {
+                        state.host_unavailable_starts -= 1;
+                        error = Some(failure("host_unavailable", "transport", "none"));
+                    } else if state.fabric_configurations.contains_key(&sandbox_id)
+                        || state.fabric_stopped.contains(&sandbox_id)
+                    {
+                        error = Some(failure("runtime_exists", "start", "none"));
+                    } else if let Some(config) = (flag("--config") == Some("-"))
+                        .then(|| serde_json::from_slice::<serde_json::Value>(&request.stdin).ok())
+                        .flatten()
+                    {
+                        if let Some(rejected) = state.configuration_error.clone() {
+                            let code = rejected["error"]["code"].as_str().unwrap_or("start_failed");
+                            // Fabric rejects an invalid configuration before
+                            // starting anything; any other failed start may
+                            // have consumed the sandbox's one runtime.
+                            let effects = if code.starts_with("validation_") {
+                                "none"
+                            } else {
+                                "unknown"
+                            };
+                            if effects != "none" {
+                                state.fabric_stopped.insert(sandbox_id.clone());
+                            }
+                            error = Some(failure(
+                                code,
+                                rejected["error"]["stage"].as_str().unwrap_or("start"),
+                                effects,
+                            ));
+                        } else {
+                            result = serde_json::json!({
+                                "runtime_id": runtime_id,
+                                "agent_name": flag("--agent"),
+                                "adapter_id": config["harness"]["adapter_id"],
+                            });
                             state
-                                .fabric_generations
-                                .get(&sandbox_id)
-                                .copied()
-                                .unwrap_or_default()
-                        )
-                        .as_str(),
-                    )
-                {
-                    error = Some(
-                        serde_json::json!({"code":"stale_generation", "stage":"generation", "message":"stale generation", "effects":"none"}),
-                    );
-                    exit = 1;
-                } else if let Some(config) = config {
-                    changed = if operation == "prepare" {
-                        state.fabric_configurations.contains_key(&sandbox_id)
-                            && !state.fabric_stopped.contains(&sandbox_id)
+                                .fabric_configurations
+                                .insert(sandbox_id.clone(), config);
+                            changed = Some(true);
+                        }
                     } else {
-                        state.fabric_configurations.get(&sandbox_id) != Some(&config)
-                            || state.fabric_stopped.contains(&sandbox_id)
-                    };
-                    if changed {
-                        *state
-                            .fabric_generations
-                            .entry(sandbox_id.clone())
-                            .or_default() += 1;
+                        error = Some(failure("invalid_request", "request", "none"));
                     }
-                    // An injected error is a configuration the host rejects;
-                    // stopping an agent still succeeds.
-                    let failure = state
-                        .configuration_error
-                        .clone()
-                        .filter(|_| operation == "configure");
-                    let stopped = operation == "prepare" || failure.is_some();
-                    if stopped {
+                }
+                "invoke" => {
+                    if running && flag("--runtime-id") == Some(runtime_id.as_str()) {
+                        let input = serde_json::from_slice::<serde_json::Value>(&request.stdin)
+                            .unwrap_or(serde_json::Value::Null);
+                        result =
+                            serde_json::json!({"status":"succeeded", "output":{"message":input}});
+                    } else {
+                        error = Some(failure("runtime_unavailable", "invoke", "none"));
+                    }
+                }
+                "stop" => {
+                    if running && flag("--runtime-id") == Some(runtime_id.as_str()) {
                         state.fabric_stopped.insert(sandbox_id.clone());
-                    } else {
-                        state.fabric_stopped.remove(&sandbox_id);
-                    }
-                    if let Some(failure) = &failure {
-                        error = Some(
-                            serde_json::json!({"code":failure["error"]["code"], "stage":failure["error"]["stage"], "message":"safe fixture failure", "effects":"applied"}),
-                        );
-                        exit = 1;
-                    } else if operation == "configure" {
-                        state
-                            .fabric_configurations
-                            .insert(sandbox_id.clone(), config);
-                    }
-                    if stopped {
                         state.fabric_configurations.remove(&sandbox_id);
+                        changed = Some(true);
+                    } else {
+                        error = Some(failure("runtime_unavailable", "stop", "none"));
                     }
-                } else {
-                    error = Some(
-                        serde_json::json!({"code":"invalid_file","stage":"request","message":"invalid input","effects":"none"}),
-                    );
-                    exit = 1;
                 }
-            }
-            let model = state.fabric_configurations.get(&sandbox_id);
-            let running = model.is_some() && !state.fabric_stopped.contains(&sandbox_id);
-            let mut result = serde_json::json!({"runtime_id": if running { Some("fixture-runtime") } else { None }, "runtime_state":if running {"running"} else {"stopped"}, "generation":format!("fixture:{}", state.fabric_generations.get(&sandbox_id).copied().unwrap_or_default()), "applied_config":if running { model } else { None }});
-            let mut status = if exit == 0 { "succeeded" } else { "failed" };
-            if operation == "prepare" {
-                result["prepared"] = serde_json::json!(exit == 0 && !running);
-            }
-            if operation == "check" {
-                let health = state.health_report.clone().unwrap_or_else(|| serde_json::json!({"supported":true,"report":{"fixture":true},"reason_code":null}));
-                result["health"] = health["report"].clone();
-                if health["supported"] == false {
-                    status = "unsupported";
-                    exit = 1;
-                    error = Some(
-                        serde_json::json!({"code":"fabric_health_unsupported","stage":"check","message":"health unsupported","effects":"none"}),
-                    );
-                } else if !health["report"].is_object() || !health["reason_code"].is_null() {
-                    status = "failed";
-                    exit = 1;
-                    error = Some(
-                        serde_json::json!({"code":"fabric_health_failed","stage":"check","message":"health failed","effects":"none"}),
-                    );
-                }
-            }
-            if operation == "check" && state.host_unavailable_checks > 0 {
-                state.host_unavailable_checks -= 1;
-                result = serde_json::json!({"runtime_id":null,"runtime_state":"unknown","generation":null,"applied_config":null,"health":null});
-                status = "failed";
-                exit = 1;
-                error = Some(
-                    serde_json::json!({"code":"host_unavailable","stage":"transport","message":"host unavailable","effects":"none"}),
-                );
+                _ => error = Some(failure("invalid_request", "request", "none")),
             }
             if state.exec_exit != 0 {
-                exit = state.exec_exit;
-                status = "failed";
+                error.get_or_insert_with(|| failure("fixture_failed", operation, "unknown"));
+            } else {
+                exit = i32::from(error.is_some());
             }
-            if exit != 0 && error.is_none() {
-                error = Some(
-                    serde_json::json!({"code":"fixture_failed","stage":operation,"message":"fixture failed","effects":"unknown"}),
-                );
+            if error.is_some() {
+                result = serde_json::Value::Null;
             }
+            let status = if error.is_some() {
+                "failed"
+            } else {
+                "succeeded"
+            };
             if state.exec_response.is_none() {
                 let mut bytes = serde_json::to_vec(&serde_json::json!({"operation":operation,"status":status,"changed":changed,"result":result,"error":error})).unwrap();
                 bytes.push(b'\n');
@@ -989,8 +960,8 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                 && request
                     .command
                     .get(operation_index)
-                    .is_some_and(|operation| operation == "configure")
-                && std::mem::take(&mut state.lose_configure_reply));
+                    .is_some_and(|operation| operation == "start")
+                && std::mem::take(&mut state.lose_start_reply));
         state.exec_environments.push(request.environment);
         state.exec_stdin.push(request.stdin);
         state.exec_calls.push(request.command);

@@ -41,9 +41,10 @@ An agent's model choices do not restrict other processes within its sandbox beyo
 ### Run One Deep Agents or Pi Request
 
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
-Inside the sandbox, `fabric-agent invoke --agent NAME --input FILE` reads one JSON value from a file and returns Fabric's result in `result.fabric_result`.
+Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
+`ID` is the agent's `runtime_id`, recorded in the deployment's OpenTofu state; the [OpenClaw example](#run-one-headless-openclaw-request) reads it.
 Use `--input -` to read the value from stdin instead; see the [bridge commands](design/fabric-management.md#bridge-commands).
-The bridge passes the value to Fabric unchanged; the bundled adapters use a string as the prompt and send any other value as its JSON text.
+Fabric receives the value unchanged; the bundled adapters use a string as the prompt and send any other value as its JSON text.
 A request can incur inference charges and affect retained agent history.
 Do not assume a universal result shape.
 No request walkthrough has been rehearsed yet ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
@@ -54,16 +55,17 @@ Headless operation follows the same public Fabric invocation boundary.
 The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
-With a configured runtime, run this from any directory inside the target sandbox when its YAML `agent.name` is `assistant`:
+With a running agent whose YAML `agent.name` is `assistant`, read its runtime ID from the deployment's state directory with `jq`, then send the request from the client host:
 
 ```sh
-fabric-agent invoke --agent assistant --input - <<'JSON'
+RUNTIME_ID=$(jq -r '.resources[] | select(.type == "fabric_agent") | .instances[].attributes | select(.name == "assistant") | .runtime_id' .local/deployment/terraform.tfstate)
+openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent assistant --runtime-id "$RUNTIME_ID" --input - <<'JSON'
 "Reply with exactly READY."
 JSON
 ```
 
 The command's `--agent` selects the deployment's YAML `agent.name`; the input is one JSON value, here the prompt string.
-On success, inspect `result.fabric_result.status` and `result.fabric_result.output.response`; a successful command does not establish general model compatibility.
+On success, inspect `result.status` and `result.output.response`; a successful command does not establish general model compatibility.
 If later invocations fail with `runtime_unavailable`, replace the sandbox using the [CLI replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime).
 Host-side invocation tooling remains follow-up work ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 To reach an agent from the client host, see [agent interfaces](interfaces.md).
@@ -202,10 +204,9 @@ Build the selected agent image with its installed Fabric metadata using the [ima
 Use an immutable image reference available to the sandbox compute daemon.
 Deployment identity and ownership checks protect provider registrations and retained storage.
 
-The runtime host validates public Fabric configuration before starting a runtime.
-Apply calls configure after OpenTofu establishes the required dependencies.
-Configure preserves an unchanged runtime or stops it before starting the replacement; removing `fabric_agent` calls prepare, which stops the runtime and clears the applied configuration.
-OpenTofu retains desired configuration; the host remembers only its active configuration in memory and waits for apply after a host restart.
+Fabric validates public Fabric configuration when the runtime starts.
+Apply starts the agent after OpenTofu establishes the required dependencies.
+A configuration change replaces the agent's sandbox, because a sandbox runs one runtime; removing `fabric_agent` stops the runtime.
 Unchanged configuration does not request inference or restart the runtime.
 The host reports its active runtime identity and remembered public configuration.
 This observation is not a native filesystem audit or proof of successful inference.
