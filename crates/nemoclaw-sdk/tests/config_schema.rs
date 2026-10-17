@@ -415,13 +415,19 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
 }
 
 #[test]
-fn example_discovery_includes_nested_yaml_and_excludes_other_files() {
+fn example_discovery_includes_nested_yaml_and_yml_and_excludes_other_files() {
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("nested/deeper")).unwrap();
-    let expected: std::collections::BTreeSet<_> =
-        ["top.yaml", "nested/child.yaml", "nested/deeper/leaf.yaml"]
-            .map(|name| root.path().join(name))
-            .into();
+    let expected: std::collections::BTreeSet<_> = [
+        "top.yaml",
+        "top.yml",
+        "nested/child.yaml",
+        "nested/child.yml",
+        "nested/deeper/leaf.yaml",
+        "nested/deeper/leaf.yml",
+    ]
+    .map(|name| root.path().join(name))
+    .into();
     for path in &expected {
         std::fs::write(path, "name: fixture\n").unwrap();
     }

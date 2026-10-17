@@ -770,6 +770,7 @@
       "description": "GPU-family contracts, not model or whole-system qualifications. System profiles fix ARM64; GPU profiles require architecture. Each currently requires one visible GPU.",
       "enum": [
         "dgx-spark",
+        "rtx-spark",
         "dgx-station",
         "gb200",
         "gb300",
@@ -2504,7 +2505,8 @@
                           "profile": {
                             "not": {
                               "enum": [
-                                "dgx-spark"
+                                "dgx-spark",
+                                "rtx-spark"
                               ]
                             }
                           }
@@ -2719,7 +2721,8 @@
                           "profile": {
                             "not": {
                               "enum": [
-                                "dgx-spark"
+                                "dgx-spark",
+                                "rtx-spark"
                               ]
                             }
                           }
@@ -3024,6 +3027,7 @@
                   "profile": {
                     "enum": [
                       "dgx-spark",
+                      "rtx-spark",
                       "dgx-station",
                       "gb200",
                       "gb300",
@@ -3048,7 +3052,8 @@
                 "properties": {
                   "profile": {
                     "enum": [
-                      "dgx-spark"
+                      "dgx-spark",
+                      "rtx-spark"
                     ]
                   }
                 },
