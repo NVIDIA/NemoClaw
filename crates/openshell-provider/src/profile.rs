@@ -11,9 +11,10 @@ const CLUSTER_SOURCE: &str = "nemoclaw.nvidia.com/cluster-source";
 const CLUSTER_ADDRESSES: &str = "nemoclaw.nvidia.com/cluster-addresses";
 const AUTH_STYLE: &str = "nemoclaw.nvidia.com/auth-style";
 const HEADER_NAME: &str = "nemoclaw.nvidia.com/header-name";
+const SANDBOX_ENV: &str = "nemoclaw.nvidia.com/sandbox-env";
 
 /// Each ownership and definition field, and the profile annotation that carries it.
-const FIELDS: [(&str, &str); 10] = [
+const FIELDS: [(&str, &str); 11] = [
     ("owner", OWNER),
     ("generation", GENERATION),
     ("binaries_json", BINARIES),
@@ -24,6 +25,7 @@ const FIELDS: [(&str, &str); 10] = [
     ("cluster_addresses", CLUSTER_ADDRESSES),
     ("auth_style", AUTH_STYLE),
     ("header_name", HEADER_NAME),
+    ("sandbox_env", SANDBOX_ENV),
 ];
 
 fn annotations(fields: Row) -> Result<std::collections::HashMap<String, String>, ObservationError> {
@@ -96,9 +98,9 @@ fn definition_with_rule(
         description: format!("Declared {display} web search"),
         category: proto::ProviderProfileCategory::Knowledge as i32,
         credentials: vec![proto::ProviderProfileCredential {
-            name: provider.credential_env().into(),
+            name: sandbox_env(provider, want),
             description: format!("{display} Search API key"),
-            env_vars: vec![provider.credential_env().into()],
+            env_vars: vec![sandbox_env(provider, want)],
             required: true,
             auth_style: auth_style.into(),
             header_name: header_name.into(),
@@ -106,13 +108,26 @@ fn definition_with_rule(
         }],
         endpoints: network.endpoints.clone(),
         binaries: binaries(want)?,
+        // A default variable name is recorded as no annotation at all.
         annotations: annotations(
-            ["owner", "generation", "binaries_json"]
-                .map(|key| (key.into(), want[key].clone()))
-                .into(),
+            ["owner", "generation", "binaries_json", "sandbox_env"]
+                .into_iter()
+                .filter_map(|key| {
+                    let value = want.get(key).cloned().unwrap_or_default();
+                    (key != "sandbox_env" || !value.is_empty()).then(|| (key.into(), value))
+                })
+                .collect(),
         )?,
         ..Default::default()
     })
+}
+/// The variable sandboxes see the search key in: the one named, or the
+/// provider's default.
+pub(super) fn sandbox_env(provider: SearchProvider, want: &Row) -> String {
+    want.get("sandbox_env")
+        .filter(|name| !name.is_empty())
+        .cloned()
+        .unwrap_or_else(|| provider.credential_env().into())
 }
 pub(super) fn cluster_source(
     want: &Row,
@@ -270,6 +285,13 @@ fn row(
                 .ok_or(ObservationError::Incomplete)?,
         ),
     ]);
+    if search.is_some() {
+        // Empty means the provider's default variable name.
+        fields.insert(
+            "sandbox_env".into(),
+            metadata.get("sandbox_env").cloned().unwrap_or_default(),
+        );
+    }
     let expected = if api {
         for field in ["endpoint", "auth_style", "header_name"] {
             fields.insert(
@@ -355,9 +377,16 @@ pub(super) fn provider_row(
     {
         return Err(ObservationError::BindingMismatch);
     }
+    // OpenShell reports credential names with their values redacted. The
+    // one name is the variable sandboxes see; empty means the default.
+    let sandbox_env = match provider.credentials.keys().collect::<Vec<_>>()[..] {
+        [key] if key != search.credential_env() => key.clone(),
+        _ => String::new(),
+    };
     let mut result = base(provider.metadata, name, removing)?;
     result.insert("credential_source".into(), String::new());
     result.extend([
+        ("sandbox_env".into(), sandbox_env),
         ("endpoint".into(), search.endpoint().into()),
         ("provider_type".into(), search.name().into()),
         ("profile_name".into(), provider.r#type),

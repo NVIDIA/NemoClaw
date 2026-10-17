@@ -425,6 +425,25 @@ fn provider_registration(known: &Row, unknown: &[&str]) -> Option<String> {
     (!unknown.contains(&"name")).then(|| known.get("name").cloned().unwrap_or_default())
 }
 
+/// The variable sandboxes see an inference registration's key in; empty for
+/// a server that needs none.
+fn inference_sandbox_env(known: &Row, unknown: &[&str]) -> Option<String> {
+    if ["name", "credential_env", "credential_source"]
+        .iter()
+        .any(|field| unknown.contains(field))
+    {
+        return None;
+    }
+    let value = |field: &str| known.get(field).map(String::as_str).unwrap_or_default();
+    let authenticated =
+        !value("credential_env").is_empty() || !value("credential_source").is_empty();
+    Some(if authenticated {
+        nemoclaw_openshell::profile::inference_key_env(value("name"))
+    } else {
+        String::new()
+    })
+}
+
 /// The registration a web search row registers, derived from the inputs that
 /// name it.
 fn web_search_registration(known: &Row, unknown: &[&str]) -> Option<String> {
@@ -488,13 +507,14 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
                 "generation",
                 "provider_type",
                 "credential_env",
+                "sandbox_env",
                 "binaries_json",
             ],
             &["binaries_json"],
         )
-        .optional(&["credential_env", "binaries_json"])
+        .optional(&["credential_env", "sandbox_env", "binaries_json"])
         // Omission selects the default, not the previous value.
-        .reset_when_omitted(&["credential_env", "binaries_json"])
+        .reset_when_omitted(&["credential_env", "sandbox_env", "binaries_json"])
         .replaces(binaries_changes)
         .derived("registration", web_search_registration),
         // An inference server's profile and registration, as one resource
@@ -536,7 +556,8 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "cluster_source",
         ])
         .replaces(inference_changes)
-        .derived("registration", provider_registration),
+        .derived("registration", provider_registration)
+        .derived("sandbox_env", inference_sandbox_env),
         Definition::new(
             "sandbox",
             &[

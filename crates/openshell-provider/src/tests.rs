@@ -295,3 +295,31 @@ fn sparse_filesystem_policy_accepts_proxy_baseline_but_rejects_other_drift() {
         .push("/tmp".into());
     assert!(!network::loaded_policy_matches(&loaded, &policy_json(&declared).unwrap()).unwrap());
 }
+
+#[test]
+fn inference_names_the_variable_sandboxes_see_its_key_in() {
+    let row = |pairs: &[(&str, &str)]| -> Row {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).into(), (*value).into()))
+            .collect()
+    };
+    let hosted = row(&[
+        ("name", "hosted-model"),
+        ("credential_env", "NVIDIA_API_KEY"),
+        ("credential_source", ""),
+    ]);
+    assert_eq!(
+        inference_sandbox_env(&hosted, &[]).as_deref(),
+        Some("NEMOCLAW_INFERENCE_HOSTED_MODEL_KEY")
+    );
+    // An unauthenticated server gives sandboxes no key.
+    let local = row(&[
+        ("name", "local"),
+        ("credential_env", ""),
+        ("credential_source", ""),
+    ]);
+    assert_eq!(inference_sandbox_env(&local, &[]).as_deref(), Some(""));
+    // Unknown until the inputs that decide it are known.
+    assert_eq!(inference_sandbox_env(&hosted, &["credential_env"]), None);
+}

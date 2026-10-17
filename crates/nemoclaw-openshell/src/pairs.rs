@@ -58,12 +58,14 @@ pub fn web_search_rows(row: &Row) -> Option<(Row, Row)> {
     profile_row.extend([
         ("name".into(), profile.clone()),
         ("binaries_json".into(), value(row, "binaries_json").into()),
+        ("sandbox_env".into(), value(row, "sandbox_env").into()),
     ]);
     let mut registration_row = common(row);
     registration_row.extend([
         ("name".into(), registration),
         ("endpoint".into(), provider.endpoint().into()),
         ("credential_env".into(), value(row, "credential_env").into()),
+        ("sandbox_env".into(), value(row, "sandbox_env").into()),
         ("provider_type".into(), provider.name().into()),
         ("profile_name".into(), profile),
     ]);

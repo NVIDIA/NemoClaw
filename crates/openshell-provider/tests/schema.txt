@@ -47,6 +47,7 @@ resource openshell_inference (version 2)
   name: string, required
   ref: object({ generation = string, id = string, name = string, owner = string, registration = string, type = string, workspace = string }), computed
   registration: string, computed
+  sandbox_env: string, computed
   server: object({ credential_env = string, credential_source = string, endpoint = string, type = string }), optional
   workspace: object({ name = string, owner = string, type = string }), required
 
@@ -334,6 +335,7 @@ resource openshell_web_search (version 2)
   provider_type: string, required
   ref: object({ generation = string, id = string, name = string, owner = string, registration = string, type = string, workspace = string }), computed
   registration: string, computed
+  sandbox_env: string, optional, computed
   workspace: object({ name = string, owner = string, type = string }), required
 
 resource openshell_workspace (version 2)

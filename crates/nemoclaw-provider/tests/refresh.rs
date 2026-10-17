@@ -509,9 +509,11 @@ async fn changing_from_cluster_to_external_inference_replaces_the_owned_profile(
         .await
         .unwrap();
     assert!(diagnostics.errors.is_empty(), "{diagnostics:?}");
-    // The derived registration name is computed, not configured.
+    // The derived registration name and sandbox variable are computed, not
+    // configured.
     let mut planned = planned;
     planned.remove("registration");
+    planned.remove("sandbox_env");
     assert_eq!(
         planned, prior,
         "an explicit unchanged cluster source remains bound"

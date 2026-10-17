@@ -396,7 +396,10 @@ fn get_provider(
         .get(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
         .ok_or_else(|| Status::not_found("absent"))?
         .clone();
-    provider.credentials.clear();
+    // OpenShell reports credential names with their values redacted.
+    for value in provider.credentials.values_mut() {
+        *value = "REDACTED".into();
+    }
     Ok(p::ProviderResponse {
         provider: Some(provider),
         ..Default::default()
@@ -443,7 +446,10 @@ fn create_provider(
     if std::mem::take(&mut state.lose_create) {
         return Err(Status::unavailable("lost create reply secret"));
     }
-    provider.credentials.clear();
+    // OpenShell reports credential names with their values redacted.
+    for value in provider.credentials.values_mut() {
+        *value = "REDACTED".into();
+    }
     Ok(p::ProviderResponse {
         provider: Some(provider),
         ..Default::default()
@@ -480,7 +486,10 @@ fn update_provider(
     state.conditional_updates += 1;
     state.effects += 1;
     state.providers.insert(key, provider.clone());
-    provider.credentials.clear();
+    // OpenShell reports credential names with their values redacted.
+    for value in provider.credentials.values_mut() {
+        *value = "REDACTED".into();
+    }
     Ok(p::ProviderResponse {
         provider: Some(provider),
         ..Default::default()
