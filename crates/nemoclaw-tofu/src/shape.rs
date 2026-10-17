@@ -475,6 +475,11 @@ fn convert(shape: &Shape, value: &Value, outward: bool) -> Value {
                 .map(|(key, value)| (key.clone(), convert(item, value, outward)))
                 .collect(),
         ),
+        // OpenTofu sends numbers without an exact float64 value, such as 0.2,
+        // as decimal text; text that is not a number reaches validation unchanged.
+        (Shape::Number, Value::String(text)) if !outward => text
+            .parse::<serde_json::Number>()
+            .map_or_else(|_| value.clone(), Value::Number),
         (Shape::Json, value) if outward && !value.is_null() => Value::String(value.to_string()),
         // Text that is not JSON reaches validation unchanged.
         (Shape::Json, Value::String(text)) if !outward => {
@@ -642,6 +647,25 @@ pub fn block(fields: &Fields, description: &str) -> Block {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn numbers_without_an_exact_float_arrive_as_numbers() {
+        // OpenTofu sends a number such as 0.2, which has no exact float64
+        // value, as decimal text; whole numbers arrive as integers.
+        use serde_json::json;
+        assert_eq!(
+            super::inward(&super::Shape::Number, &json!("0.2")),
+            json!(0.2)
+        );
+        assert_eq!(super::inward(&super::Shape::Number, &json!(0)), json!(0));
+        // Text that is not a number reaches validation unchanged.
+        assert_eq!(
+            super::inward(&super::Shape::Number, &json!("warm")),
+            json!("warm")
+        );
+        let list = super::Shape::List(Box::new(super::Shape::Number));
+        assert_eq!(super::inward(&list, &json!(["0.5", 1])), json!([0.5, 1]));
+    }
+
     use super::*;
     use serde_json::json;
 
