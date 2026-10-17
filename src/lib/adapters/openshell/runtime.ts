@@ -4,6 +4,7 @@
 import type { StdioOptions } from "node:child_process";
 import path from "node:path";
 
+import { parseTimerDelayMs } from "../../core/timer";
 import { ROOT } from "../../runner";
 import {
   captureOpenshellCommand,
@@ -172,9 +173,9 @@ export function captureResolvedOpenshellAsync(args: CommandArgs, opts: AsyncRunn
 
 /** Resolve the status-probe timeout (ms) from env, falling back to the default. */
 export function getStatusProbeTimeoutMs(): number {
-  const raw = process.env.NEMOCLAW_STATUS_PROBE_TIMEOUT_MS;
-  const parsed = raw ? Number(raw) : NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : OPENSHELL_PROBE_TIMEOUT_MS;
+  return (
+    parseTimerDelayMs(process.env.NEMOCLAW_STATUS_PROBE_TIMEOUT_MS) ?? OPENSHELL_PROBE_TIMEOUT_MS
+  );
 }
 
 /** Async variant of {@link captureOpenshell} for status probes, with a kill grace period. */
