@@ -2653,7 +2653,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             portableRuntimeAuthority: lockedRuntime.portableRuntimeContext?.authority ?? null,
             agentFlag: opts.agent || null,
             envAgent: process.env.NEMOCLAW_AGENT || null,
-            requestedHostMounts: opts.hostMounts,
+            ...onboardSessionBootstrap.requestedSandboxAccessInput(opts),
             ...stationSessionInput,
           },
           {
@@ -3006,7 +3006,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           resumeAgentChanged,
           requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
           requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
-          hostMounts: effectiveHostMounts,
+          ...onboardSessionBootstrap.sessionSandboxAccess(effectiveHostMounts, session),
           endpointProvenance,
           recreateSandbox: isRecreateSandbox,
           controlUiPort: _preflightDashboardPort,

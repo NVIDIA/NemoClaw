@@ -489,13 +489,14 @@ export function ensureRebuildAgentBaseImage(
 /**
  * Point the inner onboard at the dashboard origin recorded for an OpenClaw
  * sandbox so an exported `CHAT_UI_URL` cannot change what the replacement
- * dashboard allows (#13177). Prints a warning when it ignores such an export.
+ * dashboard allows (#13177). Prints a warning when it ignores an exported
+ * `CHAT_UI_URL` or `NEMOCLAW_DASHBOARD_ORIGINS`.
  * Returns a function that restores the caller's `CHAT_UI_URL`.
  */
 export function pinRecordedOpenClawDashboardOriginForRecreate(
   input: {
     readonly sandboxName: string;
-    readonly sandboxEntry: Pick<SandboxEntry, "dashboardExternalUrl">;
+    readonly sandboxEntry: Pick<SandboxEntry, "dashboardExternalUrl" | "dashboardOrigins">;
     readonly rebuildAgent: string | null;
     readonly controlUiPort: number | null;
     readonly replacementDashboard?: { readonly agent: string; readonly url?: string };
@@ -507,10 +508,14 @@ export function pinRecordedOpenClawDashboardOriginForRecreate(
     sandboxName: input.sandboxName,
     cliName: CLI_NAME,
     recordedExternalUrl: input.sandboxEntry.dashboardExternalUrl,
+    recordedDashboardOrigins: input.sandboxEntry.dashboardOrigins ?? [],
     rebuildAgent: input.rebuildAgent,
     controlUiPort: input.controlUiPort,
     replacementDashboard: input.replacementDashboard,
-    env: { CHAT_UI_URL: previousChatUiUrl },
+    env: {
+      CHAT_UI_URL: previousChatUiUrl,
+      NEMOCLAW_DASHBOARD_ORIGINS: env.NEMOCLAW_DASHBOARD_ORIGINS,
+    },
   });
   if (!plan) return () => undefined;
   for (const line of plan.warnings) console.log(`  ${D}${line}${R}`);

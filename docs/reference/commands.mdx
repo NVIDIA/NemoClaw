@@ -415,7 +415,7 @@ Use the stable `id` value with `$$nemoclaw onboard --profile <name>`. Display na
 Run the interactive setup wizard (recommended for new installs). The wizard creates an OpenShell gateway, registers inference providers, selects the exact managed image (or builds an explicit custom Dockerfile), and creates the sandbox. Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
-$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository>@sha256:<digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository>@sha256:<digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability | --no-observability] [--control-ui-port <N>] [--dashboard-origin <origin>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 <AgentOnly variant="hermes">
@@ -992,6 +992,26 @@ Use `--agents <agents.yaml>` to declare secondary OpenClaw agents, `agents.defau
 Use `--control-ui-port <N>` to choose the host dashboard port for a sandbox. The value must be an integer from `1024` through `65535`. This flag takes precedence over `CHAT_UI_URL`, `NEMOCLAW_DASHBOARD_PORT`, the previous registry value, and the default port.
 
 Do not use a port from `8642` through `8652` for any agent. NemoClaw allocates each Hermes sandbox's OpenAI-compatible API port from that range, so it rejects every port in the range as a dashboard port before sandbox creation.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+
+Use `--dashboard-origin <origin>` when a browser reaches the dashboard through a proxy on a different port than the dashboard, for example `https://launchpad.example.com:8443`.
+NemoClaw adds each origin to the OpenClaw dashboard's allowed origins and keeps its port.
+Repeat the flag for more origins, or set `NEMOCLAW_DASHBOARD_ORIGINS` to a comma-separated list for non-interactive onboarding.
+A sandbox accepts at most 16 distinct extra origins.
+Each value must be a bare origin: a scheme, a host, and an optional port, without a path, query, or user information.
+A remote origin must use `https`, and `http` is accepted only for a loopback host.
+The flag requires a NemoClaw-managed OpenClaw image, so onboarding refuses it with `--from` or `--from-image`, or when it falls back to the Dockerfile build.
+It does not change the dashboard bind address or the URL that NemoClaw reports.
+If you add or change origins when you onboard an existing sandbox again, onboarding records them, but the running dashboard uses them only after `$$nemoclaw <name> rebuild`.
+`$$nemoclaw <name> rebuild` replays the recorded origins.
+To remove them, unset `NEMOCLAW_DASHBOARD_ORIGINS`, run onboard again without `--dashboard-origin`, then rebuild the sandbox.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
 
 If you enable Slack during onboarding, the wizard collects both the Bot Token (`SLACK_BOT_TOKEN`) and the App-Level Token (`SLACK_APP_TOKEN`). Socket Mode requires both tokens. The app-level token is stored in a dedicated `slack-app` OpenShell provider and forwarded to the sandbox alongside the bot token. The wizard also accepts optional `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` values so you can restrict Slack DMs, channel `@mention` users, and channel IDs before the sandbox is created.
 
@@ -3788,7 +3808,7 @@ For Deep Agents sandboxes, run `$$nemoclaw onboard --fresh --name <sandbox-name>
 
 <Warning>The `$$nemoclaw setup` command is deprecated. Use `$$nemoclaw onboard` instead.</Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--dashboard-origin`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup
@@ -3801,7 +3821,7 @@ $$nemoclaw setup
   onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--dashboard-origin`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup-spark
@@ -4269,6 +4289,10 @@ inference | | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy | |
   | `NEMOCLAW_DASHBOARD_BIND` | *unset* (loopback outside WSL) | Dashboard or API forward bind
   address. WSL uses an all-interface forward for Windows-host reachability. Set to `0.0.0.0` to opt
   in to remote bind on other SSH-deployed hosts. |
+</AgentOnly>
+<AgentOnly variant="openclaw">
+  | `NEMOCLAW_DASHBOARD_ORIGINS` | *unset* | Comma-separated extra dashboard browser origins
+  for a managed OpenClaw image, at most 16. Same rules as `--dashboard-origin`. |
 </AgentOnly>
 New OpenRouter selections use the sandbox-attached native provider and do not use
 `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT`. The port remains reserved for legacy shared routes.

@@ -697,6 +697,8 @@ COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts src/lib/provi
 COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/
 COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
 COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
+COPY src/lib/dashboard/url.ts /src/lib/dashboard/
+COPY src/lib/core/url-utils.ts src/lib/core/provider-endpoint.ts /src/lib/core/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 

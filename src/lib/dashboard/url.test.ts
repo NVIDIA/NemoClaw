@@ -5,10 +5,55 @@ import { describe, expect, it } from "vitest";
 
 import {
   isValidDashboardExternalUrl,
+  parseDashboardOrigins,
   rebindLoopbackDashboardUrlPort,
   resolveExternalDashboardUrl,
   resolveExternalDashboardUrlForPort,
 } from "./url";
+
+describe("parseDashboardOrigins (#13177)", () => {
+  it("normalizes bare origins, drops duplicates, and keeps their ports", () => {
+    expect(
+      parseDashboardOrigins([
+        " https://Launchpad.Example.Test:8443/ ",
+        "https://launchpad.example.test:8443",
+        "http://localhost:9000",
+        "https://dash.example.test:443",
+      ]),
+    ).toEqual([
+      "https://launchpad.example.test:8443",
+      "http://localhost:9000",
+      "https://dash.example.test",
+    ]);
+  });
+
+  it("splits comma-separated entries and ignores empty ones", () => {
+    expect(
+      parseDashboardOrigins(["https://a.example.test, ,https://b.example.test:8443", ""]),
+    ).toEqual(["https://a.example.test", "https://b.example.test:8443"]);
+  });
+
+  it.each([
+    ["a path", "https://a.example.test/dashboard"],
+    ["a query", "https://a.example.test?x=1"],
+    ["a fragment", "https://a.example.test#x"],
+    ["an empty query", "https://a.example.test?"],
+    ["an empty fragment", "https://a.example.test#"],
+    ["user information", "https://user:secret@a.example.test"],
+    ["plain http for a remote host", "http://a.example.test:8443"],
+    ["a non-http scheme", "ftp://a.example.test"],
+    ["no scheme", "a.example.test"],
+    ["a control character", "https://a.example.test\u0007"],
+  ])("rejects an origin with %s", (_case, origin) => {
+    expect(() => parseDashboardOrigins([origin])).toThrow(/dashboard origin/i);
+  });
+
+  it("does not echo user information in the error", () => {
+    expect(() => parseDashboardOrigins(["https://user:secret@a.example.test"])).toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining("secret") }),
+    );
+  });
+});
 
 describe("rebindLoopbackDashboardUrlPort", () => {
   it.each([
