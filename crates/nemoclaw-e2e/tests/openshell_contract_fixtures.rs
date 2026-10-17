@@ -58,9 +58,10 @@ fn fixture(mut document: Document) -> Option<String> {
     let mut resources = Map::new();
     let compiled: Value = serde_json::from_str(&encoded).unwrap();
     for (kind, bodies) in compiled.as_object().unwrap() {
-        // OpenShell objects; the gateway installation types have their own
-        // contract tests.
-        if !kind.starts_with("openshell_")
+        // OpenShell objects, and the agent configurations that replace their
+        // sandboxes; the gateway installation types have their own contract
+        // tests.
+        if !(kind.starts_with("openshell_") || kind == "terraform_data")
             || nemoclaw_openshell::installation_type(nemoclaw_openshell::object_kind(kind))
                 .is_some()
         {

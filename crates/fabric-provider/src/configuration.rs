@@ -184,10 +184,9 @@ pub(crate) async fn read(
     if ready && status.runtime_id.as_deref().is_none_or(str::is_empty) {
         return Err(ObservationError::Incomplete);
     }
-    let observed = config.to_string();
-    if configuration(value(prior, "config_json"))? != configuration(&observed)? {
-        row.insert("config_json".into(), observed.clone());
-    }
+    // An agent changes only with its sandbox, and Fabric reports no applied
+    // configuration (NVIDIA/NeMo-Fabric#420), so a change made inside the
+    // sandbox outside OpenTofu is not reported as drift.
     Ok(Some(row))
 }
 pub(crate) async fn ensure(client: &OpenShell, desired: &Row) -> Mutation {

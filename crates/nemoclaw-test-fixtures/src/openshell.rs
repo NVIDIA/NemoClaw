@@ -891,13 +891,19 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                             .entry(sandbox_id.clone())
                             .or_default() += 1;
                     }
-                    let stopped = operation == "prepare" || state.configuration_error.is_some();
+                    // An injected error is a configuration the host rejects;
+                    // stopping an agent still succeeds.
+                    let failure = state
+                        .configuration_error
+                        .clone()
+                        .filter(|_| operation == "configure");
+                    let stopped = operation == "prepare" || failure.is_some();
                     if stopped {
                         state.fabric_stopped.insert(sandbox_id.clone());
                     } else {
                         state.fabric_stopped.remove(&sandbox_id);
                     }
-                    if let Some(failure) = &state.configuration_error {
+                    if let Some(failure) = &failure {
                         error = Some(
                             serde_json::json!({"code":failure["error"]["code"], "stage":failure["error"]["stage"], "message":"safe fixture failure", "effects":"applied"}),
                         );

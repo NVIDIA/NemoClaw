@@ -241,38 +241,34 @@ Reordering declarations is not an update.
 Each sandbox receives only its selected inference provider policies, while shared definitions reuse one provider registration.
 Sandbox-local definitions are visible only to their enclosing sandbox.
 Sandboxes can select distinct Brave credential references; shared references reuse one registration.
-Apply still refuses sandbox removal or replacement because its files and history are not separately retained; destroy operates on the whole deployment.
-Use separate deployments when you need independent teardown.
+Removing or replacing a sandbox deletes its files and conversation history, and the plan shows it; keep data that must survive on a [mounted volume](agents.md#skills-on-a-mounted-volume).
 
 ### Choose the Change Path
 
 | Proposed change | Current behavior and next step |
 |---|---|
-| Models, settings, or public Fabric configuration within the selected adapter | After successful runtime observation, reconciles the owned agent-configuration resource and restarts the runtime inside the existing sandbox when its image, provider attachments, and policy remain unchanged; in-memory conversations can be lost |
-| External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes a selected provider's profile and registration; changes to an existing sandbox's launch specification still require a separate deployment |
-| Harness adapter, sandbox image, driver configuration, agent identity, or provider attachments | Changes the immutable sandbox specification; apply refuses replacement; use a separate deployment with a fresh UID and state |
-| Sandbox network policy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
+| Models, settings, or public Fabric configuration within the selected adapter | Replaces the agent and its sandbox, deleting the sandbox's files and conversations; review the plan |
+| External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes a selected provider's profile and registration; a change to a sandbox's launch specification replaces the sandbox |
+| Harness adapter, sandbox image, driver configuration, agent identity, or provider attachments | Replaces the sandbox, deleting its files and conversations |
+| Sandbox network policy | Follow [policy change constraints](sandbox-network.md); a change that needs a new sandbox replaces it |
 | Managed vLLM or Ollama image, container limits, or serving specification | Replaces the Docker container. Service-level `updatePolicy: Preserve` blocks replacement of a running Docker container; set `Recreate` only when accepting sequential replacement and downtime. Review the plan, [container limits and update policy](inference.md#set-container-limits-and-update-policy), and [model constraints](models.md) |
 | Ollama proxy image or serving specification | Docker-provider reconciliation may replace the proxy container while retaining its independently bound credential storage |
 | Deployment UID, established gateway endpoint, or bound credential/gateway engine | Cannot retarget the existing state; create a separate deployment |
 | Remove an unused inference provider definition | Changes the desired document only; the SDK creates registrations for selected definitions, so unused definitions have no resources to delete |
-| Remove a sandbox, retained storage, or a protected gateway binding | Apply refuses removal; assess a separate deployment and explicit retirement of the original |
+| Remove a sandbox | Deletes it, with its files and conversations |
+| Remove retained storage or a protected gateway binding | Apply refuses removal; assess a separate deployment and explicit retirement of the original |
 | Change a credential value behind the same environment reference | Unchanged apply does not detect rotation; see [credential lifecycle](security.md#credentials-and-authentication) |
 
 Configuration edits do not recover a runtime whose bridge snapshot reports `runtime_state: unknown`.
 The provider rejects that observation before reconciling agent configuration; see [replacement after an unusable OpenClaw runtime](#replace-workloads-after-an-unusable-openclaw-runtime).
 
 For OpenClaw model and native-setting updates, use an [agent image built from this revision](build.md#build-agent-images).
-Rebuilding the CLI bundle alone does not update the adapter in an existing sandbox image; changing that image requires a separate deployment with a fresh UID and state.
+Rebuilding the CLI bundle alone does not update the adapter in an existing sandbox image; changing that image replaces the sandbox.
 How the adapter applies native configuration is Fabric's; see its OpenClaw adapter documentation.
 
-A request to remove or replace a bound sandbox is rejected before managed-runtime reconciliation, including when the same request changes a managed service.
-The refusal names the sandbox and preserves retained intent and resource state.
-Export and destroy can still use the retained configuration without reapplying the original YAML; their usual observation and ownership checks still apply.
-
-The [provider lifecycle contract](provider.md#openshell-resource-lifecycles) distinguishes reconstructible registrations and configuration from protected sandbox data and durable identity.
+The [provider lifecycle contract](provider.md#openshell-resource-lifecycles) distinguishes reconstructible objects, sandboxes included, from durable identity.
 OpenShell refuses deletion of a registration still attached to a sandbox or a profile still referenced by a registration.
-Apply can recreate a missing registration after confirmed absence, while preserving the sandbox's identity and files.
+Apply can recreate a missing registration after confirmed absence.
 Disposable Docker compute uses provider reconciliation within the declared deployment graph.
 A model change does not migrate conversations or guarantee that the new model supports the old model's tools, context, or reasoning settings.
 

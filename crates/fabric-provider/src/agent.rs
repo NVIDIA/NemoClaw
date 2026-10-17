@@ -99,6 +99,21 @@ fn validate(known: &Row, unknown: &[&str]) -> Result<(), Cow<'static, str>> {
     Ok(())
 }
 
+/// An agent changes only with its sandbox: its replacement plans while the
+/// sandbox is replaced too, which makes the sandbox's ID unknown.
+fn sandbox_kept(
+    prior: &nemoclaw_tofu::State,
+    planned: &nemoclaw_tofu::State,
+) -> Option<&'static str> {
+    use tf_provider::value::Value;
+    match (prior.get("sandbox_id"), planned.get("sandbox_id")) {
+        (Some(Value::Value(prior)), Some(Value::Value(planned))) if prior == planned => Some(
+            "A changed agent needs a new sandbox. Replace the sandbox with the agent: give it lifecycle { replace_triggered_by = [terraform_data.<agent>] }, where that terraform_data's input is the agent's configuration",
+        ),
+        _ => None,
+    }
+}
+
 /// The Fabric agent resource and its planning rules.
 pub fn definitions() -> [nemoclaw_tofu::Definition; 1] {
     use nemoclaw_tofu::{Definition, rerun_when_stopped};
@@ -115,11 +130,11 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 1] {
         .chain(sections.iter().copied())
         .collect();
     let gateway = nemoclaw_openshell::GATEWAY_FIELDS.map(|(_, field)| field);
-    // Another endpoint is another gateway; credentials rotate in place. A
-    // newer image catalog for the same harness changes no agent.
-    let mutable: Vec<&'static str> = [DESCRIPTION, HARNESS_CATALOG, "running"]
+    // A changed agent is a new agent in a new sandbox. Another endpoint is
+    // another gateway; credentials rotate in place. A newer image catalog for
+    // the same harness changes no agent.
+    let mutable: Vec<&'static str> = [HARNESS_CATALOG, "running"]
         .into_iter()
-        .chain(sections.iter().copied())
         .chain(gateway[1..].iter().copied())
         .collect();
     let optional: Vec<&'static str> = [DESCRIPTION]
@@ -131,6 +146,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 1] {
         .optional(&optional)
         .computed("running", rerun_when_stopped)
         .validate_inputs(validate)
+        .refuse_replacement_when(sandbox_kept)
         // Readiness compares the applied document with this digest.
         .derived(CONFIG_SHA256, agent::config_digest)
         .exports(

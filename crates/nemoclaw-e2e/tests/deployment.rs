@@ -331,7 +331,8 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, 4);
     let preview = deployment.plan_destroy(&cancel).await.unwrap();
-    assert_eq!(preview.changes.len(), 3);
+    // Destroy also removes the agent configuration that replaces the sandbox.
+    assert_eq!(preview.changes.len(), 4);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let destroyed = Command::new(
         bundle
@@ -357,6 +358,7 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
             .is_empty()
     );
     assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
+    // The registration, sandbox, agent, and the agent's configuration.
     assert_eq!(
         deployment
             .apply(&document, &cancel)
@@ -364,7 +366,7 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
             .unwrap()
             .changes
             .len(),
-        3
+        4
     );
 }
 
@@ -406,7 +408,7 @@ async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn tool_disclosure_cli_export_reapply_and_native_settings_drift() {
+async fn tool_disclosure_cli_export_reapply_and_configuration_on_stdin() {
     // Disclosure modes are opaque native settings; agent_tools in the SDK owns
     // both modes, so one deployment covers their drift detection.
     let mut document =
@@ -427,7 +429,7 @@ async fn tool_disclosure_cli_export_reapply_and_native_settings_drift() {
     let effects = lifecycle.apply().await;
     assert_eq!(effects, lifecycle.document.spec.sandboxes.len() + 3);
     lifecycle.export_and_reapply_unchanged(effects).await;
-    lifecycle.assert_native_settings_drift(effects).await;
+    lifecycle.assert_configuration_on_stdin().await;
     lifecycle.destroy();
 }
 
@@ -700,8 +702,9 @@ impl Lifecycle {
         );
     }
 
-    /// Broadening one sandbox's tools plans one update, and a failed observation
-    /// stops plan and export without effects or state changes.
+    /// Broadening one sandbox's tools replaces its agent with its sandbox, and
+    /// a failed observation stops plan and export without effects or state
+    /// changes.
     async fn assert_tool_policy_drift(&self, effects: usize) {
         let state = fs::read(self.directory.path().join("terraform.tfstate")).unwrap();
         let mut broadened = self.document.clone();
@@ -711,9 +714,18 @@ impl Lifecycle {
             .plan(&broadened, &self.cancel)
             .await
             .unwrap();
-        assert_eq!(plan.changes.len(), 1);
-        assert!(plan.changes[0].resource.starts_with("fabric_agent."));
-        assert_eq!(plan.changes[0].actions, ["update"]);
+        assert_eq!(plan.changes.len(), 3, "{:?}", plan.changes);
+        let actions = |prefix: &str| {
+            plan.changes
+                .iter()
+                .find(|change| change.resource.starts_with(prefix))
+                .unwrap()
+                .actions
+                .clone()
+        };
+        assert_eq!(actions("terraform_data."), ["update"]);
+        assert_eq!(actions("openshell_sandbox."), ["delete", "create"]);
+        assert_eq!(actions("fabric_agent."), ["delete", "create"]);
         self.fixture.state.lock().unwrap().exec_exit = 2;
         assert!(
             self.deployment
@@ -735,8 +747,9 @@ impl Lifecycle {
     }
 
     /// The first sandbox's Fabric configuration arrives on stdin without the
-    /// credential, and its drift is planned without effects.
-    async fn assert_native_settings_drift(&self, effects: usize) {
+    /// credential. A configuration changed inside the sandbox outside OpenTofu
+    /// is not reported: Fabric reports no applied configuration.
+    async fn assert_configuration_on_stdin(&self) {
         let key = format!(
             "{}/{}",
             self.document.workspace(),
@@ -782,33 +795,6 @@ impl Lifecycle {
                     })
             );
         }
-        // Native settings belong to the owned Fabric configuration. Refresh must
-        // detect drift without mutating either the host or durable deployment.
-        self.fixture
-            .state
-            .lock()
-            .unwrap()
-            .fabric_configurations
-            .get_mut(&sandbox_id)
-            .unwrap()["models"]["default"]["model"] = serde_json::json!("foreign-model");
-        assert!(self.deployment.export(&self.cancel).await.is_err());
-        let plan = self
-            .deployment
-            .plan(&self.document, &self.cancel)
-            .await
-            .unwrap();
-        assert!(
-            plan.changes
-                .iter()
-                .any(|change| change.resource.starts_with("fabric_agent."))
-        );
-        assert_eq!(self.fixture.state.lock().unwrap().effects, effects);
-        self.fixture
-            .state
-            .lock()
-            .unwrap()
-            .fabric_configurations
-            .insert(sandbox_id, original);
     }
 
     /// The CLI destroys the deployment, leaving only the workspace on the gateway.
@@ -980,7 +966,8 @@ async fn destroy_does_not_require_the_inference_credential_or_rewrite_its_refere
             .unwrap()
             .changes
             .len(),
-        3
+        // Destroy also removes the agent configuration.
+        4
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     // Teardown initializes the stage once to read its bindings and once for
@@ -1249,8 +1236,9 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     let preview = deployment.plan(&document, &cancel).await.unwrap();
-    // Each image/adapter scope owns its provider registration and executable grants.
-    assert_eq!(preview.changes.len(), 7);
+    // Each image/adapter scope owns its provider registration and executable
+    // grants; each agent's configuration replaces its sandbox.
+    assert_eq!(preview.changes.len(), 9);
     assert_eq!(fixture.state.lock().unwrap().effects, 0);
     let applied = deployment.apply(&document, &cancel).await.unwrap();
     assert_eq!(applied.health.len(), 2);
@@ -1277,7 +1265,8 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     other.name = "third".into();
     document.spec.sandboxes.push(other);
     let added = deployment.plan(&document, &cancel).await.unwrap();
-    assert_eq!(added.changes.len(), 2);
+    // The sandbox, its agent, and the agent's configuration.
+    assert_eq!(added.changes.len(), 3);
     assert!(
         added
             .changes
@@ -1476,7 +1465,7 @@ async fn failed_first_apply_can_destroy_bound_resources_without_successful_reapp
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn failed_first_configuration_accepts_corrected_intent_without_recreating_sandbox() {
+async fn failed_first_configuration_accepts_corrected_intent_by_replacing_the_sandbox() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
@@ -1491,7 +1480,6 @@ async fn failed_first_configuration_accepts_corrected_intent_without_recreating_
     fixture.state.lock().unwrap().exec_exit = 1;
     assert!(deployment.apply(&document, &cancel).await.is_err());
     let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
-    let effects = fixture.state.lock().unwrap().effects;
     document.spec.sandboxes[0]
         .agent
         .inference
@@ -1504,9 +1492,10 @@ async fn failed_first_configuration_accepts_corrected_intent_without_recreating_
     deployment
         .apply(&document, &cancel)
         .await
-        .expect("configuration recovery uses the bound parent sandbox");
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(fixture.state.lock().unwrap().sandboxes, sandboxes);
+        .expect("a corrected agent replaces the sandbox");
+    let replaced = fixture.state.lock().unwrap().sandboxes.clone();
+    assert_eq!(replaced.len(), 1);
+    assert_ne!(replaced, sandboxes);
     let exported = deployment.export(&cancel).await.unwrap();
     assert_eq!(exported, document);
     assert!(
@@ -1572,7 +1561,6 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
         String::from_utf8_lossy(&applied.stdout)
     );
     let original = fixture.state.lock().unwrap().sandboxes.clone();
-    let effects = fixture.state.lock().unwrap().effects;
     document.spec.sandboxes[0]
         .agent
         .inference
@@ -1635,8 +1623,6 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
         assert!(!message.contains("[[redacted]]"));
         assert!(!stdout.contains("native-secret-must-not-escape"));
         assert!(!stderr.contains("native-secret-must-not-escape"));
-        assert_eq!(fixture.state.lock().unwrap().sandboxes, original);
-        assert_eq!(fixture.state.lock().unwrap().effects, effects);
     }
     fixture.state.lock().unwrap().configuration_error = None;
     let recovered = invoke("apply", "json", "a");
@@ -1645,8 +1631,10 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
         "{}",
         String::from_utf8_lossy(&recovered.stdout)
     );
-    assert_eq!(fixture.state.lock().unwrap().sandboxes, original);
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    // The changed agent runs in a new sandbox.
+    let recovered_sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
+    assert_eq!(recovered_sandboxes.len(), 1);
+    assert_ne!(recovered_sandboxes, original);
     let destroyed = invoke("destroy", "json", "a");
     assert!(
         destroyed.status.success(),

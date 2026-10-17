@@ -208,12 +208,31 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
             assert_eq!(resource["owner"], document.metadata.uid);
         }
         assert_eq!(resource["generation"], generations[generation]);
-        if generation == "provider" {
-            assert!(resource["lifecycle"].get("prevent_destroy").is_none());
-        } else {
+        // Only the workspace is retained; a sandbox is replaced with its agent.
+        if generation == "workspace" {
             assert_eq!(resource["lifecycle"]["prevent_destroy"], true);
+        } else {
+            assert!(resource["lifecycle"].get("prevent_destroy").is_none());
         }
     }
+    // A changed agent configuration replaces the sandbox, through a
+    // terraform_data holding the configuration Fabric receives.
+    assert_eq!(
+        sandbox["lifecycle"]["replace_triggered_by"],
+        json!(["terraform_data.agent_worker"])
+    );
+    let configuration = &resources["terraform_data"]["agent_worker"];
+    let input: serde_json::Value =
+        serde_json::from_str(configuration["input"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        input["metadata"]["name"],
+        resources["fabric_agent"]["worker"]["name"]
+    );
+    assert_eq!(
+        configuration["depends_on"],
+        json!(["data.openshell_gateway.apply"])
+    );
+    assert!(configuration.get("lifecycle").is_none());
     assert_eq!(provider["server"]["credential_env"], "MODEL_TOKEN");
     assert_eq!(
         provider["server"]["endpoint"],

@@ -481,15 +481,31 @@ impl Resource for ResourceAdapter {
             // installation. Apply still reconciles running:false.
             state.insert("running".into(), running.clone());
         }
-        if self.definition.refuse_replacement && !replacements.is_empty() {
+        let refusal = if replacements.is_empty() {
+            None
+        } else if self.definition.refuse_replacement {
+            Some(
+                "Replacement would discard retained identity; use explicit teardown and a new resource identity",
+            )
+        } else {
+            self.definition
+                .refuse_replacement_when
+                .and_then(|refuse| refuse(&prior, &state))
+        };
+        if let Some(reason) = refusal {
             let name = match prior.get("name") {
                 Some(Value::Value(name)) => name.as_str(),
                 _ => "unknown",
             };
-            diags.root_error("Resource replacement refused", format!(
-                "{}/{}: changed fields: {}. Replacement would discard retained identity or sandbox files; use explicit teardown and a new resource identity",
-                self.definition.kind, name.escape_default(), replacements.join(", "),
-            ));
+            diags.root_error(
+                "Resource replacement refused",
+                format!(
+                    "{}/{}: changed fields: {}. {reason}",
+                    self.definition.kind,
+                    name.escape_default(),
+                    replacements.join(", "),
+                ),
+            );
             return None;
         }
         Some((

@@ -188,7 +188,12 @@ pub(super) fn exported(
 ) -> Result<Document, Error> {
     consistent_provider_credentials(&document, generations, observations)?;
     for target in compile::targets(&document, generations)? {
-        if target.address.starts_with("data.") || plan::disposable(&target.address) {
+        // An agent configuration is derived from the document; OpenTofu
+        // holds it only to replace the agent's sandbox.
+        if target.address.starts_with("data.")
+            || plan::disposable(&target.address)
+            || target.kind == compile::AGENT_CONFIGURATION
+        {
             continue;
         }
         let mut observation = observations

@@ -756,7 +756,7 @@ fn public_operation_futures_fit_the_async_callers_stack_budget() {
 
 #[test]
 fn destroy_drift_errors_distinguish_undeclared_resources_from_missing_saved_ids() {
-    let address = "openshell_sandbox.assistant";
+    let address = "openshell_workspace.workspace";
     let plan: Plan = serde_json::from_value(json!({
         "resource_drift":[{
             "address": address, "change": {"actions":["update"], "before":{"id":"saved-id"}}

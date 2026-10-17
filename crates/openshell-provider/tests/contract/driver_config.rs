@@ -99,23 +99,6 @@ fn run(root: &TofuWorkspace, args: &[&str]) -> Output {
 }
 
 /// A plan that would replace the sandbox, which the provider refuses.
-fn refused(root: &TofuWorkspace, extra: &[&str]) {
-    let mut args = vec!["plan", "-input=false"];
-    args.extend(extra);
-    let output = root
-        .command()
-        .args(&args)
-        .arg("-no-color")
-        .env("NEMOCLAW_TEST_BRAVE_KEY", "brave-fixture-secret")
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !output.status.success() && stderr.contains("Resource replacement refused"),
-        "{stderr}"
-    );
-}
-
 fn sandbox_actions(root: &TofuWorkspace, extra: &[&str]) -> Value {
     let mut args = vec!["plan", "-input=false", "-out=check.plan"];
     args.extend(extra);
@@ -153,9 +136,12 @@ async fn sandbox_driver_config_passes_through_unchanged() {
     // Reading it back plans no change, numbers included.
     assert_eq!(sandbox_actions(&root, &[]), json!(["no-op"]));
 
-    // It's part of the immutable sandbox specification: a change would
-    // replace the sandbox, which the provider refuses, as for its image.
-    refused(&root, &["-var=target=/sandbox/other"]);
+    // It's part of the immutable sandbox specification: a change replaces
+    // the sandbox, as for its image.
+    assert_eq!(
+        sandbox_actions(&root, &["-var=target=/sandbox/other"]),
+        json!(["delete", "create"])
+    );
 
     // A configuration changed behind OpenTofu shows as drift.
     {
@@ -164,5 +150,5 @@ async fn sandbox_driver_config_passes_through_unchanged() {
         let template = sandbox.spec.as_mut().unwrap().template.as_mut().unwrap();
         template.driver_config = None;
     }
-    refused(&root, &[]);
+    assert_eq!(sandbox_actions(&root, &[]), json!(["delete", "create"]));
 }

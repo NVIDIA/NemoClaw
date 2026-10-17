@@ -254,9 +254,8 @@ OpenTofu selects Podman gateway replacement through the provider contract, witho
 The SDK requires the gateway's independent storage binding, the compiler orders the dependency and protects retained storage, and the provider rechecks identity before replacing the process.
 Missing or substituted bound credentials and gateway storage stop planning; reproducible model caches can be rebuilt.
 
-The shared [OpenShell lifecycle contract](../../crates/nemoclaw-openshell/src/lifecycle.rs) distinguishes retained workspace identity, stateful sandboxes, and reconstructible registrations and configuration.
-Sandbox files and conversation history have no separately retained storage, so apply refuses sandbox deletion or replacement.
-It also refuses to recreate a missing sandbox binding.
+The shared [OpenShell lifecycle contract](../../crates/nemoclaw-openshell/src/lifecycle.rs) distinguishes retained workspace identity from reconstructible sandboxes, registrations and configuration.
+Fabric starts one agent runtime per sandbox, so a changed agent replaces its sandbox, deleting its files and conversation history; data that must survive belongs on a mounted volume.
 Explicit destroy deletes those files even though the OpenShell workspace remains.
 The [retention reference](../state.md#deletion-and-retention) lists what survives.
 

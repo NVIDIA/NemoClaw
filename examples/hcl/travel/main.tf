@@ -153,9 +153,9 @@ data "fabric_harness" "pi" {
 }
 
 locals {
-  gateway     = data.openshell_gateway.current.ref
-  pi_launch   = jsondecode(data.fabric_harness.pi.launch_json)
-  model_url   = regex("^https?://(?P<host>[^:/]+):(?P<port>[0-9]+)", data.ollama_readiness.nemotron.ref.endpoint)
+  gateway   = data.openshell_gateway.current.ref
+  pi_launch = jsondecode(data.fabric_harness.pi.launch_json)
+  model_url = regex("^https?://(?P<host>[^:/]+):(?P<port>[0-9]+)", data.ollama_readiness.nemotron.ref.endpoint)
 }
 
 # Tear the configuration down with tofu destroy -var destroy=true. To keep the
@@ -174,6 +174,20 @@ resource "openshell_inference" "nemotron" {
   server    = data.ollama_readiness.nemotron.ref
   api       = "openai-completions"
   binaries  = local.pi_launch.binaries
+}
+
+# The agent's configuration. A changed agent needs a new sandbox, so changing
+# it replaces the sandbox, deleting the sandbox's files.
+locals {
+  agent = {
+    # The file's license comment is not an instruction.
+    instructions = trimspace(replace(file("${path.module}/instructions.md"), "/(?s)<!--.*?-->/", ""))
+    model        = data.ollama_readiness.nemotron.ref.model
+  }
+}
+
+resource "terraform_data" "agent" {
+  input = local.agent
 }
 
 resource "openshell_sandbox" "travel" {
@@ -213,6 +227,9 @@ resource "openshell_sandbox" "travel" {
       }
     }
   }
+  lifecycle {
+    replace_triggered_by = [terraform_data.agent]
+  }
 }
 
 # The agent: Pi's configuration, applied inside the sandbox.
@@ -223,14 +240,13 @@ resource "fabric_agent" "travel" {
   name    = "travel"
   instructions {
     system {
-      # The file's license comment is not an instruction.
-      content = trimspace(replace(file("${path.module}/instructions.md"), "/(?s)<!--.*?-->/", ""))
+      content = local.agent.instructions
       mode    = "replace"
     }
   }
   models "default" {
     provider    = "openai"
-    model       = data.ollama_readiness.nemotron.ref.model
+    model       = local.agent.model
     api_key_env = "NEMOCLAW_ANONYMOUS_API_KEY"
   }
 }

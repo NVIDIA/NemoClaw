@@ -128,10 +128,11 @@ fn identity(change: &ResourceChange, expected: &Row, binding: &StateBinding) -> 
 pub(super) use crate::docker_compute::is_disposable as disposable;
 
 pub(super) fn reconstructible(address: &str) -> bool {
-    address.split_once('.').is_some_and(|(kind, _)| {
-        crate::backend::openshell_lifecycle(kind)
-            == Some(crate::backend::OpenShellLifecycle::Reconstructible)
-    })
+    address.starts_with("terraform_data.")
+        || address.split_once('.').is_some_and(|(kind, _)| {
+            crate::backend::openshell_lifecycle(kind)
+                == Some(crate::backend::OpenShellLifecycle::Reconstructible)
+        })
 }
 
 fn standard_actions(actions: &[String]) -> bool {

@@ -91,7 +91,7 @@ For a managed Kubernetes gateway, it takes `kubernetes`, the gateway's specifica
 Each provider that reaches such a gateway opens its own port forward on a free loopback port, with the kubeconfig the specification names and the development credentials in the SDK's state directory, and keeps it open while OpenTofu runs.
 A literal object of the same shape, with `type = "openshell_gateway"`, also works where no data source is read, such as an SDK teardown graph.
 Objects keep their gateway connection in state, so refresh and removal reach the same gateway without provider configuration.
-Credential and TLS references update in place; a different endpoint is a different gateway, so it replaces reconstructible objects and retained or stateful objects refuse it.
+Credential and TLS references update in place; a different endpoint is a different gateway, so it replaces reconstructible objects, sandboxes included, and the retained workspace refuses it.
 These schemas are version 1; state from an earlier provider is rejected rather than upgraded.
 When a registration names a managed vLLM or Ollama proxy credential, the provider reads the key from the owning container during apply, so the key never enters OpenTofu state.
 
@@ -118,10 +118,10 @@ Other inputs are typed too:
 - `openshell_sandbox`'s optional `driver_config` is OpenShell's per-driver sandbox configuration (`SandboxTemplate.driver_config`) as JSON text, usually from `jsonencode()`, keyed by driver, such as volume mounts.
   It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/sandboxes/runtimes.mdx).
   The gateway accepts it only when its driver allows driver configuration, which OpenShell disables by default, NemoClaw-installed gateways included.
-  It is part of the sandbox's immutable specification: changing it, or a different configuration observed on the gateway, would replace the sandbox, which apply refuses, as for the image; see [change paths](usage.md#choose-the-change-path).
+  It is part of the sandbox's immutable specification: changing it, or a different configuration observed on the gateway, replaces the sandbox, as for the image; see [change paths](usage.md#choose-the-change-path).
 - `openshell_sandbox`'s optional `service` blocks are OpenShell's sandbox service exposures: `name`, `target_port`, and optional `authorization_mode` (`STRIP` or `BEARER_PASSTHROUGH`).
   They are passed through unchanged in the creation request, so OpenShell's defaults apply: an omitted mode is `STRIP`, and an empty name is the unnamed endpoint.
-  Like `driver_config`, they are part of the sandbox's creation: changing them, or a different endpoint observed on the gateway, would replace the sandbox, which apply refuses.
+  Like `driver_config`, they are part of the sandbox's creation: changing them, or a different endpoint observed on the gateway, replaces the sandbox.
 - The computed `service_urls` maps each service name to the URL the gateway reports for it, such as `openshell_sandbox.researcher.service_urls["research"]`. A service the gateway reports without a URL has no entry.
 - `owner` and `generation` are optional; when omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [credential storage](#vllm-and-ollama-types).
 
@@ -289,7 +289,26 @@ resource "fabric_agent" "travel" {
 Planning rejects a configuration Fabric cannot parse, naming the field but not its value.
 Whether the harness accepts a configuration is Fabric's to decide, inside the sandbox when the agent is configured: Pi, for example, replaces system instructions and cannot append to them, so asking it to append fails during apply ([#13319](https://github.com/NVIDIA/NemoClaw/issues/13319)).
 Once the sandbox is known, planning refuses a `name` or harness other than the agent and harness the sandbox launches.
-Changing the sandbox, harness, or `name` replaces the agent; any other change reconfigures it through the sandbox's Fabric host without replacing the sandbox.
+Any change replaces the agent, and a changed agent needs a new sandbox, so planning refuses to replace an agent while its sandbox stays the same.
+Replace the sandbox with the agent through a `terraform_data` holding the agent's configuration, as generated graphs do:
+
+```hcl
+resource "terraform_data" "assistant" {
+  input = { model = var.model, instructions = var.instructions }
+}
+
+resource "openshell_sandbox" "assistant" {
+  # ...
+  lifecycle {
+    replace_triggered_by = [terraform_data.assistant]
+  }
+}
+```
+
+Triggering on the `fabric_agent` itself would be a cycle, because the agent refers to its sandbox.
+Keep the input to values known while planning: a value known only during apply, such as a read postponed to apply, replaces the sandbox on every apply.
+Fabric reports no applied configuration, so a configuration changed inside the sandbox outside OpenTofu is not reported as drift.
+Replacing a sandbox deletes its files and conversation history; keep data that must survive on a [mounted volume](agents.md#skills-on-a-mounted-volume).
 Removing the resource stops the agent, as removing an attachment does: Fabric stops its runtime through the host's `prepare` operation and the host forgets the configuration, while the sandbox stays.
 If the sandbox is already gone, removal succeeds; if stopping fails, the binding is kept so the next apply or destroy retries.
 
@@ -374,7 +393,7 @@ Generated graphs declare only the types marked as used; NemoClaw does not qualif
 
 ## OpenShell Resource Lifecycles
 
-The shared [resource lifecycle contract](../crates/nemoclaw-openshell/src/lifecycle.rs) distinguishes reconstructible configuration from protected identity and sandbox data.
+The shared [resource lifecycle contract](../crates/nemoclaw-openshell/src/lifecycle.rs) distinguishes reconstructible objects, sandboxes included, from retained workspace identity.
 The provider owns observation and update/replacement behavior; OpenTofu owns action ordering and resource state.
 The SDK checks deployment scope and recovery constraints without imposing a second blanket ban on OpenShell changes.
 For reconstructible resources, OpenTofu and the provider own confirmed absence, physical identity, and replacement cleanup; the SDK does not require a second drift history to report those actions during apply or teardown.
@@ -382,18 +401,17 @@ For reconstructible resources, OpenTofu and the provider own confirmed absence, 
 | Resource | Reconciliation | Protection |
 |---|---|---|
 | Inference and web search | Create the profile and then the registration; recreate a missing profile and rotate an inference credential reference in place; replace on any other input change or a missing registration | The same checks for both objects; a failure between them records the identity, so the next apply replaces the resource |
-| Fabric runtime configuration | Apply the public Fabric document and reconcile its resource lifecycle | Verify the parent sandbox identity; a changed configuration can restart its runtime and lose native session state |
-| Sandbox | Create and observe the declared sandbox | During apply, refuse deletion, replacement, or recreation of a missing binding because deletion loses agent files and history |
+| Fabric agent | Apply the public Fabric document; replace the agent on any input change | Verify the parent sandbox identity; refuse a replacement unless the sandbox is replaced too |
+| Sandbox | Create and observe the declared sandbox; replace it on any change to its specification | Replacement and deletion delete its files and conversation history; data that must survive belongs on a mounted volume |
 | Workspace | Create and observe; delete only during explicit teardown | Refuse replacement and automatic recreation of a missing binding; `lifecycle { prevent_destroy = true }` retains it, as generated graphs do |
 
 OpenShell refuses deletion of profiles referenced by registrations and registrations attached to sandboxes.
 Inference and web search resources therefore recreate a missing profile in place, and remove the registration before its profile.
 Generated graphs create an `openshell_inference` only for definitions selected by sandboxes; unused YAML definitions have no resource lifecycle.
-Standalone HCL can remove or replace an inference resource, while removing a last selection in SDK YAML also changes the protected sandbox specification.
-Replacing a registration still attached to a protected sandbox is not a supported shortcut around sandbox lifecycle rules.
-Endpoint and policy changes that also change a sandbox's launch specification remain protected; see [change paths](usage.md#choose-the-change-path).
+Standalone HCL can remove or replace an inference resource, while removing a last selection in SDK YAML also changes the sandbox's specification, which replaces the sandbox.
+Endpoint and policy changes that also change a sandbox's launch specification replace the sandbox; see [change paths](usage.md#choose-the-change-path).
 
-The provider's `destroy` setting authorizes explicit teardown of sandboxes and workspaces; reconstructible registrations and configuration do not require it.
+The provider's `destroy` setting authorizes explicit teardown of workspaces; reconstructible objects, sandboxes included, do not require it.
 It never authorizes deleting the workspace or bypassing identity checks.
 Removing Fabric configuration stops the agent and leaves the sandbox-owned runtime host and its sandbox in place.
 The SDK's destroy operation still retains durable storage and the workspace.

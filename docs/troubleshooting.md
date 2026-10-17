@@ -100,7 +100,7 @@ For an external Ollama digest mismatch, use [the proxy guide](inference.md#use-e
 |---|---|---|
 | Model appears in the endpoint inventory | The service reports that model | Confirm API compatibility and an inference request |
 | Apply succeeds | Declared resources and agent configuration pass readiness checks | Verify inference and a native agent turn through the intended interface |
-| Agent configuration drift | Native settings differ from retained intent | Restore expected settings; checks do not overwrite them |
+| Agent configuration changed inside the sandbox | Not reported: Fabric reports no applied configuration | Change the configuration in the deployment and apply, which replaces the sandbox |
 | Forwarded native service cannot connect | Native service, forwarding, or authentication may be incomplete | Follow [interface diagnosis](interfaces.md#diagnose-failures); keep local forwarding ports consistent |
 | Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect [retained status and logs](models.md#diagnose-and-recover-a-stopped-runtime) and correct capacity/startup conditions before explicit recovery |
 
@@ -116,7 +116,7 @@ For example, a network endpoint ambiguity can report conflicting `allowed_ips` m
 Credential-bearing provider creation and update requests, status reads, and exec failures retain category-only diagnostics.
 This rejection reporting applies to Docker, Podman, and cluster gateways.
 Use the OpenShell inspection and log collection procedure below before cleanup.
-If startup requires a different image or policy, follow the [sandbox change procedure](usage.md#choose-the-change-path); apply protects the existing sandbox from replacement.
+If startup requires a different image or policy, change it and apply; that replaces the sandbox, deleting its files ([change paths](usage.md#choose-the-change-path)).
 A failed first apply can be [destroyed](usage.md#destroy) when the retained state accounts for its resource identities.
 
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.

@@ -121,8 +121,8 @@ The fixtures return protocol responses; they do not establish agent inference, n
 | Module | Checks |
 |---|---|
 | `deployment` | Configuration lifecycles through the SDK and CLI: shared state, interrupted creation, unchanged apply, readiness failure without replacement, failed observation without state loss, export and reapply, policy and tool drift, web search, credential redaction, startup failure messages, and destroy |
-| `export_observations` | Export through provider refresh without applying, without inference or search credentials, and rejection of observed drift without changes to saved state |
-| `fabric_deployment` | One harness test each for OpenClaw and Pi, which reconcile configuration and protect sandbox identity, and missing or failed runtime declarations |
+| `export_observations` | Export through provider refresh without applying, without inference or search credentials, rejection of observed drift without changes to saved state, and a Pi model changed inside the sandbox, which export ignores |
+| `fabric_deployment` | One harness test each for OpenClaw and Pi, where a changed configuration replaces the agent with its sandbox, and missing or failed runtime declarations |
 | `multiple_providers` | Two deployments' provider attachments, export and reapply, drift, and destroy, each scoped to its sandbox |
 | `inference_discovery` | Optional catalog failures that keep complete unchanged plans and report uncertainty |
 | `sandbox_readiness` | Standalone sandbox completion; see [below](#standalone-sandbox-completion) |
@@ -133,7 +133,7 @@ The fixtures return protocol responses; they do not establish agent inference, n
 In `deployment`, `cli_terminal_outputs_preserve_lifecycle_and_json_contract` checks text plans, JSON apply, unchanged text apply, JSON plan completeness, text destroy, and repeated JSON destroy against one fixture state.
 `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` changes the gateway driver after planning to check OpenTofu's apply-time check, recovery, and teardown.
 `rejected_policy_fails_promptly_with_context_and_allows_recovery_or_destroy` checks a simulated gateway admission rejection with sandbox context in text and JSON output, retained bindings, recovery, and destroy.
-`separate_agent_sandboxes_cli_export_reapply_and_policy_drift` and `tool_disclosure_cli_export_reapply_and_native_settings_drift` check OpenClaw tool policies, with observation failures that change nothing.
+`separate_agent_sandboxes_cli_export_reapply_and_policy_drift` and `tool_disclosure_cli_export_reapply_and_configuration_on_stdin` check OpenClaw tool policies, whose changes replace the sandbox, with observation failures that change nothing.
 
 ### Helm Release Recovery
 

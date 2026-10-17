@@ -194,16 +194,13 @@ NemoClaw sends the provider's API to any adapter whose Fabric descriptor declare
 `extensions` holds the model fields the selected adapter declares, and Fabric validates them; it cannot set a field the deployment already sets.
 The SDK preserves each named route plus the `default` role.
 
-Model and settings updates reconcile a reconstructible agent-configuration resource for every adapter.
-When sandbox identity, provider attachments, image, and policy remain unchanged and runtime observation succeeds, the runtime restarts inside the existing sandbox.
-In-memory conversations can be lost; retained native files remain subject to the adapter's lifecycle.
-Changing sandbox resources can still require a separate deployment under the normal replacement protections.
+Any model or settings update replaces the agent and its sandbox, deleting the sandbox's files and conversations; keep data that must survive on a [mounted volume](#skills-on-a-mounted-volume).
 
 ## Runtime Lifecycle
 
 Build the selected agent image with its installed Fabric metadata using the [image procedure](build.md#build-agent-images).
 Use an immutable image reference available to the sandbox compute daemon.
-Deployment identity and ownership checks protect retained sandboxes, provider registrations, and storage.
+Deployment identity and ownership checks protect provider registrations and retained storage.
 
 The runtime host validates public Fabric configuration before starting a runtime.
 Apply calls configure after OpenTofu establishes the required dependencies.

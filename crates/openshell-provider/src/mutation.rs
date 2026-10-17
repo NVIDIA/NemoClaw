@@ -222,7 +222,7 @@ impl Backend for OpenShell {
         ) && !(destroying
             && matches!(
                 openshell_lifecycle(kind),
-                Some(OpenShellLifecycle::Stateful | OpenShellLifecycle::Retained)
+                Some(OpenShellLifecycle::Retained)
             ))
         {
             return Err(ObservationError::Query);

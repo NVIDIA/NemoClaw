@@ -50,7 +50,7 @@ fn search_uses_owned_profile_and_provider_without_exporting_secrets() {
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let rows = targets(&doc, &generations).unwrap();
-    assert_eq!(rows.len(), 5);
+    assert_eq!(rows.len(), 6);
     let search = rows.iter().find(|r| r.kind == "web_search").unwrap();
     assert_eq!(search.values["credential_env"], "SEARCH_KEY");
     assert_eq!(search.values["provider_type"], "brave");
@@ -241,7 +241,7 @@ fn unused_definitions_create_no_search_resources_policy_or_secret_requirements()
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let rows = targets(&doc, &generations).unwrap();
-    assert_eq!(rows.len(), 4);
+    assert_eq!(rows.len(), 5);
     assert!(!serde_json::to_string(&rows).unwrap().contains("brave"));
     assert!(!doc.credential_names().contains(&"SEARCH_KEY"));
     assert!(doc.yaml().unwrap().contains("SEARCH_KEY"));

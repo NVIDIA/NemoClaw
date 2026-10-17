@@ -63,6 +63,10 @@ resource "openshell_sandbox" "agent" {
   image               = var.image
   launch_json         = var.launch_json
   providers      = [openshell_inference.inference[0].ref]
+  # A changed agent needs a new sandbox.
+  lifecycle {
+    replace_triggered_by = [terraform_data.agent_configuration]
+  }
   policy {
     managed "nemoclaw-inference-local-fcb7b1f1af3733764900def4" {
       endpoints {
@@ -79,6 +83,10 @@ resource "openshell_sandbox" "agent" {
 }
 variable "model" { default = "first-model" }
 variable "mode" { default = "replace" }
+# The agent's configuration, which replaces the sandbox when it changes.
+resource "terraform_data" "agent_configuration" {
+  input = { model = var.model, mode = var.mode }
+}
 variable "catalog_json" { type = string }
 # The harness the sandbox launches, as data.fabric_harness reports it.
 locals {

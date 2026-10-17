@@ -143,14 +143,23 @@ impl Services {
             );
         }
     }
-    /// The plan fails because it would replace the sandbox.
-    fn refused(&self, services: &Value) {
-        let output = self.run(&["plan"], services);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            !output.status.success() && stderr.contains("Resource replacement refused"),
-            "{stderr}"
-        );
+    /// The plan replaces the sandbox.
+    fn replaced(&self, services: &Value) {
+        self.succeed(&["plan", "-out=check.plan"], services);
+        let output = self
+            .root
+            .command()
+            .args(["show", "-json", "check.plan"])
+            .output()
+            .unwrap();
+        let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let sandbox = plan["resource_changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|change| change["type"] == "openshell_sandbox")
+            .unwrap();
+        assert_eq!(sandbox["change"]["actions"], json!(["delete", "create"]));
     }
     fn urls(&self) -> Value {
         let output = self
@@ -206,16 +215,16 @@ async fn sandbox_services_are_created_and_report_their_urls() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
-async fn sandbox_service_changes_are_refused_like_driver_config() {
+async fn sandbox_service_changes_replace_the_sandbox() {
     let fixture = Fixture::start().await;
     let tofu = Services::new(&fixture.endpoint);
     let services = json!({"research": {"target_port": 8080}});
     tofu.succeed(&["apply", "-auto-approve"], &services);
 
-    // Exposures are part of the creation request: a change would replace
-    // the sandbox, which the provider refuses.
-    tofu.refused(&json!({"research": {"target_port": 9090}}));
-    tofu.refused(&json!({}));
+    // Exposures are part of the creation request: a change replaces the
+    // sandbox.
+    tofu.replaced(&json!({"research": {"target_port": 9090}}));
+    tofu.replaced(&json!({}));
 
     // An endpoint changed behind OpenTofu shows as drift.
     fixture
@@ -227,5 +236,5 @@ async fn sandbox_service_changes_are_refused_like_driver_config() {
         .next()
         .unwrap()
         .target_port = 1234;
-    tofu.refused(&services);
+    tofu.replaced(&services);
 }

@@ -7,10 +7,9 @@
 pub enum OpenShellLifecycle {
     /// Workspace identity survives deployment teardown.
     Retained,
-    /// Sandbox files and history have no separately managed persistent storage.
-    /// Deletion requires explicit teardown; absence and replacement need recovery.
-    Stateful,
-    /// Registrations and configuration can be rebuilt from declared intent.
+    /// Sandboxes, registrations and configuration can be rebuilt from
+    /// declared intent. Replacing a sandbox deletes its files and history;
+    /// data that must survive belongs on a mounted volume.
     Reconstructible,
 }
 
@@ -18,8 +17,7 @@ pub enum OpenShellLifecycle {
 pub fn openshell_lifecycle(kind: &str) -> Option<OpenShellLifecycle> {
     match object_kind(kind) {
         "workspace" => Some(OpenShellLifecycle::Retained),
-        "sandbox" => Some(OpenShellLifecycle::Stateful),
-        "provider" | "provider_profile" | "web_search" | "inference" | "agent" => {
+        "sandbox" | "provider" | "provider_profile" | "web_search" | "inference" | "agent" => {
             Some(OpenShellLifecycle::Reconstructible)
         }
         _ => None,

@@ -39,7 +39,7 @@ Use authenticated [native access](interfaces.md) for the selected deployment.
 | Pi conversation | Held in the running Pi process; switching declared choices preserves it, while applying configuration changes or restarting the runtime loses it |
 
 NemoClaw sets the workspace and artifact locations in the agent's Fabric configuration; the [Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python) define the rest.
-Agent state can survive a process restart while its files remain; deleting the sandbox deletes its files.
+Agent state can survive a process restart while its files remain; replacing or deleting the sandbox, as any agent configuration change does, deletes its files.
 Each declared agent runs in its own OpenShell sandbox; workspace directories do not further isolate processes within that sandbox.
 File locations for the other harnesses are tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
 

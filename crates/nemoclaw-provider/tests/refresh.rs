@@ -224,7 +224,7 @@ async fn failed_and_partial_observations_retain_protocol_state() {
 }
 
 #[tokio::test]
-async fn confirmed_absence_reconciles_registrations_but_preserves_stateful_bindings() {
+async fn confirmed_absence_reconciles_reconstructible_objects_but_preserves_retained_bindings() {
     for kind in ["workspace", "inference", "web_search", "sandbox", "agent"] {
         for destroying in [false, true] {
             let resource = ResourceAdapter::new(
@@ -239,9 +239,9 @@ async fn confirmed_absence_reconciles_registrations_but_preserves_stateful_bindi
             let result = resource
                 .read(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
                 .await;
-            // Explicit teardown accepts a confirmed-absent sandbox or workspace.
-            if matches!(kind, "inference" | "web_search" | "agent")
-                || (destroying && matches!(kind, "sandbox" | "workspace"))
+            // Explicit teardown accepts a confirmed-absent workspace.
+            if matches!(kind, "inference" | "web_search" | "sandbox" | "agent")
+                || (destroying && kind == "workspace")
             {
                 assert!(result.is_none());
                 assert!(diagnostics.errors.is_empty());
@@ -392,7 +392,7 @@ async fn reconstructible_resources_plan_replacement_and_deletion_without_teardow
                 Value::Null,
             )
             .await;
-        let reconstructible = matches!(kind, "inference" | "web_search" | "agent");
+        let reconstructible = matches!(kind, "inference" | "web_search" | "sandbox" | "agent");
         assert_eq!(result.is_some(), reconstructible, "{kind}");
         assert_eq!(diagnostics.errors.is_empty(), reconstructible, "{kind}");
         if let Some((_, _, replacements)) = result {
@@ -406,9 +406,8 @@ async fn reconstructible_resources_plan_replacement_and_deletion_without_teardow
             let result = resource
                 .plan_destroy(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
                 .await;
-            // Explicit teardown may delete sandboxes and workspaces.
-            let allowed =
-                reconstructible || (destroying && matches!(kind, "sandbox" | "workspace"));
+            // Explicit teardown may delete workspaces.
+            let allowed = reconstructible || (destroying && kind == "workspace");
             assert_eq!(result.is_some(), allowed, "{kind}, destroy={destroying}");
             assert_eq!(
                 diagnostics.errors.is_empty(),
@@ -423,23 +422,17 @@ async fn reconstructible_resources_plan_replacement_and_deletion_without_teardow
 async fn retained_replacement_refusal_names_the_resource_and_changed_fields() {
     let resource = ResourceAdapter::new(
         support::definition(
-            "sandbox",
-            &["name", "workspace", "owner", "generation"],
+            "workspace",
+            &["name", "gateway", "owner", "generation"],
             &[],
         ),
         Arc::new(Fixture(Ok(None))),
     );
     let mut prior = state(row());
     prior.insert("name".into(), Value::Value("reviewer".into()));
-    prior.insert(
-        "workspace".into(),
-        Value::Value("PRIVATE_OLD_WORKSPACE".into()),
-    );
+    prior.insert("gateway".into(), Value::Value("PRIVATE_OLD_GATEWAY".into()));
     let mut changed = prior.clone();
-    changed.insert(
-        "workspace".into(),
-        Value::Value("PRIVATE_NEW_WORKSPACE".into()),
-    );
+    changed.insert("gateway".into(), Value::Value("PRIVATE_NEW_GATEWAY".into()));
     let mut diagnostics = Diagnostics::default();
     assert!(
         resource
@@ -455,8 +448,8 @@ async fn retained_replacement_refusal_names_the_resource_and_changed_fields() {
             .is_none()
     );
     let text = format!("{diagnostics:?}");
-    assert!(text.contains("sandbox/reviewer"), "{text}");
-    assert!(text.contains("changed fields: workspace"), "{text}");
+    assert!(text.contains("workspace/reviewer"), "{text}");
+    assert!(text.contains("changed fields: gateway"), "{text}");
     assert!(!text.contains("PRIVATE_"), "{text}");
 }
 

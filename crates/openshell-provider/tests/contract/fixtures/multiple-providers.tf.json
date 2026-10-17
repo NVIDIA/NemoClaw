@@ -127,6 +127,9 @@
               "condition": "${data.openshell_gateway.current.compatible}",
               "error_message": "${format(\"Gateway is incompatible with this configuration: %s. Retain state, correct the gateway or the configuration, and reapply.\", data.openshell_gateway.current.incompatibility)}"
             }
+          ],
+          "replace_triggered_by": [
+            "terraform_data.agent_researcher"
           ]
         },
         "name": "researcher",
@@ -194,6 +197,9 @@
               "condition": "${data.openshell_gateway.current.compatible}",
               "error_message": "${format(\"Gateway is incompatible with this configuration: %s. Retain state, correct the gateway or the configuration, and reapply.\", data.openshell_gateway.current.incompatibility)}"
             }
+          ],
+          "replace_triggered_by": [
+            "terraform_data.agent_writer"
           ]
         },
         "name": "writer",
@@ -250,6 +256,20 @@
         },
         "name": "nc-09fae1b508fa21be",
         "owner": "cb18eaf0-1a4e-47b8-b254-6fe4e49bc360"
+      }
+    },
+    "terraform_data": {
+      "agent_researcher": {
+        "depends_on": [
+          "data.openshell_gateway.apply"
+        ],
+        "input": "{\"environment\":{\"provider\":\"local\",\"workspace\":\"/sandbox/workspace\"},\"harness\":{\"adapter_id\":\"nvidia.fabric.openclaw\",\"settings\":{}},\"metadata\":{\"name\":\"researcher\"},\"models\":{\"default\":{\"api_key_env\":\"NEMOCLAW_INFERENCE_HOSTED_4DF6A0A09C020309380F8E47_KEY\",\"base_url\":\"https://hosted.example/v1\",\"model\":\"replace-with-supported-model\",\"provider\":\"anthropic\",\"settings\":{}},\"fast\":{\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\",\"base_url\":\"http://172.20.0.1:11434/v1\",\"model\":\"qwen3:4b\",\"provider\":\"openai\",\"settings\":{}},\"smart\":{\"api_key_env\":\"NEMOCLAW_INFERENCE_HOSTED_4DF6A0A09C020309380F8E47_KEY\",\"base_url\":\"https://hosted.example/v1\",\"model\":\"replace-with-supported-model\",\"provider\":\"anthropic\",\"settings\":{}}},\"runtime\":{\"artifacts\":\"/sandbox/artifacts\"},\"schema_version\":\"fabric.agent/v1alpha1\"}"
+      },
+      "agent_writer": {
+        "depends_on": [
+          "data.openshell_gateway.apply"
+        ],
+        "input": "{\"environment\":{\"provider\":\"local\",\"workspace\":\"/sandbox/workspace\"},\"harness\":{\"adapter_id\":\"nvidia.fabric.openclaw\",\"settings\":{}},\"metadata\":{\"name\":\"writer\"},\"models\":{\"default\":{\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\",\"base_url\":\"http://172.20.0.1:11434/v1\",\"model\":\"qwen3:4b\",\"provider\":\"openai\",\"settings\":{}},\"fast\":{\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\",\"base_url\":\"http://172.20.0.1:11434/v1\",\"model\":\"qwen3:4b\",\"provider\":\"openai\",\"settings\":{}}},\"runtime\":{\"artifacts\":\"/sandbox/artifacts\"},\"schema_version\":\"fabric.agent/v1alpha1\"}"
       }
     }
   },

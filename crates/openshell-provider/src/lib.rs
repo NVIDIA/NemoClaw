@@ -518,18 +518,14 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
     })
 }
 
-/// Retained and stateful objects keep their bindings and refuse replacement.
+/// Retained objects keep their bindings and refuse replacement.
 fn lifecycle_rules(definition: nemoclaw_tofu::Definition) -> nemoclaw_tofu::Definition {
     use nemoclaw_openshell::{OpenShellLifecycle, openshell_lifecycle};
     use nemoclaw_tofu::Protection;
     match openshell_lifecycle(definition.kind) {
         // OpenTofu's prevent_destroy retains a workspace; generated graphs set
-        // it. Without it, explicit teardown may delete the workspace, as it may
-        // a sandbox.
+        // it. Without it, explicit teardown may delete the workspace.
         Some(OpenShellLifecycle::Retained) => definition
-            .protect(Protection::UnlessDestroying)
-            .refuse_replacement(),
-        Some(OpenShellLifecycle::Stateful) => definition
             .protect(Protection::UnlessDestroying)
             .refuse_replacement(),
         Some(OpenShellLifecycle::Reconstructible) | None => definition,

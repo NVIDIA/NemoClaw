@@ -122,7 +122,7 @@ fn every_fabric_type_has_a_contract_test() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
-async fn pi_configuration_updates_without_replacing_the_sandbox() {
+async fn a_changed_pi_configuration_replaces_the_sandbox() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint, &[]);
     // A configuration Fabric rejects fails validation at its field, before
@@ -171,6 +171,7 @@ async fn pi_configuration_updates_without_replacing_the_sandbox() {
     assert_eq!(writes(), 1);
     tofu.noop();
     assert_eq!(writes(), 1, "no-op must not reconfigure Pi");
+    let first = sandbox_id(&fixture);
     tofu.run(
         &[
             "plan",
@@ -182,8 +183,11 @@ async fn pi_configuration_updates_without_replacing_the_sandbox() {
     );
     assert_eq!(writes(), 1, "plan must not configure Pi");
     tofu.run(&["apply", "-input=false", "change.plan"], true);
-    assert_eq!(writes(), 2);
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    // The changed agent runs in a new sandbox: Pi is stopped in the old one,
+    // then configured in the new one.
+    assert_ne!(sandbox_id(&fixture), first);
+    assert_eq!(writes(), 3);
+    let _ = effects;
     // A stopped host is observed as drift; explicit apply reconfigures it.
     let sandbox_id = fixture
         .state
@@ -213,7 +217,7 @@ async fn pi_configuration_updates_without_replacing_the_sandbox() {
         ],
         true,
     );
-    assert_eq!(writes(), 3);
+    assert_eq!(writes(), 4);
     assert!(
         !fixture
             .state
@@ -222,8 +226,8 @@ async fn pi_configuration_updates_without_replacing_the_sandbox() {
             .fabric_stopped
             .contains(&sandbox_id)
     );
-    // Lose the exec response after the host accepted a configuration. Never
-    // retry the mutation automatically; the next refresh observes the outcome.
+    // Lose the exec response after the host accepted a new agent's
+    // configuration. Apply fails without retrying; the agent is left tainted.
     tofu.run(
         &[
             "plan",
@@ -235,7 +239,7 @@ async fn pi_configuration_updates_without_replacing_the_sandbox() {
     );
     fixture.state.lock().unwrap().lose_configure_reply = true;
     tofu.run(&["apply", "-input=false", "ambiguous.plan"], false);
-    assert_eq!(writes(), 4);
+    assert_eq!(writes(), 6);
     assert!(!fixture.state.lock().unwrap().lose_configure_reply);
     tofu.run(
         &[
@@ -248,14 +252,14 @@ async fn pi_configuration_updates_without_replacing_the_sandbox() {
     );
     assert_eq!(
         writes(),
-        4,
-        "confirmed configuration must not be written again"
+        7,
+        "the next apply creates the tainted agent again, configuring it once"
     );
     let prior = tofu.state();
     fixture.state.lock().unwrap().exec_truncated = true;
     tofu.run(&["plan", "-input=false", "-var=model=second-model"], false);
     assert_eq!(tofu.state(), prior);
-    assert_eq!(writes(), 4);
+    assert_eq!(writes(), 7);
     assert!(!fixture.state.lock().unwrap().lose_configure_reply);
     fixture.state.lock().unwrap().exec_truncated = false;
     tofu.run(
@@ -271,9 +275,39 @@ async fn pi_configuration_updates_without_replacing_the_sandbox() {
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
     assert_eq!(
         writes(),
-        5,
+        8,
         "destroy stops Pi once before removing its sandbox, and never reconfigures it"
     );
+}
+
+/// Without a trigger that replaces its sandbox, a changed agent is refused
+/// while planning, with the way to fix it, and nothing changes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
+async fn a_changed_agent_without_a_new_sandbox_is_refused() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint, &[]);
+    let main = tofu.root.path().join("main.tf");
+    let source = fs::read_to_string(&main).unwrap();
+    let trigger =
+        "  lifecycle {\n    replace_triggered_by = [terraform_data.agent_configuration]\n  }\n";
+    assert!(source.contains(trigger));
+    fs::write(&main, source.replace(trigger, "")).unwrap();
+    tofu.apply();
+    let sandbox = sandbox_id(&fixture);
+    let effects = fixture.state.lock().unwrap().effects;
+    let refused = tofu.run(&["plan", "-input=false", "-var=model=second-model"], false);
+    let stderr = String::from_utf8_lossy(&refused.stderr)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        stderr.contains("A changed agent needs a new sandbox"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("replace_triggered_by"), "{stderr}");
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(sandbox_id(&fixture), sandbox);
 }
 
 /// The only sandbox's ID in the fake gateway.
