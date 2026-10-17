@@ -1,23 +1,23 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
-# GTC DC T-205: planned target, not live-qualified. See README.md.
+# GTC DC planned target, not live-qualified. See README.md.
 # Replace the deployment UID and zero image digests with owned build references.
 # Run the Linux ARM64 bundle in WSL2 on the 128 GB RTX Spark N1X configuration.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
-  name: gtc-dc-hermes-windows-wsl2-rtx-spark
-  uid: 2a960156-8713-4eda-9e2f-4f1810a7bb0b
+  name: gtc-dc-openclaw-windows-wsl2-rtx-spark
+  uid: 79cbbfad-2af8-46bc-8059-80bbdfd0336a
 spec:
   gateway:
     management: managed
     runtime:
       provider: docker
-    endpoint: http://127.0.0.1:17907
+    endpoint: http://127.0.0.1:17908
     engine: unix:///var/run/docker.sock
     image: ghcr.io/nvidia/openshell/gateway@sha256:bdb4fe248070032c88be78f029dad9325cb698480e90486e1413a674a5d8edc8
-    networkCIDR: 172.30.186.0/24
+    networkCIDR: 172.30.187.0/24
   services:
     super:
       kind: vllm
@@ -37,7 +37,7 @@ spec:
         reasoningParser: nemotron_v3
         mambaBackend: flashinfer
         enforceEager: true
-        port: 19107
+        port: 19108
         contextTokens: 65536
         maxSequences: 1
         batchTokens: 1024
@@ -58,11 +58,11 @@ spec:
   sandboxes:
     - name: assistant
       image:
-        ref: nc-fabric-hermes-arm64@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
       harness:
-        kind: nvidia.fabric.hermes
+        kind: nvidia.fabric.openclaw
         execution:
           timeoutSeconds: 300
       agent:
