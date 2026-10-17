@@ -55,15 +55,15 @@ path = "lifecycle.xml"
 # tests.
 [[profile.lifecycle.overrides]]
 filter = 'binary_id(=fabric-provider::contract)'
-slow-timeout = { period = "22s", terminate-after = 2 }
-
-[[profile.lifecycle.overrides]]
-filter = 'binary_id(=nemoclaw-provider::contract)'
 slow-timeout = { period = "10s", terminate-after = 2 }
 
 [[profile.lifecycle.overrides]]
+filter = 'binary_id(=nemoclaw-provider::contract)'
+slow-timeout = { period = "8s", terminate-after = 2 }
+
+[[profile.lifecycle.overrides]]
 filter = 'binary_id(=openshell-provider::contract)'
-slow-timeout = { period = "12s", terminate-after = 2 }
+slow-timeout = { period = "6s", terminate-after = 2 }
 
 # Real Docker and OpenTofu; run through `cargo ci live-docker`, which builds the
 # images and owned inputs these tests read. The Docker tests share one engine,
