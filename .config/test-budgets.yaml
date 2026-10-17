@@ -44,17 +44,17 @@ live-kind:
   test_seconds: 120
 
 # Each provider's contract tests, measured on linux_amd64 and linux_arm64 in
-# one run after providers and the fake OpenShell gateway set TCP_NODELAY.
+# two runs after providers and the fake OpenShell gateway set TCP_NODELAY.
 binaries:
-  # 5 tests: at most 14.4 s summed; slowest test 6.2 s.
+  # 5 tests: at most 17.4 s summed; slowest test 6.2 s.
   fabric-provider::contract:
     summed_seconds: 25
     test_seconds: 10
-  # 26 tests: at most 27.5 s summed; slowest test 4.7 s.
+  # 26 tests: at most 32.5 s summed; slowest test 4.7 s.
   nemoclaw-provider::contract:
     summed_seconds: 45
     test_seconds: 8
-  # 62 tests: at most 56.3 s summed; slowest test 2.8 s.
+  # 62 tests: at most 74.6 s summed; slowest test 3.7 s.
   openshell-provider::contract:
-    summed_seconds: 80
+    summed_seconds: 105
     test_seconds: 6
