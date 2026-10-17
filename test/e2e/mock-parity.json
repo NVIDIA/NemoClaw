@@ -271,7 +271,13 @@
     },
     {
       "live": "test/e2e/live/bootstrap-install-smoke.test.ts",
+      "liveSources": [
+        "test/e2e/live/full-e2e-inference-probe.ts",
+        "test/e2e/live/hosted-e2e-cleanup.ts"
+      ],
       "fast": [
+        "test/e2e/support/full-e2e-inference-probe.test.ts",
+        "test/e2e/support/hosted-e2e-cleanup.test.ts",
         "test/automation/e2e/brev-launchable-ci-cpu-checksum.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
@@ -286,7 +292,13 @@
     },
     {
       "live": "test/e2e/live/launchable-smoke.test.ts",
+      "liveSources": [
+        "test/e2e/live/full-e2e-inference-probe.ts",
+        "test/e2e/live/hosted-e2e-cleanup.ts"
+      ],
       "fast": [
+        "test/e2e/support/full-e2e-inference-probe.test.ts",
+        "test/e2e/support/hosted-e2e-cleanup.test.ts",
         "test/automation/e2e/brev-launchable-ci-cpu-checksum.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
@@ -472,8 +484,14 @@
     },
     {
       "live": "test/e2e/live/agent-turn-latency.test.ts",
-      "liveSources": ["test/e2e/live/agent-turn-latency-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/agent-turn-latency-helpers.ts",
+        "test/e2e/live/full-e2e-inference-probe.ts",
+        "test/e2e/live/hosted-e2e-cleanup.ts"
+      ],
       "fast": [
+        "test/e2e/support/full-e2e-inference-probe.test.ts",
+        "test/e2e/support/hosted-e2e-cleanup.test.ts",
         "test/e2e/support/agent-turn-latency-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",

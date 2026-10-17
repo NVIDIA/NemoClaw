@@ -9,6 +9,8 @@ import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { normalizeMode } from "../fixtures/inference-adapter.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
+import { sandboxAbsentFromList } from "./hosted-e2e-cleanup.ts";
 import {
   buildOpenClawFirstTurnLatencyEvidence,
   CLI,
@@ -142,10 +144,7 @@ runAgentTurnLatencyTest(
       "openclaw-route",
       progress,
     );
-    expect(openclawRoute.exitCode, resultText(openclawRoute)).toBe(0);
-    for (const expected of [inference.expectedRouteProvider, inference.model]) {
-      expect(resultText(openclawRoute)).toContain(expected);
-    }
+    expect(openclawRoute.ok, openclawRoute.detail).toBe(true);
     progress.phase("run OpenClaw hosted inference turn");
     const firstTurn = await openclawTurn(host, inference, progress, {
       artifactName: "openclaw-agent-turn",
@@ -181,7 +180,7 @@ runAgentTurnLatencyTest(
     progress.phase("replace OpenClaw with Hermes sandbox");
     const openclawDestroy = await host.command(
       "node",
-      [CLI, OPENCLAW_SANDBOX, "destroy", "--yes", "--cleanup-gateway"],
+      [CLI, OPENCLAW_SANDBOX, "destroy", "--yes", "--no-cleanup-gateway"],
       {
         artifactName: "destroy-openclaw-before-hermes",
         env: env(OPENCLAW_SANDBOX, "openclaw", inference),
@@ -190,6 +189,21 @@ runAgentTurnLatencyTest(
       },
     );
     expect(openclawDestroy.exitCode, resultText(openclawDestroy)).toBe(0);
+    expect(getSandbox(OPENCLAW_SANDBOX)).toBeNull();
+    const remainingOpenclaw = await sandbox.openshell(
+      ["sandbox", "list", "-g", "nemoclaw", "-o", "json"],
+      {
+        artifactName: "openclaw-after-destroy",
+        env: env(OPENCLAW_SANDBOX, "openclaw", inference),
+        timeoutMs: 60_000,
+      },
+    );
+    expect(sandboxAbsentFromList(remainingOpenclaw, OPENCLAW_SANDBOX)).toBe(true);
+    await host.cleanupGatewayRegistration("nemoclaw", {
+      artifactName: "remove-openclaw-gateway-before-hermes",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
 
     const hermesInstall = await installSandbox(
       host,
@@ -209,10 +223,7 @@ runAgentTurnLatencyTest(
       "hermes-route",
       progress,
     );
-    expect(hermesRoute.exitCode, resultText(hermesRoute)).toBe(0);
-    for (const expected of [inference.expectedRouteProvider, inference.model]) {
-      expect(resultText(hermesRoute)).toContain(expected);
-    }
+    expect(hermesRoute.ok, hermesRoute.detail).toBe(true);
 
     const payload = JSON.stringify({
       model: inference.model,
@@ -251,6 +262,26 @@ runAgentTurnLatencyTest(
       model: inference.model,
       provider: inference.expectedRouteProvider,
     };
+    const hermesDestroy = await host.command(
+      "node",
+      [CLI, HERMES_SANDBOX, "destroy", "--yes", "--no-cleanup-gateway"],
+      {
+        artifactName: "destroy-hermes-after-turn",
+        env: env(HERMES_SANDBOX, "hermes", inference),
+        timeoutMs: 120_000,
+      },
+    );
+    expect(hermesDestroy.exitCode, resultText(hermesDestroy)).toBe(0);
+    expect(getSandbox(HERMES_SANDBOX)).toBeNull();
+    const remainingHermes = await sandbox.openshell(
+      ["sandbox", "list", "-g", "nemoclaw", "-o", "json"],
+      {
+        artifactName: "hermes-after-destroy",
+        env: env(HERMES_SANDBOX, "hermes", inference),
+        timeoutMs: 60_000,
+      },
+    );
+    expect(sandboxAbsentFromList(remainingHermes, HERMES_SANDBOX)).toBe(true);
     progress.phase("record hosted inference timing evidence");
     await artifacts.writeJson("turn-latency-results.json", results);
   },

@@ -28,6 +28,7 @@ function fakeInference(apiKey = "secret-api-key"): AgentTurnInference {
     mode: "internal-nvidia",
     model: "test-model",
     provider: "custom",
+    endpointUrl: "https://custom.example/v1",
     expectedRouteProvider: "compatible-endpoint",
     env: (extra = {}) => ({ ...extra, COMPATIBLE_API_KEY: apiKey }),
     redactionValues: () => [apiKey],

@@ -7,9 +7,7 @@ import fs from "node:fs";
 import { buildSandboxInferenceChatCommand } from "../fixtures/inference-adapter.ts";
 import os from "node:os";
 import path from "node:path";
-import assert from "node:assert/strict";
-import { runInNewContext } from "node:vm";
-import { customNativeProvider } from "../../../src/lib/inference/native-provider/custom.ts";
+import { nativeRouteHarness } from "./full-e2e-native-route-harness.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 
 import {
@@ -37,114 +35,95 @@ function completion(content: string, finishReason = "stop"): string {
   });
 }
 
+describe.each(["openclaw", "hermes"] as const)("%s native route", (agent) => {
+  it.each([
+    ["owned-id", "none", true],
+    ["different-id", "none", false],
+    ["owned-id", "endpoint", false],
+    ["owned-id", "api", false],
+    ["owned-id", "credential", false],
+    ["owned-id", "model", false],
+  ] as const)(
+    "checks custom native provider identity %s and agent drift %s on the recorded gateway",
+    async (observedId, drift, expected) => {
+      const { definition, openshell, exec, input } = nativeRouteHarness(agent, observedId, drift);
+      const result = await readFullE2eInferenceRoute(input);
+      expect(result.ok).toBe(expected);
+      expect(exec).toHaveBeenCalledExactlyOnceWith(
+        "alpha",
+        expect.any(Array),
+        expect.objectContaining({ artifactName: "phase-3-native-custom-agent-route" }),
+      );
+      expect(openshell.mock.calls.map(([args]) => args)).toEqual([
+        ["provider", "get", "-g", "recorded-gateway", definition.providerName],
+        ["sandbox", "provider", "list", "-g", "recorded-gateway", "alpha"],
+      ]);
+      expect(openshell).toHaveBeenNthCalledWith(
+        1,
+        expect.any(Array),
+        expect.objectContaining({
+          redactionValues: ["synthetic-key"],
+          captureLimitBytes: 16 * 1024,
+        }),
+      );
+    },
+  );
+});
+
 it.each([
-  ["owned-id", "none", true],
-  ["different-id", "none", false],
-  ["owned-id", "endpoint", false],
-  ["owned-id", "api", false],
-  ["owned-id", "credential", false],
-  ["owned-id", "model", false],
-] as const)(
-  "checks custom native provider identity %s and agent drift %s on the recorded gateway",
-  async (observedId, drift, expected) => {
-    const definition = customNativeProvider({
-      provider: "compatible-endpoint",
-      endpointUrl: "https://custom.example/v1",
-      api: "openai-completions",
-      credentialEnv: "SOURCE_KEY",
-      allowedIps: ["8.8.8.8"],
-    });
-    const openshell = vi
-      .fn()
-      .mockResolvedValueOnce({
-        exitCode: 0,
-        stdout: [
-          `Name: ${definition.providerName}`,
-          `Id: ${observedId}`,
-          `Type: ${definition.profileId}`,
-          "Resource version: 1",
-          "Credential keys: COMPATIBLE_API_KEY",
-          "Config keys: <none>",
-        ].join("\n"),
-      })
-      .mockResolvedValueOnce({ exitCode: 0, stdout: definition.providerName });
-    const handle = "openshell:resolve:env:v3_COMPATIBLE_API_KEY";
-    const config = {
-      agents: {
-        defaults: {
-          model: { primary: drift === "model" ? "inference/other" : "inference/selected-model" },
-        },
-      },
-      models: {
-        providers: {
-          inference: {
-            baseUrl: drift === "endpoint" ? "https://wrong.example/v1" : definition.endpoint,
-            api: drift === "api" ? "openai-responses" : definition.api,
-            apiKey: drift === "credential" ? "raw-secret" : handle,
-            models: [{ id: "selected-model" }],
-          },
-        },
-      },
-    };
-    const exec = vi.fn(async (_name, command) => {
-      let stdout = "";
-      try {
-        runInNewContext(command[2], {
-          require: (name: string) =>
-            name === "node:fs" ? { readFileSync: () => JSON.stringify(config) } : assert,
-          process: {
-            argv: ["node", command[3]],
-            env: { COMPATIBLE_API_KEY: handle },
-            stdout: {
-              write: (value: string) => {
-                stdout += value;
-              },
-            },
-          },
-        });
-        return { exitCode: 0, stdout };
-      } catch {
-        return { exitCode: 1, stdout };
-      }
-    });
-    const result = await readFullE2eInferenceRoute({
-      sandbox: { openshell, exec } as unknown as SandboxClient,
-      sandboxName: "alpha",
-      logicalProvider: definition.logicalProvider,
-      model: "selected-model",
-      env: {},
-      redactionValues: ["synthetic-key"],
-      entry: {
-        name: "alpha",
-        gatewayName: "recorded-gateway",
-        nativeHostedProviderAttachment: {
-          schemaVersion: 1,
-          profileId: definition.profileId,
-          providerName: definition.providerName,
-          providerId: "owned-id",
-          endpointUrl: definition.endpointUrl,
-          allowedIps: definition.allowedIps,
-          custom: definition.custom,
-        },
-      },
-    });
-    expect(result.ok).toBe(expected);
-    expect(exec).toHaveBeenCalledExactlyOnceWith(
-      "alpha",
-      expect.any(Array),
-      expect.objectContaining({ artifactName: "phase-3-native-custom-agent-route" }),
-    );
-    expect(openshell.mock.calls.map(([args]) => args)).toEqual([
-      ["provider", "get", "-g", "recorded-gateway", definition.providerName],
-      ["sandbox", "provider", "list", "-g", "recorded-gateway", "alpha"],
-    ]);
-    expect(openshell).toHaveBeenNthCalledWith(
-      1,
-      expect.any(Array),
-      expect.objectContaining({ redactionValues: ["synthetic-key"], captureLimitBytes: 16 * 1024 }),
-    );
-  },
-);
+  { endpointUrl: "https://other.example/v1" },
+  { logicalProvider: "compatible-anthropic-endpoint" },
+  { preferredApi: "openai-responses" },
+])("rejects native selection drift %j before inspecting the sandbox", async (selection) => {
+  const { input, openshell, exec } = nativeRouteHarness("openclaw");
+  const observed = await readFullE2eInferenceRoute({ ...input, ...selection });
+  expect(observed.ok).toBe(false);
+  expect(openshell).not.toHaveBeenCalled();
+  expect(exec).not.toHaveBeenCalled();
+});
+
+it("rejects a missing native receipt instead of accepting a global route", async () => {
+  const openshell = vi.fn().mockResolvedValue({
+    exitCode: 0,
+    stdout: "compatible-endpoint selected-model",
+  });
+  const result = await readFullE2eInferenceRoute({
+    sandbox: { openshell } as unknown as SandboxClient,
+    sandboxName: "alpha",
+    logicalProvider: "compatible-endpoint",
+    endpointUrl: "https://custom.example/v1",
+    model: "selected-model",
+    env: {},
+    redactionValues: [],
+    entry: null,
+  });
+  expect(result.ok).toBe(false);
+  expect(openshell).not.toHaveBeenCalled();
+});
+
+it.each([
+  [0, "compatible-endpoint selected-model", true],
+  [1, "compatible-endpoint selected-model", false],
+  [0, "compatible-endpoint wrong-model", false],
+  [0, "other-provider selected-model", false],
+  [0, "Inference: Not configured", false],
+] as const)("checks shared route status %s and content %s", async (exitCode, stdout, ok) => {
+  const openshell = vi.fn().mockResolvedValue({ exitCode, stdout });
+  const exec = vi.fn();
+  const observed = await readFullE2eInferenceRoute({
+    sandbox: { openshell, exec } as unknown as SandboxClient,
+    sandboxName: "alpha",
+    logicalProvider: "compatible-endpoint",
+    endpointUrl: "http://127.0.0.1:1234/v1",
+    model: "selected-model",
+    entry: null,
+    env: {},
+    redactionValues: [],
+  });
+  expect(observed.ok).toBe(ok);
+  expect(openshell).toHaveBeenCalledWith(["inference", "get"], expect.any(Object));
+  expect(exec).not.toHaveBeenCalled();
+});
 
 describe("full E2E sandbox inference probe", () => {
   it.each([
@@ -159,14 +138,20 @@ describe("full E2E sandbox inference probe", () => {
           mode: 0o700,
         });
         const body = JSON.stringify({ prompt: 'literal $(exit 99) "quote"' });
-        const [command, ...args] = buildSandboxInferenceChatCommand(body, provider, endpointUrl);
+        const timeout = provider === "compatible-endpoint" ? 60 : 90;
+        const [command, ...args] = buildSandboxInferenceChatCommand(
+          body,
+          provider,
+          endpointUrl,
+          timeout,
+        );
         const handle = `openshell:resolve:env:v3_${credentialEnv}`;
         const env = { PATH: `${directory}:/usr/bin:/bin`, [credentialEnv]: handle };
         const result = execFileSync(command, args, { env, encoding: "utf8" });
         expect(result.split("\n")).toEqual([
           "-fsS",
           "--max-time",
-          "90",
+          String(timeout),
           `${endpointUrl}/chat/completions`,
           "-H",
           "Content-Type: application/json",
@@ -214,19 +199,22 @@ describe("full E2E sandbox inference probe", () => {
     },
   );
 
-  it("retains the credential-free local probe for a compatible provider", () => {
-    expect(buildSandboxInferenceChatCommand("{}", "compatible-endpoint")).toEqual([
-      "curl",
-      "-fsS",
-      "--max-time",
-      "90",
-      "https://inference.local/v1/chat/completions",
-      "-H",
-      "Content-Type: application/json",
-      "--data-raw",
-      "{}",
-    ]);
-  });
+  it.each([undefined, "http://127.0.0.1:1234/v1", "https://inference.local/v1"])(
+    "retains the shared route for endpoint %s",
+    (endpoint) => {
+      expect(buildSandboxInferenceChatCommand("{}", "compatible-endpoint", endpoint)).toEqual([
+        "curl",
+        "-fsS",
+        "--max-time",
+        "90",
+        "https://inference.local/v1/chat/completions",
+        "-H",
+        "Content-Type: application/json",
+        "--data-raw",
+        "{}",
+      ]);
+    },
+  );
   it("uses deterministic sampling and the requested reply budget for Nemotron", () => {
     expect(JSON.parse(buildFullE2eInferenceRequest("nvidia/nvidia/nemotron-3-ultra", 512))).toEqual(
       {

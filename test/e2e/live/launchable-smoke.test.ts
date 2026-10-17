@@ -22,11 +22,15 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
+import { buildSandboxInferenceChatCommand } from "../fixtures/inference-adapter.ts";
+import { readFullE2eInferenceRoute } from "./full-e2e-inference-probe.ts";
+import { cleanupBootstrapState, sandboxAbsentFromList } from "./hosted-e2e-cleanup.ts";
 
 // This is intentionally a single live test instead of a new fixture
 // family: the contract is the real Ubuntu bootstrap path, so the test invokes
 // scripts/brev-launchable-ci-cpu.sh via sudo, then proves the bootstrap-built
-// CLI can onboard, route inference.local, and run an OpenClaw agent turn
+// CLI can onboard, use hosted inference, and run an OpenClaw agent turn
 // through Vitest.
 
 const BOOTSTRAP_SCRIPT = path.join(REPO_ROOT, "scripts", "brev-launchable-ci-cpu.sh");
@@ -115,29 +119,13 @@ async function preseedBootstrapClone(
   expectExitZero(result, "preseed bootstrap clone");
 }
 
-async function cleanupBootstrapState(host: HostCliClient, cloneDir: string): Promise<void> {
-  await runBash(
-    host,
-    [
-      `if command -v nemoclaw >/dev/null 2>&1; then nemoclaw ${JSON.stringify(SANDBOX_NAME)} destroy --yes 2>/dev/null || true; fi`,
-      `if command -v openshell >/dev/null 2>&1; then openshell sandbox delete ${JSON.stringify(SANDBOX_NAME)} 2>/dev/null || true; fi`,
-      "if command -v openshell >/dev/null 2>&1; then openshell gateway destroy -g nemoclaw 2>/dev/null || true; fi",
-      `sudo rm -rf ${JSON.stringify(cloneDir)} 2>/dev/null || rm -rf ${JSON.stringify(cloneDir)} || true`,
-    ].join("\n"),
-    {
-      artifactName: "cleanup-bootstrap-state",
-      env: runEnv({ PATH: `/usr/local/bin:${process.env.PATH ?? ""}` }),
-      timeoutMs: 180_000,
-    },
-  );
-}
-
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function expectPongFromSandboxInference(
   sandboxExec: (command: string[], artifactName: string) => Promise<ShellProbeResult>,
+  endpointUrl: string,
 ): Promise<void> {
   const payload = JSON.stringify({
     model: MODEL,
@@ -149,24 +137,14 @@ async function expectPongFromSandboxInference(
   let lastResult: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     lastResult = await sandboxExec(
-      [
-        "curl",
-        "-s",
-        "--max-time",
-        "60",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "-d",
-        payload,
-      ],
+      buildSandboxInferenceChatCommand(payload, EXPECTED_ROUTE_PROVIDER, endpointUrl, 60),
       `phase-6-sandbox-inference-attempt-${attempt}`,
     );
-    if (lastResult.stdout.trim()) {
+    if (lastResult.exitCode === 0 && lastResult.stdout.trim()) {
       try {
         lastContent = parseChatContent(lastResult.stdout);
       } catch {
-        lastContent = lastResult.stdout.slice(0, 200);
+        lastContent = "invalid chat completion JSON";
       }
       if (/PONG/i.test(lastContent)) return;
     }
@@ -174,7 +152,7 @@ async function expectPongFromSandboxInference(
   }
 
   throw new Error(
-    `sandbox inference.local expected PONG after 3 attempts; last content='${lastContent}'; ` +
+    `sandbox hosted inference expected PONG after 3 attempts; last content='${lastContent}'; ` +
       `stdout='${lastResult?.stdout.slice(0, 300) ?? ""}'; stderr='${lastResult?.stderr.slice(0, 300) ?? ""}'`,
   );
 }
@@ -252,10 +230,16 @@ test(
 
     progress.phase("prepare a fresh bootstrap clone");
     const cloneDir = path.join(os.tmpdir(), `NemoClaw-bootstrap-${randomUUID()}`);
-    cleanup.add(`remove bootstrap clone ${cloneDir}`, async () =>
-      cleanupBootstrapState(host, cloneDir),
-    );
-    await cleanupBootstrapState(host, cloneDir);
+    const cleanBootstrap = () =>
+      cleanupBootstrapState({
+        host,
+        sandbox,
+        name: SANDBOX_NAME,
+        cloneDir,
+        env: runEnv({ PATH: `/usr/local/bin:${process.env.PATH ?? ""}` }),
+      });
+    cleanup.add(`remove bootstrap sandbox and clone ${cloneDir}`, cleanBootstrap);
+    await cleanBootstrap();
     await preseedBootstrapClone(host, cloneDir, artifacts);
 
     progress.phase("run the Brev bootstrap script");
@@ -378,13 +362,19 @@ test(
     });
     expectExitZero(status, `nemoclaw ${SANDBOX_NAME} status`);
 
-    const inferenceConfig = await host.command("openshell", ["inference", "get"], {
-      artifactName: "phase-5-openshell-inference-get",
+    const inferenceConfig = await readFullE2eInferenceRoute({
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+      entry: getSandbox(SANDBOX_NAME),
+      logicalProvider: EXPECTED_ROUTE_PROVIDER,
+      endpointUrl: hosted.endpointUrl,
+      preferredApi: hosted.env.NEMOCLAW_PREFERRED_API,
+      model: MODEL,
+      artifactPrefix: "phase-5",
       env: pathEnv,
-      timeoutMs: 30_000,
+      redactionValues: [apiKey],
     });
-    expectExitZero(inferenceConfig, "openshell inference get");
-    expect(inferenceConfig.stdout).toMatch(new RegExp(EXPECTED_ROUTE_PROVIDER, "i"));
+    expect(inferenceConfig.ok, inferenceConfig.detail).toBe(true);
 
     const gatewayContainer = await runtimeProvider.command(
       ["container", "ps", "--format", "{{.Names}}"],
@@ -438,7 +428,7 @@ test(
         env: pathEnv,
         timeoutMs: INFERENCE_TIMEOUT_MS,
       });
-    await expectPongFromSandboxInference(sandboxExec);
+    await expectPongFromSandboxInference(sandboxExec, hosted.endpointUrl);
 
     const sessionId = `e2e-bootstrap-${Date.now()}-${randomUUID()}`;
     const agent = await sandboxExec(
@@ -468,24 +458,29 @@ test(
     ).toBe(true);
 
     progress.phase("destroy the bootstrap sandbox and clone");
-    const destroy = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: "phase-7-nemoclaw-destroy",
-      cwd: cloneDir,
-      env: pathEnv,
-      timeoutMs: 120_000,
-    });
+    const destroy = await host.command(
+      "nemoclaw",
+      [SANDBOX_NAME, "destroy", "--yes", "--no-cleanup-gateway"],
+      {
+        artifactName: "phase-7-nemoclaw-destroy",
+        cwd: cloneDir,
+        env: pathEnv,
+        timeoutMs: 120_000,
+      },
+    );
     expectExitZero(destroy, `destroy ${SANDBOX_NAME}`);
-    await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "phase-7-openshell-gateway-destroy",
+    const remaining = await sandbox.openshell(["sandbox", "list", "-g", "nemoclaw", "-o", "json"], {
+      artifactName: "phase-7-remaining-sandboxes",
       env: pathEnv,
       timeoutMs: 60_000,
     });
+    expect(
+      sandboxAbsentFromList(remaining, SANDBOX_NAME),
+      "bootstrap sandbox resource remains or list failed",
+    ).toBe(true);
 
-    const registryFile = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
-    if (fs.existsSync(registryFile)) {
-      expect(fs.readFileSync(registryFile, "utf8")).not.toContain(`"${SANDBOX_NAME}"`);
-    }
+    expect(getSandbox(SANDBOX_NAME)).toBeNull();
 
-    await cleanupBootstrapState(host, cloneDir);
+    await cleanBootstrap();
   },
 );

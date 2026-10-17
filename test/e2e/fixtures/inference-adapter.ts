@@ -3,6 +3,7 @@
 
 import { randomBytes } from "node:crypto";
 import { nativeHostedAuthHeaderScript } from "../../../src/lib/inference/native-provider/contract.ts";
+import { isHostedCustomEndpoint } from "../../../src/lib/inference/native-provider/custom.ts";
 import {
   NATIVE_NVIDIA_AUTH_HEADER_SCRIPT,
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
@@ -468,8 +469,15 @@ export function buildSandboxInferenceChatCommand(
   requestBody: string,
   logicalProvider: string,
   endpointUrl?: string,
+  timeoutSeconds = 90,
 ): [string, ...string[]] {
-  const nativeCustom = logicalProvider === "compatible-endpoint" && endpointUrl;
+  if (!Number.isSafeInteger(timeoutSeconds) || timeoutSeconds <= 0) {
+    throw new Error("Sandbox inference timeout must be a positive integer");
+  }
+  const nativeCustom =
+    logicalProvider === "compatible-endpoint" &&
+    endpointUrl &&
+    isHostedCustomEndpoint(logicalProvider, endpointUrl);
   if (logicalProvider === NVIDIA_HOSTED_LOGICAL_PROVIDER || nativeCustom) {
     const auth = nativeCustom
       ? nativeHostedAuthHeaderScript({
@@ -480,7 +488,7 @@ export function buildSandboxInferenceChatCommand(
     return [
       "bash",
       "-c",
-      `${auth}; exec curl -fsS --max-time 90 "$1" -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-raw "$2"`,
+      `${auth}; exec curl -fsS --max-time ${timeoutSeconds} "$1" -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-raw "$2"`,
       "full-e2e-native-inference",
       `${(nativeCustom ? endpointUrl : NVIDIA_HOSTED_NATIVE_ENDPOINT).replace(/\/+$/u, "")}/chat/completions`,
       requestBody,
@@ -490,7 +498,7 @@ export function buildSandboxInferenceChatCommand(
     "curl",
     "-fsS",
     "--max-time",
-    "90",
+    String(timeoutSeconds),
     "https://inference.local/v1/chat/completions",
     "-H",
     "Content-Type: application/json",

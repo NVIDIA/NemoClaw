@@ -7,7 +7,7 @@ import {
 } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText, shellQuote } from "../fixtures/clients/command.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import type { E2EInferenceAdapter } from "../fixtures/inference-adapter.ts";
@@ -15,13 +15,21 @@ import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
+import { readFullE2eInferenceRoute } from "./full-e2e-inference-probe.ts";
 
 // The injected E2E inference adapter (#5745) is the single source of the
 // model, provider, expected route, and credential this suite exercises;
 // this file must not rederive them from ad hoc NEMOCLAW_* env inspection.
 export type AgentTurnInference = Pick<
   E2EInferenceAdapter,
-  "env" | "expectedRouteProvider" | "model" | "mode" | "provider" | "redactionValues"
+  | "endpointUrl"
+  | "env"
+  | "expectedRouteProvider"
+  | "model"
+  | "mode"
+  | "provider"
+  | "redactionValues"
 >;
 
 export { REPO_ROOT };
@@ -413,12 +421,20 @@ export async function route(
   inference: AgentTurnInference,
   artifactName: string,
   progress?: Pick<TestProgress, "onOutput">,
-): Promise<ShellProbeResult> {
-  return await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
-    artifactName,
+): Promise<{ ok: boolean; detail: string }> {
+  return readFullE2eInferenceRoute({
+    sandbox,
+    sandboxName,
+    agent,
+    entry: getSandbox(sandboxName),
+    logicalProvider: inference.expectedRouteProvider,
+    endpointUrl: inference.endpointUrl,
+    preferredApi: inference.env().NEMOCLAW_PREFERRED_API,
+    model: inference.model,
     env: env(sandboxName, agent, inference),
+    redactionValues: inference.redactionValues(),
+    artifactPrefix: artifactName,
     onOutput: progress?.onOutput,
-    timeoutMs: 30_000,
   });
 }
 

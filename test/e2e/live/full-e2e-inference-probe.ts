@@ -3,9 +3,12 @@
 
 import { parseCliOpenShellProviderMetadata } from "../../../src/lib/adapters/openshell/provider-metadata-cli.ts";
 import { hostedNativeProviderForAttachment } from "../../../src/lib/inference/native-provider/hosted-attachment.ts";
+import { isHostedCustomEndpoint } from "../../../src/lib/inference/native-provider/custom.ts";
+import { hermesApiMode, hermesProviderKey } from "../../../src/lib/hermes-managed-route.ts";
 import { getSandboxInferenceConfig } from "../../../src/lib/inference/config.ts";
 import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
+import type { ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
 import {
   PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
   readPublicNvidiaSwitchAttachmentEvidence,
@@ -325,18 +328,39 @@ export function fullE2eInferenceProbeEvidence<Result extends InferenceCommandRes
 export async function readFullE2eInferenceRoute(input: {
   sandbox: SandboxClient;
   sandboxName: string;
+  agent?: "openclaw" | "hermes";
   entry: SandboxEntry | null;
   logicalProvider: string;
+  endpointUrl?: string;
+  preferredApi?: string;
+  artifactPrefix?: string;
+  onOutput?: ShellProbeRunOptions["onOutput"];
   model: string;
   env: NodeJS.ProcessEnv;
   redactionValues: string[];
 }): Promise<{ ok: boolean; detail: string }> {
   const receipt = input.entry?.nativeHostedProviderAttachment;
+  const artifactPrefix = input.artifactPrefix ?? "phase-3";
+  if (isHostedCustomEndpoint(input.logicalProvider, input.endpointUrl) && !receipt?.custom) {
+    return { ok: false, detail: "Missing selected custom native provider attachment" };
+  }
   if (receipt?.custom) {
     const definition = hostedNativeProviderForAttachment(receipt);
     if (!definition) return { ok: false, detail: "Invalid custom native ownership" };
+    if (
+      definition.logicalProvider !== input.logicalProvider ||
+      (input.preferredApi !== undefined && input.preferredApi !== receipt.custom.api) ||
+      (input.endpointUrl !== undefined &&
+        new URL(input.endpointUrl).href !== new URL(definition.endpoint).href)
+    ) {
+      return {
+        ok: false,
+        detail: "Native attachment differs from selected provider, endpoint or API",
+      };
+    }
     const options = {
       env: input.env,
+      onOutput: input.onOutput,
       redactionValues: input.redactionValues,
       timeoutMs: 60_000,
       captureLimitBytes: 16 * 1024,
@@ -344,11 +368,11 @@ export async function readFullE2eInferenceRoute(input: {
     const gateway = input.entry?.gatewayName || input.env.OPENSHELL_GATEWAY || "nemoclaw";
     const provider = await input.sandbox.openshell(
       ["provider", "get", "-g", gateway, receipt.providerName],
-      { ...options, artifactName: "phase-3-native-custom-provider-metadata" },
+      { ...options, artifactName: `${artifactPrefix}-native-custom-provider-metadata` },
     );
     const attachments = await input.sandbox.openshell(
       ["sandbox", "provider", "list", "-g", gateway, input.sandboxName],
-      { ...options, artifactName: "phase-3-native-custom-provider-attachment" },
+      { ...options, artifactName: `${artifactPrefix}-native-custom-provider-attachment` },
     );
     const metadata =
       provider.exitCode === 0 ? parseCliOpenShellProviderMetadata(provider.stdout) : null;
@@ -363,32 +387,66 @@ export async function readFullE2eInferenceRoute(input: {
     // Keep credential references out of retained command output.
     const agent = await input.sandbox.exec(
       input.sandboxName,
-      [
-        "node",
-        "-e",
-        [
-          'const config = JSON.parse(require("node:fs").readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));',
-          'const assert = require("node:assert/strict");',
-          "const expected = JSON.parse(process.argv[1]);",
-          "const provider = config.models?.providers?.[expected.providerKey];",
-          'assert.equal(config.agents?.defaults?.model?.primary, expected.primaryModelRef, "selected model mismatch");',
-          'assert.equal(provider?.baseUrl, expected.endpoint, "selected endpoint mismatch");',
-          'assert.equal(provider?.api, expected.api, "selected API mismatch");',
-          'assert.ok(provider?.models?.some(model => model.id === expected.model), "selected model is absent");',
-          "const handle = process.env[expected.credentialEnv];",
-          'assert.ok(new RegExp("^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + expected.credentialEnv + "$").test(handle ?? "") && provider?.apiKey === handle, "selected credential reference mismatch");',
-          'process.stdout.write("selected agent route verified");',
-        ].join(" "),
-        JSON.stringify({
-          providerKey: route.providerKey,
-          primaryModelRef: route.primaryModelRef,
-          endpoint: route.inferenceBaseUrl,
-          api: route.inferenceApi,
-          model: input.model,
-          credentialEnv: definition.credentialEnv,
-        }),
-      ],
-      { ...options, artifactName: "phase-3-native-custom-agent-route" },
+      input.agent === "hermes"
+        ? [
+            "/opt/hermes/.venv/bin/python3",
+            "-I",
+            "-c",
+            [
+              "import json, os, re, sys, yaml",
+              'sys.path.insert(0, "/opt/hermes")',
+              "from hermes_cli.config import _expand_env_vars",
+              "expected = json.loads(sys.argv[1])",
+              'with open("/sandbox/.hermes/config.yaml", encoding="utf-8") as source:',
+              "    config = _expand_env_vars(yaml.safe_load(source))",
+              'model = config.get("model", {})',
+              'provider = config.get("providers", {}).get(expected["providerKey"], {})',
+              'custom = [item for item in config.get("custom_providers", []) if item.get("name") == expected["logicalProvider"]]',
+              'assert model.get("provider") == "custom", "selected provider mismatch"',
+              'assert model.get("default") == expected["model"] and provider.get("default_model") == expected["model"], "selected model mismatch"',
+              'assert len(custom) == 1, "selected custom provider mismatch"',
+              'assert model.get("base_url") == provider.get("api") == custom[0].get("base_url") == expected["endpoint"], "selected endpoint mismatch"',
+              'assert model.get("api_mode") == provider.get("transport") == custom[0].get("api_mode") == expected["apiMode"], "selected API mismatch"',
+              'handle = os.environ.get(expected["credentialEnv"], "")',
+              'assert re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + expected["credentialEnv"], handle), "selected credential scope mismatch"',
+              'assert all(item.get("api_key") == handle for item in (model, provider, custom[0])), "selected credential reference mismatch"',
+              'sys.stdout.write("selected agent route verified")',
+            ].join("\n"),
+            JSON.stringify({
+              providerKey: hermesProviderKey(input.logicalProvider),
+              logicalProvider: input.logicalProvider,
+              endpoint: route.inferenceBaseUrl,
+              apiMode: hermesApiMode(route.inferenceApi),
+              model: input.model,
+              credentialEnv: definition.credentialEnv,
+            }),
+          ]
+        : [
+            "node",
+            "-e",
+            [
+              'const config = JSON.parse(require("node:fs").readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));',
+              'const assert = require("node:assert/strict");',
+              "const expected = JSON.parse(process.argv[1]);",
+              "const provider = config.models?.providers?.[expected.providerKey];",
+              'assert.equal(config.agents?.defaults?.model?.primary, expected.primaryModelRef, "selected model mismatch");',
+              'assert.equal(provider?.baseUrl, expected.endpoint, "selected endpoint mismatch");',
+              'assert.equal(provider?.api, expected.api, "selected API mismatch");',
+              'assert.ok(provider?.models?.some(model => model.id === expected.model), "selected model is absent");',
+              "const handle = process.env[expected.credentialEnv];",
+              'assert.ok(new RegExp("^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + expected.credentialEnv + "$").test(handle ?? "") && provider?.apiKey === handle, "selected credential reference mismatch");',
+              'process.stdout.write("selected agent route verified");',
+            ].join(" "),
+            JSON.stringify({
+              providerKey: route.providerKey,
+              primaryModelRef: route.primaryModelRef,
+              endpoint: route.inferenceBaseUrl,
+              api: route.inferenceApi,
+              model: input.model,
+              credentialEnv: definition.credentialEnv,
+            }),
+          ],
+      { ...options, artifactName: `${artifactPrefix}-native-custom-agent-route` },
     );
     const ok =
       metadata?.name === receipt.providerName &&
@@ -407,7 +465,7 @@ export async function readFullE2eInferenceRoute(input: {
     };
   }
   const native = await readPublicNvidiaSwitchAttachmentEvidence({
-    artifactName: "phase-3-native-nvidia-provider-attachment",
+    artifactName: `${artifactPrefix}-native-nvidia-provider-attachment`,
     env: input.env,
     logicalProvider: input.logicalProvider,
     receipt: input.entry?.nativeNvidiaProviderAttachment,
@@ -417,9 +475,16 @@ export async function readFullE2eInferenceRoute(input: {
   if (native !== null)
     return { ok: native === PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE, detail: native };
   const route = await input.sandbox.openshell(["inference", "get"], {
-    artifactName: "phase-3-openshell-inference-get",
+    artifactName: `${artifactPrefix}-openshell-inference-get`,
     env: input.env,
+    onOutput: input.onOutput,
     timeoutMs: 60_000,
   });
-  return { ok: route.exitCode === 0 && route.stdout.includes(input.model), detail: route.stdout };
+  return {
+    ok:
+      route.exitCode === 0 &&
+      route.stdout.includes(input.model) &&
+      route.stdout.includes(input.logicalProvider),
+    detail: route.stdout,
+  };
 }
