@@ -58,7 +58,7 @@ spec:
   sandboxes:
     - name: assistant
       image:
-        ref: nc-fabric-openclaw-arm64@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
       harness:

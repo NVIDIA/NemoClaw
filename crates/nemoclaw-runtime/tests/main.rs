@@ -11,3 +11,5 @@ mod dependencies;
 mod entrypoint;
 #[path = "ollama_cache.rs"]
 mod ollama_cache;
+#[path = "rtx_spark.rs"]
+mod rtx_spark;

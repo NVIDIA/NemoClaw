@@ -56,8 +56,8 @@ mkdir -p .local/gtc-dc
 cp examples/gtc-dc/openclaw-dgx-spark.yml .local/gtc-dc/deployment.yml
 ```
 
-Assign a fresh `metadata.uid` and replace both zero image digests with the matching runtime and agent references from builds of this checkout.
-The runtime builder prints its immutable loaded image reference; use the matching agent reference printed by image inspection.
+Assign a fresh `metadata.uid` and replace both zero-digest image references with references from builds of this checkout.
+The runtime builder prints `Runtime image loaded: NAME@sha256:DIGEST`; image inspection prints the agent's `nc-fabric@sha256:DIGEST` reference.
 Both images must exist on the Docker daemon selected in the copied file.
 Check that its gateway port, model port, and private `/24` do not conflict with existing resources.
 The committed templates use gateway ports 17901–17909, model ports 19101–19109, and networks 172.30.180.0/24–172.30.188.0/24.
@@ -81,8 +81,10 @@ The configurations adapt the existing [Station](../station/vllm.yaml), [Spark](.
 The changes select Nemotron Super NVFP4, one agent per file, target-specific hardware, a 65,536-token context, explicit memory budgets, and separate deployment identities and addresses.
 
 The [upstream vLLM Nemotron Super recipe](https://github.com/vllm-project/recipes/blob/d80a1692a40e79bc6a5dc77e5a2d71c32e3d4b37/models/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16.yaml), pinned to recipes commit `d80a1692a40e79bc6a5dc77e5a2d71c32e3d4b37`, informs the model and native parser choices.
-Its current examples use vLLM 0.28.0 and settings beyond the ordinary managed-service contract.
-These templates instead use fields accepted by this checkout and its pinned ARM64 runtime image.
+Its DGX Spark and Station commands use vLLM 0.28.0 with settings these templates do not select, such as an FP8 KV cache and MTP speculative decoding.
+These templates use only fields that this checkout's schema accepts.
+The pinned ARM64 runtime image builds on the upstream `vllm/vllm-openai` image currently tagged `qwen38-flash-next`, not a vLLM release; whether it serves this model is untested.
 They do not reproduce or qualify the upstream recipe.
-The [ARM64 runtime notice](../../runtimes/vllm/NOTICE.md) describes retained upstream sources and licenses; model license and notice files are retained with the pinned snapshot.
+The [ARM64 runtime notice](../../runtimes/vllm/NOTICE.md) describes retained upstream sources and licenses.
+The model is distributed under the [NVIDIA Nemotron Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/); the pinned snapshot contains no separate license or notice file.
 The RTX Spark profile uses NVIDIA's [documented N1X GPU identities](https://docs.nvidia.com/rtx-spark/rtx-spark-porting-guide/latest/gpu-identification.html) and [CUDA compute capability table](https://developer.nvidia.com/cuda/gpus).
