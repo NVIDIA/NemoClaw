@@ -3,6 +3,7 @@
 
 import type { Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
+import { isN1xManagedVllmProviderModel } from "../../../domain/sandbox/n1x-managed-vllm-rebuild";
 import {
   isPendingReservationForSession,
   isRouteOnlySandboxReservation,
@@ -21,6 +22,8 @@ export function initialOpenClawToolDisclosure(input: {
   fresh: boolean;
   agentName: string;
   provider: string;
+  model: string;
+  deferredN1xManagedVllmPreviewIntent?: boolean;
   entry: SandboxEntry | null;
   sessionId: string | undefined;
   env: NodeJS.ProcessEnv;
@@ -33,7 +36,13 @@ export function initialOpenClawToolDisclosure(input: {
     isRouteOnlySandboxReservation(input.entry) &&
     isPendingReservationForSession(input.entry, input.sessionId) &&
     input.entry.toolDisclosure === undefined;
-  return localDefault ? (resolveToolDisclosureRequest(null, input.env) ?? "direct") : null;
+  if (!localDefault) return null;
+  // Reserve context for replies on the 32K N1x Qwen recipe (#13088).
+  const n1xDefault =
+    input.deferredN1xManagedVllmPreviewIntent === true &&
+    isN1xManagedVllmProviderModel(input.provider, input.model) &&
+    input.entry?.model === input.model;
+  return resolveToolDisclosureRequest(null, input.env) ?? (n1xDefault ? "progressive" : "direct");
 }
 
 export interface SandboxResumeSignals {

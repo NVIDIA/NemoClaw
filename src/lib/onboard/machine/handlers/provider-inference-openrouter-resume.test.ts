@@ -47,6 +47,7 @@ describe("OpenRouter provider inference resume", () => {
         skipHostInferenceSmoke: true,
         reuseGatewayCredentialWithoutLocalKey: true,
         preferredInferenceApi: "openai-completions",
+        deferPublishedRouteReservation: true,
         endpointSource: null,
         reservationSessionId: session.sessionId,
       },

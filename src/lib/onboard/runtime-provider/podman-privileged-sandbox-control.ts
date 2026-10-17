@@ -54,6 +54,7 @@ function resolveTarget(
 function execute(
   engine: PodmanContainerEngine,
   input: RuntimeProviderPrivilegedSandboxCommandInput,
+  user = "root",
 ): RuntimeProviderPrivilegedSandboxCommandResult {
   const target = resolveTarget(engine, input);
   if (
@@ -72,7 +73,7 @@ function execute(
       ...(input.input ? ["--interactive"] : []),
       ...environment,
       "--user",
-      "root",
+      user,
       target.resourceHandle,
       ...input.command,
     ],
@@ -145,6 +146,16 @@ export function createPodmanPrivilegedSandboxControl(
       > & { readonly timeoutMs?: number },
     ) => resolveTarget(engine, input),
     execute: (input: RuntimeProviderPrivilegedSandboxCommandInput) => execute(engine, input),
+    // The caller supplies its managed-image identity; target resolution still
+    // pins the exact container, and root or option-like identities are refused.
+    executeAsSandboxUser: (
+      input: RuntimeProviderPrivilegedSandboxCommandInput & { readonly sandboxUser: string },
+    ) => {
+      if (!/^[1-9][0-9]{0,9}:[1-9][0-9]{0,9}$/u.test(input.sandboxUser)) {
+        throw new Error("Podman sandbox-user cleanup requires a non-root numeric UID and GID.");
+      }
+      return execute(engine, input, input.sandboxUser);
+    },
     ...(cleanupEngine
       ? {
           clearStoppedStateRoots: (

@@ -62,6 +62,7 @@ function sanitizeDockerArg(value: unknown): string {
 }
 
 export interface HermesPortableDockerfileBuildSettings {
+  readonly nativeEndpointUrl?: string;
   readonly baseImageRef?: string;
   readonly model: string;
   readonly provider: string | null;
@@ -128,6 +129,9 @@ export function renderHermesPortableDockerfileBuildSettings(
     input.model,
     input.provider,
     input.preferredInferenceApi,
+    input.nativeEndpointUrl ? true : undefined,
+    input.nativeEndpointUrl,
+    "hermes",
   );
   const replacements = [
     ["NEMOCLAW_MODEL", input.model],
@@ -192,6 +196,7 @@ export interface PatchStagedDockerfileOptions {
   baseImageResolutionMetadata?: SandboxBaseImageResolutionMetadata | null;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
   upstreamEndpointUrl?: string | null;
+  nativeProvider?: boolean;
   compatibleEndpointReasoning?: "true" | "false";
   wslDashboardExposure?: boolean;
 }
@@ -309,6 +314,9 @@ export function patchStagedDockerfile(
     sanitizedModel,
     provider,
     preferredInferenceApi,
+    options.nativeProvider,
+    options.upstreamEndpointUrl,
+    options.agentName,
   );
   const { providerKey, primaryModelRef, inferenceApi, inferenceCompat } = providerless
     ? { providerKey: "", primaryModelRef: "", inferenceApi: "", inferenceCompat: null }

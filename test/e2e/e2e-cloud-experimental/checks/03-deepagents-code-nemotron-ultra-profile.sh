@@ -58,8 +58,8 @@ from langchain_openai import ChatOpenAI
 CONFIG_PATH = Path("/sandbox/.deepagents/config.toml")
 EXPECTED_VERSIONS = {
     "nemoclaw-deepagents-profile": "0.1.0",
-    "deepagents-code": "0.1.55",
-    "deepagents": "0.7.5",
+    "deepagents-code": "0.1.71",
+    "deepagents": "0.7.15",
 }
 MANAGED_MODEL_IDS = (
     "nvidia/nemotron-3-ultra-550b-a55b",
@@ -69,7 +69,7 @@ EXPECTED_EXTRA_BODY = {
     "chat_template_kwargs": {"force_nonempty_content": True},
 }
 EXPECTED_NATIVE_PROFILE_SHA256 = (
-    "3b95b118e90c4ae19890c611cc7e1e85261217f971496e9bb7508142133c7d9a"
+    "eec0bfdb27522823f80e5f95a00e03071162c2a96aa71fbffc1c112c5184c01f"
 )
 EXPECTED_BOOTSTRAP_SHA256 = (
     "005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf"

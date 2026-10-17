@@ -13,8 +13,18 @@ NemoClaw keeps provider credentials on the host and validates explicit custom en
 
 ## Protect Provider Credentials
 
+<AgentOnly variant="openclaw">
 The agent inside the sandbox sends requests to `inference.local` instead of connecting to the upstream endpoint directly.
-OpenShell forwards the traffic and injects the provider credential at egress.
+</AgentOnly>
+<AgentOnly variant="hermes,deepagents">
+New Deep Agents Code and Hermes sandboxes use the recorded endpoint through a sandbox-attached OpenShell provider when the host-local selection qualifies.
+Other custom endpoints retain the shared `inference.local` route.
+Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Live qualification of the Hermes native local lifecycle is pending.
+</AgentOnly>
+OpenShell mediates inference traffic and injects the provider credential at egress.
 The sandbox does not receive the raw API key.
 
 Use `COMPATIBLE_API_KEY` for an OpenAI-compatible endpoint that requires authentication.

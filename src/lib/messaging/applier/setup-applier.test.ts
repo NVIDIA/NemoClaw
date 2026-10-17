@@ -458,6 +458,7 @@ describe("MessagingSetupApplier", () => {
         "--credential",
         "TELEGRAM_BOT_TOKEN",
       ],
+      ["provider", "profile", "export", "nemoclaw-mcp-v1", "--output", "json"],
       ["provider", "get", "demo-telegram-bridge"],
       ["provider", "update", "demo-slack-bridge", "--credential", "SLACK_BOT_TOKEN"],
       ["provider", "get", "demo-slack-bridge"],
@@ -471,6 +472,7 @@ describe("MessagingSetupApplier", () => {
         "--credential",
         "SLACK_APP_TOKEN",
       ],
+      ["provider", "profile", "export", "nemoclaw-mcp-v1", "--output", "json"],
       ["provider", "get", "demo-slack-app"],
     ]);
     expect(calls[4]?.env).toEqual({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" });

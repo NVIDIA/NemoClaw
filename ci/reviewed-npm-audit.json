@@ -12,9 +12,7 @@
     "integrity": "sha512-MFnyX2vs47f/yVJRUXKmA7C6wZDH03ZGFFg+R5gZME+yMQDg9WF6G4Kdz/APM7nCUpaoGk2bwNEdUUmR60J54A==",
     "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.116/3380652847354127ed1bb8010490f8815040ada3"
   },
-  "sourceNestedShrinkwrapPackages": [
-    "@earendil-works/pi-coding-agent@0.80.6"
-  ],
+  "sourceNestedShrinkwrapPackages": ["@earendil-works/pi-coding-agent@0.80.6"],
   "sourceRegistryPackagesWithoutIntegrity": [
     {
       "label": "Pi agent core 0.80.6 nested shrinkwrap entry",
@@ -203,10 +201,10 @@
     }
   ],
   "sourceRegistryPackageReplacement": {
-    "artifactName": "nvidia-openshell-sdk-0.1.2.tgz",
-    "label": "OpenShell TypeScript SDK 0.1.2",
-    "packageSpec": "@nvidia/openshell-sdk@0.1.2",
-    "integrity": "sha512-GtNh/xzuIydm8pnBJSB+Pvo9wQrGcvAdVMgQOjmx2asjXIAMQcdX5/17sd0GjFF0K0KHCTW2gqgwYvf6BCqWMQ==",
-    "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.2/2bef2b98c751484b2a8ad434915138f85d23cfba"
+    "artifactName": "nvidia-openshell-sdk-0.1.3.tgz",
+    "label": "OpenShell TypeScript SDK 0.1.3",
+    "packageSpec": "@nvidia/openshell-sdk@0.1.3",
+    "integrity": "sha512-JXWcEDIl/h8Pp6c2NrFMp0XLloDsLaDZvSVJzXvKUyGEulE64d/utiE1KtNh45JtiZXbVmB2PMJAWEmgZKW5kA==",
+    "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.3/32e1b675af5ad8b8a8fe078a1a11d515a9f45571"
   }
 }

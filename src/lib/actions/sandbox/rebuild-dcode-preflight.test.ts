@@ -22,6 +22,25 @@ import { resolveRebuildDurableConfig } from "./rebuild-durable-config";
 describe("rebuildSandbox DCode flow: preflight", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
+  it.each(["ollama-local", "vllm-local"])(
+    "preserves legacy DCode %s state before any rebuild mutation (#13197)",
+    async (provider) => {
+      const harness = createRebuildFlowHarness({
+        agentName: "langchain-deepagents-code",
+        sandboxEntry: { ...makeDcodeSandboxEntry(), provider },
+      });
+      configureDcodeSession(harness);
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+      ).rejects.toThrow("Legacy shared local inference cannot be rebuilt safely");
+
+      expectNoDcodeMutation(harness);
+      expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
+      expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([false, true])(
     "rejects an invalid host key before an unavailable catalog with force %s (#12742)",
     async (force) => {

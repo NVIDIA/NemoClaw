@@ -511,6 +511,22 @@ describe("resolveCreateSandboxDashboardPortFromObservations", () => {
     assert.equal(result.chatUiUrl, "http://127.0.0.1:18791");
   });
 
+  it("keeps the CHAT_UI_URL host when --control-ui-port selects the port (#13177)", () => {
+    const result = resolveCreateSandboxDashboardPortFromObservations({
+      sandboxName: "cursor",
+      controlUiPort: 19000,
+      chatUiUrlEnv: "https://launchpad.example.test:18789",
+      persistedPort: 18791,
+      agentForwardPort: null,
+      defaultPort: 18789,
+      forwardObservations: [],
+      findAvailablePort: (_sandboxName, preferredPort) => preferredPort,
+    });
+
+    assert.equal(result.preferredPort, 19000);
+    assert.equal(result.chatUiUrl, "https://launchpad.example.test:19000");
+  });
+
   it("ignores malformed CHAT_UI_URL when --control-ui-port supplies the URL", () => {
     const result = resolveCreateSandboxDashboardPortFromObservations({
       sandboxName: "cursor",

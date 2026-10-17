@@ -7,7 +7,10 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
+import {
+  DEFAULT_CLOUD_MODEL,
+  resolveAgentInferenceApi,
+} from "../../../src/lib/inference/config.ts";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
@@ -103,6 +106,15 @@ export function mockAnthropicSwitchEnabled(runtimeEnv: NodeJS.ProcessEnv = proce
   );
 }
 
+export function useLocalHermesInferenceBaseline(
+  runtimeEnv: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    (runtimeEnv.NEMOCLAW_SWITCH_PROVIDER ?? SWITCH_PROVIDER) === PUBLIC_NVIDIA_SWITCH_PROVIDER ||
+    mockAnthropicSwitchEnabled(runtimeEnv)
+  );
+}
+
 export function expectAuthenticatedBaselineInventoryRequest(
   baseline: Pick<FakeOpenAiCompatibleServer, "requests"> | undefined,
 ): void {
@@ -182,7 +194,12 @@ export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Proc
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: openshellGatewayName(),
   };
-  apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey });
+  apiKey &&
+    Object.assign(out, {
+      NVIDIA_INFERENCE_API_KEY: apiKey,
+      NEMOCLAW_PROVIDER: "build",
+      NEMOCLAW_MODEL: process.env.NEMOCLAW_MODEL ?? DEFAULT_CLOUD_MODEL,
+    });
   USE_COMPATIBLE_HOSTED &&
     apiKey &&
     Object.assign(out, {
@@ -231,7 +248,10 @@ export async function prepareProxyResolutionRoute({
   redactionValues: string[];
 }): Promise<{ model: string; requestOffset: number }> {
   const endpoint =
-    mockBaseline?.baseUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
+    mockBaseline?.baseUrl ??
+    (USE_COMPATIBLE_HOSTED
+      ? (process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL)
+      : NVIDIA_HOSTED_NATIVE_ENDPOINT);
   const model = mockBaseline ? PROXY_RESOLUTION_MODEL : SWITCH_MODEL;
   const requestOffset = mockBaseline?.requests().length ?? 0;
 
@@ -403,6 +423,53 @@ export async function runHermesPongWithRetry(
   });
   if (execution.value) return execution.value.result;
   throw new Error("Hermes live probe completed without an attempt result.");
+}
+
+/** Real Hermes gateway requests must cross the attached local provider boundary. */
+export async function expectNativeLocalHermesTurn(options: {
+  sandbox: SandboxClient;
+  endpoint: FakeOpenAiCompatibleServer;
+  model: string;
+  artifactName: string;
+  redactionValues: string[];
+  onEvidence: NonNullable<HermesProbeRetryOptions["onEvidence"]>;
+}): Promise<void> {
+  const offset = options.endpoint.requests().length;
+  const payload = JSON.stringify({
+    model: options.model,
+    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+    max_tokens: 100,
+  });
+  const result = await runHermesPongWithRetry({
+    expectedModel: options.model,
+    onEvidence: options.onEvidence,
+    run: (attempt) =>
+      options.sandbox.execShell(
+        SANDBOX_NAME,
+        trustedSandboxShellScript(hermesApiCommand(payload)),
+        {
+          artifactName: `${options.artifactName}-${attempt}`,
+          env: env(),
+          redactionValues: options.redactionValues,
+          timeoutMs: 150_000,
+        },
+      ),
+  });
+  expect(result.exitCode, resultText(result)).toBe(0);
+  expect(chatContent(result.stdout)).toMatch(/PONG/i);
+  expect(inferenceResponseModel(result.stdout)).toBe(options.model);
+  expect(
+    options.endpoint
+      .requests()
+      .slice(offset)
+      .some(
+        (request) =>
+          request.auth === "ok" &&
+          request.method === "POST" &&
+          request.path === "/v1/chat/completions" &&
+          request.model === options.model,
+      ),
+  ).toBe(true);
 }
 
 export async function runHermesCliPongWithRetry(
@@ -706,7 +773,7 @@ export async function hermesGatewayPid(
   return await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
-      "ps -eo pid=,comm=,args= | awk '$0 ~ /hermes/ && $0 ~ /gateway run/ { print $1; exit }'",
+      "ps -eo pid=,comm=,args= | awk '$2 ~ /^(hermes([.]real)?|python[0-9.]*)$/ && $0 ~ /[h]ermes/ && $0 ~ /gateway[ ]run/ { print $1 }'",
     ),
     { artifactName, env: env(), timeoutMs: 30_000 },
   );
@@ -723,14 +790,11 @@ export async function envHash(
   });
 }
 
-export function maybeAssertPidStable(
-  before: ShellProbeResult,
-  after: ShellProbeResult,
-  assertStable: (a: string, b: string) => void,
-): void {
-  const beforePid = before.stdout.trim();
-  const afterPid = after.stdout.trim();
-  beforePid && afterPid && assertStable(afterPid, beforePid);
+export function parseHermesGatewayPid(
+  result: Pick<ShellProbeResult, "exitCode" | "stdout">,
+): string | undefined {
+  const pid = result.stdout.trim();
+  return result.exitCode === 0 && /^[1-9][0-9]*$/u.test(pid) ? pid : undefined;
 }
 
 export function expectedBaseUrl(): string {
@@ -754,9 +818,16 @@ export function expectedApiMode(): string | undefined {
 // This live lane runs on ubuntu-latest and intentionally uses GNU grep's
 // POSIX ERE character classes; support tests pin the accepted scalar shapes.
 export const API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("sk-[^"[:space:]]+"|'sk-[^'[:space:]]+'|sk-[^"'[:space:]]+)[[:space:]]*$`;
+const NVIDIA_REFERENCE =
+  "openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY";
+export const NVIDIA_API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("${NVIDIA_REFERENCE}"|'${NVIDIA_REFERENCE}'|${NVIDIA_REFERENCE})[[:space:]]*$`;
 
-export function apiKeyShapeCommand(): string[] {
-  return ["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"];
+export function apiKeyShapeCommand(provider: string = SWITCH_PROVIDER): string[] {
+  const pattern =
+    provider === PUBLIC_NVIDIA_SWITCH_PROVIDER
+      ? NVIDIA_API_KEY_SHAPE_PATTERN
+      : API_KEY_SHAPE_PATTERN;
+  return ["grep", "-Eq", pattern, "/sandbox/.hermes/config.yaml"];
 }
 
 export async function apiKeyShape(sandbox: SandboxClient): Promise<ShellProbeResult> {

@@ -19,7 +19,7 @@ import {
   resolveSandboxCreateMessagingProviderRequests,
   resolveSandboxCreatePolicyTier,
 } from "./sandbox-create-plan";
-import type { prepareInitialSandboxCreatePolicy } from "./initial-policy";
+import { prepareInitialSandboxCreatePolicy } from "./initial-policy";
 import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 
 const sandboxGpuConfig: SandboxGpuCreateConfig = {
@@ -269,6 +269,7 @@ describe("prepareSandboxCreatePolicy", () => {
       fromRef: "/tmp/Dockerfile",
       messagingTokenDefs,
       messagingConfig: { WECHAT_BASE_URL: "https://idc-37.weixin.qq.com" },
+      prepareInitialSandboxCreatePolicy,
       upsertMessagingProviders: vi.fn(() => [providerName]),
       getHermesToolGatewayProviderName: vi.fn(),
     });
@@ -657,6 +658,7 @@ describe("resolveSandboxCreateIntent", () => {
         name: "sandbox-telegram-bridge",
         envKey: "TELEGRAM_BOT_TOKEN",
         token: "telegram-super-secret",
+        providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
       },
     ];
     const intent = resolveSandboxCreateIntent({
@@ -736,6 +738,7 @@ describe("resolveSandboxCreateIntent", () => {
         name: "sandbox-telegram-bridge",
         envKey: "TELEGRAM_BOT_TOKEN",
         token: "telegram-super-secret",
+        providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
       },
     ];
     const intent = resolveSandboxCreateIntent({
@@ -1183,6 +1186,35 @@ describe("resolveSandboxCreateIntent", () => {
       materializedTokenDefs: [],
       expectedMessage:
         "Cannot materialize sandbox create intent; missing credential binding 'TELEGRAM_BOT_TOKEN' for provider 'sandbox-telegram-bridge'.",
+    });
+  });
+
+  it("rejects a persisted messaging binding without a profile type before running effects (#13344)", async () => {
+    const tokenDef = {
+      name: "sandbox-telegram-bridge",
+      envKey: "TELEGRAM_BOT_TOKEN",
+      token: "telegram-secret",
+    };
+    await expectCredentialBindingFailure({
+      plannedTokenDef: tokenDef,
+      materializedTokenDefs: [tokenDef],
+      expectedMessage:
+        "Cannot materialize sandbox create intent; provider 'sandbox-telegram-bridge' has no explicit owned profile type. Re-run channel setup with a supported profile.",
+    });
+  });
+
+  it("rejects a matching unowned generic type before policy or provider effects (#13344)", async () => {
+    const tokenDef: MessagingTokenDef = {
+      name: "sandbox-telegram-bridge",
+      envKey: "TELEGRAM_BOT_TOKEN",
+      token: "telegram-secret",
+      providerType: "generic",
+    };
+    await expectCredentialBindingFailure({
+      plannedTokenDef: tokenDef,
+      materializedTokenDefs: [tokenDef],
+      expectedMessage:
+        "Cannot materialize sandbox create intent; provider 'sandbox-telegram-bridge' has no NemoClaw-owned profile for type 'generic'. Re-run channel setup with a supported profile.",
     });
   });
 

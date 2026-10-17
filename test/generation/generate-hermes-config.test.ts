@@ -268,6 +268,32 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     path.join(import.meta.dirname, "../..", "src", "lib", "providerless-inference.ts"),
     path.join(fixtureRoot, "src", "lib", "providerless-inference.ts"),
   );
+  const nativeConfigDir = path.join("src", "lib", "inference", "native-provider");
+  fs.mkdirSync(path.join(fixtureRoot, nativeConfigDir), { recursive: true });
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", nativeConfigDir, "agent-config.ts"),
+    path.join(fixtureRoot, nativeConfigDir, "agent-config.ts"),
+  );
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", nativeConfigDir, "hosted.ts"),
+    path.join(fixtureRoot, nativeConfigDir, "hosted.ts"),
+  );
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", nativeConfigDir, "contract.ts"),
+    path.join(fixtureRoot, nativeConfigDir, "contract.ts"),
+  );
+  const localConfigDir = "src/lib/inference/native-local";
+  fs.mkdirSync(path.join(fixtureRoot, localConfigDir), { recursive: true });
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", localConfigDir, "agent-config.ts"),
+    path.join(fixtureRoot, localConfigDir, "agent-config.ts"),
+  );
+  const coreDir = "src/lib/core";
+  fs.mkdirSync(path.join(fixtureRoot, coreDir), { recursive: true });
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", coreDir, "endpoint-url-safety.ts"),
+    path.join(fixtureRoot, coreDir, "endpoint-url-safety.ts"),
+  );
   return fixtureScriptPath;
 }
 

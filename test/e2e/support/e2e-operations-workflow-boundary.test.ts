@@ -33,6 +33,14 @@ function workflowScript(jobName: string, stepName: string): string {
 }
 
 describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
+  it("requires the Spark plan in the shared aggregate results", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const job = workflow.jobs["report-to-pr"];
+    job.needs = (job.needs as string[]).filter((name) => name !== "llama-cpp-dgx-spark-plan");
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "report-to-pr must wait for llama-cpp-dgx-spark-plan",
+    );
+  });
   it("accepts the checked-in workflow", () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
     const workflow = readE2eOperationsWorkflow();

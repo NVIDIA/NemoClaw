@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { requireValue } from "../core/require-value";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import {
-  applyCloudFallbackSelection,
+  abortFailedNimStartup,
   clearNimContainerBeforeRetry,
   createRemoteModelValidator,
   resolveCompatibleEndpointSelection,
@@ -31,40 +31,92 @@ function makeState(): SetupNimSelectionState {
 }
 
 describe("setupNim selection state helpers", () => {
-  it("applies a complete cloud fallback and clears stale local-provider state", () => {
+  it("removes the owned NIM container before clearing its route marker", () => {
     const state = makeState();
-    state.allowToolsIncompatible = true;
-
-    applyCloudFallbackSelection(state, {
-      providerName: "nvidia-prod",
-      endpointUrl: "https://integrate.api.nvidia.com/v1",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      defaultModel: "meta/llama-3.3-70b-instruct",
+    state.localNimSelected = true;
+    const remove = vi.fn((name: string) => {
+      expect(name).toBe("nemoclaw-nim-test");
+      expect(state.nimContainer).toBe(name);
+      expect(state.localNimSelected).toBe(true);
     });
 
-    assert.deepEqual(state, {
-      model: "meta/llama-3.3-70b-instruct",
-      provider: "nvidia-prod",
-      endpointUrl: "https://integrate.api.nvidia.com/v1",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      hermesAuthMethod: null,
-      hermesToolGateways: [],
-      preferredInferenceApi: null,
-      nimContainer: null,
-      allowToolsIncompatible: false,
-      skipHostInferenceSmoke: false,
-      reuseGatewayCredentialWithoutLocalKey: false,
-    });
-  });
+    clearNimContainerBeforeRetry(state, remove);
 
-  it("clears stale NIM containers before retrying provider selection", () => {
-    const state = makeState();
-
-    clearNimContainerBeforeRetry(state);
-
+    expect(remove).toHaveBeenCalledOnce();
     assert.equal(state.nimContainer, null);
+    expect(state.localNimSelected).toBeUndefined();
     assert.equal(state.model, "nvidia/local-nim");
     assert.equal(state.provider, "vllm-local");
+  });
+
+  it("keeps the NIM marker when owned-container removal fails", () => {
+    const state = makeState();
+    state.localNimSelected = true;
+
+    expect(() =>
+      clearNimContainerBeforeRetry(state, () => {
+        throw new Error("remove failed");
+      }),
+    ).toThrow("remove failed");
+
+    expect(state.nimContainer).toBe("nemoclaw-nim-test");
+    expect(state.localNimSelected).toBe(true);
+  });
+
+  it("stops onboarding after unhealthy NIM cleanup without selecting cloud inference", () => {
+    const state = makeState();
+    state.localNimSelected = true;
+    const remove = vi.fn((id: string) => {
+      expect(id).toBe("a".repeat(64));
+      expect(state.localNimSelected).toBe(true);
+    });
+
+    const started = { name: "nemoclaw-nim-test", id: "a".repeat(64) };
+    expect(() => abortFailedNimStartup(state, started, remove)).toThrow(
+      "Local NVIDIA NIM failed to become healthy. Onboarding stopped.",
+    );
+
+    expect(remove).toHaveBeenCalledOnce();
+    expect(state.nimContainer).toBeNull();
+    expect(state.localNimSelected).toBeUndefined();
+    expect(state.model).toBe("nvidia/local-nim");
+    expect(state.provider).toBe("vllm-local");
+    expect(state.credentialEnv).toBeNull();
+  });
+
+  it("removes the exact started NIM container even when identity revalidation fails", () => {
+    const state = makeState();
+    state.localNimSelected = true;
+    state.revalidateSandboxIdentity = vi.fn(() => {
+      throw new Error("sandbox identity changed");
+    });
+    const started = { name: "nemoclaw-nim-test", id: "b".repeat(64) };
+    const remove = vi.fn((id: string) => {
+      expect(id).toBe(started.id);
+      expect(state.nimContainer).toBe(started.name);
+    });
+
+    expect(() => abortFailedNimStartup(state, started, remove)).toThrow(
+      "Local NVIDIA NIM failed to become healthy. Onboarding stopped.",
+    );
+    expect(state.revalidateSandboxIdentity).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledExactlyOnceWith(started.id);
+    expect(state.nimContainer).toBeNull();
+    expect(state.localNimSelected).toBeUndefined();
+  });
+
+  it("retains the NIM marker when exact-container cleanup fails", () => {
+    const state = makeState();
+    state.localNimSelected = true;
+    const started = { name: "nemoclaw-nim-test", id: "c".repeat(64) };
+
+    expect(() =>
+      abortFailedNimStartup(state, started, () => {
+        throw new Error(`Remove container ${started.id} manually`);
+      }),
+    ).toThrow(started.id);
+    expect(state.nimContainer).toBe(started.name);
+    expect(state.localNimSelected).toBe(true);
   });
 });
 
@@ -109,7 +161,10 @@ describe("createRemoteModelValidator", () => {
         ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
         requireValue,
         isBackToSelection: (_value): _value is never => false,
-        validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+        validateCustomOpenAiLikeSelection: async () => ({
+          ok: false,
+          retry: "selection",
+        }),
         validateCustomAnthropicSelection: async (
           _label,
           _endpointUrl,
@@ -125,7 +180,10 @@ describe("createRemoteModelValidator", () => {
           ok: false,
           retry: "selection",
         }),
-        validateOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+        validateOpenAiLikeSelection: async () => ({
+          ok: false,
+          retry: "selection",
+        }),
         shouldRequireResponsesToolCalling: () => false,
         shouldSkipResponsesProbe: () => false,
         getProbeAuthMode: () => undefined,
@@ -180,9 +238,18 @@ describe("createRemoteModelValidator", () => {
         receivedCapabilityCache = selectedCapabilityCache;
         return { ok: true, api: "responses" };
       },
-      validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
-      validateAnthropicSelectionWithRetryMessage: async () => ({ ok: false, retry: "selection" }),
-      validateOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+      validateCustomAnthropicSelection: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
+      validateAnthropicSelectionWithRetryMessage: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
+      validateOpenAiLikeSelection: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
       shouldRequireResponsesToolCalling: () => false,
       shouldSkipResponsesProbe: () => false,
       getProbeAuthMode: () => undefined,
@@ -225,10 +292,22 @@ describe("createRemoteModelValidator", () => {
         return value;
       },
       isBackToSelection: (_value): _value is never => false,
-      validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
-      validateCustomAnthropicSelection: async () => ({ ok: false, retry: "model" }),
-      validateAnthropicSelectionWithRetryMessage: async () => ({ ok: false, retry: "selection" }),
-      validateOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+      validateCustomOpenAiLikeSelection: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
+      validateCustomAnthropicSelection: async () => ({
+        ok: false,
+        retry: "model",
+      }),
+      validateAnthropicSelectionWithRetryMessage: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
+      validateOpenAiLikeSelection: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
       shouldRequireResponsesToolCalling: () => false,
       shouldSkipResponsesProbe: () => false,
       getProbeAuthMode: () => undefined,
@@ -263,8 +342,14 @@ describe("createRemoteModelValidator", () => {
         ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
         requireValue,
         isBackToSelection: (_value): _value is never => false,
-        validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
-        validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
+        validateCustomOpenAiLikeSelection: async () => ({
+          ok: false,
+          retry: "selection",
+        }),
+        validateCustomAnthropicSelection: async () => ({
+          ok: false,
+          retry: "selection",
+        }),
         validateAnthropicSelectionWithRetryMessage: async () => ({
           ok: false,
           retry: "selection",

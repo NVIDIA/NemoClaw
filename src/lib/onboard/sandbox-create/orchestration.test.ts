@@ -732,9 +732,14 @@ describe("sandbox recreate registry authority", () => {
 });
 
 describe("managed DCode sandbox create selection", () => {
-  it.each([null, "https://openrouter.ai/api/v1"])(
+  it.each([
+    [null, false, undefined],
+    ["https://openrouter.ai/api/v1", false, undefined],
+    ["https://openrouter.ai/api/v1", true, undefined],
+    ["http://localhost:8000/v1", true, "http://host.openshell.internal:8000/v1"],
+  ] as const)(
     "passes the selected endpoint to live drift validation: %s (#9555)",
-    async (endpointUrl) => {
+    async (endpointUrl, nativeProvider, nativeLocalEndpointUrl) => {
       const readDcodeSelectionDrift = vi.fn(async () => ({
         changed: false,
         providerChanged: false,
@@ -751,6 +756,10 @@ describe("managed DCode sandbox create selection", () => {
           model: "nvidia/nemotron-3-ultra-550b-a55b",
           preferredInferenceApi: "openai-completions",
           createIntent: { endpointUrl },
+          nativeLocalProviderAttachment: nativeLocalEndpointUrl
+            ? { endpointUrl: nativeLocalEndpointUrl }
+            : undefined,
+          nativeProvider,
         },
         readDcodeSelectionDrift,
       );
@@ -760,7 +769,8 @@ describe("managed DCode sandbox create selection", () => {
         "compatible-endpoint",
         "nvidia/nemotron-3-ultra-550b-a55b",
         "openai-completions",
-        endpointUrl,
+        nativeLocalEndpointUrl ?? endpointUrl,
+        nativeProvider,
       );
     },
   );

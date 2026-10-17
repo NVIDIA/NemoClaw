@@ -5965,8 +5965,19 @@ n1x_pci_identity_is_valid() {
   [[ "$vendor" = "0x10de" && "$pci_class" =~ ^0x03[0-9a-f]{4}$ ]]
 }
 
+# Generated from bin/lib/n1x-pci-policy.json. Update with node --no-warnings scripts/lib/generate-n1x-pci-policy.mts.
+# n1x-pci-policy:begin
+n1x_pci_device_is_known() {
+  case "${1:-}" in
+    0x2e03 | 0x2e06 | 0x2e13 | 0x2e02 | 0x2e2a) return 0 ;;
+  esac
+  return 1
+}
+# n1x-pci-policy:end
+
 n1x_has_pci_gpu() {
-  local pci_root="" pci_device="" vendor="" pci_class="" scanned=0
+  local pci_root="" pci_device="" vendor="" pci_class="" device="" scanned=0
+  local require_known_device="${1:-0}"
   pci_root="$(n1x_pci_devices_path)"
   [ -d "$pci_root" ] || return 1
   for pci_device in "$pci_root"/*; do
@@ -5980,7 +5991,12 @@ n1x_has_pci_gpu() {
     fi
     vendor="${vendor//[[:space:]]/}"
     pci_class="${pci_class//[[:space:]]/}"
-    n1x_pci_identity_is_valid "$vendor" "$pci_class" && return 0
+    n1x_pci_identity_is_valid "$vendor" "$pci_class" || continue
+    [ "$require_known_device" = "1" ] || return 0
+    device="$(head -c 65 "$pci_device/device" 2>/dev/null)" || continue
+    [ "${#device}" -le 64 ] || continue
+    device="$(printf "%s" "$device" | tr '[:upper:]' '[:lower:]')"
+    n1x_pci_device_is_known "$device" && return 0
   done
   return 1
 }
@@ -5991,7 +6007,15 @@ is_n1x_host() {
     arm64 | aarch64) ;;
     *) return 1 ;;
   esac
-  n1x_fastos_release_is_trusted && n1x_has_pci_gpu
+  if n1x_fastos_release_is_trusted; then
+    n1x_has_pci_gpu
+    return "$?"
+  fi
+  local marker=""
+  marker="$(n1x_fastos_release_path)"
+  # Only an absent marker enables hardware inference; invalid or linked markers stay blocked.
+  [ ! -e "$marker" ] && [ ! -L "$marker" ] || return 1
+  n1x_has_pci_gpu 1
 }
 
 # Concept ISO 1.0.2 reports an NVIDIA BOS kernel but has no FastOS marker.
@@ -6084,6 +6108,8 @@ validate_express_platform_boundary() {
 }
 
 STATION_ULTRA_VLLM_MODEL="nemotron-3-ultra-550b-a55b"
+STATION_SUPER_VL_VLLM_MODEL="nemotron-3.5-super-vl-120b"
+STATION_SUPER_VL_SERVED_MODEL="nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4"
 STATION_ULTRA_SERVED_MODEL="nvidia/nemotron-3-ultra-550b-a55b"
 STATION_ULTRA_DUAL_SERVED_MODEL="nemotron-ultra"
 STATION_ULTRA_LEGACY_VLLM_IMAGE="vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416"
@@ -6249,15 +6275,13 @@ configure_station_express_model() {
     NEMOCLAW_VLLM_MODEL="$STATION_DEEPSEEK_VLLM_MODEL"
     NEMOCLAW_MODEL="$STATION_DEEPSEEK_SERVED_MODEL"
   elif [ -z "$selected_model" ]; then
-    if [ "${_STATION_INSTALL_MODE:-}" = "express" ] || [ -n "${NEMOCLAW_DGX_STATION_PEER:-}" ]; then
-      # Station Express keeps its single-host Ultra default. Pair qualification
-      # changes only the serving topology. An explicit peer also selects Ultra
-      # for a provider-driven, non-interactive pair setup.
+    if [ -n "${NEMOCLAW_DGX_STATION_PEER:-}" ]; then
+      # Super VL is single-host only. Explicit peers retain the Ultra recipe.
       NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
       NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
     else
-      # A direct provider selection outside Express keeps the Station profile
-      # default unless the operator selects a model or peer.
+      # The catalog owns the single-Station default for Express and direct
+      # provider setup. Keep automatic intent available for pair discovery.
       unset NEMOCLAW_VLLM_MODEL
     fi
   else
@@ -6265,6 +6289,10 @@ configure_station_express_model() {
       || error "NEMOCLAW_VLLM_MODEL=auto is reserved for DGX Station reboot-resume state. Unset NEMOCLAW_VLLM_MODEL to request automatic selection."
     _STATION_EXPRESS_MODEL_WAS_EXPLICIT=1
     case "$selected_model" in
+      "$STATION_SUPER_VL_VLLM_MODEL" | "$STATION_SUPER_VL_SERVED_MODEL" | "nvidia/nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4")
+        NEMOCLAW_VLLM_MODEL="$STATION_SUPER_VL_VLLM_MODEL"
+        NEMOCLAW_MODEL="$STATION_SUPER_VL_SERVED_MODEL"
+        ;;
       "$STATION_ULTRA_VLLM_MODEL" | "nvidia/nvidia-nemotron-3-ultra-550b-a55b-nvfp4")
         NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
         ;;
@@ -7211,12 +7239,16 @@ ensure_station_express_pair() {
           || error "The nemoclaw-vllm container no longer matches the legacy image ($STATION_ULTRA_LEGACY_VLLM_IMAGE) and ownership contract after peer discovery. Inspect it with 'docker inspect nemoclaw-vllm'; restore the original single-Station workload before retrying, or stop this upgrade if the change was intentional."
       fi
       if [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]; then
-        NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
-        NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
-        export NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
+        if [ "${_STATION_EXPRESS_MIGRATING_LEGACY_HEAD:-0}" = "1" ]; then
+          NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
+          NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
+          export NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
+        else
+          unset NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
+        fi
       fi
       unset NEMOCLAW_DGX_STATION_SSH_BINDING
-      info "No eligible reciprocal dual-DGX Station pair is available; using the existing single-Station Ultra recipe."
+      info "No eligible reciprocal dual-DGX Station pair is available; using single-Station model ${NEMOCLAW_VLLM_MODEL:-selected by the serving catalog}."
       ;;
     ready)
       [ "$status" -eq 0 ] \
@@ -7336,8 +7368,8 @@ describe_express_install() {
         esac
       else
         show_hf_authentication="1"
-        inference_summary="managed local vLLM with NVIDIA Nemotron 3 Ultra 550B and automatic Station topology selection"
-        inference_disclosure="A pretrusted reciprocal dual-Station pair selects distributed serving; otherwise NemoClaw uses the existing single-Station Ultra recipe. The pinned image and approximately 352 GB model are pulled only after topology qualification."
+        inference_summary="managed local vLLM with NVIDIA Nemotron 3.5 Super VL and automatic Station topology selection"
+        inference_disclosure="One Station uses Super VL NVFP4 + MTP with 49,152-token context and a pinned public vLLM nightly (experimental). A pretrusted reciprocal dual-Station pair selects distributed Ultra serving. Downloads start only after topology qualification: approximately 75 GB for Super VL or 352 GB for Ultra. Explicit Ultra selection remains available; existing workloads are not automatically switched."
       fi
       case "$(classify_dgx_station_release)" in
         supported-dgx-os)
@@ -7464,11 +7496,11 @@ maybe_offer_express_install() {
     resume_loaded_station_install "$platform"
     return 0
   fi
-  # A Concept ISO-style host is outside the N1x preview identity boundary.
+  # Explain an unqualified Concept ISO-style host without overriding hardware detection.
   if [ -z "$platform" ]; then
     if is_nvidia_bos_arm64_host_without_n1x_marker; then
       warn "NVIDIA BOS ARM64 host has no /etc/fastos-release, as reported for Concept ISO 1.0.2."
-      warn "The Deferred N1x Express preview requires a trusted N1x FASTOS marker. Continuing with ordinary onboarding."
+      warn "The Deferred N1x Express preview requires a trusted N1x FASTOS marker or recognized N1x PCI identity. Continuing with ordinary onboarding."
     fi
     return 0
   fi

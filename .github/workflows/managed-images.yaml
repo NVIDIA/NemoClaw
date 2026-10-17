@@ -50,6 +50,7 @@ on:
       - "src/lib/adapters/openshell/**"
       - "src/lib/adapters/podman/**"
       - "src/lib/agent/candidate-authority.ts"
+      - "src/lib/agent/deep-agents-code-runtime-identity.json"
       - "src/lib/extra-agents-validation.ts"
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"
@@ -58,6 +59,7 @@ on:
       - "src/lib/security/credential-hash.ts"
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
+      - "test/helpers/openclaw-real-agent-reload-proof.ts"
       - "test/e2e/fixtures/docker-build-guard.ts"
       - "test/e2e/live/mcp-bridge*.ts"
       - "test/e2e/support/mcp-bridge-portable-lock-barrier.ts"
@@ -190,6 +192,7 @@ jobs:
           done
           for support_relative in \
             agents/langchain-deepagents-code/validate-runtime-contract.py \
+            src/lib/agent/deep-agents-code-runtime-identity.json \
             ci/reviewed-npm-audit.json \
             scripts/lib/bundled-npm-package.mts \
             scripts/lib/patch-bundled-npm-ip-address.mts \
@@ -424,7 +427,7 @@ jobs:
           fi
 
   pr-build-and-entrypoint:
-    name: PR build and direct managed startup (${{ matrix.display_name }})
+    name: PR build and direct managed startup (${{ matrix.display_name }}, ${{ matrix.arch }})
     # External contributor PRs retain the local build/direct-startup lane after
     # GitHub's maintainer workflow approval. Exact digest publication is limited
     # to branches in NVIDIA/NemoClaw; fork jobs never log in or push.
@@ -432,16 +435,19 @@ jobs:
       - pr-reviewed-npm-audit
       - publication-identity
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 90
     permissions:
       contents: read
       packages: write
     env:
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+      PLATFORM: linux/${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
+        agent: [openclaw, hermes, langchain-deepagents-code]
+        arch: [amd64, arm64]
         include:
           - agent: openclaw
             display_name: OpenClaw
@@ -622,7 +628,7 @@ jobs:
         shell: bash
         run: scripts/check-production-build-args.sh -f agents/langchain-deepagents-code/Dockerfile.base
 
-      - name: Resolve digest-pinned linux/amd64 PR base
+      - name: Resolve digest-pinned native PR base
         id: base
         shell: bash
         env:
@@ -634,7 +640,6 @@ jobs:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
           DISPLAY_NAME: ${{ matrix.display_name }}
           LOCAL_BASE_REFERENCE: nemoclaw-managed-pr/${{ matrix.agent }}-base:${{ github.event.pull_request.head.sha }}
-          PLATFORM: linux/amd64
         run: scripts/checks/resolve-managed-pr-base.sh
 
       - name: Validate PR managed-image build args
@@ -691,7 +696,7 @@ jobs:
             )
           fi
           docker build \
-            --platform linux/amd64 \
+            --platform "$PLATFORM" \
             --file "$DOCKERFILE" \
             --tag "$IMAGE_REFERENCE" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
@@ -699,7 +704,7 @@ jobs:
             --label "org.opencontainers.image.version=${RELEASE}" \
             --label "io.nvidia.nemoclaw.agent=${{ matrix.agent }}" \
             --label "io.nvidia.nemoclaw.managed-image.contract=1" \
-            --label "io.nvidia.nemoclaw.managed-image.platform=linux/amd64" \
+            --label "io.nvidia.nemoclaw.managed-image.platform=${PLATFORM}" \
             --label "io.nvidia.nemoclaw.managed-image.startup-profile=1" \
             --label "io.nvidia.nemoclaw.managed-image.capabilities=1" \
             --label "io.nvidia.nemoclaw.managed-image.cohort=${PUBLICATION_COHORT}" \
@@ -716,7 +721,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           load: true
           push: false
           tags: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
@@ -726,7 +731,7 @@ jobs:
             org.opencontainers.image.version=${{ steps.release.outputs.value }}
             io.nvidia.nemoclaw.agent=${{ matrix.agent }}
             io.nvidia.nemoclaw.managed-image.contract=1
-            io.nvidia.nemoclaw.managed-image.platform=linux/amd64
+            io.nvidia.nemoclaw.managed-image.platform=linux/${{ matrix.arch }}
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}
@@ -742,7 +747,7 @@ jobs:
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', steps.mcporter-audit.outputs.raw) || '' }}
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-policy-result={0}', steps.mcporter-audit.outputs.policy) || '' }}
-          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
+          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-${{ matrix.arch }}
           provenance: false
           sbom: false
 
@@ -752,7 +757,6 @@ jobs:
         env:
           AGENT: ${{ matrix.agent }}
           IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
-          PLATFORM: linux/amd64
           PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
           RELEASE: ${{ steps.release.outputs.value }}
           RESOLUTION_KEY: ${{ steps.base.outputs.resolution_key }}
@@ -936,7 +940,7 @@ jobs:
             scripts/checks/run-managed-image-direct-e2e.ts \
             --agent "$AGENT" \
             --image "$IMAGE_REFERENCE" \
-            --platform linux/amd64
+            --platform "$PLATFORM"
 
       - name: Log in to GHCR for exact same-repository PR digest
         if: github.event.pull_request.head.repo.full_name == github.repository
@@ -956,7 +960,7 @@ jobs:
           builder: ${{ steps.buildx.outputs.name }}
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           build-contexts: ${{ steps.base.outputs.local == 'true' && format('nemoclaw-pr-base=oci-layout://{0}', steps.base.outputs.oci) || '' }}
           outputs: type=image,name=${{ matrix.repository }},push-by-digest=true,name-canonical=true,push=true
           labels: |
@@ -965,7 +969,7 @@ jobs:
             org.opencontainers.image.version=${{ steps.release.outputs.value }}
             io.nvidia.nemoclaw.agent=${{ matrix.agent }}
             io.nvidia.nemoclaw.managed-image.contract=1
-            io.nvidia.nemoclaw.managed-image.platform=linux/amd64
+            io.nvidia.nemoclaw.managed-image.platform=linux/${{ matrix.arch }}
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}
@@ -981,7 +985,7 @@ jobs:
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', steps.mcporter-audit.outputs.raw) || '' }}
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-policy-result={0}', steps.mcporter-audit.outputs.policy) || '' }}
-          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
+          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-${{ matrix.arch }}
           provenance: false
           sbom: false
 
@@ -1013,7 +1017,7 @@ jobs:
           }
           reference="${IMAGE}@${DIGEST}"
           raw="$RUNNER_TEMP/${AGENT}-published-manifest.raw"
-          scripts/checks/pull-public-exact-digest.sh "$reference" linux/amd64
+          scripts/checks/pull-public-exact-digest.sh "$reference" "$PLATFORM"
           if [ "$AGENT" = "hermes" ]; then
             published_layer_count="$(docker image inspect --format '{{len .RootFS.Layers}}' "$reference")"
             if [ "$published_layer_count" -gt 125 ]; then
@@ -1049,12 +1053,13 @@ jobs:
             --arg digest "$DIGEST" \
             --arg image "$IMAGE" \
             --arg reference "$reference" \
+            --arg platform "$PLATFORM" \
             --arg release "$RELEASE" \
             --arg revision "$CANDIDATE_SHA" \
             '{
               contractVersion: 1,
               agent: $agent,
-              platform: "linux/amd64",
+              platform: $platform,
               image: $image,
               digest: $digest,
               reference: $reference,
@@ -1072,17 +1077,21 @@ jobs:
         if: github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-pr-contract-${{ github.run_id }}-${{ matrix.agent }}
+          name: managed-pr-contract-${{ matrix.arch == 'arm64' && 'arm64-' || '' }}${{ github.run_id }}-${{ matrix.agent }}
           path: ${{ runner.temp }}/managed-pr-contract/contract.json
           if-no-files-found: error
           overwrite: true
           retention-days: 1
 
   pr-managed-activation:
-    name: PR exact all-agent managed runtime activation
+    name: PR exact all-agent managed runtime activation (${{ matrix.arch }})
     needs: [pr-build-and-entrypoint, publication-identity]
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
     timeout-minutes: 90
     permissions:
       contents: read
@@ -1095,6 +1104,7 @@ jobs:
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
       NEMOCLAW_E2E_SHARD: default
       NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/managed-pr-catalog.json
+      MANAGED_IMAGE_PLATFORM: linux/${{ matrix.arch }}
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
       OPENSHELL_GATEWAY: nemoclaw
@@ -1126,7 +1136,7 @@ jobs:
       - name: Download exact published all-agent contracts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: managed-pr-contract-${{ github.run_id }}-*
+          pattern: managed-pr-contract-${{ matrix.arch == 'arm64' && 'arm64-' || '' }}${{ github.run_id }}-*
           path: ${{ runner.temp }}/managed-pr-contracts
           merge-multiple: false
 
@@ -1193,7 +1203,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-image-activation-${{ github.run_id }}-${{ github.run_attempt }}
+          name: managed-image-activation-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: e2e-artifacts/live/managed-image-activation/
           if-no-files-found: error
           retention-days: 1

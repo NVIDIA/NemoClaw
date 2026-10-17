@@ -40,7 +40,10 @@ import {
   countLocalImageBuildCommands,
   createContainerBuildGuard,
 } from "../fixtures/docker-build-guard.ts";
-import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import {
+  startFakeOpenAiCompatibleServer,
+  type FakeOpenAiCompatibleRequest,
+} from "../fixtures/fake-openai-compatible.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import { initializeGatewayForCleanup } from "../fixtures/gateway-runtime-start.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
@@ -395,13 +398,15 @@ export function externalImageActivationMatches(input: {
   );
 }
 
-async function runAgentTurn(
+export async function runManagedActivationAgentTurn(
   sandbox: SandboxClient,
   agent: ShippedManagedImageAgent,
   sandboxName: string,
   phase: "before" | "boundary" | "after",
   env: NodeJS.ProcessEnv,
+  observeRequests?: () => readonly FakeOpenAiCompatibleRequest[],
 ): Promise<void> {
+  const requestStart = observeRequests?.().length ?? 0;
   const command = agentTurnCommand(agent, `managed-${agent}-${phase}-${Date.now()}`);
   const postRestartScript = managedActivationPostRestartAgentTurnScript(
     agent,
@@ -425,6 +430,19 @@ async function runAgentTurn(
   expect(result.exitCode === 0 && /\bPONG\b/iu.test(resultText(result)), resultText(result)).toBe(
     true,
   );
+  observeRequests &&
+    expect(
+      observeRequests()
+        .slice(requestStart)
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions" &&
+            request.model === MODEL,
+        ),
+      `${sandboxName} ${phase} turn must send a new authenticated completion to its selected endpoint and model`,
+    ).toBe(true);
 }
 
 export function managedOpenClawSubagentCommand(sessionId: string): string[] {
@@ -561,7 +579,7 @@ async function proveHermesRestartSecretBoundary(
       !output.includes(HERMES_BOUNDARY_SENTINEL),
     output,
   ).toBe(true);
-  await runAgentTurn(sandbox, "hermes", sandboxName, "boundary", env);
+  await runManagedActivationAgentTurn(sandbox, "hermes", sandboxName, "boundary", env);
 }
 
 export async function preclean(
@@ -656,7 +674,7 @@ async function verifyExactCleanup(
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
   const containerEngine = env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
-  const settled = await pollUntil({
+  await pollUntil({
     artifactPrefix: `post-destroy-absence-${sandboxName}`,
     deadlineMs: 60_000,
     delayMs: 1_000,
@@ -689,14 +707,8 @@ async function verifyExactCleanup(
     accept: ({ containers, openshellList }) =>
       !outputContainsSandbox(openshellList, sandboxName) && containers.stdout.trim() === "",
   });
-  const { containers, openshellList } = settled.value;
-  assertExitZero(openshellList, "list OpenShell sandboxes after managed activation destroy");
-  expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
-  assertExitZero(
-    containers,
-    `inspect ${containerEngine} inventory after managed activation destroy`,
-  );
-  expect(containers.stdout.trim(), resultText(containers)).toBe("");
+  // pollUntil returns only after both successful inventory commands prove
+  // absence. Its terminal and deadline failures already reject this cleanup.
 }
 
 function enterOnboardPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
@@ -862,13 +874,14 @@ export async function collectOnboardFailureRuntimeDiagnostics(
   }
 }
 
-async function qualifyAgent(
+export async function qualifyAgent(
   fixtures: RuntimeFixtures,
   guard: ContainerBuildGuard,
   catalogPath: string,
   endpointUrl: string,
   agent: ShippedManagedImageAgent,
   contract: ManagedImageContractV1,
+  observeRequests?: () => readonly FakeOpenAiCompatibleRequest[],
 ): Promise<void> {
   const { artifacts, cleanup, host, lifecycle, progress, sandbox } = fixtures;
   const sandboxName = SANDBOX_NAMES[agent];
@@ -897,7 +910,7 @@ async function qualifyAgent(
   if (agent === "openclaw") {
     await approveOpenClawAdminScope(host, sandbox, sandboxName, env, [API_KEY]);
   }
-  await runAgentTurn(sandbox, agent, sandboxName, "before", env);
+  await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "before", env, observeRequests);
   if (agent === "openclaw") await runOpenClawSubagentTurn(sandbox, sandboxName, env);
   if (agent === "hermes") {
     progress.phase("prove Hermes secret-boundary refusal before native restart");
@@ -929,12 +942,18 @@ async function qualifyAgent(
     redactionValues: [API_KEY],
     timeoutMs: 120_000,
   });
+  if (stop.exitCode !== 0) {
+    await collectOnboardFailureRuntimeDiagnostics(artifacts, host, agent, sandboxName, env);
+  }
   const start = await host.nemoclaw([sandboxName, "start"], {
     artifactName: `${agent}-public-start`,
     env,
     redactionValues: [API_KEY],
     timeoutMs: 10 * 60_000,
   });
+  if (stop.exitCode === 0 && start.exitCode !== 0) {
+    await collectOnboardFailureRuntimeDiagnostics(artifacts, host, agent, sandboxName, env);
+  }
   expect(
     stop.exitCode === 0 && start.exitCode === 0,
     `${resultText(stop)}\n${resultText(start)}`,
@@ -966,7 +985,7 @@ async function qualifyAgent(
     readMarker.exitCode === 0 && readMarker.stdout.trim() === marker,
     resultText(readMarker),
   ).toBe(true);
-  await runAgentTurn(sandbox, agent, sandboxName, "after", env);
+  await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "after", env, observeRequests);
 
   enterCleanupPhase(progress, agent);
   await sandbox.cleanupSandbox(sandboxName, {
@@ -985,6 +1004,7 @@ async function qualifyExternalImage(
   endpointUrl: string,
   agent: ExternalImageAgent,
   contract: ManagedImageContractV1,
+  observeRequests?: () => readonly FakeOpenAiCompatibleRequest[],
 ): Promise<{
   readonly agent: ExternalImageAgent;
   readonly reference: string;
@@ -1024,7 +1044,7 @@ async function qualifyExternalImage(
     artifactNamePrefix: `external-image-${agent}-ready`,
     env,
   });
-  await runAgentTurn(sandbox, agent, sandboxName, "before", env);
+  await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "before", env, observeRequests);
 
   const beforeInspection = await inspectRuntimeImageId(
     host,
@@ -1100,7 +1120,7 @@ async function qualifyExternalImage(
       // before exercising the same privileged CLI boundary again.
       await approveOpenClawAdminScope(host, sandbox, sandboxName, env, [API_KEY]);
     }
-    await runAgentTurn(sandbox, agent, sandboxName, "after", env);
+    await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "after", env, observeRequests);
     rebuilt = true;
   }
   registryEntry = registryDocument().sandboxes?.[sandboxName];
@@ -1173,6 +1193,7 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     chatContent: "PONG",
     host: "0.0.0.0",
     model: MODEL,
+    port: 8000,
     progress,
     publicHost: "host.openshell.internal",
     requireAuth: true,
@@ -1200,6 +1221,7 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
       inference.baseUrl,
       agent,
       contracts.get(agent)!,
+      agent === "hermes" ? inference.requests : undefined,
     );
   }
 
@@ -1217,6 +1239,7 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
         inference.baseUrl,
         agent,
         contracts.get(agent)!,
+        agent === "hermes" ? inference.requests : undefined,
       ),
     );
   }

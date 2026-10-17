@@ -51,7 +51,6 @@ import {
   type TempSshConfigRunResult,
 } from "../sandbox/temp-ssh-config.js";
 import {
-  CREDENTIAL_PLACEHOLDER,
   isConfigValue,
   isCredentialField,
   isDependencyLockfile,
@@ -1026,7 +1025,9 @@ function sha256File(filePath: string): string {
   }
 }
 
-function structuredContentIsCredentialFree(fileName: string, raw: string): boolean {
+function structuredContentIsCredentialFree(entry: string, raw: string): boolean {
+  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  const fileName = path.posix.basename(normalized).toLowerCase();
   let value: unknown;
   try {
     value = fileName.endsWith(".json") ? JSON.parse(raw) : parseYaml(raw);
@@ -1036,6 +1037,22 @@ function structuredContentIsCredentialFree(fileName: string, raw: string): boole
   if (value === null || value === undefined) return true;
   if (!isConfigValue(value)) return false;
   if (typeof value === "string" && valueLooksLikeSecret(value)) return false;
+  if (nativeStructuredAuthorityKind(normalized, fileName) === "openclaw-config") {
+    const models = isObjectRecord(value) ? value.models : null;
+    const providers = isObjectRecord(models) ? models.providers : null;
+    const inference = isObjectRecord(providers) ? providers.inference : null;
+    if (
+      isObjectRecord(inference) &&
+      inference.apiKey === "${NVIDIA_INFERENCE_API_KEY}" &&
+      inference.baseUrl === "https://integrate.api.nvidia.com/v1"
+    ) {
+      value = structuredClone(value);
+      const clonedModels = (value as Record<string, unknown>).models as Record<string, unknown>;
+      const clonedProviders = clonedModels.providers as Record<string, unknown>;
+      const clonedInference = clonedProviders.inference as Record<string, unknown>;
+      clonedInference.apiKey = "unused";
+    }
+  }
   return isDeepStrictEqual(stripCredentials(value), value);
 }
 
@@ -1306,25 +1323,6 @@ function nativeStructuredAuthorityKind(
   return null;
 }
 
-const OMIT_STRIPPED_CREDENTIAL = Symbol("omit stripped credential");
-
-function withoutStrippedCredentialFields(value: unknown): unknown {
-  if (value === CREDENTIAL_PLACEHOLDER) return OMIT_STRIPPED_CREDENTIAL;
-  if (Array.isArray(value)) {
-    return value.map((child) => {
-      const sanitized = withoutStrippedCredentialFields(child);
-      return sanitized === OMIT_STRIPPED_CREDENTIAL ? null : sanitized;
-    });
-  }
-  if (!isObjectRecord(value)) return value;
-  return Object.fromEntries(
-    Object.entries(value).flatMap(([key, child]) => {
-      const sanitized = withoutStrippedCredentialFields(child);
-      return sanitized === OMIT_STRIPPED_CREDENTIAL ? [] : [[key, sanitized]];
-    }),
-  );
-}
-
 function sanitizedStructuredAuthority(
   payload: Buffer,
   size: number,
@@ -1369,29 +1367,81 @@ function sanitizedStructuredAuthority(
   }
   if (isDeepStrictEqual(sanitized, config)) return payload;
 
-  let serialized = Buffer.from(JSON.stringify(sanitized), "utf8");
-  if (serialized.byteLength > size && kind !== "openclaw-config") {
-    const compact = withoutStrippedCredentialFields(sanitized);
-    serialized = Buffer.from(
-      JSON.stringify(compact === OMIT_STRIPPED_CREDENTIAL ? null : compact),
-      "utf8",
-    );
+  const serialized = Buffer.from(JSON.stringify(sanitized), "utf8");
+  if (serialized.byteLength > NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES) {
+    return `the machine-local configuration at '${normalized}' is too large to sanitize safely`;
   }
-  if (serialized.byteLength > size) {
-    return `the machine-local configuration at '${normalized}' cannot be sanitized in place`;
-  }
-  const replacement = Buffer.alloc(size, 0x20);
+  const replacement = Buffer.alloc(Math.max(size, serialized.byteLength), 0x20);
   serialized.copy(replacement);
   return replacement;
+}
+
+function assertArchiveSanitationDeadline(deadlineMs: number | undefined): void {
+  if (backupDeadlineExpired(deadlineMs)) {
+    throw new Error("Native archive sanitation exceeded the backup deadline");
+  }
+}
+
+/** Grow a private tar member, copying the tail backwards to preserve overlapping ranges. */
+function growArchiveMember(
+  descriptor: number,
+  header: Buffer,
+  headerOffset: number,
+  nextOffset: number,
+  archiveSize: number,
+  replacementSize: number,
+  maxBytes: number,
+  deadlineMs: number | undefined,
+): number {
+  const newNextOffset =
+    headerOffset + TAR_BLOCK_BYTES + Math.ceil(replacementSize / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+  const growth = newNextOffset - nextOffset;
+  if (!Number.isSafeInteger(archiveSize + growth))
+    throw new Error("the native archive is too large");
+  if (archiveSize + growth > maxBytes) {
+    throw new Error(
+      `Native archive sanitation exceeded the ${maxBytes}-byte backup-space limit. Free backup-disk space or reduce the native home, then retry.`,
+    );
+  }
+  if (growth > 0) {
+    for (let end = archiveSize; end > nextOffset;) {
+      assertArchiveSanitationDeadline(deadlineMs);
+      const start = Math.max(nextOffset, end - 1024 * 1024);
+      const chunk = readArchiveRange(descriptor, start, end - start);
+      assertArchiveSanitationDeadline(deadlineMs);
+      if (!chunk || !writeArchiveRange(descriptor, start + growth, chunk)) {
+        throw new Error("could not grow the native archive");
+      }
+      end = start;
+    }
+  }
+  assertArchiveSanitationDeadline(deadlineMs);
+  const paddingOffset = headerOffset + TAR_BLOCK_BYTES + replacementSize;
+  if (!writeArchiveRange(descriptor, paddingOffset, Buffer.alloc(newNextOffset - paddingOffset))) {
+    throw new Error("could not pad the native archive member");
+  }
+  header.write(`${replacementSize.toString(8).padStart(11, "0")}\0`, 124, 12, "ascii");
+  header.fill(0x20, 148, 156);
+  const checksum = header.reduce((sum, byte) => sum + byte, 0);
+  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
+  assertArchiveSanitationDeadline(deadlineMs);
+  if (!writeArchiveRange(descriptor, headerOffset, header)) {
+    throw new Error("could not update the native archive member size");
+  }
+  return growth;
 }
 
 /**
  * Remove machine-local runtime authority from the private archive copy. The
  * live native tree is never modified, and all other native state is retained.
- * Keeping each tar member at its original byte length makes this a bounded,
- * single-copy operation. Replacement startup creates fresh local authority.
+ * Structured configuration can grow during serialization. Move subsequent
+ * members in bounded chunks. Replacement startup creates fresh local authority.
  */
-export function sanitizeMachineLocalArchiveConfig(archivePath: string): string | null {
+export function sanitizeMachineLocalArchiveConfig(
+  archivePath: string,
+  maxBytes = NATIVE_STATE_CAPTURE_MAX_BYTES,
+  deadlineMs?: number,
+): string | null {
   const hermesTarget = ".hermes/.env";
   const openClawDatabaseTargets = new Set([
     ".openclaw/state/openclaw.sqlite",
@@ -1407,18 +1457,19 @@ export function sanitizeMachineLocalArchiveConfig(archivePath: string): string |
   let descriptor: number | null = null;
   try {
     descriptor = openSync(archivePath, constants.O_RDWR | constants.O_NOFOLLOW);
-    const archiveSize = fstatSync(descriptor).size;
+    let archiveSize = fstatSync(descriptor).size;
     let offset = 0;
     let nextPath: string | null = null;
     const found = new Set<string>();
     while (offset < archiveSize) {
+      assertArchiveSanitationDeadline(deadlineMs);
       const header = readArchiveRange(descriptor, offset, TAR_BLOCK_BYTES);
       if (!header) return "could not read the native archive";
       if (header.every((byte) => byte === 0)) return null;
       const size = tarHeaderSize(header);
       if (size === null) return "the native archive has an invalid member size";
       const dataOffset = offset + TAR_BLOCK_BYTES;
-      const nextOffset = dataOffset + Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+      let nextOffset = dataOffset + Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
       if (!Number.isSafeInteger(nextOffset) || nextOffset > archiveSize) {
         return "the native archive is truncated";
       }
@@ -1482,6 +1533,21 @@ export function sanitizeMachineLocalArchiveConfig(archivePath: string): string |
             replacement = sanitized;
           }
           if (replacement !== payload) {
+            if (replacement.byteLength > size) {
+              const growth = growArchiveMember(
+                descriptor,
+                header,
+                offset,
+                nextOffset,
+                archiveSize,
+                replacement.byteLength,
+                maxBytes,
+                deadlineMs,
+              );
+              archiveSize += growth;
+              nextOffset += growth;
+            }
+            assertArchiveSanitationDeadline(deadlineMs);
             if (!writeArchiveRange(descriptor, dataOffset, replacement)) {
               return `could not sanitize the machine-local configuration at '${normalized}'`;
             }
@@ -1540,9 +1606,10 @@ function shouldScanNativeOpaqueAssignments(
   providerProfileSchema: boolean,
 ): boolean {
   const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  const structuredKind = nativeStructuredAuthorityKind(normalized, fileName);
   return (
     providerProfileSchema ||
-    nativeStructuredAuthorityKind(normalized, fileName) !== null ||
+    structuredKind !== null ||
     fileName === ".env" ||
     fileName.endsWith(".env") ||
     /^\.openclaw\/agents\/[^/]+\/(?:history|session)\.log$/u.test(normalized)
@@ -1556,14 +1623,17 @@ function scanNativeTarFilePayload(
   opaqueAssignments: boolean,
   npmConfig: boolean,
   providerProfileSchema: boolean,
+  openclawConfig: boolean,
   privateKeyHeader: boolean,
   dependencyBinary: boolean,
-): boolean | null {
+  deadlineMs: number | undefined,
+): boolean | null | "deadline" {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
   let remaining = size;
   let offset = position;
   let overlap = "";
   while (remaining > 0) {
+    if (backupDeadlineExpired(deadlineMs)) return "deadline";
     const requested = Math.min(remaining, chunk.byteLength);
     const count = readSync(descriptor, chunk, 0, requested, offset);
     if (count === 0) return null;
@@ -1580,7 +1650,9 @@ function scanNativeTarFilePayload(
           /^([ \t]*(?:"secret"|secret)[ \t]*:[ \t]*)(?:true|false)([ \t]*,?[ \t]*(?:#.*)?)$/gimu,
           "$1unused$2",
         )
-      : raw;
+      : openclawConfig
+        ? raw.replace(/("apiKey"\s*:\s*")\$\{NVIDIA_INFERENCE_API_KEY\}(")/gu, "$1unused$2")
+        : raw;
     if (
       textContainsCredential(credentialScanInput, {
         opaqueAssignments,
@@ -1596,7 +1668,12 @@ function scanNativeTarFilePayload(
   return false;
 }
 
-function nativeArchiveRawCredentialViolation(archivePath: string): string | null {
+type NativeArchiveCredentialViolation = string | { entry: string; deadlineExpired: true } | null;
+
+function nativeArchiveRawCredentialViolation(
+  archivePath: string,
+  deadlineMs: number | undefined,
+): NativeArchiveCredentialViolation {
   let descriptor: number | null = null;
   try {
     descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -1640,25 +1717,36 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
         nextPath = null;
         if (type === "0" || type === "\0" || type === "7") {
           const fileName = path.posix.basename(entry).toLowerCase();
+          const dcodeSessionsDatabaseRole = dcodeSessionsDatabaseEntryRole(entry);
+          // SQLite inspection of the main database does not cover unused sidecar bytes.
           if (
             !shouldSkipNativeRawCredentialScan(fileName) &&
-            dcodeSessionsDatabaseEntryRole(entry) === null
+            dcodeSessionsDatabaseRole !== "database"
           ) {
             // Dependency source is not a credential authority and generated
             // bundles can contain accidental token-shaped bytes. Package
             // manifests still receive a structure-aware scan below.
             const providerProfileSchema = isBundledProviderProfileSchema(entry);
             const dependencyTree = isNativeDependencyTreeEntry(entry);
+            const openclawConfig =
+              nativeStructuredAuthorityKind(
+                path.posix.normalize(entry.replace(/^\.\//u, "")),
+                fileName,
+              ) === "openclaw-config";
             const violation = scanNativeTarFilePayload(
               descriptor,
               dataOffset,
               size,
-              shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+              dcodeSessionsDatabaseRole === "sidecar" ||
+                shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
               fileName === ".npmrc",
               providerProfileSchema,
+              openclawConfig,
               !dependencyTree,
               dependencyTree,
+              deadlineMs,
             );
+            if (violation === "deadline") return { entry, deadlineExpired: true };
             if (violation === null) return "native state credential scan";
             if (violation) return entry;
           }
@@ -1677,8 +1765,9 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
 function nativeArchiveCredentialViolation(
   archivePath: string,
   entries: readonly string[],
-): string | null {
-  const rawViolation = nativeArchiveRawCredentialViolation(archivePath);
+  deadlineMs: number | undefined,
+): NativeArchiveCredentialViolation {
+  const rawViolation = nativeArchiveRawCredentialViolation(archivePath, deadlineMs);
   if (rawViolation) return rawViolation;
   const candidates: Array<{
     entry: string;
@@ -1696,13 +1785,17 @@ function nativeArchiveCredentialViolation(
     const isDependencyPackage = fileName === "package.json" && segments.includes("node_modules");
     const dcodeSessionsDatabaseRole = dcodeSessionsDatabaseEntryRole(entry);
     const isSensitive = isSensitiveFile(fileName);
+    const isOpenClawConfig =
+      nativeStructuredAuthorityKind(path.posix.normalize(entry.replace(/^\.\//u, "")), fileName) ===
+      "openclaw-config";
     const isEnv = fileName === ".env" || fileName.endsWith(".env");
     if (
       !isLockfile &&
       !isDependencyPackage &&
       dcodeSessionsDatabaseRole === null &&
       !isEnv &&
-      !isSensitive
+      !isSensitive &&
+      !isOpenClawConfig
     ) {
       continue;
     }
@@ -1777,7 +1870,7 @@ function nativeArchiveCredentialViolation(
         (!candidate.isLockfile &&
           !candidate.isDependencyPackage &&
           !candidate.isEnv &&
-          !structuredContentIsCredentialFree(candidate.fileName, raw))
+          !structuredContentIsCredentialFree(candidate.entry, raw))
       ) {
         return candidate.entry;
       }
@@ -2158,7 +2251,11 @@ function withSshCleanupResult<T extends BackupResult | RestoreResult>({
 }
 
 /** Capture one opaque archive of the OpenShell-owned native home/workspace. */
-function backupNativeSandboxState(sandboxName: string, options: BackupOptions): BackupResult {
+function backupNativeSandboxState(
+  sandboxName: string,
+  options: BackupOptions,
+  onDirectoryCreated: (backupPath: string) => void,
+): BackupResult {
   if (backupDeadlineExpired(options.deadlineMs)) {
     return nativeStateFailure("Sandbox backup deadline expired before backup started", true);
   }
@@ -2173,7 +2270,10 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
   if (existsSync(backupPath))
     return nativeStateFailure(`Snapshot path '${backupPath}' already exists; retry the backup.`);
   rejectSymlinksOnPath(backupPath);
-  mkdirSync(backupPath, { recursive: true, mode: 0o700 });
+  mkdirSync(path.dirname(backupPath), { recursive: true, mode: 0o700 });
+  // Claim only a new leaf so failure cleanup cannot remove a concurrent backup.
+  mkdirSync(backupPath, { mode: 0o700 });
+  onDirectoryCreated(backupPath);
   rejectSymlinksOnPath(backupPath);
 
   let temporary: ReturnType<typeof createTempSshConfig> | null = null;
@@ -2278,7 +2378,9 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
           "trap resume EXIT HUP INT TERM",
           "quiesce_pass=0",
           'while :; do collect_candidates; newly_stopped=""; for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) if kill -STOP "$pid" 2>/dev/null; then stopped="$stopped $pid"; newly_stopped=1; fi ;; esac; done; [ -n "$newly_stopped" ] || break; quiesce_pass=$((quiesce_pass + 1)); [ "$quiesce_pass" -lt 10 ] || exit 21; done',
-          'for pid in $stopped; do attempts=0; while [ -r "/proc/$pid/status" ]; do state=""; { while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done; } 2>/dev/null < "/proc/$pid/status" || break; case "$state" in T*) break ;; esac; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
+          // A group leader can be a zombie while sibling threads still run.
+          // Require every remaining task to be stopped or exited before capture.
+          'for pid in $stopped; do attempts=0; while [ -d "/proc/$pid" ]; do pending=""; observed=""; for task in /proc/$pid/task/[0-9]*; do [ -d "$task" ] || continue; observed=1; state=""; { while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done; } 2>/dev/null < "$task/status" || { [ ! -d "$task" ] && continue; }; case "$state" in T*|Z*|X*|x*) ;; *) pending=1 ;; esac; done; [ -n "$observed" ] || { [ ! -d "/proc/$pid" ] && break; pending=1; }; [ -n "$pending" ] || break; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
           "collect_candidates",
           'for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) exit 21 ;; esac; done',
           'if [ -e "$root/.openclaw/state/openclaw.sqlite" ] || [ -L "$root/.openclaw/state/openclaw.sqlite" ] || [ -e "$root/.openclaw-data/state/openclaw.sqlite" ] || [ -L "$root/.openclaw-data/state/openclaw.sqlite" ]; then command -v node >/dev/null 2>&1 || exit 22; node --no-warnings -e ' +
@@ -2356,7 +2458,16 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
     // Reject sparse encodings with the bounded raw parser before invoking the
     // platform tar. GNU tar and bsdtar diagnose malformed or unsupported sparse
     // fixtures differently, but the security boundary must be deterministic.
-    const rawArchiveViolation = nativeArchiveRawCredentialViolation(archivePath);
+    const rawArchiveViolation = nativeArchiveRawCredentialViolation(
+      archivePath,
+      options.deadlineMs,
+    );
+    if (rawArchiveViolation && typeof rawArchiveViolation !== "string") {
+      rmSync(backupPath, { recursive: true, force: true });
+      return nativeStateFailure(
+        `Native archive credential scan exceeded the backup deadline at '${rawArchiveViolation.entry}'`,
+      );
+    }
     if (rawArchiveViolation === "native state sparse archive entry") {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(`Native state archive validation failed: ${rawArchiveViolation}`);
@@ -2385,14 +2496,27 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
         `Native state archive validation failed: ${hardLinkViolations.join("; ")}`,
       );
     }
-    const sanitationFailure = sanitizeMachineLocalArchiveConfig(archivePath);
+    const sanitationFailure = sanitizeMachineLocalArchiveConfig(
+      archivePath,
+      maxBytes,
+      options.deadlineMs,
+    );
     if (sanitationFailure) {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(`Native state archive sanitation failed: ${sanitationFailure}`);
     }
-    const credentialViolation = nativeArchiveCredentialViolation(archivePath, validation.entries);
+    const credentialViolation = nativeArchiveCredentialViolation(
+      archivePath,
+      validation.entries,
+      options.deadlineMs,
+    );
     if (credentialViolation) {
       rmSync(backupPath, { recursive: true, force: true });
+      if (typeof credentialViolation !== "string") {
+        return nativeStateFailure(
+          `Native archive credential scan exceeded the backup deadline at '${credentialViolation.entry}'`,
+        );
+      }
       return nativeStateFailure(
         `Rebuild was aborted because the native state archive contains credential-bearing or uninspectable content at '${credentialViolation}'. Move credentials to supported OpenShell credential storage and retry.`,
       );
@@ -2482,7 +2606,24 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
 }
 
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
-  return backupNativeSandboxState(sandboxName, options);
+  let createdBackupPath: string | undefined;
+  try {
+    return backupNativeSandboxState(sandboxName, options, (backupPath) => {
+      createdBackupPath = backupPath;
+    });
+  } catch (error) {
+    if (
+      createdBackupPath &&
+      !removeSandboxStateBackup(sandboxName, createdBackupPath, options.deadlineMs)
+    ) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `${detail}. Incomplete backup at '${createdBackupPath}' could not be removed`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
 // ── Restore ────────────────────────────────────────────────────────
 
@@ -3157,7 +3298,7 @@ export type RebuildRecoveryManifestValidation =
   | { ok: false; reason: string };
 
 /**
- * Remove one completed rebuild backup without allowing a caller-controlled
+ * Remove one rebuild backup without allowing a caller-controlled
  * path to escape the sandbox's timestamped backup directory.
  */
 function removePathWithinDeadline(targetPath: string, deadlineMs?: number): boolean {

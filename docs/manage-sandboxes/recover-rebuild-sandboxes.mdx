@@ -190,14 +190,16 @@ During the lease, `launch` still verifies the owning OpenShell gateway, exact li
 <AgentOnly variant="openclaw,hermes">
 Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
 Shared-route providers use `inference.local`.
-Their models probe must return HTTP 2xx, except that `openrouter-api` can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
-NVIDIA Endpoints verifies its sandbox-attached provider at `integrate.api.nvidia.com` and runs the bounded model request without the shared-route models probe.
+Their models probe must return HTTP 2xx, except that a retained legacy `openrouter-api` shared route can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
+NVIDIA Endpoints, supported fixed hosted selections, and new OpenClaw Ollama, standalone vLLM, and llama.cpp selections verify their recorded sandbox-attached provider and run the bounded model request at its native endpoint without the shared-route models probe.
+For Hermes, new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use the same native attachment check. Owned Local NVIDIA NIM and retained legacy shared routes continue to use `inference.local`.
+Retained OpenClaw local selections with a valid shared route continue to use `inference.local` for supported model switches. An older OpenClaw Ollama, standalone vLLM, or llama.cpp sandbox without a native attachment cannot resume or rebuild. Back it up and re-onboard it with `--fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NVIDIA NIM sandboxes retain the shared route and can resume or rebuild without a native attachment.
 A failed required probe or model request rejects launch readiness.
 This check is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
-The models probe must return HTTP 2xx, except that `openrouter-api` can return HTTP 404 for `GET /v1/models`.
+For new Deep Agents Code standalone local selections, NemoClaw verifies the recorded sandbox-attached provider and requests the model through its qualified host-local endpoint. Older Deep Agents Code standalone local shared routes without an attachment stop before resume or rebuild; back up and recreate the sandbox with `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NVIDIA NIM retains its shared route and does not require a native attachment to resume or rebuild. For retained legacy and custom shared routes, the models probe must return HTTP 2xx, except that a legacy `openrouter-api` route can return HTTP 404 for `GET /v1/models` when the model request succeeds. NVIDIA Endpoints and supported fixed hosted selections instead verify the recorded native attachment and request the model through its native endpoint.
 A failed request rejects launch readiness and identifies the inference request as the failed check.
 </AgentOnly>
 <AgentOnly variant="openclaw">
@@ -215,7 +217,7 @@ Before the first mutation in the complete preflight, the producer revalidates it
 
 If unsafe or malformed authority history makes the prior lease timeline untrustworthy, NemoClaw durably invalidates the old epoch and starts one conservative 24-hour quarantine. Publication remains disabled until both wall time and monotonic uptime span the full quarantine. Repeated attempts do not extend it. After it elapses, the next successful complete preflight can publish a new fixed 24-hour lease.
 
-Lease acceptance and publication are currently Linux-only and require a secure, independently writable OS per-user runtime authority under `/run/user/<numeric-uid>`. It never uses caller-provided environment variables to select this authority.
+Lease acceptance and publication are currently Linux-only and require a secure, independently writable OS per-user runtime authority under `/run/user/<numeric-uid>`. It never uses caller-provided environment variables to select this authority. Your current-user home can be group-writable, such as mode `0775` with umask `0002`. NemoClaw keeps its state directories private and rejects a home that is writable by other users.
 
 On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease. `connect --probe-only` also runs the complete preflight, including recovery and probes. After a successful probe and recovery, it prints a note that launch-readiness evidence is unavailable on this platform and exits zero. On Linux, unsafe launch-readiness diagnostics can report the affected path, owner UID, permissions, a bounded error code, and repair guidance.
 They exclude receipt contents, environment values, and raw OS error messages.
@@ -393,7 +395,11 @@ nemohermes <sandbox-name> gateway-token --quiet
 ```
 
 Before post-restore repairs, NemoClaw verifies that the recreated sandbox still identifies as Hermes and exits nonzero if its identity does not match the rebuild target.
-After state restore, NemoClaw restarts the Hermes gateway so it reads the restored durable state, then restores managed MCP configuration through the normal lifecycle.
+For a native local selection, NemoClaw refreshes only the managed credential references after restore and before restart, preserving restored model and provider settings.
+The refresh validates the replacement sandbox identity and recorded route. An unsafe or changed configuration stops activation and preserves the backup and any acquired cron gate.
+A legacy local sandbox without a valid Hermes attachment must be backed up and recreated before native local resume or rebuild. Use `nemohermes onboard --fresh --name <sandbox-name> --recreate-sandbox` after preserving required data.
+Live qualification of the Hermes native local lifecycle is pending.
+After state restore and credential refresh, NemoClaw restarts the Hermes gateway so it reads the restored durable state, then restores managed MCP configuration through the normal lifecycle.
 MCP restoration performs an acknowledged gateway reload, so NemoClaw finishes by verifying the final running gateway and its managed MCP state without replacing that verified process again.
 The gateway starts during recreation and reads its durable state before the restore replaces it, which is why the first post-restore restart must happen before managed MCP restoration.
 `rebuild` exits nonzero instead of reporting success when it cannot verify final gateway health or managed MCP state.

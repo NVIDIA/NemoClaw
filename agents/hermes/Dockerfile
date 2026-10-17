@@ -46,7 +46,7 @@ COPY agents/hermes/plugin/__init__.py agents/hermes/plugin/plugin.yaml /opt/nemo
 # Channel-owned Google Chat runtime asset, loaded by the plugin beside its own
 # __init__.py.
 COPY src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py /opt/nemoclaw-hermes-plugin/googlechat_adapter.py
-COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
+COPY agents/hermes/generate-config.ts agents/hermes/check-native-credentials.ts /opt/nemoclaw-hermes-config/
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py agents/hermes/finalize-image-layout.sh /opt/nemoclaw-hermes-config/
 COPY agents/hermes/a2a-neutral.patch agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/
@@ -63,6 +63,9 @@ COPY agents/hermes/managed_policy.py /opt/nemoclaw-hermes-config/managed_policy.
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts
 COPY src/lib/tool-disclosure.ts src/lib/providerless-inference.ts src/lib/inference-credential.ts /src/lib/
+COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
+COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
+COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/
 COPY src/lib/messaging/ /src/lib/messaging/
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 
@@ -390,6 +393,10 @@ ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=8fb5b35e0e175c71f49bbc4846daffc661
 
 # hadolint ignore=DL3067
 COPY --from=hermes-runtime-payload / /
+
+# The startup guard comes from the runtime payload. Verify its credential
+# projection through the pinned Hermes consumer after installing that payload.
+RUN node /opt/nemoclaw-hermes-config/check-native-credentials.ts
 
 # Keep the root-owned managed-startup handoff in this image-only layer. The
 # following permissions block is replayed on the host by regression tests.

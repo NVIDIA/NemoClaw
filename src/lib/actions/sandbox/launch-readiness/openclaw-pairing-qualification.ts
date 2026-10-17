@@ -16,6 +16,7 @@ import {
 const QUALIFICATION_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_QUALIFICATION__=";
 const SETTLEMENT_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=";
 const RETRYABLE_OBSERVATION_EXIT_STATUS = 3;
+const INCOMPATIBLE_OBSERVATION_EXIT_STATUS = 4;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const OPENCLAW_VERSION_RE = /\bopenclaw\b[^\r\n0-9]*([0-9]+\.[0-9]+\.[0-9]+)(?![0-9.])/i;
 export const OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS = 3_000;
@@ -38,7 +39,8 @@ const OBSERVATION_MAX_OUTPUT_BYTES = 4 * 1_024;
 
 export const OPENCLAW_PAIRING_REQUIRED_ROLES = ["operator"] as const;
 // Canonical approval preserves the requested pairing/write view on the paired
-// record and adds the implied read scope only to credential-bearing token views.
+// record and adds implied read access to credential-bearing token views. A prior
+// explicit read grant also remains in the paired record after native approval.
 export const OPENCLAW_PAIRING_REQUEST_SCOPES = ["operator.pairing", "operator.write"] as const;
 export const OPENCLAW_PAIRING_REQUIRED_SCOPES = [
   "operator.pairing",
@@ -53,7 +55,7 @@ export function parseOpenClawVersionFromText(value: string): string | null {
 }
 
 export type OpenClawPairingSettlementObservation = {
-  readonly state: "pairing-only" | "scope-upgrade-pending" | "settled";
+  readonly state: "pairing-only" | "scope-upgrade-required" | "scope-upgrade-pending" | "settled";
   readonly deviceIdentitySha256: string;
 };
 
@@ -79,6 +81,13 @@ export class OpenClawPairingQualificationError extends Error {
   constructor() {
     super("OpenClaw pairing qualification is unavailable.");
     this.name = "OpenClawPairingQualificationError";
+  }
+}
+
+export class OpenClawPairingIncompatibleError extends OpenClawPairingQualificationError {
+  constructor() {
+    super();
+    this.name = "OpenClawPairingIncompatibleError";
   }
 }
 
@@ -151,6 +160,7 @@ function parseOpenClawPairingSettlementRecord(output: string): Record<string, un
     typeof record.deviceIdentitySha256 !== "string" ||
     !SHA256_RE.test(record.deviceIdentitySha256) ||
     (record.state !== "pairing-only" &&
+      record.state !== "scope-upgrade-required" &&
       record.state !== "scope-upgrade-pending" &&
       record.state !== "pairing-pending" &&
       record.state !== "settled")
@@ -167,6 +177,7 @@ export function parseOpenClawPairingSettlementObservation(
   if (
     !record ||
     (record.state !== "pairing-only" &&
+      record.state !== "scope-upgrade-required" &&
       record.state !== "scope-upgrade-pending" &&
       record.state !== "settled")
   ) {
@@ -241,6 +252,7 @@ MAX_ENTRY_BYTES = 512 * 1024
 MAX_SAFE_INTEGER = 9007199254740991
 REQUIRED_ROLES = ['operator']
 PAIRING_ONLY_SCOPES = ['operator.pairing']
+PAIRING_READ_SCOPES = ['operator.pairing', 'operator.read']
 REQUEST_SCOPES = ['operator.pairing', 'operator.write']
 TOKEN_SCOPES = ['operator.pairing', 'operator.read', 'operator.write']
 ADMIN_REQUEST_SCOPES = ['operator.admin', 'operator.pairing', 'operator.write']
@@ -254,8 +266,10 @@ STRICT_SETTLEMENT = ${mode === "settlement" ? "True" : "False"}
 ED25519_SPKI_PREFIX = bytes.fromhex('302a300506032b6570032100')
 RAW_PUBLIC_KEY_RE = re.compile(r'^[A-Za-z0-9_-]{43}$')
 
+incompatible_pairing = False
+
 def reject():
-    sys.exit(1)
+    sys.exit(${INCOMPATIBLE_OBSERVATION_EXIT_STATUS} if incompatible_pairing else 1)
 
 def retry_observation():
     sys.exit(${RETRYABLE_OBSERVATION_EXIT_STATUS})
@@ -648,6 +662,7 @@ try:
             )
         )
     ]
+    incompatible_pairing = bool(local_paired)
     if len(local_paired) != 1:
         reject()
     map_key, paired_device = local_paired[0]
@@ -657,7 +672,7 @@ try:
         or paired_device.get('deviceId') != device_id
         or paired_device.get('publicKey') != device_public_key
         or paired_device.get('clientId') != 'cli'
-        or paired_device.get('clientMode') != 'cli'
+        or paired_device.get('clientMode') not in ('cli', 'probe')
         or paired_device.get('role') != 'operator'
         or not exact_string_set(paired_device.get('roles'), REQUIRED_ROLES)
         or 'requestedScopes' in paired_device
@@ -691,6 +706,7 @@ try:
     ):
         reject()
 
+    incompatible_pairing = False
     if STRICT_SETTLEMENT and pending:
         reject()
     canonical_pending_count = 0
@@ -749,9 +765,17 @@ try:
         if normalized_roles(device) is None:
             reject()
 
+    # Native approval merges an earlier explicit read grant into the write grant.
+    # Require the two device views to agree on one exact supported scope set.
+    explicit_read_grant = (
+        exact_string_set(paired_device.get('scopes'), TOKEN_SCOPES)
+        and exact_string_set(paired_device.get('approvedScopes'), TOKEN_SCOPES)
+    )
     baseline_settled = (
-        exact_string_set(paired_device.get('scopes'), REQUEST_SCOPES)
-        and exact_string_set(paired_device.get('approvedScopes'), REQUEST_SCOPES)
+        (explicit_read_grant or (
+            exact_string_set(paired_device.get('scopes'), REQUEST_SCOPES)
+            and exact_string_set(paired_device.get('approvedScopes'), REQUEST_SCOPES)
+        ))
         and exact_string_set(paired_operator.get('scopes'), TOKEN_SCOPES)
         and exact_string_set(auth_operator.get('scopes'), TOKEN_SCOPES)
     )
@@ -773,11 +797,21 @@ try:
         and exact_string_set(paired_operator.get('scopes'), PAIRING_ONLY_SCOPES)
         and exact_string_set(auth_operator.get('scopes'), PAIRING_ONLY_SCOPES)
     )
+    # A probe changes connection metadata, not the local device identity. Only
+    # verified matching credentials may produce a canonical CLI write request.
+    read_baseline = ORDINARY_SETTLEMENT and all(
+        exact_string_set(view, PAIRING_READ_SCOPES) for view in (
+            paired_device.get('scopes'), paired_device.get('approvedScopes'),
+            paired_operator.get('scopes'), auth_operator.get('scopes'),
+        )
+    )
+    upgrade_required = read_baseline
     if ALLOW_CANONICAL_PENDING:
         relevant_pending_count = canonical_pending_count if ORDINARY_SETTLEMENT else len(pending)
-        if relevant_pending_count and (relevant_pending_count != 1 or not pairing_only):
+        if relevant_pending_count and (relevant_pending_count != 1 or not (pairing_only or read_baseline)):
             reject()
-    if not settled and not pairing_only:
+    if not settled and not pairing_only and not upgrade_required:
+        incompatible_pairing = True
         reject()
 
     device_identity_sha256 = hashlib.sha256(json.dumps({
@@ -786,11 +820,11 @@ try:
     }, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
     ${
       mode !== "qualification"
-        ? "print(MARKER + json.dumps({\n        'deviceIdentitySha256': device_identity_sha256,\n        'state': ('settled' if settled else ('scope-upgrade-pending' if ORDINARY_SETTLEMENT and canonical_pending_count else ('pairing-pending' if REPORT_CANONICAL_PENDING and pending else 'pairing-only'))),\n    }, sort_keys=True, separators=(',', ':')))\n    sys.exit(0)"
+        ? "print(MARKER + json.dumps({\n        'deviceIdentitySha256': device_identity_sha256,\n        'state': ('settled' if settled else ('scope-upgrade-pending' if ORDINARY_SETTLEMENT and canonical_pending_count else ('pairing-pending' if REPORT_CANONICAL_PENDING and pending else ('scope-upgrade-required' if upgrade_required else 'pairing-only')))),\n    }, sort_keys=True, separators=(',', ':')))\n    sys.exit(0)"
         : "if not settled:\n        reject()"
     }
 
-    projected_request_scopes = ADMIN_REQUEST_SCOPES if admin_settled else REQUEST_SCOPES
+    projected_request_scopes = ADMIN_REQUEST_SCOPES if admin_settled else (TOKEN_SCOPES if explicit_read_grant else REQUEST_SCOPES)
     projected_paired_token_scopes = ADMIN_PAIRED_TOKEN_SCOPES if admin_settled else TOKEN_SCOPES
     projected_auth_token_scopes = ADMIN_AUTH_TOKEN_SCOPES if admin_settled else TOKEN_SCOPES
     projection = {
@@ -802,6 +836,8 @@ try:
             'deviceId': device_id,
             'publicKey': device_public_key,
             'clientId': 'cli',
+            # Authenticated probes refresh connection metadata only. Both
+            # validated modes represent the same canonical CLI authority.
             'clientMode': 'cli',
             'roles': REQUIRED_ROLES,
             'pairedRequestScopes': projected_request_scopes,
@@ -885,6 +921,9 @@ function runOpenClawPairingObservation(
   );
   if (!result.error && !result.signal && result.status === RETRYABLE_OBSERVATION_EXIT_STATUS) {
     throw new OpenClawPairingObservationRetryableError();
+  }
+  if (!result.error && !result.signal && result.status === INCOMPATIBLE_OBSERVATION_EXIT_STATUS) {
+    throw new OpenClawPairingIncompatibleError();
   }
   if (result.error || result.signal || result.status !== 0) {
     throw new OpenClawPairingQualificationError();

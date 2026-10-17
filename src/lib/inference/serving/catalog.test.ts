@@ -240,13 +240,7 @@ spec:
       value: f16
     speculativeDecoding: disabled
     limits:
-      maxRequestBodyBytes: 1048576
-      maxRequestHeaderBytes: 32768
-      maxOutputTokens: 4096
       requestTimeoutSeconds: 120
-      shutdownTimeoutSeconds: 25
-    requestGuard:
-      upstreamPort: 8082
   readiness:
     contractRef: test.readiness/v1
     timeoutSeconds: 120
@@ -514,31 +508,14 @@ describe("managed inference serving catalog compiler", () => {
         kvCache: { key: "f16", value: "f16" },
         speculativeDecoding: "disabled",
         limits: {
-          maxRequestBodyBytes: 1048576,
-          maxRequestHeaderBytes: 32768,
-          maxOutputTokens: 4096,
           requestTimeoutSeconds: 120,
-          shutdownTimeoutSeconds: 25,
         },
-        requestGuard: { upstreamPort: 8082 },
       },
       capabilities: { agents: [], protocols: ["openai-completions"] },
     });
     expect(first.presets[0]?.spec.selection).toBe("explicit-only");
     expect(first.sources.every((source) => /^sha256:[0-9a-f]{64}$/.test(source.digest))).toBe(true);
     expect(first.catalogDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
-  });
-
-  it("rejects a tool-capable llama.cpp recipe whose request guard cannot hold an agent turn", () => {
-    const undersized = replaceSource(
-      llamaCppRecipeSource(),
-      "      maxRequestBodyBytes: 1048576",
-      "      maxRequestBodyBytes: 32768",
-    );
-
-    expect(() => compile([undersized, llamaCppPresetSource()])).toThrow(
-      "must allow at least 1048576 request body bytes when tool calls are enabled",
-    );
   });
 
   it.each([
@@ -604,8 +581,7 @@ describe("managed inference serving catalog compiler", () => {
     ["CPU fallback", "      cpuFallback: reject", "      cpuFallback: allow"],
     ["external network exposure", "    networkExposure: loopback", "    networkExposure: lan"],
     ["missing authentication", "    authentication: bearer\n", ""],
-    ["a missing guard limit", "      shutdownTimeoutSeconds: 25\n", ""],
-    ["a colliding guard port", "      upstreamPort: 8082", "      upstreamPort: 8081"],
+    ["a missing native socket timeout", "      requestTimeoutSeconds: 120\n", ""],
     ["an unsafe KV cache type", "      key: f16", "      key: q4_0"],
     ["disabled flash attention", "    flashAttention: enabled", "    flashAttention: disabled"],
     [

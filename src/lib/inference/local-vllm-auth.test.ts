@@ -269,9 +269,17 @@ describe("managed vLLM authentication", () => {
 
   it("separates the host-local validation URL from the sandbox route (#8379)", () => {
     lifecycle.baseUrl.mockReturnValue(null);
+    const serving = {
+      catalogDigest: `sha256:${"a".repeat(64)}`,
+      presetId: "test-profile",
+      presetDigest: `sha256:${"b".repeat(64)}`,
+      recipeId: "test-recipe",
+      recipeDigest: `sha256:${"c".repeat(64)}`,
+    };
     const recoverHostLocalManagedVllmEndpointImpl = vi.fn(() => ({
       baseUrl: "http://127.0.0.1:19000",
       apiKey: API_KEY,
+      serving,
     }));
 
     expect(
@@ -283,6 +291,7 @@ describe("managed vLLM authentication", () => {
       baseUrl: "http://host.openshell.internal:19000/v1",
       validationBaseUrl: "http://127.0.0.1:19000/v1",
       apiKey: API_KEY,
+      serving,
     });
   });
 

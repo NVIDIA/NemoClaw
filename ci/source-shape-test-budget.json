@@ -353,7 +353,7 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
-      "test": "passes only the base-packaged SDK archive to pull request dependency jobs",
+      "test": "passes only an SDK archive admitted by the base-controlled verifier to dependency jobs",
       "category": "security"
     },
     {

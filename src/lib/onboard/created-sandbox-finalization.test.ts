@@ -423,214 +423,56 @@ describe("created DCode sandbox finalization", () => {
     }
   });
 
-  it("publishes fresh metadata after endpoint-aware OpenRouter validation (#9555)", async () => {
-    const endpointUrl = "https://openrouter.ai/api/v1";
-    const getDcodeSelectionDrift = vi.fn(async () => ({
-      changed: false,
-      providerChanged: false,
-      modelChanged: false,
-      existingProvider: "openrouter",
-      existingModel: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
-      unknown: false,
-    }));
-    const register = vi.fn();
+  it.each([false, true])(
+    "passes native attachment selection %s before registry publication",
+    async (nativeProvider) => {
+      const endpointUrl = "https://openrouter.ai/api/v1";
+      const getDcodeSelectionDrift = vi.fn(async () => ({
+        changed: false,
+        providerChanged: false,
+        modelChanged: false,
+        existingProvider: "openrouter",
+        existingModel: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
+        unknown: false,
+      }));
+      const register = vi.fn();
 
-    await finalizeCreatedSandbox(
-      {
-        sandboxName: "dcode",
-        restoreBackupPath: null,
-        preUpgradeBackup: false,
-        targetAgentType: "langchain-deepagents-code",
-        validateManagedDcode: true,
-        provider: "compatible-endpoint",
-        model: "nvidia/nemotron-3-ultra-550b-a55b",
-        preferredInferenceApi: "openai-completions",
-        endpointUrl,
-      },
-      {
-        restoreRecreatedSandboxState: vi.fn(),
-        getDcodeSelectionDrift,
-        register,
-        note: vi.fn(),
-        error: vi.fn(),
-        exitProcess: (code): never => {
-          throw new Error(`exit ${code}`);
-        },
-      },
-    );
-
-    expect(getDcodeSelectionDrift).toHaveBeenCalledWith(
-      "dcode",
-      "compatible-endpoint",
-      "nvidia/nemotron-3-ultra-550b-a55b",
-      "openai-completions",
-      endpointUrl,
-    );
-    expect(register).toHaveBeenCalledOnce();
-  });
-
-  it("passes the fresh create endpoint through the production completion constructor (#9555)", async () => {
-    const endpointUrl = "https://openrouter.ai/api/v1";
-    const model = "nvidia/nemotron-3-ultra-550b-a55b";
-    const verifiedCreateBoundary = {
-      sandboxName: "dcode",
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      lifecycleGeneration: "generation-1",
-      lifecycleLiveIdentityFingerprint: "a".repeat(64),
-      route: "native" as const,
-    };
-    const verifiedCreate = {
-      reservation: {} as never,
-      checkpoint: pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary),
-    } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
-    const runCaptureOpenshell = vi.fn(() =>
-      [
-        "Sandbox:  dcode",
-        "Route:    inference",
-        "Provider: compatible-endpoint",
-        `Model:    openai:${model}`,
-        "Endpoint: https://inference.local/v1",
-        "Runtime:  Deep Agents Code (terminal)",
-      ].join("\n"),
-    );
-    const runBuffered = vi.fn(async () => ({
-      outcome: { kind: "completed" as const, exitCode: 0 },
-      stdout: runCaptureOpenshell(),
-      stderr: "",
-    }));
-    vi.spyOn(process, "exit").mockImplementation((code): never => {
-      throw new Error(`exit ${code}`);
-    });
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    const completionArgs = [
-      "dcode",
-      null,
-      null,
-      null,
-      null,
-      { customOpenClawImage: false, isManagedDcodeAgent: true },
-      {
-        provider: "compatible-endpoint",
-        model,
-        preferredInferenceApi: "openai-completions",
-        endpointUrl,
-      },
-      {
-        createIntent: {
+      await finalizeCreatedSandbox(
+        {
+          sandboxName: "dcode",
+          restoreBackupPath: null,
+          preUpgradeBackup: false,
+          targetAgentType: "langchain-deepagents-code",
+          validateManagedDcode: true,
+          provider: "compatible-endpoint",
+          model: "nvidia/nemotron-3-ultra-550b-a55b",
+          preferredInferenceApi: "openai-completions",
           endpointUrl,
-          endpointSource: null,
-          observabilityEnabled: false,
+          nativeProvider,
         },
-        resolvedCreateIntent: {
-          policy: { options: {} },
-          hostMounts: undefined,
+        {
+          restoreRecreatedSandboxState: vi.fn(),
+          getDcodeSelectionDrift,
+          register,
+          note: vi.fn(),
+          error: vi.fn(),
+          exitProcess: (code): never => {
+            throw new Error(`exit ${code}`);
+          },
         },
-      },
-      {
-        gpuEnabled: false,
-        hostGpuDetected: false,
-        sandboxGpuEnabled: false,
-        sandboxGpuMode: "none",
-        sandboxGpuDevice: null,
-        sandboxGpuProof: null,
-        openshellDriver: "docker",
-        openshellVersion: "0.0.101",
-      },
-      false,
-      { toolDisclosure: undefined, dcodeAutoApprovalMode: "disabled" },
-      { webSearchConfig: null, hermesAuthMethod: null },
-      {
-        plannedMessagingState: undefined,
-        preservedMcpState: undefined,
-        hermesToolGateways: [],
-      },
-      null,
-      { gatewayName: "nemoclaw", gatewayPort: 8080 },
-      {
-        initialSandboxPolicy: {
-          appliedPresets: ["personal-open-internet"],
-          policyPath: "/private/initial-policy.yaml",
-        },
-        compatibilityPolicyPath: null,
-        dashboardRemoteBindPrepared: false,
-        getVerifiedCreateBoundary: () => verifiedCreateBoundary,
-        getVerifiedCreateRegistrationAuthority: () => verifiedCreate,
-        revalidateSandboxIdentity: vi.fn(),
-      },
-      null,
-      "build-1",
-      {
-        mode: "none",
-        hostGpuDetected: false,
-        hostGpuPlatform: "linux",
-        sandboxGpuEnabled: false,
-        sandboxGpuDevice: null,
-        errors: [],
-      },
-      false,
-      vi.fn(),
-      runCaptureOpenshell,
-      "http://127.0.0.1:8643",
-      { config: null, enabled: false },
-      vi.fn(),
-      vi.fn(),
-      vi.fn(),
-      {
-        runtimeProvider: null,
-        ensurePreparedWorkload: vi.fn(),
-        ensurePreparedProfile: vi.fn(),
-      },
-      {
-        source: {
-          kind: "legacy-dockerfile",
-          dockerfilePath: "/workspace/Dockerfile",
-          reason: "agent-not-managed",
-        },
-        release: null,
-        fallbackDiagnostic: null,
-      },
-      vi.fn(),
-      { runBuffered },
-    ] as unknown as Parameters<typeof createOnboardCreatedSandboxCompletion>;
-    const completion = createOnboardCreatedSandboxCompletion(...completionArgs);
-    const created = {
-      createResult: { status: 0, output: "", sawProgress: true },
-      route: "native",
-      firstCreateOutput: "",
-      registryImageRef: null,
-      lifecycleRegistrationFields: { lifecycleGeneration: "generation-1" },
-    } as SandboxGpuCreateFlowResult;
-    const lifecycleLiveIdentityFingerprint = "a".repeat(64);
-    const lifecycle = {
-      generation: "generation-1",
-      recordExactIdentity: () => ({
-        lifecycleGeneration: "generation-1",
-        lifecycleLiveIdentityFingerprint,
-      }),
-      capture: () => ({
-        lifecycleGeneration: "generation-1",
-        lifecycleLiveIdentityFingerprint,
-      }),
-      revalidate: (registration: {
-        lifecycleGeneration: string;
-        lifecycleLiveIdentityFingerprint: string;
-      }) => registration,
-    };
+      );
 
-    await expect(
-      completion.complete(
-        created,
-        null,
-        "disabled",
-        false,
-        () => ({ lifecycleGeneration: "generation-1" }),
-        lifecycle,
-      ),
-    ).rejects.toThrow("exit 1");
-    expect(runBuffered).toHaveBeenCalledOnce();
-  });
+      expect(getDcodeSelectionDrift).toHaveBeenCalledWith(
+        "dcode",
+        "compatible-endpoint",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "openai-completions",
+        endpointUrl,
+        nativeProvider,
+      );
+      expect(register).toHaveBeenCalledOnce();
+    },
+  );
 
   it("does not publish registry metadata when live validation fails (#6311)", async () => {
     const register = vi.fn();
@@ -1449,6 +1291,7 @@ describe("restored OpenClaw selection reconciliation", () => {
       null,
       "nemoclaw-9090",
       undefined,
+      { endpointUrl: undefined, nativeProvider: false },
     );
   });
 
