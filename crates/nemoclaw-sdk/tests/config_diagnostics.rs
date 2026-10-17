@@ -167,3 +167,20 @@ fn collection_tags_are_rejected_and_quoted_or_block_tag_text_is_preserved() {
         literal["spec"]["sandboxes"][0]["harness"]["settings"]
     );
 }
+
+#[test]
+fn a_missing_service_image_reports_the_digest_pin_rule_at_its_service() {
+    let mut input = source("spark/spark-inline.yaml");
+    input["spec"]["services"]["qwen"]
+        .as_object_mut()
+        .unwrap()
+        .remove("image");
+    let error = Document::parse(input.to_string().as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("schema at spec.services.qwen (line")
+            && error.ends_with(": service image must be pinned by a SHA-256 digest"),
+        "{error}"
+    );
+}

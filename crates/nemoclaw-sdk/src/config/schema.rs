@@ -3,6 +3,9 @@
 //! Authored YAML represented as JSON, before Document::defaults runs.
 pub(crate) mod validation;
 
+// Editors select union variants the same way schema diagnostics do.
+pub use nemoclaw_runtime::schema::select_variant;
+
 pub const SCHEMA_PATH: &str = "schemas/nemoclaw-v1alpha1.schema.json";
 
 pub fn input_schema() -> serde_json::Value {

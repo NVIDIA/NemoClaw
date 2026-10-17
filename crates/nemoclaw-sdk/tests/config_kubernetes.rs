@@ -512,3 +512,56 @@ fn kubernetes_does_not_relax_gateway_transport_or_credential_validation() {
         assert!(Document::parse(input.to_string().as_bytes()).is_err());
     }
 }
+
+fn schema_error(input: &Value) -> String {
+    Document::parse(input.to_string().as_bytes())
+        .unwrap_err()
+        .to_string()
+}
+
+#[test]
+fn managed_kubernetes_endpoint_and_local_field_errors_state_the_target_rule() {
+    let rule = "managed Kubernetes requires an explicit HTTPS 127.0.0.1 endpoint with a nonzero port and excludes local engine settings";
+    let mut endpoint = managed_document();
+    endpoint["spec"]["gateway"]["endpoint"] = json!("http://127.0.0.1:17671");
+    let mut local = managed_document();
+    local["spec"]["gateway"]["networkCIDR"] = json!("172.30.1.0/24");
+    for (input, path) in [(endpoint, "spec.gateway.endpoint"), (local, "spec.gateway")] {
+        let error = schema_error(&input);
+        assert!(
+            error.contains(&format!("schema at {path} (line")) && error.contains(rule),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn a_reserved_kubernetes_environment_name_states_the_naming_rule() {
+    let mut input = managed_document();
+    input["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE", "KUBECONFIG"]);
+    let error = schema_error(&input);
+    assert!(
+        error.contains("schema at spec.gateway.kubernetes.environment[1] (line")
+            && error.contains(
+                "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
+            ),
+        "{error}"
+    );
+    assert!(!error.contains("KUBECONFIG"), "{error}");
+}
+
+#[test]
+fn managed_services_with_a_kubernetes_runtime_state_the_cluster_rule() {
+    let managed =
+        Document::parse(include_bytes!("fixtures/config/managed-ollama.yaml").as_slice()).unwrap();
+    let mut input = external_document();
+    input["spec"]["services"] = serde_json::to_value(managed.spec.services).unwrap();
+    let error = schema_error(&input);
+    assert!(
+        error.contains("schema at spec.services (line")
+            && error.contains(
+                "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
+            ),
+        "{error}"
+    );
+}
