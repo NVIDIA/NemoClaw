@@ -33,6 +33,7 @@ set -euo pipefail
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="07-deepagents-code-headless-inference"
 HEADLESS_TIMEOUT="${DEEPAGENTS_HEADLESS_TIMEOUT:-120}"
+HOSTED_ENDPOINT="${NEMOCLAW_ENDPOINT_URL:-https://inference-api.nvidia.com/v1}"
 SKILL_CLI_TIMEOUT_SECONDS=180
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
@@ -382,20 +383,43 @@ references_attached_provider_placeholder_key() {
   grep -Eq 'api_key_env[[:space:]]*=[[:space:]]*"NVIDIA_INFERENCE_API_KEY"'
 }
 
+references_native_compatible_route() {
+  local configured_endpoint
+  configured_endpoint="$(sed -n 's/^[[:space:]]*base_url[[:space:]]*=[[:space:]]*"\([^"]*\)"[[:space:]]*$/\1/p')"
+  [ "$configured_endpoint" = "$HOSTED_ENDPOINT" ]
+}
+
+references_compatible_provider_placeholder_key() {
+  grep -Eq 'api_key_env[[:space:]]*=[[:space:]]*"COMPATIBLE_API_KEY"'
+}
+
 configured_inference_route_contract() {
   local config
   config="$(cat)"
   if printf '%s\n' "$config" | references_native_nvidia_route \
     && printf '%s\n' "$config" | references_attached_provider_placeholder_key \
     && ! printf '%s\n' "$config" | references_managed_inference_route \
-    && ! printf '%s\n' "$config" | references_managed_placeholder_key; then
+    && ! printf '%s\n' "$config" | references_managed_placeholder_key \
+    && ! printf '%s\n' "$config" | references_native_compatible_route \
+    && ! printf '%s\n' "$config" | references_compatible_provider_placeholder_key; then
     printf '%s\n' native-nvidia
+    return 0
+  fi
+  if printf '%s\n' "$config" | references_native_compatible_route \
+    && printf '%s\n' "$config" | references_compatible_provider_placeholder_key \
+    && ! printf '%s\n' "$config" | references_managed_inference_route \
+    && ! printf '%s\n' "$config" | references_managed_placeholder_key \
+    && ! printf '%s\n' "$config" | references_native_nvidia_route \
+    && ! printf '%s\n' "$config" | references_attached_provider_placeholder_key; then
+    printf '%s\n' native-compatible
     return 0
   fi
   if printf '%s\n' "$config" | references_managed_inference_route \
     && printf '%s\n' "$config" | references_managed_placeholder_key \
     && ! printf '%s\n' "$config" | references_native_nvidia_route \
-    && ! printf '%s\n' "$config" | references_attached_provider_placeholder_key; then
+    && ! printf '%s\n' "$config" | references_attached_provider_placeholder_key \
+    && ! printf '%s\n' "$config" | references_native_compatible_route \
+    && ! printf '%s\n' "$config" | references_compatible_provider_placeholder_key; then
     printf '%s\n' managed
     return 0
   fi
@@ -612,6 +636,9 @@ main() {
   if [ "$route_contract" = "native-nvidia" ]; then
     pass "config.toml routes through the native NVIDIA endpoint"
     pass "config.toml uses the attached-provider placeholder API key"
+  elif [ "$route_contract" = "native-compatible" ]; then
+    pass "config.toml routes through the attached compatible endpoint"
+    pass "config.toml uses the compatible-provider placeholder API key"
   elif [ "$route_contract" = "managed" ]; then
     pass "config.toml routes through the managed inference.local endpoint"
     pass "config.toml uses the managed Deep Agents Code placeholder API key"

@@ -102,7 +102,7 @@ assert_identity() {
   [ "$route" = "inference" ] || fail "$phase identity route is '${route:-missing}'"
   [ "$provider" = "compatible-endpoint" ] || fail "$phase identity provider is '${provider:-missing}'"
   [ "$observed_model" = "openai:${model}" ] || fail "$phase identity model is '${observed_model:-missing}'"
-  [ "$endpoint" = "https://inference.local/v1" ] || fail "$phase identity endpoint is '${endpoint:-missing}'"
+  [ "$endpoint" = "$HOSTED_ENDPOINT" ] || fail "$phase identity endpoint is '${endpoint:-missing}'"
 }
 
 is_positive_integer() {
@@ -183,14 +183,14 @@ import sys
 import tomllib
 
 path = Path("/sandbox/.deepagents/config.toml")
-model, credential_canary = sys.argv[1:]
+model, credential_canary, endpoint = sys.argv[1:]
 text = path.read_text(encoding="utf-8")
 config = tomllib.loads(text)
 provider = config["models"]["providers"]["openai"]
 assert config["models"]["default"] == f"openai:{model}"
 assert provider["models"] == [model]
-assert provider["api_key_env"] == "DEEPAGENTS_CODE_OPENAI_API_KEY"
-assert provider["base_url"] == "https://inference.local/v1"
+assert provider["api_key_env"] == "COMPATIBLE_API_KEY"
+assert provider["base_url"] == endpoint
 assert config["update"] == {"check": True, "auto_update": True}
 assert config["ui"] == {"show_scrollbar": True, "show_url_open_toast": False, "theme": "discard"}
 assert config["threads"] == {
@@ -414,7 +414,7 @@ pass "fresh re-onboard restores the complete native config byte-for-byte"
 verify_source="$(verify_config_source)"
 verify_output="$(
   openshell sandbox exec --name "$SANDBOX_NAME" -- \
-    /opt/venv/bin/python3 -I -c "$verify_source" "$model_a" "$CREDENTIAL_CANARY" 2>&1
+    /opt/venv/bin/python3 -I -c "$verify_source" "$model_a" "$CREDENTIAL_CANARY" "$HOSTED_ENDPOINT" 2>&1
 )" || fail "live DCode config does not preserve the complete native-state boundary"
 printf '%s\n' "$verify_output" | grep -Fq "NEMOCLAW_DCODE_FRESH_CONFIG_VERIFIED" || fail "fresh config verification marker is missing"
 pass "config keeps declared and unrecognized native state"

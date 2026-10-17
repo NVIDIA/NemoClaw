@@ -56,6 +56,7 @@ type HeadlessCheckEnvironment = Partial<
     | "DCODE_EXIT"
     | "DEEPAGENTS_HEADLESS_TIMEOUT"
     | "HEADLESS_OUTPUT"
+    | "NEMOCLAW_ENDPOINT_URL"
     | "PROC_ROOT"
     | "TOKEN",
     string
@@ -152,6 +153,7 @@ export function runHeadlessCheckHelper(
       DCODE_EXIT: env.DCODE_EXIT ?? "",
       DEEPAGENTS_HEADLESS_TIMEOUT: env.DEEPAGENTS_HEADLESS_TIMEOUT ?? "",
       HEADLESS_OUTPUT: env.HEADLESS_OUTPUT ?? "",
+      NEMOCLAW_ENDPOINT_URL: env.NEMOCLAW_ENDPOINT_URL ?? "",
       PATH: "/usr/bin:/bin",
       PROC_ROOT: env.PROC_ROOT ?? "",
       TOKEN: env.TOKEN ?? "",

@@ -21,6 +21,7 @@ set -euo pipefail
 
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-}}"
 PREFIX="03-deepagents-code-nemotron-ultra-profile"
+HOSTED_ENDPOINT="${NEMOCLAW_ENDPOINT_URL:-https://inference-api.nvidia.com/v1}"
 
 fail() {
   printf '%s: FAIL: %s\n' "$PREFIX" "$1" >&2
@@ -40,7 +41,10 @@ profile_contract_source() {
 import asyncio
 import hashlib
 import importlib.metadata
+import os
+import re
 import socket
+import sys
 from pathlib import Path
 import tomllib
 
@@ -125,8 +129,8 @@ assert configured_model_id in MANAGED_MODEL_IDS, default_model
 
 provider = config["models"]["providers"]["openai"]
 assert provider["models"] == [configured_model_id]
-assert provider["api_key_env"] == "DEEPAGENTS_CODE_OPENAI_API_KEY"
-assert provider["base_url"] == "https://inference.local/v1"
+assert provider["api_key_env"] == "COMPATIBLE_API_KEY"
+assert provider["base_url"] == sys.argv[1]
 assert provider["enabled"] is True
 assert provider["params"] == {
     "use_responses_api": False,
@@ -162,10 +166,15 @@ assert set(_NEMOCLAW_NEMOTRON_ULTRA_MODEL_IDS) == set(MANAGED_MODEL_IDS)
 
 MANAGED_BASE_URL = managed_inference_base_url()
 assert MANAGED_BASE_URL == provider["base_url"], MANAGED_BASE_URL
-# The resolver supplies only the fixed synthetic credential. The provider
-# credential never reaches the constructor or appears in the returned settings.
+COMPATIBLE_REFERENCE = os.environ.get("COMPATIBLE_API_KEY", "")
+assert re.fullmatch(
+    r"openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?COMPATIBLE_API_KEY",
+    COMPATIBLE_REFERENCE,
+), "compatible provider reference is missing or invalid"
+# The resolver passes the issued reference to OpenShell. It never receives the
+# host's raw provider credential.
 OPENAI_CONTRACT = {
-    "api_key": "nemoclaw-managed-inference",
+    "api_key": COMPATIBLE_REFERENCE,
     "base_url": MANAGED_BASE_URL,
     "use_responses_api": False,
 }
@@ -179,7 +188,7 @@ MANAGED_ULTRA_EXTRA_BODY = {
     **EXPECTED_EXTRA_BODY,
 }
 OPENROUTER_CONTRACT = {
-    "api_key": "nemoclaw-managed-inference",
+    "api_key": COMPATIBLE_REFERENCE,
     "base_url": MANAGED_BASE_URL,
 }
 # Deliberate near miss: a different Nemotron generation must not be shaped.
@@ -448,7 +457,7 @@ sandbox_exec "test -x /opt/venv/bin/python3" >/dev/null || fail "/opt/venv/bin/p
 profile_source="$(profile_contract_source)"
 profile_output="$(
   openshell sandbox exec --name "$SANDBOX_NAME" -- \
-    /opt/venv/bin/python3 -I -c "$profile_source" 2>&1
+    /opt/venv/bin/python3 -I -c "$profile_source" "$HOSTED_ENDPOINT" 2>&1
 )" || fail "Nemotron Ultra harness profile contract failed: $profile_output"
 printf '%s\n' "$profile_output" | grep -Fq "NEMOCLAW_NEMOTRON_ULTRA_PROFILE_OK:" || fail "profile verification marker is missing"
 pass "configured ChatOpenAI resolves the complete Nemotron Ultra profile without inference"

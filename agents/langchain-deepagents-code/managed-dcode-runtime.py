@@ -1114,6 +1114,11 @@ def managed_inference_api_key(base_url: str) -> str:
             else "OPENROUTER_API_KEY"
         )
         provider = "OpenRouter"
+    elif upstream_provider == "compatible-endpoint" and host not in {
+        "inference.local", "localhost", "127.0.0.1", "::1"
+    }:
+        name = "COMPATIBLE_API_KEY"
+        provider = "compatible endpoint"
     else:
         return "nemoclaw-managed-inference"
     value = os.environ.get(name, "")
