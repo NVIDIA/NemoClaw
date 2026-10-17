@@ -10,6 +10,20 @@ provider openshell (version 0)
   destroy: bool, optional
     > Permit removing this provider's objects during explicit teardown.
 
+resource openshell_api (version 2)
+  auth_style: string, optional, computed
+  binaries: list(string), optional
+  credential_env: string, optional, computed
+  endpoint: string, optional, computed
+  gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
+  generation: string, optional, computed
+  header_name: string, optional, computed
+  id: string, computed
+  name: string, required
+  ref: object({ generation = string, id = string, name = string, owner = string, registration = string, type = string, workspace = string }), computed
+  registration: string, computed
+  workspace: object({ name = string, owner = string, type = string }), required
+
 resource openshell_gateway_storage (version 0)
   compute_driver: string, required
   data_path: string, computed
@@ -94,6 +108,7 @@ resource openshell_podman_gateway (version 0)
   running: string, computed
 
 resource openshell_sandbox (version 2)
+  driver_config: string, optional
   gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   generation: string, optional, computed
   id: string, computed
@@ -103,6 +118,7 @@ resource openshell_sandbox (version 2)
   owner: string, optional, computed
   providers: list(object({ registration = string, type = string })), optional
   ref: object({ generation = string, id = string, name = string, owner = string, type = string, workspace = string }), computed
+  service_urls: map(string), computed
   workspace: object({ name = string, type = string }), required
   block policy: optional
     cluster_grants: list(string), optional
@@ -299,6 +315,13 @@ resource openshell_sandbox (version 2)
                 > Nonempty list of nonempty glob strings.
               value: string, optional
                 > The value itself, instead of the other attributes.
+  block service: list
+    authorization_mode: string, optional
+      > STRIP or BEARER_PASSTHROUGH; OpenShell uses STRIP when omitted.
+    name: string, required
+      > Service name within the sandbox; empty is OpenShell's unnamed endpoint.
+    target_port: number, required
+      > Loopback TCP port the service listens on inside the sandbox.
 
 resource openshell_web_search (version 2)
   binaries: list(string), optional

@@ -101,10 +101,36 @@ Keep state, diagnose the failure, and reapply after recovery.
 
 ## Configuration and Credentials
 
+### Run an Application Container
+
+Declare a `kind: container` service with an immutable image and literal environment settings.
+The image owns its entrypoint; optional `command` overrides its arguments, and `files` supplies nonsecret configuration with mode 0444.
+Environment values enter configuration, plans/state, exports, and Docker inspection; they are not protected credential references.
+Generic credential-file delivery is deferred.
+If an application needs a key through `environment`, follow the [temporary plaintext environment approach](design/container-contract.md#application-environment) and protect every resulting artifact.
+NemoClaw does not expand host environment variables in this map.
+`container` sets GPU access, CPU/memory limits, shared memory, IPC, and ulimits; omission does not expose GPUs.
+The default user is 65532:65532; images that require root must explicitly request `user: "0:0"`.
+The container runs on the managed local Docker gateway's engine and network.
+Optional `publication` binds an unprivileged TCP port to loopback or a private IPv4 address; `port` must agree with the application's listener.
+`readiness.path` selects an HTTP GET expecting 200; `readiness.runtimeStatus` selects a managed-runtime status file such as `/data/status.json`.
+Choose at most one; omission uses Docker HEALTHCHECK, and all modes check on unchanged applies.
+The default readiness timeout is 300 seconds.
+HTTP probes must reach the published or container address from the provider process; virtualized engine networking may require explicit publication.
+A private publication allows an OpenAI-compatible container to be selected by `serviceRef`; registration waits for its readiness and uses /v1.
+Application data defaults to /data, or `data.mountPath` selects a directory below /var/lib.
+This data is disposable: destroy removes the owned volume.
+See the [container contract](design/container-contract.md) for the explicit managed-model form and the manual VoiceClaw interface.
+The typed `ollama` and `vllm` kinds retain their current policies and use this same assembly base.
+
+### Supply Credential References
+
 Use [definitions and references](configuration-references.md) to choose shared or inline configuration.
 Use the [field reference](reference/configuration.md) for names, defaults, and validation rules.
 
-Unknown fields, duplicate keys, inline secrets, and unsupported combinations are rejected; images require immutable SHA-256 references.
+Unknown fields, duplicate keys, and unsupported combinations are rejected; images require immutable SHA-256 references.
+Container `environment` values are literal settings retained in configuration and state, not the credential references described below.
+Validation cannot identify a secret pasted into a literal value.
 Gateway and inference ownership are independent of the harness, but inference must support the harness's request API.
 See [managed models](models.md), [Ollama](inference.md#run-managed-ollama), or [external Ollama with a managed proxy](inference.md#use-external-ollama-through-a-managed-proxy) for service configuration.
 
@@ -112,7 +138,8 @@ Use `credential: {env: INFERENCE_API_KEY}` for an inference provider or gateway.
 The caller supplies the referenced environment value.
 For gateway mTLS, `tls.ca.env`, `tls.certificate.env`, and `tls.key.env` reference environment variables whose values are local file paths.
 
-Credential values stay out of configuration, plans, state, and export.
+Values resolved through credential references stay out of configuration, plans, state, and export.
+This guarantee does not apply to literal container environment settings.
 OpenShell stores installed provider credentials for routing; removing the local variable does not revoke them.
 Rotation under an unchanged reference is not detected automatically.
 
@@ -223,7 +250,7 @@ Use separate deployments when you need independent teardown.
 |---|---|
 | Models, settings, or public Fabric configuration within the selected adapter | After successful runtime observation, reconciles the owned agent-configuration resource and restarts the runtime inside the existing sandbox when its image, provider attachments, and policy remain unchanged; in-memory conversations can be lost |
 | External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes a selected provider's profile and registration; changes to an existing sandbox's launch specification still require a separate deployment |
-| Harness adapter, sandbox image, agent identity, or provider attachments | Changes the immutable sandbox specification; apply refuses replacement; use a separate deployment with a fresh UID and state |
+| Harness adapter, sandbox image, driver configuration, agent identity, or provider attachments | Changes the immutable sandbox specification; apply refuses replacement; use a separate deployment with a fresh UID and state |
 | Sandbox network policy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
 | Managed vLLM or Ollama image, container limits, or serving specification | Replaces the Docker container. Service-level `updatePolicy: Preserve` blocks replacement of a running Docker container; set `Recreate` only when accepting sequential replacement and downtime. Review the plan, [container limits and update policy](inference.md#set-container-limits-and-update-policy), and [model constraints](models.md) |
 | Ollama proxy image or serving specification | Docker-provider reconciliation may replace the proxy container while retaining its independently bound credential storage |
@@ -237,9 +264,7 @@ The provider rejects that observation before reconciling agent configuration; se
 
 For OpenClaw model and native-setting updates, use an [agent image built from this revision](build.md#build-agent-images).
 Rebuilding the CLI bundle alone does not update the adapter in an existing sandbox image; changing that image requires a separate deployment with a fresh UID and state.
-The packaged adapter tracks its native configuration sections, updates them during an explicit runtime restart, and preserves unrelated native bookkeeping and files.
-Conflicting direct edits to an owned section cause startup to fail without overwriting that section.
-See the [OpenClaw modification notice](../image/fabric/OPENCLAW-NOTICE.md) for ownership and interrupted-write behavior.
+How the adapter applies native configuration is Fabric's; see its OpenClaw adapter documentation.
 
 A request to remove or replace a bound sandbox is rejected before managed-runtime reconciliation, including when the same request changes a managed service.
 The refusal names the sandbox and preserves retained intent and resource state.

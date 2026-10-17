@@ -46,11 +46,7 @@ fn help_remains_text_and_documents_lifecycle_output_controls() {
 fn failure_json_and_progress_stay_separate_when_either_stream_is_redirected() {
     let directory = tempfile::tempdir().unwrap();
     let config = directory.path().join("input.yaml");
-    fs::write(
-        &config,
-        include_str!("../../../examples/openclaw-dashboard.yaml"),
-    )
-    .unwrap();
+    fs::write(&config, include_str!("../../../examples/openclaw.yaml")).unwrap();
     for operation in ["plan", "apply", "destroy"] {
         for mode in ["auto", "plain", "off"] {
             for redirect_stdout in [false, true] {

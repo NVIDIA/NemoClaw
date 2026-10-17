@@ -405,7 +405,9 @@ impl StructuredAdapter {
                 .iter()
                 .find(|structured| structured.field == name)
             {
+                // An observation is the backend's, never the plan's.
                 let value = planned
+                    .filter(|_| !self.definition().is_computed(structured.field))
                     .and_then(|planned| planned.get(structured.attribute).cloned())
                     .unwrap_or_else(|| structured.decode(&value));
                 outward.insert(structured.attribute.into(), value);
@@ -493,7 +495,9 @@ impl Resource for StructuredAdapter {
                         structured.attribute.into(),
                         Attribute {
                             attr_type: crate::shape::attribute_type(shape),
-                            constraint: if optional {
+                            constraint: if self.definition().is_computed(structured.field) {
+                                AttributeConstraint::Computed
+                            } else if optional {
                                 AttributeConstraint::Optional
                             } else {
                                 AttributeConstraint::Required
@@ -836,6 +840,28 @@ mod tests {
             r#"{"rules":{"github":{"hostName":"api.github.com"}}}"#
         );
         assert_eq!(row["names_json"], r#"["b","a"]"#);
+    }
+
+    /// A computed field with a shape, such as URLs a gateway assigns, is a
+    /// typed computed attribute that other resources read.
+    #[test]
+    fn a_typed_observation_is_a_computed_attribute() {
+        let definition = Definition::new("sandbox", &["name"], &[])
+            .computed("urls_json", crate::carry_prior)
+            .structured("urls", "urls_json", Shape::Map(Box::new(Shape::String)));
+        let schema = StructuredAdapter(ResourceAdapter::new(
+            definition,
+            Arc::new(Recorder::default()),
+        ))
+        .schema(&mut Diagnostics::default())
+        .unwrap();
+        let urls = &schema.block.attributes["urls"];
+        assert_eq!(
+            urls.attr_type,
+            AttributeType::Map(Box::new(AttributeType::String))
+        );
+        assert!(matches!(urls.constraint, AttributeConstraint::Computed));
+        assert!(!schema.block.attributes.contains_key("urls_json"));
     }
 
     #[tokio::test]

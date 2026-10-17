@@ -63,6 +63,7 @@ Its modules run the `nemoclaw` types against fake Docker engines, gateways, mode
 | `service_storage`, `gateway_storage` | Retained service storage and, on Unix, Docker gateway storage against a fake engine |
 | `gateway_readiness` | Managed-gateway exit diagnostics, bootstrap state kept after failure, corrected retry, unchanged-apply rechecks, and teardown without the readiness data source |
 | `runtime_image`, `vllm_runtime` | Runtime image compatibility and, on Unix, the vLLM runtime contract |
+| `host_container_health` | Authored application health reads: an owned healthy container passes and an unhealthy one fails the plan |
 | `discovery` | Discovery plans that read target metadata without mutations |
 | `kubernetes_hcl`, `kubernetes_lifecycle` | Kubernetes planning, and apply, refresh, and teardown against the in-memory API in `crates/test-support/kube_api.rs`; the test writes and deletes the objects Helm would, and the live Kind suite runs the chart itself |
 
@@ -229,26 +230,12 @@ The fixture checks that the supervisor runs independently of the CLI; it does no
 
 The image `unit-tests` stage installs Fabric's `tests/fixtures/discovery` adapter beside the pinned Fabric runtime.
 Its tests package that adapter's installed discovery output and deliver its settings to Fabric's installed runner through the bridge host.
-The SDK's [planner tests](../../crates/nemoclaw-sdk/tests/fabric_planner.rs) plan the same unknown adapter's settings from an image catalog.
+The SDK's [compatibility tests](../../crates/nemoclaw-sdk/tests/fabric_compatibility.rs) check an image catalog's adapters, revision and filesystem requirements; NemoClaw doesn't plan adapter settings.
 
 
 ### Inference API Fixtures
 
-Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/tests/native), alongside the implementation.
-Build the selected image using the [agent image procedure](../build.md#build-agent-images), then run its retained Fabric tests in a disposable container:
-
-```sh
-docker run --rm --runtime=runc --network none --entrypoint /bin/sh nc-fabric:openclaw -ec '
-  fixture=$(mktemp -d)
-  tar -xzf /opt/nemoclaw/source/fabric.tar.gz -C "$fixture" --strip-components=1
-  /opt/fabric/bin/python "$fixture/tests/native/qualify.py" nvidia.fabric.openclaw --settings "{\"cli\":\"/app/openclaw.mjs\"}"
-'
-```
-
-For Hermes, select `nc-fabric:hermes`, adapter ID `nvidia.fabric.hermes`, and settings `{"mode":"service"}`.
-The script starts the installed native runtime, sends two turns to an isolated local inference fixture, and stops the runtime.
-Expect a JSON result with `result: passed`; the container is removed on exit.
-These checks use no live credentials or external model endpoints and do not qualify external search APIs.
+Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/5574117feb4be948c1b03f4c36a2fe9a11af910d/tests), alongside the implementation.
 The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging and the generic host separately.
 
 

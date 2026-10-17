@@ -42,7 +42,8 @@ The generated graphs manage these objects and observations:
 | OpenShell provider | Kubernetes namespace and encryption key (`openshell_kubernetes_storage`), development issuer (`openshell_kubernetes_auth`), and gateway readiness (`openshell_kubernetes_gateway`) |
 | Host provider data source | Engine facts and advertised hardware (`host_engine`) |
 | Host provider data source | Managed vLLM and Ollama image platform and labels (`host_image`) |
-| Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
+| Host provider data source | Application container health (`host_container_health`) |
+| Docker provider | Docker gateway, inference, proxy, and application containers; model-cache and application volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 | Helm provider | The managed Kubernetes gateway's OpenShell chart release (`helm_release.gateway`) |
 
@@ -80,6 +81,7 @@ None of them exposes ephemeral resources or provider functions.
 | `openshell_workspace` | Workspace |
 | `openshell_inference` | [An inference server's provider and its profile](#inference-providers) |
 | `openshell_web_search` | [A web search provider and its profile](#web-search) |
+| `openshell_api` | [Credentials for another API and its profile](#api-credentials) |
 | `openshell_sandbox` | Sandbox |
 | `openshell_gateway` data source | [Gateway version and compute drivers](#gateway-capabilities) |
 
@@ -97,7 +99,7 @@ When a registration names a managed vLLM or Ollama proxy credential, the provide
 Each OpenShell resource exports a computed `ref` object identifying it: its `type`, `name`, `owner`, `generation`, and `id`, plus `workspace` for objects inside a workspace.
 Objects name each other by `ref`, never by separate name strings:
 
-- Inference and web search resources and sandboxes take `workspace = openshell_workspace.<label>.ref`.
+- Inference, web search, API credential resources and sandboxes take `workspace = openshell_workspace.<label>.ref`.
 - A sandbox takes `providers`, a list of registration refs.
 
 A consumer checks the ref's `type` and rejects a ref of another type.
@@ -110,10 +112,18 @@ Other inputs are typed too:
 - `openshell_sandbox` takes a `policy` block.
   The block's attributes and blocks follow the sandbox policy model with snake_case names: optional `explicit` policy and `managed` deployment grants, whose named network rules are labeled blocks.
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
-- `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference` or `openshell_web_search`. Each ref names the OpenShell registration it attaches in `registration`.
+- `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference`, `openshell_web_search` or `openshell_api`. Each ref names the OpenShell registration it attaches in `registration`.
 - `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables managed endpoint grants allow.
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox; it does not depend on the agent runtime that produced the launch.
   `fabric_harnesses` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
+- `openshell_sandbox`'s optional `driver_config` is OpenShell's per-driver sandbox configuration (`SandboxTemplate.driver_config`) as JSON text, usually from `jsonencode()`, keyed by driver, such as volume mounts.
+  It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/sandboxes/runtimes.mdx).
+  The gateway accepts it only when its driver allows driver configuration, which OpenShell disables by default, NemoClaw-installed gateways included.
+  It is part of the sandbox's immutable specification: changing it, or a different configuration observed on the gateway, would replace the sandbox, which apply refuses, as for the image; see [change paths](usage.md#choose-the-change-path).
+- `openshell_sandbox`'s optional `service` blocks are OpenShell's sandbox service exposures: `name`, `target_port`, and optional `authorization_mode` (`STRIP` or `BEARER_PASSTHROUGH`).
+  They are passed through unchanged in the creation request, so OpenShell's defaults apply: an omitted mode is `STRIP`, and an empty name is the unnamed endpoint.
+  Like `driver_config`, they are part of the sandbox's creation: changing them, or a different endpoint observed on the gateway, would replace the sandbox, which apply refuses.
+- The computed `service_urls` maps each service name to the URL the gateway reports for it, such as `openshell_sandbox.researcher.service_urls["research"]`. A service the gateway reports without a URL has no entry.
 - `owner` and `generation` are optional; when omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [credential storage](#vllm-and-ollama-types).
 
 ```hcl
@@ -124,6 +134,10 @@ resource "openshell_sandbox" "assistant" {
   image        = var.image
   launch_json  = data.fabric_harnesses.assistant.launch_json
   providers    = [openshell_inference.local.ref]
+  service {
+    name        = "research"
+    target_port = 8080
+  }
   policy {
     explicit {
       version = 1
@@ -170,6 +184,53 @@ resource "openshell_inference" "nemotron" {
   binaries  = ["/usr/local/bin/pi"]
 }
 ```
+
+#### API Credentials
+
+Use `openshell_api` when a sandbox needs to authenticate to an API other than inference or web search, such as a booking service over HTTP MCP.
+It owns an OpenShell profile and registration; attach its `ref` to the sandbox's `providers`.
+The profile binds credential injection to the endpoint's host, port and path subtree, and the named executables.
+OpenShell owns injection and destination checks when the sandbox connects.
+
+Set the credential in the environment of the process running OpenTofu, then name that variable in `credential_env`:
+
+```hcl
+resource "openshell_api" "booking" {
+  gateway        = data.openshell_gateway.example.ref
+  workspace      = openshell_workspace.example.ref
+  name           = "booking"
+  endpoint       = "https://booking.example.com/mcp"
+  credential_env = "BOOKING_API_KEY"
+  binaries       = ["/usr/bin/curl"]
+}
+
+# In openshell_sandbox.buyer:
+# providers = [openshell_api.booking.ref]
+```
+
+`auth_style` defaults to `bearer`, using `Authorization` unless `header_name` overrides it.
+For an API key sent without the Bearer prefix, set `auth_style = "header"` and `header_name = "X-API-Key"`.
+Query parameters, OAuth and refresh flows are not supported by this resource.
+Endpoints must use HTTP(S) without embedded credentials, queries, fragments or globs.
+For `/mcp`, the profile allows `/mcp` and its descendants, not sibling paths.
+A literal IP grants only that address; a DNS name receives no private-network grant.
+`binaries` must list the absolute paths of the callers allowed to use the credential.
+
+The provider resolves the host variable during apply and sends its value to OpenShell's credential store.
+OpenTofu state and the exported `ref` contain the variable name, never its value.
+OpenShell projects a credential placeholder into `NEMOCLAW_API_BOOKING_KEY` for `name = "booking"`; the agent does not receive the stored credential value.
+The registration is named `booking` and its profile `nemoclaw-api-booking`.
+
+Changing `credential_env` updates the stored credential in place on the next apply, retaining the registration and attached sandbox.
+Changing only the value of the same host variable does not create a plan change; use a new variable reference to rotate it.
+Credential propagation to an already-running client has not been qualified.
+An unchanged plan reads the binding without resolving the host secret.
+A missing profile is recreated in place; a missing registration replaces the reconstructible pair without replacing its sandbox.
+Foreign ownership or an incomplete observation stops planning.
+
+To remove the credential, first detach or explicitly remove sandboxes using its registration, then remove the API resource and apply.
+Removal deletes the registration and its owned profile; it does not unset the host variable or revoke the key at the API service.
+Endpoint, authentication and executable changes replace the pair, so detach consumers before making those changes.
 
 #### Web Search
 
@@ -247,7 +308,7 @@ Every section of Fabric's agent configuration is an input with Fabric's name: `i
 Their types come from Fabric's published configuration schema, with snake_case names.
 Named objects, such as model roles, are labeled blocks: `models "default" { ... }`.
 A value Fabric leaves open, such as `settings`, is JSON text; write it with `jsonencode`.
-Fields an object accepts beyond those Fabric's schema declares, such as a model's `api`, go in that object's `extensions` attribute, also as JSON text.
+Fields an object accepts beyond those Fabric's schema declares, such as one an adapter documents for its models, go in that object's `extensions` attribute, also as JSON text.
 Fabric requires a `runtime` section, so omitting `runtime` sends an empty one.
 
 ```hcl
@@ -274,7 +335,7 @@ resource "fabric_agent" "travel" {
 ```
 
 Planning rejects a configuration Fabric cannot parse, naming the field but not its value.
-It also rejects one the harness does not accept, using the catalog records in the harness ref: Pi, for example, replaces system instructions and cannot append to them.
+Whether the harness accepts a configuration is Fabric's to decide, inside the sandbox when the agent is configured: Pi, for example, replaces system instructions and cannot append to them, so asking it to append fails during apply ([#13319](https://github.com/NVIDIA/NemoClaw/issues/13319)).
 Once the sandbox is known, planning refuses a `name` or harness other than the agent and harness the sandbox launches.
 Changing the sandbox, harness, or `name` replaces the agent; any other change reconfigures it through the sandbox's Fabric host without replacing the sandbox.
 Removing the resource stops the agent, as removing an attachment does: Fabric stops its runtime through the host's `prepare` operation and the host forgets the configuration, while the sandbox stays.
@@ -339,6 +400,7 @@ The `host` provider observes container engines and changes nothing; it has no se
 |---|---|
 | `host_engine` | [Engine version, platform, CPUs, memory](#engine-and-fabric-discovery), and [advertised hardware](#target-hardware) |
 | `host_image` | [An image's platform and labels](#runtime-image-compatibility) |
+| `host_container_health` | [Owned container readiness](#application-container-health): Docker HEALTHCHECK, HTTP, or managed-runtime status |
 
 ### Docker and Helm Types
 
@@ -444,12 +506,9 @@ Optional `filesystem_read` lists the paths the sandbox policy grants for reading
 A configuration without `harness.adapter_id` is rejected.
 Optional `architecture` and `operating_system` supply the execution engine's platform.
 The computed `compatibility_status` is `supported`, `unsupported`, or `unknown`, with details in `observation_json.compatibility`.
-The SDK checks image identity, source revision and platform, then calls Fabric's pure planner with the selected image's descriptors.
-Fabric owns settings, model, extension and workflow validation.
-Missing native capability contracts and mismatched Fabric revisions remain unknown; explicit schema violations are unsupported.
-The `fabric_plan` check retains a bounded canonical field path and a fixed explanation for classified planner failures.
-Raw schema messages and rejected values are omitted; unsafe or overlong field identifiers fall back to `configuration`.
-For a rejected model token limit, the reason also names `overrides.maxTokens` and up to 16 model routes carrying that setting, including Fabric's generated `default` role.
+The SDK checks image identity, source revision and platform, and that the image provides the selected adapter (the `fabric_adapter` check).
+A mismatched Fabric revision leaves compatibility unknown; an image without the adapter is unsupported.
+Fabric owns settings, model, extension and workflow validation, which it performs inside the sandbox when the agent is configured.
 Deployment postconditions name the sandbox and adapter and preserve unsupported check reasons in text and JSON errors.
 Onboarding uses the same assessment; unknown error variants retain a generic rejection.
 Omitting `config_json` preserves metadata-only discovery.
@@ -669,6 +728,22 @@ The SDK emits a read for the currently selected image and another dependent on a
 An absent image may therefore be pulled before a compatibility failure, but storage, network, and container creation remain blocked.
 SDK plan reports preserve unresolved runtime-image checks in `deferred`, separate from supplemental catalog and service-readiness advisories.
 Teardown removes both image observations and their dependency gates.
+
+## Application Container Health
+
+`host_container_health` requires an `engine`, a container `name`, and a `container_id`.
+Optional `labels` maps each label the container must carry to its value; generated graphs require the deployment owner, generation, and compiled launch digest.
+The source verifies that the selected container is running and matches its identity and labels; it never runs a command in it.
+By default it requires Docker HEALTHCHECK to report `healthy`.
+Optional `http_url` selects an HTTP GET that must return 200, without credentials in the URL or redirects.
+Optional `runtime_status` instead selects a managed-runtime status file: `phase`, `updated`, `detail`, and `pid`, with a ready report no older than the container's start time.
+These modes are mutually exclusive; neither interprets application configuration or invokes a model.
+A successful read sets `healthy`.
+It waits for startup within `wait_timeout_seconds` (capped at 3600, default 0); zero performs one bounded observation.
+Missing or stopped containers, mismatched labels, malformed or stopped runtime reports, rejected HTTP reads, and unhealthy Docker reports fail the read.
+A stale runtime report or loading phase is not readiness; it can be polled within the deadline.
+Failed engine observations are not absence.
+Generated graphs set `read_trigger` so every apply, including an unchanged apply, observes current health before dependent services start.
 
 ## Runtime Capacity and Readiness
 

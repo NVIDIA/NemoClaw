@@ -416,7 +416,7 @@ The suite tests real entrypoints, file and stdin inputs, exit codes, capability 
 The dummy, OpenClaw, Hermes, and Pi also run shared configuration, generation, no-op, invocation, and preparation assertions, using the lifecycle profiles in the reference image procedure.
 Native profiles use isolated local inference; images without a selected profile report lifecycle coverage as skipped.
 Readiness qualification is separate and reports unsupported native health as skipped unless `--require-ready` requires it to pass.
-The workflow requires dummy readiness and retains the dummy-specific readiness-failure test; it separately checks OpenClaw reconfiguration and Hermes security.
+The workflow requires dummy readiness and retains the dummy-specific readiness-failure test; it separately checks OpenClaw reconfiguration.
 
 The image workflow obtains its image decision from the shared validation plan and skips image steps when their inputs are unaffected; the `Build` checks still report.
 A failed planning job fails those checks instead of skipping them.

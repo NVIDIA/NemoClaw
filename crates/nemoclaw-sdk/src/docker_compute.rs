@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Compile disposable service compute into standard Docker provider resources.
 use crate::config::ComputeDriver;
+use crate::services::literal;
 use crate::{Error, backend::Row, compile::Target, config::ImagePullPolicy, managed::Spec};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -13,11 +14,15 @@ fn process(target: &Target) -> bool {
         && spec(target).is_ok_and(|spec| spec.compute_driver == ComputeDriver::Docker))
         || matches!(
             target.kind.as_str(),
-            "inference_service" | "ollama_service" | "ollama_proxy"
+            "inference_service" | "ollama_service" | "ollama_proxy" | "container_service"
         )
 }
 pub(crate) fn address(logical: &str) -> String {
-    for kind in ["inference_storage", "ollama_service_storage"] {
+    for kind in [
+        "inference_storage",
+        "ollama_service_storage",
+        "container_storage",
+    ] {
         if let Some(name) =
             logical.strip_prefix(&format!("{}.", crate::compile::resource_type(kind)))
             && !name.ends_with("_auth")
@@ -30,6 +35,7 @@ pub(crate) fn address(logical: &str) -> String {
         "ollama_service",
         "ollama_proxy",
         "managed_gateway",
+        "container_service",
     ] {
         if let Some(name) =
             logical.strip_prefix(&format!("{}.", crate::compile::resource_type(kind)))
@@ -75,6 +81,8 @@ fn image(target: &Target) -> Result<Target, Error> {
         let platform = spec
             .process
             .as_ref()
+            // An image-owned application runs on the engine's own platform.
+            .filter(|process| !process.architecture.is_empty())
             .map(|process| format!("linux/{}", process.architecture));
         (spec.engine().to_owned(), spec.image().to_owned(), platform)
     };
@@ -130,6 +138,7 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
     let mut result = raw.to_vec();
     for target in &mut result {
         if address(&target.address).starts_with("docker_volume.") {
+            let retained = crate::services::resource_behavior(&target.kind).retained_storage;
             let storage = crate::managed::Storage::from_row(&target.values)?;
             target.address = address(&target.address);
             target.kind = "docker_volume".into();
@@ -138,6 +147,12 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
                 ("name".into(), storage.name),
                 ("owner".into(), storage.owner),
             ]);
+            if !retained {
+                target
+                    .values
+                    .insert("generation".into(), storage.generation);
+                target.values.insert("disposable".into(), "true".into());
+            }
         }
     }
     let mut ancillary: BTreeMap<String, Target> = BTreeMap::new();
@@ -173,22 +188,25 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
     result.extend(ancillary.into_values());
     Ok(result)
 }
-/// Escape OpenTofu template sequences in every string of `value`.
-pub(crate) fn literal(value: &mut Value) {
-    match value {
-        Value::String(text) => *text = text.replace("${", "$${").replace("%{", "%%{"),
-        Value::Array(values) => values.iter_mut().for_each(literal),
-        Value::Object(values) => values.values_mut().for_each(literal),
-        _ => {}
-    }
-}
 fn rewrite(value: &mut Value, old: &str, new: &str) {
     match value {
-        Value::String(text) if text == old => *text = new.into(),
         Value::Array(values) => values.iter_mut().for_each(|value| rewrite(value, old, new)),
-        Value::Object(values) => values
-            .values_mut()
-            .for_each(|value| rewrite(value, old, new)),
+        Value::Object(values) => {
+            for (key, value) in values {
+                // Resource references, not arbitrary application strings.
+                if matches!(key.as_str(), "depends_on" | "replace_triggered_by") {
+                    if let Some(references) = value.as_array_mut() {
+                        for reference in references {
+                            if reference.as_str() == Some(old) {
+                                *reference = json!(new);
+                            }
+                        }
+                    }
+                } else {
+                    rewrite(value, old, new);
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -222,6 +240,40 @@ fn container(target: &Target) -> Result<Value, Error> {
         .ok_or(Error::State("missing runtime process"))?;
     let launch = spec.container("/data")?;
     let mut attrs = json!({"name":spec.name,"labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"network_mode":spec.network(),"mounts":[{"type":"volume","source":spec.volume(),"target":process.mount_target}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"no","memory":process.memory_bytes/(1<<20),"memory_swap":process.memory_bytes/(1<<20),"shm_size":process.shared_memory_bytes/(1<<20),"ipc_mode":if process.host_ipc {"host"} else {"private"},"ulimit":[{"name":"memlock","soft":-1,"hard":-1},{"name":"stack","soft":67108864,"hard":67108864}],"ports":[{"internal":process.port,"external":process.port,"ip":process.bind_address,"protocol":"tcp"}],"log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60});
+    if let Some(image) = &process.image_owned {
+        let attrs_map = attrs.as_object_mut().unwrap();
+        attrs_map.remove("entrypoint");
+        if image.command.is_none() {
+            attrs_map.remove("command");
+        }
+        attrs_map.remove("ulimit");
+        if process.port == 0 || process.bind_address.is_empty() {
+            attrs_map.remove("ports");
+        }
+        if !image.ulimits.is_empty() {
+            attrs["ulimit"] = json!(
+                image
+                    .ulimits
+                    .iter()
+                    .map(|(name, value)| json!({"name":name,"soft":value,"hard":value}))
+                    .collect::<Vec<_>>()
+            );
+        }
+        if !image.files.is_empty() {
+            attrs["upload"] = json!(image.files.iter().map(|(path, content)|
+                json!({"file":path,"content":content,"permissions":"0444","owner":"0","group":"0"})).collect::<Vec<_>>());
+        }
+        attrs["user"] = json!(launch.user);
+        attrs["labels"] = json!(
+            spec.labels()?
+                .into_iter()
+                .collect::<BTreeMap<_, _>>()
+                .into_iter()
+                .map(|(label, value)| json!({"label":label,"value":value}))
+                .collect::<Vec<_>>()
+        );
+        attrs["destroy_grace_seconds"] = json!(15);
+    }
     if target.kind == "inference_service"
         && crate::services::installers::vllm::configured_service(&spec)?
             .authentication
@@ -247,7 +299,7 @@ fn container(target: &Target) -> Result<Value, Error> {
     // Containers created before memory limits were configurable used the
     // default and have no label; keep them unchanged.
     let memory_gib = process.memory_bytes / nemoclaw_runtime::hardware::GIB;
-    if memory_gib != crate::services::installers::vllm::DEFAULT_MEMORY_LIMIT_GIB {
+    if memory_gib != crate::services::installers::container::DEFAULT_MEMORY_LIMIT_GIB {
         push_label(
             &mut attrs,
             "nemoclaw.nvidia.com/memory-limit-gib",
@@ -275,7 +327,15 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
         providers.insert(alias.clone(), engine.clone());
         let mut attrs = match target.kind.as_str() {
             "docker_volume" => {
-                json!({"name":target.values["name"],"driver":"local","labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"lifecycle":{"prevent_destroy":true}})
+                let mut volume = json!({"name":target.values["name"],"driver":"local","labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"lifecycle":{"prevent_destroy":true}});
+                if target.values.get("disposable").is_some_and(|v| v == "true") {
+                    volume["labels"].as_array_mut().unwrap().push(json!({
+                        "label":crate::managed::GENERATION_LABEL,
+                        "value":target.values["generation"]
+                    }));
+                    volume.as_object_mut().unwrap().remove("lifecycle");
+                }
+                volume
             }
             "docker_network" => {
                 json!({"name":target.values["name"],"labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"driver":"bridge","ipam_config":[{"subnet":target.values["cidr"],"gateway":crate::config::bridge_address(&target.values["cidr"])?}]})
@@ -409,11 +469,16 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             }
             storage_path(&mut attrs);
         }
-        if matches!(target.kind.as_str(), "inference_service" | "ollama_service") {
+        if matches!(
+            target.kind.as_str(),
+            "inference_service" | "ollama_service" | "container_service"
+        ) {
             let cache_kind = if target.kind == "inference_service" {
                 "inference_storage"
-            } else {
+            } else if target.kind == "ollama_service" {
                 "ollama_service_storage"
+            } else {
+                "container_storage"
             };
             let name = target.address.split_once('.').unwrap().1;
             attrs["mounts"][0]["source"] =
@@ -439,10 +504,7 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             dependencies.push(json!(network.address));
         }
         attrs["depends_on"] = json!(dependencies);
-        if let Some(preconditions) = old
-            .get("lifecycle")
-            .and_then(|lifecycle| lifecycle.get("precondition"))
-        {
+        if let Some(preconditions) = old.get("lifecycle").and_then(|l| l.get("precondition")) {
             attrs["lifecycle"] = json!({"precondition":preconditions});
         }
         let physical = address(&target.address);

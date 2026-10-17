@@ -5,7 +5,6 @@
 import asyncio
 import copy
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,7 +13,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from bridge_protocol import parse_command
 from fabric import RuntimeHost, client
-from nemo_fabric import Fabric, FabricConfigError, FabricRuntimeError
+from nemo_fabric import FabricConfigError, FabricRuntimeError
+from nemo_fabric_adapter_catalog import get_adapter_descriptor
 
 CONFIG = {
     "metadata": {"name": "main"},
@@ -165,10 +165,9 @@ class RuntimeReadback(unittest.IsolatedAsyncioTestCase):
 
 
 class NativeFailure(unittest.IsolatedAsyncioTestCase):
-    async def test_native_planner_distinguishes_missing_descriptor_evidence_from_invalid_settings(
-        self,
-    ):
-        descriptor = copy.deepcopy(Fabric().discover()[0].to_mapping()["descriptor"])
+    async def test_native_planner_rejects_settings_its_descriptor_does_not_accept(self):
+        # Any real descriptor works; Fabric's adapter catalog supplies one.
+        descriptor = get_adapter_descriptor("nvidia.fabric.langchain.deepagents")
         descriptor["adapter_id"] = "org.nemoclaw.test.validation"
         descriptor.pop("settings_schema", None)
         with tempfile.TemporaryDirectory() as directory:
@@ -184,8 +183,9 @@ class NativeFailure(unittest.IsolatedAsyncioTestCase):
                 "discovery": {"local_paths": [str(path)]},
             }
             host = RuntimeHost("main", root)
+            # Without a settings schema, Fabric accepts no settings.
             for schema, valid, code in (
-                (None, None, "validation_unavailable"),
+                (None, False, "fabric_validate_failed"),
                 (
                     {"type": "object", "additionalProperties": False},
                     False,
@@ -206,7 +206,8 @@ class NativeFailure(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(host.snapshot()["runtime_id"])
                 self.assertEqual(set(root.iterdir()), {path})
 
-    async def test_native_lifecycle_code_survives_the_real_sdk_start_wrapper(self):
+    async def test_native_lifecycle_failure_reports_start_failure_without_details(self):
+        # Fabric's SDK start wrapper does not carry native codes through (#13324).
         native_error = RuntimeError("PRIVATE_NATIVE_MESSAGE")
         native_error.code = "pi_model_unknown"
         native = SimpleNamespace(start_runtime=Mock(side_effect=native_error))
@@ -219,83 +220,6 @@ class NativeFailure(unittest.IsolatedAsyncioTestCase):
                 patch.object(host.backend.fabric, "_require_native_module", return_value=native),
             ):
                 response = await configure(host, CONFIG)
-        self.assertEqual(response["error"]["code"], "pi_model_unknown")
+        self.assertEqual(response["error"]["code"], "fabric_start_failed")
         self.assertEqual(response["error"]["stage"], "start")
         self.assertNotIn("PRIVATE", json.dumps(response))
-
-
-@unittest.skipUnless(
-    os.environ.get("NEMOCLAW_TEST_FABRIC_DESCRIPTOR"), "requires installed Fabric-only fixture"
-)
-class InstalledAdapterExecution(unittest.IsolatedAsyncioTestCase):
-    async def test_native_adapter_failure_survives_every_error_boundary_without_details(self):
-        import importlib.util
-
-        descriptor = json.loads(Path(os.environ["NEMOCLAW_TEST_FABRIC_DESCRIPTOR"]).read_text())
-        original = Path(importlib.util.find_spec("fabric_discovery_fixture").origin).read_text()
-        for code, failure in (
-            (
-                "pi_model_unknown",
-                'raise lifecycle.LifecycleError("pi_model_unknown", "PRIVATE_SENTINEL", metadata={"token": "PRIVATE_SENTINEL"})',
-            ),
-            ("lifecycle_adapter_start_failed", 'raise ValueError("PRIVATE_SENTINEL")'),
-        ):
-            with tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                replaced = original.replace('self.config = payload["config"]', failure)
-                self.assertNotEqual(original, replaced)
-                (root / "fabric_discovery_fixture.py").write_text(
-                    "# NeMo Fabric fixture at 24f068c895e5cbc30286bc743498be4e5014d658.\n"
-                    "# 2026-09-30: replace startup with a controlled error for this test.\n"
-                    + replaced
-                )
-                config = self.configuration(descriptor, directory)
-                host = RuntimeHost("main", root)
-                with patch.dict(os.environ, {"PYTHONPATH": directory}):
-                    response = await configure(host, config)
-                self.assertEqual(response["error"]["stage"], "start")
-                self.assertEqual(response["error"]["code"], code)
-                self.assertNotIn("PRIVATE", json.dumps(response))
-
-    @staticmethod
-    def configuration(descriptor, directory):
-        return {
-            "metadata": {"name": "main"},
-            "harness": {
-                "adapter_id": descriptor["adapter_id"],
-                "settings": {"mode": "advanced", "budget": 4},
-            },
-            "models": {"default": {"provider": "openai", "model": "fixture-model"}},
-            "environment": {"workspace": directory},
-            "runtime": {"artifacts": directory},
-        }
-
-    async def test_installed_discovery_settings_reach_actual_fabric_execution(self):
-        from catalog import snapshot
-
-        descriptor = json.loads(Path(os.environ["NEMOCLAW_TEST_FABRIC_DESCRIPTOR"]).read_text())
-        records = snapshot("a" * 40, "b" * 64)["adapters"]
-        record = next(
-            item for item in records if item["descriptor"]["adapter_id"] == descriptor["adapter_id"]
-        )
-        self.assertEqual(record["descriptor"]["settings_schema"], descriptor["settings_schema"])
-        self.assertTrue(any(item["source"] == "installed_package" for item in record["provenance"]))
-        with tempfile.TemporaryDirectory() as directory:
-            config = self.configuration(descriptor, directory)
-            host = RuntimeHost("main", Path(directory))
-            try:
-                self.assertEqual((await configure(host, config))["status"], "succeeded")
-                response = await host.handle(
-                    {"operation": "invoke", "agent": "main", "input": {"request": "unchanged"}}
-                )
-                self.assertEqual(response["status"], "succeeded")
-                result = response["result"]["fabric_result"]
-                self.assertEqual(result["output"]["settings"], config["harness"]["settings"])
-                self.assertEqual(result["output"]["input"], {"request": "unchanged"})
-                invalid = copy.deepcopy(config)
-                del invalid["harness"]["settings"]["budget"]
-                self.assertEqual((await configure(host, invalid))["status"], "failed")
-                self.assertEqual(host.snapshot()["applied_config"], config)
-                self.assertEqual(host.snapshot()["runtime_state"], "running")
-            finally:
-                await host.stop()

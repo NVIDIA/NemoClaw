@@ -31,11 +31,7 @@ class AgentContract(unittest.TestCase):
             self.assertTrue(REFERENCE, "dummy profile requires the reference image")
             return CONFIG, {"message": "hello"}, "hello", None
         self.assertFalse(REFERENCE, "native profile requires a production image")
-        settings = {
-            "openclaw": {"cli": "/app/openclaw.mjs"},
-            "hermes": {"mode": "service"},
-            "pi": {},
-        }[PROFILE]
+        settings = {}
         inference = self.enterContext(local_inference())
         # Stop the runtime before shutting down its inference dependency.
         self.addCleanup(self.stop_host)
@@ -45,23 +41,19 @@ class AgentContract(unittest.TestCase):
             "models": {
                 "default": {
                     "provider": "openai",
-                    "api": "openai-completions",
                     "model": "gpt-4.1-mini",
                     "api_key_env": "FABRIC_NATIVE_TEST_KEY",
                     "base_url": f"http://127.0.0.1:{inference.server_port}/v1",
                 }
             },
         }
-        prompt = "Say hello."
-        invocation = (
-            {"agent": "main", "message": prompt}
-            if PROFILE == "openclaw"
-            else {"prompt": prompt, "model": "default"}
-            if PROFILE == "pi"
-            # Hermes service mode takes text; the bridge unwraps this form.
-            else {"text": prompt}
-        )
-        return config, invocation, "fabric-native-ok", inference
+        if PROFILE == "pi":
+            # Pi needs its wire protocol and limits for a model it does not ship.
+            config["models"]["default"].update(
+                {"api": "openai-completions", "context_window": 32768, "max_tokens": 1024}
+            )
+        # Fabric's adapters take the prompt as plain text.
+        return config, "Say hello.", "fabric-native-ok", inference
 
     def stop_host(self):
         if self.host is not None:

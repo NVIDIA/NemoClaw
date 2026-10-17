@@ -64,7 +64,7 @@ def read_runtime(path, adapters, *, required=False):
         raise ValueError("runtime required paths must exist in the image")
     runtime["binaries"] = {}
     # The Python host executes Python adapters in-process. Include its actual
-    # interpreter as well as each descriptor's additional executable requirements.
+    # interpreter as well as the executables each adapter's harness stage declared.
     interpreter = environment.get("ADAPTER_PYTHON")
     if (
         not absolute(interpreter)
@@ -72,15 +72,12 @@ def read_runtime(path, adapters, *, required=False):
         or not os.access(interpreter, os.X_OK)
     ):
         raise ValueError("runtime ADAPTER_PYTHON requires an installed interpreter")
-    for record in adapters:
-        descriptor = record["descriptor"]
+    for adapter_id, names in adapters.items():
         binaries = {str(Path(interpreter).resolve(strict=True))}
-        for binary in descriptor.get("requirements", {}).get("binaries", []):
+        for binary in names:
             executable = shutil.which(binary, path=environment.get("PATH", ""))
             if executable is None:
-                raise ValueError(
-                    f"missing required executable {binary!r} for {descriptor['adapter_id']}"
-                )
+                raise ValueError(f"missing required executable {binary!r} for {adapter_id}")
             binaries.add(str(Path(executable).resolve(strict=True)))
-        runtime["binaries"][descriptor["adapter_id"]] = sorted(binaries)
+        runtime["binaries"][adapter_id] = sorted(binaries)
     return runtime

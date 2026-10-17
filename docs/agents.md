@@ -20,9 +20,8 @@ For public Fabric configuration such as MCP, telemetry, or a workflow, use `harn
 Deployment-owned fields, including metadata, adapter identity, and resolved model connections, cannot be overridden through that object.
 See [the SDK configuration projection](../crates/nemoclaw-sdk/src/fabric_config.rs) for the deployment boundary.
 
-Plan invokes Fabric's planner against the selected image's canonical descriptor snapshot.
-A missing descriptor contract or mismatched Fabric revision leaves compatibility unknown; a schema rejection is unsupported.
-Runtime startup validates the same public configuration through the installed Fabric API.
+Plan checks that the selected image provides the harness at NemoClaw's Fabric revision; a mismatched revision leaves compatibility unknown.
+Fabric validates the configuration through its installed API when the agent is configured, so a configuration the harness rejects fails during apply ([#13319](https://github.com/NVIDIA/NemoClaw/issues/13319)).
 Neither check establishes successful model inference.
 
 ## Choose Native Access
@@ -42,38 +41,32 @@ An agent's model choices do not restrict other processes within its sandbox beyo
 ### Run One Deep Agents or Pi Request
 
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
-Inside the sandbox, `fabric-agent invoke --agent NAME --input FILE` reads one JSON object from a file and returns Fabric's result in `result.fabric_result`.
-Use `--input -` to read the object from stdin instead; see the [bridge commands](design/fabric-management.md#bridge-commands).
+Inside the sandbox, `fabric-agent invoke --agent NAME --input FILE` reads one JSON value from a file and returns Fabric's result in `result.fabric_result`.
+Use `--input -` to read the value from stdin instead; see the [bridge commands](design/fabric-management.md#bridge-commands).
+The bridge passes the value to Fabric unchanged; the bundled adapters use a string as the prompt and send any other value as its JSON text.
 A request can incur inference charges and affect retained agent history.
-Do not assume a universal prompt/result shape.
-An adapter that takes only a text prompt, today Hermes in `service` mode, receives `{"text": "..."}` from the bridge as the string itself; any other object is refused for it.
+Do not assume a universal result shape.
 No request walkthrough has been rehearsed yet ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw/src/nemo_fabric_adapters/openclaw/adapter.py) accepts an object with exactly `agent` and `message` for an explicit native-agent request.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
-**A malformed request can leave the runtime unusable.**
-With the current pinned OpenClaw adapter, an operator reported later invocations failing with `runtime_unavailable`, a bridge `runtime_state` of `unknown`, and subsequent deployment operations failing with `observation is incomplete`.
-Apply cannot recover while the runtime observation is `unknown`, even after a configuration edit; the operator recovered by replacing the sandbox.
-The [CLI replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime) destroys all of the deployment's sandboxes, including their files and conversation history, while retaining managed model and credential storage.
-The affected input cases and recovery inside the existing sandbox remain unqualified ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
-
-With a configured runtime, run this from any directory inside the target sandbox when its YAML `agent.name` is `assistant` and its native OpenClaw agent is the default `main`:
+With a configured runtime, run this from any directory inside the target sandbox when its YAML `agent.name` is `assistant`:
 
 ```sh
 fabric-agent invoke --agent assistant --input - <<'JSON'
-{"agent":"main","message":"Reply with exactly READY."}
+"Reply with exactly READY."
 JSON
 ```
 
-The command's `--agent` selects the deployment's YAML `agent.name`; the JSON `agent` selects OpenClaw's native agent, set by `harness.settings.agent_name` and defaulting to `main`.
-The bridge passes this JSON unchanged to OpenClaw; `{"text":"..."}` is not this adapter's request format.
+The command's `--agent` selects the deployment's YAML `agent.name`; the input is one JSON value, here the prompt string.
 On success, inspect `result.fabric_result.status` and `result.fabric_result.output.response`; a successful command does not establish general model compatibility.
-Host-side invocation tooling also remains follow-up work ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
-For browser access, see [agent interfaces](interfaces.md#openclaw-dashboard).
+If later invocations fail with `runtime_unavailable`, replace the sandbox using the [CLI replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime).
+Host-side invocation tooling remains follow-up work ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
+To reach an agent from the client host, see [agent interfaces](interfaces.md).
 
 ## Native Controls at Initialization
 
@@ -97,17 +90,13 @@ See [security](security.md) for the deployment boundary.
 
 The shared `harness.execution.timeoutSeconds` value maps to public Fabric `runtime.timeout_seconds`.
 Omission uses Fabric's default; NemoClaw does not choose a native timeout from the adapter name.
-Heartbeat and other native scheduling options belong in `harness.settings` under the schema supplied by Fabric.
+The adapter's own startup, connection, and shutdown timeouts belong in `harness.settings` under the schema supplied by Fabric.
 See the [full OpenClaw example](../examples/full-featured-openclaw.yaml) and [timeout budgets](inference.md#understand-timeout-budgets).
 
 ## OpenClaw Tracing
 
-Configure the native adapter through its settings, or public Fabric telemetry through `harness.config` when the owner contract accepts it.
-The [full OpenClaw example](../examples/full-featured-openclaw.yaml) preserves native OTLP intent and declares explicit deployment egress.
-NemoClaw does not infer collector access from native settings or provision a collector.
-Use an existing collector whose access and retention policy meets your requirements.
-Review [trace data exposure](security.md) before enabling collection.
-Native delivery and live collector qualification remain separate from configuration validation.
+The pinned OpenClaw adapter supports neither Relay telemetry nor native OpenTelemetry.
+Review [trace data exposure](security.md) before enabling collection for another harness.
 
 ## Hermes Relay Tracing
 
@@ -128,9 +117,37 @@ The managed binding does not enable a native search tool.
 Declare its native plugin or public Fabric MCP configuration separately and validate it against the selected adapter.
 A deployment credential grant is not a native capability claim.
 
-## Brave Web Search
+## Skills on a Mounted Volume
 
-Declare the credential reference and attach the definition to the intended agent:
+Fabric reads skills from the paths in `fabric_agent`'s `skills` block.
+To give an agent skills that outlive its sandbox, mount a volume into the sandbox with `openshell_sandbox`'s [`driver_config`](provider.md#openshell-resources-and-data-sources) and point `skills` at the mount.
+This is available in HCL only, with a gateway configured to allow driver configuration.
+
+```hcl
+resource "openshell_sandbox" "assistant" {
+  # ...
+  driver_config = jsonencode({
+    docker = {
+      mounts = [{ type = "volume", source = "assistant-skills", target = "/sandbox/skills" }]
+    }
+  })
+}
+
+resource "fabric_agent" "assistant" {
+  # ...
+  skills {
+    paths = ["/sandbox/skills"]
+  }
+}
+```
+
+OpenShell's mount settings decide whether the agent can write to the volume, and the sandbox's filesystem policy decides which paths its process may read or write.
+The volume's contents persist when the sandbox is replaced, including anything the agent writes there.
+How the volume gets its contents is up to the platform; OpenShell's documentation describes the volume labels it requires.
+
+## Web Search
+
+Declare the credential reference and attach the definition to each agent that searches:
 
 ```yaml
 agent:
@@ -143,46 +160,39 @@ agent:
         env: BRAVE_API_KEY
 ```
 
-Use the [complete OpenClaw example](../examples/openclaw-web-search.yaml) for both managed credential intent and separately authored native configuration.
+Use `provider: tavily` for Tavily; the [web search example](../examples/web-search.yaml) shows two agents sharing one definition.
 Set the referenced variable on the applying host through your secret-management mechanism.
 NemoClaw creates a workspace-scoped provider profile and credential-bearing provider in OpenShell.
-The sandbox receives a placeholder through `BRAVE_API_KEY`; OpenShell substitutes the real key for the authorized Brave request.
+The sandbox receives a placeholder, `BRAVE_API_KEY` or `TAVILY_API_KEY` even when the host reference has another name, and OpenShell substitutes the real key for authorized requests to the search API.
 Exported YAML and OpenTofu state retain the host reference, not its value.
 Destroy removes the owned provider and profile without revoking the upstream key.
-Unchanged apply does not rotate a changed value behind an unchanged reference.
+Unchanged apply does not rotate a changed value behind an unchanged reference; follow [credential retirement](security.md#credentials-and-authentication) when replacing or revoking the key.
 
-The reserved `nemoclaw-brave` policy rule permits the configured search endpoint and executables for credential injection.
-Explicit policy cannot reuse that name, and inference provider names cannot use the reserved `brave-search` registration prefix.
-The [managed search tests](../crates/nemoclaw-sdk/tests/web_search.rs) cover profile selection, grants, credentials, and authored scope.
-Native tool behavior, account quota, and live search results require separate qualification.
-
-## Tavily Web Search
-
-Use `provider: tavily` and an environment reference for the applying host's key.
-The [Tavily example](../examples/tavily-web-search.yaml) includes deployment credential bindings and native settings for its selected adapters.
-The managed binding does not impose a harness-name support matrix or install an adapter plugin.
-The selected Fabric configuration must enable an appropriate native integration.
-
-OpenShell supplies the sandbox placeholder under `TAVILY_API_KEY`, even when the host reference has another name.
-The reserved `nemoclaw-tavily` profile authorizes the supported search/extract paths with bearer-header injection.
-Inference names using `tavily-search` or its registration prefix are reserved when attached.
+The reserved `nemoclaw-brave` and `nemoclaw-tavily` policy rules permit the search API's paths for the harness's executables.
+Explicit policy cannot reuse those names, and inference provider names cannot use the reserved `brave-search` or `tavily-search` registration prefixes.
 Unused definitions create no resources or credentials.
-Follow [credential retirement](security.md#credentials-and-authentication) when replacing or revoking the key.
-Tavily search has not been tested live through OpenShell ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
-## Hermes Native Server
-
-Fabric owns native server startup, interfaces, authentication, persisted state, and conversation behavior.
-NemoClaw manages the sandbox and submits the resolved public configuration to Fabric.
-The [Hermes interface example](../examples/hermes-interfaces.yaml) shows authored settings; [interface access](interfaces.md#hermes-api-dashboard-and-browser-tui) explains OpenShell forwarding.
-A started Fabric runtime does not by itself prove a healthy native HTTP listener or model response.
-Native file drift requires an observation contract supplied by Fabric; the generic runtime host does not infer it from remembered configuration.
+OpenShell supplies the credential and the network grant; the agent's own tools make the search requests.
+NemoClaw does not install search plugins or configure harness-native search.
+OpenClaw's Brave and Tavily plugins can't be configured through Fabric's OpenClaw adapter ([#13361](https://github.com/NVIDIA/NemoClaw/issues/13361)).
+The [managed search tests](../crates/nemoclaw-sdk/tests/web_search.rs) cover profile selection, grants, credentials, and authored scope; native tool behavior, account quota, and live search results require separate qualification ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 ## Pi Model Selection
 
-The [Pi example](../examples/fabric-pi.yaml) supplies native registry metadata through `overrides.settings.model_metadata`.
-Fabric's Pi adapter owns that metadata's schema and mapping.
-The SDK forwards the selected provider API as a public model extension and preserves each named route plus the `default` role.
+The [Pi example](../examples/fabric-pi.yaml) selects a model by name.
+For a model Pi does not ship, which includes every model served through OpenShell's inference gateway, Pi needs the model's API, context window, and output limit:
+
+```yaml
+overrides:
+  model: qwen3:4b
+  maxTokens: 4096
+  extensions:
+    context_window: 32768
+```
+
+NemoClaw sends the provider's API to any adapter whose Fabric descriptor declares a model `api`; set it in `extensions` only to override that.
+`extensions` holds the model fields the selected adapter declares, and Fabric validates them; it cannot set a field the deployment already sets.
+The SDK preserves each named route plus the `default` role.
 
 Model and settings updates reconcile a reconstructible agent-configuration resource for every adapter.
 When sandbox identity, provider attachments, image, and policy remain unchanged and runtime observation succeeds, the runtime restarts inside the existing sandbox.

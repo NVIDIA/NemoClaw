@@ -29,8 +29,8 @@ It does not promise conversation continuity across a native runtime restart.
 
 Images provide `fabric-agent` on `PATH`.
 The provider uses the image’s advertised command through authenticated OpenShell execution, with each flag and value passed as a separate argument.
-`--config` and `--input` take a file path, or `-` to read one JSON object from stdin.
-Fabric receives invocation input unchanged, except for an adapter that takes only text, today Hermes in `service` mode: it receives the string from `{"text": "..."}`, and any other object is refused with `text_input_required` before anything is sent.
+`--config` takes one JSON object and `--input` one JSON value, each from a file path or `-` for stdin.
+Fabric receives invocation input unchanged; the bundled adapters use a string as the prompt and send any other value as its JSON text.
 Only an exact `-` selects stdin; commands leave stdin unread otherwise and reject a terminal or an empty or oversized stream.
 The provider sends configuration and invocation input on stdin in the same execution as the command, so it writes no files into the sandbox.
 
@@ -93,8 +93,8 @@ An unsuccessful or unknown native check fails the command while retaining config
 Operational checks remain unsupported and never invoke an agent.
 
 Standalone validation can now run in the selected image before a deployment host exists.
-The SDK's pre-provisioning path has not yet migrated: it still uses the compiled Fabric planner and exact-revision catalog checks.
-Connecting that consumer to image validation and replacing revision equality with agreed contract compatibility remains NemoClaw work.
+The SDK's pre-provisioning path no longer plans configurations: it checks that the image provides the selected adapter at the exact Fabric revision, and Fabric validates the configuration in the sandbox.
+Replacing revision equality with agreed contract compatibility remains NemoClaw work.
 The Docker reference tests do not establish an OpenShell recovery or deployment integration.
 
 ### Image Metadata

@@ -109,10 +109,12 @@ impl FabricCatalog {
         if catalog.schema_version != 2
             || !valid_digest(&catalog.fabric_revision, 40)
             || !valid_digest(&catalog.source_sha256, 64)
+            // Descriptors come from Fabric's adapter catalog package, so each
+            // must be a valid Fabric descriptor; provenance is NemoClaw's note.
             || catalog.adapters.iter().any(|adapter| {
                 adapter.descriptor["contract_version"] != nemo_fabric_core::ADAPTER_CONTRACT_VERSION
-                    || serde_json::from_value::<nemo_fabric_core::ResolvedAdapterDescriptor>(
-                        serde_json::to_value(adapter).expect("serializable descriptor"),
+                    || serde_json::from_value::<nemo_fabric_core::AdapterDescriptor>(
+                        adapter.descriptor.clone(),
                     )
                     .is_err()
             })

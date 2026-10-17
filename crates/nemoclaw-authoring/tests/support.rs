@@ -138,7 +138,11 @@ pub fn installed_image(document: &Document) -> FabricObservation {
         },
         compatibility: Some(verdict(
             Support::Supported,
-            &[("fabric_plan", Support::Supported, "the plan is valid")],
+            &[(
+                "fabric_adapter",
+                Support::Supported,
+                "the image provides the selected adapter",
+            )],
         )),
     }
 }

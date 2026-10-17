@@ -3,9 +3,10 @@
 
 # Deploy OpenClaw with Existing Services
 
-Create one OpenClaw sandbox using an existing OpenShell gateway and inference endpoint, then access its native dashboard.
+Create one OpenClaw sandbox using an existing OpenShell gateway and inference endpoint, then send its agent a request.
 This development procedure uses a source-built bundle and agent image.
 This guide builds NemoClaw from source because there are no releases yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)); its access steps have not been rehearsed end to end ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
+With the pinned Fabric, OpenClaw can't start in an OpenShell sandbox, so apply stops at the agent until [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) is fixed.
 
 ## 1. Prepare the Hosts and Bundle
 
@@ -35,17 +36,17 @@ Review [credential ownership](security.md#credentials-and-authentication) and [d
 
 Follow [the agent image build](build.md#build-agent-images) for OpenClaw.
 Record the printed immutable image reference and make that exact image available to the gateway's sandbox compute daemon.
-The image must include this revision's configuration and dashboard interfaces.
+The image must come from this revision, so it matches the bundle.
 An example's old digest or zero-digest placeholder is not a downloadable release artifact.
 
 ## 3. Prepare Desired-State YAML
 
 Use a working directory that does not already contain another deployment.
-Copy the maintained [dashboard example](../examples/openclaw-dashboard.yaml) into it and generate a fresh deployment UUID:
+Copy the maintained [OpenClaw example](../examples/openclaw.yaml) into it and generate a fresh deployment UUID:
 
 ```sh
 mkdir -p .local/first-deployment
-cp examples/openclaw-dashboard.yaml .local/first-deployment/deployment.yaml
+cp examples/openclaw.yaml .local/first-deployment/deployment.yaml
 uuidgen
 ```
 
@@ -53,7 +54,7 @@ To answer questions instead of editing YAML, run [guided onboarding](reference/c
 
 ```sh
 mkdir -p .local/first-deployment
-nemoclaw onboard examples/openclaw-dashboard.yaml --output .local/first-deployment/deployment.yaml
+nemoclaw onboard examples/openclaw.yaml --output .local/first-deployment/deployment.yaml
 ```
 
 Onboarding starts from the example's values, writes a fresh `metadata.uid`, and saves validated YAML without creating deployment state.
@@ -74,9 +75,9 @@ Edit the copied YAML before executing it:
 | `spec.sandboxes[0].image.ref` | The immutable reference from your image build |
 | `spec.gateway.runtime.provider` | `docker` or `podman`, matching your gateway's compute driver |
 | The primary route's `overrides.model` | The exact model ID served by your endpoint |
-| Other route `overrides` | Limits and reasoning settings supported by that model; remove optional tuning you have not verified |
+| Other route `overrides` | Limits supported by that model; remove optional tuning you have not verified |
 
-Keep `gateway.management: external`, sandbox name `assistant`, and loopback dashboard port `18800` to match the access commands.
+Keep `gateway.management: external` and sandbox name `assistant` to match the access commands.
 The explicit `gateway.engine` is used for image inspection; it does not grant NemoClaw ownership of the external gateway.
 External gateways have no default image engine; use the address of the daemon holding the image, which may be on another host.
 Update the copied schema comment to `../../schemas/nemoclaw-v1alpha1.schema.json` so editor diagnostics use this checkout's schema.
@@ -131,17 +132,18 @@ See [unchanged apply and recovery](usage.md#updates-and-recovery) before using i
 
 ## 5. Access the Agent
 
-[Select the gateway and workspace](interfaces.md#select-the-gateway-and-workspace) in each terminal used for native access.
-Follow [Connect through OpenShell](interfaces.md#connect-through-openshell) to forward port `18800`.
-Native authentication and browser pairing follow the selected Fabric adapter's contract; a rehearsed procedure is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
-Keep the forward bound to loopback.
+[Select the gateway and workspace](interfaces.md#select-the-gateway-and-workspace), then send the agent a short prompt from the client host:
 
-In the native dashboard, send a short prompt such as `Reply with a short greeting.`
-Verify an agent reply, which tests this endpoint/model/harness interaction beyond dashboard access or readiness.
+```sh
+openshell sandbox exec -n assistant --no-tty -- fabric-agent invoke --agent assistant --input - <<'JSON'
+"Reply with a short greeting."
+JSON
+```
+
+Verify an agent reply in `result.fabric_result.output`; it tests this endpoint, model, and harness together beyond readiness.
 It does not establish general model quality or tool reliability.
-
-Stop forwarding with Ctrl-C when finished.
-The deployment continues running after the client exits.
+The request may incur inference charges and is added to the agent's conversation history.
+A rehearsed procedure is tracked in [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642).
 
 ## 6. Preview Cleanup
 

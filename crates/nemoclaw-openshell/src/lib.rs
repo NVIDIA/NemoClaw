@@ -3,6 +3,7 @@
 //! OpenShell rules shared by the SDK compiler and the providers: gateway
 //! connections and capabilities, compute drivers, and object lifecycles.
 
+pub mod api;
 mod capabilities;
 mod connection;
 pub mod credential_metadata;

@@ -10,10 +10,12 @@ pub mod agent;
 mod client;
 mod composite;
 mod connected;
+mod driver_config;
 mod gateway_source;
 mod network;
 mod profile;
 mod provider;
+mod services;
 pub use nemoclaw_openshell::pairs::{inference_rows, web_search_rows};
 pub use nemoclaw_openshell::{policy::policy_json, profile::definition as inference_profile};
 mod inference;
@@ -166,6 +168,41 @@ fn provider_row(
     services: &dyn Services,
 ) -> Result<Row, ObservationError> {
     let provider = response.provider.ok_or(ObservationError::Incomplete)?;
+    if provider.r#type == format!("nemoclaw-api-{name}") {
+        let metadata = provider
+            .metadata
+            .as_ref()
+            .ok_or(ObservationError::Incomplete)?;
+        if metadata.workspace.is_empty()
+            || provider.profile_workspace != metadata.workspace
+            || provider.config.len() != 1
+            || metadata.labels.contains_key(CREDENTIAL_SOURCE)
+            || !credential_metadata::unpack(&metadata.annotations)?.is_empty()
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
+        let endpoint = provider
+            .config
+            .get("NEMOCLAW_API_ENDPOINT")
+            .filter(|endpoint| !endpoint.is_empty())
+            .ok_or(ObservationError::Incomplete)?
+            .clone();
+        let credential = metadata
+            .labels
+            .get(CREDENTIAL)
+            .filter(|credential| !credential.is_empty())
+            .ok_or(ObservationError::Incomplete)?
+            .clone();
+        let mut row = base(provider.metadata, name, removing)?;
+        row.extend([
+            ("endpoint".into(), endpoint),
+            ("credential_env".into(), credential),
+            ("provider_type".into(), "api".into()),
+            ("profile_name".into(), provider.r#type),
+            ("credential_source".into(), String::new()),
+        ]);
+        return Ok(row);
+    }
     if nemoclaw_openshell::search::SearchProvider::from_profile(&provider.r#type).is_some() {
         return profile::provider_row(provider, name, removing);
     }
@@ -234,7 +271,9 @@ fn sandbox_row(
         .as_ref()
         .ok_or(ObservationError::Incomplete)?;
     let spec = sandbox.spec.ok_or(ObservationError::Incomplete)?;
-    let image = spec.template.ok_or(ObservationError::Incomplete)?.image;
+    let template = spec.template.ok_or(ObservationError::Incomplete)?;
+    let driver_config = driver_config::observed(template.driver_config.as_ref());
+    let image = template.image;
     let environment: Row = spec.environment.into_iter().collect();
     let inference = environment.get(PROVIDERS_ENV).cloned().unwrap_or_default();
     let launch_json = meta
@@ -275,6 +314,7 @@ fn sandbox_row(
     let mut row = base(sandbox.metadata.clone(), name, removing)?;
     row.insert("provider_names_json".into(), inference);
     row.insert("image".into(), image);
+    row.insert("driver_config_json".into(), driver_config);
     row.insert("policy_json".into(), policy_input);
     row.insert("launch_json".into(), launch_json);
     // Phase is used by active checks, but is not a Terraform schema attribute.
@@ -398,10 +438,42 @@ fn web_search_registration(known: &Row, unknown: &[&str]) -> Option<String> {
 }
 
 /// OpenShell objects and their planning rules.
-pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
+pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
     use nemoclaw_tofu::Definition;
     [
         Definition::new("workspace", &["name", "owner", "generation"], &[]),
+        Definition::new(
+            composite::API,
+            &[
+                "workspace",
+                "name",
+                "owner",
+                "generation",
+                "endpoint",
+                "credential_env",
+                "binaries_json",
+                "auth_style",
+                "header_name",
+            ],
+            &["credential_env", "binaries_json"],
+        )
+        .optional(&[
+            "endpoint",
+            "credential_env",
+            "binaries_json",
+            "auth_style",
+            "header_name",
+        ])
+        .reset_when_omitted(&[
+            "endpoint",
+            "credential_env",
+            "binaries_json",
+            "auth_style",
+            "header_name",
+        ])
+        .validate_inputs(composite::validate_api)
+        .replaces(binaries_changes)
+        .derived("registration", provider_registration),
         // A web search provider's profile and registration, as one resource
         // whose owner is its workspace's. Every input names them, so changes
         // replace. `credential_env` and `binaries` are required by plans,
@@ -476,10 +548,19 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
                 "launch_json",
                 "policy_json",
                 "provider_names_json",
+                "driver_config_json",
+                services::FIELD,
             ],
             &[],
         )
-        .optional(&["policy_json", "provider_names_json"]),
+        .optional(&[
+            "policy_json",
+            "provider_names_json",
+            "driver_config_json",
+            services::FIELD,
+        ])
+        // The URLs of the sandbox's exposures, which are part of its creation.
+        .computed(services::URLS, nemoclaw_tofu::carry_prior),
     ]
     .map(lifecycle_rules)
     .map(|mut definition| {

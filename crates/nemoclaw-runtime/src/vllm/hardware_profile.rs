@@ -13,6 +13,7 @@ pub enum MemoryArchitecture {
 /// GPU-family contracts, not model or whole-system qualifications. System profiles fix ARM64; GPU profiles require architecture. Each currently requires one visible GPU.
 pub enum HardwareProfile {
     DgxSpark,
+    RtxSpark,
     DgxStation,
     Gb200,
     Gb300,
@@ -40,7 +41,7 @@ pub enum HardwareProfile {
 }
 
 impl HardwareProfile {
-    pub const UNIFIED_MEMORY: [Self; 1] = [Self::DgxSpark];
+    pub const UNIFIED_MEMORY: [Self; 2] = [Self::DgxSpark, Self::RtxSpark];
 
     pub fn memory_architecture(self) -> MemoryArchitecture {
         if Self::UNIFIED_MEMORY.contains(&self) {
@@ -57,8 +58,9 @@ impl HardwareProfile {
         }
     }
 
-    pub const ARM64_SYSTEMS: [Self; 5] = [
+    pub const ARM64_SYSTEMS: [Self; 6] = [
         Self::DgxSpark,
+        Self::RtxSpark,
         Self::DgxStation,
         Self::Gb200,
         Self::Gb300,
@@ -69,10 +71,10 @@ impl HardwareProfile {
         Self::ARM64_SYSTEMS.contains(&self).then_some("arm64")
     }
 
-    // NVIDIA's CUDA GPU table, checked 2026-09-18: https://developer.nvidia.com/cuda/gpus
+    // NVIDIA's CUDA GPU table, checked 2026-10-16: https://developer.nvidia.com/cuda/gpus
     pub fn compute_capability(self) -> u32 {
         match self {
-            Self::DgxSpark => 121,
+            Self::DgxSpark | Self::RtxSpark => 121,
             Self::DgxStation | Self::Gb300 => 103,
             Self::Gb200 => 100,
             Self::Gh200 | Self::H100 | Self::H200 => 90,
@@ -87,6 +89,7 @@ impl HardwareProfile {
     pub fn gpu_family(self) -> &'static str {
         match self {
             Self::DgxSpark => "NVIDIA GB10",
+            Self::RtxSpark => "NVIDIA RTX Spark N1X",
             Self::DgxStation | Self::Gb300 => "GB300",
             Self::Gb200 => "GB200",
             Self::Gh200 => "GH200",
@@ -111,6 +114,17 @@ impl HardwareProfile {
     pub fn matches_gpu(self, observed: &str) -> bool {
         if self == Self::DgxSpark {
             return observed == self.gpu_family();
+        }
+        if self == Self::RtxSpark {
+            // Published N1X variants and the base identity used by NVIDIA's readiness guide:
+            // https://docs.nvidia.com/rtx-spark/rtx-spark-porting-guide/latest/gpu-identification.html
+            // https://github.com/NVIDIA/NemoClaw/blob/4ce30c292c0a518ee713f2d10460d473bb904637/docs/reference/system-readiness.mdx
+            return matches!(
+                observed,
+                "NVIDIA RTX Spark N1X"
+                    | "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)"
+                    | "NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)"
+            );
         }
         let name = observed
             .strip_prefix("NVIDIA ")

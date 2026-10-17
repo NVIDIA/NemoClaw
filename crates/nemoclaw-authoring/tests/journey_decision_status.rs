@@ -11,7 +11,10 @@ fn supplied_values_and_user_decisions_are_distinct() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let mut session = JourneyDefinition::new("decision-status", base)
-        .ask(["/metadata/name", "adapter:nvidia.fabric.openclaw:/cli"])
+        .ask([
+            "/metadata/name",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+        ])
         .start(&capabilities)
         .unwrap();
 
@@ -35,7 +38,7 @@ fn supplied_values_and_user_decisions_are_distinct() {
         DecisionStatus::Accepted
     );
 
-    let optional = "adapter:nvidia.fabric.openclaw:/cli";
+    let optional = "adapter:nvidia.fabric.openclaw:/openclaw_command";
     assert!(
         !session
             .resolve(&capabilities)

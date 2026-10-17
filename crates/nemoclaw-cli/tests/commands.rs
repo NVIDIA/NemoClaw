@@ -309,7 +309,7 @@ fn failed_progress_is_visible_without_verbose_and_stays_on_stderr() {
 
 fn write_credential_document(directory: &std::path::Path) -> std::path::PathBuf {
     let path = directory.join("credential-input.yaml");
-    let yaml = include_str!("../../../examples/openclaw-dashboard.yaml").replace(
+    let yaml = include_str!("../../../examples/openclaw.yaml").replace(
         "      endpoint: https://inference.example.com/v1",
         "      endpoint: https://inference.example.com/v1\n      credential: {env: STORY_CREDENTIAL_KEY}",
     );

@@ -72,6 +72,10 @@ pub struct State {
     /// Reject one RPC before its handler can mutate fixture state.
     pub reject_rpc: Option<(&'static str, tonic::Code, String)>,
     pub rejected_rpcs: Vec<String>,
+    /// Sandbox service endpoints by workspace, sandbox, and service name.
+    pub services: std::collections::BTreeMap<(String, String, String), p::ServiceEndpoint>,
+    /// The exposures each CreateSandbox request carried, as sent.
+    pub sandbox_exposures: Vec<Vec<p::SandboxServiceExposure>>,
 }
 impl State {
     fn created(&mut self, kind: &str) {
@@ -315,6 +319,7 @@ impl tower::Service<http::Request<Body>> for Service {
                 "/openshell.v1.OpenShell/DeleteWorkspace" => {
                     unary(request, state, delete_workspace).await
                 }
+                "/openshell.v1.OpenShell/GetService" => unary(request, state, get_service).await,
                 "/openshell.v1.OpenShell/DeleteProvider" => {
                     unary(request, state, |state, request| {
                         delete_provider(state, &request)
@@ -581,6 +586,7 @@ fn create_sandbox(
     if state.sandboxes.contains_key(&key) {
         return Err(Status::already_exists("collision"));
     }
+    state.sandbox_exposures.push(q.service_exposures.clone());
     let sandbox = p::Sandbox {
         metadata: Some(p::ObjectMeta {
             annotations: q.annotations,
@@ -622,9 +628,42 @@ fn create_sandbox(
         }
     }
     state.created("sandbox");
+    // The gateway stores each exposure as an endpoint, resolving an omitted
+    // authorization mode to STRIP, and reports each endpoint's URL.
+    let mut service_urls = HashMap::new();
+    for exposure in q.service_exposures {
+        let meta = sandbox.metadata.as_ref().unwrap();
+        let mode = match p::ServiceAuthorizationMode::try_from(exposure.authorization_mode) {
+            Ok(p::ServiceAuthorizationMode::Unspecified) => p::ServiceAuthorizationMode::Strip,
+            Ok(mode) => mode,
+            Err(_) => return Err(Status::invalid_argument("authorization_mode is invalid")),
+        };
+        let endpoint = p::ServiceEndpoint {
+            metadata: Some(state.metadata(
+                format!("{}--{}", meta.name, exposure.service),
+                meta.workspace.clone(),
+                HashMap::from([("sandbox".into(), meta.name.clone())]),
+            )),
+            sandbox_id: meta.id.clone(),
+            sandbox: meta.name.clone(),
+            name: exposure.service.clone(),
+            target_port: exposure.target_port,
+            domain: true,
+            authorization_mode: mode as i32,
+        };
+        service_urls.insert(exposure.service, service_response(endpoint.clone()).url);
+        state.services.insert(
+            (
+                meta.workspace.clone(),
+                meta.name.clone(),
+                endpoint.name.clone(),
+            ),
+            endpoint,
+        );
+    }
     Ok(p::SandboxResponse {
         sandbox: Some(sandbox),
-        ..Default::default()
+        service_urls,
     })
 }
 fn get_sandbox(state: &mut State, q: &p::GetSandboxRequest) -> Result<p::SandboxResponse, Status> {
@@ -653,6 +692,11 @@ fn delete_sandbox(
         execution.delete(sandbox)?;
     }
     let sandbox = state.sandboxes.remove(&key).unwrap();
+    // The gateway removes a deleted sandbox's endpoints by its ID.
+    let id = sandbox.metadata.as_ref().unwrap().id.clone();
+    state
+        .services
+        .retain(|_, endpoint| endpoint.sandbox_id != id);
     state.effects += 1;
     if std::mem::take(&mut state.lose_delete) {
         return Err(Status::unavailable("secret-sentinel: deletion reply lost"));
@@ -661,6 +705,41 @@ fn delete_sandbox(
         outcome: p::DeletionOutcome::Completed.into(),
         sandbox_id: sandbox.metadata.unwrap().id,
     })
+}
+fn service_response(endpoint: p::ServiceEndpoint) -> p::ServiceEndpointResponse {
+    let workspace = endpoint
+        .metadata
+        .as_ref()
+        .map(|m| m.workspace.clone())
+        .unwrap_or_default();
+    let host = if endpoint.name.is_empty() {
+        format!("{workspace}--{}", endpoint.sandbox)
+    } else {
+        format!("{workspace}--{}--{}", endpoint.sandbox, endpoint.name)
+    };
+    p::ServiceEndpointResponse {
+        endpoint: Some(endpoint),
+        url: format!("http://{host}.services.fixture.test/"),
+    }
+}
+fn get_service(
+    state: &mut State,
+    q: p::GetServiceRequest,
+) -> Result<p::ServiceEndpointResponse, Status> {
+    state.read("service")?;
+    let workspace = workspace(&q.workspace_scope)?;
+    if !state
+        .sandboxes
+        .contains_key(&format!("{workspace}/{}", q.sandbox))
+    {
+        return Err(Status::not_found("sandbox not found"));
+    }
+    let endpoint = state
+        .services
+        .get(&(workspace, q.sandbox, q.name))
+        .ok_or_else(|| Status::not_found("service endpoint not found"))?
+        .clone();
+    Ok(service_response(endpoint))
 }
 fn policy_status(
     state: &mut State,

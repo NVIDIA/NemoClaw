@@ -190,7 +190,7 @@ class ReferenceContract(unittest.IsolatedAsyncioTestCase):
 
 
 class StandaloneValidation(unittest.TestCase):
-    def test_invocation_input_is_an_object_from_files_and_stdin(self):
+    def test_invocation_input_is_any_json_value_from_files_and_stdin(self):
         prompt = {"text": "Hello\n世界"}
         encoded = json.dumps(prompt).encode()
         with tempfile.TemporaryDirectory() as directory:
@@ -207,10 +207,11 @@ class StandaloneValidation(unittest.TestCase):
             self.assertEqual(request["input"], prompt)
             for value in ("Hello", [], None, 42, True):
                 path.write_text(json.dumps(value))
-                with self.subTest(value=value), self.assertRaises(bridge_protocol.ProtocolError):
-                    bridge_protocol.parse_command(
+                with self.subTest(value=value):
+                    request = bridge_protocol.parse_command(
                         ["invoke", "--agent", "main", "--input", str(path)]
                     )
+                    self.assertEqual(request["input"], value)
 
     def test_validate_does_not_connect_to_a_host_or_start_a_runtime(self):
         with tempfile.TemporaryDirectory() as directory:

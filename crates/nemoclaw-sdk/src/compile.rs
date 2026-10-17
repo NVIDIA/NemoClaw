@@ -432,7 +432,7 @@ fn objects_graph(
     let mut graph = compile_with_plans(document, generations, version, &service_plans, &raw)?;
     crate::docker_compute::configure(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid Docker compute graph"))?;
-    crate::services::configure_proxy_readiness(&mut graph, &raw)
+    crate::services::configure_readiness(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid proxy readiness graph"))?;
     let targets = crate::docker_compute::targets(&raw)
         .map_err(|_| ConfigError::new("invalid Docker compute plan"))?;
@@ -645,7 +645,7 @@ fn compile_with_plans(
                 let mut value = input.configuration(encoded).map_err(ConfigError::new)?;
                 // Values are still OpenTofu templates; keep literal policy
                 // paths and matchers intact through that interpretation.
-                crate::docker_compute::literal(&mut value);
+                crate::services::literal(&mut value);
                 attributes[input.attribute] = value;
             }
         }

@@ -512,6 +512,7 @@ async fn deploy_to_the_health_check(provider: &str, while_applying: impl AsyncFn
         .local_addr()
         .unwrap()
         .port();
+    let harness = required("NEMOCLAW_TEST_AGENT_HARNESS");
     let yaml = format!(
         "apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
@@ -550,18 +551,18 @@ spec:
               providerRef: hosted
               overrides:
                 model: fixture-model
-                settings:
-                  model_metadata:
-                    api: openai-completions
-                    contextWindow: 8192
-                    maxTokens: 2048
-                    reasoning: false
-                    input:
-                    - text
+                maxTokens: 2048{extensions}
 ",
         context = required("NEMOCLAW_TEST_KUBE_CONTEXT"),
         image = required("NEMOCLAW_TEST_AGENT_IMAGE"),
-        harness = required("NEMOCLAW_TEST_AGENT_HARNESS"),
+        harness = harness,
+        // Pi needs a context window for a model it does not ship; OpenClaw
+        // declares no model extensions.
+        extensions = if harness == "nvidia.fabric.pi" {
+            "\n                extensions:\n                  context_window: 8192"
+        } else {
+            ""
+        },
     );
     let document = Document::parse(yaml.as_bytes()).unwrap();
     let state = tempfile::tempdir().unwrap();

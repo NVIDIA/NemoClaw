@@ -3,6 +3,38 @@
 
 use super::*;
 
+#[test]
+fn container_generations_survive_reopen_and_service_removal() {
+    let mut document = crate::config::Document::parse(
+        include_str!("../../tests/fixtures/config/managed-ollama.yaml").as_bytes(),
+    )
+    .unwrap();
+    document.spec.services.insert(
+        "application".into(),
+        serde_json::from_value(serde_json::json!({
+            "kind": "container",
+            "image": format!("example.invalid/application@sha256:{}", "a".repeat(64)),
+        }))
+        .unwrap(),
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    let record = Record::new(document.clone()).unwrap();
+    store.save(&record).unwrap();
+    assert_eq!(store.load().unwrap().unwrap(), record);
+    drop(store);
+
+    let store = Store::open(directory.path()).unwrap();
+    let mut reopened = store.load().unwrap().unwrap();
+    assert_eq!(reopened, record);
+    document.spec.services.remove("application");
+    reopened.allocate_missing_generations(&document).unwrap();
+    reopened.begin_apply(&document, BTreeMap::new());
+    reopened.finish_apply();
+    store.save(&reopened).unwrap();
+    assert_eq!(store.load().unwrap().unwrap(), reopened);
+}
+
 #[cfg(unix)]
 #[test]
 fn dropping_store_releases_lock_while_a_duplicate_descriptor_remains_open() {

@@ -18,12 +18,13 @@ fn docker() -> Command {
 }
 
 /// The agent image a platform's live tests run, and its Fabric harness. Pi is
-/// the smaller image but is built only for ARM64; OpenClaw is built for both.
+/// the smaller image but is built only for ARM64. AMD64 runs Deep Agents until
+/// OpenClaw can start in an OpenShell sandbox again (#13372).
 pub(super) fn agent(platform: &str) -> (&'static str, &'static str) {
     if platform == "linux_arm64" {
         ("pi", "nvidia.fabric.pi")
     } else {
-        ("openclaw", "nvidia.fabric.openclaw")
+        ("deepagents", "nvidia.fabric.langchain.deepagents")
     }
 }
 

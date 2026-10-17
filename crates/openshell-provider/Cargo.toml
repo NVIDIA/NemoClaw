@@ -32,6 +32,7 @@ nemoclaw-sdk = { path = "../nemoclaw-sdk", optional = true }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
 async-trait.workspace = true
 openshell-core.workspace = true
+prost-types.workspace = true
 openshell-policy.workspace = true
 openshell-sdk.workspace = true
 rustls.workspace = true

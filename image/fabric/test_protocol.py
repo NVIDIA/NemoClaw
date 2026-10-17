@@ -67,12 +67,16 @@ class CommandArguments(unittest.TestCase):
                 bridge_protocol.parse_command(arguments)
             self.assertNotIn("SECRET", str(error.exception))
 
-    def test_input_files_require_bounded_utf8_json_objects(self):
+    def test_input_files_require_one_bounded_utf8_json_value(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "input.json"
+            for content, value in ((b'"Say hello."', "Say hello."), (b"[1]", [1])):
+                path.write_bytes(content)
+                request = bridge_protocol.parse_command(
+                    ["invoke", "--agent", "main", "--input", str(path)]
+                )
+                self.assertEqual(request["input"], value)
             for content in (
-                b"[]",
-                b"null",
                 b"{",
                 b"{} {}",
                 b"\xff",
@@ -108,10 +112,17 @@ class CommandArguments(unittest.TestCase):
             self.assertEqual(request[field], value)
             self.assertEqual(stdin.buffer.read(), b"")
 
-    def test_stdin_requires_one_bounded_object_and_never_reads_a_terminal(self):
+    def test_stdin_requires_one_bounded_value_and_never_reads_a_terminal(self):
+        # Configuration stays an object; invocation input is any JSON value.
+        stdin = SimpleNamespace(buffer=io.BytesIO(b"[]"), isatty=lambda: False)
+        with (
+            patch("sys.stdin", new=stdin),
+            self.assertRaises(bridge_protocol.ProtocolError) as error,
+        ):
+            bridge_protocol.parse_command(["validate", "--agent", "main", "--config", "-"])
+        self.assertEqual(error.exception.code, "invalid_input")
         for content in (
             b"",
-            b"[]",
             b"{} {}",
             b"\xff",
             b'{"x":NaN}',

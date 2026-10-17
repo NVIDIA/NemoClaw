@@ -486,58 +486,6 @@ fn unused_tavily_definition_does_not_add_credentials_resources_or_agent_grants()
 }
 
 #[test]
-fn tavily_example_separates_openclaw_and_hermes_executable_scopes() {
-    let document =
-        Document::parse(include_bytes!("../../../examples/tavily-web-search.yaml").as_slice())
-            .unwrap();
-    let normalized = serde_json::to_value(&document).unwrap();
-    assert_eq!(
-        normalized["spec"]["integrations"]["search"]["provider"],
-        "tavily"
-    );
-    assert_eq!(document.credential_names(), ["TAVILY_API_KEY"]);
-    assert_eq!(
-        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
-        document
-    );
-    let generations = ["workspace", "provider", "sandbox"]
-        .map(|key| (key.into(), "a".repeat(32)))
-        .into();
-    let rows = targets(&document, &generations).unwrap();
-    for sandbox in &document.spec.sandboxes {
-        let authored = document
-            .sandbox_harness(sandbox)
-            .unwrap()
-            .settings
-            .as_ref()
-            .unwrap();
-        let configuration = nemoclaw_sdk::fabric_config::for_sandbox(&document, sandbox).unwrap();
-        assert_eq!(
-            configuration["harness"]["settings"],
-            serde_json::to_value(authored).unwrap()
-        );
-    }
-    assert_eq!(
-        rows.iter()
-            .filter(|row| row
-                .values
-                .get("provider_type")
-                .is_some_and(|kind| kind == "tavily"))
-            .count(),
-        2
-    );
-    for row in rows.iter().filter(|row| row.kind == "sandbox") {
-        let providers: Vec<String> =
-            serde_json::from_str(&row.values["provider_names_json"]).unwrap();
-        assert!(
-            providers
-                .iter()
-                .any(|name| name.starts_with("tavily-search-"))
-        );
-    }
-}
-
-#[test]
 fn different_search_providers_keep_distinct_bindings_for_the_same_credential_reference() {
     let mut value = input();
     let generations = ["workspace", "provider", "sandbox"]

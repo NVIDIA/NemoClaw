@@ -27,16 +27,10 @@ spec:
           providerRef: local
           overrides:
             model: qwen3:32b
-            settings:
-              model_metadata:
-                contextWindow: 32768
         - name: fast
           providerRef: local
           overrides:
             model: qwen3:4b
-            settings:
-              model_metadata:
-                contextWindow: 8192
   sandboxes:
     - name: researcher
       harnessRef: assistant
@@ -53,6 +47,3 @@ spec:
               providerRef: local
               overrides:
                 model: qwen3:4b
-                settings:
-                  model_metadata:
-                    contextWindow: 8192
