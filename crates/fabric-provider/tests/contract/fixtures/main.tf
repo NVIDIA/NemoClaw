@@ -68,7 +68,7 @@ resource "openshell_sandbox" "agent" {
     replace_triggered_by = [terraform_data.agent_configuration]
   }
   policy {
-    managed "nemoclaw-inference-local-fcb7b1f1af3733764900def4" {
+    managed {
       endpoints {
         access = "full"
         allowed_ips = ["127.0.0.1/32"]

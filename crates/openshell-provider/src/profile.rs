@@ -919,7 +919,13 @@ mod tests {
         );
         let mut sandbox = row("sandbox");
         let mut policy: serde_json::Value = serde_json::from_str(&sandbox["policy_json"]).unwrap();
-        let endpoint = &mut policy["managed"][fields["name"].as_str()]["endpoints"][0];
+        let grant = policy["managed"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|rule| rule["name"] == fields["name"].as_str())
+            .unwrap();
+        let endpoint = &mut grant["endpoints"][0];
         endpoint["host"] = "model.agents.svc.cluster.local".into();
         endpoint["port"] = 8000.into();
         endpoint["allowed_ips"] = serde_json::json!([]);

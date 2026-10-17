@@ -100,8 +100,8 @@
         "owner": "9b33c13b-516f-4377-bbf1-0019d00a9271",
         "policy": {
           "explicit": null,
-          "managed": {
-            "nemoclaw-inference-local-fbc7a7ff452ab9ce0475ef34": {
+          "managed": [
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -117,7 +117,7 @@
               ],
               "name": "nemoclaw-inference-local-fbc7a7ff452ab9ce0475ef34"
             }
-          }
+          ]
         },
         "providers": [
           "${openshell_inference.inference_local-fbc7a7ff452ab9ce0475ef34.ref}"

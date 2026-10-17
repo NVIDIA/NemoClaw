@@ -170,8 +170,8 @@
         "owner": "d21c8698-2b96-49fd-bb17-570c523960d0",
         "policy": {
           "explicit": null,
-          "managed": {
-            "nemoclaw-inference-local-5834fdcc94534d6506776906": {
+          "managed": [
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -187,7 +187,7 @@
               ],
               "name": "nemoclaw-inference-local-5834fdcc94534d6506776906"
             }
-          }
+          ]
         },
         "providers": [
           "${openshell_inference.inference_local-5834fdcc94534d6506776906.ref}"
@@ -226,8 +226,8 @@
         "owner": "d21c8698-2b96-49fd-bb17-570c523960d0",
         "policy": {
           "explicit": null,
-          "managed": {
-            "nemoclaw-inference-local-5834fdcc94534d6506776906": {
+          "managed": [
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -243,7 +243,7 @@
               ],
               "name": "nemoclaw-inference-local-5834fdcc94534d6506776906"
             }
-          }
+          ]
         },
         "providers": [
           "${openshell_inference.inference_local-5834fdcc94534d6506776906.ref}"
@@ -282,8 +282,8 @@
         "owner": "d21c8698-2b96-49fd-bb17-570c523960d0",
         "policy": {
           "explicit": null,
-          "managed": {
-            "nemoclaw-inference-local-b95da89e857d01251c2f1583": {
+          "managed": [
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -299,7 +299,7 @@
               ],
               "name": "nemoclaw-inference-local-b95da89e857d01251c2f1583"
             }
-          }
+          ]
         },
         "providers": [
           "${openshell_inference.inference_local-b95da89e857d01251c2f1583.ref}"
@@ -338,8 +338,8 @@
         "owner": "d21c8698-2b96-49fd-bb17-570c523960d0",
         "policy": {
           "explicit": null,
-          "managed": {
-            "nemoclaw-inference-local-3d36801b67957c3bcfa1093b": {
+          "managed": [
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -355,7 +355,7 @@
               ],
               "name": "nemoclaw-inference-local-3d36801b67957c3bcfa1093b"
             }
-          }
+          ]
         },
         "providers": [
           "${openshell_inference.inference_local-3d36801b67957c3bcfa1093b.ref}"
@@ -394,8 +394,8 @@
         "owner": "d21c8698-2b96-49fd-bb17-570c523960d0",
         "policy": {
           "explicit": null,
-          "managed": {
-            "nemoclaw-inference-local-3d36801b67957c3bcfa1093b": {
+          "managed": [
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -411,7 +411,7 @@
               ],
               "name": "nemoclaw-inference-local-3d36801b67957c3bcfa1093b"
             }
-          }
+          ]
         },
         "providers": [
           "${openshell_inference.inference_local-3d36801b67957c3bcfa1093b.ref}"

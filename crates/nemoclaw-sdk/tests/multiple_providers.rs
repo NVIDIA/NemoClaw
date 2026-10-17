@@ -97,9 +97,9 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
     );
     assert!(other_settings["models"]["smart"].is_null());
     let other_policy: Value = serde_json::from_str(&other.values["policy_json"]).unwrap();
-    assert_eq!(other_policy["managed"].as_object().unwrap().len(), 1);
+    assert_eq!(other_policy["managed"].as_array().unwrap().len(), 1);
     let policy: Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
-    assert_eq!(policy["managed"].as_object().unwrap().len(), 2);
+    assert_eq!(policy["managed"].as_array().unwrap().len(), 2);
     let graph = compile(&doc, &generations(), "0.1.0").unwrap();
     let mut dependencies: Vec<_> = rows
         .iter()

@@ -150,26 +150,24 @@ fn shared_integration_references_grant_only_the_selected_agents() {
         let providers: Vec<String> =
             serde_json::from_str(&row.values["provider_names_json"]).unwrap();
         if row.values["name"] == "reader" {
-            assert!(
-                !policy["managed"]
-                    .as_object()
+            assert!(!policy["managed"].as_array().unwrap().iter().any(|rule| {
+                rule["name"]
+                    .as_str()
                     .unwrap()
-                    .keys()
-                    .any(|key| key.starts_with("nemoclaw-brave-"))
-            );
+                    .starts_with("nemoclaw-brave-")
+            }));
             assert!(
                 !providers
                     .iter()
                     .any(|name| name.starts_with("brave-search-"))
             );
         } else {
-            assert!(
-                policy["managed"]
-                    .as_object()
+            assert!(policy["managed"].as_array().unwrap().iter().any(|rule| {
+                rule["name"]
+                    .as_str()
                     .unwrap()
-                    .keys()
-                    .any(|key| key.starts_with("nemoclaw-brave-"))
-            );
+                    .starts_with("nemoclaw-brave-")
+            }));
             assert!(
                 providers
                     .iter()
@@ -439,15 +437,20 @@ fn tavily_preserves_openclaw_and_hermes_intent_and_credential_references() {
             serde_json::from_str(&sandbox.values["provider_names_json"]).unwrap();
         assert!(providers.contains(&registration(provider)));
         let policy: Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
-        assert!(
-            !policy["managed"]
-                .as_object()
+        assert!(!policy["managed"].as_array().unwrap().iter().any(|rule| {
+            rule["name"]
+                .as_str()
                 .unwrap()
-                .keys()
-                .any(|key| key.starts_with("nemoclaw-brave-"))
-        );
-        assert_eq!(policy["managed"][&profile]["binaries"], json!([]));
-        let endpoint = &policy["managed"][&profile]["endpoints"][0];
+                .starts_with("nemoclaw-brave-")
+        }));
+        let grant = policy["managed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|rule| rule["name"] == profile.as_str())
+            .unwrap();
+        assert_eq!(grant["binaries"], json!([]));
+        let endpoint = &grant["endpoints"][0];
         assert_eq!(endpoint["host"], "api.tavily.com");
         assert_ne!(endpoint["request_body_credential_rewrite"], true);
         assert!(endpoint.get("tls").is_none());

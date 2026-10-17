@@ -101,8 +101,8 @@
         "owner": "7f0b6d2e-5c1a-4e8f-9d3b-2a6c4e1f8b90",
         "policy": {
           "explicit": null,
-          "managed": {
-            "nemoclaw-brave-30809e6761b7aea95293b61b": {
+          "managed": [
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -122,7 +122,7 @@
               ],
               "name": "nemoclaw-brave-30809e6761b7aea95293b61b"
             },
-            "nemoclaw-inference-local-4dcf1b725a48b148ce57287f": {
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -138,7 +138,7 @@
               ],
               "name": "nemoclaw-inference-local-4dcf1b725a48b148ce57287f"
             }
-          }
+          ]
         },
         "providers": [
           "${openshell_inference.inference_local-4dcf1b725a48b148ce57287f.ref}",
@@ -179,8 +179,8 @@
         "owner": "7f0b6d2e-5c1a-4e8f-9d3b-2a6c4e1f8b90",
         "policy": {
           "explicit": null,
-          "managed": {
-            "nemoclaw-brave-30809e6761b7aea95293b61b": {
+          "managed": [
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -200,7 +200,7 @@
               ],
               "name": "nemoclaw-brave-30809e6761b7aea95293b61b"
             },
-            "nemoclaw-inference-local-4dcf1b725a48b148ce57287f": {
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -216,7 +216,7 @@
               ],
               "name": "nemoclaw-inference-local-4dcf1b725a48b148ce57287f"
             }
-          }
+          ]
         },
         "providers": [
           "${openshell_inference.inference_local-4dcf1b725a48b148ce57287f.ref}",

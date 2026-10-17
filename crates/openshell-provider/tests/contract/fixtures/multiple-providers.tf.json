@@ -136,8 +136,8 @@
         "owner": "cb18eaf0-1a4e-47b8-b254-6fe4e49bc360",
         "policy": {
           "explicit": null,
-          "managed": {
-            "nemoclaw-inference-hosted-4df6a0a09c020309380f8e47": {
+          "managed": [
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -150,7 +150,7 @@
               ],
               "name": "nemoclaw-inference-hosted-4df6a0a09c020309380f8e47"
             },
-            "nemoclaw-inference-local-5834fdcc94534d6506776906": {
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -166,7 +166,7 @@
               ],
               "name": "nemoclaw-inference-local-5834fdcc94534d6506776906"
             }
-          }
+          ]
         },
         "providers": [
           "${openshell_inference.inference_hosted-4df6a0a09c020309380f8e47.ref}",
@@ -206,8 +206,8 @@
         "owner": "cb18eaf0-1a4e-47b8-b254-6fe4e49bc360",
         "policy": {
           "explicit": null,
-          "managed": {
-            "nemoclaw-inference-local-5834fdcc94534d6506776906": {
+          "managed": [
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -223,7 +223,7 @@
               ],
               "name": "nemoclaw-inference-local-5834fdcc94534d6506776906"
             }
-          }
+          ]
         },
         "providers": [
           "${openshell_inference.inference_local-5834fdcc94534d6506776906.ref}"

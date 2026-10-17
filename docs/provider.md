@@ -110,7 +110,8 @@ These schemas are version 1; state recorded by an earlier provider schema is rej
 Other inputs are typed too:
 
 - `openshell_sandbox` takes a `policy` block.
-  The block's attributes and blocks follow the sandbox policy model with snake_case names: optional `explicit` policy and `managed` deployment grants, whose named network rules are labeled blocks.
+  The block's attributes and blocks follow the sandbox policy model with snake_case names: an optional `explicit` policy, whose named network rules are labeled blocks, and `managed` deployment grants, a list of blocks with unique `name`s.
+  Because grants are unlabeled, a `dynamic "managed"` block can generate them in a sandbox that uses `for_each`; OpenTofu requires the labels of dynamic blocks to be known when it validates, before `each.key` is.
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
 - `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference`, `openshell_web_search` or `openshell_api`. Each ref names the OpenShell registration it attaches in `registration`.
 - `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables managed endpoint grants allow.

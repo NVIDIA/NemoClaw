@@ -230,7 +230,8 @@ resource openshell_sandbox (version 2)
           > sandbox or a numeric non-root sandbox GID accepted by OpenShell.
         run_as_user: string, optional
           > sandbox or a numeric non-root sandbox UID accepted by OpenShell.
-    block managed: map
+    block managed: list
+      > Deployment-owned grants, each named by its rule; names are unique.
       name: string, required
         > Human-readable rule name.
       block binaries: list

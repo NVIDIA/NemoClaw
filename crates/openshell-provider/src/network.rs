@@ -110,3 +110,57 @@ pub(super) fn row_policy(row: &Row) -> Result<proto::SandboxPolicy, ObservationE
 pub(super) fn validate_row_policy(row: &Row) -> Result<(), ObservationError> {
     row_policy(row).map(|_| ())
 }
+
+/// Managed grants are named in OpenShell's policy, so their names must be
+/// unique; checked when planning, while names are known.
+pub(super) fn validate_grant_names(
+    known: &Row,
+    unknown: &[&str],
+) -> Result<(), std::borrow::Cow<'static, str>> {
+    let Some(encoded) = known.get("policy_json").filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    if unknown.contains(&"policy_json") {
+        return Ok(());
+    }
+    let input: nemoclaw_openshell::runtime::PolicyInput =
+        serde_json::from_str(encoded).map_err(|_| "policy is not a valid sandbox policy")?;
+    if input.has_duplicate_grant() {
+        return Err("policy grants must have unique names".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod grant_name_tests {
+    use super::validate_grant_names;
+    use serde_json::json;
+
+    fn row(managed: serde_json::Value) -> nemoclaw_tofu::Row {
+        [(
+            "policy_json".to_owned(),
+            json!({"explicit": null, "managed": managed}).to_string(),
+        )]
+        .into()
+    }
+
+    fn grant(name: &str) -> serde_json::Value {
+        json!({"name": name, "endpoints": [{"host": "api.example.com", "port": 443}], "binaries": []})
+    }
+
+    #[test]
+    fn grants_need_unique_names() {
+        assert!(validate_grant_names(&row(json!([grant("model"), grant("search")])), &[]).is_ok());
+        let error =
+            validate_grant_names(&row(json!([grant("model"), grant("model")])), &[]).unwrap_err();
+        assert_eq!(error, "policy grants must have unique names");
+        // Unknown policies are checked once known.
+        assert!(
+            validate_grant_names(
+                &row(json!([grant("model"), grant("model")])),
+                &["policy_json"]
+            )
+            .is_ok()
+        );
+    }
+}

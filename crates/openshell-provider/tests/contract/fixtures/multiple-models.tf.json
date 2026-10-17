@@ -100,8 +100,8 @@
         "owner": "51d3ac63-7e34-4aca-b3e4-13381f1dcb76",
         "policy": {
           "explicit": null,
-          "managed": {
-            "nemoclaw-inference-local-5834fdcc94534d6506776906": {
+          "managed": [
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -117,7 +117,7 @@
               ],
               "name": "nemoclaw-inference-local-5834fdcc94534d6506776906"
             }
-          }
+          ]
         },
         "providers": [
           "${openshell_inference.inference_local-5834fdcc94534d6506776906.ref}"
@@ -156,8 +156,8 @@
         "owner": "51d3ac63-7e34-4aca-b3e4-13381f1dcb76",
         "policy": {
           "explicit": null,
-          "managed": {
-            "nemoclaw-inference-local-5834fdcc94534d6506776906": {
+          "managed": [
+            {
               "binaries": [],
               "endpoints": [
                 {
@@ -173,7 +173,7 @@
               ],
               "name": "nemoclaw-inference-local-5834fdcc94534d6506776906"
             }
-          }
+          ]
         },
         "providers": [
           "${openshell_inference.inference_local-5834fdcc94534d6506776906.ref}"

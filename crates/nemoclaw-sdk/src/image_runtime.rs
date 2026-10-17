@@ -78,7 +78,14 @@ pub fn policy_input(
     }
     Ok(PolicyInput {
         explicit,
-        managed,
+        // Each grant is named by its rule.
+        managed: managed
+            .into_iter()
+            .map(|(name, mut rule)| {
+                rule.name = name;
+                rule
+            })
+            .collect(),
         cluster_grants: Default::default(),
     })
 }

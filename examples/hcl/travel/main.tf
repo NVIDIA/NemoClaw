@@ -199,7 +199,7 @@ resource "openshell_sandbox" "travel" {
   launch_json = data.fabric_harness.pi.launch_json
   providers   = [openshell_inference.nemotron.ref]
   policy {
-    managed "travel-nemotron" {
+    managed {
       name = "travel-nemotron"
       endpoints {
         host     = local.model_url.host
@@ -209,7 +209,7 @@ resource "openshell_sandbox" "travel" {
         access   = "full"
       }
     }
-    managed "travel-example" {
+    managed {
       name = "travel-example"
       binaries {
         path = "/usr/bin/curl"
