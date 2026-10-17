@@ -17,9 +17,8 @@ pub enum OpenShellLifecycle {
 pub fn openshell_lifecycle(kind: &str) -> Option<OpenShellLifecycle> {
     match object_kind(kind) {
         "workspace" => Some(OpenShellLifecycle::Retained),
-        "sandbox" | "provider" | "provider_profile" | "web_search" | "inference" | "api" | "agent" => {
-            Some(OpenShellLifecycle::Reconstructible)
-        }
+        "sandbox" | "provider" | "provider_profile" | "web_search" | "inference" | "api"
+        | "agent" => Some(OpenShellLifecycle::Reconstructible),
         _ => None,
     }
 }
