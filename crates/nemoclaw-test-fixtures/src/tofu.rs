@@ -19,6 +19,17 @@ fn install_ssh_relay(directory: &Path) {
     }
 }
 
+/// Stage a provider executable in a workspace. Unix links to it instead of
+/// copying: a Linux debug provider is about 150 MB, every contract test stages
+/// one, and macOS verifies each new copy before its first launch. Windows
+/// copies, so the provider finds the relay beside it.
+fn stage(executable: &Path, staged: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(std::path::absolute(executable).unwrap(), staged).unwrap();
+    #[cfg(not(unix))]
+    fs::copy(executable, staged).unwrap();
+}
+
 pub struct TofuWorkspace {
     directory: TempDir,
     tofu: PathBuf,
@@ -60,13 +71,12 @@ impl TofuWorkspace {
     pub fn with_providers(tofu: impl AsRef<Path>, providers: &[(&str, &Path)]) -> Self {
         let directory = tempfile::tempdir().unwrap();
         for (name, executable) in providers {
-            fs::copy(
+            stage(
                 executable,
-                directory
+                &directory
                     .path()
                     .join(crate::executable(&format!("terraform-provider-{name}"))),
-            )
-            .unwrap();
+            );
         }
         if !providers.is_empty() {
             install_ssh_relay(directory.path());
