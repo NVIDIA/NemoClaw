@@ -64,7 +64,7 @@ pub fn structured_inputs(kind: &str) -> Vec<Structured> {
         shape,
     };
     match kind {
-        "web_search" | "inference" => {
+        "web_search" | "inference" | "api" => {
             vec![input("binaries", "binaries_json", strings())]
         }
         "sandbox" => vec![
@@ -91,7 +91,7 @@ pub fn export(kind: &str) -> Option<Export> {
     let fields: &[&'static str] = match kind {
         "workspace" => &["name", "owner", "generation", "id"],
         // Registrations name what sandboxes attach: `registration`.
-        "web_search" | "inference" => &[
+        "web_search" | "inference" | "api" => &[
             "workspace",
             "name",
             "registration",
@@ -168,7 +168,7 @@ fn object_references(kind: &str) -> Vec<Reference> {
     };
     match kind {
         // A web search registration belongs to its workspace's owner.
-        "web_search" => vec![Reference {
+        "web_search" | "api" => vec![Reference {
             attribute: "workspace",
             kind: "openshell_workspace",
             fields: vec![("name", "workspace"), ("owner", "owner")],

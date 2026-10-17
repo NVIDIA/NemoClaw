@@ -202,6 +202,29 @@ fn images(edits: &[(&str, Option<&str>)]) -> String {
     decision
 }
 
+/// Reuse setup within one test, but give every path the same clean base.
+fn assert_each_change_selects(workflow: &str, paths: &[&str], contents: &str) {
+    let repo = Repo::new();
+    let base = repo.base();
+    for path in paths {
+        // Earlier triggering edits must not make a later case pass by accident.
+        succeed(repo.0.path(), "git", &["reset", "--hard", &base]);
+        let (decision, stderr) = repo.decide_for(workflow, &[(path, Some(contents))], Some(&base));
+        assert!(!stderr.contains("could not analyze"), "{path}: {stderr}");
+        assert_eq!(
+            succeed(
+                repo.0.path(),
+                "git",
+                &["diff", "--name-only", &base, "HEAD"]
+            )
+            .trim(),
+            *path,
+            "each case must compare only its own edit"
+        );
+        assert_eq!(decision, format!("{workflow}=true"), "{path}");
+    }
+}
+
 #[test]
 fn documentation_runtimes_and_other_workflows_do_not_rebuild_images() {
     let decision = images(&[
@@ -230,36 +253,32 @@ fn sdk_changes_reach_the_build_tool_only_through_its_disabled_default_feature() 
 
 #[test]
 fn crates_in_the_image_build_rebuild_images() {
-    for path in [
-        "crates/nemoclaw-runtime/src/lib.rs",
-        "crates/nemoclaw-build/src/lib.rs",
-        "crates/nemoclaw-ollama-proxy/src/lib.rs",
-    ] {
-        assert_eq!(
-            images(&[(path, Some("pub fn changed() {}\n"))]),
-            "images=true",
-            "{path}"
-        );
-    }
+    assert_each_change_selects(
+        "images",
+        &[
+            "crates/nemoclaw-runtime/src/lib.rs",
+            "crates/nemoclaw-build/src/lib.rs",
+            "crates/nemoclaw-ollama-proxy/src/lib.rs",
+        ],
+        "pub fn changed() {}\n",
+    );
 }
 
 #[test]
 fn image_inputs_outside_crates_rebuild_images() {
-    for path in [
-        "image/fabric/Dockerfile",
-        "docker-bake.hcl",
-        ".dockerignore",
-        "ruff.toml",
-        "LICENSE",
-        "rust-toolchain.toml",
-        ".github/workflows/images.yml",
-    ] {
-        assert_eq!(
-            images(&[(path, Some("# changed\n"))]),
-            "images=true",
-            "{path}"
-        );
-    }
+    assert_each_change_selects(
+        "images",
+        &[
+            "image/fabric/Dockerfile",
+            "docker-bake.hcl",
+            ".dockerignore",
+            "ruff.toml",
+            "LICENSE",
+            "rust-toolchain.toml",
+            ".github/workflows/images.yml",
+        ],
+        "# changed\n",
+    );
 }
 
 #[test]
@@ -298,24 +317,26 @@ fn documentation_other_workflows_and_packages_outside_the_live_build_skip_live_s
 
 #[test]
 fn live_build_packages_and_their_inputs_run_live_suites() {
-    for path in [
-        "crates/nemoclaw-sdk/src/lib.rs",
-        "crates/nemoclaw-runtime/src/lib.rs",
-        "crates/nemoclaw-e2e/src/lib.rs",
-        "crates/nemoclaw-build/src/lib.rs",
-        "crates/nemoclaw-cli/src/lib.rs",
-        "crates/openshell-provider/src/lib.rs",
-        "runtimes/vllm/build.json",
-        "image/fabric/Dockerfile",
-        "examples/local.yaml",
-        "versions.json",
-        ".config/nextest.toml",
-        ".github/workflows/bundle-platform.yml",
-        ".github/workflows/rust.yml",
-        "Makefile",
-    ] {
-        assert_eq!(live(&[(path, Some("# changed\n"))]), "live=true", "{path}");
-    }
+    assert_each_change_selects(
+        "live",
+        &[
+            "crates/nemoclaw-sdk/src/lib.rs",
+            "crates/nemoclaw-runtime/src/lib.rs",
+            "crates/nemoclaw-e2e/src/lib.rs",
+            "crates/nemoclaw-build/src/lib.rs",
+            "crates/nemoclaw-cli/src/lib.rs",
+            "crates/openshell-provider/src/lib.rs",
+            "runtimes/vllm/build.json",
+            "image/fabric/Dockerfile",
+            "examples/local.yaml",
+            "versions.json",
+            ".config/nextest.toml",
+            ".github/workflows/bundle-platform.yml",
+            ".github/workflows/rust.yml",
+            "Makefile",
+        ],
+        "# changed\n",
+    );
 }
 
 impl Repo {

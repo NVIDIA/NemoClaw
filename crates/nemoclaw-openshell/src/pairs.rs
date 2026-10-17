@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! The OpenShell provider profile and registration rows that an
-//! `openshell_inference` or `openshell_web_search` row owns.
+//! `openshell_inference`, `openshell_web_search` or `openshell_api` row owns.
 use crate::search::{SearchProvider, web_search_names};
 use std::collections::BTreeMap;
 
@@ -25,6 +25,27 @@ fn bind(registration: &mut Row, row: &Row) {
     if let Some(id) = row.get("id").filter(|id| !id.is_empty()) {
         registration.insert("id".into(), id.clone());
     }
+}
+
+/// The profile and registration an API credential resource owns. Changing the
+/// host reference keeps the profile's placeholder and the registration name.
+pub fn api_rows(row: &Row) -> (Row, Row) {
+    let profile = format!("nemoclaw-api-{}", value(row, "name"));
+    let mut profile_row = common(row);
+    profile_row.insert("name".into(), profile.clone());
+    for field in ["endpoint", "binaries_json", "auth_style", "header_name"] {
+        profile_row.insert(field.into(), value(row, field).into());
+    }
+    let mut registration = common(row);
+    registration.extend([
+        ("name".into(), value(row, "name").into()),
+        ("profile_name".into(), profile),
+        ("provider_type".into(), "api".into()),
+        ("endpoint".into(), value(row, "endpoint").into()),
+        ("credential_env".into(), value(row, "credential_env").into()),
+    ]);
+    bind(&mut registration, row);
+    (profile_row, registration)
 }
 
 /// The profile and registration rows a web search row owns, or `None` for an

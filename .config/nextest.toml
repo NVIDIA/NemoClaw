@@ -19,6 +19,12 @@ slow-timeout = { period = "8s", terminate-after = 3 }
 [profile.ci.junit]
 path = "test.xml"
 
+# These fixtures spawn Git, Cargo and Bake processes. Limit their contention
+# on CI runners without serializing tests in the other binaries.
+[[profile.ci.overrides]]
+filter = 'binary_id(=nemoclaw-build::integration)'
+test-group = "build-integration"
+
 [profile.lifecycle]
 inherits = "ci"
 test-threads = 4
@@ -98,6 +104,7 @@ path = "live-docker.xml"
 
 [test-groups]
 docker-engine = { max-threads = 1 }
+build-integration = { max-threads = 2 }
 
 # Everything but the rebuild uses the engine.
 [[profile.live-docker.overrides]]

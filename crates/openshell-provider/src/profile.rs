@@ -9,9 +9,11 @@ const PROVIDER_TYPE: &str = "nemoclaw.nvidia.com/provider-type";
 const AUTHENTICATED: &str = "nemoclaw.nvidia.com/authenticated";
 const CLUSTER_SOURCE: &str = "nemoclaw.nvidia.com/cluster-source";
 const CLUSTER_ADDRESSES: &str = "nemoclaw.nvidia.com/cluster-addresses";
+const AUTH_STYLE: &str = "nemoclaw.nvidia.com/auth-style";
+const HEADER_NAME: &str = "nemoclaw.nvidia.com/header-name";
 
 /// Each ownership and definition field, and the profile annotation that carries it.
-const FIELDS: [(&str, &str); 8] = [
+const FIELDS: [(&str, &str); 10] = [
     ("owner", OWNER),
     ("generation", GENERATION),
     ("binaries_json", BINARIES),
@@ -20,6 +22,8 @@ const FIELDS: [(&str, &str); 8] = [
     ("authenticated", AUTHENTICATED),
     ("cluster_source", CLUSTER_SOURCE),
     ("cluster_addresses", CLUSTER_ADDRESSES),
+    ("auth_style", AUTH_STYLE),
+    ("header_name", HEADER_NAME),
 ];
 
 fn annotations(fields: Row) -> Result<std::collections::HashMap<String, String>, ObservationError> {
@@ -184,6 +188,33 @@ fn native_definition(
     Ok(profile)
 }
 
+pub(super) fn api_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationError> {
+    let name = want["name"]
+        .strip_prefix("nemoclaw-api-")
+        .ok_or(ObservationError::Query)?;
+    let mut profile = nemoclaw_openshell::api::definition(
+        name,
+        &want["endpoint"],
+        &want["auth_style"],
+        &want["header_name"],
+    )?;
+    profile.binaries = binaries(want)?;
+    profile.annotations = annotations(
+        [
+            "owner",
+            "generation",
+            "endpoint",
+            "binaries_json",
+            "auth_style",
+            "header_name",
+        ]
+        .into_iter()
+        .map(|field| (field.into(), want[field].clone()))
+        .collect(),
+    )?;
+    Ok(profile)
+}
+
 fn row(
     mut profile: proto::ProviderProfile,
     workspace: &str,
@@ -201,7 +232,8 @@ fn row(
     let owner = metadata.get("owner").cloned().unwrap_or_default();
     let generation = metadata.get("generation").cloned().unwrap_or_default();
     let search = SearchProvider::from_profile(name);
-    if (!name.starts_with("nemoclaw-inference-") && search.is_none())
+    let api = name.starts_with("nemoclaw-api-");
+    if (!name.starts_with("nemoclaw-inference-") && !api && search.is_none())
         || profile.id != name
         || profile.resource_version == 0
         || if catalog_entry {
@@ -238,7 +270,18 @@ fn row(
                 .ok_or(ObservationError::Incomplete)?,
         ),
     ]);
-    let expected = if name.starts_with("nemoclaw-inference-") {
+    let expected = if api {
+        for field in ["endpoint", "auth_style", "header_name"] {
+            fields.insert(
+                field.into(),
+                metadata
+                    .get(field)
+                    .cloned()
+                    .ok_or(ObservationError::Incomplete)?,
+            );
+        }
+        api_definition(&fields)?
+    } else if name.starts_with("nemoclaw-inference-") {
         fields.extend([
             ("name".into(), name.into()),
             ("owner".into(), owner.clone()),
@@ -431,7 +474,8 @@ impl ConnectedOpenShellGateway {
     }
     pub(super) async fn create_profile(&self, want: &Row) -> Result<String, ObservationError> {
         let search = SearchProvider::from_profile(&want["name"]);
-        if search.is_none() && !want["name"].starts_with("nemoclaw-inference-") {
+        let api = want["name"].starts_with("nemoclaw-api-");
+        if search.is_none() && !api && !want["name"].starts_with("nemoclaw-inference-") {
             return Err(ObservationError::Query);
         }
         let mut observed = want.clone();
@@ -451,7 +495,9 @@ impl ConnectedOpenShellGateway {
             .import_provider_profiles(self.request(proto::ImportProviderProfilesRequest {
                 workspace_scope: Some(proto::workspace_selector(&want["workspace"])),
                 profiles: vec![proto::ProviderProfileImportItem {
-                    profile: Some(if let Some(search) = search {
+                    profile: Some(if api {
+                        api_definition(want)?
+                    } else if let Some(search) = search {
                         definition(search, want)?
                     } else {
                         native_definition(&observed, self.services.as_ref())?
