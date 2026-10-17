@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
-# GTC DC T-359: planned target, not live-qualified. See README.md.
+# GTC DC planned target, not live-qualified. See README.md.
 # Replace the deployment UID and zero image digests with owned build references.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig

@@ -32,9 +32,12 @@ Each target requires exactly one visible NVIDIA GPU; these configurations provid
 
 RTX Spark combines an [ARM64 N1X processor](https://docs.nvidia.com/rtx-spark/rtx-spark-porting-guide/latest/overview.html) with [shared CPU/GPU memory](https://www.nvidia.com/en-us/products/rtx-spark/specifications/).
 These examples select its 128 GB configuration and the `rtx-spark` hardware profile.
-Run the Linux ARM64 tools and Docker engine inside WSL2, with NVIDIA GPU passthrough, RAM, disk, and the API socket available there.
+Run the Linux ARM64 tools inside WSL2, with the Docker API socket, NVIDIA GPU access, RAM, and disk available there.
+NemoClaw's [main-line readiness checks](https://github.com/NVIDIA/NemoClaw/blob/4ce30c292c0a518ee713f2d10460d473bb904637/docs/reference/system-readiness.mdx) qualify Docker Desktop's WSL integration and treat Docker Engine installed inside WSL as unqualified; neither has run these templates.
+Under WSL2, CUDA uses the Windows NVIDIA driver, which appears inside the distribution as a stub `libcuda.so`; do not install a Linux GPU driver there ([CUDA on WSL](https://docs.nvidia.com/cuda/wsl-user-guide/index.html)).
 The 88 GiB budget and 28 GiB reserve require at least 116 GiB total memory observable inside WSL2; startup additionally checks for at least 108 GiB available memory.
-Configure the WSL2 memory limit and leave capacity for Windows and other applications outside that Linux budget; reject the run if the observed headroom is insufficient.
+A WSL2 memory limit that passes these checks leaves at most 12 GiB of the 128 GB configuration for firmware, Windows, and other applications.
+Whether memory observed inside WSL2 accounts for GPU allocations made through the Windows driver is untested; measure both inside WSL2 and in Windows while the model loads.
 Model loading and GPU access through WSL2 still require validation on the selected machine.
 See [hardware admission and memory checks](../../docs/models.md#choose-a-hardware-profile) and [platform limits](../../docs/limits.md#platforms-models-and-placement).
 
