@@ -9,9 +9,9 @@ They are planned configurations; successful model loading, agent replies, and li
 
 | Harness | Linux ARM64 DGX Station | Linux ARM64 DGX Spark | Windows ARM64 with WSL2 and RTX Spark |
 |---|---|---|---|
-| Hermes | [Station](hermes-dgx-station.yml) | [Spark](hermes-dgx-spark.yml) | [WSL2 RTX Spark](hermes-windows-wsl2-rtx-spark.yml) |
-| OpenClaw | [Station](openclaw-dgx-station.yml) | [Spark](openclaw-dgx-spark.yml) | [WSL2 RTX Spark](openclaw-windows-wsl2-rtx-spark.yml) |
-| LangChain Deep Agents | [Station](deepagents-dgx-station.yml) | [Spark](deepagents-dgx-spark.yml) | [WSL2 RTX Spark](deepagents-windows-wsl2-rtx-spark.yml) |
+| Hermes | [Station](hermes-dgx-station.yaml) | [Spark](hermes-dgx-spark.yaml) | [WSL2 RTX Spark](hermes-windows-wsl2-rtx-spark.yaml) |
+| OpenClaw | [Station](openclaw-dgx-station.yaml) | [Spark](openclaw-dgx-spark.yaml) | [WSL2 RTX Spark](openclaw-windows-wsl2-rtx-spark.yaml) |
+| LangChain Deep Agents | [Station](deepagents-dgx-station.yaml) | [Spark](deepagents-dgx-spark.yaml) | [WSL2 RTX Spark](deepagents-windows-wsl2-rtx-spark.yaml) |
 
 All files select [NVIDIA Nemotron 3 Super 120B-A12B NVFP4](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4/tree/ff433f5493e25d631c9f12b5d55c674229923d02), pinned to commit `ff433f5493e25d631c9f12b5d55c674229923d02`.
 The serving configuration uses a 65,536-token context, one sequence, an 8 GiB KV cache, and an 88 GiB total GPU budget.
@@ -56,7 +56,7 @@ Copy one template into a private deployment directory before planning:
 
 ```sh
 mkdir -p .local/gtc-dc
-cp examples/gtc-dc/openclaw-dgx-spark.yml .local/gtc-dc/deployment.yml
+cp examples/gtc-dc/openclaw-dgx-spark.yaml .local/gtc-dc/deployment.yaml
 ```
 
 Assign a fresh `metadata.uid` and replace both zero-digest image references with references from builds of this checkout.
@@ -69,10 +69,10 @@ These distinct addresses do not make concurrent model services fit one host; pla
 Preview the selected deployment on ARM64:
 
 ```sh
-dist/linux_arm64/bin/nemoclaw plan --state-dir .local/gtc-dc/state .local/gtc-dc/deployment.yml
+dist/linux_arm64/bin/nemoclaw plan --state-dir .local/gtc-dc/state .local/gtc-dc/deployment.yaml
 ```
 
-For a Windows target, copy its corresponding `*-windows-wsl2-rtx-spark.yml` file instead and run the same Linux ARM64 command inside WSL2.
+For a Windows target, copy its corresponding `*-windows-wsl2-rtx-spark.yaml` file instead and run the same Linux ARM64 command inside WSL2.
 
 Plan observes the selected environment without creating deployment resources or requesting inference.
 Follow [the deployment workflow](../../docs/usage.md) for apply, recovery, and retained teardown, and verify [model and agent responses](../../docs/inference.md#verify-the-result) separately.
