@@ -1,0 +1,4 @@
+node_modules/
+.local/
+dist/
+*.lock.tmp
