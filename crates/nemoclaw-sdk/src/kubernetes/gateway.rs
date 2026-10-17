@@ -63,7 +63,7 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
         json!({"registry": "", "repository": repository, "digest": digest, "pullPolicy": "IfNotPresent"})
     };
     let name = &spec.name;
-    let values = json!({
+    let mut values = json!({
         "fullnameOverride": name,
         "global": {"image": {"registry": ""}},
         "gateway": {"image": image(pins::DEFAULT_GATEWAY_IMAGE)},
@@ -98,6 +98,17 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
             "limits": {"cpu": "1", "memory": "1Gi"},
         },
     });
+    if !target.image_pull_secrets.is_empty() {
+        values["imagePullSecrets"] = json!(
+            target
+                .image_pull_secrets
+                .iter()
+                .map(|name| json!({"name": name}))
+                .collect::<Vec<_>>()
+        );
+        values["gatewayConfig"]["openshell.drivers.kubernetes"]["image_pull_secrets"] =
+            json!(target.image_pull_secrets);
+    }
     Ok(values)
 }
 
