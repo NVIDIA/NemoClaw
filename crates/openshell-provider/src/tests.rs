@@ -131,6 +131,40 @@ fn deletion_timestamp_presence_blocks_observation_but_allows_cleanup() {
 }
 
 #[test]
+fn a_policy_without_its_own_grants_accepts_the_proxy_mode_enrichment() {
+    // Attached providers alone put a sandbox in proxy mode, where OpenShell adds
+    // its known filesystem paths even to a policy with no network rules.
+    let mut declared = policy();
+    declared.network_policies.clear();
+    let expected = policy_json(&declared).unwrap();
+    let mut loaded = declared.clone();
+    loaded
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_only
+        .push("/var/log".into());
+    let response = |policy| proto::GetSandboxPolicyStatusResponse {
+        active_version: 2,
+        revision: Some(proto::SandboxPolicyRevision {
+            version: 2,
+            status: proto::PolicyStatus::Loaded as i32,
+            policy: Some(policy),
+            ..Default::default()
+        }),
+    };
+    assert!(active_policy(response(loaded.clone()), &expected).is_ok());
+    // Unknown additions are still refused.
+    loaded
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_only
+        .push("/private".into());
+    assert!(active_policy(response(loaded), &expected).is_err());
+}
+
+#[test]
 fn loaded_policy_accepts_only_the_runtime_log_directory_enrichment() {
     let mut declared = policy();
     let profile = inference_profile(

@@ -52,10 +52,9 @@ pub(super) fn loaded_policy_matches(
     }
     let input: ExplicitPolicy =
         serde_json::from_str(expected).map_err(|_| ObservationError::Query)?;
+    // Attached providers put a sandbox in proxy mode even without network
+    // rules of its own, so the same additions apply.
     let mut baseline = input.to_proto().map_err(|_| ObservationError::Query)?;
-    if baseline.network_policies.is_empty() {
-        return Ok(false);
-    }
     let Some(observed) = &loaded.filesystem else {
         return Ok(false);
     };
