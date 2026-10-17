@@ -46,10 +46,10 @@ live-kind:
 # Each provider's contract tests, measured in 14 v1 runs on linux_amd64 and
 # linux_arm64.
 binaries:
-  # 3 tests: at most 27 s summed; slowest test, the Pi configuration update,
-  # 16.4 s.
+  # 5 tests: at most 41 s summed; slowest test, the Pi configuration change
+  # that replaces its sandbox, 18.6 s.
   fabric-provider::contract:
-    summed_seconds: 40
+    summed_seconds: 50
     test_seconds: 22
   # 29 tests, which only the 3 latest runs had: at most 80 s summed; slowest
   # test 6.9 s.
