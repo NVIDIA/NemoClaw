@@ -7,8 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { redactString } from "../fixtures/redaction.ts";
+import { nativeLocalIdentity } from "../../../src/lib/inference/native-local/contract.ts";
 import { patchOpenClawInferenceConfig } from "../../../src/lib/actions/inference-set.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { captureNativeRestart503Diagnostic } from "../fixtures/inference-routing-openclaw-native.ts";
 
 import { startTestProgress } from "../fixtures/progress.ts";
 
@@ -520,3 +522,179 @@ it.each(["", "nvapi-fixture-secret", "openshell:resolve:env:NVIDIA_INFERENCE_API
     ).rejects.toThrow();
   },
 );
+
+describe("OpenClaw native restart diagnostics", () => {
+  afterEach(() => vi.useRealTimers());
+
+  const binding = {
+    provider: "llama-cpp-local",
+    agent: "openclaw",
+    endpointUrl: "http://host.openshell.internal:8081/v1",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "authenticated",
+    gatewayName: "nemoclaw",
+    sandboxName: "owner",
+  } as const;
+  const attachment = {
+    ...binding,
+    ...nativeLocalIdentity(binding),
+    schemaVersion: 1 as const,
+    providerId: "fixture-local-provider",
+  };
+
+  it("records bounded route recovery without changing the original start failure (#12975)", async () => {
+    vi.useFakeTimers();
+    const apiKey = "sk-native-test-not-real";
+    const start = {
+      exitCode: 1,
+      stderr:
+        "native local inference check failed: sandbox inference invocation probe returned HTTP 503",
+    };
+    const statuses = ["200", "503", "200", "200"];
+    let requestCount = 0;
+    const exec = vi.fn(async (_owner: string, _args: string[], _options: unknown) => {
+      const stdout = statuses.shift()!;
+      requestCount += Number(stdout === "200");
+      return { exitCode: 0, stdout };
+    });
+    const referenceProbe = vi.fn(async () => {
+      requestCount += 1;
+      return { ok: true as const };
+    });
+    const requests = vi.fn(() => Array.from({ length: requestCount }, () => ({})));
+    const nemoclaw = vi.fn(async () => ({ exitCode: 0 }));
+    const writeJson = vi.fn(async () => "artifact");
+    const diagnostic = captureNativeRestart503Diagnostic(start as never, {
+      owner: "owner",
+      model: "nemoclaw-openclaw-native-local",
+      apiKey,
+      attachment,
+      referenceProbe,
+      fake: { requests } as never,
+      sandbox: { exec } as never,
+      host: { nemoclaw } as never,
+      artifacts: { writeJson } as never,
+    });
+
+    await vi.advanceTimersByTimeAsync(8_000);
+    await diagnostic;
+    expect(exec).toHaveBeenCalledTimes(4);
+    expect(exec.mock.calls[0]?.[2]).toMatchObject({ redactionValues: [apiKey] });
+    expect(exec.mock.calls[1]?.[2]).toMatchObject({ redactionValues: [apiKey] });
+    expect(exec.mock.calls[2]?.[2]).toMatchObject({ redactionValues: [apiKey] });
+    expect(exec.mock.calls[3]?.[2]).toMatchObject({ redactionValues: [apiKey] });
+    expect(referenceProbe).toHaveBeenCalledTimes(2);
+    expect(referenceProbe).toHaveBeenCalledWith(
+      expect.objectContaining({ nativeLocalProviderAttachment: attachment }),
+      {},
+      20_000,
+    );
+    expect(exec.mock.calls[1]?.[1]).toContain("--output");
+    expect(exec.mock.calls[1]?.[1]).toContain("/dev/null");
+    expect(exec.mock.calls[1]?.[1]).toContain("--data-binary");
+    expect(exec.mock.calls[1]?.[1]).toContain(
+      "http://host.openshell.internal:8081/v1/chat/completions",
+    );
+    expect(nemoclaw).toHaveBeenCalledWith(["owner", "doctor"], expect.any(Object));
+    expect(writeJson).toHaveBeenCalledWith("owner-restart-503-diagnostic.json", {
+      immediate: { exitCode: 0, httpStatus: "200", reachedEndpoint: true },
+      immediateChat: { exitCode: 0, httpStatus: "503", reachedEndpoint: false },
+      immediateReference: { ok: true, httpStatus: null, reachedEndpoint: true },
+      delayed: { exitCode: 0, httpStatus: "200", reachedEndpoint: true },
+      delayedChat: { exitCode: 0, httpStatus: "200", reachedEndpoint: true },
+      delayedReference: { ok: true, httpStatus: null, reachedEndpoint: true },
+      doctorExitCode: 0,
+    });
+    expect(start.exitCode).toBe(1);
+  });
+
+  it("captures a native local HTTP 503 from the final start check (#12975)", async () => {
+    vi.useFakeTimers();
+    const exec = vi.fn(async () => ({ exitCode: 0, stdout: "200" }));
+    const writeJson = vi.fn(async () => "artifact");
+    const diagnostic = captureNativeRestart503Diagnostic(
+      {
+        exitCode: 1,
+        stderr:
+          "The sandbox started but inference is not usable: sandbox inference invocation probe returned HTTP 503",
+      } as never,
+      {
+        owner: "owner",
+        model: "nemoclaw-openclaw-native-local",
+        apiKey: "sk-native-test-not-real",
+        attachment,
+        referenceProbe: vi.fn(async () => ({ ok: true as const })),
+        fake: { requests: vi.fn(() => []) } as never,
+        sandbox: { exec } as never,
+        host: { nemoclaw: vi.fn(async () => ({ exitCode: 0 })) } as never,
+        artifacts: { writeJson } as never,
+      },
+    );
+    await vi.advanceTimersByTimeAsync(8_000);
+    await diagnostic;
+    expect(exec).toHaveBeenCalledTimes(4);
+    expect(writeJson).toHaveBeenCalledOnce();
+  });
+
+  it("retains completed status evidence when a later direct probe rejects (#12975)", async () => {
+    vi.useFakeTimers();
+    const apiKey = "sk-native-test-not-real";
+    const writeJson = vi.fn(async () => "artifact");
+    const diagnostic = captureNativeRestart503Diagnostic(
+      {
+        exitCode: 1,
+        stderr:
+          "native local inference check failed: sandbox inference invocation probe returned HTTP 503",
+      } as never,
+      {
+        owner: "owner",
+        model: "nemoclaw-openclaw-native-local",
+        apiKey,
+        attachment,
+        referenceProbe: vi.fn(async () => ({
+          ok: false as const,
+          httpStatus: 503,
+          detail: "HTTP 503",
+        })),
+        fake: { requests: vi.fn(() => []) } as never,
+        sandbox: {
+          exec: vi
+            .fn()
+            .mockResolvedValueOnce({ exitCode: 0, stdout: "200" })
+            .mockRejectedValueOnce(new Error("test probe failure"))
+            .mockResolvedValue({ exitCode: 0, stdout: "200" }),
+        } as never,
+        host: { nemoclaw: vi.fn(async () => ({ exitCode: 0 })) } as never,
+        artifacts: { writeJson } as never,
+      },
+    );
+    await vi.advanceTimersByTimeAsync(8_000);
+    await diagnostic;
+    expect(writeJson).toHaveBeenCalledWith(
+      "owner-restart-503-diagnostic.json",
+      expect.objectContaining({
+        immediate: { exitCode: 0, httpStatus: "200", reachedEndpoint: false },
+        immediateChat: { error: "probe unavailable" },
+        delayedReference: { ok: false, httpStatus: 503, reachedEndpoint: false },
+        doctorExitCode: 0,
+      }),
+    );
+    expect(JSON.stringify(writeJson.mock.calls)).not.toContain("test probe failure");
+    expect(JSON.stringify(writeJson.mock.calls)).not.toContain(apiKey);
+  });
+
+  it("does not probe when restart did not fail with the native HTTP 503 signature (#12975)", async () => {
+    const exec = vi.fn();
+    await captureNativeRestart503Diagnostic({ exitCode: 1, stderr: "HTTP 401" } as never, {
+      owner: "owner",
+      model: "nemoclaw-openclaw-native-local",
+      apiKey: "sk-native-test-not-real",
+      attachment,
+      fake: { requests: vi.fn() } as never,
+      sandbox: { exec } as never,
+      host: { nemoclaw: vi.fn() } as never,
+      artifacts: { writeJson: vi.fn() } as never,
+    });
+    expect(exec).not.toHaveBeenCalled();
+  });
+});

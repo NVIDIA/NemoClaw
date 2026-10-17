@@ -787,6 +787,88 @@ const restartCases = restartProviders.flatMap((provider) =>
 );
 
 describe("startSandbox persisted native inference selection", () => {
+  const openClawBinding = {
+    provider: "llama-cpp-local" as const,
+    agent: "openclaw" as const,
+    endpointUrl: "http://host.openshell.internal:8081/v1",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "authenticated" as const,
+    gatewayName: "nemoclaw-19080",
+    sandboxName: "my-sandbox",
+  };
+  const openClawAttachment = {
+    ...openClawBinding,
+    ...nativeLocalIdentity(openClawBinding),
+    schemaVersion: 1 as const,
+    providerId: "owned-local-provider-id",
+  };
+  const stoppedNativeOpenClaw = () =>
+    sandbox({
+      stopped: true,
+      agent: "openclaw",
+      provider: openClawBinding.provider,
+      model: "local-model",
+      gatewayName: openClawBinding.gatewayName,
+      preferredInferenceApi: "openai-completions",
+      nativeLocalProviderAttachment: openClawAttachment,
+    });
+
+  it("checks native local OpenClaw inference after connect (#12975)", async () => {
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true as const }));
+    const delayInferenceInvocationProbe = vi.fn(async () => {});
+    const h = harness({ probeInferenceInvocation, delayInferenceInvocationProbe });
+    h.getSandbox.mockReturnValue(stoppedNativeOpenClaw());
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    expect(probeInferenceInvocation).toHaveBeenCalledOnce();
+    expect(delayInferenceInvocationProbe).not.toHaveBeenCalled();
+    expect(probeInferenceInvocation.mock.invocationCallOrder[0]).toBeGreaterThan(
+      h.verifyGateway.mock.invocationCallOrder[0],
+    );
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
+  });
+
+  it("settles a transient native local OpenClaw HTTP 503 after connect (#12975)", async () => {
+    const probeInferenceInvocation = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false as const,
+        detail: "sandbox inference invocation probe returned HTTP 503",
+        httpStatus: 503,
+      })
+      .mockResolvedValueOnce({ ok: true as const });
+    const delayInferenceInvocationProbe = vi.fn(async () => {});
+    const h = harness({ probeInferenceInvocation, delayInferenceInvocationProbe });
+    h.getSandbox.mockReturnValue({ ...stoppedNativeOpenClaw(), agent: null });
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    expect(probeInferenceInvocation).toHaveBeenCalledTimes(2);
+    expect(delayInferenceInvocationProbe).toHaveBeenCalledExactlyOnceWith(8_000);
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
+  });
+
+  it.each([503, 401] as const)(
+    "fails closed after native local OpenClaw HTTP %s post-connect check (#12975)",
+    async (httpStatus) => {
+      const probeInferenceInvocation = vi.fn(async () => ({
+        ok: false as const,
+        detail: `HTTP ${httpStatus}`,
+        httpStatus,
+      }));
+      const delayInferenceInvocationProbe = vi.fn(async () => {});
+      const h = harness({ probeInferenceInvocation, delayInferenceInvocationProbe });
+      h.getSandbox.mockReturnValue(stoppedNativeOpenClaw());
+
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+      expect(probeInferenceInvocation).toHaveBeenCalledTimes(httpStatus === 503 ? 3 : 1);
+      expect(delayInferenceInvocationProbe.mock.calls).toEqual(
+        httpStatus === 503 ? [[8_000], [32_000]] : [],
+      );
+      expect(h.verifyGateway).toHaveBeenCalledOnce();
+      expect(h.updateSandbox).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     ["langchain-deepagents-code", "authenticated"],
     ["langchain-deepagents-code", "sentinel"],

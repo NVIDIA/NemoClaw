@@ -98,6 +98,7 @@ export interface SandboxStartDeps extends StandardSandboxLifecycleDeps {
 
 const GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
 const START_INFERENCE_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
+const OPENCLAW_NATIVE_LOCAL_INFERENCE_SETTLEMENT_DELAYS_MS = [8_000, 32_000] as const;
 
 /** Observe native startup only after an intentional stop; never relaunch the agent here. */
 async function waitForStartedNativeGatewayProcess(
@@ -158,6 +159,9 @@ async function checkStartedSandboxInference(
   if (!model || !provider) return null;
   let nativeProvider: boolean;
   let nativeEndpointUrl: string | undefined;
+  const nativeLocalOpenClaw =
+    (sandbox.agent === null || sandbox.agent === undefined || sandbox.agent === "openclaw") &&
+    sandbox.nativeLocalProviderAttachment?.agent === "openclaw";
   try {
     const receipt = recordedNativeProviderAttachment(sandbox);
     nativeProvider = Boolean(receipt);
@@ -192,18 +196,22 @@ async function checkStartedSandboxInference(
       {},
       READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
     );
-  if (sandbox.agent !== "hermes" && sandbox.agent !== "pi") return await probe();
+  if (sandbox.agent !== "hermes" && sandbox.agent !== "pi" && !nativeLocalOpenClaw)
+    return await probe();
+  const delays = nativeLocalOpenClaw
+    ? OPENCLAW_NATIVE_LOCAL_INFERENCE_SETTLEMENT_DELAYS_MS
+    : START_INFERENCE_SETTLEMENT_DELAYS_MS;
   return await retryUntilAsync(probe, {
     accept: (result) =>
-      sandbox.agent === "pi"
+      sandbox.agent === "pi" || nativeLocalOpenClaw
         ? result.ok || result.httpStatus !== 503
         : !isTransientInferenceInvocationFailure(result),
-    retryDelaysMs: START_INFERENCE_SETTLEMENT_DELAYS_MS,
+    retryDelaysMs: delays,
     onRetry: (result, delayMs, attempt) =>
       log(
         `  Inference request returned HTTP ${result.ok ? "unknown" : result.httpStatus}; ` +
           `checking again in ${delayMs / 1_000} seconds ` +
-          `(attempt ${attempt + 1}/${START_INFERENCE_SETTLEMENT_DELAYS_MS.length + 1})…`,
+          `(attempt ${attempt + 1}/${delays.length + 1})…`,
       ),
     sleep: deps.delayInferenceInvocationProbe ?? sleep,
   });

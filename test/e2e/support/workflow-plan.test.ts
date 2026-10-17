@@ -271,6 +271,9 @@ describe("E2E workflow plan", () => {
     "src/lib/actions/inference-set/native-local.ts",
     "src/lib/actions/inference-set/local-runtime.ts",
     "src/lib/inference/native-local/profile.ts",
+    "src/lib/actions/sandbox/connect.ts",
+    "src/lib/actions/sandbox/launch-readiness/health.ts",
+    "src/lib/actions/sandbox/start.ts",
   ])("selects native OpenClaw live evidence when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
       "inference-routing-openclaw-native",

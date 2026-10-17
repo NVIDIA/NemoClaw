@@ -12,8 +12,8 @@ import type { SandboxEntry } from "../../state/registry";
 import {
   LaunchReadinessEvidenceError,
   LaunchReadinessObservationError,
-  requireLaunchSemanticHealth,
   requireNativeInferenceHealth,
+  requireLaunchSemanticHealth,
   type LaunchReadinessHealthDeps,
 } from "./launch-readiness/health";
 import {
@@ -209,6 +209,164 @@ const GATEWAY = "nemoclaw";
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const dcodeAgent = loadAgent("langchain-deepagents-code");
 const OPENROUTER_GATEWAY_AGENTS = ["openclaw", "hermes"] as const;
+
+it("preserves a safe native local probe failure for restart diagnostics (#12975)", async () => {
+  const binding = {
+    provider: "llama-cpp-local" as const,
+    agent: "openclaw" as const,
+    endpointUrl: "http://host.openshell.internal:8081/v1",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "authenticated" as const,
+    gatewayName: GATEWAY,
+    sandboxName: SANDBOX,
+  };
+  const receipt = {
+    ...binding,
+    ...nativeLocalIdentity(binding),
+    schemaVersion: 1 as const,
+    providerId: "owned-local-provider",
+  };
+  await expect(
+    requireNativeInferenceHealth({
+      sandboxName: SANDBOX,
+      gatewayName: GATEWAY,
+      agentName: "openclaw",
+      entry: {
+        name: SANDBOX,
+        provider: binding.provider,
+        model: "local-model",
+        nativeLocalProviderAttachment: receipt,
+      } as SandboxEntry,
+      deps: {
+        verifyNativeLocalAttachment: vi.fn(async () => {}),
+        inferenceInvocationProbe: vi.fn(async () => ({
+          ok: false as const,
+          detail: "sandbox inference invocation probe returned HTTP 503",
+          httpStatus: null,
+        })),
+      } as LaunchReadinessHealthDeps,
+    }),
+  ).rejects.toMatchObject({
+    category: "health",
+    failedCheck: "inference request",
+    detail: "sandbox inference invocation probe returned HTTP 503",
+  });
+});
+
+it.each([
+  {
+    name: "recovers",
+    agent: "openclaw",
+    selectedAgent: "openclaw",
+    statuses: [503, 200],
+    attempts: 2,
+    delays: 1,
+    succeeds: true,
+  },
+  {
+    name: "recovers with an implicit OpenClaw session",
+    agent: "openclaw",
+    selectedAgent: undefined,
+    statuses: [503, 200],
+    attempts: 2,
+    delays: 1,
+    succeeds: true,
+  },
+  {
+    name: "stays unavailable",
+    agent: "openclaw",
+    selectedAgent: "openclaw",
+    statuses: [503, 503, 503],
+    attempts: 3,
+    delays: 2,
+    succeeds: false,
+  },
+  {
+    name: "rejects credentials",
+    agent: "openclaw",
+    selectedAgent: "openclaw",
+    statuses: [401],
+    attempts: 1,
+    delays: 0,
+    succeeds: false,
+  },
+  {
+    name: "does not retry a conflicting Pi selection",
+    agent: "openclaw",
+    selectedAgent: "pi",
+    statuses: [503],
+    attempts: 1,
+    delays: 0,
+    succeeds: false,
+  },
+  {
+    name: "checks Pi once",
+    agent: "pi",
+    selectedAgent: "pi",
+    statuses: [503],
+    attempts: 1,
+    delays: 0,
+    succeeds: false,
+  },
+] as const)("bounds native local health when it $name (#12975)", async (testCase) => {
+  const binding = {
+    provider: "llama-cpp-local" as const,
+    agent: testCase.agent,
+    endpointUrl: "http://host.openshell.internal:8081/v1",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "authenticated" as const,
+    gatewayName: GATEWAY,
+    sandboxName: SANDBOX,
+  };
+  const statuses = [...testCase.statuses];
+  const inferenceInvocationProbe = vi.fn(async () => {
+    const httpStatus = statuses.shift() ?? 503;
+    return httpStatus === 200
+      ? ({ ok: true } as const)
+      : ({ ok: false, detail: `HTTP ${httpStatus}`, httpStatus } as const);
+  });
+  const nativeLocalInferenceRetrySleep = vi.fn(async () => {});
+  const verifyNativeLocalAttachment = vi.fn(async () => {});
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const check = requireNativeInferenceHealth({
+    sandboxName: SANDBOX,
+    gatewayName: GATEWAY,
+    agentName: testCase.selectedAgent,
+    entry: {
+      name: SANDBOX,
+      agent: testCase.agent,
+      provider: binding.provider,
+      model: "local-model",
+      nativeLocalProviderAttachment: {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1,
+        providerId: "owned-local-provider",
+      },
+    } as SandboxEntry,
+    deps: { inferenceInvocationProbe, nativeLocalInferenceRetrySleep, verifyNativeLocalAttachment },
+  });
+  try {
+    const result = await check.then(
+      () => ({ ok: true }),
+      (error: LaunchReadinessObservationError) => ({ ok: false, detail: error.detail }),
+    );
+    expect(result).toEqual(
+      testCase.succeeds ? { ok: true } : { ok: false, detail: `HTTP ${testCase.statuses.at(-1)}` },
+    );
+    expect(inferenceInvocationProbe).toHaveBeenCalledTimes(testCase.attempts);
+    expect(nativeLocalInferenceRetrySleep.mock.calls).toEqual(
+      testCase.delays ? [[8_000], [32_000]].slice(0, testCase.delays) : [],
+    );
+    expect(verifyNativeLocalAttachment).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledTimes(testCase.delays);
+    expect(errorSpy.mock.calls.at(-1)?.[0]).toEqual(
+      testCase.delays ? expect.stringContaining(`attempt ${testCase.attempts}/3`) : undefined,
+    );
+  } finally {
+    errorSpy.mockRestore();
+  }
+});
 
 function dcodeEntry(provider = "openrouter-api"): SandboxEntry {
   return {

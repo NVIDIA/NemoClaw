@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 
 import {
   connectModulePath,
@@ -30,6 +31,58 @@ describe("connectSandbox route lifecycle", () => {
     });
     delete process.env.NEMOCLAW_TEST_NO_SLEEP;
     delete require.cache[requireDist.resolve(connectModulePath)];
+  });
+
+  it("reports a failed native local restart probe without naming the shared route (#12975)", async () => {
+    const binding = {
+      provider: "llama-cpp-local" as const,
+      agent: "openclaw" as const,
+      endpointUrl: "http://host.openshell.internal:8081/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated" as const,
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+    };
+    const detail = `sandbox inference invocation probe returned HTTP 503; OPENAI_API_KEY=sk-test-not-real ${"x".repeat(300)}`;
+    const launchReadiness = requireDist(
+      "../../src/lib/actions/sandbox/launch-readiness.js",
+    ) as typeof import("./launch-readiness");
+    const { LaunchReadinessObservationError } = requireDist(
+      "../../src/lib/actions/sandbox/launch-readiness/health.js",
+    ) as typeof import("./launch-readiness/health");
+    vi.spyOn(launchReadiness, "requireNativeInferenceHealth").mockRejectedValue(
+      new LaunchReadinessObservationError("health", "inference request", detail),
+    );
+    const harness = createConnectHarness({
+      registryEntry: {
+        provider: binding.provider,
+        model: "local-model",
+        endpointUrl: binding.endpointUrl,
+        preferredInferenceApi: "openai-completions",
+        credentialEnv: binding.credentialEnv,
+        nativeLocalProviderAttachment: {
+          ...binding,
+          ...nativeLocalIdentity(binding),
+          schemaVersion: 1,
+          providerId: "owned-local-provider",
+        },
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("sandbox inference invocation probe returned HTTP 503");
+    expect(errorOutput).not.toContain("sk-test-not-real");
+    expect(errorOutput).not.toContain("x".repeat(300));
+    expect(errorOutput).not.toContain("inference.local");
+    expect(harness.withGatewayRouteMutationLockSpy).not.toHaveBeenCalled();
+    expect(
+      harness.runOpenshellSpy.mock.calls.filter(
+        ([args]) => Array.isArray(args) && args[0] === "inference" && args[1] === "set",
+      ),
+    ).toEqual([]);
   });
 
   it("skips the vLLM model preflight only for probe-only connects (#4585)", async () => {

@@ -1857,6 +1857,23 @@ async function ensureSandboxInferenceRouteUnlocked(
       process.exit(1);
     }
     const detail = error instanceof Error && error.message ? error.message : String(error);
+    if (sb.nativeLocalProviderAttachment !== undefined) {
+      if (!quiet) {
+        const nativeDetail =
+          error &&
+          typeof error === "object" &&
+          "detail" in error &&
+          typeof error.detail === "string"
+            ? error.detail
+            : detail;
+        console.error(
+          `  Error: native local inference check failed: ${sanitizeRouteValueForDisplay(redact(nativeDetail)).replace(/\s+/g, " ").trim().slice(0, 240)}`,
+        );
+        console.error(`  Run:  ${CLI_NAME} ${sandboxName} doctor`);
+        console.error("  Connect is stopping because native local inference is not known healthy.");
+      }
+      return { sandbox: sb, routeHealthy: false };
+    }
     if (!quiet) {
       console.error(`  Error: failed to verify or repair inference route: ${detail}`);
       printUnrecoverableInferenceRoute(
