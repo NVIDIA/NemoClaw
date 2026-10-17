@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { addAbortListener } from "node:events";
 import fs from "node:fs";
@@ -18,12 +18,14 @@ import {
   validateNativePodmanRestoreAction,
   validateNativePodmanSetupAction,
 } from "../../../tools/e2e/workflow-boundary.mts";
+import { requireFixture } from "./require-fixture.ts";
 
 const RESTORE_ACTION = path.resolve(".github/actions/restore-native-podman-e2e/action.yaml");
 const SETUP_ACTION = path.resolve(".github/actions/setup-native-podman-e2e/action.yaml");
 const FIXED_RESTORE_ROOT = "/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore";
 const COMMAND_OUTPUT_LIMIT = 64 * 1024;
 const OUTPUT_TRUNCATION_MARKER = "\n[output truncated]\n";
+const OPENSHELL_COMPONENTS = ["openshell", "openshell-gateway", "openshell-sandbox"];
 
 type WorkflowStep = {
   env?: Record<string, unknown>;
@@ -47,6 +49,31 @@ function e2eWorkflowJobs(): Record<string, WorkflowJob> {
     jobs: Record<string, WorkflowJob>;
   };
   return workflow.jobs;
+}
+
+function privilegedOpenShellInstallLog(sourceRoot: string): string {
+  return `${OPENSHELL_COMPONENTS.map(
+    (component) =>
+      `install -o root -g root -m 0755 ${sourceRoot}/${component} /usr/bin/${component}`,
+  ).join("\n")}\n`;
+}
+
+function requirePrivilegedOpenShellInstallLog(log: string, sourceRoot: string): void {
+  requireFixture(
+    log === privilegedOpenShellInstallLog(sourceRoot),
+    "Portable Hermes must install every OpenShell component as root:root with mode 0755",
+  );
+}
+
+function requirePrivilegedOpenShellReuseLog(log: string, destinationRoot: string): void {
+  const expected = `${OPENSHELL_COMPONENTS.flatMap((component) => [
+    `chown root:root ${destinationRoot}/${component}`,
+    `chmod 0755 ${destinationRoot}/${component}`,
+  ]).join("\n")}\n`;
+  requireFixture(
+    log === expected,
+    "Portable Hermes must enforce root:root ownership and mode 0755 on reused components",
+  );
 }
 
 vi.setConfig({ maxConcurrency: 5 });
@@ -359,6 +386,137 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o700 });
 }
 
+function writeOpenShellComponents(root: string, mode = 0o755): void {
+  for (const component of OPENSHELL_COMPONENTS) {
+    const componentPath = path.join(root, component);
+    writeExecutable(componentPath, "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(componentPath, mode);
+  }
+}
+
+type OpenShellHandoffContext = {
+  fakeBin: string;
+  home: string;
+  privilegedRoot: string;
+  root: string;
+  xdgBinHome: string;
+};
+
+type OpenShellHandoffPreparation = {
+  pathValue: string;
+  requireInstallLog?: (log: string) => void;
+  rewritePrivilegedRoot?: boolean;
+  sourceRoot: string;
+  verifySelection?: () => void;
+};
+
+function runOpenShellHandoffFixture(
+  tempPrefix: string,
+  prepare: (context: OpenShellHandoffContext) => OpenShellHandoffPreparation,
+): void {
+  const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
+  const install = job.steps?.find((step) => step.name === "Install pinned OpenShell");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), tempPrefix));
+  const home = path.join(root, "home");
+  const fakeBin = path.join(root, "bin");
+  const xdgBinHome = String(install?.env?.XDG_BIN_HOME ?? "")
+    .replace("${{ runner.temp }}", root)
+    .replace("${{ github.run_id }}", "123456")
+    .replace("${{ github.run_attempt }}", "1");
+  const githubPath = path.join(root, "github-path");
+  const privilegedRoot = path.join(root, "installed");
+  const sudoLog = path.join(root, "sudo.log");
+  fs.mkdirSync(home);
+  fs.mkdirSync(fakeBin);
+  fs.mkdirSync(privilegedRoot);
+  fs.writeFileSync(sudoLog, "");
+
+  try {
+    const { pathValue, requireInstallLog, rewritePrivilegedRoot, sourceRoot, verifySelection } =
+      prepare({
+        fakeBin,
+        home,
+        privilegedRoot,
+        root,
+        xdgBinHome,
+      });
+    const validateInstallLog =
+      requireInstallLog ?? ((log) => requirePrivilegedOpenShellInstallLog(log, sourceRoot));
+    writeExecutable(
+      path.join(fakeBin, "sudo"),
+      `#!/bin/sh
+set -eu
+case "$1" in
+  install)
+    previous=
+    last=
+    for argument in "$@"; do
+      previous="$last"
+      last="$argument"
+    done
+    [ -x "$previous" ]
+    destination="$SUDO_INSTALL_ROOT/$(basename "$last")"
+    cp "$previous" "$destination"
+    chmod 0755 "$destination"
+    ;;
+  chown)
+    [ "$2" = root:root ]
+    [ -f "$3" ] && [ ! -L "$3" ]
+    ;;
+  chmod)
+    [ "$2" = 0755 ]
+    [ -f "$3" ] && [ ! -L "$3" ]
+    chmod 0755 "$3"
+    ;;
+  *) exit 64 ;;
+esac
+printf '%s\\n' "$*" >>"$SUDO_LOG"
+exit 0
+`,
+    );
+    const installScript = rewritePrivilegedRoot
+      ? (install?.run ?? "").replaceAll("/usr/bin", privilegedRoot)
+      : (install?.run ?? "");
+    const result = spawnSync("/bin/bash", ["-c", installScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_PATH: githubPath,
+        HOME: home,
+        PATH: pathValue,
+        RUNNER_TEMP: root,
+        SUDO_INSTALL_ROOT: privilegedRoot,
+        SUDO_LOG: sudoLog,
+        XDG_BIN_HOME: xdgBinHome,
+      },
+    });
+
+    requireFixture(result.status === 0, result.stderr);
+    verifySelection?.();
+    const installLog = fs.readFileSync(sudoLog, "utf8");
+    validateInstallLog(installLog);
+    for (const component of OPENSHELL_COMPONENTS) {
+      const source = path.join(sourceRoot, component);
+      const destination = path.join(privilegedRoot, component);
+      requireFixture(
+        fs.readFileSync(destination).equals(fs.readFileSync(source)),
+        `Portable Hermes changed ${component} bytes during handoff`,
+      );
+      requireFixture(
+        (fs.statSync(destination).mode & 0o777) === 0o755,
+        `Portable Hermes installed ${component} with the wrong mode`,
+      );
+    }
+    requireFixture(
+      fs.readFileSync(githubPath, "utf8") ===
+        `${rewritePrivilegedRoot ? privilegedRoot : "/usr/bin"}\n`,
+      "Portable Hermes did not publish the privileged OpenShell root",
+    );
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+}
+
 async function runPodmanCleanupFixture(
   ownerContext: ProcessOwner,
   withDockerState: boolean,
@@ -648,6 +806,114 @@ describe("native Podman E2E setup boundary", () => {
     });
   });
 
+  it("copies Portable Hermes OpenShell components from a nondefault XDG bin home", () => {
+    runOpenShellHandoffFixture("nemoclaw-openshell-handoff-", ({ fakeBin, xdgBinHome }) => {
+      writeExecutable(
+        path.join(fakeBin, "bash"),
+        `#!/bin/sh
+set -eu
+if [ "\${1:-}" = scripts/install-openshell.sh ]; then
+  install_root="\${XDG_BIN_HOME:-$HOME/.local/bin}"
+  mkdir -p "$install_root"
+  for component in openshell openshell-gateway openshell-sandbox; do
+    printf '#!/bin/sh\\nexit 0\\n' >"$install_root/$component"
+    chmod 0755 "$install_root/$component"
+  done
+  exit 0
+fi
+exec /bin/bash "$@"
+`,
+      );
+      return {
+        pathValue: `${fakeBin}:/usr/bin:/bin`,
+        sourceRoot: xdgBinHome,
+      };
+    });
+  });
+
+  it("forces a fresh isolated install instead of promoting a compatible preinstalled root", () => {
+    runOpenShellHandoffFixture(
+      "nemoclaw-openshell-preinstalled-",
+      ({ fakeBin, home, root, xdgBinHome }) => {
+        const preinstalledRoot = path.join(root, "preinstalled");
+        const staleUserLocalRoot = path.join(home, ".local", "bin");
+        fs.mkdirSync(preinstalledRoot);
+        fs.mkdirSync(staleUserLocalRoot, { recursive: true });
+        fs.mkdirSync(xdgBinHome, { recursive: true });
+        writeExecutable(
+          path.join(fakeBin, "bash"),
+          `#!/bin/sh
+set -eu
+if [ "\${1:-}" = scripts/install-openshell.sh ]; then
+  [ "$(command -v openshell)" = "$XDG_BIN_HOME/openshell" ]
+  for component in openshell openshell-gateway openshell-sandbox; do
+    printf '#!/bin/sh\\nexit 7\\n' >"$XDG_BIN_HOME/$component"
+    chmod 0755 "$XDG_BIN_HOME/$component"
+  done
+  exit 0
+fi
+exec /bin/bash "$@"
+`,
+        );
+        writeOpenShellComponents(preinstalledRoot);
+        writeExecutable(path.join(xdgBinHome, "openshell"), "#!/bin/sh\nexit 81\n");
+        writeExecutable(path.join(xdgBinHome, "openshell-gateway"), "#!/bin/sh\nexit 82\n");
+        writeExecutable(path.join(xdgBinHome, "openshell-sandbox"), "#!/bin/sh\nexit 83\n");
+        writeExecutable(path.join(staleUserLocalRoot, "openshell"), "#!/bin/sh\nexit 91\n");
+        writeExecutable(path.join(staleUserLocalRoot, "openshell-gateway"), "#!/bin/sh\nexit 92\n");
+        writeExecutable(path.join(staleUserLocalRoot, "openshell-sandbox"), "#!/bin/sh\nexit 93\n");
+        return {
+          pathValue: `${fakeBin}:${preinstalledRoot}:/usr/bin:/bin`,
+          sourceRoot: xdgBinHome,
+          verifySelection: () =>
+            requireFixture(
+              fs.existsSync(xdgBinHome),
+              "A compatible preinstalled OpenShell bypassed the required fresh install",
+            ),
+        };
+      },
+    );
+  });
+
+  it("enforces ownership and mode when the isolated install aliases the privileged root", () => {
+    runOpenShellHandoffFixture(
+      "nemoclaw-openshell-privileged-preinstalled-",
+      ({ fakeBin, privilegedRoot, xdgBinHome }) => {
+        writeExecutable(
+          path.join(fakeBin, "bash"),
+          `#!/bin/sh
+set -eu
+if [ "\${1:-}" = scripts/install-openshell.sh ]; then
+  [ "$(command -v openshell)" = "$XDG_BIN_HOME/openshell" ]
+  rm -f "$XDG_BIN_HOME/openshell"
+  for component in openshell openshell-gateway openshell-sandbox; do
+    ln "$SUDO_INSTALL_ROOT/$component" "$XDG_BIN_HOME/$component"
+  done
+  exit 0
+fi
+exec /bin/bash "$@"
+`,
+        );
+        writeOpenShellComponents(privilegedRoot, 0o777);
+        return {
+          pathValue: `${fakeBin}:${privilegedRoot}:/usr/bin:/bin`,
+          requireInstallLog: (log) => requirePrivilegedOpenShellReuseLog(log, privilegedRoot),
+          rewritePrivilegedRoot: true,
+          sourceRoot: xdgBinHome,
+        };
+      },
+    );
+  });
+
+  it("rejects a Portable Hermes handoff without root ownership arguments", () => {
+    const sourceRoot = "/trusted/openshell";
+    const mutation = privilegedOpenShellInstallLog(sourceRoot).replace(" -o root", "");
+
+    expect(() => requirePrivilegedOpenShellInstallLog(mutation, sourceRoot)).toThrow(
+      /root:root with mode 0755/,
+    );
+  });
+
   // source-shape-contract: security -- The explicit selector must retain the reviewed GPU, runtime, candidate, and cleanup boundaries
   it("runs Portable Hermes only on the explicit Podman 5.7 GPU lane", () => {
     const setupAction = YAML.parse(fs.readFileSync(SETUP_ACTION, "utf8")) as {
@@ -671,6 +937,7 @@ describe("native Podman E2E setup boundary", () => {
     const fixtureInstall = job.steps?.find(
       (step) => step.name === "Install immutable native Podman cleanup fixture",
     );
+    const openshellInstall = job.steps?.find((step) => step.name === "Install pinned OpenShell");
     const candidateCheckout = job.steps?.find(
       (step) => step.name === "Check out the exact candidate",
     );
@@ -682,6 +949,7 @@ describe("native Podman E2E setup boundary", () => {
       (step) => step.name === "Remove immutable native Podman cleanup fixture",
     );
     const trustedCheckoutIndex = job.steps?.indexOf(trustedCheckout!) ?? -1;
+    const openshellInstallIndex = job.steps?.indexOf(openshellInstall!) ?? -1;
     const candidateCheckoutIndex = job.steps?.indexOf(candidateCheckout!) ?? -1;
     const setupIndex = job.steps?.indexOf(setup!) ?? -1;
     const uploadIndex =
@@ -730,6 +998,11 @@ describe("native Podman E2E setup boundary", () => {
     );
     expect(fixtureInstall?.run).toContain("sha256sum --check --strict");
     expect(fixtureInstall?.run).toContain("--owner=root --group=root --mode=0555");
+    expect(openshellInstall?.run).toContain("bash scripts/install-openshell.sh");
+    expect(openshellInstall?.env).toEqual({
+      XDG_BIN_HOME:
+        "${{ runner.temp }}/nemoclaw-portable-hermes-openshell-bin.${{ github.run_id }}.${{ github.run_attempt }}",
+    });
     expect(setup?.with).toEqual({
       "cleanup-fixture":
         "/usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}",
@@ -765,6 +1038,8 @@ describe("native Podman E2E setup boundary", () => {
       /live-vitest-invocation\.mts run \\\n\s+--test-path test\/e2e\/live\/portable-profile-rootless-linux\.test\.ts/u,
     );
     expect(trustedCheckoutIndex).toBeGreaterThanOrEqual(0);
+    expect(openshellInstallIndex).toBeGreaterThan(trustedCheckoutIndex);
+    expect(candidateCheckoutIndex).toBeGreaterThan(openshellInstallIndex);
     expect(candidateCheckoutIndex).toBeGreaterThan(trustedCheckoutIndex);
     expect(setupIndex).toBeGreaterThanOrEqual(0);
     expect(uploadIndex).toBeGreaterThan(setupIndex);

@@ -3,15 +3,19 @@
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Super VL release preparation
+# Super VL Station default candidate
 
-This activation candidate prepares a harness-independent Super VL NVFP4 recipe for DGX Station.
-It is published for draft review, not enabled for use. The production catalog lists the preset, but selection and support remain disabled.
-The model does not enter the install menu or change Station's default. Ultra remains available.
+This change enables the harness-independent Super VL NVFP4 recipe as the default for new single-DGX-Station installs.
+The preset is experimental because its pinned runtime is a public nightly, not a stable release.
+Explicit Ultra and DeepSeek selections remain available. Paired Stations retain Ultra, and Spark is unchanged.
+Existing running installations are not automatically migrated.
 
 The preceding inactive Cobalt work is recorded in issue #12492.
 The [October 15 scope decision](https://github.com/NVIDIA/NemoClaw/issues/12492#issuecomment-6197737817)
 accepts publication of this activation candidate, with qualification and independent activation review still required.
+The [single-Station default Accept decision](https://github.com/NVIDIA/NemoClaw/issues/12492#issuecomment-6204669353)
+authorizes this default change, owned by Prekshi Vyas, while retaining Ultra as an option and for paired Stations.
+That decision does not establish passing qualification or independent merge approval.
 
 The public, ungated HF artifact is pinned to launch revision `82d93699acd3be9e4617c53360fe5b3f5dbeb1b3`.
 Its manifest lists 114 files (75,063,319,581 bytes). All 88 weight hashes and all model code, tokenizer, and configuration files
@@ -20,7 +24,7 @@ All 114 launch files were independently SHA-256 verified in the native Station m
 The runtime is the model-card-listed public ARM64 vLLM nightly at digest
 `sha256:fd33bec1578f312a01547cc6b9691a5154c3e8bcfb76d2b35acb657bfc4eee8f`.
 It contains vLLM commit `3f1bcfd82bb2e93fcd364fc7a5491718453a77e2`, including fixes #59627 and #60797.
-This is a nightly, not a stable release or a custom NemoClaw image. Complete qualification and activation review remain required.
+This is a nightly, not a stable release or a custom NemoClaw image. Candidate-bound onboarding qualification and independent review remain required before merging this default change.
 Keep credentials, private endpoints and raw private test records outside this repository.
 
 ## Prepared integration
@@ -70,7 +74,19 @@ The eight-image limit, video denial, remote-domain denial, and four/eight-image 
 This is not an all-green qualification. These direct endpoint tests do not qualify a new OpenClaw run or full CLI onboarding.
 The exact npm archive, model manifest, image, template, command, dependency inventory, and test scripts are bound in the private evidence ledger.
 These Station results predate the launcher cleanup repair. Local process tests cover server exit, signal forwarding, and snapshot removal;
-repeat native Station startup and restart qualification with the repaired launcher before activation.
+the subsequent run below tested the repaired launcher.
+
+The October 15 run on commit `cb8f90438e362659b4a14f4b2ad9f66769c74b4d` passed native installation,
+authentication, receipt recovery, restart, and cold reinstall on the pinned public image.
+Source-checkout CLI onboarding completed all eight stages. OpenClaw 2026.9.2 used the actual `main` agent,
+full tools, Tool Search disabled, high thinking, a 49,152-token context, an 8,192-token output budget,
+and `parallel_tool_calls: false`. Five turns exercised 20 tool calls, image ordering, exact file bytes
+with zero/one/two trailing newlines, restart, and rebuild. The original workspace instructions were preserved.
+Two successful mutating turns recorded `replayInvalid: true`; that metadata is not evidence of safe replay.
+The packaged CLI's fallback sandbox build failed because required build files were absent from the npm archive.
+The source-checkout pass does not resolve that packaging failure. The local-media HTTP status mismatch also remains.
+This historical evidence is identified by `super-vl-station-20261015-cb8f90438`; it does not qualify the new default-selection path.
+The default candidate must verify native onboarding and generated agent settings without relying on manual configuration from that run.
 
 The recipe adds no agent configuration, workspace instructions, or harness-specific setup.
 Tool and reasoning parsers are model-server settings; they do not select or configure an agent harness.
@@ -96,14 +112,15 @@ That output limit is a client requirement, not a server-enforced limit or the ba
 This recipe does not configure clients or certify that every harness sends these fields.
 
 Integration tests compile these documents and materialize the serving command through existing consumers.
-They prove that discovery lists the disabled release candidate and selection rejects it.
-The old Cobalt identifier is retired. An enabled synthetic test copy proves selection and receipt wiring only.
+They prove that qualified single-Station discovery selects the experimental preset by default,
+explicit model choices remain respected, and missing hardware qualifications or disabled presets are rejected.
+The old Cobalt identifier is retired. Installer tests cover native receipt wiring, reboot resume, and paired-Station selection.
 These tests do not prove runtime flag compatibility, model quality, prompt fit, harness compatibility, or hardware performance.
 The model capabilities describe the candidate contract, not completed release qualification.
 
 ## Release activation
 
-Complete these gates before enabling this draft:
+Complete these gates before merging this default candidate:
 
 1. Record the released NVFP4/MTP model identity, immutable revision, file manifest, template hash, and complete runtime image digest.
 2. Replace the release bindings and validate all serving options and template contents against the pinned runtime and target hardware.
@@ -111,8 +128,9 @@ Complete these gates before enabling this draft:
 3. Qualify chat, images, context fit, and streaming/non-streaming tools, including serial responses and trailing-newline preservation with thinking enabled.
    Include authentication, restart, rebuild, cleanup, recovery, and the staged media restrictions.
 4. Record the harness and configuration used for each live test; do not imply untested harnesses are qualified.
-5. Set selection to `explicit-only` and choose the reviewed support state from release-bound evidence.
-6. Review any proposed default or fallback change separately from staging.
+5. Qualify the new automatic selection through native onboarding, including generated agent configuration and packaged sandbox delivery.
+   The existing clean-host Station smoke requires a dedicated host; do not run its destructive cleanup on a workstation with unrelated sandboxes.
+6. Independently review this single-Station default change separately from the already-merged staging integration.
 
 The model is publicly released. Draft publication does not establish activation readiness.
-Do not enable the preset while any artifact field or qualification result remains unresolved.
+Do not treat this local/default candidate or historical hardware results as proof that the promotion has shipped.

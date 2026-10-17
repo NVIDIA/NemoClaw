@@ -24,7 +24,7 @@ Some changes apply at runtime, while image and filesystem changes require a rebu
 | --- | --- | --- |
 | Inference provider | Runtime route and config update; rebuild only if you need to recreate the image | Run `$$nemoclaw inference set` |
 | Inference model on the current provider | Runtime route and config update | Run `$$nemoclaw inference set` |
-| Sub-agent | Re-onboard required because the sub-agent and workspace are baked at onboard | `$$nemoclaw onboard --recreate-sandbox` |
+| Agent and workspace layout configured during NemoClaw onboarding | Re-onboard to replace the initial layout; native agent roster changes follow the `agents.list` row below | `$$nemoclaw onboard --recreate-sandbox` |
 | Network policy preset | Runtime on the next request; rebuild only if the preset adds bind-mounted secrets | `$$nemoclaw <name> policy add <preset>` or `policy remove <preset>` |
 | Network allowlist | Runtime on the next request | `openshell policy set` or the interactive approval prompt at the gateway |
 | Channel tokens | Rebuild required because the channel configuration and credential attachment are created during onboarding or rebuild | `$$nemoclaw <name> channels add <channel>`, then accept the rebuild prompt |
@@ -37,7 +37,7 @@ Some changes apply at runtime, while image and filesystem changes require a rebu
 | Filesystem layout | Locked at creation | Re-onboard with `$$nemoclaw onboard --recreate-sandbox` |
 | Sandbox name | Locked at creation | Re-onboard with a different `--name` |
 | GPU passthrough or device selector | Locked at creation | Re-onboard with `--gpu` or `--sandbox-gpu-device` |
-| `agents.list` | Runtime after gateway restart; generated OpenClaw configuration disables hot reload | Use `openclaw configure` or `openclaw config set`, then run `$$nemoclaw <name> gateway restart` |
+| `agents.list` | Runtime through hybrid reload by default; Google Chat keeps reload disabled to preserve its webhook route | Use `openclaw configure` or `openclaw config set`. With Google Chat enabled, run `$$nemoclaw <name> gateway restart` to activate the change. |
 | `openclaw.json` keys | Runtime according to OpenClaw's native reload behavior; some changes require a gateway restart | Use `openclaw configure`, `openclaw config set`, or `openclaw config unset` inside the sandbox |
 
 For a new or pristine OpenClaw workspace, `NEMOCLAW_MINIMAL_BOOTSTRAP=1` avoids roughly 3,000 tokens of per-turn project-context overhead by skipping the default template seed. It does not delete existing workspace files.

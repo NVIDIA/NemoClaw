@@ -59,6 +59,7 @@ on:
       - "src/lib/security/credential-hash.ts"
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
+      - "test/helpers/openclaw-real-agent-reload-proof.ts"
       - "test/e2e/fixtures/docker-build-guard.ts"
       - "test/e2e/live/mcp-bridge*.ts"
       - "test/e2e/support/mcp-bridge-portable-lock-barrier.ts"

@@ -87,11 +87,13 @@ describe("handleAgentSetupState", () => {
     const { deps, calls } = createDeps();
     const agent = { name: "hermes", displayName: "Hermes" };
     const session = createSession();
+    const revalidateSandboxIdentity = vi.fn();
 
     const result = await handleAgentSetupState({
       ...baseOptions(deps, agent),
       session,
       resume: true,
+      revalidateSandboxIdentity,
     });
 
     expect(calls.handleAgentSetup).toHaveBeenCalledWith(
@@ -101,9 +103,18 @@ describe("handleAgentSetupState", () => {
       agent,
       true,
       session,
-      { ctx: true, gatewayName: "nemoclaw-19090" },
+      {
+        ctx: true,
+        gatewayName: "nemoclaw-19090",
+        revalidateSandboxIdentity,
+        prepareHermesInferenceForward: expect.any(Function),
+      },
     );
-    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent);
+    expect(calls.ensureDashboard).toHaveBeenCalledWith(
+      "my-assistant",
+      agent,
+      revalidateSandboxIdentity,
+    );
     expect(calls.skipped).toHaveBeenCalledWith("openclaw");
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
     expect(result.session?.steps.openclaw.status).toBe("skipped");
@@ -116,6 +127,124 @@ describe("handleAgentSetupState", () => {
     });
   });
 
+  it.each([false, true])(
+    "hands the selected forward to Hermes exactly once before setup completes (resume=%s)",
+    async (resume) => {
+      const events: string[] = [];
+      const revalidateSandboxIdentity = vi.fn();
+      const { deps, calls } = createDeps({
+        handleAgentSetup: async (_name, _model, _provider, _agent, _resume, _session, context) => {
+          events.push("api-ready");
+          await (
+            context as { prepareHermesInferenceForward(): Promise<void> }
+          ).prepareHermesInferenceForward();
+          events.push("route-restart", "agent-setup-complete");
+        },
+      });
+      calls.ensureDashboard.mockImplementation(() => {
+        events.push("forward-owned:18791", "forward-owned:8643");
+        return 18791;
+      });
+      calls.persistDashboardPort.mockImplementation(() => {
+        events.push("port-published");
+      });
+      const agent = { name: "hermes", displayName: "Hermes" };
+      await handleAgentSetupState({
+        ...baseOptions(deps, agent),
+        resume,
+        revalidateSandboxIdentity,
+      });
+      expect(events).toEqual([
+        "api-ready",
+        "forward-owned:18791",
+        "forward-owned:8643",
+        "port-published",
+        "route-restart",
+        "agent-setup-complete",
+      ]);
+      expect(calls.ensureDashboard).toHaveBeenCalledExactlyOnceWith(
+        "my-assistant",
+        agent,
+        revalidateSandboxIdentity,
+      );
+      expect(calls.persistDashboardPort).toHaveBeenCalledExactlyOnceWith("my-assistant", 18791);
+      expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
+        "publish agent forward for sandbox 'my-assistant'",
+      );
+      expect(calls.skipped).toHaveBeenCalledWith("openclaw");
+    },
+  );
+
+  it.each([
+    {
+      name: "failed forward",
+      forward: () => {
+        throw new Error("forward refused");
+      },
+    },
+    { name: "missing forward", forward: () => 0 },
+  ])("does not activate or advance after $name", async ({ forward }) => {
+    const restart = vi.fn();
+    const { deps, calls } = createDeps({
+      ensureAgentDashboardForward: forward,
+      handleAgentSetup: async (_n, _m, _p, _a, _r, _s, context) => {
+        await (
+          context as { prepareHermesInferenceForward(): Promise<void> }
+        ).prepareHermesInferenceForward();
+        restart();
+      },
+    });
+    await expect(
+      handleAgentSetupState(baseOptions(deps, { name: "hermes", displayName: "Hermes" })),
+    ).rejects.toThrow();
+    expect(restart).not.toHaveBeenCalled();
+    expect(calls.persistDashboardPort).not.toHaveBeenCalled();
+    expect(calls.skipped).not.toHaveBeenCalled();
+  });
+
+  it("refuses publication and restart when identity changes during forward handoff", async () => {
+    const restart = vi.fn();
+    const checks = new Map([
+      [
+        "publish agent forward for sandbox 'my-assistant'",
+        () => {
+          throw new Error("sandbox identity changed");
+        },
+      ],
+    ]);
+    const { deps, calls } = createDeps({
+      handleAgentSetup: async (_n, _m, _p, _a, _r, _s, context) => {
+        await (
+          context as { prepareHermesInferenceForward(): Promise<void> }
+        ).prepareHermesInferenceForward();
+        restart();
+      },
+    });
+    await expect(
+      handleAgentSetupState({
+        ...baseOptions(deps, { name: "hermes", displayName: "Hermes" }),
+        revalidateSandboxIdentity: (operation) => checks.get(operation)?.(),
+      }),
+    ).rejects.toThrow("sandbox identity changed");
+    expect(calls.ensureDashboard).toHaveBeenCalledOnce();
+    expect(calls.persistDashboardPort).not.toHaveBeenCalled();
+    expect(restart).not.toHaveBeenCalled();
+    expect(calls.skipped).not.toHaveBeenCalled();
+  });
+
+  it("does not forward or advance when agent route initialization fails", async () => {
+    const { deps, calls } = createDeps();
+    calls.handleAgentSetup.mockRejectedValueOnce(new Error("native attachment changed"));
+    const agent = { name: "hermes", displayName: "Hermes" };
+    await expect(handleAgentSetupState(baseOptions(deps, agent))).rejects.toThrow(
+      "native attachment changed",
+    );
+    expect(calls.ensureDashboard).not.toHaveBeenCalled();
+    expect(calls.persistDashboardPort).not.toHaveBeenCalled();
+    expect(calls.skipped).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
+
   it("persists the bumped dashboard port returned by the forward (#8214)", async () => {
     const { deps, calls } = createDeps({});
     calls.ensureDashboard.mockReturnValue(18791);
@@ -123,7 +252,7 @@ describe("handleAgentSetupState", () => {
 
     await handleAgentSetupState({ ...baseOptions(deps, agent), resume: true });
 
-    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent);
+    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent, undefined);
     expect(calls.persistDashboardPort).toHaveBeenCalledWith("my-assistant", 18791);
   });
 

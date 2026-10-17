@@ -96,6 +96,7 @@ import {
   validateAttachedHermesToolGatewayProfileBeforeSandboxCreation,
   verifyNativeHostedAttachmentAfterCreate,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
+  verifyNativeLocalAttachmentAfterCreate,
   verifyNativeNvidiaAttachmentAfterCreate,
 } from "./provider-publication";
 import {
@@ -1000,6 +1001,7 @@ export async function readManagedDcodeCreateSelectionDrift(
     model: string;
     preferredInferenceApi: string | null;
     createIntent: Pick<SandboxCreateIntent, "endpointUrl"> | null;
+    nativeLocalProviderAttachment?: { endpointUrl: string };
     nativeProvider: boolean;
   },
   readDcodeSelectionDrift: DcodeSelectionDriftReader,
@@ -1009,7 +1011,7 @@ export async function readManagedDcodeCreateSelectionDrift(
     input.provider,
     input.model,
     input.preferredInferenceApi,
-    input.createIntent?.endpointUrl ?? null,
+    input.nativeLocalProviderAttachment?.endpointUrl ?? input.createIntent?.endpointUrl ?? null,
     input.nativeProvider,
   );
 }
@@ -1439,6 +1441,7 @@ export function createProviderEffectBoundary(input: {
   readonly resumingVerifiedCreate?: boolean;
   readonly sandboxName: string;
   readonly gatewayName: string;
+  readonly expectedNativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   readonly expectedNativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   readonly expectedNativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
   readonly preparationInput: ProviderPreparationInput;
@@ -1499,6 +1502,18 @@ export function createProviderEffectBoundary(input: {
   const attachAndVerifyNativeInferenceProvider = async (
     context: VerifiedSandboxCreateEffectsContext,
   ) => {
+    if (input.expectedNativeLocalProviderAttachment) {
+      context.revalidateSandboxIdentity(
+        `attaching native local provider for sandbox '${input.sandboxName}'`,
+      );
+      await verifyNativeLocalAttachmentAfterCreate({
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        expected: input.expectedNativeLocalProviderAttachment,
+        deps,
+      });
+      return;
+    }
     if (
       !usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) &&
       !usesNativeHostedProvider(input.preparationInput.inferenceProvider)
@@ -1776,6 +1791,10 @@ function directCreateHermesToolGatewayProfile(input: {
   return input.providerNames.includes(providerName) ? { hermesToolGateway: { providerName } } : {};
 }
 
+/**
+ * Return the create-or-reuse step for one onboard run. The post-create retry
+ * owner is installed once here and serves every call of the returned step.
+ */
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
   const postCreateRecoveryRetryOwner = installPostCreateRecoveryRetryOwner();
   return async function createSandboxWithBaseImageResolution(
@@ -2104,10 +2123,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           provider,
           preferredInferenceApi,
           endpointUrl: createIntent?.endpointUrl ?? null,
-          nativeProvider: Boolean(
-            resolvedCreateIntent.nativeHostedProviderAttachment ||
-            resolvedCreateIntent.nativeNvidiaProviderAttachment,
-          ),
+          localNimSelected: createIntent?.localNimSelected === true,
+          nativeLocalProviderAttachment: resolvedCreateIntent.nativeLocalProviderAttachment,
+          nativeProvider:
+            createIntent?.localNimSelected === true
+              ? false
+              : Boolean(
+                  resolvedCreateIntent.nativeLocalProviderAttachment ||
+                  resolvedCreateIntent.nativeHostedProviderAttachment ||
+                  resolvedCreateIntent.nativeNvidiaProviderAttachment,
+                ),
           startupProfile: {
             chatUiUrl,
             effectiveDashboardPort: effectivePort,
@@ -2283,6 +2308,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         updateReusedSandboxMetadata,
         releaseDashboardPort: dashboardPortReservationScope.release,
         revalidateSandboxIdentity: (operation) => revalidateSandboxIdentity(true, operation),
+        cliName: cliName(),
       }));
     };
     if (recreateRuntime.acceptedTarget && !resumingVerifiedCreate) {
@@ -2461,7 +2487,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               model,
               preferredInferenceApi,
               createIntent,
+              nativeLocalProviderAttachment: resolvedCreateIntent.nativeLocalProviderAttachment,
               nativeProvider: Boolean(
+                existingSandboxEntry?.nativeLocalProviderAttachment ||
                 existingSandboxEntry?.nativeHostedProviderAttachment ||
                 existingSandboxEntry?.nativeNvidiaProviderAttachment,
               ),
@@ -2822,8 +2850,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 model,
                 chatUiUrl,
                 provider,
-                endpointUrl: createIntent?.endpointUrl ?? null,
+                endpointUrl:
+                  resolvedCreateIntent.nativeLocalProviderAttachment?.endpointUrl ??
+                  createIntent?.endpointUrl ??
+                  null,
                 nativeProvider: Boolean(
+                  resolvedCreateIntent.nativeLocalProviderAttachment ||
                   resolvedCreateIntent.nativeHostedProviderAttachment ||
                   resolvedCreateIntent.nativeNvidiaProviderAttachment,
                 ),
@@ -3732,6 +3764,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
       sandboxName,
       gatewayName: GATEWAY_NAME,
+      expectedNativeLocalProviderAttachment: resolvedCreateIntent.nativeLocalProviderAttachment,
       expectedNativeNvidiaProviderAttachment: resolvedCreateIntent.nativeNvidiaProviderAttachment,
       expectedNativeHostedProviderAttachment: resolvedCreateIntent.nativeHostedProviderAttachment,
       preparationInput: providerPreparationInput,
@@ -3840,6 +3873,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           }),
         sourceRoot: ROOT,
         buildContextSettings: {
+          nativeEndpointUrl: resolvedCreateIntent.nativeLocalProviderAttachment?.endpointUrl,
           model,
           provider,
           preferredInferenceApi,

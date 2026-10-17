@@ -167,6 +167,7 @@ describe("OpenRouter model switch verification", () => {
       expect(result.model).toBe(model);
       expect(routeSelections(deps)).toEqual([]);
       expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
+        agentName: "openclaw",
         gatewayName: "nemoclaw-18085",
         sandboxName: "alpha",
         provider: OPENROUTER_PROVIDER_NAME,

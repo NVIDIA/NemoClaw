@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { SandboxEntry } from "../state/registry";
+import { nativeLocalIdentity } from "./native-local/contract";
 import {
   checkGatewayRouteCompatibility,
   formatGatewayRouteConflict,
@@ -114,6 +115,41 @@ describe("shared gateway inference route compatibility", () => {
       ok: false,
       conflicts: [{ sandboxName: "reserved-peer", reason: "provider-model" }],
     });
+  });
+
+  it("counts an owned Local NIM even when its registry row has a stale native attachment", () => {
+    const binding = {
+      provider: "vllm-local",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "sentinel",
+      gatewayName: "nemoclaw",
+      sandboxName: "nim-peer",
+    } as const;
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "stale-provider",
+    };
+    const peer = sandbox("nim-peer", {
+      provider: "vllm-local",
+      model: "nim/model",
+      nimContainer: "nemoclaw-nim-owned",
+      nativeLocalProviderAttachment: attachment,
+    });
+
+    expect(discover(discoveryRoute("vllm-local"), [peer])).toMatchObject({
+      ok: true,
+      requiredModel: "nim/model",
+    });
+    expect(check(route("nvidia-prod", "different/model"), [peer])).toMatchObject({
+      ok: false,
+      conflicts: [{ sandboxName: "nim-peer", reason: "provider-model" }],
+    });
+    expect(discover(discoveryRoute("vllm-local"), [{ ...peer, nimContainer: null }])).toMatchObject(
+      { ok: true, requiredModel: null },
+    );
   });
 
   it.each([

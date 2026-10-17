@@ -9,7 +9,7 @@ metadata:
   displayName: NVIDIA Nemotron 3.5 Super VL 120B-A12B NVFP4
 
 spec:
-  # Verified release artifact; its preset remains disabled pending runtime qualification.
+  # Verified public release artifact; see the Station release record for limitations.
   id: nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4
   revision: "82d93699acd3be9e4617c53360fe5b3f5dbeb1b3"
   environmentValue: nemotron-3.5-super-vl-120b

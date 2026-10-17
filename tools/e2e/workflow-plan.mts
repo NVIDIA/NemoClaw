@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { appendFileSync } from "node:fs";
-import { HOSTED_PROVIDER_SMOKE_CASES } from "./hosted-provider-smoke.mts";
+import { OPENROUTER_SMOKE } from "./hosted-provider-smoke.mts";
 import { requiresManagedImages } from "./workflow-prerequisites.mts";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -402,9 +402,7 @@ function isCatalogueMatrixRowForProfile(
   return (
     target?.profile === profile &&
     value.model_env ===
-      HOSTED_PROVIDER_SMOKE_CASES.find(
-        (selected) => target.id === `hosted-inference-${selected.selector}`,
-      )?.modelEnv &&
+      (target.id === "hosted-inference-openrouter" ? OPENROUTER_SMOKE.modelEnv : undefined) &&
     target.targetId === value.target_id &&
     target.displayName === value.display_name &&
     target.agentRuntime === value.agent_runtime &&

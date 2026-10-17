@@ -423,11 +423,15 @@ export const finalizationHandlerDeps = {
     if (typeof gatewayName !== "string" || !gatewayName) {
       return { ok: false, detail: "the sandbox gateway identity is unavailable" };
     }
-    return finalizationHandlerRuntime.loadVerifyDeployment().probeOnboardInferenceInvocation({
-      ...entry,
-      ...input,
+    const verification = finalizationHandlerRuntime.loadVerifyDeployment();
+    const context = verification.onboardInferenceVerificationContext(
+      input.sandboxName,
       gatewayName,
-    });
+      input.agentName,
+      { ...input, endpointUrl: entry.endpointUrl },
+      entry,
+    );
+    return verification.probeOnboardInferenceInvocation(context.invocation);
   },
   async waitForSandboxControlPlaneReady(name: string): Promise<boolean> {
     return finalizationHandlerRuntime

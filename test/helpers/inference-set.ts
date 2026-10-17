@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  nativeLocalIdentity,
+  type NativeLocalBinding,
+} from "../../src/lib/inference/native-local/contract";
 import { vi } from "vitest";
 import type {
   CaptureOpenshellOptions,
@@ -15,6 +19,7 @@ import type { OpenShellProviderAdapter } from "../../src/lib/adapters/openshell/
 import { createCliOpenShellProviderAdapter } from "../../src/lib/adapters/openshell/provider-adapter-cli";
 import { HOSTED_NATIVE_PROVIDERS } from "../../src/lib/inference/native-provider/hosted";
 import { fixedNativeProvider } from "../../src/lib/inference/native-provider/fixed";
+import { isLocalInferenceProvider } from "../../src/lib/inference/native-local/agent-config";
 import type { NativeProviderAttachment } from "../../src/lib/inference/native-provider/contract";
 import type { AgentConfigTarget } from "../../src/lib/sandbox/config";
 import type { ConfigObject, ConfigValue } from "../../src/lib/security/credential-filter";
@@ -75,18 +80,31 @@ function nativeAwareProviderAdapter(
   base: OpenShellProviderAdapter,
   entries: SandboxEntry[],
 ): OpenShellProviderAdapter {
-  const definitions = [fixedNativeProvider("nvidia-prod")!, ...HOSTED_NATIVE_PROVIDERS];
+  const localReceipts = entries.flatMap((entry) =>
+    entry.nativeLocalProviderAttachment ? [entry.nativeLocalProviderAttachment] : [],
+  );
+  const definitions = [
+    fixedNativeProvider("nvidia-prod")!,
+    ...HOSTED_NATIVE_PROVIDERS,
+    ...localReceipts,
+  ];
   const receipts = entries.flatMap((entry) =>
-    [entry.nativeNvidiaProviderAttachment, entry.nativeHostedProviderAttachment].filter(
-      (receipt): receipt is NativeProviderAttachment => !!receipt,
-    ),
+    [
+      entry.nativeNvidiaProviderAttachment,
+      entry.nativeHostedProviderAttachment,
+      entry.nativeLocalProviderAttachment,
+    ].filter((receipt): receipt is NativeProviderAttachment => !!receipt),
   );
   const present = new Set(receipts.map((receipt) => receipt.providerName));
   const attachments = new Map(
     entries.map((entry) => [
       entry.name,
       new Set(
-        [entry.nativeNvidiaProviderAttachment, entry.nativeHostedProviderAttachment]
+        [
+          entry.nativeNvidiaProviderAttachment,
+          entry.nativeHostedProviderAttachment,
+          entry.nativeLocalProviderAttachment,
+        ]
           .filter((receipt) => !!receipt)
           .map((receipt) => receipt!.providerName),
       ),
@@ -97,6 +115,12 @@ function nativeAwareProviderAdapter(
   return {
     ...base,
     ensureProviderPolicyComposition: async () => ({ ok: true, value: undefined }),
+    inspectProviderProfile: async (request) => {
+      const local = localReceipts.find((receipt) => receipt.profileId === request.profileType);
+      return local
+        ? { ok: true, value: { credentialKeys: [local.credentialEnv] } }
+        : await base.inspectProviderProfile(request);
+    },
     importProviderProfile: async (request) =>
       definitions.some((definition) => request.profilePath.endsWith(`${definition.profileId}.yaml`))
         ? { ok: true }
@@ -155,6 +179,11 @@ function nativeAwareProviderAdapter(
       ok: true,
       value: { names: [...(attachments.get(request.sandboxName) ?? [])] },
     }),
+    deleteProvider: async (request) => {
+      if (!definitionFor(request.providerName)) return await base.deleteProvider(request);
+      present.delete(request.providerName);
+      return { ok: true };
+    },
   };
 }
 
@@ -260,6 +289,26 @@ export type CaptureOpenshell = (
   options?: CaptureOpenshellOptions,
 ) => CaptureOpenshellResult;
 
+export function nativeLocalTestReceipt(
+  provider: NativeLocalBinding["provider"] = "ollama-local",
+  endpointUrl = "http://host.openshell.internal:11435/v1",
+) {
+  const binding: NativeLocalBinding = {
+    provider,
+    endpointUrl,
+    sandboxName: "alpha",
+    gatewayName: "nemoclaw",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "authenticated",
+  };
+  return {
+    ...binding,
+    ...nativeLocalIdentity(binding),
+    schemaVersion: 1 as const,
+    providerId: "local-provider-id",
+  };
+}
+
 export function createDeps(options: {
   config: ConfigObject;
   entry?: SandboxEntry | null;
@@ -289,6 +338,7 @@ export function createDeps(options: {
   withGatewayRouteMutationLock?: InferenceSetDeps["withGatewayRouteMutationLock"];
   getNativeNvidiaProviderAuthority?: InferenceSetDeps["getNativeNvidiaProviderAuthority"];
   setNativeNvidiaProviderAuthority?: InferenceSetDeps["setNativeNvidiaProviderAuthority"];
+  clearNativeLocalProviderAuthority?: InferenceSetDeps["clearNativeLocalProviderAuthority"];
 }): InferenceSetDeps & {
   calls: {
     captureOpenshell: ReturnType<typeof vi.fn>;
@@ -315,6 +365,7 @@ export function createDeps(options: {
     settleOpenClawPairing: ReturnType<typeof vi.fn>;
     withGatewayRouteMutationLock: ReturnType<typeof vi.fn>;
     setNativeNvidiaProviderAuthority: ReturnType<typeof vi.fn>;
+    clearNativeLocalProviderAuthority: ReturnType<typeof vi.fn>;
   };
   getSession: () => Session | null;
 } {
@@ -392,6 +443,7 @@ export function createDeps(options: {
           await operation()),
     ),
     setNativeNvidiaProviderAuthority: vi.fn(),
+    clearNativeLocalProviderAuthority: vi.fn(),
   };
   const providerAdapter =
     options.providerAdapter ??
@@ -439,6 +491,33 @@ export function createDeps(options: {
       { redactDiagnostic: redactInferenceSetRouteDiagnostic },
     );
   return {
+    requireNativeProviderPolicy: async () => {},
+    readNativeLocalCredentialHandle: vi.fn(
+      async () => "openshell:resolve:env:v1_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    ),
+    verifyNativeLocalProviderAttachment: vi.fn(async (input) => input.expected),
+    prepareNativeLocalSwitch: async (input) => {
+      const binding: NativeLocalBinding = {
+        provider: input.provider as NativeLocalBinding["provider"],
+        ...(input.agentName === "hermes" ? { agent: "hermes" as const } : {}),
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        endpointUrl: input.binding?.baseUrl ?? "http://host.openshell.internal:11435/v1",
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        authMode: "authenticated",
+      };
+      return {
+        changed: false,
+        previousDetached: false,
+        receipt: {
+          ...binding,
+          ...nativeLocalIdentity(binding),
+          schemaVersion: 1,
+          providerId: "local-provider-id",
+        },
+      };
+    },
+    listNativeLocalProviderAuthorities: () => [],
     getDefaultSandbox: () => defaultSandbox,
     getSandbox: (name: string) => sandboxes[name] ?? null,
     listSandboxes: () => ({ sandboxes: entries, defaultSandbox }),
@@ -450,6 +529,8 @@ export function createDeps(options: {
     getNativeNvidiaProviderAuthority: options.getNativeNvidiaProviderAuthority,
     setNativeNvidiaProviderAuthority:
       options.setNativeNvidiaProviderAuthority ?? calls.setNativeNvidiaProviderAuthority,
+    clearNativeLocalProviderAuthority:
+      options.clearNativeLocalProviderAuthority ?? calls.clearNativeLocalProviderAuthority,
     updateSandbox: calls.updateSandbox,
     getRequestedAgent: () => options.requestedAgent,
     loadSession: () => session,
@@ -478,8 +559,7 @@ export function createDeps(options: {
     providerAdapter,
     appendAuditEntry: calls.appendAuditEntry,
     log: calls.log,
-    isLocalInferenceProvider: (provider) =>
-      provider === "ollama-local" || provider === "vllm-local",
+    isLocalInferenceProvider,
     validateLocalProvider: calls.validateLocalProvider,
     ensureLocalProviderReachable: calls.ensureLocalProviderReachable,
     resolveContextWindowForModel: calls.resolveContextWindowForModel,
@@ -499,4 +579,56 @@ export function createDeps(options: {
     calls,
     getSession: () => session,
   };
+}
+
+/** Stateful local-to-NVIDIA fixture with a failed restoration after detach. */
+export function createFailingNativeLocalRestoreAdapter(
+  base: OpenShellProviderAdapter,
+  previous: ReturnType<typeof nativeLocalTestReceipt>,
+) {
+  let localAttached = true;
+  const detachProvider = vi.fn(async (request: Parameters<typeof base.detachProvider>[0]) => {
+    if (request.providerName !== previous.providerName) return base.detachProvider(request);
+    localAttached = false;
+    return { ok: true as const, value: { changed: true } };
+  });
+  const adapter = {
+    ...base,
+    detachProvider,
+    inspectProviderProfile: async () => ({
+      ok: true as const,
+      value: { credentialKeys: [previous.credentialEnv] },
+    }),
+    getProvider: async (request: Parameters<typeof base.getProvider>[0]) =>
+      request.providerName !== previous.providerName
+        ? base.getProvider(request)
+        : {
+            ok: true as const,
+            value: {
+              name: previous.providerName,
+              type: previous.profileId,
+              credentialKeys: [previous.credentialEnv],
+              configKeys: [],
+              revision: { id: previous.providerId, resourceVersion: 1 },
+            },
+          },
+    listProviderAttachments: async (
+      request: Parameters<typeof base.listProviderAttachments>[0],
+    ) => {
+      const result = await base.listProviderAttachments(request);
+      return result.ok
+        ? {
+            ok: true as const,
+            value: {
+              names: [...result.value.names, ...(localAttached ? [previous.providerName] : [])],
+            },
+          }
+        : result;
+    },
+    attachProvider: async (request: Parameters<typeof base.attachProvider>[0]) => {
+      if (request.providerName !== previous.providerName) return base.attachProvider(request);
+      throw new Error("local restoration unavailable");
+    },
+  };
+  return { adapter, detachProvider };
 }

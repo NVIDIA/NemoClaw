@@ -206,7 +206,7 @@ $$nemoclaw headless-agent status
 $$nemoclaw headless-agent connect --probe-only
 ```
 
-`$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified. Its main `Inference` line probes the selected provider path from inside the sandbox. Shared providers use `https://inference.local/v1/models`, then send an inference request over the same route when that probe reports the route reachable. NVIDIA Endpoints and supported fixed hosted providers verify the recorded sandbox-attached OpenShell provider with an inference request to its native endpoint. Status repeats inference requests up to three total attempts when they return a transient gateway status; refer to the [CLI commands reference](../reference/commands) for the retried statuses and their token cost. The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` after a final failure or after all transient attempts fail.
+`$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified. Its main `Inference` line probes the selected provider path from inside the sandbox. Shared providers use `https://inference.local/v1/models`, then send an inference request over the same route when that probe reports the route reachable. NVIDIA Endpoints, supported fixed hosted providers, and qualified Deep Agents local selections verify the recorded sandbox-attached OpenShell provider with an inference request. Status repeats inference requests up to three total attempts when they return a transient gateway status; refer to the [CLI commands reference](../reference/commands) for the retried statuses and their token cost. The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` after a final failure or after all transient attempts fail.
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -269,11 +269,13 @@ unset TOKEN
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-Deep Agents Code does not expose a dashboard URL or gateway token. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. Custom and local providers retain the OpenShell-managed `inference.local` route.
+Deep Agents Code does not expose a dashboard URL or gateway token. NVIDIA Endpoints, supported fixed hosted providers, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, retained legacy and other custom shared routes use the OpenShell-managed `inference.local` route.
 
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
+
+New OpenClaw Ollama, standalone vLLM, and llama.cpp selections use a sandbox-attached native provider. Local NVIDIA NIM and user-supplied compatible endpoints retain the shared `inference.local` route; an older local selection without an attachment may also retain it until a safe fresh recreation.
 
 OpenClaw generates a new gateway token when the sandbox container starts with mutable configuration.
 Retrieve the dashboard URL or token again after the container starts or a replacement sandbox is created.

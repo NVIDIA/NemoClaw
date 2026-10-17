@@ -104,6 +104,7 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
+      legacyCustomRoute: true,
       runOpenshell: providerAbsentRunner,
       overrides: { probeOpenAiLikeEndpoint },
     });
@@ -135,6 +136,7 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
+      legacyCustomRoute: true,
       runOpenshell: createStaleAnthropicProviderRunner(PROVIDER, CREDENTIAL_ENV),
       overrides: { probeOpenAiLikeEndpoint },
     });
@@ -158,6 +160,7 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
+      legacyCustomRoute: true,
       runOpenshell: createStaleAnthropicProviderRunner(PROVIDER, CREDENTIAL_ENV, ["test-box"]),
       overrides: { probeOpenAiLikeEndpoint },
     });
@@ -182,6 +185,7 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     const exitProcess = createInjectedExit();
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
+      legacyCustomRoute: true,
       runOpenshell: createStaleAnthropicProviderRunner(PROVIDER, CREDENTIAL_ENV, [
         "other-box",
         "test-box",
@@ -218,6 +222,7 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
       message: "POST /v1/chat/completions returned 404",
     }));
     const harness = createDirectSetupInferenceHarness({
+      legacyCustomRoute: true,
       runOpenshell: providerAbsentRunner,
       overrides: { probeOpenAiLikeEndpoint, exitProcess, isNonInteractive: () => true },
     });
@@ -242,6 +247,7 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
+      legacyCustomRoute: true,
       runOpenshell: providerAbsentRunner,
       overrides: { probeOpenAiLikeEndpoint },
     });
@@ -261,6 +267,7 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
   it("skips the surface probe on keyless gateway-credential reuse", async () => {
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
+      legacyCustomRoute: true,
       runOpenshell: commandStubs({ "provider get": { status: 0 } }),
       overrides: { probeOpenAiLikeEndpoint },
     });

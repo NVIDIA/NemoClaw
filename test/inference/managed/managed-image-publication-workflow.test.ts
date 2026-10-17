@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { OPENSHELL_V0116_QUALIFICATION } from "../../e2e/fixtures/openshell-v0116-qualification";
 
 import {
   publicationAgents,
@@ -473,6 +472,7 @@ describe("complete managed-image publication workflow", () => {
       expect.arrayContaining([
         ".github/actions/ci-reviewed-npm-audit/**",
         "ci/reviewed-npm-audit.json",
+        "test/helpers/openclaw-real-agent-reload-proof.ts",
       ]),
     );
     expect(reviewedAudit).toMatchObject({
@@ -795,6 +795,7 @@ describe("complete managed-image publication workflow", () => {
     const baseImagePaths = readWorkflow("base-image.yaml").on?.push?.paths ?? [];
     expect(baseImagePaths).toEqual(
       expect.arrayContaining([
+        "test/helpers/openclaw-real-agent-reload-proof.ts",
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
       ]),
@@ -850,9 +851,11 @@ describe("complete managed-image publication workflow", () => {
       stableMcp.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
       "stable MCP job is missing OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
     );
-    expect(stableSupervisorImage).toBe(OPENSHELL_V0116_QUALIFICATION.supervisorImage);
+    expect(stableSupervisorImage).toBe(
+      needsOutput("generate-matrix", "openshell_supervisor_image"),
+    );
     expect(credentialWindow.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBe(
-      OPENSHELL_V0116_QUALIFICATION.supervisorImage,
+      needsOutput("generate-matrix", "openshell_supervisor_image"),
     );
   });
 

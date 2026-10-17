@@ -32,7 +32,7 @@ export default class CredentialsAddCommand extends NemoClawCommand {
   static flags = {
     type: Flags.string({
       description:
-        "Provider profile (e.g. tavily, tavily-hermes-v1, nvidia, openai, anthropic, generic)",
+        "Provider profile (e.g. tavily, tavily-hermes-v1, nvidia, openai, anthropic, generic). NemoClaw imports bundled profiles. Custom profiles must already be installed in the selected gateway. Each registration inspects the custom profile without replacing it.",
       required: true,
     }),
     agent: Flags.string({
