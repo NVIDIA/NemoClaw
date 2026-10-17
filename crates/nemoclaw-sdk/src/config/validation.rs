@@ -74,11 +74,34 @@ impl Document {
                 )))?;
             }
             let agent = &sandbox.agent;
+            let harness = self.sandbox_harness(sandbox)?;
 
             if let Some(tools) = &agent.tools {
                 tools.validate()?;
             }
             let inference = self.scoped_inference(sandbox)?;
+            if let Some(routing) = &inference.inference.routing {
+                routing.validate(Some(&harness.kind), &inference.inference.routes)?;
+                let route_refs = routing.route_refs()?;
+                let providers = route_refs
+                    .iter()
+                    .map(|name| {
+                        let route = inference
+                            .inference
+                            .routes
+                            .iter()
+                            .find(|route| &route.name == name)
+                            .ok_or(ConfigError::new(
+                                "Switchyard routing references an unknown inference route",
+                            ))?;
+                        Ok(self.route_provider(route, &inference)?.key)
+                    })
+                    .collect::<Result<std::collections::BTreeSet<_>, ConfigError>>()?;
+                require(
+                    providers.len() == route_refs.len(),
+                    "Switchyard routing roles require distinct OpenShell providers",
+                )?;
+            }
             for route in &inference.inference.routes {
                 let selected = self.route_provider(route, &inference)?;
                 let provider = selected.definition;

@@ -895,6 +895,10 @@
           "maxItems": 32,
           "minItems": 1,
           "type": "array"
+        },
+        "routing": {
+          "$ref": "#/$defs/InferenceRouting",
+          "description": "Optional in-process routing over the named routes. Switchyard requires Hermes."
         }
       },
       "required": [
@@ -1053,6 +1057,37 @@
         }
       },
       "type": "object"
+    },
+    "InferenceRouting": {
+      "description": "Optional inference routing performed inside the harness process.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Route Hermes requests through the native NeMo Relay Switchyard plugin.",
+          "properties": {
+            "algorithm": {
+              "$ref": "#/$defs/SwitchyardAlgorithm",
+              "description": "Supported Switchyard routing algorithm and its named route bindings."
+            },
+            "kind": {
+              "const": "switchyard",
+              "description": "In-process routing implementation selected for this inference.",
+              "type": "string"
+            },
+            "routeId": {
+              "description": "Synthetic Switchyard model name, exposed as `switchyard/<routeId>`.",
+              "pattern": "^[a-z][a-z0-9-]{0,39}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "routeId",
+            "algorithm"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "InlineRecipe": {
       "additionalProperties": false,
@@ -3500,6 +3535,112 @@
       ],
       "type": "object"
     },
+    "SwitchyardAlgorithm": {
+      "description": "Switchyard algorithms accepted by the V1 configuration contract.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Deterministic weighted selection among two or more named inference routes.",
+          "properties": {
+            "kind": {
+              "const": "weighted-random",
+              "description": "Supported Switchyard algorithm selected for this route.",
+              "type": "string"
+            },
+            "seed": {
+              "description": "Seed supplied to Switchyard's random router.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "targets": {
+              "description": "Named target routes and their positive integer weights.",
+              "items": {
+                "$ref": "#/$defs/SwitchyardWeightedTarget"
+              },
+              "maxItems": 32,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "seed",
+            "targets"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Capability classifier choosing between weak and strong serving routes.",
+          "properties": {
+            "baseThreshold": {
+              "description": "Initial classifier threshold, from zero through one.",
+              "format": "double",
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "classifierRoute": {
+              "description": "Named route used for the classification request.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "llm-classifier",
+              "description": "Supported Switchyard algorithm selected for this route.",
+              "type": "string"
+            },
+            "strongRoute": {
+              "description": "Named route used for higher-complexity requests.",
+              "type": "string"
+            },
+            "thresholdStep": {
+              "description": "Positive threshold adjustment for each additional capability level.",
+              "format": "double",
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "weakRoute": {
+              "description": "Named route used for lower-complexity requests.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "classifierRoute",
+            "weakRoute",
+            "strongRoute",
+            "baseThreshold",
+            "thresholdStep"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SwitchyardWeightedTarget": {
+      "additionalProperties": false,
+      "description": "One weighted Switchyard target bound to a named inference route.",
+      "properties": {
+        "routeRef": {
+          "description": "Named route whose provider connection remains managed by OpenShell.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
+        },
+        "weight": {
+          "description": "Positive relative selection weight.",
+          "format": "uint32",
+          "maximum": 1000000000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "routeRef",
+        "weight"
+      ],
+      "type": "object"
+    },
     "TLS": {
       "additionalProperties": false,
       "description": "Gateway mutual TLS file references. All three references are required when TLS is declared.",
@@ -3943,7 +4084,7 @@
     "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and development authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
-    "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",
+    "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model, routing, and tool fields have valid structural shapes. Hermes Switchyard routing accepts only supported algorithms, distinct named roles, and distinct OpenShell providers. Fabric validates adapter-specific combinations; Fabric configuration generation rejects Switchyard before deployment until a qualified adapter is pinned.",
     "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and missing agent references, and permits at most one attached web search definition per sandbox. Native search must be authored separately through public Fabric configuration and validated by Fabric. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
     "The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
     "Native reasoning-effort identifiers are preserved for Fabric validation. Managed inference services may constrain routes to their declared served model.",

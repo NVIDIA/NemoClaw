@@ -350,6 +350,10 @@ pub struct Inference {
     #[serde(rename = "routes")]
     /// One or more uniquely named model choices. Fabric validates native multiple-model support.
     pub routes: Vec<Route>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::InferenceRouting")]
+    /// Optional in-process routing over the named routes. Switchyard requires Hermes.
+    pub routing: Option<super::InferenceRouting>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

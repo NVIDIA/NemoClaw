@@ -122,11 +122,25 @@ fn the_reference_image_is_separate_from_the_agents_on_both_platforms() {
 }
 
 #[test]
-fn image_checks_include_the_reference_contract() {
-    let Some(targets) = plan("linux/arm64", &["check"]) else {
-        return;
-    };
-    assert!(targets.contains_key("reference-tests"));
+fn image_checks_include_the_reference_and_dormant_switchyard_contracts() {
+    for platform in ["linux/arm64", "linux/amd64"] {
+        let Some(targets) = plan(platform, &["check"]) else {
+            return;
+        };
+        assert!(targets.contains_key("reference-tests"));
+        assert_eq!(
+            targets["switchyard-candidate"]["target"],
+            "switchyard-candidate"
+        );
+        assert_eq!(
+            targets["switchyard-candidate"]["platforms"],
+            serde_json::json!([platform])
+        );
+        assert_eq!(
+            targets["switchyard-candidate"]["output"],
+            serde_json::json!([{"type": "cacheonly"}])
+        );
+    }
 }
 
 #[test]

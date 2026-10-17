@@ -15,6 +15,7 @@ pub use nemoclaw_openshell::search::search_policy;
 mod inference;
 mod providers;
 pub(crate) mod references;
+mod routing;
 mod source;
 mod yaml_source;
 pub use crate::services::ServiceDefinition;
@@ -32,6 +33,7 @@ pub use kubernetes::*;
 #[doc(hidden)]
 pub mod schema;
 pub use kinds::{ComputeDriver, HarnessKind, InferenceProviderKind};
+pub use routing::{InferenceRouting, SwitchyardAlgorithm, SwitchyardWeightedTarget};
 mod types;
 pub use inference::{InferenceConnection, InferenceTarget};
 pub(crate) mod validation;

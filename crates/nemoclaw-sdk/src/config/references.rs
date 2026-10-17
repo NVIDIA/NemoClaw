@@ -202,6 +202,9 @@ impl Inference {
             }
             super::schema::validate_tuning(&route.overrides.tuning)?;
         }
+        if let Some(routing) = &self.routing {
+            routing.validate(None, &self.routes)?;
+        }
         Ok(())
     }
 }

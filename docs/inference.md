@@ -18,6 +18,8 @@ The YAML `routes` field names model configuration; it creates no OpenShell route
 
 Declare model choices for an adapter that advertises native model selection.
 The SDK preserves the choices; parser acceptance does not establish native model-switching support.
+Hermes can express `inference.routing.kind: switchyard` with classifier or seeded weighted routing, but V1 rejects it during Fabric configuration until it packages and qualifies a compatible Fabric, Hermes, Relay, and Switchyard plugin set; [#8885](https://github.com/NVIDIA/NemoClaw/issues/8885) and [#8886](https://github.com/NVIDIA/NemoClaw/issues/8886) track that work.
+This configuration contract is implementation groundwork, not supported Switchyard runtime behavior.
 Declare named `inference.routes` and set `inference.default` to the initial choice when there is more than one route.
 Omitting `default` selects the sole route; duplicate names and missing defaults are errors.
 Use `inferenceRef` to reuse the whole selection without repeating it.

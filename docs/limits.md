@@ -40,6 +40,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Limit | Issue |
 |---|---|
 | Real Fabric adapters report health as unsupported, so [apply fails at agent readiness](usage.md#fabric-health-during-apply) | [#13031](https://github.com/NVIDIA/NemoClaw/issues/13031) |
+| Hermes Switchyard routing is accepted by the configuration contract but rejected during Fabric configuration until a compatible adapter and runtime set is packaged and qualified | [#8885](https://github.com/NVIDIA/NemoClaw/issues/8885), [#8886](https://github.com/NVIDIA/NemoClaw/issues/8886) |
 | Managed llama.cpp, Model Router and Gemini | [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035) |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous | [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038) |
 | Managed NVIDIA NIM service | [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649) |

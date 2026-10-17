@@ -167,6 +167,8 @@ mod service_references;
 mod spark_examples;
 #[path = "ssh_live.rs"]
 mod ssh_live;
+#[path = "switchyard.rs"]
+mod switchyard;
 #[path = "telemetry.rs"]
 mod telemetry;
 #[path = "web_search.rs"]

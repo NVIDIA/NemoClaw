@@ -45,6 +45,32 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             json!({"description": "Integration implementation selected by this definition."}),
         );
     }
+    for variant in defs["InferenceRouting"]["oneOf"]
+        .as_array_mut()
+        .expect("tagged inference routing variants")
+    {
+        property(
+            variant,
+            "kind",
+            json!({"description": "In-process routing implementation selected for this inference."}),
+        );
+        property(variant, "routeId", json!({"pattern": c::SLUG}));
+    }
+    for variant in defs["SwitchyardAlgorithm"]["oneOf"]
+        .as_array_mut()
+        .expect("tagged Switchyard algorithm variants")
+    {
+        property(
+            variant,
+            "kind",
+            json!({"description": "Supported Switchyard algorithm selected for this route."}),
+        );
+    }
+    property(
+        &mut defs["SwitchyardWeightedTarget"],
+        "routeRef",
+        json!({"pattern": c::SLUG}),
+    );
     for variant in defs["ServiceDefinition"]["oneOf"]
         .as_array_mut()
         .expect("tagged service variants")
@@ -382,7 +408,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and development authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
-        "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",
+        "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model, routing, and tool fields have valid structural shapes. Hermes Switchyard routing accepts only supported algorithms, distinct named roles, and distinct OpenShell providers. Fabric validates adapter-specific combinations; Fabric configuration generation rejects Switchyard before deployment until a qualified adapter is pinned.",
         "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and missing agent references, and permits at most one attached web search definition per sandbox. Native search must be authored separately through public Fabric configuration and validated by Fabric. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
         "The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
         "Native reasoning-effort identifiers are preserved for Fabric validation. Managed inference services may constrain routes to their declared served model.",

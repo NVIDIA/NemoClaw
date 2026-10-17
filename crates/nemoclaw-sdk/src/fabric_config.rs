@@ -9,6 +9,11 @@ use serde_json::{Value, json};
 pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, ConfigError> {
     let harness = document.sandbox_harness(sandbox)?;
     let selection = document.scoped_inference(sandbox)?;
+    if selection.inference.routing.is_some() {
+        return Err(ConfigError::new(
+            "Switchyard routing requires a qualified Fabric adapter",
+        ));
+    }
     let mut result = json!({
         "schema_version":"fabric.agent/v1alpha1",
         "metadata":{"name":sandbox.agent.name},
