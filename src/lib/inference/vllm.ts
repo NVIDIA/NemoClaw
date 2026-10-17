@@ -277,6 +277,21 @@ export function selectVllmGpuDevice(profile: VllmProfile, device: string): VllmP
   };
 }
 
+/**
+ * Render the catalog's pinned download size for the pre-install declaration.
+ *
+ * The operator commits to the download at the `Continue?` gate, which runs
+ * before any pull or model fetch, so the size has to be on that screen; the
+ * onboarding review screen prints the same estimate only after the install
+ * finished (#12207). A recipe without a pinned size keeps the plain wording
+ * instead of declaring an invented number.
+ */
+function declaredDownloadSize(bytes: number | undefined): string {
+  return typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0
+    ? ` (${formatStorageBytes(BigInt(Math.ceil(bytes)))})`
+    : "";
+}
+
 function printHfDownloadAuthentication(nonInteractive: boolean): void {
   const authentication = hfDownloadAuthentication();
   if (authentication.authenticated) {
@@ -947,6 +962,7 @@ export function resolveVllmModelRuntime(
       fixedServeCommand: runtime.fixedServeCommand,
       managedBearerAuth: runtime.managedBearerAuth,
       trustRemoteCode: runtime.trustRemoteCode,
+      reviewedCode: runtime.reviewedCode,
       runtime,
     },
   };
@@ -2054,6 +2070,28 @@ export async function installVllm(
   }
 }
 
+function resolveVllmInstallRuntime(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  catalogSelection: MaterializedHostLocalVllmSelection | undefined,
+): { profile: VllmProfile; model: VllmModelDef } {
+  // Catalog selection already owns model arguments and authentication; apply only its container runtime.
+  if (catalogSelection) return { profile: resolveVllmRuntimeProfile(profile, model), model };
+  return resolveVllmModelRuntime(profile, model);
+}
+
+function isFixedVllmInstallProfile(profile: VllmProfile): boolean {
+  // A platform's menu default is not yet a selected fixed recipe. Resolve operator
+  // intent first; materialized recipes retain their fixed-command restrictions.
+  return (
+    profile.defaultModel.fixedServeCommand === true &&
+    (Boolean(profile.servingCatalog) ||
+      !profile.defaultModel.runtimeVariants?.some(
+        (variant) => variant.selection === "automatic" && variant.fixedServeCommand === true,
+      ))
+  );
+}
+
 async function runVllmInstall(
   profile: VllmProfile,
   opts: InstallVllmOptions,
@@ -2072,7 +2110,7 @@ async function runVllmInstall(
     configuredPeer,
     configuredManagedClusterPeers,
   } = selection;
-  const fixedServeCommand = profile.defaultModel.fixedServeCommand === true;
+  const fixedServeCommand = isFixedVllmInstallProfile(profile);
   if (fixedServeCommand) {
     if (
       (!hostLocalSelection && explicitModel) ||
@@ -2275,14 +2313,11 @@ async function runVllmInstall(
     return { ok: false };
   }
   let runtimeProfile: VllmProfile;
-  if (
-    hostLocalSelection ||
-    (profile.platform === "station" && configuredPeer.length > 0 && usesStationPair)
-  ) {
+  if (profile.platform === "station" && configuredPeer.length > 0 && usesStationPair) {
     runtimeProfile = profile;
   } else {
     try {
-      const runtime = resolveVllmModelRuntime(profile, model);
+      const runtime = resolveVllmInstallRuntime(profile, model, hostLocalSelection);
       runtimeProfile = runtime.profile;
       model = runtime.model;
     } catch (err) {
@@ -2400,6 +2435,14 @@ async function runVllmInstall(
     console.log(`    Selected for your hardware: ${hostLocalSelection.displayName}`);
     console.log(`    Context limit: ${String(model.maxModelLen)} tokens`);
   }
+  // A catalog selection always knows its preset and recipe, but only a recipe
+  // that pins a catalog receipt copies them onto the runtime profile, so the
+  // selection is the more complete source for this declaration.
+  const declaredCatalogIdentity = hostLocalSelection ?? runtimeProfile.servingCatalog;
+  if (declaredCatalogIdentity) {
+    console.log(`    Serving profile: ${declaredCatalogIdentity.presetId}`);
+    console.log(`    Recipe: ${declaredCatalogIdentity.recipeId}`);
+  }
   console.log(`    Image: ${runtimeProfile.image}`);
   console.log(
     `    Model: ${model.id}${modelSource === "env" ? " (NEMOCLAW_VLLM_MODEL override)" : ""}`,
@@ -2417,8 +2460,16 @@ async function runVllmInstall(
       `    Fabric: ${dualStationPlan.rails.map((rail) => rail.subnet).join(", ")} (RoCEv2 GID ${String(dualStationPlan.roceGidIndex)})`,
     );
   }
-  if (!opts.hasImage) console.log("    Image download on first run, cached after");
-  console.log("    Model download on first run, cached after");
+  if (!opts.hasImage) {
+    console.log(
+      `    Image download on first run${declaredDownloadSize(runtimeProfile.imageDownloadSizeBytes)}, cached after`,
+    );
+  }
+  console.log(
+    `    Model download on first run${declaredDownloadSize(
+      runtimeProfile.modelDownloadSizeBytes ?? model.downloadSizeBytes,
+    )}, cached after`,
+  );
   printHfDownloadAuthentication(opts.nonInteractive);
   console.log("");
 

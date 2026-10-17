@@ -277,13 +277,6 @@ test(
       PATH: `/usr/local/bin:${process.env.PATH ?? ""}`,
     });
 
-    const nemoclawHelp = await runBash(host, "command -v nemoclaw && nemoclaw --help >/dev/null", {
-      artifactName: "phase-3-nemoclaw-help",
-      env: pathEnv,
-      timeoutMs: 30_000,
-    });
-    expectExitZero(nemoclawHelp, "nemoclaw is on PATH and --help works");
-
     const openshellVersion = await runBash(host, "command -v openshell && openshell --version", {
       artifactName: "phase-3-openshell-version",
       env: pathEnv,

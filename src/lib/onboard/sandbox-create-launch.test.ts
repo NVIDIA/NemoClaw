@@ -754,7 +754,7 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     },
   );
 
-  it("preserves the gateway builder for generated Deep Agents Code images", async () => {
+  it("builds generated Deep Agents Code images before rendering create", async () => {
     const buildCtx = createTrustedBuildContext();
     const dockerfile = path.join(buildCtx, "Dockerfile");
     const result = await prepareSandboxCreateLaunchWithPrebuild({
@@ -774,58 +774,56 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
         buildId: "build-123",
         dockerDriverGateway: true,
         env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
-        buildImage: async () => 1,
+        buildImage: async () => 0,
+        inspectImageId: () => IMAGE_ID,
         log: vi.fn(),
         origin: "generated",
       },
     });
 
     expect(result.prebuild).toEqual({
-      createArgs: ["--from", dockerfile, "--name", "demo"],
-      imageRef: null,
-      imageId: null,
+      createArgs: ["--from", "nemoclaw-sandbox-local:demo-build-123", "--name", "demo"],
+      imageRef: "nemoclaw-sandbox-local:demo-build-123",
+      imageId: IMAGE_ID,
     });
-    expect(result.createCommand).toContain(`sandbox create --from ${dockerfile} --name demo`);
-    expect(result.createCommand).not.toContain("nemoclaw-sandbox-local");
+    expect(result.createCommand).toContain(
+      "sandbox create --from nemoclaw-sandbox-local:demo-build-123 --name demo",
+    );
   });
 
-  it("preserves the rootless gateway path for a generated portable Hermes image", async () => {
+  it("stops a generated portable Hermes image after a failed Podman build", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
     const buildImage = vi.fn().mockResolvedValue(1);
     const buildCtx = createTrustedBuildContext();
     const dockerfile = path.join(buildCtx, "Dockerfile");
-    const result = await prepareSandboxCreateLaunchWithPrebuild({
-      agent: { name: "hermes" } as any,
-      chatUiUrl: "",
-      createArgs: ["--from", dockerfile, "--name", "demo"],
-      env: {},
-      extraPlaceholderKeys: [],
-      getDashboardForwardPort: () => "0",
-      hermesApiPort: 8642,
-      hermesDashboardState: disabledHermesDashboardState,
-      manageDashboard: false,
-      openshellShellCommand: (args) => args.join(" "),
-      sandboxName: "demo",
-      buildEnv: () => ({}),
-      prebuild: {
-        buildCtx,
-        buildId: "build-123",
-        dockerDriverGateway: true,
-        env: {
-          NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
-          NEMOCLAW_SANDBOX_PREBUILD: "1",
+    await expect(
+      prepareSandboxCreateLaunchWithPrebuild({
+        agent: { name: "hermes" } as any,
+        chatUiUrl: "",
+        createArgs: ["--from", dockerfile, "--name", "demo"],
+        env: {},
+        extraPlaceholderKeys: [],
+        getDashboardForwardPort: () => "0",
+        hermesApiPort: 8642,
+        hermesDashboardState: disabledHermesDashboardState,
+        manageDashboard: false,
+        openshellShellCommand: (args) => args.join(" "),
+        sandboxName: "demo",
+        buildEnv: () => ({}),
+        prebuild: {
+          buildCtx,
+          buildId: "build-123",
+          dockerDriverGateway: true,
+          env: {
+            NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+            NEMOCLAW_SANDBOX_PREBUILD: "1",
+          },
+          buildImage,
+          log: vi.fn(),
+          origin: "generated",
         },
-        buildImage,
-        log: vi.fn(),
-        origin: "generated",
-      },
-    });
-
-    expect(result.prebuild).toEqual({
-      createArgs: ["--from", dockerfile, "--name", "demo"],
-      imageRef: null,
-      imageId: null,
-    });
+      }),
+    ).rejects.toThrow("Local rootless Podman build failed (exit 1)");
     expect(buildImage).toHaveBeenCalledOnce();
   });
 });

@@ -1,6 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { parseCliOpenShellProviderMetadata } from "../../../src/lib/adapters/openshell/provider-metadata-cli.ts";
+import { hostedNativeProviderForAttachment } from "../../../src/lib/inference/native-provider/hosted-attachment.ts";
+import { getSandboxInferenceConfig } from "../../../src/lib/inference/config.ts";
+import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
+import {
+  PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
+  readPublicNvidiaSwitchAttachmentEvidence,
+} from "./public-nvidia-switch-provider.ts";
+
 import { runBoundedRetry, type RetryEvidence } from "../../../tools/e2e/retry-evidence.mts";
 
 import { resolveMaxTokensField } from "../../../src/lib/inference/max-tokens-field.ts";
@@ -17,6 +27,7 @@ const EVIDENCE_PARSE_ERROR_LIMIT_BYTES = 2 * 1024;
 const EVIDENCE_MODEL_LIMIT_BYTES = 512;
 const EVIDENCE_FINISH_REASON_LIMIT_BYTES = 128;
 const TRUNCATION_SUFFIX = "...[truncated]";
+
 const USAGE_TOTAL_FIELDS = ["prompt_tokens", "completion_tokens", "total_tokens"] as const;
 const USAGE_DETAIL_FIELDS = [
   "audio_tokens",
@@ -308,4 +319,107 @@ export function fullE2eInferenceProbeEvidence<Result extends InferenceCommandRes
     );
   }
   return evidence;
+}
+
+/** Preserve full E2E's live ownership check for the selected route family. */
+export async function readFullE2eInferenceRoute(input: {
+  sandbox: SandboxClient;
+  sandboxName: string;
+  entry: SandboxEntry | null;
+  logicalProvider: string;
+  model: string;
+  env: NodeJS.ProcessEnv;
+  redactionValues: string[];
+}): Promise<{ ok: boolean; detail: string }> {
+  const receipt = input.entry?.nativeHostedProviderAttachment;
+  if (receipt?.custom) {
+    const definition = hostedNativeProviderForAttachment(receipt);
+    if (!definition) return { ok: false, detail: "Invalid custom native ownership" };
+    const options = {
+      env: input.env,
+      redactionValues: input.redactionValues,
+      timeoutMs: 60_000,
+      captureLimitBytes: 16 * 1024,
+    };
+    const gateway = input.entry?.gatewayName || input.env.OPENSHELL_GATEWAY || "nemoclaw";
+    const provider = await input.sandbox.openshell(
+      ["provider", "get", "-g", gateway, receipt.providerName],
+      { ...options, artifactName: "phase-3-native-custom-provider-metadata" },
+    );
+    const attachments = await input.sandbox.openshell(
+      ["sandbox", "provider", "list", "-g", gateway, input.sandboxName],
+      { ...options, artifactName: "phase-3-native-custom-provider-attachment" },
+    );
+    const metadata =
+      provider.exitCode === 0 ? parseCliOpenShellProviderMetadata(provider.stdout) : null;
+    const route = getSandboxInferenceConfig(
+      input.model,
+      input.logicalProvider,
+      receipt.custom.api,
+      true,
+      receipt.endpointUrl,
+    );
+    // Inspect the selected agent's real configuration inside the sandbox.
+    // Keep credential references out of retained command output.
+    const agent = await input.sandbox.exec(
+      input.sandboxName,
+      [
+        "node",
+        "-e",
+        [
+          'const config = JSON.parse(require("node:fs").readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));',
+          'const assert = require("node:assert/strict");',
+          "const expected = JSON.parse(process.argv[1]);",
+          "const provider = config.models?.providers?.[expected.providerKey];",
+          'assert.equal(config.agents?.defaults?.model?.primary, expected.primaryModelRef, "selected model mismatch");',
+          'assert.equal(provider?.baseUrl, expected.endpoint, "selected endpoint mismatch");',
+          'assert.equal(provider?.api, expected.api, "selected API mismatch");',
+          'assert.ok(provider?.models?.some(model => model.id === expected.model), "selected model is absent");',
+          "const handle = process.env[expected.credentialEnv];",
+          'assert.ok(new RegExp("^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + expected.credentialEnv + "$").test(handle ?? "") && provider?.apiKey === handle, "selected credential reference mismatch");',
+          'process.stdout.write("selected agent route verified");',
+        ].join(" "),
+        JSON.stringify({
+          providerKey: route.providerKey,
+          primaryModelRef: route.primaryModelRef,
+          endpoint: route.inferenceBaseUrl,
+          api: route.inferenceApi,
+          model: input.model,
+          credentialEnv: definition.credentialEnv,
+        }),
+      ],
+      { ...options, artifactName: "phase-3-native-custom-agent-route" },
+    );
+    const ok =
+      metadata?.name === receipt.providerName &&
+      metadata.type === receipt.profileId &&
+      metadata.revision?.id === receipt.providerId &&
+      metadata.configKeys.length === 0 &&
+      metadata.credentialKeys.length === 1 &&
+      metadata.credentialKeys[0] === definition.credentialEnv &&
+      attachments.exitCode === 0 &&
+      attachments.stdout.split(/\s+/u).includes(receipt.providerName) &&
+      agent.exitCode === 0 &&
+      agent.stdout === "selected agent route verified";
+    return {
+      ok,
+      detail: `Custom native provider ownership, attachment and selected agent route: ${ok ? "verified" : "mismatch"}`,
+    };
+  }
+  const native = await readPublicNvidiaSwitchAttachmentEvidence({
+    artifactName: "phase-3-native-nvidia-provider-attachment",
+    env: input.env,
+    logicalProvider: input.logicalProvider,
+    receipt: input.entry?.nativeNvidiaProviderAttachment,
+    sandbox: input.sandbox,
+    sandboxName: input.sandboxName,
+  });
+  if (native !== null)
+    return { ok: native === PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE, detail: native };
+  const route = await input.sandbox.openshell(["inference", "get"], {
+    artifactName: "phase-3-openshell-inference-get",
+    env: input.env,
+    timeoutMs: 60_000,
+  });
+  return { ok: route.exitCode === 0 && route.stdout.includes(input.model), detail: route.stdout };
 }

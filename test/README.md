@@ -46,6 +46,35 @@ When a defect escapes normal controls, record the product cause, detection gap, 
 prevention evidence in the issue or pull request. Search a bounded set of sibling paths for the same
 failure class. Fix sibling instances only when they share the cause and fit the current scope.
 
+### Native llama.cpp cancellation on Docker
+
+Run the opt-in cancellation regression against an approved local Docker daemon, a cached
+SmolLM2-135M Q4_K_M model, and the approved native CPU image. The image must contain stock curl
+and llama.cpp revision `8e7f22b67ef4667b4ddd50230771287f328cfb3f`; the test verifies that revision.
+Build the CLI, then set the image and model paths explicitly:
+
+```bash
+npm run build:cli
+NEMOCLAW_NATIVE_LLAMA_TEST_IMAGE='<approved-local-image-id>' \
+NEMOCLAW_NATIVE_LLAMA_TEST_MODEL='<absolute-path-to-cached-model.gguf>' \
+NEMOCLAW_NATIVE_LLAMA_TEST_EVIDENCE='<absolute-path-to-result.json>' \
+npx vitest run --project package-contract test/package-contract/inference/llama-cpp-native-cancellation.test.ts
+```
+
+The test starts the compiled TypeScript bridge and one native server on an owned internal
+network, with unpublished ports. Five cancellations cross the bridge and the real Docker daemon.
+Docker events and generation metrics verify remote client exit and stopped generation; the next
+completion must recover normal latency. The suite also checks bearer rejection, request-client
+isolation, SIGTERM cleanup, and closed admission when Docker refuses remote cleanup. The deadline
+case invokes the production 900-second timer callback after consuming an SSE chunk, while cleanup
+still uses real Docker. The fixture removes its containers, network, and temporary credentials and
+retains the cached image and model.
+
+The native llama.cpp image PR workflow supplies the pinned model and runs this test against each
+image it builds, on CPU. Other jobs skip it when the image or model variable is absent.
+A passing manual run proves the bridge cancellation path with the approved CPU image; it does not prove OpenShell
+onboarding, production CUDA image qualification, or the complete supported E2E fanout.
+
 ## Test contracts
 
 Do not read shipped YAML, JSON, manifests, workflows, or E2E runtime files only to assert literal
@@ -127,3 +156,16 @@ first on `PATH` and exposes `gtar` as `tar` only to the Vitest process through a
 This workflow runs only after pushes to `main`; candidate-controlled and manually dispatched code
 does not receive its package credential. WSL installs `gnu-coreutils` for fixtures that require GNU
 utility behavior, keeps Ubuntu's default utilities intact, and stops Docker before non-live tests.
+
+Some tests also run host `python3` helper scripts. The same job installs their packages from
+[`ci/platform-vitest-macos-requirements.lock`](../ci/platform-vitest-macos-requirements.lock), which
+owns the authoritative list. Use a virtual environment with the workflow's Python version.
+Install the packages before you run the `cli` project:
+
+```bash
+python3 -m pip install --requirement ci/platform-vitest-macos-requirements.lock
+```
+
+A host without those packages fails on the helper's empty output rather than on the import error, so
+the failure does not name the missing package. `mcp-bridge-adapter-hermes.test.ts` reports
+`expected '' to be 'registered'` when `python3` cannot import `yaml`.

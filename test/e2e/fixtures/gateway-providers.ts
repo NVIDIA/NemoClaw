@@ -5,6 +5,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  exportedProviderProfileMatchesContract,
+  parseCheckedInProviderProfileContract,
+} from "../../../src/lib/adapters/openshell/provider-profile.ts";
+import { scopeGatewayOpenshellArgs } from "../../../src/lib/adapters/openshell/gateway-scope.ts";
 import { resultText } from "./clients/command.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import type { SandboxClient } from "./clients/sandbox.ts";
@@ -18,10 +23,12 @@ import type { ShellProbeResult } from "./shell-probe.ts";
 
 const PROVIDER_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const CREDENTIAL_ENV = /^[A-Z_][A-Z0-9_]*$/u;
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
+const EXTRA_PROVIDER_CREDENTIAL_ENV = "NEMOCLAW_E2E_EXTRA_PROVIDER_TOKEN";
+const EXTRA_PROVIDER_PROFILE = path.join(
+  import.meta.dirname,
+  "provider-profiles",
+  "nemoclaw-e2e-extra-provider-v1.yaml",
+);
 
 function assertProviderName(providerName: string): void {
   if (!PROVIDER_NAME.test(providerName)) {
@@ -253,47 +260,66 @@ export async function applyFixtureProviderPolicyEndpoint(
   });
 }
 
-export async function upsertGenericGatewayProvider(
+export async function createExtraGatewayProvider(
   host: HostCliClient,
   providerName: string,
   options: {
     artifactName: string;
-    credentialEnv: string;
     env: NodeJS.ProcessEnv;
-    redactionValues?: string[];
   },
 ): Promise<void> {
   assertProviderName(providerName);
-  if (!CREDENTIAL_ENV.test(options.credentialEnv)) {
-    throw new Error(`Unsafe provider credential env name: ${options.credentialEnv}`);
+  const credential = options.env[EXTRA_PROVIDER_CREDENTIAL_ENV];
+  if (!credential) {
+    throw new Error(`Missing provider credential env value: ${EXTRA_PROVIDER_CREDENTIAL_ENV}`);
   }
-  if (!options.env[options.credentialEnv]) {
-    throw new Error(`Missing provider credential env value: ${options.credentialEnv}`);
-  }
-
-  const provider = shellQuote(providerName);
-  const credential = shellQuote(options.credentialEnv);
-  const result = await host.command(
-    "bash",
-    [
-      "-lc",
-      [
-        "set -euo pipefail",
-        `if openshell provider get -g nemoclaw ${provider} >/dev/null 2>&1; then`,
-        `  openshell provider update -g nemoclaw ${provider} --credential ${credential}`,
-        "else",
-        `  openshell provider create -g nemoclaw --name ${provider} --type generic --credential ${credential}`,
-        "fi",
-      ].join("\n"),
-    ],
-    {
-      artifactName: options.artifactName,
-      env: options.env,
-      redactionValues: options.redactionValues ?? [],
-      timeoutMs: 60_000,
-    },
+  const contract = parseCheckedInProviderProfileContract(
+    fs.readFileSync(EXTRA_PROVIDER_PROFILE, "utf8"),
   );
-  expect(result.exitCode, resultText(result)).toBe(0);
+  if (!contract) throw new Error("The E2E extra-provider profile is invalid.");
+  const profileEnv = { ...options.env };
+  delete profileEnv[EXTRA_PROVIDER_CREDENTIAL_ENV];
+  const run = (args: string[], artifactName: string, env: NodeJS.ProcessEnv) =>
+    host.command(host.openshellCommandPath, scopeGatewayOpenshellArgs(args, "nemoclaw"), {
+      artifactName,
+      env,
+      redactionValues: [credential],
+      timeoutMs: 60_000,
+    });
+  const imported = await run(
+    ["provider", "profile", "import", "--file", EXTRA_PROVIDER_PROFILE],
+    `${options.artifactName}-profile-import`,
+    profileEnv,
+  );
+  if (imported.exitCode !== 0 && !/already exists/iu.test(resultText(imported))) {
+    throw new Error("Could not import the E2E extra-provider profile.");
+  }
+  const exported = await run(
+    ["provider", "profile", "export", contract.profileId, "--output", "json"],
+    `${options.artifactName}-profile-export`,
+    profileEnv,
+  );
+  if (
+    exported.exitCode !== 0 ||
+    !exportedProviderProfileMatchesContract(exported.stdout, contract)
+  ) {
+    throw new Error("The E2E extra-provider profile does not match its checked-in definition.");
+  }
+  const created = await run(
+    [
+      "provider",
+      "create",
+      "--name",
+      providerName,
+      "--type",
+      contract.profileId,
+      "--credential",
+      EXTRA_PROVIDER_CREDENTIAL_ENV,
+    ],
+    options.artifactName,
+    options.env,
+  );
+  if (created.exitCode !== 0) throw new Error("Could not create the E2E extra provider.");
 }
 
 export async function expectSandboxProviderAttachment(

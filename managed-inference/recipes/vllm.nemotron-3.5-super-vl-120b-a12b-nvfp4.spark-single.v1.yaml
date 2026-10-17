@@ -1,0 +1,84 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingRecipe
+
+metadata:
+  id: vllm.nemotron-3.5-super-vl-120b-a12b-nvfp4.spark-single.v1
+  displayName: NVIDIA Nemotron 3.5 Super VL NVFP4 with vLLM on DGX Spark
+
+spec:
+  backend: vllm
+
+  modelRef: vllm.nemotron-3.5-super-vl-120b-a12b-nvfp4.v1
+  runtime:
+    # ARM64 manifest for vllm/vllm-openai:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2.
+    image: vllm/vllm-openai@sha256:fd33bec1578f312a01547cc6b9691a5154c3e8bcfb76d2b35acb657bfc4eee8f
+    imageDownloadSizeBytes: 10690535076
+    minimumComputeCapability: 121
+    # Reserve this 70 GiB checkpoint and its serving state for 128 GB DGX Spark systems.
+    minimumGpuMemoryBytes: 120000000000
+    pullTimeoutSeconds: 43200
+    architecture: arm64
+    networkMode: bridge
+    ipcMode: host
+    sharedMemoryBytes: 17179869184
+    gpuRequest: all
+    devices: []
+    ulimits:
+      memlock: -1
+      stackBytes: 67108864
+    modelCache:
+      source: huggingface-cache
+      target: /root/.cache/huggingface
+    temporaryFilesystems: []
+    environment: {}
+
+  execution:
+    materializerRef: vllm.host-local/v1
+    lifecycleRef: vllm.host-local.lifecycle/v1
+    orchestrationRef: vllm.host-local.standard/v1
+
+  serve:
+    authentication: bearer
+    directInstall:
+      authentication: bearer
+      fixedArguments: true
+      catalogReceipt: true
+    executable: /usr/local/bin/vllm
+    arguments:
+      - name: --max-model-len
+        value: 114688
+      - name: --max-num-seqs
+        value: 2
+      - name: --gpu-memory-utilization
+        value: 0.7
+      - name: --spec-method
+        value: mtp
+      - name: --spec-tokens
+        value: 5
+      - name: --mamba-backend
+        value: flashinfer
+      - name: --mamba-ssm-cache-dtype
+        value: float16
+      - name: --enable-mamba-cache-stochastic-rounding
+      - name: --mamba-cache-philox-rounds
+        value: 5
+      - name: --enable-mamba-shared-prefix-checkpoint
+      - name: --prefix-match-unit
+        value: 16
+      - name: --enable-auto-tool-choice
+      - name: --tool-call-parser
+        value: qwen3_coder
+      - name: --reasoning-parser
+        value: nemotron_v3
+      - name: --limit-mm-per-prompt
+        value: '{"image":8,"video":0}'
+      # Accept inline images without arbitrary remote media or host-file access.
+      - name: --allowed-media-domains
+        value: super-vl.invalid
+
+  readiness:
+    timeoutSeconds: 3600
+    expectedModel: nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4

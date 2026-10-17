@@ -54,6 +54,7 @@ import {
   RESTRICTED_TIER_NAME,
 } from "./policy-tier-suppression";
 import { withPolicyApplicationTrace } from "./tracing";
+import { readAppliedPolicySelection } from "../domain/telemetry/provenance";
 
 export { suppressedAgentRequiredPresets } from "./policy-tier-suppression";
 
@@ -130,6 +131,7 @@ export type SetupPolicySelectionOptions = {
 };
 
 export type SetupPolicySelectionDeps = {
+  rememberAppliedTier?: (sandboxName: string, tierName: string | null) => void;
   policies: PoliciesApi;
   tiers: TiersApi;
   localInferenceProviders: readonly string[];
@@ -172,6 +174,15 @@ export function createOnboardPolicyApplication(deps: OnboardPolicyApplicationDep
     initialSelected: string[],
   ) => promptHelpers().presetsCheckboxSelector(allPresets, initialSelected);
   const setupDeps: SetupPolicySelectionDeps = {
+    rememberAppliedTier: (sandboxName, tierName) => {
+      const receipt = readAppliedPolicySelection({
+        schemaVersion: 1,
+        source: "verified_selection",
+        tier: tierName,
+      });
+      if (!receipt) return;
+      policies.persistAppliedPolicySelection(sandboxName, receipt);
+    },
     policies,
     tiers,
     localInferenceProviders: deps.localInferenceProviders,
@@ -520,6 +531,7 @@ async function setupPoliciesWithSelectionInner(
     );
     await deps.syncPresetSelection(sandboxName, currentAppliedPresets, resumeSelection);
     await requireSandboxReady(deps, sandboxName, "after");
+    deps.rememberAppliedTier?.(sandboxName, requestedTierName);
     if (onSelection) onSelection(resumeSelection);
     return resumeSelection;
   }
@@ -600,6 +612,7 @@ async function setupPoliciesWithSelectionInner(
         );
         await deps.syncPresetSelection(sandboxName, currentAppliedPresets, retainedPresets);
         await requireSandboxReady(deps, sandboxName, "after");
+        deps.rememberAppliedTier?.(sandboxName, tierName);
         if (onSelection) onSelection(retainedPresets);
         return retainedPresets;
       }
@@ -687,6 +700,7 @@ async function setupPoliciesWithSelectionInner(
     );
     await deps.syncPresetSelection(sandboxName, currentAppliedPresets, chosen);
     await requireSandboxReady(deps, sandboxName, "after");
+    deps.rememberAppliedTier?.(sandboxName, tierName);
     if (onSelection) onSelection(chosen);
     return chosen;
   }
@@ -741,6 +755,7 @@ async function setupPoliciesWithSelectionInner(
     accessByName,
   );
   await requireSandboxReady(deps, sandboxName, "after");
+  deps.rememberAppliedTier?.(sandboxName, tierName);
   if (onSelection) onSelection(interactiveChoice);
   return interactiveChoice;
 }

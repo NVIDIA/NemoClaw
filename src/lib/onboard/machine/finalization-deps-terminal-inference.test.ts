@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { onboardInferenceVerificationContext } from "../../verify-deployment";
 
 import { finalizationHandlerDeps, finalizationHandlerRuntime } from "./finalization-deps";
 
@@ -23,6 +24,7 @@ describe("terminal inference finalization dependency", () => {
     const probeOnboardInferenceInvocation = vi.fn(async () => ({ ok: true }));
     vi.spyOn(finalizationHandlerRuntime, "loadVerifyDeployment").mockReturnValue({
       probeOnboardInferenceInvocation,
+      onboardInferenceVerificationContext,
     } as never);
 
     await expect(finalizationHandlerDeps.probeTerminalInference(input)).resolves.toEqual({
@@ -31,6 +33,30 @@ describe("terminal inference finalization dependency", () => {
     expect(probeOnboardInferenceInvocation).toHaveBeenCalledExactlyOnceWith({
       ...input,
       gatewayName: "nemoclaw-19090",
+      endpointUrl: null,
+      nativeLocalExpected: false,
+    });
+  });
+
+  it("passes the sandbox native attachment to the terminal inference verifier", async () => {
+    const nativeHostedProviderAttachment = { providerId: "owned-id" };
+    vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockReturnValue({
+      load: () => ({
+        sandboxes: { "deep-code": { gatewayName: "nemoclaw", nativeHostedProviderAttachment } },
+      }),
+    } as never);
+    const probeOnboardInferenceInvocation = vi.fn(async () => ({ ok: true }));
+    vi.spyOn(finalizationHandlerRuntime, "loadVerifyDeployment").mockReturnValue({
+      probeOnboardInferenceInvocation,
+      onboardInferenceVerificationContext,
+    } as never);
+    await finalizationHandlerDeps.probeTerminalInference(input);
+    expect(probeOnboardInferenceInvocation).toHaveBeenCalledExactlyOnceWith({
+      ...input,
+      gatewayName: "nemoclaw",
+      endpointUrl: null,
+      nativeLocalExpected: false,
+      nativeHostedProviderAttachment,
     });
   });
 

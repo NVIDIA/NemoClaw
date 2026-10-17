@@ -72,7 +72,7 @@ describe("Pi qualification task construction", () => {
   it.each(["before-rebuild", "after-rebuild", "after-recovery"])(
     "constructs a context-free headless read for %s",
     (phase) => {
-      const taskName = `pi-read-v2-${phase}`;
+      const taskName = `pi-read-v3-${phase}`;
       const task = buildPiReadTask("pi-qual", "/sandbox/task root/workspace", taskName, TOKEN);
 
       expect(task.remotePath).toBe("/sandbox/task root/workspace/task.txt");
@@ -95,7 +95,7 @@ describe("Pi qualification task construction", () => {
         "read",
         "--name",
         taskName,
-        "Use the read tool exactly once to read /sandbox/task root/workspace/task.txt. Reply with exactly the file contents and no other text.",
+        "Use the read tool exactly once to read /sandbox/task root/workspace/task.txt. Reply with exactly the file contents as plain text. Do not add Markdown, code fences, backticks, explanations, or any other text.",
       ]);
     },
   );
@@ -106,7 +106,7 @@ describe("Pi qualification task construction", () => {
     const token = "literal 'quotes' and $HOME";
 
     try {
-      const task = buildPiReadTask("pi-qual", workdir, "pi-read-v2-before-rebuild", token);
+      const task = buildPiReadTask("pi-qual", workdir, "pi-read-v3-before-rebuild", token);
       const result = runReadTaskSeed(root, task.seedScript);
 
       expect(result.error).toBeUndefined();
@@ -131,7 +131,7 @@ describe("Pi qualification task construction", () => {
 
     try {
       fs.writeFileSync(workdir, "occupied");
-      const task = buildPiReadTask("pi-qual", workdir, "pi-read-v2-before-rebuild", TOKEN);
+      const task = buildPiReadTask("pi-qual", workdir, "pi-read-v3-before-rebuild", TOKEN);
       const result = runReadTaskSeed(root, task.seedScript);
 
       expect(result.error).toBeUndefined();
@@ -192,6 +192,34 @@ describe("Pi qualification event oracle", () => {
       eventCount: 5,
       toolCallId: "call-read",
     });
+  });
+
+  it("rejects the observed trailing Markdown fence without retrying (#13364)", () => {
+    const recordedReply = `${TOKEN}\n\`\`\``;
+    const stream = parsePiJsonEvents(eventStream());
+    stream[3] = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: recordedReply }],
+      },
+    };
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(stream, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("instead of exact file contents");
+    expect(
+      classifyPiReadTaskAttempt(
+        { failure, proof: undefined, result: { ...failedProbe(), exitCode: 0 } },
+        undefined,
+      ),
+    ).toEqual({ outcome: "failed", failureClass: "deterministic" });
   });
 
   it("rejects malformed JSON, another tool, a failed read, and altered output", () => {
@@ -412,14 +440,14 @@ describe("Pi qualification event oracle", () => {
     ).toThrow("after the read completed");
   });
 
-  it("accepts the managed Pi inference route", () => {
+  it("accepts the native NVIDIA route used by Pi qualification", () => {
     expect(
       parsePiInferenceEvidence(
         JSON.stringify({
           providers: {
             openshell: {
               api: "openai-completions",
-              baseUrl: "https://inference.local/v1",
+              baseUrl: "https://integrate.api.nvidia.com/v1",
               models: [{ id: "nvidia/test-model" }],
             },
           },
@@ -429,11 +457,14 @@ describe("Pi qualification event oracle", () => {
     ).toEqual({
       api: "openai-completions",
       model: "nvidia/test-model",
-      route: "https://inference.local/v1",
+      route: "https://integrate.api.nvidia.com/v1",
     });
   });
 
-  it("rejects missing or inconsistent Pi qualification evidence", () => {
+  it.each([
+    ["https://inference.local/v1", "nvidia/test-model"],
+    ["https://integrate.api.nvidia.com/v1", "nvidia/other-model"],
+  ])("rejects a mismatched route %s or model %s", (baseUrl, model) => {
     expect(() => parsePiInferenceEvidence("{}", "nvidia/test-model")).toThrow(
       "Pi managed inference providers must be an object",
     );
@@ -443,8 +474,8 @@ describe("Pi qualification event oracle", () => {
           providers: {
             openshell: {
               api: "openai-completions",
-              baseUrl: "https://inference.local/v1",
-              models: [{ id: "nvidia/other-model" }],
+              baseUrl,
+              models: [{ id: model }],
             },
           },
         }),

@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NativeProviderAttachment } from "../inference/native-provider/contract";
+import { isNativeHostedProviderName } from "../inference/native-provider/hosted-attachment";
+import { buildNativeHostedSandboxPolicy } from "../inference/native-provider/network-policy";
+
 import fs from "node:fs";
 import path from "node:path";
 import { TextDecoder } from "node:util";
@@ -324,6 +328,7 @@ function createPolicyTempCleanup(policyPath: string, expectedPrefix: string): ()
 
 type InitialPolicyOptions = {
   inferenceProvider?: string | null;
+  nativeHostedProviderAttachment?: NativeProviderAttachment;
   directGpu?: boolean;
   dockerGpuPatch?: boolean;
   hostGpuAvailable?: boolean;
@@ -500,6 +505,16 @@ function resolveInitialSandboxCreatePolicy(
   try {
     if (options.inferenceProvider === NVIDIA_HOSTED_NATIVE_PROVIDER) {
       adoptPolicy(buildNativeNvidiaSandboxPolicy(basePolicy), "nemoclaw-native-inference-policy");
+    }
+    if (options.inferenceProvider && isNativeHostedProviderName(options.inferenceProvider)) {
+      adoptPolicy(
+        buildNativeHostedSandboxPolicy(
+          basePolicy,
+          options.inferenceProvider,
+          options.nativeHostedProviderAttachment,
+        ),
+        "nemoclaw-native-hosted-inference-policy",
+      );
     }
     // Fail closed: the OpenClaw OTEL preset is added at create time only when the
     // selected policy tier is known and is not Restricted. When the tier is null

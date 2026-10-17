@@ -22,6 +22,7 @@ import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
 import {
   pinRebuildAgentBaseImageForRecreate,
+  pinRecordedOpenClawDashboardOriginForRecreate,
   type RebuildAgentBaseImagePreflight,
   type RebuildSandboxEntry,
 } from "./rebuild-flow-helpers";
@@ -167,9 +168,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         observabilityRequestedExplicitly: recreateOptions.observabilityRequestedExplicitly,
         telegramConfig: sessionMatchesSandbox ? sessionBefore?.telegramConfig : null,
         wechatConfig: sessionMatchesSandbox ? sessionBefore?.wechatConfig : null,
-        migratedLegacyValueHashes: sessionMatchesSandbox
-          ? sessionBefore?.migratedLegacyValueHashes
-          : null,
         routerPid: resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPid : undefined,
         routerPort:
           resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPort : undefined,
@@ -253,6 +251,14 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
   const previousRestoreLatestBackup = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
+  const restoreChatUiUrl = pinRecordedOpenClawDashboardOriginForRecreate({
+    sandboxName,
+    sandboxEntry: sb,
+    rebuildAgent,
+    controlUiPort: recreateOptions.controlUiPort,
+    replacementDashboard:
+      recreateOptions.managedWorkloadRebuild?.replacementProfile.profile.dashboard,
+  });
   process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
   // The outer rebuild already made its sole backup before the destroy phase deleted
   // the sandbox without tearing down the gateway/session needed by onboard --resume.
@@ -335,6 +341,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     } else {
       process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = previousRestoreLatestBackup;
     }
+    restoreChatUiUrl();
   }
 
   if (onboardFailed) {

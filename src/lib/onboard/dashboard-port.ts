@@ -609,12 +609,18 @@ function parseChatUiUrlPort(chatUiUrlEnv: string | null | undefined): number | n
   }
 }
 
+/**
+ * Build the dashboard URL for a new sandbox. `--control-ui-port` selects only
+ * the port; the `CHAT_UI_URL` host is kept (#13177). Without a usable
+ * `CHAT_UI_URL`, the URL is loopback on the effective port.
+ */
 function buildCreateSandboxChatUiUrl(
   chatUiUrlEnv: string | null | undefined,
-  controlUiPort: number | null,
   effectivePort: number,
 ): string {
-  if (chatUiUrlEnv && controlUiPort == null) {
+  // `--control-ui-port` selects the port only; it must not discard the
+  // browser-facing host that `CHAT_UI_URL` records (#13177).
+  if (chatUiUrlEnv) {
     try {
       const parsed = new URL(normalizeChatUiUrlForParsing(chatUiUrlEnv));
       parsed.port = String(effectivePort);
@@ -655,7 +661,7 @@ function createSandboxDashboardPortResult(
   return {
     preferredPort,
     effectivePort,
-    chatUiUrl: buildCreateSandboxChatUiUrl(input.chatUiUrlEnv, input.controlUiPort, effectivePort),
+    chatUiUrl: buildCreateSandboxChatUiUrl(input.chatUiUrlEnv, effectivePort),
   };
 }
 

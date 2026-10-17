@@ -2,16 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
-import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia/contract";
+import { fixedNativeProviderForAttachment } from "../../inference/native-provider/fixed";
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { CLI_NAME } from "../../cli/branding";
 import { R, RD } from "../../cli/terminal-style";
-import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import { resolveSandboxGatewayName, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import {
   checkRebuildGatewayProviderOrBail,
+  validateRebuildHostInferenceCredential,
   shouldVerifyRebuildGatewayProvider,
+  type HostCredentialTarget,
 } from "./rebuild-provider-preflight";
 import { getRebuildCredentialEnvFromRegistry } from "./rebuild-resume-config";
+import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
+import { verifyRecordedNativeLocalProviderAttachment } from "../../inference/native-local/profile";
 
 const hermesProviderAuth = require("../../hermes-provider-auth") as {
   HERMES_PROVIDER_NAME: string;
@@ -147,6 +152,23 @@ async function preflightHermesProviderCredentials(
   return false;
 }
 
+export async function preflightRebuildHostCredential(
+  target: HostCredentialTarget,
+  credentialValue: string | null,
+  bail: RebuildBail,
+): Promise<boolean> {
+  if (!credentialValue || (await validateRebuildHostInferenceCredential(target, credentialValue)))
+    return true;
+  console.error("");
+  console.error(
+    `  ${RD}Rebuild preflight failed:${R} the host inference credential could not be validated.`,
+  );
+  console.error("  Check the host inference credential and recorded endpoint, then retry rebuild.");
+  console.error("  Sandbox is untouched — no data was lost.");
+  bail("Host inference credential validation failed");
+  return false;
+}
+
 export async function preflightRebuildCredentials(
   sb: RebuildSandboxEntry,
   log: RebuildLog,
@@ -159,13 +181,50 @@ export async function preflightRebuildCredentials(
     sb.endpointUrl,
   );
   const rebuildProvider = sb.provider;
-  const nativeAttachment = normalizeNativeNvidiaProviderAttachment(
-    sb.nativeNvidiaProviderAttachment,
-  );
+  if (sb.nativeLocalProviderAttachment !== undefined) {
+    try {
+      await verifyRecordedNativeLocalProviderAttachment({
+        adapter: createManagedProviderAdapter(),
+        expected: sb.nativeLocalProviderAttachment,
+        sandboxName: sb.name,
+        gatewayName: resolveSandboxGatewayName(sb),
+        agent: sb.agent,
+        provider: rebuildProvider,
+      });
+    } catch {
+      bail("Could not verify native local provider credentials; sandbox is untouched");
+      return false;
+    }
+    return preflightRebuildHostCredential(
+      { ...sb, credentialEnv: rebuildCredentialEnv },
+      rebuildCredentialEnv
+        ? rebuildOnboardDependencies.hydrateCredentialEnv(rebuildCredentialEnv)
+        : null,
+      bail,
+    );
+  }
+  let nativeAttachment;
+  try {
+    nativeAttachment = recordedNativeProviderAttachment(sb);
+  } catch {
+    bail("Invalid native provider authority; sandbox is untouched");
+    return false;
+  }
   if (nativeAttachment) {
-    return checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
-      nativeAttachment,
-    });
+    const definition = fixedNativeProviderForAttachment(nativeAttachment);
+    const nativeCredentialEnv = definition.credentialEnv;
+    if (
+      !(await checkRebuildGatewayProviderOrBail(rebuildProvider, nativeCredentialEnv, log, bail, {
+        nativeAttachment,
+      }))
+    )
+      return false;
+    const sourceCredentialEnv = definition.custom?.credentialEnv ?? nativeCredentialEnv;
+    return preflightRebuildHostCredential(
+      { ...sb, credentialEnv: sourceCredentialEnv },
+      rebuildOnboardDependencies.hydrateCredentialEnv(sourceCredentialEnv),
+      bail,
+    );
   }
 
   if (rebuildProvider === hermesProviderAuth.HERMES_PROVIDER_NAME) {
@@ -209,7 +268,13 @@ export async function preflightRebuildCredentials(
     );
     return true;
   }
-  if (credentialValue) return true;
+  if (credentialValue) {
+    return preflightRebuildHostCredential(
+      { ...sb, credentialEnv: rebuildCredentialEnv },
+      credentialValue,
+      bail,
+    );
+  }
 
   console.error("");
   console.error(`  ${RD}Rebuild preflight failed:${R} provider credential not found.`);

@@ -6,6 +6,11 @@
  * All functions are pure.
  */
 
+import { nativeLocalCredentialReference } from "./native-local/agent-config";
+import {
+  usesNativeLocalInference,
+  usesNativeLocalInferenceForAgent,
+} from "./native-local/contract";
 import { isSafeModelId, shouldSkipResponsesProbe } from "../validation";
 import {
   isSafeLlamaCppServedModelAlias,
@@ -13,6 +18,14 @@ import {
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
 } from "./llama-cpp/contract";
+import { hostedNativeProvider, usesNativeHermesEndpoint } from "./native-provider/hosted";
+import { isCustomHostedProvider, resolveCustomNativeApi } from "./native-provider/hosted";
+import {
+  isBedrockRuntimeEndpoint,
+  BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
+} from "./bedrock-runtime";
+import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "./anthropic/openai-surface";
+import { nativeOpenClawProviderKey } from "./native-provider/fixed";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
 import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
 import { DEFAULT_OLLAMA_MODEL_TAG as DEFAULT_OLLAMA_MODEL } from "./ollama-model-registry";
@@ -20,8 +33,20 @@ import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "./ollama/contract";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openrouter";
 import { VLLM_LOCAL_CREDENTIAL_ENV } from "./serving/vllm-credential-contract";
 
-export { isSafeModelId };
+export {
+  isSafeModelId,
+  nativeLocalCredentialReference,
+  usesNativeLocalInference,
+  usesNativeLocalInferenceForAgent,
+};
+export {
+  isPersistedPiSharedLocalInferenceRoute,
+  normalizeNativeLocalProviderAttachment,
+} from "./native-local/contract";
+export { hasLegacySharedLocalInferenceRoute } from "./selection";
+export type { NativeLocalProviderAttachment } from "./native-local/contract";
 export { OLLAMA_LOCAL_CREDENTIAL_ENV };
+export { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "../inference-credential";
 export {
   detachNativeNvidiaProvider,
   ensureNativeNvidiaProvider,
@@ -204,18 +229,7 @@ export function resolveAgentInferenceApi(
     : preferredInferenceApi;
 }
 
-/**
- * Return the OpenAI-compatible base used when a custom Anthropic endpoint is
- * routed through the managed Chat Completions frontend. Anthropic endpoint
- * normalization intentionally strips a trailing `/v1`; OpenShell's OpenAI
- * provider appends `/chat/completions`, so restore `/v1` exactly once here.
- */
-export function getCompatibleAnthropicOpenAiSurfaceBaseUrl(
-  endpointUrl: string | null | undefined,
-): string {
-  const trimmed = String(endpointUrl ?? "").replace(/\/+$/, "");
-  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
-}
+export { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "./anthropic/openai-surface";
 
 export function getProviderSelectionConfig(
   provider: string,
@@ -223,7 +237,7 @@ export function getProviderSelectionConfig(
 ): ProviderSelectionConfig | null {
   const base: Omit<ProviderSelectionConfig, "model" | "credentialEnv" | "providerLabel"> = {
     endpointType: "custom",
-    endpointUrl: INFERENCE_ROUTE_URL,
+    endpointUrl: hostedNativeProvider(provider)?.endpoint ?? INFERENCE_ROUTE_URL,
     ncpPartner: null,
     profile: DEFAULT_ROUTE_PROFILE,
     provider,
@@ -331,11 +345,35 @@ export function getSandboxInferenceConfig(
   model: string,
   provider: string | null = null,
   preferredInferenceApi: string | null = null,
+  nativeProvider?: boolean,
+  nativeEndpointUrl?: string | null,
+  agentName?: string | null,
 ): SandboxInferenceConfig {
-  let providerKey: string;
+  const nativeCustom =
+    nativeProvider === true &&
+    isCustomHostedProvider(provider) &&
+    !usesNativeLocalInference(provider, nativeEndpointUrl) &&
+    !usesNativeLocalInferenceForAgent(agentName, provider, nativeEndpointUrl);
+  const selectedApi = resolveCustomNativeApi(provider, preferredInferenceApi, nativeCustom);
+  let providerKey: string = nativeOpenClawProviderKey(provider, selectedApi) ?? MANAGED_PROVIDER_ID;
   let primaryModelRef: string;
-  let inferenceBaseUrl = INFERENCE_ROUTE_URL;
-  let inferenceApi = preferredInferenceApi || "openai-completions";
+  const useNativeProvider =
+    nativeProvider ??
+    (provider !== "hermes-provider" || usesNativeHermesEndpoint(nativeEndpointUrl));
+  const hostedNative = useNativeProvider
+    ? hostedNativeProvider(provider, nativeEndpointUrl)
+    : undefined;
+  let customEndpoint = nativeCustom ? nativeEndpointUrl : undefined;
+  if (nativeCustom && !customEndpoint)
+    throw new Error("Native custom inference is missing its recorded endpoint");
+  if (customEndpoint && provider === "compatible-anthropic-endpoint")
+    customEndpoint = isBedrockRuntimeEndpoint(customEndpoint)
+      ? BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL
+      : selectedApi && selectedApi !== "anthropic-messages"
+        ? getCompatibleAnthropicOpenAiSurfaceBaseUrl(customEndpoint)
+        : customEndpoint;
+  let inferenceBaseUrl = customEndpoint ?? hostedNative?.endpoint ?? INFERENCE_ROUTE_URL;
+  let inferenceApi = selectedApi || "openai-completions";
   // Providers without a /v1/responses endpoint must never be configured with the
   // Responses API. On a provider switch the runtime API resolves to null and the
   // caller falls back to the persisted (shared "inference") provider api, which
@@ -349,12 +387,15 @@ export function getSandboxInferenceConfig(
 
   switch (provider) {
     case "openai-api":
-      providerKey = "openai";
       primaryModelRef = `openai/${model}`;
       break;
     case "anthropic-prod":
     case "compatible-anthropic-endpoint":
-      if (provider === "compatible-anthropic-endpoint" && inferenceApi === "openai-completions") {
+      if (
+        provider === "compatible-anthropic-endpoint" &&
+        (inferenceApi === "openai-completions" ||
+          (nativeCustom && inferenceApi === "openai-responses"))
+      ) {
         providerKey = MANAGED_PROVIDER_ID;
         primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
         inferenceCompat = {
@@ -364,13 +405,12 @@ export function getSandboxInferenceConfig(
       }
       providerKey = "anthropic";
       primaryModelRef = `anthropic/${model}`;
-      inferenceBaseUrl = "https://inference.local";
+      inferenceBaseUrl = customEndpoint ?? hostedNative?.endpoint ?? "https://inference.local";
       inferenceApi = "anthropic-messages";
       break;
     case "gemini-api":
     case OPENROUTER_PROVIDER_NAME:
     case "hermes-provider":
-      providerKey = MANAGED_PROVIDER_ID;
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
       inferenceCompat = {
         supportsStore: false,
@@ -403,7 +443,6 @@ export function getSandboxInferenceConfig(
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
       break;
     case "nvidia-prod":
-      providerKey = MANAGED_PROVIDER_ID;
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
       inferenceBaseUrl = NVIDIA_HOSTED_NATIVE_ENDPOINT;
       inferenceApi = "openai-completions";
@@ -418,6 +457,15 @@ export function getSandboxInferenceConfig(
       break;
   }
 
+  if (
+    useNativeProvider &&
+    nativeEndpointUrl &&
+    usesNativeLocalInferenceForAgent(agentName, provider, nativeEndpointUrl) &&
+    nativeLocalCredentialReference(provider, nativeEndpointUrl, agentName)
+  ) {
+    inferenceBaseUrl = nativeEndpointUrl;
+    inferenceApi = "openai-completions";
+  }
   return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
 }
 

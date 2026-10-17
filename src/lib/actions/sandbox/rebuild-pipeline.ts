@@ -54,6 +54,7 @@ import {
   recoverHermesCronRestore,
   runHermesCronRestoreTransaction,
   runRebuildPostRestorePhase,
+  recordRebuildCompletion,
 } from "./rebuild-post-restore-phase";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
@@ -75,6 +76,8 @@ import {
 } from "./rebuild-prepared-recovery";
 import {
   inspectRebuildGatewayProviderRegistration,
+  validateRebuildHostInferenceCredential,
+  verifyRebuildNativeLocalProviderBeforeDelete,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import {
@@ -93,12 +96,14 @@ import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 
 export { stageMessagingManifestPlanForRebuild };
 
-function runBestEffortRebuildCleanup(cleanup: () => boolean | void, warning: string): void {
+function runBestEffortRebuildCleanup(cleanup: () => boolean | void, warning: string): boolean {
   try {
-    if (cleanup() === false) console.warn(warning);
+    if (cleanup() !== false) return true;
   } catch {
-    console.warn(warning);
+    // Retain the existing non-fatal cleanup behavior.
   }
+  console.warn(warning);
+  return false;
 }
 
 function rebuildFailureDetail(error: unknown): string {
@@ -235,6 +240,10 @@ async function rebuildSandboxUnlocked(
   } = targetConfig;
   let recreateOptions = stagedRecreateOptions;
   const { staleRecovery } = liveState;
+  let telemetryVerified = false;
+  let telemetryMutated = false;
+  let telemetryCleanupOnly = false;
+  let telemetryCleanupComplete = true;
   let preparedImage = initiallyPreparedImage;
   let recoveryManifest = validatedRecoveryManifest;
   let rebuildPolicySourcePath: string | null = null;
@@ -488,6 +497,8 @@ async function rebuildSandboxUnlocked(
         console.log(`  Completed retained recovery cleanup for '${sandboxName}'.`);
         console.log(`  Backup is preserved at: ${cleanupManifest.backupPath}`);
         log(`Completed retained recovery cleanup ${cleanupJournal.id} for '${sandboxName}'`);
+        telemetryVerified = true;
+        telemetryCleanupOnly = true;
         return;
       }
 
@@ -664,6 +675,7 @@ async function rebuildSandboxUnlocked(
             `Sandbox '${sandboxName}' was recovered, but NemoClaw could not clear its intentional-stop record. Retry 'nemoclaw ${sandboxName} rebuild --yes' before another lifecycle command.`,
           );
         }
+        telemetryMutated = true;
         const restored = await runRebuildRestorePhase({
           sandboxName,
           targetAgentType: rebuildAgent || "openclaw",
@@ -743,6 +755,7 @@ async function rebuildSandboxUnlocked(
         log(
           `Recovered and restored journaled replacement ${recreateJournal.id} for '${sandboxName}'`,
         );
+        telemetryVerified = postRestoreVerification?.complete === true;
         return;
       }
 
@@ -830,9 +843,27 @@ async function rebuildSandboxUnlocked(
         },
         validateAtDeleteEdge: async (runtimeSelection) => {
           stoppedSource?.assertCurrent();
+          const hostCredential = resumeConfig.credentialEnv
+            ? hydrateCredentialEnv(resumeConfig.credentialEnv)
+            : null;
+          if (
+            hostCredential &&
+            !(await validateRebuildHostInferenceCredential(resumeConfig, hostCredential))
+          ) {
+            return {
+              ok: false,
+              message:
+                "Host inference credential could not be validated before sandbox deletion. Check the credential and recorded endpoint, then retry rebuild.",
+            };
+          }
+          const nativeAttachment =
+            resumeConfig.nativeNvidiaProviderAttachment ??
+            resumeConfig.nativeHostedProviderAttachment;
           if (
             !recreateOptions.rebuildProviderReconfigure &&
-            shouldVerifyRebuildGatewayProvider(resumeConfig.provider)
+            resumeConfig.nativeLocalProviderAttachment === undefined &&
+            resumeConfig.provider &&
+            (nativeAttachment || shouldVerifyRebuildGatewayProvider(resumeConfig.provider))
           ) {
             const registration = await inspectRebuildGatewayProviderRegistration(
               resumeConfig.provider,
@@ -841,7 +872,7 @@ async function rebuildSandboxUnlocked(
               runtimeSelection,
               undefined,
               resumeConfig.credentialEnv,
-              resumeConfig.nativeNvidiaProviderAttachment,
+              nativeAttachment,
             );
             if (registration !== "registered") {
               return {
@@ -859,40 +890,64 @@ async function rebuildSandboxUnlocked(
               recreateOptions.managedWorkloadRebuild,
             ) ?? revalidateRebuildRouteBeforeDelete(routePreflightReceipt);
           if (!validation.ok) return validation;
-          // Live MCP teardown temporarily removes credential-bound rules from
-          // the source sandbox. Its preparation returned the complete
-          // pre-teardown OpenShell document above and independently revalidates
-          // the stripped source policy. Do not overwrite that handoff with the
-          // temporary teardown state at the delete edge.
-          if (preservedMcpPolicyHandoff) return validation;
-          // A stale-recovery sandbox is already absent. Preflight admitted this
-          // path only after digest-verifying the policy handoff bound to the
-          // prepared recovery manifest, so there is no live policy to recapture.
-          if (staleRecovery) return validation;
-          // Prepared legacy recovery freezes source policy before the gateway upgrade.
-          // Revalidate that handoff instead of recapturing unreadable live state.
-          if (preparedBackupRecovery) {
-            return backup.backupManifest && readRebuildPolicyHandoff(backup.backupManifest)
-              ? validation
-              : {
-                  ok: false,
-                  message: "The prepared recovery policy handoff changed before sandbox deletion.",
-                };
-          }
-          try {
-            return (await capturePolicyHandoff(runtimeSelection))
-              ? validation
-              : {
-                  ok: false,
-                  message:
-                    "The current OpenShell policy became unavailable before sandbox deletion.",
-                };
-          } catch (error) {
+          const policyValidation = await (async () => {
+            // Live MCP teardown temporarily removes credential-bound rules from
+            // the source sandbox. Its preparation returned the complete
+            // pre-teardown OpenShell document above and independently revalidates
+            // the stripped source policy. Do not overwrite that handoff with the
+            // temporary teardown state at the delete edge.
+            if (preservedMcpPolicyHandoff) return validation;
+            // A stale-recovery sandbox is already absent. Preflight admitted this
+            // path only after digest-verifying the policy handoff bound to the
+            // prepared recovery manifest, so there is no live policy to recapture.
+            if (staleRecovery) return validation;
+            // Prepared legacy recovery freezes source policy before the gateway upgrade.
+            // Revalidate that handoff instead of recapturing unreadable live state.
+            if (preparedBackupRecovery) {
+              return backup.backupManifest && readRebuildPolicyHandoff(backup.backupManifest)
+                ? validation
+                : {
+                    ok: false,
+                    message:
+                      "The prepared recovery policy handoff changed before sandbox deletion.",
+                  };
+            }
+            try {
+              return (await capturePolicyHandoff(runtimeSelection))
+                ? validation
+                : {
+                    ok: false,
+                    message:
+                      "The current OpenShell policy became unavailable before sandbox deletion.",
+                  };
+            } catch (error) {
+              return {
+                ok: false,
+                message: error instanceof Error ? error.message : String(error),
+              };
+            }
+          })();
+          if (!policyValidation.ok || resumeConfig.nativeLocalProviderAttachment === undefined)
+            return policyValidation;
+          if (
+            !(await verifyRebuildNativeLocalProviderBeforeDelete(
+              sandboxName,
+              recreateOptions.targetGatewayName,
+              resumeConfig,
+              runtimeSelection,
+            ))
+          ) {
             return {
               ok: false,
-              message: error instanceof Error ? error.message : String(error),
+              message: "Native local provider authority changed before sandbox deletion.",
             };
           }
+          return (
+            revalidateManagedWorkloadRebuildBeforeDelete(
+              sandboxName,
+              recreateOptions.managedWorkloadRebuild,
+            ) ?? revalidateRebuildRouteBeforeDelete(routePreflightReceipt)
+          );
         },
         prepareSourceForDelete: sourceWindowForDelete
           ? async () => {
@@ -911,9 +966,11 @@ async function rebuildSandboxUnlocked(
         cleanupDockerOrphanAfterDelete: () =>
           removeStaleRebuildDockerOrphan(sandboxName, sandboxEntry.openshellDriver, log),
         onDeleted: () => {
+          telemetryMutated = true;
           retainPolicyHandoffForRecovery = true;
         },
         onDeleteStateAmbiguous: () => {
+          telemetryMutated = true;
           retainPolicyHandoffForRecovery = true;
         },
       });
@@ -1027,6 +1084,7 @@ async function rebuildSandboxUnlocked(
         if (!clearRecoveryMarker(recreateJournal.id, backup.backupManifest)) return;
       }
       retainPolicyHandoffForRecovery = false;
+      telemetryVerified = postRestoreVerification?.complete === true;
     } finally {
       if (sourceOpenClawDoctorWindow) {
         await releaseRebuildSourceOpenClawWindow(sourceOpenClawDoctorWindow);
@@ -1038,40 +1096,53 @@ async function rebuildSandboxUnlocked(
         (handoffManifest.rebuildPolicyHandoff || handoffManifest.rebuildMcpHandoff) &&
         !retainPolicyHandoffForRecovery
       ) {
-        runBestEffortRebuildCleanup(
-          () =>
-            clearRebuildPolicyHandoff(handoffManifest) && clearRebuildMcpHandoff(handoffManifest),
-          "  Warning: bounded rebuild recovery handoff could not be removed.",
-        );
+        telemetryCleanupComplete =
+          runBestEffortRebuildCleanup(
+            () =>
+              clearRebuildPolicyHandoff(handoffManifest) && clearRebuildMcpHandoff(handoffManifest),
+            "  Warning: bounded rebuild recovery handoff could not be removed.",
+          ) && telemetryCleanupComplete;
       } else if (rebuildPolicySourcePath && rebuildPolicySourceIsEphemeral) {
         const retainedPolicySourcePath = rebuildPolicySourcePath;
-        runBestEffortRebuildCleanup(
-          () => cleanupTempDir(retainedPolicySourcePath, "nemoclaw-rebuild-policy"),
-          `  Warning: temporary rebuild policy handoff could not be removed. Remove ${retainedPolicySourcePath} before retrying.`,
-        );
+        telemetryCleanupComplete =
+          runBestEffortRebuildCleanup(
+            () => cleanupTempDir(retainedPolicySourcePath, "nemoclaw-rebuild-policy"),
+            `  Warning: temporary rebuild policy handoff could not be removed. Remove ${retainedPolicySourcePath} before retrying.`,
+          ) && telemetryCleanupComplete;
       }
     }
   } finally {
     if (stoppedSource)
+      telemetryCleanupComplete =
+        runBestEffortRebuildCleanup(
+          stoppedSource.dispose,
+          `  Warning: private stopped-state capture files could not be fully removed. Remove ${JSON.stringify(stoppedSource.cleanupDirectory)} before retrying.`,
+        ) && telemetryCleanupComplete;
+    telemetryCleanupComplete =
       runBestEffortRebuildCleanup(
-        stoppedSource.dispose,
-        `  Warning: private stopped-state capture files could not be fully removed. Remove ${JSON.stringify(stoppedSource.cleanupDirectory)} before retrying.`,
-      );
-    runBestEffortRebuildCleanup(
-      dcodePreflight.cleanup,
-      "  Warning: temporary DCode rebuild inputs could not be fully removed.",
-    );
-    runBestEffortRebuildCleanup(
-      () => disposeRebuildAgentBaseImagePreflight(baseImagePreflight),
-      "  Warning: temporary rebuild base-image handoff could not be removed.",
-    );
+        dcodePreflight.cleanup,
+        "  Warning: temporary DCode rebuild inputs could not be fully removed.",
+      ) && telemetryCleanupComplete;
+    telemetryCleanupComplete =
+      runBestEffortRebuildCleanup(
+        () => disposeRebuildAgentBaseImagePreflight(baseImagePreflight),
+        "  Warning: temporary rebuild base-image handoff could not be removed.",
+      ) && telemetryCleanupComplete;
     if (preparedImage) {
       const retainedPreparedImage = preparedImage;
-      runBestEffortRebuildCleanup(
-        () => disposePreparedBuildContext(retainedPreparedImage),
-        "  Warning: temporary rebuild image inputs could not be fully removed.",
-      );
+      telemetryCleanupComplete =
+        runBestEffortRebuildCleanup(
+          () => disposePreparedBuildContext(retainedPreparedImage),
+          "  Warning: temporary rebuild image inputs could not be fully removed.",
+        ) && telemetryCleanupComplete;
     }
+    await recordRebuildCompletion(
+      sandboxName,
+      telemetryVerified && telemetryCleanupComplete,
+      telemetryCleanupOnly,
+      sandboxEntry,
+      telemetryMutated,
+    );
     process.removeListener("exit", releaseOnboardLock);
     releaseOnboardLock();
   }

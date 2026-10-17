@@ -94,5 +94,25 @@
   {
     "name": "NEMOCLAW_VLLM_GPU_DEVICE",
     "reason": "Internal command-scoped handoff for the public --vllm-gpu-device flag. NemoClaw validates, persists, scopes, and restores it; users should set the CLI flag instead."
+  },
+  {
+    "name": "NEMOCLAW_TELEMETRY_INSTALLED_VERSION",
+    "reason": "Internal installer-to-telemetry handoff containing only the public CLI version already observed by installer verification. Never user-set; missing observations remain unavailable."
+  },
+  {
+    "name": "NEMOCLAW_TELEMETRY_INSTALLER_PHASE",
+    "reason": "Internal installer-to-telemetry phase marker constrained to before or installed so the single operation captures authoritative prior and observed installed versions. Never user-set."
+  },
+  {
+    "name": "NEMOCLAW_TELEMETRY_INSTALLER_OUTCOME",
+    "reason": "Internal installer-to-telemetry terminal outcome receipt validated against the operation outcome allowlist after installer cleanup. Never user-set."
+  },
+  {
+    "name": "NEMOCLAW_TELEMETRY_INSTALLER_STATE",
+    "reason": "Internal installer-to-telemetry terminal state receipt validated against the operation state allowlist after installer cleanup. Never user-set."
+  },
+  {
+    "name": "NEMOCLAW_TELEMETRY_INSTALLER_STARTED_AT",
+    "reason": "Internal installer-to-telemetry start timestamp accepted only as strict UTC ISO text when creating an installer-owned operation context. Never user-set; inherited operation timing is preserved."
   }
 ]

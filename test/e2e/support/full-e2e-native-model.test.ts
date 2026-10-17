@@ -37,6 +37,16 @@ it("gives separate invocations different temporary provider and model entries", 
   expect(first.primary).not.toBe(second.primary);
 });
 
+it("keeps native NVIDIA routing and credential resolution across a model edit", () => {
+  const fixture = buildNativeModelRestartFixture("nvidia/model", "nvidia-prod");
+  expect(JSON.parse(fixture.patch).models.providers[fixture.provider]).toMatchObject({
+    baseUrl: "https://integrate.api.nvidia.com/v1",
+    apiKey: "${NVIDIA_INFERENCE_API_KEY}",
+    api: "openai-completions",
+    models: [{ id: "nvidia/model", name: "nvidia/model" }],
+  });
+});
+
 it("encodes model identifiers as JSON data without interpreting path or shell syntax", () => {
   const model = 'vendor/a.b[0]"; $(not-a-command)';
   const fixture = buildNativeModelRestartFixture(model);
@@ -87,4 +97,18 @@ it("reports the last cleanup failure when verification and both cleanup steps fa
   await expect(
     withNativeModelCleanup(fail(errors[0]), fail(errors[1]), fail(errors[2])),
   ).rejects.toBe(errors[2]);
+});
+
+it("retains a custom native endpoint and opaque credential reference through a model edit", () => {
+  const fixture = buildNativeModelRestartFixture(
+    "team/model",
+    "compatible-endpoint",
+    "https://custom.example/team/v1",
+  );
+  expect(JSON.parse(fixture.patch).models.providers[fixture.provider]).toMatchObject({
+    baseUrl: "https://custom.example/team/v1",
+    apiKey: "${COMPATIBLE_API_KEY}",
+    api: "openai-completions",
+    models: [{ id: "team/model", name: "team/model" }],
+  });
 });

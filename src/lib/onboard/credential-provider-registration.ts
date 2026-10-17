@@ -9,7 +9,10 @@ import {
   isMessagingProviderMutationFailure,
   MessagingProviderApplyError,
 } from "../messaging/applier/openshell-provider";
-import { buildMessagingProviderApplication } from "../messaging/applier/provider-application";
+import {
+  buildMessagingProviderApplication,
+  hasNemoClawOwnedMessagingProviderProfile,
+} from "../messaging/applier/provider-application";
 import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { CheckpointProviderBinding } from "../state/onboard-checkpoint-types";
@@ -54,7 +57,6 @@ export interface CredentialProviderRegistrationDeps {
   updateSession(mutator: (session: Session) => Session | void): Session;
   stagedLegacyValues: ReadonlyMap<string, string>;
   migratedLegacyKeys: Set<string>;
-  persistMigratedLegacyKeys(): void;
 }
 
 /** Credential identity comes from the declared alias relationship, not shared values. */
@@ -82,7 +84,6 @@ function recordMigratedLegacyMessagingCredentials(
     if (migration.migrated) deps.migratedLegacyKeys.add(migration.envKey);
     else deps.migratedLegacyKeys.delete(migration.envKey);
   }
-  deps.persistMigratedLegacyKeys();
 }
 
 function setStagedCredentialProviderReceipts(
@@ -205,6 +206,8 @@ function validatePlannedCredentialProviderBindings(
   tokenDefs: readonly MessagingTokenDef[],
   requiredBindings: readonly CheckpointProviderBinding[],
   hasPreparedCredential: (tokenDef: MessagingTokenDef) => boolean,
+  root: string,
+  agent: SandboxMessagingPlan["agent"],
 ): ReadonlyMap<string, CheckpointProviderBinding> {
   const requiredByName = new Map<string, CheckpointProviderBinding>();
   for (const binding of requiredBindings) {
@@ -216,13 +219,23 @@ function validatePlannedCredentialProviderBindings(
 
   const plannedByName = new Map<string, CheckpointProviderBinding>();
   for (const tokenDef of tokenDefs) {
+    const required = requiredByName.get(tokenDef.name);
+    if (!required && !hasPreparedCredential(tokenDef)) continue;
+    if (!tokenDef.providerType) {
+      throw new Error(
+        `Messaging provider '${tokenDef.name}' has no explicit owned profile type. Re-run channel setup with a supported profile.`,
+      );
+    }
+    if (!hasNemoClawOwnedMessagingProviderProfile(root, agent, tokenDef.providerType)) {
+      throw new Error(
+        `Messaging provider '${tokenDef.name}' has no NemoClaw-owned profile for type '${tokenDef.providerType}'. Re-run channel setup with a supported profile.`,
+      );
+    }
     const binding = {
       name: tokenDef.name,
-      type: tokenDef.providerType || "generic",
+      type: tokenDef.providerType,
       credentialEnv: tokenDef.envKey,
     };
-    const required = requiredByName.get(binding.name);
-    if (!required && !hasPreparedCredential(tokenDef)) continue;
     if (
       !isCanonicalBinding(binding) ||
       plannedByName.has(binding.name) ||
@@ -241,6 +254,22 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
   const refreshReceipts = new Map<string, string>();
   const gatewayRunner = (gatewayName = deps.getGatewayName()) =>
     createGatewayScopedOpenshellRunner(deps.runOpenshell, gatewayName);
+  function recordMigratedProviderCredential(
+    name: string,
+    credentialEnv: string,
+    persistedValue: string | null,
+    revalidateSandboxIdentity?: (operation: string) => void,
+  ): void {
+    // Retire only the staged value actually written, including declared aliases.
+    const migrationKeys = stagedMigrationKeys(credentialEnv, deps.stagedLegacyValues);
+    if (migrationKeys.length === 0) return;
+    revalidateSandboxIdentity?.(`record migrated credential for provider ${JSON.stringify(name)}`);
+    for (const key of migrationKeys) {
+      if (persistedValue === deps.stagedLegacyValues.get(key)) deps.migratedLegacyKeys.add(key);
+      else deps.migratedLegacyKeys.delete(key);
+    }
+  }
+
   async function upsertProvider(
     name: string,
     type: string,
@@ -259,27 +288,17 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       gatewayRunner(gatewayName),
       options,
     );
-    if (result.ok && credentialEnv) {
-      // The legacy file can carry the value under an alias of the canonical
-      // credential env (NVIDIA_API_KEY for NVIDIA_INFERENCE_API_KEY), which
-      // resolveProviderCredential resolves transparently. Account the alias
-      // too, or the staged key never looks migrated and the plaintext file
-      // survives an onboard that used it (#10373).
-      const migrationKeys = stagedMigrationKeys(credentialEnv, deps.stagedLegacyValues);
-      if (migrationKeys.length > 0) {
-        options.revalidateSandboxIdentity?.(
-          `record migrated credential for provider ${JSON.stringify(name)}`,
-        );
-        const upsertedValue = env[credentialEnv] ?? deps.getCredential(credentialEnv);
-        for (const key of migrationKeys) {
-          if (upsertedValue === deps.stagedLegacyValues.get(key)) {
-            deps.migratedLegacyKeys.add(key);
-          } else {
-            deps.migratedLegacyKeys.delete(key);
-          }
-        }
-        deps.persistMigratedLegacyKeys();
-      }
+    if (
+      result.ok &&
+      credentialEnv &&
+      stagedMigrationKeys(credentialEnv, deps.stagedLegacyValues).length > 0
+    ) {
+      recordMigratedProviderCredential(
+        name,
+        credentialEnv,
+        env[credentialEnv] ?? deps.getCredential(credentialEnv),
+        options.revalidateSandboxIdentity,
+      );
     }
     return result;
   }
@@ -289,7 +308,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     options: MessagingProviderRegistrationOptions = {},
     runOpenshell: OpenshellCliHelpers["runOpenshell"] = deps.runOpenshell,
     applicationPlan: SandboxMessagingPlan = MessagingSetupApplier.readPlanFromEnv() ??
-      emptyMessagingPlan(),
+      MessagingSetupApplier.emptyPlan(),
   ): Promise<string[]> {
     const application = buildMessagingProviderApplication({
       tokenDefs,
@@ -441,10 +460,15 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
   ): Promise<readonly CheckpointProviderBinding[]> {
     const messaging = await prepareCredentialProviders(input);
     input.revalidateSandboxIdentity?.("stage sandbox credential providers after planning");
+    const applicationPlan =
+      MessagingSetupApplier.readPlanFromEnv() ??
+      MessagingSetupApplier.emptyPlan(input.sandboxName, agentNameForMessagingPlan(input.agent));
     const plannedBindings = validatePlannedCredentialProviderBindings(
       messaging.messagingTokenDefs,
       input.requiredBindings,
       hasConfiguredMessagingCredential,
+      deps.root,
+      applicationPlan.agent,
     );
     const plannedTokenDefs = new Map(
       messaging.messagingTokenDefs.map((tokenDef) => [tokenDef.name, tokenDef]),
@@ -454,9 +478,6 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       tokenDefs.filter(hasConfiguredMessagingCredential).map((tokenDef) => tokenDef.name),
     );
     const runOpenshell = deps.runOpenshell;
-    const applicationPlan =
-      MessagingSetupApplier.readPlanFromEnv() ??
-      emptyMessagingPlan(input.sandboxName, agentNameForMessagingPlan(input.agent));
     await preflightRequiredCredentialProviderBindings(
       input.requiredBindings,
       plannedTokenDefs,
@@ -490,31 +511,12 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
   }
 
   return {
+    recordMigratedProviderCredential,
     inspectGatewayCredential,
     providerMatchesGatewayCredential,
     applyMessagingProviders,
     stageSandboxCredentialProviders,
     upsertProvider,
-  };
-}
-
-function emptyMessagingPlan(
-  sandboxName = "provider-application",
-  agent: SandboxMessagingPlan["agent"] = "openclaw",
-): SandboxMessagingPlan {
-  return {
-    schemaVersion: 1,
-    sandboxName,
-    agent,
-    workflow: "onboard",
-    channels: [],
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
   };
 }
 

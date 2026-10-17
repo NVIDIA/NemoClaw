@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
+import { recordTelemetryTarget } from "../telemetry/operation";
 import { getCredential } from "../../credentials/store";
 import {
   type WebSearchProvider,
@@ -9,7 +10,10 @@ import {
   webSearchLabelFor,
   webSearchProviderForConfig,
 } from "../../inference/web-search";
-import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
+import {
+  rebuildDashboardChatUiUrl,
+  shouldManageDashboardForAgent,
+} from "../../onboard/dashboard-runtime";
 import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
 import { enforceDockerGpuPatchPreserveNetwork } from "../../onboard/docker-gpu-local-inference";
 import { verifySandboxBridgeGatewayReachableOrExit } from "../../onboard/gateway-sandbox-reachability";
@@ -25,6 +29,7 @@ import { agentSupportsWebSearchProvider } from "../../onboard/web-search-support
 import { redact } from "../../security/redact";
 import {
   preflightRebuildCredentials,
+  preflightRebuildHostCredential,
   type RebuildBail,
   type RebuildLog,
 } from "./rebuild-credential-preflight";
@@ -113,6 +118,18 @@ export type RebuildTargetRuntimePreflightResult =
       requiresGatewayProviderReconfigure: boolean;
     }
   | { ok: false };
+
+export async function preflightRebuildTargetHostCredential(
+  target: RebuildTargetConfig,
+  bail: RebuildBail,
+): Promise<boolean> {
+  const credentialEnv = target.credentialEnv;
+  return preflightRebuildHostCredential(
+    { ...target.resumeConfig, credentialEnv },
+    credentialEnv ? rebuildOnboardDependencies.hydrateCredentialEnv(credentialEnv) : null,
+    bail,
+  );
+}
 
 export async function preflightRebuildTargetRuntime(
   target: RebuildTargetConfig,
@@ -212,7 +229,11 @@ export async function preflightRebuildTargetRuntime(
       preResolvedBaseImageMetadata: recreateOptions.preResolvedBaseImageMetadata ?? null,
       gatewayPort: recreateOptions.targetGatewayPort,
       chatUiUrl: managesDashboard
-        ? `http://127.0.0.1:${String(recreateOptions.controlUiPort)}`
+        ? rebuildDashboardChatUiUrl({
+            agentName: target.agentDefinition?.name,
+            recordedExternalUrl: sb.dashboardExternalUrl,
+            port: recreateOptions.controlUiPort ?? 0,
+          })
         : "",
     });
     if (!customImage.ok) {
@@ -231,9 +252,10 @@ export async function preflightRebuildTargetRuntime(
       return { ok: false };
     }
 
-    // Credential preflight must use the same trusted selection. Legacy registry
-    // rows may recover provider/model from their own matching onboard session;
-    // checking the raw row first would miss that remote credential requirement.
+    // Revalidate after image preparation: a key accepted before catalog lookup
+    // can be revoked while the image builds. Stop before backup in that case.
+    // Use the resolved selection, including an API family recovered from the
+    // sandbox's matching session, so every probe checks the recreate target.
     if (
       !(await preflightRebuildCredentials(
         {
@@ -242,6 +264,7 @@ export async function preflightRebuildTargetRuntime(
           model: target.resumeConfig.model,
           endpointUrl: target.resumeConfig.endpointUrl,
           credentialEnv: target.credentialEnv,
+          preferredInferenceApi: target.resumeConfig.preferredInferenceApi,
           hermesAuthMethod: target.durableConfig.hermesAuthMethod,
         },
         log,
@@ -280,6 +303,8 @@ export async function preflightAuthoritativeOnboardRuntime(
     const gatewayAuthority = await rebuildOnboardDependencies.preflightAuthoritativeRebuildTarget({
       ...recreateOptions,
       ...options,
+      agent: resumeConfig.agent,
+      nativeLocalProviderAttachment: resumeConfig.nativeLocalProviderAttachment,
       model: resumeConfig.model,
       provider: resumeConfig.provider,
       sandboxName,
@@ -287,6 +312,13 @@ export async function preflightAuthoritativeOnboardRuntime(
     recreateOptions.rebuildGatewayAuthority = gatewayAuthority;
     return true;
   } catch (err) {
+    recordTelemetryTarget({
+      scope: "sandbox",
+      sandboxName,
+      gatewayName: recreateOptions.targetGatewayName,
+      outcome: "failed",
+      state: "unchanged",
+    });
     printRebuildPreflightFailure(
       "the replacement onboarding host/runtime checks did not pass.",
       err instanceof Error ? err.message : String(err),

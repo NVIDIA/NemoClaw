@@ -61,6 +61,17 @@ const HERMES_STRUCTURED_TOOL_SEARCH = {
   max_search_limit: 20,
 };
 
+it("uses a resolvable credential in every native NVIDIA inference configuration", () => {
+  const { config } = runConfigScript({
+    NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
+    NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
+  });
+  const placeholder = "${NVIDIA_INFERENCE_API_KEY}";
+  expect(config.model.api_key).toBe(placeholder);
+  expect(config.providers["nvidia-prod"].api_key).toBe(placeholder);
+  expect(config.custom_providers[0].api_key).toBe(placeholder);
+});
+
 const REMOTE_PLATFORM_TOOLSETS = [
   "web",
   "browser",
@@ -250,8 +261,38 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     path.join(fixtureRoot, "src", "lib", "hermes-managed-route.ts"),
   );
   fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", "src", "lib", "inference-credential.ts"),
+    path.join(fixtureRoot, "src", "lib", "inference-credential.ts"),
+  );
+  fs.copyFileSync(
     path.join(import.meta.dirname, "../..", "src", "lib", "providerless-inference.ts"),
     path.join(fixtureRoot, "src", "lib", "providerless-inference.ts"),
+  );
+  const nativeConfigDir = path.join("src", "lib", "inference", "native-provider");
+  fs.mkdirSync(path.join(fixtureRoot, nativeConfigDir), { recursive: true });
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", nativeConfigDir, "agent-config.ts"),
+    path.join(fixtureRoot, nativeConfigDir, "agent-config.ts"),
+  );
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", nativeConfigDir, "hosted.ts"),
+    path.join(fixtureRoot, nativeConfigDir, "hosted.ts"),
+  );
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", nativeConfigDir, "contract.ts"),
+    path.join(fixtureRoot, nativeConfigDir, "contract.ts"),
+  );
+  const localConfigDir = "src/lib/inference/native-local";
+  fs.mkdirSync(path.join(fixtureRoot, localConfigDir), { recursive: true });
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", localConfigDir, "agent-config.ts"),
+    path.join(fixtureRoot, localConfigDir, "agent-config.ts"),
+  );
+  const coreDir = "src/lib/core";
+  fs.mkdirSync(path.join(fixtureRoot, coreDir), { recursive: true });
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", coreDir, "endpoint-url-safety.ts"),
+    path.join(fixtureRoot, coreDir, "endpoint-url-safety.ts"),
   );
   return fixtureScriptPath;
 }

@@ -6,12 +6,14 @@ import { execFileSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry } from "../../state/registry";
 import {
   LaunchReadinessEvidenceError,
   LaunchReadinessObservationError,
   requireLaunchSemanticHealth,
+  requireNativeInferenceHealth,
   type LaunchReadinessHealthDeps,
 } from "./launch-readiness/health";
 import {
@@ -379,4 +381,70 @@ describe("OpenRouter launch readiness", () => {
       });
     },
   );
+});
+
+describe("Hermes native-local readiness authority", () => {
+  function fixture(provider: string, agent: "hermes" | undefined) {
+    const binding = {
+      agent,
+      provider: "vllm-local" as const,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      gatewayName: "selected",
+      sandboxName: "alpha",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated" as const,
+    };
+    const receipt = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "owned",
+    };
+    return {
+      sandboxName: "alpha",
+      gatewayName: "selected",
+      agentName: "hermes",
+      entry: {
+        name: "alpha",
+        agent: "hermes",
+        provider,
+        model: "model-a",
+        nativeLocalProviderAttachment: receipt,
+      },
+      deps: {
+        verifyNativeLocalAttachment: vi.fn(async () => {}),
+        inferenceInvocationProbe: vi.fn(async () => ({ ok: true as const })),
+      },
+    };
+  }
+
+  it.each([
+    { name: "different selected provider", provider: "llama-cpp-local", agent: "hermes" as const },
+    { name: "DCode attachment", provider: "vllm-local", agent: undefined },
+  ])("rejects $name before observing or invoking the provider", async ({ provider, agent }) => {
+    const input = fixture(provider, agent);
+    await expect(requireNativeInferenceHealth(input)).rejects.toBeInstanceOf(
+      LaunchReadinessEvidenceError,
+    );
+    expect(input.deps.verifyNativeLocalAttachment).not.toHaveBeenCalled();
+    expect(input.deps.inferenceInvocationProbe).not.toHaveBeenCalled();
+  });
+
+  it("verifies and invokes the attached Hermes provider", async () => {
+    const input = fixture("vllm-local", "hermes");
+    await expect(requireNativeInferenceHealth(input)).resolves.toBe(true);
+    expect(input.deps.verifyNativeLocalAttachment).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      gatewayName: "selected",
+      expected: input.entry.nativeLocalProviderAttachment,
+    });
+    expect(input.deps.inferenceInvocationProbe).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        agentName: "hermes",
+        provider: "vllm-local",
+        model: "model-a",
+        nativeLocalProviderAttachment: input.entry.nativeLocalProviderAttachment,
+      }),
+    );
+  });
 });

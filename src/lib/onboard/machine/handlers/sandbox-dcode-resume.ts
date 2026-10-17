@@ -18,6 +18,7 @@ export interface Deps {
     model: string,
     preferredInferenceApi: string | null,
     endpointUrl: string | null,
+    nativeProvider: boolean,
   ): Promise<{ changed: boolean; unknown: boolean }>;
   error(message?: string): void;
   exitProcess(code: number): never;
@@ -49,6 +50,8 @@ function agentName<Agent>(agent: Agent): string | null | undefined {
 export function resolveAutoApprovalMode<Agent>(
   options: SelectionOptions<Agent> & {
     readonly requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
+    readonly resume?: boolean;
+    readonly session?: Session | null;
   },
   sandboxName: string | null,
   deps: Pick<Deps, "error" | "exitProcess"> & {
@@ -56,11 +59,21 @@ export function resolveAutoApprovalMode<Agent>(
   },
 ): DcodeAutoApprovalMode {
   const registryEntry = sandboxName ? deps.getSandboxRegistryEntry(sandboxName) : null;
+  // A route reservation precedes registration and does not yet own the capability.
+  // Once registered, its value wins over old session intent, including revocation.
+  const registered =
+    registryEntry &&
+    (!registryEntry.pendingRouteReservation || registryEntry.dcodeAutoApprovalMode != null);
+  const pendingMode =
+    options.resume && !registered && options.session?.dcodeAutoApprovalRequestedExplicitly
+      ? options.session.dcodeAutoApprovalMode
+      : null;
   const resolution = resolveDcodeAutoApprovalRequest({
     agent: usesManagedDcodeIdentity(agentName(options.agent), options.fromDockerfile)
       ? agentName(options.agent)
       : null,
     requestedMode: options.requestedDcodeAutoApprovalMode,
+    pendingMode,
     recordedMode: registryEntry?.dcodeAutoApprovalMode,
   });
   if (!resolution.error) return resolution.mode;
@@ -118,7 +131,12 @@ export async function resolveSignals<Agent>(
     options.provider,
     options.model,
     options.preferredInferenceApi,
-    options.endpointUrl,
+    registryEntry.nativeLocalProviderAttachment?.endpointUrl ?? options.endpointUrl,
+    Boolean(
+      registryEntry.nativeLocalProviderAttachment ||
+      registryEntry.nativeHostedProviderAttachment ||
+      registryEntry.nativeNvidiaProviderAttachment,
+    ),
   );
   return {
     inferenceSelectionChanged: Boolean(drift.changed || drift.unknown),

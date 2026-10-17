@@ -4,6 +4,10 @@
 // Fixture and response helpers shared by the openclaw-inference-switch live
 // target and fast e2e-support tests without gating on NEMOCLAW_RUN_LIVE_E2E=1.
 
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import type { RetryFailureClass } from "../../../tools/e2e/retry-evidence.mts";
 import {
   startFakeOpenAiCompatibleServer,
@@ -154,13 +158,14 @@ export const MOCK_BASELINE_MODEL = "openclaw-switch-baseline-model";
 
 export function startMockOpenClawBaselineProvider(
   progress: FakeOpenAiCompatibleServerOptions["progress"],
+  publicHost = "host.openshell.internal",
 ) {
   return startFakeOpenAiCompatibleServer({
     apiKey: MOCK_BASELINE_API_KEY,
     chatContent: "PONG",
     host: "0.0.0.0",
     model: MOCK_BASELINE_MODEL,
-    publicHost: "host.openshell.internal",
+    publicHost,
     progress,
     requireAuth: true,
   });
@@ -187,4 +192,52 @@ export function mockBaselineInference(endpointUrl: string): BaselineInferenceCon
       NEMOCLAW_PROVIDER: "custom",
     },
   };
+}
+
+/** Read the structured route through the same host CLI used by the live scenario. */
+export async function getRouteOutput(
+  host: HostCliClient,
+  options: { env: NodeJS.ProcessEnv; timeoutMs: number },
+): Promise<ShellProbeResult> {
+  return host.command("node", [CLI_ENTRYPOINT, "inference", "get", "--json"], {
+    ...options,
+    artifactName: "nemoclaw-inference-get-after-switch",
+  });
+}
+
+/** Validate the native handle inside the sandbox before artifact redaction. */
+export async function readOpenClawConfig(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  options: {
+    env: NodeJS.ProcessEnv;
+    timeoutMs: number;
+    artifactName: string;
+    nativeNvidia?: boolean;
+    nativeCustomApi?: string;
+  },
+): Promise<ShellProbeResult> {
+  return sandbox.exec(
+    sandboxName,
+    options.nativeNvidia || options.nativeCustomApi
+      ? [
+          "node",
+          "-e",
+          [
+            'const fs = require("node:fs");',
+            'const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));',
+            `const provider = config.models?.providers?.${options.nativeCustomApi === "anthropic-messages" ? "anthropic" : "inference"};`,
+            // A fresh exec receives the newly attached provider handle. Keep
+            // both values inside the sandbox because ShellProbe redacts the
+            // credential-shaped config field before returning stdout.
+            `const credentialEnv = ${JSON.stringify(options.nativeCustomApi ? (options.nativeCustomApi === "anthropic-messages" ? "COMPATIBLE_ANTHROPIC_API_KEY" : "COMPATIBLE_API_KEY") : "NVIDIA_INFERENCE_API_KEY")};`,
+            "const handle = process.env[credentialEnv];",
+            'require("node:assert/strict").ok(new RegExp("^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + credentialEnv + "$").test(handle ?? "") && provider?.apiKey === handle, "native credential reference mismatch");',
+            "delete provider.apiKey;",
+            "process.stdout.write(JSON.stringify(config));",
+          ].join(" "),
+        ]
+      : ["cat", "/sandbox/.openclaw/openclaw.json"],
+    { artifactName: options.artifactName, env: options.env, timeoutMs: options.timeoutMs },
+  );
 }

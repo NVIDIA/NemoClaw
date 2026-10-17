@@ -10,6 +10,63 @@ import { runInstallerSourced } from "../helpers/installer-express-prompt-harness
 import { INSTALLER_PAYLOAD } from "../helpers/installer-sourced-env";
 
 describe("non-interactive Station Express selection", () => {
+  it.each(["express", "provider"])(
+    "leaves the catalog default unforced across %s reboot resume",
+    (mode) => {
+      const { home, result, output } = runInstallerSourced(`
+station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
+_STATION_INSTALL_MODE=${mode}
+configure_station_express_model
+printf 'INITIAL=%s|%s\\n' "\${NEMOCLAW_VLLM_MODEL-unset}" "\${NEMOCLAW_MODEL-unset}"
+save_station_express_resume
+load_station_express_resume
+configure_station_express_model
+printf 'RESUMED=%s|%s\\n' "\${NEMOCLAW_VLLM_MODEL-unset}" "\${NEMOCLAW_MODEL-unset}"
+`);
+      onTestFinished(() => fs.rmSync(home, { recursive: true, force: true }));
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("INITIAL=unset|unset");
+      expect(output).toContain("RESUMED=unset|unset");
+      expect(
+        fs.readFileSync(path.join(home, ".nemoclaw/station-express-resume"), "utf8"),
+      ).toContain("\nmodel=auto\n");
+    },
+  );
+  it.each([
+    ["", "", "", "0"],
+    ["", "peer.example", "nemotron-3-ultra-550b-a55b", "0"],
+    ["nemotron-3-ultra-550b-a55b", "", "nemotron-3-ultra-550b-a55b", "1"],
+    ["nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4", "", "nemotron-3.5-super-vl-120b", "1"],
+  ])("preserves model intent '%s' with peer '%s'", (model, peer, expected, explicit) => {
+    const { home, result, output } = runInstallerSourced(
+      `
+_STATION_INSTALL_MODE=express
+configure_station_express_model
+printf 'MODEL=%s|%s\\n' "\${NEMOCLAW_VLLM_MODEL:-}" "$_STATION_EXPRESS_MODEL_WAS_EXPLICIT"
+`,
+      { NEMOCLAW_VLLM_MODEL: model, NEMOCLAW_DGX_STATION_PEER: peer },
+    );
+    onTestFinished(() => fs.rmSync(home, { recursive: true, force: true }));
+    expect(result.status, output).toBe(0);
+    expect(output).toContain(`MODEL=${expected}|${explicit}`);
+  });
+
+  it("retains automatic pair discovery after a catalog-default reboot receipt", () => {
+    const { home, result, output } = runInstallerSourced(`
+station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
+_STATION_INSTALL_MODE=express
+configure_station_express_model
+save_station_express_resume
+unset NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
+load_station_express_resume
+configure_station_express_model
+station_dual_model_requested
+printf 'DISCOVERY=%s|%s\\n' "$?" "\${NEMOCLAW_VLLM_MODEL:-}"
+`);
+    onTestFinished(() => fs.rmSync(home, { recursive: true, force: true }));
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("DISCOVERY=0|\n");
+  });
   function expectCiQualificationHelp(installer: string) {
     const result = spawnSync("bash", [installer, "--help"], { encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
@@ -64,7 +121,7 @@ main ${args}
       try {
         expect(result.status, output).toBe(0);
         expect(output).toContain(`AGENT=${agent}`);
-        expect(output).toContain("SELECTED=express|1|install-vllm|nemotron-3-ultra-550b-a55b|");
+        expect(output).toContain("SELECTED=express|1|install-vllm|||suggested||1");
       } finally {
         fs.rmSync(home, { recursive: true, force: true });
       }
@@ -73,14 +130,12 @@ main ${args}
   it.each([
     "--express-install --yes-i-accept-third-party-software",
     "--yes-i-accept-third-party-software --express-install --non-interactive",
-  ])("selects the real Ultra Express recipe through main with %s", (args) => {
+  ])("delegates the Express model to the catalog through main with %s", (args) => {
     const { home, result, output } = select(args);
     try {
       expect(result.status, output).toBe(0);
       expect(output).toContain("HOST_PREPARATION");
-      expect(output).toContain(
-        "SELECTED=express|1|install-vllm|nemotron-3-ultra-550b-a55b|nvidia/nemotron-3-ultra-550b-a55b|suggested||1",
-      );
+      expect(output).toContain("SELECTED=express|1|install-vllm|||suggested||1");
       expect(output).not.toContain("Run express install with these settings?");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -184,13 +239,13 @@ unset NEMOCLAW_PROVIDER NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
 EXPRESS_INSTALL=1
 ACCEPT_THIRD_PARTY_SOFTWARE=1
 maybe_offer_express_install
-printf 'RESUMED=%s|%s|%s\\n' "$NEMOCLAW_STATION_EXPRESS" "$NEMOCLAW_VLLM_MODEL" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}"
+printf 'RESUMED=%s|%s|%s\\n' "$NEMOCLAW_STATION_EXPRESS" "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}"
 `);
       try {
         expect(result.status, output).toBe(mode === "express" ? 0 : 1);
         expect(output).toContain(
           mode === "express"
-            ? "RESUMED=1|nemotron-3-ultra-550b-a55b|"
+            ? "RESUMED=1||"
             : "resume state was accepted in provider mode; refusing to resume it in express mode",
         );
       } finally {

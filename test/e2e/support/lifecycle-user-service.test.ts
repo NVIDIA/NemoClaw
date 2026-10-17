@@ -509,6 +509,7 @@ describe("managed OpenShell gateway user-service stop", () => {
       [
         "#!/bin/sh",
         `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
+        'if [ "$XDG_RUNTIME_DIR" != "/run/user/$(id -u)" ] || [ "$DBUS_SESSION_BUS_ADDRESS" != "unix:path=$XDG_RUNTIME_DIR/bus" ]; then exit 96; fi',
         `if [ "$*" = ${JSON.stringify(upstreamServiceShow)} ]; then exit 1; fi`,
         'if [ "$*" = "--user show-environment" ]; then exit 0; fi',
         `if [ "$*" = "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value" ]; then printf '%s\\n' ${JSON.stringify(unit)}; exit 0; fi`,

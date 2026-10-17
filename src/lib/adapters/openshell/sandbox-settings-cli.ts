@@ -26,6 +26,13 @@ export function createCliOpenShellSandboxSettings(
         };
       }
       if (target.kind === "named") assertNoOpenShellGatewayEndpointOverride();
+      const optOut = process.env.NEMOCLAW_NO_AUTO_AUDIT_LOGS?.toLowerCase();
+      if (optOut && optOut !== "0" && optOut !== "false") {
+        return { ok: true, value: undefined };
+      }
+      console.error(
+        `NemoClaw is attempting to enable OpenShell OCSF JSON audit logs for sandbox '${sandboxName}' (ocsf_json_enabled=true). Set NEMOCLAW_NO_AUTO_AUDIT_LOGS=1 to opt out.`,
+      );
       const args = ["settings", "set"];
       if (target.kind === "named") args.push("-g", target.gatewayName);
       args.push(sandboxName, "--key", "ocsf_json_enabled", "--value", "true");

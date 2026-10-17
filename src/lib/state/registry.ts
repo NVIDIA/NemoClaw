@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+export {
+  getNativeHostedProviderAuthority,
+  setNativeHostedProviderAuthority,
+} from "./registry/native-provider-authority";
+
 import { isDeepStrictEqual } from "node:util";
 import { isDeferredN1xManagedVllmAcceptanceRoute } from "../domain/sandbox/n1x-managed-vllm-rebuild";
 import type { InferenceSelection } from "../inference/selection";
@@ -22,6 +27,9 @@ import {
 import { withLock } from "./registry/lock";
 import { load, save } from "./registry/persistence";
 import {
+  normalizeNativeLocalProviderAttachment,
+  retainedNativeLocalProviderAttachment,
+  nativeHostedReservationAttachment,
   isCurrentSandboxInferenceRouteReservation,
   isCurrentPendingSandboxCreateReservation,
   normalizeSandboxInferenceRouteSelection,
@@ -73,7 +81,7 @@ export {
   clearNativeNvidiaProviderAuthority,
   getNativeNvidiaProviderAuthority,
   setNativeNvidiaProviderAuthority,
-} from "./registry/native-nvidia-provider-authority";
+} from "./registry/native-provider-authority";
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
 import { cloneSandboxHostMounts, hasUnsafeHostMountTerminalText } from "./registry/host-mount";
@@ -485,6 +493,18 @@ export function registerSandbox(
         );
       }
     }
+    const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
+      entry.nativeLocalProviderAttachment,
+    );
+    if (
+      entry.nativeLocalProviderAttachment !== undefined &&
+      (!nativeLocalProviderAttachment ||
+        nativeLocalProviderAttachment.sandboxName !== entry.name ||
+        nativeLocalProviderAttachment.gatewayName !== entry.gatewayName ||
+        nativeLocalProviderAttachment.provider !== entry.provider)
+    ) {
+      throw new Error("Cannot publish an invalid native local provider attachment.");
+    }
     const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
       entry.nativeNvidiaProviderAttachment,
     );
@@ -493,12 +513,23 @@ export function registerSandbox(
         "Cannot register a sandbox with an invalid native NVIDIA provider attachment",
       );
     }
+    const nativeHostedProviderAttachment = nativeHostedReservationAttachment(
+      entry.nativeHostedProviderAttachment,
+      entry.provider,
+    );
     const registered: SandboxEntry = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
       servingProfileProvenance: servingProfileProvenance ?? undefined,
       deferredN1xManagedVllmAccepted: entry.deferredN1xManagedVllmAccepted,
       ...inferenceSelectionRegistryFields(entry),
+      modelAssignmentSelections: Array.isArray(entry.modelAssignmentSelections)
+        ? entry.modelAssignmentSelections.map((selection) => ({ ...selection }))
+        : undefined,
+      nativeModelSelectionProvenance: entry.nativeModelSelectionProvenance
+        ? { ...entry.nativeModelSelectionProvenance }
+        : undefined,
+      configurationApplyPending: entry.configurationApplyPending === true ? true : undefined,
       gpuEnabled: entry.gpuEnabled || false,
       hostGpuDetected: entry.hostGpuDetected === true,
       sandboxGpuEnabled: entry.sandboxGpuEnabled === true,
@@ -543,7 +574,9 @@ export function registerSandbox(
           : undefined,
       ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
       ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+      ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
       ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+      ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
       messaging: cloneSandboxMessagingState(entry.messaging),
@@ -594,7 +627,9 @@ type SandboxInferenceRouteReservation = Pick<
   reservationSessionId?: string;
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
+  nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
 };
 
 interface SandboxInferenceRouteReservationOptions {
@@ -636,6 +671,22 @@ export function reserveSandboxInferenceRoute(
     )
       return false;
     const normalized = normalizeInferenceSelection(route);
+    const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
+      route.nativeLocalProviderAttachment,
+    );
+    if (
+      route.nativeLocalProviderAttachment !== undefined &&
+      (!nativeLocalProviderAttachment ||
+        nativeLocalProviderAttachment.sandboxName !== name ||
+        nativeLocalProviderAttachment.gatewayName !== route.gatewayName ||
+        nativeLocalProviderAttachment.provider !== route.provider)
+    ) {
+      throw new Error("Cannot publish an invalid native local provider attachment.");
+    }
+    const nativeHostedProviderAttachment = nativeHostedReservationAttachment(
+      route.nativeHostedProviderAttachment,
+      normalized.provider,
+    );
     const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
       route.nativeNvidiaProviderAttachment,
     );
@@ -700,6 +751,14 @@ export function reserveSandboxInferenceRoute(
             route.hostLocalInferenceProvenance ?? existing.hostLocalInferenceProvenance,
           ) &&
           isDeepStrictEqual(
+            existing.nativeLocalProviderAttachment,
+            nativeLocalProviderAttachment ?? existing.nativeLocalProviderAttachment,
+          ) &&
+          isDeepStrictEqual(
+            existing.nativeHostedProviderAttachment,
+            nativeHostedProviderAttachment ?? existing.nativeHostedProviderAttachment,
+          ) &&
+          isDeepStrictEqual(
             existing.nativeNvidiaProviderAttachment,
             nativeNvidiaProviderAttachment ?? existing.nativeNvidiaProviderAttachment,
           ) &&
@@ -739,6 +798,19 @@ export function reserveSandboxInferenceRoute(
       endpointSource: normalized.endpointSource,
       credentialEnv: normalized.credentialEnv,
       preferredInferenceApi: normalized.preferredInferenceApi,
+      nativeLocalProviderAttachment:
+        nativeLocalProviderAttachment ??
+        retainedNativeLocalProviderAttachment(existing, {
+          provider: normalized.provider,
+          endpointUrl: normalized.endpointUrl,
+          gatewayName: route.gatewayName,
+        }),
+      nativeHostedProviderAttachment: nativeHostedReservationAttachment(
+        nativeHostedProviderAttachment,
+        normalized.provider,
+        existing ?? undefined,
+        { ...normalized, gatewayName: route.gatewayName },
+      ),
       nativeNvidiaProviderAttachment: isNativeNvidiaProvider(normalized.provider)
         ? (nativeNvidiaProviderAttachment ?? existing?.nativeNvidiaProviderAttachment)
         : undefined,
