@@ -233,13 +233,8 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     }
     let mut retained = destroyed.retained.clone();
     retained.sort();
-    assert_eq!(
-        retained,
-        [
-            "openshell_gateway_storage.runtime",
-            "openshell_workspace.deployment"
-        ]
-    );
+    // Destroy deletes the workspace; only gateway storage remains.
+    assert_eq!(retained, ["openshell_gateway_storage.runtime"]);
     // Retained gateway storage is still on the engine.
     assert!(
         !docker_objects(

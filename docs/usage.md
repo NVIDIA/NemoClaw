@@ -411,9 +411,10 @@ After destroy succeeds, the namespace, encryption key, and persistent volumes re
 
 ## Destroy
 
-Destroy removes all bound sandboxes, provider registrations and profiles, and managed process containers.
+Destroy removes all bound sandboxes, provider registrations and profiles, the OpenShell workspace, and managed process containers.
 **Sandbox files and conversation history are deleted.** Back up native agent data separately when needed.
-The workspace, model downloads, prepared data, gateway database and keys, gateway bridge, stopped initializer, images, and local deployment state remain.
+Model downloads, prepared data, the gateway database and keys, the gateway bridge, the stopped initializer, images, and local deployment state remain.
+Re-applying the same configuration reinstalls a managed gateway on its retained storage and recreates the workspace.
 Service-owned networks are removed with disposable compute.
 Persistent resources stay tracked; retained image bytes do not require retained image-resource bindings.
 

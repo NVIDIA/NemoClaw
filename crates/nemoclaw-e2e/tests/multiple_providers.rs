@@ -150,5 +150,5 @@ async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_s
     assert!(live.sandboxes.is_empty());
     assert!(live.providers.is_empty());
     assert!(live.profiles.is_empty());
-    assert_eq!(live.workspaces.len(), 2);
+    assert!(live.workspaces.is_empty());
 }

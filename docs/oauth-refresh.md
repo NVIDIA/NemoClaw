@@ -69,7 +69,8 @@ An expired or revoked refresh grant can require signing in again; follow the iss
 
 Attaching this provider to a NemoClaw-managed sandbox is an out-of-band change.
 NemoClaw checks its authored attachment list: export and apply can refuse the changed sandbox as drift.
-Use this as an operator-managed attachment, and detach it before returning to NemoClaw plan, export, apply, or destroy.
+Use this as an operator-managed attachment, and detach it before returning to NemoClaw plan, export, or apply.
+Before destroy, also remove the manually created provider, refresh state and workspace profile as described below.
 Do not delete or edit deployment state to bypass the check.
 For a sandbox managed entirely outside NemoClaw, follow the upstream tutorial's sandbox-creation procedure instead.
 
@@ -118,15 +119,22 @@ Then use the original YAML, bundle, state directory and credential environment f
 | NemoClaw export | Exports checked authored deployment configuration, not this profile, refresh material, or manual attachment; attachment drift is refused |
 | NemoClaw reapply | Uses the authored attachment set; it does not recreate this manual registration or attach it after sandbox replacement |
 | Sandbox replacement | Requires a new manual attachment and a new process if this API is still needed |
+| Deployment destroy | Deletes the OpenShell workspace; first remove manual refresh records, providers and workspace profiles |
 | Credential retirement | Belongs to the operator and issuer; deployment teardown is not OAuth revocation |
 
-When retiring access, detach the provider from every sandbox using it, then remove its refresh metadata and provider registration if no consumers remain:
+Destroy now deletes the deployment's OpenShell workspace.
+OpenShell refuses workspace deletion while a provider, custom profile or credential refresh record remains, even after its sandbox attachments are gone.
+Before destroy, stop use of the manual registration, detach it from every consumer, and remove the resources you created in that workspace:
 
 ```sh
 openshell provider refresh delete microsoft-mail --credential-key MS_GRAPH_ACCESS_TOKEN
 openshell provider delete microsoft-mail
+openshell profile delete microsoft-graph-mail
 ```
 
 These commands do not revoke the issuer's grant or remove your client credential source.
-Revoke that grant through the issuer, retire the local token material, and remove the custom profile only when no provider still needs it.
+Delete the custom profile only after its last provider is removed.
+If other consumers still need these workspace-scoped resources, defer deployment destroy until they have an operator-approved replacement; do not force deletion or edit state.
+If destroy has already reported remaining resources, retain the deployment state, remove only the identified operator-owned resources, and retry destroy with the same state.
+Revoke the grant through the issuer and retire the local token material when retiring access; deleting gateway records alone is not revocation.
 The [security guide](security.md#credentials-and-authentication) describes the separate deployment credential boundaries.

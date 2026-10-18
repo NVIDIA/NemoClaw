@@ -82,7 +82,7 @@ The current CLI has no snapshot or lost-state adoption command.
 
 **Destroy deletes sandbox files and conversation history.**
 The [destroy guide](usage.md#destroy) owns the workload removal, retained-storage, and recovery procedure.
-The retained OpenShell workspace resource does not imply that sandbox files survive.
+Destroy also deletes the OpenShell workspace; re-applying the same configuration recreates it.
 
 Credentials can also remain in retained runtime storage.
 See [managed vLLM authentication](inference.md#authenticate-a-managed-vllm-service), [Ollama proxy credentials](inference.md#use-external-ollama-through-a-managed-proxy), and [security](security.md) before retiring storage.
@@ -96,7 +96,7 @@ To retire a deployment whose retained resources are on Docker engines, follow [R
 | Sandbox and its native files, settings, tokens, and conversations | Deleted |
 | Deployment provider profiles and registrations, including declared Brave integration resources | Removed; upstream keys are not revoked |
 | External gateway, inference service, external Ollama daemon/model, and externally owned engine/network | Remain under their operators' control |
-| OpenShell workspace | Retained and tracked; does not preserve the deleted sandbox's files |
+| OpenShell workspace | Deleted; re-applying the configuration recreates it |
 | Managed vLLM/Ollama process containers and service-owned networks | Removed; model storage remains tracked |
 | Managed model downloads and prepared data | Native Docker volumes retained by default; missing caches may be reconstructed separately from credentials |
 | Managed vLLM credentials | Separate tracked credential volume retained |

@@ -463,7 +463,7 @@ For reconstructible resources, OpenTofu and the provider own confirmed absence, 
 | Inference and web search | Create the profile and then the registration; recreate a missing profile and rotate an inference credential reference in place; replace on any other input change or a missing registration | The same checks for both objects; a failure between them records the identity, so the next apply replaces the resource |
 | Fabric agent | Apply the public Fabric document; replace the agent on any input change | Verify the parent sandbox identity; refuse a replacement unless the sandbox is replaced too |
 | Sandbox | Create and observe the declared sandbox; replace it on any change to its specification | Replacement and deletion delete its files and conversation history; data that must survive belongs on a mounted volume |
-| Workspace | Create and observe; delete only during explicit teardown | Refuse replacement and automatic recreation of a missing binding; `lifecycle { prevent_destroy = true }` retains it, as generated graphs do |
+| Workspace | Create and observe; delete only during explicit teardown | Refuse replacement and automatic recreation of a missing binding; `lifecycle { prevent_destroy = true }` retains it, as generated graphs do during apply |
 
 OpenShell refuses deletion of profiles referenced by registrations and registrations attached to sandboxes.
 Inference and web search resources therefore recreate a missing profile in place, and remove the registration before its profile.
@@ -474,7 +474,7 @@ Endpoint and policy changes that also change a sandbox's launch specification re
 The provider's `destroy` setting authorizes explicit teardown of workspaces; reconstructible objects, sandboxes included, do not require it.
 It never authorizes deleting the workspace or bypassing identity checks.
 Removing Fabric configuration stops the agent and leaves the sandbox-owned runtime host and its sandbox in place.
-The SDK's destroy operation still retains durable storage and the workspace.
+The SDK's destroy operation retains durable storage and deletes the workspace with the rest of the deployment's objects.
 See [deletion and retention](state.md#deletion-and-retention) before removing workloads.
 
 An observation error is not absence.

@@ -481,11 +481,9 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
         image_resource.as_str(),
         "openshell_inference.inference_hosted-nvidia-prod",
         "openshell_sandbox.assistant",
+        "openshell_workspace.deployment",
     ];
-    let retained = vec![
-        String::from("openshell_workspace.deployment"),
-        String::from("openshell_gateway_storage.runtime"),
-    ];
+    let retained = vec![String::from("openshell_gateway_storage.runtime")];
     let destroy_plan = deployment.plan_destroy(&cancel).await.unwrap();
     assert_eq!(destroy_plan.outcome, Outcome::Planned);
     assert_changes(&destroy_plan.changes, &removed, "delete");
@@ -497,10 +495,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     assert!(destroyed.deferred.is_empty());
     assert_eq!(
         destroyed.retained,
-        vec![
-            String::from("openshell_workspace.deployment"),
-            String::from("openshell_gateway_storage.runtime"),
-        ]
+        vec![String::from("openshell_gateway_storage.runtime")]
     );
     fs::write(
         directory.join("brev-proof.json"),

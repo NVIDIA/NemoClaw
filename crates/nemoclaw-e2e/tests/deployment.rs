@@ -96,10 +96,6 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
     let summary = String::from_utf8(destroyed.stdout).unwrap();
     assert!(summary.contains("Destroy complete"), "{summary}");
     assert!(summary.contains("Sandbox files and conversation history deleted"));
-    assert!(summary.contains("OpenShell workspace"));
-    assert!(summary.contains(
-        "Retaining the workspace does not preserve sandbox files or conversation history."
-    ));
     let repeated = invoke("destroy", "json");
     let result: serde_json::Value = serde_json::from_slice(&repeated.stdout).unwrap();
     assert_eq!(result["outcome"], "destroyed");
@@ -107,7 +103,7 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
     let observed = fixture.state.lock().unwrap();
     assert!(observed.sandboxes.is_empty());
     assert!(observed.providers.is_empty());
-    assert_eq!(observed.workspaces.len(), 1);
+    assert!(observed.workspaces.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -203,7 +199,7 @@ async fn independent_sandboxes_reconcile_concurrently_and_retain_shared_dependen
     let state = fixture.state.lock().unwrap();
     assert!(state.sandboxes.is_empty());
     assert!(state.providers.is_empty());
-    assert_eq!(state.workspaces.len(), 1);
+    assert!(state.workspaces.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -292,7 +288,7 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
     );
     fixture.state.lock().unwrap().driver = Some("podman".into());
     deployment.destroy(&cancel).await.unwrap();
-    assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
+    assert!(fixture.state.lock().unwrap().workspaces.is_empty());
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
 }
 
@@ -331,8 +327,9 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, 4);
     let preview = deployment.plan_destroy(&cancel).await.unwrap();
-    // Destroy also removes the agent configuration that replaces the sandbox.
-    assert_eq!(preview.changes.len(), 4);
+    // Destroy also removes the agent configuration that replaces the sandbox,
+    // and the workspace.
+    assert_eq!(preview.changes.len(), 5);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let destroyed = Command::new(
         bundle
@@ -357,8 +354,9 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
             .changes
             .is_empty()
     );
-    assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
-    // The registration, sandbox, agent, and the agent's configuration.
+    assert!(fixture.state.lock().unwrap().workspaces.is_empty());
+    // The workspace, registration, sandbox, agent, and the agent's
+    // configuration: re-apply after destroy recreates the workspace too.
     assert_eq!(
         deployment
             .apply(&document, &cancel)
@@ -366,7 +364,7 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
             .unwrap()
             .changes
             .len(),
-        4
+        5
     );
 }
 
@@ -850,7 +848,7 @@ impl Lifecycle {
             String::from_utf8_lossy(&destroyed.stderr)
         );
         let state = self.fixture.state.lock().unwrap();
-        assert_eq!(state.workspaces.len(), 1);
+        assert!(state.workspaces.is_empty());
         assert!(state.sandboxes.is_empty());
         assert!(state.providers.is_empty());
         assert!(state.profiles.is_empty());
@@ -948,7 +946,7 @@ async fn startup_and_observation_failures_retain_bindings_and_recover() {
         deployment.destroy(&cancel).await.unwrap().outcome,
         Outcome::Destroyed
     );
-    assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
+    assert!(fixture.state.lock().unwrap().workspaces.is_empty());
     assert!(fixture.state.lock().unwrap().providers.is_empty());
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
 }
@@ -1003,8 +1001,8 @@ async fn destroy_does_not_require_the_inference_credential_or_rewrite_its_refere
             .unwrap()
             .changes
             .len(),
-        // Destroy also removes the agent configuration.
-        4
+        // Destroy also removes the agent configuration and the workspace.
+        5
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     // Teardown initializes the stage once to read its bindings and once for
@@ -1115,7 +1113,7 @@ async fn destroy_waits_for_graceful_sandbox_stop_without_retrying() {
     );
     let state = fixture.state.lock().unwrap();
     assert!(state.sandboxes.is_empty());
-    assert_eq!(state.workspaces.len(), 1); // Destroy retains the owned workspace.
+    assert!(state.workspaces.is_empty()); // Destroy deletes the workspace too.
     assert_eq!(state.delete_calls, 1);
 }
 
@@ -1291,7 +1289,7 @@ async fn failed_first_apply_can_destroy_bound_resources_without_successful_reapp
         assert!(state.sandboxes.is_empty());
         assert!(state.providers.is_empty());
         assert!(state.profiles.is_empty());
-        assert_eq!(state.workspaces.len(), 1);
+        assert!(state.workspaces.is_empty());
     }
 }
 
