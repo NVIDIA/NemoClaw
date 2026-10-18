@@ -268,6 +268,7 @@ mod live {
                 "fabric_agent.assistant",
                 "openshell_inference.inference_hosted-nvidia-prod",
                 "openshell_sandbox.assistant",
+                "openshell_workspace.deployment",
             ],
             "delete",
         );
@@ -284,10 +285,8 @@ mod live {
     }
 
     fn retained_resources() -> Vec<String> {
-        vec![
-            "openshell_workspace.deployment".into(),
-            "openshell_gateway_storage.runtime".into(),
-        ]
+        // Destroy deletes the workspace; only gateway storage remains.
+        vec!["openshell_gateway_storage.runtime".into()]
     }
 
     /// One plan creates the runtime and the objects it serves, in address order.
