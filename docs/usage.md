@@ -475,13 +475,14 @@ OpenShell deletes by name without an ID/version condition, so a concurrent repla
 
 ### Remove Retained Resources
 
-This procedure removes what destroy retains on Docker engines when you retire a deployment.
-It does not cover a Podman, Kubernetes, or OpenShift gateway; keep the state directory for those ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+NemoClaw has no purge command: you remove what destroy retains with each platform's own commands, below.
+Finish destroy first: `nemoclaw plan --destroy --state-dir .local/deployment` must print `No resource changes planned.`, then the entries to remove under `Retained resources:`.
 
 **Removal permanently deletes the managed gateway's database, workspace, and keys, plus model downloads, prepared data, and managed vLLM and Ollama proxy credentials.**
-It does not revoke upstream keys or remove images, external gateways, or engines.
+It does not revoke upstream keys or remove images, external gateways, engines, or clusters.
 
-Finish destroy first: `nemoclaw plan --destroy --state-dir .local/deployment` must print `No resource changes planned.`, then the entries to remove under `Retained resources:`.
+#### On Docker
+
 The commands select objects by UID alone, so confirm that no other deployment, including one copied from the same example, uses this `metadata.uid`.
 Run the commands with Docker access to each engine the deployment selects: the managed gateway's `spec.gateway.engine`, each service's `placement.engine`, and each Ollama proxy's `engine`.
 For SSH placement, connect to that host using the already configured SSH identity; do not substitute the client's local Docker daemon.
@@ -514,4 +515,38 @@ When every entry's objects are gone, remove the `.local/deployment` directory.
 To deploy again, use a fresh `metadata.uid` and a new state directory; apply refuses a state directory whose gateway storage or credentials were removed.
 
 The [live Docker suite](contributing/testing.md) removes its gateways' UID-labelled objects and fails if any remain.
-Removal of managed service volumes and of objects on SSH engines is not verified, and there is no purge command ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+
+#### On Podman
+
+A managed Podman gateway keeps the same objects, with the same names and label, as on Docker ([retained Docker objects](state.md#find-retained-docker-objects)).
+Follow the Docker steps with `podman --url "$deployment_engine"` in place of `docker --host "$deployment_engine"`, where `deployment_engine` is the gateway's `spec.gateway.engine`, such as `unix:///run/user/1000/podman/podman.sock`.
+This procedure has not yet been run against a Podman gateway ([current limits](limits.md#data-and-cleanup)).
+
+#### On Kubernetes or OpenShift
+
+Destroy keeps the deployment's namespace, the gateway's key Secret and its persistent volume claims ([retained Kubernetes objects](state.md#find-retained-kubernetes-objects)).
+Deleting the namespace removes them all.
+Use the kubeconfig and context the deployment uses, and set `deployment_namespace` to its `gateway.kubernetes.namespace`:
+
+```sh
+deployment_context=my-cluster
+deployment_namespace=nemoclaw-development
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+  get pods,secrets,persistentvolumeclaims
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+  get persistentvolumeclaims -o jsonpath='{range .items[*]}{.spec.volumeName}{"\n"}{end}'
+```
+
+Continue only if no pods remain, and nothing other than this deployment uses the namespace.
+Note the volume names the second command prints, then delete the namespace and wait for it to go:
+
+```sh
+kubectl --context "$deployment_context" delete namespace "$deployment_namespace" --wait=true
+```
+
+If `kubectl get namespace "$deployment_namespace"` reports it not found, the namespace and its objects are gone.
+Whether the noted volumes go too depends on their StorageClass: with the `Delete` reclaim policy, the cluster removes them and their data; with `Retain`, they remain `Released`, and you delete them and their storage with your platform's tools.
+On OpenShift, `oc delete project` does the same as deleting the namespace.
+When the namespace and the volumes are gone, remove the state directory, which holds the cluster receipt and any development issuer keys.
+
+The [live Kubernetes suite](contributing/live-tests.md) deletes a retained namespace this way and checks that the namespace and its volumes are gone.
