@@ -498,6 +498,7 @@ fn objects_graph(
     let mut graph = compile_with_plans(document, generations, version, &service_plans, &raw)?;
     crate::docker_compute::configure(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid Docker compute graph"))?;
+    crate::docker_compute::authenticate(&mut graph, &document.spec.registries);
     crate::services::configure_readiness(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid proxy readiness graph"))?;
     let targets = crate::docker_compute::targets(&raw)

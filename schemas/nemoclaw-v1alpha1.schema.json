@@ -2467,6 +2467,31 @@
       ],
       "description": "A literal glob or a nonempty list of alternative globs."
     },
+    "Registry": {
+      "additionalProperties": false,
+      "description": "A registry NemoClaw authenticates to when pulling images through Docker.",
+      "properties": {
+        "address": {
+          "description": "Registry address, such as nvcr.io or registry.example.com:5000, matching its entry in the Docker configuration file.",
+          "maxLength": 253,
+          "minLength": 1,
+          "type": "string"
+        },
+        "configFile": {
+          "description": "Absolute path of the Docker configuration file that holds the login, on the machine running OpenTofu. Defaults to `.docker/config.json` in the user's home directory; `DOCKER_CONFIG` is not read.",
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "address"
+      ],
+      "type": "object"
+    },
     "Resources": {
       "additionalProperties": false,
       "description": "Resource declarations checked against host observations and produced data.",
@@ -3765,6 +3790,14 @@
             "pattern": "^[a-z][a-z0-9-]{0,39}$"
           },
           "type": "object"
+        },
+        "registries": {
+          "description": "Registries whose images NemoClaw pulls through Docker with the logins of the machine running OpenTofu, from its Docker configuration file. Lists addresses only; credentials stay in that file or its credential store.",
+          "items": {
+            "$ref": "#/$defs/Registry"
+          },
+          "maxItems": 32,
+          "type": "array"
         },
         "sandboxes": {
           "description": "One to 32 uniquely named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.",

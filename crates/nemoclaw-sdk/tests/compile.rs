@@ -566,3 +566,56 @@ fn isolated_sandboxes_take_extra_network_grants() {
     });
     assert!(nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).is_err());
 }
+
+#[test]
+fn docker_providers_authenticate_to_listed_registries() {
+    let generations: nemoclaw_sdk::compile::Generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+        "inference_service",
+        "ollama_service",
+    ]
+    .map(|key| (key.into(), "a".repeat(32)))
+    .into();
+    let mut value: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/managed-ollama.yaml")).unwrap();
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).unwrap();
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    let providers = graph["provider"]["docker"]
+        .as_array()
+        .expect("Docker providers");
+    assert!(
+        providers
+            .iter()
+            .all(|provider| provider.get("registry_auth").is_none())
+    );
+
+    value["spec"]["registries"] = serde_json::json!([
+        {"address": "nvcr.io"},
+        {"address": "registry.example.com:5000", "configFile": "/srv/ci/docker/config.json"}
+    ]);
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
+        .expect("registries must parse");
+    assert_eq!(
+        nemoclaw_sdk::config::Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
+        doc
+    );
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    // Every Docker provider reads the logins of the machine running OpenTofu;
+    // the graph names only the registries.
+    for provider in graph["provider"]["docker"].as_array().unwrap() {
+        assert_eq!(
+            provider["registry_auth"],
+            serde_json::json!([
+                {"address": "nvcr.io"},
+                {"address": "registry.example.com:5000", "config_file": "/srv/ci/docker/config.json"}
+            ]),
+            "{provider}"
+        );
+    }
+
+    value["spec"]["registries"] = serde_json::json!([{"address": "nvcr.io", "password": "x"}]);
+    assert!(nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).is_err());
+}

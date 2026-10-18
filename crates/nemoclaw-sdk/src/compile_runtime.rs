@@ -235,6 +235,7 @@ pub(crate) fn compiled_runtime(
 ) -> Result<(Value, Vec<Target>), Error> {
     let (mut graph, targets) = runtime_graph(document, generations, version)?;
     crate::docker_compute::configure(&mut graph, &targets)?;
+    crate::docker_compute::authenticate(&mut graph, &document.spec.registries);
     if let Some(gateway) = targets.iter().find(|target| target.kind == GATEWAY_KIND)
         && document.spec.gateway.runtime().provider == ComputeDriver::Docker
     {
