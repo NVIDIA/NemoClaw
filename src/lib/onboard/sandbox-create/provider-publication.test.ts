@@ -107,6 +107,47 @@ async function prepareProviders(
   await publishAttachedProvidersBeforeDockerSandboxCreation(input, deps);
 }
 
+const HERMES_PROFILE_TYPE = "nemoclaw-hermes-tool-gateway-v1";
+const HERMES_CREDENTIAL_ENV = "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN";
+const hermesProviderName = "alpha-hermes-tool-gateway";
+
+function hermesProvider(
+  overrides: {
+    type?: string;
+    name?: string;
+    credentialKeys?: string[];
+    configKeys?: string[];
+  } = {},
+) {
+  return vi.fn(async () => ({
+    ok: true as const,
+    value: {
+      name: hermesProviderName,
+      type: HERMES_PROFILE_TYPE,
+      credentialKeys: [HERMES_CREDENTIAL_ENV],
+      configKeys: [],
+      ...overrides,
+    },
+  }));
+}
+
+function hermesBoundary(harness: ReturnType<typeof createHarness>) {
+  return createProviderEffectBoundary({
+    deferred: false,
+    sandboxName: "alpha",
+    gatewayName: "nemoclaw",
+    preparationInput: publicationInput({
+      messagingProviders: [],
+      messagingProviderRequests: [],
+      hermesToolGateway: { providerName: hermesProviderName },
+    }),
+    preparationDeps: harness.deps,
+    runVerifiedSandboxCreateEffects: null,
+    activateDeferredProviderEffects: null,
+    revalidateSandboxIdentityBeforeCreate: vi.fn(),
+  });
+}
+
 describe("sandbox provider preparation", () => {
   it.each([
     ["brave", true, expect.anything()],
@@ -382,44 +423,16 @@ describe("sandbox provider preparation", () => {
     expect(harness.runOpenshell).not.toHaveBeenCalled();
   });
 
-  it.each(["nemoclaw-hermes-tool-gateway-v1", "generic"])(
+  it.each([HERMES_PROFILE_TYPE, "generic"])(
     "preserves the %s Hermes tool gateway binding on direct create",
     async (type) => {
       const warningCheck = vi.fn();
-      const providerName = "alpha-hermes-tool-gateway";
       const adapter = Object.assign(
-        typedProviderAdapter({
-          getProvider: vi.fn(async () => ({
-            ok: true as const,
-            value: {
-              name: providerName,
-              type,
-              credentialKeys: ["NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN"],
-              configKeys: [],
-            },
-          })),
-        }),
+        typedProviderAdapter({ getProvider: hermesProvider({ type }) }),
         { warnIfVerifiedProfilesChangedAfterSandboxCreate: warningCheck },
       );
       const harness = createHarness(adapter);
-      const boundary = createProviderEffectBoundary({
-        deferred: false,
-        sandboxName: "alpha",
-        gatewayName: "nemoclaw",
-        preparationInput: publicationInput({
-          messagingProviders: [],
-          messagingProviderRequests: [],
-          hermesToolGateway: {
-            providerName,
-            profileType: "nemoclaw-hermes-tool-gateway-v1",
-            credentialEnv: "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
-          },
-        }),
-        preparationDeps: harness.deps,
-        runVerifiedSandboxCreateEffects: null,
-        activateDeferredProviderEffects: null,
-        revalidateSandboxIdentityBeforeCreate: vi.fn(),
-      });
+      const boundary = hermesBoundary(harness);
 
       await boundary.validateBeforeCreate();
       expect(adapter.importProviderProfile).toHaveBeenCalledTimes(type === "generic" ? 0 : 1);
@@ -440,17 +453,8 @@ describe("sandbox provider preparation", () => {
   );
 
   it("blocks a changed Hermes tool gateway profile before sandbox creation", async () => {
-    const providerName = "alpha-hermes-tool-gateway";
     const adapter = typedProviderAdapter({
-      getProvider: vi.fn(async () => ({
-        ok: true as const,
-        value: {
-          name: providerName,
-          type: "nemoclaw-hermes-tool-gateway-v1",
-          credentialKeys: ["NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN"],
-          configKeys: [],
-        },
-      })),
+      getProvider: hermesProvider(),
       importProviderProfile: vi.fn(async () => ({
         ok: false as const,
         error: {
@@ -461,29 +465,33 @@ describe("sandbox provider preparation", () => {
       })),
     });
     const harness = createHarness(adapter);
-    const boundary = createProviderEffectBoundary({
-      deferred: false,
-      sandboxName: "alpha",
-      gatewayName: "nemoclaw",
-      preparationInput: publicationInput({
-        messagingProviders: [],
-        messagingProviderRequests: [],
-        hermesToolGateway: {
-          providerName,
-          profileType: "nemoclaw-hermes-tool-gateway-v1",
-          credentialEnv: "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
-        },
-      }),
-      preparationDeps: harness.deps,
-      runVerifiedSandboxCreateEffects: null,
-      activateDeferredProviderEffects: null,
-      revalidateSandboxIdentityBeforeCreate: vi.fn(),
-    });
 
-    await expect(boundary.validateBeforeCreate()).rejects.toThrow(
+    await expect(hermesBoundary(harness).validateBeforeCreate()).rejects.toThrow(
       "Could not verify Hermes tool gateway profile before sandbox creation",
     );
     expect(harness.cleanupCreateSources).toHaveBeenCalledOnce();
+    expect(adapter.updateProvider).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["unrelated provider type", { type: "unrelated" }],
+    ["legacy provider name", { type: "generic", name: "other" }],
+    [
+      "legacy credential keys",
+      { type: "generic", credentialKeys: [HERMES_CREDENTIAL_ENV, "OTHER_KEY"] },
+    ],
+    ["legacy config keys", { type: "generic", configKeys: ["OTHER_KEY"] }],
+    ["owned credential key", { credentialKeys: ["OTHER_KEY"] }],
+  ])("stops on %s before sandbox or provider mutation", async (_case, overrides) => {
+    const adapter = typedProviderAdapter({ getProvider: hermesProvider(overrides) });
+    const harness = createHarness(adapter);
+
+    await expect(hermesBoundary(harness).validateBeforeCreate()).rejects.toThrow(
+      "Hermes tool gateway provider binding changed before sandbox creation",
+    );
+    expect(harness.cleanupCreateSources).toHaveBeenCalledOnce();
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(adapter.createProvider).not.toHaveBeenCalled();
     expect(adapter.updateProvider).not.toHaveBeenCalled();
   });
 

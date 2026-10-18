@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
-
+import {
+  importHermesToolGatewayProfile,
+  LEGACY_HERMES_TOOL_GATEWAY_PROVIDER_TYPE,
+  matchHermesToolGatewayProviderType,
+} from "../../hermes-tool-gateway-provider-profile";
 import { ensureNativeLocalProviderAttached } from "../../inference/native-local/profile";
 import { isNativeHostedProviderName } from "../../inference/native-provider/hosted-attachment";
 import { hostedNativeProviderForAttachment } from "../../inference/native-provider/hosted-attachment";
@@ -36,10 +39,7 @@ import {
 } from "../../messaging/provider-profile";
 import { listMessagingBridgeProfiles } from "../messaging-bridge-provider";
 import type { SandboxEntry } from "../../state/registry";
-import {
-  matchesGatewayCredentialFamilyProviderBinding,
-  matchesGatewayCredentialOnlyProviderBinding,
-} from "../gateway-provider-metadata";
+import { matchesGatewayCredentialFamilyProviderBinding } from "../gateway-provider-metadata";
 import { resolveRegisteredRuntimeProvider } from "../runtime-provider/selection";
 import type { SandboxCreateIntent } from "../sandbox-create-intent-types";
 
@@ -52,11 +52,7 @@ type ProviderPreparationInput = {
   readonly extraProviders: readonly string[];
   readonly gatewayName: string;
   readonly directCreateProviderNames?: readonly string[];
-  readonly hermesToolGateway?: Readonly<{
-    providerName: string;
-    profileType: string;
-    credentialEnv: string;
-  }>;
+  readonly hermesToolGateway?: Readonly<{ providerName: string }>;
 };
 
 type ProviderPreparationDeps = Pick<SandboxCreateOrchestrationRuntime, "runOpenshell"> & {
@@ -208,37 +204,22 @@ export async function validateAttachedHermesToolGatewayProfileBeforeSandboxCreat
       `Could not inspect Hermes tool gateway provider before sandbox creation.`,
     );
   }
-  if (
-    ![expected.profileType, "generic"].includes(observed.value.type) ||
-    !matchesGatewayCredentialOnlyProviderBinding(observed.value, {
-      name: expected.providerName,
-      type: observed.value.type,
-      credentialKey: expected.credentialEnv,
-    })
-  ) {
+  const providerType = matchHermesToolGatewayProviderType(observed.value, expected.providerName);
+  if (!providerType) {
     throwAfterCleanup(
       deps,
       `Hermes tool gateway provider binding changed before sandbox creation.`,
     );
   }
-  if (observed.value.type === "generic") return null;
-  const profile = await adapter.importProviderProfile({
-    target,
-    profilePath: path.join(
-      REPOSITORY_ROOT,
-      "agents",
-      "hermes",
-      "host",
-      `${expected.profileType}.yaml`,
-    ),
-  });
+  if (providerType === LEGACY_HERMES_TOOL_GATEWAY_PROVIDER_TYPE) return null;
+  const profile = await importHermesToolGatewayProfile(adapter, target, REPOSITORY_ROOT);
   if (!profile.ok) {
     throwAfterCleanup(
       deps,
       `Could not verify Hermes tool gateway profile before sandbox creation.`,
     );
   }
-  return expected.profileType;
+  return providerType;
 }
 
 export function resolveProviderAdapter(
