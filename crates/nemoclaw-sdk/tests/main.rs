@@ -25,6 +25,7 @@ mod scripted_tofu;
 mod support;
 #[path = "../../test-support/http.rs"]
 mod transport;
+mod travel_team;
 
 #[path = "agent_tools.rs"]
 mod agent_tools;

@@ -5,6 +5,8 @@
 
 A travel planning team of six agents, each in its own OpenShell sandbox, written as plain OpenTofu HCL against NemoClaw's providers.
 For a single agent, see [the travel example](../travel/).
+The same team in NemoClaw's YAML configuration is [`travel-team.yaml`](../../travel-team.yaml), with shorter instructions written out per agent.
+Use the YAML unless you need what only HCL offers here: instructions rendered from templates, the JSON Schemas embedded in them, and iteration over roles.
 
 | Role | Harness | Model | Reaches |
 |---|---|---|---|
