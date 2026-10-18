@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: openclaw
+  uid: d55b73c4-cdd7-48b4-b883-dd7d0e8d37da
+spec:
+  gateway:
+    management: external
+    # Replace with the Docker or Podman engine holding the sandbox image.
+    engine: unix:///var/run/docker.sock
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17671
+  inferenceProviders:
+    - name: local
+      provider: openai
+      api: openai-responses
+      endpoint: https://inference.example.com/v1
+  sandboxes:
+    - name: assistant
+      image:
+        # Replace with the digest from a fresh OpenClaw image build; see docs/inference.md.
+        ref: local-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: example-reasoning-model
+                maxTokens: 8192

@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 use fabric_provider::AgentBridge as _;
 
-use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
 use nemoclaw_sdk::{
     CancellationToken, Deployment, OperationResult, Outcome,
     backend::Row,
     config::{Document, Gateway},
 };
+use openshell_provider::{EnvironmentSecrets, OpenShell};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -88,7 +88,7 @@ fn bindings(directory: &Path) -> (Value, Row) {
     (Value::Object(ids), sandbox.unwrap())
 }
 fn managed_bindings(directory: &Path) -> Value {
-    let path = directory.join("runtime/terraform.tfstate");
+    let path = directory.join("terraform.tfstate");
     if !path.exists() {
         return json!({});
     }
@@ -118,16 +118,35 @@ async fn exec(client: &OpenShell, binding: &Row, command: Vec<String>) -> Vec<u8
     assert_eq!(exit, 0, "native runtime command failed");
     output
 }
-async fn invoke(client: &OpenShell, binding: &Row, name: &str, input: &Value) -> Vec<u8> {
+async fn invoke(
+    client: &OpenShell,
+    binding: &Row,
+    name: &str,
+    runtime_id: &str,
+    input: &Value,
+) -> Vec<u8> {
     assert_eq!(binding["agent_name"], name);
-    let result = client.invoke_agent(binding, input).await.unwrap();
-    serde_json::to_vec(&result["fabric_result"]).unwrap()
+    let result = client
+        .invoke_agent(binding, runtime_id, input)
+        .await
+        .unwrap();
+    serde_json::to_vec(&result).unwrap()
 }
 
-async fn runtime_id(client: &OpenShell, binding: &Row) -> String {
-    let snapshot = client.agent_snapshot(binding).await.unwrap();
-    assert_eq!(snapshot.runtime_state, "running");
-    snapshot.runtime_id.unwrap()
+/// The runtime ID Fabric gave the deployment's agent, from its OpenTofu state.
+fn runtime_id(directory: &Path) -> String {
+    let state: Value =
+        serde_json::from_slice(&fs::read(directory.join("terraform.tfstate")).unwrap()).unwrap();
+    let id = state["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|resource| resource["mode"] == "managed" && resource["type"] == "fabric_agent")
+        .and_then(|resource| resource["instances"][0]["attributes"]["runtime_id"].as_str())
+        .expect("the agent records its runtime ID")
+        .to_owned();
+    assert!(!id.trim().is_empty());
+    id
 }
 
 #[tokio::test]
@@ -174,7 +193,7 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
             "policy-denied-403"
         );
     }
-    let hosted = runtime_id(&client, &binding).await;
+    let hosted = runtime_id(&directory);
     let unchanged = deployment.apply(&document, &cancel).await.unwrap();
     assert!(unchanged.changes.is_empty());
     let exported = deployment.export(&cancel).await.unwrap();
@@ -189,13 +208,13 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     );
     assert_eq!(bindings(&directory).0, before);
     assert_eq!(managed_bindings(&directory), managed_before);
-    assert_eq!(runtime_id(&client, &binding).await, hosted);
-    let response = invoke(&client, &binding, &agent.name, &input).await;
+    assert_eq!(runtime_id(&directory), hosted);
+    let response = invoke(&client, &binding, &agent.name, &hosted, &input).await;
     assert!(
         successful_invocation(&response),
         "Fabric invocation did not succeed"
     );
-    assert_eq!(runtime_id(&client, &binding).await, hosted);
+    assert_eq!(runtime_id(&directory), hosted);
     let destroyed = deployment.destroy(&cancel).await.unwrap();
     assert_eq!(destroyed.outcome, Outcome::Destroyed);
 }
@@ -279,11 +298,12 @@ async fn dependency_upgrade_survives_apply_process_exit() {
         .await
         .unwrap();
     let (before, binding) = bindings(&directory);
-    let hosted = runtime_id(&client, &binding).await;
+    let hosted = runtime_id(&directory);
     let reply = invoke(
         &client,
         &binding,
         &document.spec.sandboxes[0].agent.name,
+        &hosted,
         &input,
     )
     .await;
@@ -302,7 +322,7 @@ async fn dependency_upgrade_survives_apply_process_exit() {
             .is_empty()
     );
     assert_eq!(bindings(&directory).0, before);
-    assert_eq!(runtime_id(&client, &binding).await, hosted);
+    assert_eq!(runtime_id(&directory), hosted);
     let destroyed = deployment.destroy(&cancel).await.unwrap();
     assert_eq!(destroyed.outcome, Outcome::Destroyed);
 }

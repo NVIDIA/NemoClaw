@@ -37,7 +37,9 @@ impl From<PlannedResourceChange> for ResourceChange {
             && let Some((kind, _)) = planned.address.split_once('.')
         {
             nemoclaw_openshell::flatten(kind, &mut change.before);
+            nemoclaw_fabric::agent::flatten(kind, &mut change.before);
             nemoclaw_openshell::flatten(kind, &mut change.after);
+            nemoclaw_fabric::agent::flatten(kind, &mut change.after);
         }
         Self {
             mode: planned.mode,
@@ -81,6 +83,41 @@ pub(super) struct PlannedChange {
     #[serde(default)]
     pub after: Value,
 }
+/// Sandboxes to replace so each newly created agent gets a new sandbox.
+///
+/// A Fabric sandbox runs one agent runtime in its lifetime, and a start that
+/// failed or lost its reply may have used it. So an agent created in a sandbox
+/// that already exists replaces that sandbox too, and the plan shows it.
+pub(super) fn sandboxes_for_new_agents(plan: &Plan) -> Vec<String> {
+    let managed = |change: &&ResourceChange| {
+        change.mode.as_deref() != Some("data") && change.deposed.is_none()
+    };
+    let creates = |address: &str| {
+        plan.resource_changes.iter().filter(managed).any(|change| {
+            change.address == address
+                && change
+                    .change
+                    .actions
+                    .iter()
+                    .any(|action| action == "create")
+        })
+    };
+    let prefix = format!("{}.", nemoclaw_fabric::agent::RESOURCE_TYPE);
+    plan.resource_changes
+        .iter()
+        .filter(managed)
+        .filter(|change| change.change.actions == ["create"])
+        .filter_map(|change| change.address.strip_prefix(&prefix))
+        .map(|name| format!("openshell_sandbox.{name}"))
+        .filter(|sandbox| {
+            plan.resource_changes
+                .iter()
+                .any(|change| &change.address == sandbox)
+                && !creates(sandbox)
+        })
+        .collect()
+}
+
 fn identity(change: &ResourceChange, expected: &Row, binding: &StateBinding) -> Result<(), Error> {
     if change.change.before["id"] != binding.id {
         return Err(Error::Conflict("plan changed a durable resource identity"));
@@ -126,10 +163,11 @@ fn identity(change: &ResourceChange, expected: &Row, binding: &StateBinding) -> 
 pub(super) use crate::docker_compute::is_disposable as disposable;
 
 pub(super) fn reconstructible(address: &str) -> bool {
-    address.split_once('.').is_some_and(|(kind, _)| {
-        crate::backend::openshell_lifecycle(kind)
-            == Some(crate::backend::OpenShellLifecycle::Reconstructible)
-    })
+    address.starts_with("terraform_data.")
+        || address.split_once('.').is_some_and(|(kind, _)| {
+            crate::backend::openshell_lifecycle(kind)
+                == Some(crate::backend::OpenShellLifecycle::Reconstructible)
+        })
 }
 
 fn standard_actions(actions: &[String]) -> bool {
@@ -200,7 +238,7 @@ pub(super) fn check_plan(
             .get(&change.address)
             .ok_or(Error::Conflict("plan contains an undeclared resource"))?;
         let replacement = change.change.actions == ["delete", "create"]
-            && change.address.starts_with("nemoclaw_managed_gateway.")
+            && change.address.starts_with("openshell_podman_gateway.")
             && bindings.contains_key(&change.address);
         if !seen.insert(&change.address)
             || (!replacement
@@ -279,7 +317,7 @@ pub(super) fn check_destroy_plan(
             // The Helm provider can report absence after a release lookup
             // failure. Require the authentication resource's independent
             // Secret-metadata observation before retiring this binding.
-            let auth_address = "nemoclaw_kubernetes_auth.runtime";
+            let auth_address = "openshell_kubernetes_auth.runtime";
             let confirmed = plan.resource_changes.iter().any(|change| {
                 change.address == auth_address
                     && change.mode.as_deref() == Some("managed")
@@ -437,6 +475,35 @@ mod native_helm_tests {
         )
     }
 
+    fn changes(changes: &[(&str, &[&str])]) -> Plan {
+        let changes: Vec<Value> = changes
+            .iter()
+            .map(|(address, actions)| json!({"mode":"managed", "address":address, "change":{"actions":actions}}))
+            .collect();
+        serde_json::from_value(json!({ "resource_changes": changes })).unwrap()
+    }
+
+    #[test]
+    fn a_new_agent_in_an_existing_sandbox_replaces_the_sandbox() {
+        let plan = changes(&[
+            ("openshell_sandbox.kept", &["no-op"]),
+            ("fabric_agent.kept", &["create"]),
+            ("openshell_sandbox.updated", &["update"]),
+            ("fabric_agent.updated", &["create"]),
+            // A sandbox created alongside its agent needs nothing more.
+            ("openshell_sandbox.new", &["create"]),
+            ("fabric_agent.new", &["create"]),
+            ("openshell_sandbox.replaced", &["delete", "create"]),
+            ("fabric_agent.replaced", &["delete", "create"]),
+            ("openshell_sandbox.unchanged", &["no-op"]),
+            ("fabric_agent.unchanged", &["no-op"]),
+        ]);
+        assert_eq!(
+            super::sandboxes_for_new_agents(&plan),
+            ["openshell_sandbox.kept", "openshell_sandbox.updated"]
+        );
+    }
+
     fn planned(actions: &[&str], before: Value, after: Value) -> Plan {
         serde_json::from_value(json!({"resource_changes":[{
             "mode":"managed", "address":ADDRESS,
@@ -510,7 +577,7 @@ mod native_helm_tests {
                 .len(),
             1
         );
-        let auth_address = "nemoclaw_kubernetes_auth.runtime";
+        let auth_address = "openshell_kubernetes_auth.runtime";
         let auth = json!({"id":"auth-uid", "spec":"retained-auth-spec"});
         allowed.insert(
             auth_address.into(),
@@ -609,9 +676,9 @@ mod kubernetes_replacement_tests {
             .filter(|target| !target.address.starts_with("data."))
             .collect();
         for platform in [
-            "nemoclaw_kubernetes_storage.runtime",
-            "nemoclaw_kubernetes_auth.runtime",
-            "nemoclaw_kubernetes_gateway.runtime",
+            "openshell_kubernetes_storage.runtime",
+            "openshell_kubernetes_auth.runtime",
+            "openshell_kubernetes_gateway.runtime",
         ] {
             assert!(
                 targets.iter().any(|target| target.address == platform),
@@ -646,7 +713,7 @@ mod kubernetes_replacement_tests {
                 .collect();
             serde_json::from_value(json!({"resource_changes": changes})).unwrap()
         };
-        let accepted = runtime::check_runtime_plan(&planned(None), &expected, &bindings);
+        let accepted = crate::deployment::plan::check_plan(&planned(None), &expected, &bindings);
         assert!(
             accepted.as_ref().is_ok_and(Vec::is_empty),
             "a plan with no changes must be accepted: {accepted:?}"
@@ -654,7 +721,7 @@ mod kubernetes_replacement_tests {
         for target in &targets {
             for actions in [["delete", "create"], ["create", "delete"]] {
                 let plan = planned(Some((&target.address, actions)));
-                let result = runtime::check_runtime_plan(&plan, &expected, &bindings);
+                let result = crate::deployment::plan::check_plan(&plan, &expected, &bindings);
                 assert!(
                     matches!(
                         result,
@@ -680,11 +747,7 @@ pub(super) mod discovery_tests {
     /// The deferrals a plan reports, as `plan` and `apply` compute them.
     pub(in crate::deployment) fn deferred(plan: &Plan) -> Vec<String> {
         let report = plan
-            .discovery_report(
-                DiscoveryScope::Deployment,
-                &BTreeMap::new(),
-                &BTreeSet::new(),
-            )
+            .discovery_report(&BTreeSet::new(), &BTreeMap::new(), &BTreeSet::new())
             .unwrap();
         plan.discovery_deferred(&report)
     }
@@ -743,12 +806,12 @@ mod reporting_tests {
     use super::*;
     #[test]
     fn inventory_reports_validated_actions_and_retention_without_copying_private_state() {
-        let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"mode":"managed","address":"nemoclaw_gateway_storage.runtime","change":{"actions":["no-op"],"before":{"id":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL"},"after":{"id":"PRIVATE_SENTINEL"}}}],"resource_drift":[{"mode":"managed","address":"nemoclaw_gateway_storage.runtime","change":{"actions":["update"],"before":{},"after":{}}}]})).unwrap();
+        let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"mode":"managed","address":"openshell_gateway_storage.runtime","change":{"actions":["no-op"],"before":{"id":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL"},"after":{"id":"PRIVATE_SENTINEL"}}}],"resource_drift":[{"mode":"managed","address":"openshell_gateway_storage.runtime","change":{"actions":["update"],"before":{},"after":{}}}]})).unwrap();
         let report = plan
             .discovery_report(
-                super::super::DiscoveryScope::Runtime,
+                &BTreeSet::from(["openshell_gateway_storage.runtime".into()]),
                 &BTreeMap::new(),
-                &BTreeSet::from(["nemoclaw_gateway_storage.runtime".into()]),
+                &BTreeSet::from(["openshell_gateway_storage.runtime".into()]),
             )
             .unwrap();
         assert_eq!(report.resources.len(), 1);
@@ -763,13 +826,11 @@ mod reporting_tests {
         );
     }
     #[test]
-    fn unknown_gateway_preserves_hardware_deferrals_without_blocking_on_catalogs() {
+    fn unknown_gateway_preserves_hardware_deferrals() {
         use super::discovery_tests::{deferred, encoded};
-        let catalog = encoded(crate::inference_discovery::EndpointObservation::unknown(""));
         let hardware = encoded(crate::hardware_discovery::HardwareObservation::unknown());
-        let plan:Plan=serde_json::from_value(json!({"planned_values":{"outputs":{"discovery":{"sensitive":false}},"root_module":{"resources":[{"address":"data.nemoclaw_inference_capabilities.endpoint_0","values":{"observation_json":catalog}},{"address":"data.nemoclaw_target_hardware.target_0","values":{"observation_json":hardware}},{"address":"data.openshell_gateway.current","values":{"observation_json":null}}]}}})).unwrap();
+        let plan:Plan=serde_json::from_value(json!({"planned_values":{"outputs":{"discovery":{"sensitive":false}},"root_module":{"resources":[{"address":"data.host_engine.target_0","values":{"observation_json":hardware}},{"address":"data.openshell_gateway.current","values":{"observation_json":null}}]}}})).unwrap();
         let messages = deferred(&plan);
-        assert!(!messages.iter().any(|message| message.contains("Inference")));
         assert!(messages.iter().any(|message| message.contains("hardware")));
         assert!(messages.iter().any(|message| message.contains("Gateway")));
     }

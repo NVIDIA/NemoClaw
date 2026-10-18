@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
 
-# Set the endpoint and model for your service. Custom models need piModel metadata.
-# See docs/agents.md for catalog models and protocol requirements.
+# Set the endpoint and model for your service. Pi needs context_window and max_tokens for
+# models it does not ship; NemoClaw supplies the API from the provider. See docs/agents.md.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -35,10 +35,6 @@ spec:
               providerRef: local
               overrides:
                 model: qwen3:4b
-                settings:
-                  model_metadata:
-                    api: openai-completions
-                    contextWindow: 8192
-                    maxTokens: 2048
-                    reasoning: false
-                    input: [text]
+                maxTokens: 4096
+                extensions:
+                  context_window: 32768

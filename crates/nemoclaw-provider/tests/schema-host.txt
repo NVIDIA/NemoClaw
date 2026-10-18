@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The host provider's schema, rendered by nemoclaw-test-fixtures.
+# Regenerate it after an intended change:
+#   NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-provider --test integration schema::
+# Lines starting with > quote descriptions; tf-provider's placeholder
+# description `empty` is omitted. Blocks are version 1 unless shown.
+
+provider host (version 0)
+
+data host_container_health (version 0)
+  container_id: string, required
+  engine: string, required
+  healthy: bool, computed
+  http_url: string, optional
+  labels: map(string), optional
+  name: string, required
+  read_trigger: bool, optional
+  runtime_status: string, optional
+  wait_timeout_seconds: number, optional
+
+data host_engine (version 0)
+  available: bool, computed
+  engine: string, required
+  engine_json: string, computed
+  hardware_json: string, computed
+  status: string, computed
+
+data host_image (version 0)
+  allow_missing: bool, optional
+  architecture: string, required
+  engine: string, required
+  image: string, required
+  image_id: string, optional
+  labels: map(string), optional
+  observation_json: string, computed

@@ -3,6 +3,7 @@
 //! Fabric's image contract: what an image's Fabric catalog label promises,
 //! whether that satisfies a sandbox's requirements, and how the label is read.
 
+pub mod agent;
 pub mod capabilities;
 pub mod catalog;
 pub mod image_metadata;

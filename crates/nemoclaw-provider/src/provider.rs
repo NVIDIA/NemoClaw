@@ -83,108 +83,164 @@ impl Backend for ConfiguredBackend {
             .await
     }
 }
+/// A resource for `definition`, reconciled by `backend`.
+fn adapter(
+    definition: Definition,
+    backend: &Arc<ConfiguredBackend>,
+    destroying: &Arc<AtomicBool>,
+) -> Box<dyn DynamicResource> {
+    let structured = definition.is_structured();
+    let mut resource = ResourceAdapter::new(definition, backend.clone());
+    resource.destroying = destroying.clone();
+    // Typed list and block inputs need the structured adapter.
+    if structured {
+        Box::new(nemoclaw_tofu::StructuredAdapter(resource))
+    } else {
+        Box::new(resource)
+    }
+}
+
+/// Every resource definition this crate implements.
+pub(crate) fn all_definitions() -> Vec<Definition> {
+    let mut definitions = Vec::new();
+    definitions.extend(crate::kubernetes::definitions());
+    definitions.extend(crate::services::definitions());
+    definitions.extend(crate::managed::definitions());
+    definitions
+}
+
+/// Whether the openshell provider serves a kind: gateway installation.
+fn installs_gateway(definition: &Definition) -> bool {
+    nemoclaw_openshell::installation_type(definition.kind).is_some()
+}
+
+/// The teardown permission, the only setting of this crate's providers.
+fn destroy_schema() -> Schema {
+    let mut attributes = HashMap::new();
+    attributes.insert(
+        "destroy".into(),
+        Attribute {
+            attr_type: AttributeType::Bool,
+            constraint: AttributeConstraint::Optional,
+            ..Default::default()
+        },
+    );
+    Schema {
+        version: 0,
+        block: Block {
+            attributes,
+            ..Default::default()
+        },
+    }
+}
+
+/// Grant teardown only for an explicit `destroy = true`. Reconfiguration must
+/// not retain permission from an earlier configuration when the input becomes
+/// unknown.
+fn configure_destroy(destroying: &AtomicBool, config: &ProviderConfig) {
+    destroying.store(
+        matches!(config.destroy, Value::Value(true)),
+        Ordering::Release,
+    );
+}
+
+/// The vllm or ollama type a service kind's definition serves, if any.
+fn runtime_type(definition: &Definition) -> Option<&'static str> {
+    nemoclaw_sdk::services::provider_types::runtime_type(definition.kind)
+}
+
+/// The `host` provider: read-only observations of a container engine, its
+/// images, and container health.
 #[derive(Default)]
-pub struct NemoClawProvider {
+pub struct HostProvider {
     backend: Arc<ConfiguredBackend>,
-    destroying: Arc<AtomicBool>,
 }
 #[async_trait]
-impl Provider for NemoClawProvider {
-    type Config<'a> = ProviderConfig;
+impl Provider for HostProvider {
+    type Config<'a> = ValueEmpty;
     type MetaState<'a> = ValueEmpty;
+    fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
+        Some(Schema {
+            version: 0,
+            block: Block::default(),
+        })
+    }
+    async fn configure<'a>(&self, _: &mut Diagnostics, _: String, _: ValueEmpty) -> Option<()> {
+        Some(())
+    }
+    fn get_resources(
+        &self,
+        _: &mut Diagnostics,
+    ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
+        Some(HashMap::new())
+    }
     fn get_data_sources(
         &self,
-        diags: &mut Diagnostics,
+        _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
-        use crate::runtime_contract::RuntimeDataSource;
-        use nemoclaw_sdk::services::installers::{ollama, vllm};
-        let (vllm_runtime, ollama_runtime) =
-            match (RuntimeDataSource::vllm(), RuntimeDataSource::ollama()) {
-                (Ok(vllm), Ok(ollama)) => (vllm, ollama),
-                (Err(error), _) | (_, Err(error)) => {
-                    diags.root_error(
-                        "A runtime contract has no OpenTofu schema",
-                        error.to_string(),
-                    );
-                    return None;
-                }
-            };
         Some(HashMap::from([
             (
-                vllm::RUNTIME_DATA_SOURCE.into(),
-                Box::new(vllm_runtime) as Box<dyn DynamicDataSource>,
-            ),
-            (
-                ollama::RUNTIME_DATA_SOURCE.into(),
-                Box::new(ollama_runtime) as Box<dyn DynamicDataSource>,
-            ),
-            (
-                ollama::proxy::RUNTIME_DATA_SOURCE.into(),
-                Box::new(crate::services::installers::ollama::ProxyRuntimeDataSource)
-                    as Box<dyn DynamicDataSource>,
-            ),
-            (
-                nemoclaw_sdk::managed::GATEWAY_RUNTIME_DATA_SOURCE.into(),
-                Box::new(crate::gateway::GatewayRuntimeDataSource) as Box<dyn DynamicDataSource>,
-            ),
-            (
-                "inference_capabilities".into(),
-                Box::new(crate::inference_discovery::InferenceDataSource)
-                    as Box<dyn DynamicDataSource>,
-            ),
-            (
-                "target_hardware".into(),
-                Box::new(crate::hardware_data::HardwareDataSource(
+                "engine".into(),
+                Box::new(crate::host_engine::HostEngineDataSource(
                     self.backend.clone(),
                 )) as Box<dyn DynamicDataSource>,
             ),
             (
-                "engine_capabilities".into(),
-                Box::new(crate::discovery::EngineCapabilitiesDataSource(
-                    self.backend.clone(),
-                )) as Box<dyn DynamicDataSource>,
-            ),
-            (
-                "runtime_image".into(),
-                Box::new(crate::runtime_image::RuntimeImageDataSource(
-                    self.backend.clone(),
-                )) as Box<dyn DynamicDataSource>,
-            ),
-            (
-                "service_readiness".into(),
-                Box::new(crate::readiness::ReadinessDataSource(self.backend.clone()))
+                "image".into(),
+                Box::new(crate::host_image::HostImageDataSource(self.backend.clone()))
                     as Box<dyn DynamicDataSource>,
             ),
             (
-                "service_capacity".into(),
-                Box::new(crate::capacity::CapacityDataSource(self.backend.clone()))
-                    as Box<dyn DynamicDataSource>,
-            ),
-            (
-                "gateway_readiness".into(),
-                Box::new(crate::gateway::GatewayReadinessDataSource(
+                "container_health".into(),
+                Box::new(crate::host_container_health::HostContainerHealthDataSource(
                     self.backend.clone(),
                 )) as Box<dyn DynamicDataSource>,
             ),
         ]))
     }
+}
+
+/// The `vllm` or `ollama` provider: one runtime's credential storage, runtime
+/// contracts, readiness, and capacity.
+pub struct ServiceProvider {
+    name: &'static str,
+    backend: Arc<ConfiguredBackend>,
+    destroying: Arc<AtomicBool>,
+}
+
+impl ServiceProvider {
+    fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            backend: Arc::default(),
+            destroying: Arc::default(),
+        }
+    }
+
+    /// The `vllm` provider.
+    pub fn vllm() -> Self {
+        Self::new("vllm")
+    }
+
+    /// The `ollama` provider.
+    pub fn ollama() -> Self {
+        Self::new("ollama")
+    }
+
+    /// A type name without this provider's prefix, if this provider serves it.
+    fn local(&self, name: &str) -> Option<String> {
+        name.strip_prefix(self.name)
+            .and_then(|name| name.strip_prefix('_'))
+            .map(str::to_owned)
+    }
+}
+
+#[async_trait]
+impl Provider for ServiceProvider {
+    type Config<'a> = ProviderConfig;
+    type MetaState<'a> = ValueEmpty;
     fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
-        let mut attributes = HashMap::new();
-        attributes.insert(
-            "destroy".into(),
-            Attribute {
-                attr_type: AttributeType::Bool,
-                constraint: AttributeConstraint::Optional,
-                ..Default::default()
-            },
-        );
-        Some(Schema {
-            version: 0,
-            block: Block {
-                attributes,
-                ..Default::default()
-            },
-        })
+        Some(destroy_schema())
     }
     async fn configure<'a>(
         &self,
@@ -192,47 +248,130 @@ impl Provider for NemoClawProvider {
         _: String,
         config: ProviderConfig,
     ) -> Option<()> {
-        // Reconfiguration must not retain teardown permission from an earlier
-        // configuration when the input becomes unknown.
-        self.destroying.store(
-            matches!(config.destroy, Value::Value(true)),
-            Ordering::Release,
-        );
+        configure_destroy(&self.destroying, &config);
         Some(())
     }
     fn get_resources(
         &self,
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
-        let definitions = definitions();
         Some(
-            definitions
+            all_definitions()
                 .into_iter()
-                .map(|definition| {
-                    let name = definition.kind.into();
-                    let structured = definition.is_structured();
-                    let mut resource = ResourceAdapter::new(definition, self.backend.clone());
-                    resource.destroying = self.destroying.clone();
-                    // Typed list and block inputs need the structured adapter.
-                    let resource: Box<dyn DynamicResource> = if structured {
-                        Box::new(nemoclaw_tofu::StructuredAdapter(resource))
-                    } else {
-                        Box::new(resource)
-                    };
-                    (name, resource)
+                .filter_map(|definition| {
+                    let name = self.local(runtime_type(&definition)?)?;
+                    Some((name, adapter(definition, &self.backend, &self.destroying)))
                 })
                 .collect(),
         )
     }
+    fn get_data_sources(
+        &self,
+        diags: &mut Diagnostics,
+    ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
+        use crate::runtime_contract::RuntimeDataSource;
+        use crate::services::ServiceRuntime::{Ollama, OllamaProxy, Vllm};
+        use crate::{capacity::CapacityDataSource, readiness::ReadinessDataSource};
+        let backend = &self.backend;
+        let runtime = match self.name {
+            "vllm" => RuntimeDataSource::vllm(),
+            _ => RuntimeDataSource::ollama(),
+        };
+        let runtime = match runtime {
+            Ok(runtime) => Box::new(runtime) as Box<dyn DynamicDataSource>,
+            Err(error) => {
+                diags.root_error(
+                    "A runtime contract has no OpenTofu schema",
+                    error.to_string(),
+                );
+                return None;
+            }
+        };
+        let mut sources: HashMap<String, Box<dyn DynamicDataSource>> =
+            HashMap::from([("runtime".into(), runtime)]);
+        let readiness = |runtime| {
+            Box::new(ReadinessDataSource(backend.clone(), runtime)) as Box<dyn DynamicDataSource>
+        };
+        let capacity = |runtime| {
+            Box::new(CapacityDataSource(backend.clone(), runtime)) as Box<dyn DynamicDataSource>
+        };
+        if self.name == "vllm" {
+            sources.insert("readiness".into(), readiness(Vllm));
+            sources.insert("capacity".into(), capacity(Vllm));
+        } else {
+            sources.insert(
+                "proxy_runtime".into(),
+                Box::new(crate::services::installers::ollama::ProxyRuntimeDataSource),
+            );
+            sources.insert("readiness".into(), readiness(Ollama));
+            sources.insert("proxy_readiness".into(), readiness(OllamaProxy));
+            sources.insert("capacity".into(), capacity(Ollama));
+            sources.insert(
+                "model".into(),
+                Box::new(crate::ollama_model::OllamaModelDataSource),
+            );
+        }
+        Some(sources)
+    }
 }
 
-/// Resource definitions served by this provider.
-pub(crate) fn definitions() -> Vec<Definition> {
-    let mut definitions = Vec::new();
-    definitions.extend(crate::kubernetes::definitions());
-    definitions.extend(crate::services::definitions());
-    definitions.extend(crate::managed::definitions());
-    definitions
+/// The gateway installation types: Podman and Kubernetes gateways, their
+/// storage and credentials, and Docker gateway reads. The openshell provider
+/// serves them, sharing its teardown permission.
+pub struct GatewayInstallation {
+    backend: Arc<ConfiguredBackend>,
+    destroying: Arc<AtomicBool>,
+}
+
+impl GatewayInstallation {
+    /// Installation types that may tear down only while `destroying` holds.
+    pub fn new(destroying: Arc<AtomicBool>) -> Self {
+        Self {
+            backend: Arc::default(),
+            destroying,
+        }
+    }
+
+    /// The type name, without the provider prefix, for an installation kind.
+    fn name(kind: &str) -> String {
+        nemoclaw_openshell::installation_type(kind)
+            .and_then(|name| name.strip_prefix("openshell_").map(str::to_owned))
+            .expect("an installation kind")
+    }
+
+    /// Resources by type name, without the provider prefix.
+    pub fn resources(&self) -> HashMap<String, Box<dyn DynamicResource>> {
+        all_definitions()
+            .into_iter()
+            .filter(installs_gateway)
+            .map(|definition| {
+                let name = Self::name(definition.kind);
+                (name, adapter(definition, &self.backend, &self.destroying))
+            })
+            .collect()
+    }
+
+    /// Data sources by type name, without the provider prefix.
+    pub fn data_sources(&self) -> HashMap<String, Box<dyn DynamicDataSource>> {
+        HashMap::from([
+            (
+                Self::name(nemoclaw_sdk::managed::GATEWAY_RUNTIME_DATA_SOURCE),
+                Box::new(crate::gateway::GatewayRuntimeDataSource) as Box<dyn DynamicDataSource>,
+            ),
+            (
+                Self::name("gateway_readiness"),
+                Box::new(crate::gateway::GatewayReadinessDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
+            ),
+            (
+                Self::name("gateway_prerequisites"),
+                Box::new(crate::discovery::GatewayPrerequisitesDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
+            ),
+        ])
+    }
 }
 
 #[cfg(test)]
@@ -241,7 +380,7 @@ mod tests {
 
     #[test]
     fn every_sdk_resource_schema_is_served_once_with_its_fields() {
-        let served = definitions();
+        let served = all_definitions();
         for schema in nemoclaw_sdk::services::resource_schemas() {
             let matching: Vec<_> = served
                 .iter()
@@ -255,7 +394,7 @@ mod tests {
 
     #[tokio::test]
     async fn configuration_only_grants_or_withdraws_teardown_permission() {
-        let provider = NemoClawProvider::default();
+        let provider = ServiceProvider::vllm();
         let mut diagnostics = Diagnostics::default();
         let schema = provider.schema(&mut diagnostics).unwrap();
         assert_eq!(

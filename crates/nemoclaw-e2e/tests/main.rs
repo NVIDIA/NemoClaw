@@ -18,20 +18,20 @@ mod docker_provider_proxy;
 mod dummy_agent;
 #[path = "export_observations.rs"]
 mod export_observations;
+#[path = "fabric_bridge.rs"]
+mod fabric_bridge;
 #[path = "fabric_deployment.rs"]
 mod fabric_deployment;
 #[path = "fabric_live.rs"]
 mod fabric_live;
-#[path = "health.rs"]
-mod health;
 // Unix only, as before it moved here from nemoclaw-sdk.
+#[cfg(target_os = "linux")]
+mod docker_registry;
 #[cfg(unix)]
 #[path = "helm_recovery.rs"]
 mod helm_recovery;
 #[path = "hosted_parity.rs"]
 mod hosted_parity;
-#[path = "inference_discovery.rs"]
-mod inference_discovery;
 #[cfg(unix)]
 #[path = "../../test-support/kube_api.rs"]
 mod kube_api;
@@ -50,16 +50,18 @@ mod model_live;
 mod multiple_providers;
 #[path = "openshell_contract_fixtures.rs"]
 mod openshell_contract_fixtures;
+mod registry_fixture;
 #[path = "remote_service.rs"]
 mod remote_service;
-#[path = "sandbox_readiness.rs"]
-mod sandbox_readiness;
 #[path = "spark.rs"]
 mod spark;
 #[path = "tls.rs"]
 mod tls;
 #[path = "../../test-support/http.rs"]
 mod transport;
+#[path = "travel_example.rs"]
+mod travel_example;
+mod travel_team_example;
 #[path = "web_search.rs"]
 mod web_search;
 

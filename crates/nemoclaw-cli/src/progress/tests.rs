@@ -114,7 +114,7 @@ fn narrow_panel_reports_overflow_and_tiny_terminals_are_safe() {
     }
 }
 #[test]
-fn off_and_unused_reporters_finish_without_consuming_input_or_waiting_for_callbacks() {
+fn off_and_unused_reporters_finish_while_a_callback_is_held_and_ignore_later_events() {
     for mode in [ProgressMode::Off, ProgressMode::Auto] {
         let mut reporter = Reporter::new(mode, false, "Header".into());
         let callback = reporter.callback();

@@ -10,12 +10,13 @@ use crate::{
 };
 pub const PROXY: &str = "ollama_proxy";
 pub const STORAGE: &str = "ollama_proxy_storage";
-pub const MODEL: &str = "ollama_external_model";
+/// Data source that checks the upstream model before the proxy starts.
+pub const MODEL: &str = "ollama_model";
 /// Data source that computes the proxy's `NEMOCLAW_OLLAMA_PROXY` contract.
 pub const RUNTIME_DATA_SOURCE: &str = "ollama_proxy_runtime";
-/// Kinds the NemoClaw provider owns; the proxy container belongs to the Docker provider.
+/// Kinds the ollama provider owns; the proxy container belongs to the Docker provider.
 pub fn supports(kind: &str) -> bool {
-    matches!(kind, STORAGE | MODEL)
+    kind == STORAGE
 }
 pub fn specification(
     document: &Document,
@@ -98,7 +99,7 @@ pub fn targets(
     if let Some(policy) = spec.image_pull_policy {
         common.insert("image_pull_policy".into(), policy.as_str().into());
     }
-    Ok([STORAGE, PROXY, MODEL]
+    Ok([STORAGE, PROXY]
         .into_iter()
         .map(|kind| {
             let mut values = common.clone();
@@ -107,13 +108,11 @@ pub fn targets(
             } else {
                 values.retain(|key, _| {
                     matches!(key.as_str(), "name" | "owner" | "generation" | "engine")
-                        || (kind == MODEL
-                            && matches!(key.as_str(), "upstream" | "model" | "digest"))
                 });
             }
             Target {
                 kind: kind.into(),
-                address: format!("nemoclaw_{kind}.{service_name}"),
+                address: format!("{}.{service_name}", crate::compile::resource_type(kind)),
                 values,
             }
         })

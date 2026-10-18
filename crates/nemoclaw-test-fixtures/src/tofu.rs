@@ -19,24 +19,51 @@ fn install_ssh_relay(directory: &Path) {
     }
 }
 
+/// Stage a provider executable in a workspace. Unix links to it instead of
+/// copying: a Linux debug provider is about 150 MB, every contract test stages
+/// one, and macOS verifies each new copy before its first launch. Windows
+/// copies, so the provider finds the relay beside it.
+fn stage(executable: &Path, staged: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(std::path::absolute(executable).unwrap(), staged).unwrap();
+    #[cfg(not(unix))]
+    fs::copy(executable, staged).unwrap();
+}
+
 pub struct TofuWorkspace {
     directory: TempDir,
     tofu: PathBuf,
 }
 
 impl TofuWorkspace {
-    /// A workspace whose OpenTofu is the bundle's and uses the `nemoclaw`
-    /// provider at `nemoclaw` and the bundle's `openshell` and `fabric`
-    /// providers.
-    pub fn new(bundle: &Bundle, nemoclaw: impl AsRef<Path>) -> Self {
-        Self::with_providers(
-            bundle.tofu(),
-            &[
-                ("nemoclaw", nemoclaw.as_ref()),
-                ("openshell", &bundle.provider("openshell")),
-                ("fabric", &bundle.provider("fabric")),
-            ],
-        )
+    /// A workspace whose OpenTofu and NVIDIA providers are the bundle's, so
+    /// compiled graphs find every provider they require.
+    pub fn new(bundle: &Bundle) -> Self {
+        Self::bundled(bundle, None)
+    }
+
+    /// A workspace like [`Self::new`] that also serves a test fixture
+    /// provider, `fixture`, as `registry.opentofu.org/nvidia/nemoclaw`.
+    pub fn with_fixture(bundle: &Bundle, fixture: impl AsRef<Path>) -> Self {
+        Self::bundled(bundle, Some(fixture.as_ref()))
+    }
+
+    fn bundled(bundle: &Bundle, fixture: Option<&Path>) -> Self {
+        let providers = [
+            ("openshell", bundle.provider("openshell")),
+            ("fabric", bundle.provider("fabric")),
+            ("vllm", bundle.provider("vllm")),
+            ("ollama", bundle.provider("ollama")),
+            ("host", bundle.provider("host")),
+        ];
+        let mut providers: Vec<(&str, &Path)> = providers
+            .iter()
+            .map(|(name, path)| (*name, path.as_path()))
+            .collect();
+        if let Some(fixture) = fixture {
+            providers.push(("nemoclaw", fixture));
+        }
+        Self::with_providers(bundle.tofu(), &providers)
     }
 
     /// A workspace whose OpenTofu uses only the given `(name, executable)`
@@ -44,13 +71,12 @@ impl TofuWorkspace {
     pub fn with_providers(tofu: impl AsRef<Path>, providers: &[(&str, &Path)]) -> Self {
         let directory = tempfile::tempdir().unwrap();
         for (name, executable) in providers {
-            fs::copy(
+            stage(
                 executable,
-                directory
+                &directory
                     .path()
                     .join(crate::executable(&format!("terraform-provider-{name}"))),
-            )
-            .unwrap();
+            );
         }
         if !providers.is_empty() {
             install_ssh_relay(directory.path());

@@ -22,9 +22,6 @@ pub struct FabricCatalog {
     /// That revision's source archive checksum. The reference image records
     /// it without containing the archive.
     pub source_sha256: String,
-    /// Present only when the selected image advertises its bridge contract.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bridge: Option<BridgeCapabilities>,
     pub adapters: Vec<FabricAdapter>,
     #[serde(default)]
     pub targets: Vec<serde_json::Value>,
@@ -36,39 +33,6 @@ pub struct FabricCatalog {
     /// Present only for an installed image, never inferred from the bundled descriptors.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<Box<ImageRuntime>>,
-}
-
-/// Image-owned bridge metadata, separate from Fabric adapter descriptors.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BridgeCapabilities {
-    pub interface_version: u32,
-    pub operations: Vec<String>,
-    pub health_checks: Vec<String>,
-}
-
-impl BridgeCapabilities {
-    pub fn supports_interface(&self) -> bool {
-        let operations = [
-            "validate",
-            "prepare",
-            "configure",
-            "check",
-            "invoke",
-            "serve",
-        ];
-        self.interface_version == 1
-            && self.operations.len() == operations.len()
-            && operations
-                .iter()
-                .all(|operation| self.operations.iter().any(|value| value == operation))
-            && self.health_checks.len() <= 3
-            && self
-                .health_checks
-                .iter()
-                .zip(["live", "active", "ready"])
-                .all(|(actual, expected)| actual == expected)
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,8 +48,26 @@ impl FabricAdapter {
 
 impl FabricCatalog {
     pub fn bundled() -> Self {
-        Self::from_json(include_str!("../../../image/fabric/catalog.json"))
-            .expect("generated Fabric catalog must be valid")
+        // Parsing and checking the catalog dominates compiling small
+        // deployments, so do it once.
+        static BUNDLED: std::sync::LazyLock<FabricCatalog> = std::sync::LazyLock::new(|| {
+            FabricCatalog::from_json(include_str!("../../../image/fabric/catalog.json"))
+                .expect("generated Fabric catalog must be valid")
+        });
+        BUNDLED.clone()
+    }
+
+    /// The records of one adapter: what an agent using it is planned against.
+    pub fn for_adapter(&self, adapter_id: &str) -> Self {
+        let mut catalog = self.clone();
+        catalog
+            .adapters
+            .retain(|adapter| adapter.adapter_id() == adapter_id);
+        catalog.runtime_files.retain(|id, _| id == adapter_id);
+        if let Some(runtime) = catalog.runtime.as_mut() {
+            runtime.binaries.retain(|id, _| id == adapter_id);
+        }
+        catalog
     }
 
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
@@ -96,10 +78,12 @@ impl FabricCatalog {
         if catalog.schema_version != 2
             || !valid_digest(&catalog.fabric_revision, 40)
             || !valid_digest(&catalog.source_sha256, 64)
+            // Descriptors come from Fabric's adapter catalog package, so each
+            // must be a valid Fabric descriptor; provenance is NemoClaw's note.
             || catalog.adapters.iter().any(|adapter| {
                 adapter.descriptor["contract_version"] != nemo_fabric_core::ADAPTER_CONTRACT_VERSION
-                    || serde_json::from_value::<nemo_fabric_core::ResolvedAdapterDescriptor>(
-                        serde_json::to_value(adapter).expect("serializable descriptor"),
+                    || serde_json::from_value::<nemo_fabric_core::AdapterDescriptor>(
+                        adapter.descriptor.clone(),
                     )
                     .is_err()
             })
@@ -149,6 +133,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_catalog_for_one_adapter_keeps_only_its_records() {
+        let catalog = FabricCatalog::bundled().for_adapter("nvidia.fabric.pi");
+        assert_eq!(
+            catalog
+                .adapters
+                .iter()
+                .map(FabricAdapter::adapter_id)
+                .collect::<Vec<_>>(),
+            ["nvidia.fabric.pi"]
+        );
+        assert!(
+            catalog
+                .runtime_files
+                .keys()
+                .all(|id| id == "nvidia.fabric.pi")
+        );
+        let encoded = serde_json::to_string(&catalog).unwrap();
+        assert_eq!(FabricCatalog::from_json(&encoded).unwrap(), catalog);
+        assert!(
+            FabricCatalog::bundled()
+                .for_adapter("missing")
+                .adapters
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn bundled_catalog_keeps_only_canonical_descriptor_records() {
         let catalog = FabricCatalog::bundled();
         assert!(!catalog.adapters.is_empty());
@@ -182,7 +193,7 @@ mod tests {
             .collect();
         let runtime = serde_json::json!({
             "schema_version": 1,
-            "command": ["/srv/python3.99", "/srv/bridge.py"],
+            "command": ["/srv/fabric-agent-ctl"],
             "environment": {"ADAPTER_PYTHON":"/srv/python3.99", "PATH":"/srv"},
             "required_paths": ["/srv"],
             "policy": {"version":1,"filesystem_policy":{"read_only":["/srv"],"read_write":["/data"]},"process":{"run_as_user":"1234","run_as_group":"1234"},"network_policies":{}},

@@ -63,7 +63,7 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
         json!({"registry": "", "repository": repository, "digest": digest, "pullPolicy": "IfNotPresent"})
     };
     let name = &spec.name;
-    let values = json!({
+    let mut values = json!({
         "fullnameOverride": name,
         "global": {"image": {"registry": ""}},
         "gateway": {"image": image(pins::DEFAULT_GATEWAY_IMAGE)},
@@ -98,6 +98,17 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
             "limits": {"cpu": "1", "memory": "1Gi"},
         },
     });
+    if !target.image_pull_secrets.is_empty() {
+        values["imagePullSecrets"] = json!(
+            target
+                .image_pull_secrets
+                .iter()
+                .map(|name| json!({"name": name}))
+                .collect::<Vec<_>>()
+        );
+        values["gatewayConfig"]["openshell.drivers.kubernetes"]["image_pull_secrets"] =
+            json!(target.image_pull_secrets);
+    }
     Ok(values)
 }
 
@@ -130,7 +141,7 @@ pub(crate) fn configure(graph: &mut Value, spec: &Spec) -> Result<(), Error> {
     if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
         // This expression stays unknown until namespace identity preparation
         // succeeds; it must not be escaped as authored literal chart values.
-        release_values.push("${nemoclaw_kubernetes_auth.runtime.gateway_values}".into());
+        release_values.push("${openshell_kubernetes_auth.runtime.gateway_values}".into());
     }
     graph["resource"]["helm_release"]["gateway"] = json!({
         "name": literal(&spec.name),
@@ -145,7 +156,7 @@ pub(crate) fn configure(graph: &mut Value, spec: &Spec) -> Result<(), Error> {
         "wait": true,
         "wait_for_jobs": true,
         "timeout": 600,
-        "depends_on": ["nemoclaw_kubernetes_auth.runtime"],
+        "depends_on": ["openshell_kubernetes_auth.runtime"],
     });
     Ok(())
 }

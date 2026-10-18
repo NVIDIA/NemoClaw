@@ -18,7 +18,7 @@ pub(super) fn credential(value: &Option<Credential>) -> Result<(), ConfigError> 
     Ok(())
 }
 
-pub use nemoclaw_backend::validate_endpoint;
+pub use nemoclaw_backend::{validate_endpoint, validate_endpoint_url};
 
 pub fn is_fabric_harness(harness: &str) -> bool {
     harness.parse::<super::HarnessKind>().is_ok()
@@ -72,6 +72,25 @@ impl Document {
                     sandbox.agent.name.as_str(),
                     sandbox.agent.tools.as_ref(),
                 )))?;
+            }
+            let image_scope = self.image_scope(sandbox)?;
+            for api in self.apis(sandbox)? {
+                require(
+                    !api.agent_refs.is_empty()
+                        && api
+                            .agent_refs
+                            .iter()
+                            .all(|name| name == &sandbox.agent.name),
+                    "an api integration requires references to the sandbox's agent",
+                )?;
+                credential(&Some(api.api.credential.clone()))?;
+                let registration = api.registration(&image_scope);
+                require(
+                    selected_providers
+                        .iter()
+                        .all(|provider| provider.name != registration),
+                    "an inference provider name collides with an api integration's registration",
+                )?;
             }
             let agent = &sandbox.agent;
 
@@ -131,7 +150,8 @@ impl super::ManagedGateway {
 impl Document {
     fn validate_provider(&self, provider: &InferenceProvider) -> Result<(), ConfigError> {
         match provider.target()? {
-            InferenceTarget::External { endpoint, .. } => validate_endpoint(endpoint, false)?,
+            // OpenShell checks the destination when sandboxes connect.
+            InferenceTarget::External { endpoint, .. } => validate_endpoint_url(endpoint)?,
             InferenceTarget::Service { .. } => {
                 crate::services::validate_provider(self, provider)?;
             }

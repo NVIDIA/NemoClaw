@@ -7,7 +7,6 @@ Run agent sandboxes on an existing Kubernetes or OpenShift cluster.
 NemoClaw either installs a development OpenShell gateway in a namespace it creates, or uses a gateway you already run.
 The same agent images serve Docker, Podman, Kubernetes and OpenShift.
 
-The pinned Fabric reports agent health as unsupported, so apply stops at the agent's health check after creating every resource ([#13031](https://github.com/NVIDIA/NemoClaw/issues/13031)).
 The managed gateway's authentication is a development fixture, not a production identity service ([#12692](https://github.com/NVIDIA/NemoClaw/issues/12692)).
 OpenShift's security policy admitting these pods is untested; [current limits](limits.md#platforms-models-and-placement) lists what else is untested.
 
@@ -45,13 +44,14 @@ See [Build agent images](build.md#build-agent-images) for the harnesses each pla
 
 ## Deploy with a Managed Gateway
 
-The SDK creates the namespace and a credential key, starts a development token issuer, installs the pinned OpenShell chart, and reaches the gateway through a port forward that lasts only for each command.
+The SDK creates the namespace and a credential key, starts a development token issuer, and installs the pinned OpenShell chart.
+The `openshell` and `fabric` providers reach the gateway through port forwards they open on free loopback ports while OpenTofu runs.
 Start from [the Kubernetes example](../examples/kubernetes/managed-development.yaml) and set:
 
 - `metadata.uid` to a new UUID.
 - `gateway.kubernetes.kubeconfig` to the environment variable holding the kubeconfig path, and `context` to the exact context.
 - `gateway.kubernetes.namespace` to a namespace that does not exist yet; NemoClaw does not take over an existing one.
-- `gateway.endpoint` to `https://127.0.0.1:` and a free local port for the port forward.
+- `gateway.endpoint` to `https://127.0.0.1:` and an explicit port. Providers forward on free ports of their own, so this port is not bound.
 - Each sandbox's `image.ref` and `image.metadata`.
 
 ```yaml
@@ -78,10 +78,47 @@ nemoclaw plan --state-dir .local/kubernetes deployment.yaml
 nemoclaw apply --state-dir .local/kubernetes deployment.yaml
 ```
 
-Apply creates the gateway and every sandbox, then fails at the agent health check with `data.fabric_sandbox_readiness`; that is the expected result at this Fabric pin.
-The resources stay in place, and a later apply with the same state checks them again.
+Apply creates the gateway and every sandbox, and starts each agent.
 Keep the state directory: it holds the cluster ownership receipt and the development issuer's keys, and destroy needs both.
 [Managed Kubernetes ownership](design/architecture.md#managed-kubernetes-ownership) describes which component owns each resource.
+
+### Reference Registry Credentials
+
+For a managed gateway, `gateway.kubernetes.imagePullSecrets` names Kubernetes Secrets in the deployment's namespace.
+The pinned chart attaches these references to gateway and helper pods and configures OpenShell to attach them to sandbox pods.
+Credential values stay in Kubernetes; NemoClaw does not read, create, rotate, or remove these Secrets.
+
+Add the names to the managed gateway settings:
+
+```yaml
+spec:
+  gateway:
+    kubernetes:
+      imagePullSecrets:
+        - registry-credentials
+```
+
+The namespace must be created by NemoClaw, so arrange for your platform to provision the Secrets after namespace creation.
+If a Secret is missing or its credentials are wrong, image acquisition can fail and apply stops; keep the deployment state and UID.
+After the namespace exists, provision or repair the Secret there, then rerun apply with the same configuration and state directory.
+Do not create the namespace yourself or substitute another namespace to bypass ownership checks.
+
+For the following example, install `kubectl` and prepare a protected Docker configuration file containing registry `auths` entries, as described in [Kubernetes registry authentication](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/).
+Entries that only name a `credsStore` or `credHelpers` helper cannot supply credentials to the kubelet; it cannot run your client machine's helper.
+From the directory holding `deployment.yaml`, create the registry Secret:
+
+```sh
+kubectl --kubeconfig "$NEMOCLAW_CLUSTER_KUBECONFIG" --context my-cluster \
+  --namespace nemoclaw-development create secret generic registry-credentials \
+  --type=kubernetes.io/dockerconfigjson \
+  --from-file=.dockerconfigjson=/private/registry/config.json
+nemoclaw apply --state-dir .local/kubernetes deployment.yaml
+```
+
+Use the deployment's context and namespace, and keep that credential file out of source control and shared diagnostics.
+Check the pod events if a pull still fails; a configured reference does not establish registry access.
+Retire upstream registry credentials separately; destroy retains the namespace and caller-managed Secrets.
+Docker/Podman credential delivery and private-registry qualification across all runtimes remain tracked in [#12709](https://github.com/NVIDIA/NemoClaw/issues/12709).
 
 ## Deploy to OpenShift
 

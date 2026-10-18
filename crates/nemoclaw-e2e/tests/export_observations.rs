@@ -108,7 +108,7 @@ async fn export_uses_provider_observations_without_resolving_inference_credentia
     let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
     for provider in fixture.state.lock().unwrap().providers.values_mut() {
         provider.metadata.as_mut().unwrap().labels.insert(
-            nemoclaw_provider::openshell::CREDENTIAL.into(),
+            openshell_provider::CREDENTIAL.into(),
             "CHANGED_EXPORT_REFERENCE".into(),
         );
     }
@@ -127,7 +127,10 @@ async fn export_uses_provider_observations_without_resolving_inference_credentia
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn export_rejects_observed_pi_model_drift_without_reconfiguring_it() {
+/// Fabric reports no applied configuration, so a model changed inside the
+/// sandbox outside OpenTofu is not drift: export still returns the declared
+/// document, and nothing is reconfigured or rewritten.
+async fn export_ignores_a_pi_model_changed_inside_the_sandbox() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
@@ -153,7 +156,7 @@ async fn export_rejects_observed_pi_model_drift_without_reconfiguring_it() {
     {
         model["models"]["default"]["model"] = serde_json::json!("foreign-model");
     }
-    assert!(deployment.export(&cancel).await.is_err());
+    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert_eq!(
         fs::read(directory.path().join("terraform.tfstate")).unwrap(),
@@ -288,7 +291,7 @@ async fn mixed_search_export_preserves_scopes_shared_registrations_and_state_on_
                     .as_ref()
                     .unwrap()
                     .labels
-                    .get(nemoclaw_provider::openshell::CREDENTIAL)
+                    .get(openshell_provider::CREDENTIAL)
                     .map(String::as_str)
                     == Some(reference))
                 .unwrap()
@@ -304,7 +307,7 @@ async fn mixed_search_export_preserves_scopes_shared_registrations_and_state_on_
                 let observed = state.providers.get_mut(&key).unwrap();
                 if field == "credential" {
                     observed.metadata.as_mut().unwrap().labels.insert(
-                        nemoclaw_provider::openshell::CREDENTIAL.into(),
+                        openshell_provider::CREDENTIAL.into(),
                         "FOREIGN_SEARCH_KEY".into(),
                     );
                 } else {

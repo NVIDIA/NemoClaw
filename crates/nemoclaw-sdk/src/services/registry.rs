@@ -38,6 +38,8 @@ pub enum ServiceDefinition {
     OllamaProxy(OllamaProxy),
     /// Managed vLLM runtime and immutable model snapshot.
     Vllm(Box<installers::vllm::Service>),
+    /// Image-owned container with explicit launch settings and bounded readiness.
+    Container(Box<installers::container::Service>),
 }
 
 /// Retention and process roles of a service installer resource.
@@ -108,24 +110,6 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
             mutable: &[],
         },
         ResourceSchema {
-            kind: "ollama_external_model",
-            fields: &[
-                "name",
-                "owner",
-                "generation",
-                "engine",
-                "upstream",
-                "model",
-                "digest",
-            ],
-            mutable: &[],
-        },
-        ResourceSchema {
-            kind: installers::ollama::STORAGE_KIND,
-            fields: &crate::managed::Storage::ATTRIBUTES,
-            mutable: &[],
-        },
-        ResourceSchema {
             kind: installers::vllm::STORAGE_KIND,
             fields: &crate::managed::Storage::ATTRIBUTES,
             mutable: &[],
@@ -143,7 +127,9 @@ pub fn resource_behavior(kind: &str) -> ResourceBehavior {
         ),
         runtime_process: matches!(
             kind,
-            installers::ollama::SERVICE_KIND | installers::vllm::SERVICE_KIND
+            installers::ollama::SERVICE_KIND
+                | installers::vllm::SERVICE_KIND
+                | installers::container::SERVICE_KIND
         ),
     }
 }
@@ -153,6 +139,7 @@ pub(crate) fn resource_label(kind: &str) -> Option<&'static str> {
         installers::vllm::SERVICE_KIND => Some("inference service"),
         installers::ollama::SERVICE_KIND => Some("Ollama service"),
         "ollama_proxy" => Some("Ollama proxy"),
+        installers::container::SERVICE_KIND => Some("application container"),
         _ => None,
     }
 }
@@ -163,6 +150,7 @@ pub(crate) fn constrain_schema(
 ) {
     installers::ollama::constrain_schema(defs, normalized);
     installers::vllm::schema::constrain(defs, normalized);
+    installers::container::constrain_schema(defs);
     for service in defs["ServiceDefinition"]["oneOf"].as_array_mut().unwrap() {
         crate::config::schema::validation::property(
             service,
@@ -171,6 +159,9 @@ pub(crate) fn constrain_schema(
                 "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
             }),
         );
+        if service["properties"]["kind"]["const"] == "container" {
+            continue;
+        }
         crate::config::schema::validation::property(
             service,
             "imagePullPolicy",
@@ -190,37 +181,37 @@ pub(crate) fn constrain_schema(
 }
 
 impl ServiceDefinition {
-    /// Context tokens a managed model serves; none for a proxy.
+    /// Context tokens a managed model serves; none for a proxy or application.
     pub(crate) fn context_tokens(&self) -> Option<i64> {
         match self {
             Self::Ollama(service) => Some(service.serving.context_tokens),
             Self::Vllm(service) => Some(service.serving.context_tokens),
-            Self::OllamaProxy(_) => None,
+            Self::OllamaProxy(_) | Self::Container(_) => None,
         }
     }
 
-    /// Update policy of a managed model; none for a proxy.
+    /// Update policy of a managed model; none for a proxy or application.
     pub(crate) fn update_policy(&self) -> Option<super::ServiceUpdatePolicy> {
         match self {
             Self::Ollama(service) => Some(service.update_policy),
             Self::Vllm(service) => Some(service.update_policy),
-            Self::OllamaProxy(_) => None,
+            Self::OllamaProxy(_) | Self::Container(_) => None,
         }
     }
 
-    /// Address of a managed model's container resource; none for a proxy.
+    /// Address of a managed model's container resource; none for a proxy or application.
     pub(crate) fn model_address(&self, name: &str) -> Option<String> {
         match self {
             Self::Ollama(_) => Some(installers::ollama::service_address(name)),
             Self::Vllm(_) => Some(installers::vllm::service_address(name)),
-            Self::OllamaProxy(_) => None,
+            Self::OllamaProxy(_) | Self::Container(_) => None,
         }
     }
 
     fn stage(&self) -> InstallStage {
         match self {
             Self::Ollama(_) | Self::Vllm(_) => InstallStage::Runtime,
-            Self::OllamaProxy(_) => InstallStage::Deployment,
+            Self::OllamaProxy(_) | Self::Container(_) => InstallStage::Deployment,
         }
     }
 
@@ -229,11 +220,16 @@ impl ServiceDefinition {
             Self::Ollama(service) => service.validate(),
             Self::OllamaProxy(service) => service.validate_definition(),
             Self::Vllm(service) => service.validate(),
+            Self::Container(service) => service.validate(),
         }
     }
 
     fn validate_installation(&self, document: &Document) -> Result<(), ConfigError> {
         let (container, preparation_memory) = match self {
+            Self::Container(_) => {
+                installers::container::Service::gateway(document)?;
+                return Ok(());
+            }
             Self::Vllm(service) => (
                 service.container.as_ref(),
                 service
@@ -261,6 +257,7 @@ impl ServiceDefinition {
                     "Ollama proxy requires a managed local Docker gateway or explicit local engine",
                 );
             }
+            Self::Container(_) => unreachable!(),
         };
         crate::config::validation::require(
             placement.is_some() || local_docker,
@@ -274,10 +271,26 @@ impl ServiceDefinition {
     }
 
     fn allocation(&self, gateway: &Gateway) -> Result<Option<NetworkAllocation>, ConfigError> {
+        if let Self::Container(service) = self {
+            let gateway = gateway.managed()?;
+            return Ok(Some(NetworkAllocation {
+                engine: gateway.engine.clone(),
+                network_cidr: gateway.network_cidr.clone(),
+                bind_address: service
+                    .publication
+                    .as_ref()
+                    .map_or(String::new(), |p| p.bind_address.clone()),
+                port: service
+                    .publication
+                    .as_ref()
+                    .map_or(0, |p| i64::from(p.port)),
+            }));
+        }
         let (placement, port) = match self {
             Self::Ollama(service) => (service.published_placement()?, service.serving.port),
             Self::Vllm(service) => (service.published_placement()?, service.serving.port),
             Self::OllamaProxy(_) => return Ok(None),
+            Self::Container(_) => unreachable!(),
         };
         let placed = super::placement::ResolvedPlacement::resolve(placement, gateway, port)?;
         Ok(Some(NetworkAllocation {
@@ -300,6 +313,7 @@ impl Installer for ServiceDefinition {
             Self::Ollama(service) => service.install(document, name, generations),
             Self::OllamaProxy(service) => service.install(document, name, generations),
             Self::Vllm(service) => service.install(document, name, generations),
+            Self::Container(service) => service.install(document, name, generations),
         }
     }
 
@@ -313,6 +327,7 @@ impl Installer for ServiceDefinition {
             Self::Ollama(service) => service.remove(document, name, generations),
             Self::OllamaProxy(service) => service.remove(document, name, generations),
             Self::Vllm(service) => service.remove(document, name, generations),
+            Self::Container(service) => service.remove(document, name, generations),
         }
     }
 }
@@ -320,6 +335,30 @@ impl Installer for ServiceDefinition {
 impl ServiceDefinition {
     fn resolve(&self, document: &Document, name: &str) -> Result<ResolvedInference, ConfigError> {
         Ok(match self {
+            ServiceDefinition::Container(service) => {
+                let publication = service.publication.as_ref().ok_or_else(|| {
+                    ConfigError::new("a container inference service requires a private publication")
+                })?;
+                crate::config::validation::require(
+                    publication
+                        .bind_address
+                        .parse::<std::net::Ipv4Addr>()
+                        .is_ok_and(|ip| ip.is_private()),
+                    "a container inference service requires a private address reachable by OpenShell",
+                )?;
+                ResolvedInference {
+                    endpoint: format!(
+                        "http://{}:{}/v1",
+                        publication.bind_address, publication.port
+                    ),
+                    served_model: String::new(),
+                    requires_authentication: false,
+                    resource_dependencies: vec![format!(
+                        "data.{}.container_service_{name}",
+                        installers::container::HEALTH_DATA_SOURCE
+                    )],
+                }
+            }
             ServiceDefinition::Ollama(service) => ResolvedInference {
                 endpoint: super::placement::ResolvedPlacement::resolve(
                     service.published_placement()?,
@@ -358,6 +397,7 @@ impl ServiceDefinition {
         model: &str,
     ) -> Result<(), ConfigError> {
         match self {
+            ServiceDefinition::Container(_) => Ok(()),
             ServiceDefinition::Ollama(_) => crate::config::validation::require(
                 provider.api.is_none()
                     || provider.api == Some(crate::config::InferenceApi::OpenaiCompletions),
@@ -378,6 +418,7 @@ impl ServiceDefinition {
         generations: &Generations,
     ) -> Result<Option<String>, crate::Error> {
         match self {
+            ServiceDefinition::Container(_) => Ok(None),
             ServiceDefinition::Ollama(_) => Ok(None),
             ServiceDefinition::OllamaProxy(service) => service
                 .credential_source(document, name, generations)
@@ -430,6 +471,7 @@ pub(crate) fn defaults(definition: &mut ServiceDefinition) {
             service.defaults();
         }
         ServiceDefinition::OllamaProxy(_) => {}
+        ServiceDefinition::Container(_) => {}
         ServiceDefinition::Vllm(service) => {
             service.defaults();
         }
@@ -543,7 +585,12 @@ pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
             "managed services sharing an engine must use the same network CIDR",
         )?;
         require(
-            publications.insert((allocation.engine, allocation.bind_address, allocation.port)),
+            allocation.port == 0
+                || publications.insert((
+                    allocation.engine,
+                    allocation.bind_address,
+                    allocation.port,
+                )),
             "managed service publication addresses must be distinct on each engine",
         )?;
     }
@@ -554,7 +601,11 @@ pub(crate) fn validate_provider(
     document: &Document,
     provider: &InferenceProvider,
 ) -> Result<bool, ConfigError> {
-    Ok(definition(document, provider)?.is_some())
+    let referenced = definition(document, provider)?;
+    if let Some((name, definition @ ServiceDefinition::Container(_))) = referenced {
+        definition.resolve(document, name)?;
+    }
+    Ok(referenced.is_some())
 }
 
 pub(crate) fn validate_route(
@@ -569,7 +620,7 @@ pub(crate) fn validate_route(
     };
     let resolved = definition.resolve(document, name)?;
     require(
-        model == resolved.served_model,
+        matches!(definition, ServiceDefinition::Container(_)) || model == resolved.served_model,
         "service requires its declared served model",
     )?;
     definition.validate_route(provider, sandbox_runtime, model)
@@ -601,6 +652,9 @@ pub(crate) fn generation_kinds(document: &Document) -> Result<Vec<&'static str>,
             ServiceDefinition::Vllm(_) => {
                 kinds.insert(installers::vllm::SERVICE_KIND);
             }
+            ServiceDefinition::Container(_) => {
+                kinds.insert(installers::container::SERVICE_KIND);
+            }
         }
     }
     Ok(kinds.into_iter().collect())
@@ -613,6 +667,7 @@ pub(crate) fn supported_generation_kind(kind: &str) -> bool {
         installers::ollama::SERVICE_KIND
             | installers::ollama::proxy::PROXY
             | installers::vllm::SERVICE_KIND
+            | installers::container::SERVICE_KIND
     )
 }
 

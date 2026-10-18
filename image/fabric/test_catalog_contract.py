@@ -1,173 +1,164 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Packaging transports Fabric discovery without redefining adapter metadata."""
+"""The catalog pairs what the image build declared with Fabric's own descriptors."""
 
 import json
-import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
-from catalog import snapshot
-from nemo_fabric import DiscoveryConfig, Fabric
+from catalog import PROVENANCE, installed, read_adapters, snapshot
+from nemo_fabric_adapter_catalog import get_adapter_descriptor
+from runtime_metadata import read_runtime
+
+ADAPTER_ID = "nvidia.fabric.hermes"
 
 
 class CatalogContract(unittest.TestCase):
-    def test_bundled_descriptors_do_not_claim_an_installed_bridge(self):
-        with tempfile.TemporaryDirectory() as directory:
-            catalog = snapshot("a" * 40, "b" * 64, runtime_files=Path(directory, "absent.json"))
-        self.assertNotIn("bridge", catalog)
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+        executable = self.root / "bun-9"
+        executable.write_text("#!/bin/sh\nexit 0\n")
+        executable.chmod(0o755)
+        (self.root / "bun").symlink_to(executable)
+        self.executable = executable
+        # A stand-in for fabric-agent-ctl: a console script for this interpreter.
+        ctl = self.root / "fabric-agent-ctl"
+        ctl.write_text(f"#!{sys.executable}\n")
+        ctl.chmod(0o755)
+        self.layout = {
+            "schema_version": 1,
+            "command": [str(ctl)],
+            "environment": {"PATH": str(self.root), "ADAPTER_PYTHON": sys.executable},
+            "required_paths": [str(self.root)],
+            "policy": {
+                "version": 1,
+                "filesystem_policy": {"read_only": [str(self.root)], "read_write": []},
+                "process": {"run_as_user": "1234", "run_as_group": "1234"},
+                "network_policies": {},
+            },
+        }
+        self.manifest = self.root / "runtime.json"
+        self.manifest.write_text(json.dumps(self.layout))
 
-    def snapshot_with_runtime_files(self, declared):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory, "runtime-files.json")
-            path.write_text(json.dumps(declared))
-            return snapshot("a" * 40, "b" * 64, runtime_files=path)
+    def tearDown(self):
+        self.directory.cleanup()
 
-    def test_runtime_files_are_recorded_beside_unedited_descriptors(self):
-        records = [record.to_mapping() for record in Fabric().discover()]
-        self.assertTrue(records, "requires a discoverable Fabric adapter")
-        adapter_id = records[0]["descriptor"]["adapter_id"]
-        catalog = self.snapshot_with_runtime_files({adapter_id: ["/opt/runtime"]})
-        self.assertEqual(catalog["runtime_files"], {adapter_id: ["/opt/runtime"]})
-        self.assertEqual(catalog["adapters"], records)
+    def declare(self, declared):
+        path = self.root / "adapters.json"
+        path.write_text(json.dumps(declared))
+        return path
 
-    def test_image_without_runtime_files_adds_no_field(self):
-        with tempfile.TemporaryDirectory() as directory:
-            catalog = snapshot("a" * 40, "b" * 64, runtime_files=Path(directory, "absent.json"))
-        self.assertNotIn("runtime_files", catalog)
-
-    def test_runtime_files_for_an_uncataloged_adapter_fail_the_snapshot(self):
-        with self.assertRaisesRegex(ValueError, "org.fixture.absent"):
-            self.snapshot_with_runtime_files({"org.fixture.absent": ["/opt/runtime"]})
-
-    def test_relative_runtime_files_fail_the_snapshot(self):
-        adapter_id = Fabric().discover()[0].to_mapping()["descriptor"]["adapter_id"]
-        with self.assertRaisesRegex(ValueError, "absolute paths"):
-            self.snapshot_with_runtime_files({adapter_id: ["opt/runtime"]})
-
-    def test_parent_traversal_runtime_files_fail_the_snapshot(self):
-        adapter_id = Fabric().discover()[0].to_mapping()["descriptor"]["adapter_id"]
-        with self.assertRaisesRegex(ValueError, "absolute paths"):
-            self.snapshot_with_runtime_files({adapter_id: ["/opt/runtime/../../etc"]})
-
-    def test_runtime_files_must_be_a_list_of_paths(self):
-        adapter_id = Fabric().discover()[0].to_mapping()["descriptor"]["adapter_id"]
-        with self.assertRaisesRegex(ValueError, "absolute paths"):
-            self.snapshot_with_runtime_files({adapter_id: {"/opt/runtime": True}})
-
-    def test_installed_catalog_records_image_layout_and_resolved_adapter_executables(self):
-        records = [record.to_mapping() for record in Fabric().discover()]
-        adapter_id = records[0]["descriptor"]["adapter_id"]
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            executable = root / "bun-9"
-            executable.write_text("#!/bin/sh\nexit 0\n")
-            executable.chmod(0o755)
-            (root / "bun").symlink_to(executable)
-            bridge = root / "bridge.py"
-            bridge.write_text("# runtime bridge\n")
-            layout = {
-                "schema_version": 1,
-                "command": [sys.executable, str(bridge)],
-                "environment": {"PATH": str(root), "ADAPTER_PYTHON": sys.executable},
-                "required_paths": [str(root)],
-                "policy": {
-                    "version": 1,
-                    "filesystem_policy": {"read_only": [str(root)], "read_write": []},
-                    "process": {"run_as_user": "1234", "run_as_group": "1234"},
-                    "network_policies": {},
-                },
-            }
-            path = root / "runtime.json"
-            path.write_text(json.dumps(layout))
-            # Requirements remain Fabric-owned; only path resolution belongs to packaging.
-            from copy import deepcopy
-
-            owner_records = deepcopy(records)
-            owner_records[0]["provenance"] = [{"source": "installed_package"}]
-            owner_records[0]["descriptor"].setdefault("requirements", {})["binaries"] = ["bun"]
-            with patch("catalog.Fabric") as fabric:
-                fabric.return_value.discover.return_value = [
-                    type(
-                        "Record",
-                        (),
-                        {
-                            "to_mapping": lambda self: owner_records[0],
-                            "provenance": owner_records[0]["provenance"],
-                        },
-                    )()
-                ]
-                fabric.return_value.discover_targets.return_value = []
-                catalog = snapshot("a" * 40, "b" * 64, installed_only=True, runtime_manifest=path)
-            self.assertEqual(
-                catalog["bridge"],
-                {
-                    "interface_version": 1,
-                    "operations": ["validate", "prepare", "configure", "check", "invoke", "serve"],
-                    "health_checks": [],
-                },
-            )
-            self.assertEqual(catalog["runtime"]["command"], layout["command"])
-            self.assertEqual(catalog["runtime"]["policy"], layout["policy"])
-            self.assertEqual(catalog["runtime"]["environment"], layout["environment"])
-            self.assertEqual(
-                catalog["runtime"]["binaries"][adapter_id],
-                sorted([str(Path(sys.executable).resolve()), str(executable)]),
-            )
-            self.assertEqual(catalog["adapters"], owner_records[:1])
-            from runtime_metadata import read_runtime
-
-            owner_records[0]["descriptor"]["requirements"]["binaries"] = ["absent-executable"]
-            with self.assertRaisesRegex(ValueError, "missing required executable"):
-                read_runtime(path, owner_records[:1], required=True)
-            owner_records[0]["descriptor"]["requirements"]["binaries"] = ["bun"]
-            for field, invalid in [
-                ("schema_version", True),
-                ("command", [str(root)]),
-                ("command", ["relative/bridge"]),
-                ("required_paths", [str(root / "absent")]),
-                ("environment", {"ADAPTER_PYTHON": str(root)}),
-                ("environment", {"NEMOCLAW_PROVIDER_NAMES": "injected"}),
-            ]:
-                bad = {**layout, field: invalid}
-                path.write_text(json.dumps(bad))
-                with self.subTest(field=field, invalid=invalid), self.assertRaises(ValueError):
-                    read_runtime(path, owner_records[:1], required=True)
-
-    def test_installed_snapshot_requires_a_runtime_manifest(self):
-        with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(ValueError, "runtime manifest"):
-                snapshot(
-                    "a" * 40,
-                    "b" * 64,
-                    installed_only=True,
-                    runtime_manifest=Path(directory, "missing.json"),
-                )
-
-    def test_snapshot_preserves_owner_records(self):
-        records = Fabric().discover()
-        catalog = snapshot("a" * 40, "b" * 64)
-        self.assertEqual(catalog["adapters"], [record.to_mapping() for record in records])
-
-    def test_snapshot_preserves_fabric_workflow_targets(self):
-        records = Fabric().discover_targets()
-        catalog = snapshot("a" * 40, "b" * 64)
-        self.assertEqual(catalog["targets"], [record.to_mapping() for record in records])
-
-    @unittest.skipUnless(
-        os.environ.get("NEMOCLAW_TEST_FABRIC_DESCRIPTOR"), "requires Fabric fixture"
-    )
-    def test_new_fabric_descriptor_is_discovered_through_packaging(self):
-        discovery = DiscoveryConfig(local_paths=[os.environ["NEMOCLAW_TEST_FABRIC_DESCRIPTOR"]])
-        records = Fabric().discover(discovery=discovery)
-        catalog = snapshot("a" * 40, "b" * 64, discovery=discovery)
-        self.assertEqual(catalog["adapters"], [record.to_mapping() for record in records])
-        adapter_id = json.loads(Path(os.environ["NEMOCLAW_TEST_FABRIC_DESCRIPTOR"]).read_text())[
-            "adapter_id"
-        ]
-        self.assertTrue(
-            any(record["descriptor"]["adapter_id"] == adapter_id for record in catalog["adapters"])
+    def installed(self, declared):
+        return installed(
+            "a" * 40, "b" * 64, adapters=self.declare(declared), runtime_manifest=self.manifest
         )
+
+    def test_image_catalog_pairs_declared_adapters_with_fabric_descriptors(self):
+        catalog = self.installed({ADAPTER_ID: {"files": ["/opt/runtime"], "binaries": ["bun"]}})
+        self.assertEqual(catalog["schema_version"], 2)
+        self.assertEqual(
+            catalog["adapters"],
+            [{"descriptor": get_adapter_descriptor(ADAPTER_ID), "provenance": PROVENANCE}],
+        )
+        self.assertEqual(catalog["targets"], [])
+        self.assertEqual(catalog["runtime_files"], {ADAPTER_ID: ["/opt/runtime"]})
+        self.assertEqual(catalog["runtime"]["command"], self.layout["command"])
+        self.assertEqual(catalog["runtime"]["policy"], self.layout["policy"])
+        self.assertEqual(
+            catalog["runtime"]["binaries"][ADAPTER_ID],
+            sorted([str(Path(sys.executable).resolve()), str(self.executable)]),
+        )
+
+    def test_bundled_snapshot_lists_descriptors_without_image_facts(self):
+        catalog = snapshot("a" * 40, "b" * 64, ["nvidia.fabric.pi", ADAPTER_ID])
+        self.assertEqual(
+            [adapter["descriptor"]["adapter_id"] for adapter in catalog["adapters"]],
+            [ADAPTER_ID, "nvidia.fabric.pi"],
+        )
+        self.assertEqual(catalog["targets"], [])
+        for field in ("runtime", "runtime_files"):
+            self.assertNotIn(field, catalog)
+
+    def test_an_adapter_fabric_does_not_catalog_fails_the_snapshot(self):
+        with self.assertRaises(KeyError):
+            snapshot("a" * 40, "b" * 64, ["org.fixture.unknown"])
+
+    def test_a_declared_descriptor_file_describes_an_adapter_fabric_does_not_catalog(self):
+        descriptor = {
+            "adapter_id": "org.fixture.local",
+            "contract_version": "fabric.adapter/v1alpha2",
+        }
+        path = self.root / "local.fabric-adapter.json"
+        path.write_text(json.dumps(descriptor))
+        catalog = self.installed(
+            {"org.fixture.local": {"files": [], "binaries": [], "descriptor": str(path)}}
+        )
+        self.assertEqual(
+            catalog["adapters"],
+            [
+                {
+                    "descriptor": descriptor,
+                    "provenance": [{"source": "explicit_local", "path": str(path)}],
+                }
+            ],
+        )
+        with self.assertRaisesRegex(ValueError, "does not describe"):
+            self.installed({ADAPTER_ID: {"files": [], "binaries": [], "descriptor": str(path)}})
+
+    def test_an_adapter_without_files_adds_no_runtime_files(self):
+        catalog = self.installed({ADAPTER_ID: {"files": [], "binaries": []}})
+        self.assertNotIn("runtime_files", catalog)
+        self.assertEqual(
+            catalog["runtime"]["binaries"][ADAPTER_ID], [str(Path(sys.executable).resolve())]
+        )
+
+    def test_invalid_declarations_fail_the_snapshot(self):
+        for declared, message in [
+            ({}, "at least one adapter"),
+            ({ADAPTER_ID: {"files": []}}, "files and binaries"),
+            ({ADAPTER_ID: {"files": ["opt/runtime"], "binaries": []}}, "absolute paths"),
+            ({ADAPTER_ID: {"files": ["/opt/../etc"], "binaries": []}}, "absolute paths"),
+            ({ADAPTER_ID: {"files": {"/opt": True}, "binaries": []}}, "absolute paths"),
+            ({ADAPTER_ID: {"files": [], "binaries": ["/usr/bin/bun"]}}, "executable names"),
+            (
+                {ADAPTER_ID: {"files": [], "binaries": [], "descriptor": "local.json"}},
+                "absolute descriptor",
+            ),
+            ({ADAPTER_ID: {"files": [], "binaries": [], "unknown": True}}, "files and binaries"),
+        ]:
+            with self.subTest(declared=declared), self.assertRaisesRegex(ValueError, message):
+                read_adapters(self.declare(declared))
+        with self.assertRaisesRegex(ValueError, "declare the image's adapters"):
+            read_adapters(self.root / "absent.json")
+
+    def test_a_missing_executable_or_manifest_fails_the_snapshot(self):
+        with self.assertRaisesRegex(ValueError, "missing required executable"):
+            self.installed({ADAPTER_ID: {"files": [], "binaries": ["absent-executable"]}})
+        with self.assertRaisesRegex(ValueError, "runtime manifest"):
+            installed(
+                "a" * 40,
+                "b" * 64,
+                adapters=self.declare({ADAPTER_ID: {"files": [], "binaries": []}}),
+                runtime_manifest=self.root / "missing.json",
+            )
+
+    def test_runtime_manifest_validation_is_unchanged(self):
+        declared = {ADAPTER_ID: ["bun"]}
+        for field, invalid in [
+            ("schema_version", True),
+            ("command", [str(self.root)]),
+            ("command", ["relative/fabric-agent-ctl"]),
+            ("required_paths", [str(self.root / "absent")]),
+            ("environment", {"ADAPTER_PYTHON": str(self.root)}),
+            ("environment", {"NEMOCLAW_PROVIDER_NAMES": "injected"}),
+        ]:
+            self.manifest.write_text(json.dumps({**self.layout, field: invalid}))
+            with self.subTest(field=field, invalid=invalid), self.assertRaises(ValueError):
+                read_runtime(self.manifest, declared, required=True)
+
+
+if __name__ == "__main__":
+    unittest.main()

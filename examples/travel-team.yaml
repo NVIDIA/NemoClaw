@@ -1,0 +1,295 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# A travel planning team: four researchers, a scheduler, and a buyer, each an
+# agent in its own isolated sandbox. The researchers use a local Nemotron Nano
+# served by managed Ollama and search the web; the scheduler and buyer use a
+# hosted Nemotron Super. The buyer reaches a booking service over MCP with a
+# gateway-held key and may call only two of its tools.
+#
+# The same team in hand-written HCL, with templated instructions and the JSON
+# Schemas for each hand-off, is in hcl/travel-team. Set NVIDIA_API_KEY,
+# BRAVE_API_KEY, and BOOKINGS_API_KEY on the applying host.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: travel-team
+  uid: 3f6c2a1e-8d4b-4c7a-9e2f-5b1d0a7c6e84
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17681
+    engine: unix:///var/run/docker.sock
+    image:
+      ghcr.io/nvidia/openshell/gateway@sha256:bdb4fe248070032c88be78f029dad9325cb698480e90486e1413a674a5d8edc8
+    networkCIDR: 172.30.120.0/24
+
+  services:
+    nemotron:
+      kind: ollama
+      hardware: {profile: dgx-spark}
+      # Replace with the digest of your locally built runtimes/ollama image.
+      image: nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      model:
+        name: nemotron-3-nano:30b
+        digest: b725f11174073334edd0c2ff396b8d4e66d7dab22a5a63717ccad5a08a270cf1
+      serving:
+        # Hermes needs at least 64,000 tokens of context.
+        contextTokens: 65536
+        maxSequences: 2
+      memory:
+        gpuMemoryGiB: 48
+
+  inferenceProviders:
+    - name: local
+      provider: openai
+      api: openai-completions
+      serviceRef: nemotron
+    - name: frontier
+      provider: openai
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_API_KEY
+
+  integrations:
+    search:
+      kind: webSearch
+      provider: brave
+      credential:
+        env: BRAVE_API_KEY
+      # Hermes's Brave plugin reads the key under this name.
+      sandboxEnv: BRAVE_SEARCH_API_KEY
+    bookings:
+      kind: api
+      endpoint: https://bookings.example.com/mcp
+      credential:
+        env: BOOKINGS_API_KEY
+
+  sandboxes:
+    - name: flights
+      image:
+        # Replace with the digest from a current Hermes image build.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.hermes
+        config:
+          runtime:
+            max_turns: 16
+          instructions:
+            system:
+              mode: replace
+              content: |
+                You research flights for each leg of a trip: nonstop and one-stop options, fares, fare rules, and baggage allowances.
+                Search the web; never invent an option, a price, or a source.
+                Reply with JSON only: {"topic": "flights", "options": [...]}, up to five options per leg, cheapest first.
+                Each option has an id starting with "flights-", a summary, a price with amount and currency, and the URL it came from.
+      agent:
+        name: flights
+        integrationRefs: [search]
+        tools:
+          allow: [web]
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: nemotron-3-nano:30b
+                harnessProvider: custom
+                temperature: 0.2
+                maxTokens: 2048
+
+    - name: stays
+      image:
+        # Replace with the digest from a current Hermes image build.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.hermes
+        config:
+          runtime:
+            max_turns: 16
+          instructions:
+            system:
+              mode: replace
+              content: |
+                You research places to stay near each stop's points of interest: hotels and apartments, nightly rates, cancellation terms, and reviews.
+                Search the web; never invent an option, a price, or a source.
+                Reply with JSON only: {"topic": "stays", "options": [...]}, up to five options per stop, cheapest first.
+                Each option has an id starting with "stays-", a summary, a price with amount and currency, and the URL it came from.
+      agent:
+        name: stays
+        integrationRefs: [search]
+        tools:
+          allow: [web]
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: nemotron-3-nano:30b
+                harnessProvider: custom
+                temperature: 0.2
+                maxTokens: 2048
+
+    - name: transport
+      image:
+        # Replace with the digest from a current Hermes image build.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.hermes
+        config:
+          runtime:
+            max_turns: 16
+          instructions:
+            system:
+              mode: replace
+              content: |
+                You research getting around: airport transfers, transit passes, trains between cities, and car rental where transit is poor.
+                Search the web; never invent an option, a price, or a source.
+                Reply with JSON only: {"topic": "transport", "options": [...]}, up to five options per stop, cheapest first.
+                Each option has an id starting with "transport-", a summary, a price with amount and currency, and the URL it came from.
+      agent:
+        name: transport
+        integrationRefs: [search]
+        tools:
+          allow: [web]
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: nemotron-3-nano:30b
+                harnessProvider: custom
+                temperature: 0.2
+                maxTokens: 2048
+
+    - name: attractions
+      image:
+        # Replace with the digest from a current Hermes image build.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.hermes
+        config:
+          runtime:
+            max_turns: 16
+          instructions:
+            system:
+              mode: replace
+              content: |
+                You research things to do at each stop: attractions, opening hours, ticket prices, advance booking requirements, and seasonal closures.
+                Search the web; never invent an option, a price, or a source.
+                Reply with JSON only: {"topic": "attractions", "options": [...]}, up to five options per stop, cheapest first.
+                Each option has an id starting with "attractions-", a summary, a price with amount and currency, and the URL it came from.
+      agent:
+        name: attractions
+        integrationRefs: [search]
+        tools:
+          allow: [web]
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: nemotron-3-nano:30b
+                harnessProvider: custom
+                temperature: 0.2
+                maxTokens: 2048
+
+    - name: scheduler
+      image:
+        # Replace with the digest from a current Hermes image build.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.hermes
+        config:
+          runtime:
+            max_turns: 12
+          instructions:
+            system:
+              mode: replace
+              content: |
+                You compose a day-by-day itinerary from a trip request and the researchers' results for flights, stays, transport, and attractions.
+                Use only options the researchers returned, by id, and keep the total within the budget.
+                Before answering, delegate a check of your draft for impossible connections, overlaps, closed attractions, and budget overruns, and fix what it finds.
+                Reply with JSON only: {"days": [...], "total": {"amount": ..., "currency": ...}}, each day listing the option ids it uses with their prices.
+      agent:
+        name: scheduler
+        tools:
+          allow: [delegation]
+        inference:
+          routes:
+            - name: primary
+              providerRef: frontier
+              overrides:
+                model: nvidia/nemotron-3-super-120b-a12b
+                harnessProvider: custom
+                temperature: 0.3
+                maxTokens: 8192
+
+    - name: buyer
+      image:
+        # Replace with the digest from a current Hermes image build.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+        grants:
+          # Only setup, discovery, and the two booking tools; OpenShell
+          # refuses any other MCP call to the booking service.
+          bookings:
+            endpoints:
+              - host: bookings.example.com
+                port: 443
+                path: /mcp
+                protocol: mcp
+                enforcement: enforce
+                rules:
+                  - allow: {method: initialize}
+                  - allow: {method: notifications/initialized}
+                  - allow: {method: tools/list}
+                  - allow: {method: tools/call, tool: get_quote}
+                  - allow: {method: tools/call, tool: book_option}
+      harness:
+        kind: nvidia.fabric.hermes
+        config:
+          runtime:
+            max_turns: 24
+          mcp:
+            servers:
+              bookings:
+                transport: streamable-http
+                url: https://bookings.example.com/mcp
+                exposure: harness_native
+          instructions:
+            system:
+              mode: replace
+              content: |
+                You book an itinerary a person has approved, using only the booking service's get_quote and book_option tools.
+                An option can appear on several days; book each distinct option once.
+                First quote every distinct option, passing its itinerary price as expected_price.
+                Book only when every quote matches and every option is available; otherwise book nothing and report what changed.
+                Never substitute an option. Reply with JSON only: {"bookings": [...], "status": "booked" or "not booked", "reason": ...}.
+      agent:
+        name: buyer
+        integrationRefs: [bookings]
+        tools:
+          allow: [bookings]
+        inference:
+          routes:
+            - name: primary
+              providerRef: frontier
+              overrides:
+                model: nvidia/nemotron-3-super-120b-a12b
+                harnessProvider: custom
+                temperature: 0
+                maxTokens: 4096

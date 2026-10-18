@@ -7,7 +7,9 @@
 
 use serde_json::Value;
 use std::{
+    collections::BTreeMap,
     fs,
+    io::Read,
     path::Path,
     process::{Command, Stdio},
     time::Duration,
@@ -16,7 +18,6 @@ use std::{
 type Result<T> = std::result::Result<T, String>;
 
 pub const PLATFORMS: [&str; 2] = ["linux/arm64", "linux/amd64"];
-const BRIDGE_LABEL: &str = "io.nemoclaw.fabric.bridge";
 const CATALOG_LABEL: &str = "io.nemoclaw.fabric.catalog";
 const REFERENCE_LABEL: &str = "io.nemoclaw.fabric.reference";
 /// The adapter the reference dummy image implements.
@@ -62,14 +63,30 @@ fn status(command: &mut Command, what: &str) -> Result<()> {
 /// `platform`, and that manifest's config, each kept as its exact bytes.
 /// Layers and attestations are left out, so the bundle stays small.
 pub fn metadata_bundle(archive: &[u8], platform: &str) -> Result<Vec<u8>> {
-    use sha2::{Digest, Sha256};
-    use std::{collections::BTreeMap, io::Read};
-    let (os, architecture) = platform
-        .split_once('/')
-        .ok_or("platform must be os/architecture")?;
-    let mut files = BTreeMap::new();
     let mut tar = tar::Archive::new(archive);
-    for entry in tar.entries().map_err(|_| "invalid image archive")? {
+    let files = metadata_files(tar.entries().map_err(|_| "invalid image archive")?)?;
+    Ok(bundle_from_files(files, platform, None)?.1)
+}
+
+/// Read a named image's metadata from a saved OCI archive, seeking past layers.
+/// Returns its root digest and the verified metadata bundle.
+pub fn archived_image_metadata(
+    archive: &Path,
+    image: &str,
+    platform: &str,
+) -> Result<(String, Vec<u8>)> {
+    let file = fs::File::open(archive).map_err(|_| "cannot open image archive")?;
+    let mut tar = tar::Archive::new(file);
+    let files = metadata_files(
+        tar.entries_with_seek()
+            .map_err(|_| "invalid image archive")?,
+    )?;
+    bundle_from_files(files, platform, Some(image))
+}
+
+fn metadata_files<R: Read>(entries: tar::Entries<'_, R>) -> Result<BTreeMap<String, Vec<u8>>> {
+    let mut files = BTreeMap::new();
+    for entry in entries {
         let mut entry = entry.map_err(|_| "invalid image archive entry")?;
         let path = entry
             .path()
@@ -85,6 +102,18 @@ pub fn metadata_bundle(archive: &[u8], platform: &str) -> Result<Vec<u8>> {
             files.insert(path, bytes);
         }
     }
+    Ok(files)
+}
+
+fn bundle_from_files(
+    files: BTreeMap<String, Vec<u8>>,
+    platform: &str,
+    image: Option<&str>,
+) -> Result<(String, Vec<u8>)> {
+    use sha2::{Digest, Sha256};
+    let (os, architecture) = platform
+        .split_once('/')
+        .ok_or("platform must be os/architecture")?;
     let blob = |digest: &str| -> Result<String> {
         let hex = digest
             .strip_prefix("sha256:")
@@ -105,12 +134,21 @@ pub fn metadata_bundle(archive: &[u8], platform: &str) -> Result<Vec<u8>> {
             .get("index.json")
             .ok_or("image archive lacks index.json")?,
     ))?;
-    let [entry] = outer["manifests"]
+    let entries = outer["manifests"]
         .as_array()
         .map(Vec::as_slice)
-        .unwrap_or_default()
-    else {
-        return Err("image archive must hold exactly one image".into());
+        .unwrap_or_default();
+    let matching: Vec<_> = entries
+        .iter()
+        .filter(|entry| {
+            image.is_none_or(|name| entry["annotations"]["io.containerd.image.name"] == name)
+        })
+        .collect();
+    let [entry] = matching.as_slice() else {
+        return Err(match image {
+            Some(name) => format!("image archive must hold exactly one entry for {name}"),
+            None => "image archive must hold exactly one image".into(),
+        });
     };
     let root = entry["digest"]
         .as_str()
@@ -150,10 +188,11 @@ pub fn metadata_bundle(archive: &[u8], platform: &str) -> Result<Vec<u8>> {
         return Err(format!("image manifest config does not match {platform}"));
     }
     blobs.insert(config, config_raw);
-    serde_json::to_vec(
+    let bundle = serde_json::to_vec(
         &serde_json::json!({"schema_version": 1, "manifest_digest": manifest, "blobs": blobs}),
     )
-    .map_err(|_| "cannot encode the image metadata bundle".into())
+    .map_err(|_| "cannot encode the image metadata bundle")?;
+    Ok((root, bundle))
 }
 
 /// Save `image` from the local Docker engine and write its metadata bundle
@@ -283,16 +322,12 @@ fn read_metadata(image: &str, args: &[&str]) -> Result<Value> {
     serde_json::from_slice(&bytes).map_err(|_| "image metadata is not JSON".into())
 }
 
-/// Labels that publish the image's bridge capabilities and its catalog: the
-/// installed Fabric discovery for harnesses, the explicit descriptor for the
-/// reference dummy.
-pub fn labels(name: &str, bridge: Value, catalog: Value) -> Result<Vec<(String, String)>> {
+/// The label that publishes the image's catalog: its installed adapters with
+/// their descriptors, and its runtime.
+pub fn labels(name: &str, catalog: Value) -> Result<Vec<(String, String)>> {
     let compact = |value: &Value| {
         serde_json::to_string(value).map_err(|_| "unserializable metadata".to_owned())
     };
-    if catalog["bridge"] != bridge {
-        return Err("catalog and executable bridge capabilities disagree".into());
-    }
     // Only the reference image publishes the reference adapter, and it
     // publishes nothing else, so neither can pass for the other.
     let adapters: Vec<&str> = catalog["adapters"]
@@ -312,10 +347,7 @@ pub fn labels(name: &str, bridge: Value, catalog: Value) -> Result<Vec<(String, 
             "{name} lists {REFERENCE_ADAPTER}, which only the reference image may publish"
         ));
     }
-    Ok(vec![
-        (BRIDGE_LABEL.to_owned(), compact(&bridge)?),
-        (CATALOG_LABEL.to_owned(), compact(&catalog)?),
-    ])
+    Ok(vec![(CATALOG_LABEL.to_owned(), compact(&catalog)?)])
 }
 
 /// Build each target under a temporary tag, read its metadata, then publish
@@ -334,29 +366,16 @@ pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
                     .arg(format!("{name}.tags={temporary}")),
                 &format!("build {name}"),
             )?;
-            let bridge = read_metadata(
-                &temporary,
-                &[
-                    "-c",
-                    "from pathlib import Path; print(Path('/opt/nemoclaw/bridge.json').read_text())",
-                ],
-            )?;
-            // The reference image has no Fabric to discover with, so it
-            // publishes its one explicit descriptor in the same catalog form.
             let catalog = read_metadata(
                 &temporary,
-                if name == "dummy" {
-                    &["/opt/nemoclaw/dummy_catalog.py"]
-                } else {
-                    &[
-                        "/opt/nemoclaw/catalog.py",
-                        "--installed",
-                        "--provenance",
-                        "/opt/nemoclaw/provenance.json",
-                    ]
-                },
+                &[
+                    "/opt/nemoclaw/catalog.py",
+                    "--installed",
+                    "--provenance",
+                    "/opt/nemoclaw/provenance.json",
+                ],
             )?;
-            let labels = labels(&name, bridge, catalog)?;
+            let labels = labels(&name, catalog)?;
             let context = tempfile::tempdir().map_err(|_| "cannot create a label context")?;
             fs::write(
                 context.path().join("Dockerfile"),
@@ -411,10 +430,8 @@ pub fn qualify_arguments(
     root: &Path,
     name: &str,
     id: &str,
-    bridge: &str,
     reference: &str,
     lifecycle: Option<Lifecycle>,
-    require_ready: bool,
 ) -> Vec<String> {
     let mount = |file: &str, destination: &str| {
         format!(
@@ -438,13 +455,11 @@ pub fn qualify_arguments(
     .map(String::from)
     .to_vec();
     for variable in [
-        format!("NEMOCLAW_TEST_BRIDGE={bridge}"),
         format!("NEMOCLAW_TEST_REFERENCE={reference}"),
         format!(
             "NEMOCLAW_TEST_LIFECYCLE={}",
             lifecycle.map(Lifecycle::name).unwrap_or("")
         ),
-        format!("NEMOCLAW_TEST_REQUIRE_READY={}", u8::from(require_ready)),
         "FABRIC_NATIVE_TEST_KEY=fabric-native-key".into(),
         "HOME=/sandbox".into(),
     ] {
@@ -466,12 +481,7 @@ pub fn qualify_arguments(
     arguments
 }
 
-pub fn qualify(
-    root: &Path,
-    image: &str,
-    lifecycle: Option<Lifecycle>,
-    require_ready: bool,
-) -> Result<()> {
+pub fn qualify(root: &Path, image: &str, lifecycle: Option<Lifecycle>) -> Result<()> {
     let inspected = output(
         docker().args(["image", "inspect", image]),
         "inspect the image",
@@ -479,9 +489,11 @@ pub fn qualify(
     let inspected: Value =
         serde_json::from_slice(&inspected).map_err(|_| "unreadable image inspection")?;
     let labels = &inspected[0]["Config"]["Labels"];
-    let bridge = labels[BRIDGE_LABEL].as_str().ok_or_else(|| {
-        format!("{image} has no {BRIDGE_LABEL} label; build it with cargo images build")
-    })?;
+    if labels[CATALOG_LABEL].as_str().is_none() {
+        return Err(format!(
+            "{image} has no {CATALOG_LABEL} label; build it with cargo images build"
+        ));
+    }
     let reference = labels[REFERENCE_LABEL].as_str().unwrap_or("");
     let id = inspected[0]["Id"].as_str().ok_or("image has no ID")?;
     let root = std::path::absolute(root).map_err(|_| "cannot locate the repository")?;
@@ -489,15 +501,7 @@ pub fn qualify(
     getrandom::fill(&mut nonce).map_err(|_| "cannot name the qualification container")?;
     let name = format!("nemoclaw-contract-{}", crate::hex(&nonce));
     let mut child = docker()
-        .args(qualify_arguments(
-            &root,
-            &name,
-            id,
-            bridge,
-            reference,
-            lifecycle,
-            require_ready,
-        ))
+        .args(qualify_arguments(&root, &name, id, reference, lifecycle))
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()

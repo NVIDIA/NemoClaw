@@ -8,12 +8,12 @@
 //! not qualify a production adapter's health.
 
 use fabric_provider::AgentBridge as _;
-use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
 use nemoclaw_sdk::{
     CancellationToken, Deployment, OperationResult, Outcome,
     backend::Row,
     config::{ComputeDriver, Document, Gateway},
 };
+use openshell_provider::{EnvironmentSecrets, OpenShell};
 use serde_json::Value;
 use std::{fs, path::Path, process::Command, sync::Arc};
 
@@ -45,38 +45,32 @@ fn sandbox_binding(directory: &Path) -> Row {
         .collect()
 }
 
-async fn runtime_id(client: &OpenShell, binding: &Row) -> String {
-    let snapshot = client.agent_snapshot(binding).await.unwrap();
-    assert_eq!(snapshot.runtime_state, "running");
-    let identity = snapshot
-        .runtime_id
-        .expect("a running runtime has an identity");
-    assert!(!identity.trim().is_empty());
-    identity
+/// The runtime ID Fabric gave the deployment's agent, from its OpenTofu state.
+fn runtime_id(directory: &Path) -> String {
+    let state: Value =
+        serde_json::from_slice(&fs::read(directory.join("terraform.tfstate")).unwrap()).unwrap();
+    let id = state["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|resource| resource["mode"] == "managed" && resource["type"] == "fabric_agent")
+        .and_then(|resource| resource["instances"][0]["attributes"]["runtime_id"].as_str())
+        .expect("the agent records its runtime ID")
+        .to_owned();
+    assert!(!id.trim().is_empty());
+    id
 }
 
-/// Send one request through the image's bridge and return the agent's reply.
-async fn invoke(client: &OpenShell, binding: &Row, agent: &str, message: &str) -> Value {
-    let input = serde_json::json!({ "message": message }).to_string();
-    let (exit, output) = client
-        .exec_input(
+/// Send one request through Fabric's bridge and return the agent's run result.
+async fn invoke(client: &OpenShell, binding: &Row, runtime_id: &str, message: &str) -> Value {
+    client
+        .invoke_agent(
             binding,
-            ["fabric-agent", "invoke", "--agent", agent, "--input", "-"]
-                .map(String::from)
-                .to_vec(),
-            Row::new(),
-            60,
-            input.into_bytes(),
+            runtime_id,
+            &serde_json::json!({ "message": message }),
         )
         .await
-        .unwrap();
-    assert_eq!(
-        exit,
-        0,
-        "invoke failed: {}",
-        String::from_utf8_lossy(&output)
-    );
-    serde_json::from_slice(&output).unwrap()
+        .unwrap()
 }
 
 /// IDs of the engine's objects of `kind` matching `filter`.
@@ -143,17 +137,18 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
 
     let plan = deployment.plan(&document, &cancel).await.unwrap();
     assert_eq!(plan.outcome, Outcome::Planned);
-    // Before the managed gateway exists, plan creates its runtime stage and
-    // defers the sandbox, which needs the gateway.
+    // One plan creates the managed gateway and the sandbox it will serve.
     assert!(
-        plan.deferred_resources.contains(&resource),
-        "plan must defer the sandbox: {:?}",
-        plan.deferred_resources
+        plan.changes
+            .iter()
+            .any(|change| change.resource == resource),
+        "plan must create the sandbox: {:?}",
+        plan.changes
     );
     assert!(
         plan.changes
             .iter()
-            .any(|change| change.resource == "nemoclaw_gateway_storage.runtime"),
+            .any(|change| change.resource == "openshell_gateway_storage.runtime"),
         "plan must create the gateway storage: {:?}",
         plan.changes
     );
@@ -184,8 +179,6 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
         "apply must create the sandbox: {:?}",
         applied.changes
     );
-    assert_eq!(applied.health.len(), 1);
-    assert!(applied.health[0].health.allows_apply_completion());
 
     let client = OpenShell::connect(
         &document.spec.gateway.connection(),
@@ -193,17 +186,10 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     )
     .unwrap();
     let binding = fabric_provider::fabric_binding(sandbox_binding(&state_path)).unwrap();
-    let runtime = runtime_id(&client, &binding).await;
-    let reply = invoke(&client, &binding, &sandbox.agent.name, "dummy-lifecycle").await;
+    let runtime = runtime_id(&state_path);
+    let reply = invoke(&client, &binding, &runtime, "dummy-lifecycle").await;
     assert_eq!(reply["status"], "succeeded", "{reply}");
-    assert_eq!(
-        reply["result"]["fabric_result"]["status"], "succeeded",
-        "{reply}"
-    );
-    assert_eq!(
-        reply["result"]["fabric_result"]["output"]["message"], configured_reply,
-        "{reply}"
-    );
+    assert_eq!(reply["output"]["message"], configured_reply, "{reply}");
 
     let unchanged = deployment.apply(&document, &cancel).await.unwrap();
     assert_eq!(unchanged.outcome, Outcome::Succeeded);
@@ -214,10 +200,13 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     assert_eq!(reapplied.outcome, Outcome::Succeeded);
     assert!(reapplied.changes.is_empty(), "{:?}", reapplied.changes);
     assert_eq!(
-        runtime_id(&client, &binding).await,
+        runtime_id(&state_path),
         runtime,
         "unchanged applies must keep the running agent"
     );
+    // The same runtime still answers.
+    let again = invoke(&client, &binding, &runtime, "dummy-lifecycle").await;
+    assert_eq!(again["status"], "succeeded", "{again}");
 
     let destroyed = deployment.destroy(&cancel).await.unwrap();
     assert_eq!(destroyed.outcome, Outcome::Destroyed);
@@ -244,13 +233,8 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     }
     let mut retained = destroyed.retained.clone();
     retained.sort();
-    assert_eq!(
-        retained,
-        [
-            "nemoclaw_gateway_storage.runtime",
-            "openshell_workspace.deployment"
-        ]
-    );
+    // Destroy deletes the workspace; only gateway storage remains.
+    assert_eq!(retained, ["openshell_gateway_storage.runtime"]);
     // Retained gateway storage is still on the engine.
     assert!(
         !docker_objects(

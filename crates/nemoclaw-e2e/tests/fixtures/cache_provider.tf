@@ -3,8 +3,8 @@
 
 terraform {
   required_providers {
-    nemoclaw = { source = "registry.opentofu.org/nvidia/nemoclaw", version = "@PROVIDER_VERSION@" }
-    docker   = { source = "registry.opentofu.org/kreuzwerker/docker", version = "4.6.0" }
+    vllm   = { source = "registry.opentofu.org/nvidia/vllm", version = "@PROVIDER_VERSION@" }
+    docker = { source = "registry.opentofu.org/kreuzwerker/docker", version = "4.6.0" }
   }
 }
 variable "name" { type = string }
@@ -12,7 +12,7 @@ variable "owner" { type = string }
 variable "enabled" { default = true }
 variable "revision" { default = "initial" }
 variable "fail_start" { default = false }
-provider "nemoclaw" {}
+provider "vllm" {}
 provider "docker" { host = "@ENGINE@" }
 resource "docker_volume" "cache" {
   name = "${var.name}-data"
@@ -22,7 +22,7 @@ resource "docker_volume" "cache" {
   }
   lifecycle { prevent_destroy = true }
 }
-resource "nemoclaw_inference_storage" "credentials" {
+resource "vllm_credential_storage" "credentials" {
   name       = "${var.name}-auth"
   owner      = var.owner
   generation = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -58,5 +58,5 @@ resource "docker_container" "runtime" {
     source = "${var.name}-auth"
     target = "/credentials"
   }
-  depends_on = [nemoclaw_inference_storage.credentials]
+  depends_on = [vllm_credential_storage.credentials]
 }

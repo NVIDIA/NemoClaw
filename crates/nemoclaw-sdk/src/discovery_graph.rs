@@ -4,20 +4,24 @@
 //! Discovery reads have no dependency on resource creation or image acquisition.
 use crate::{
     config::{ConfigError, Document},
-    discovery::{DiscoveryQuery, FabricRequest, plan_queries},
+    discovery::{DiscoveryQuery, FabricRequest, GATEWAY_PREREQUISITES, plan_queries},
 };
 use serde_json::{Map, Value, json};
 
-/// The data source and inputs that answer `query` in a plan. An image read on
-/// a platform takes it from the plan's one engine read, `current`.
-fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, Value), ConfigError> {
+/// The data source type, the attribute holding its observation, and the
+/// inputs that answer `query` in a plan. One `host_engine` read answers both
+/// engine facts and advertised hardware. An image read on a platform takes it
+/// from the plan's one engine read, `current`.
+fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, &'static str, Value), ConfigError> {
     Ok(match query {
         DiscoveryQuery::Engine(request) => (
-            "engine_capabilities",
-            json!({"engine":literal(&request.engine),"compute_driver":request.compute_driver}),
+            "host_engine",
+            "engine_json",
+            json!({"engine":literal(&request.engine)}),
         ),
         DiscoveryQuery::Hardware(request) => (
-            "target_hardware",
+            "host_engine",
+            "hardware_json",
             json!({"engine":literal(&request.engine)}),
         ),
         DiscoveryQuery::Fabric(FabricRequest {
@@ -45,23 +49,18 @@ fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, Value), ConfigError> 
             if platform.is_some() {
                 for field in ["architecture", "operating_system"] {
                     inputs[field] = json!(format!(
-                        "${{jsondecode(data.nemoclaw_engine_capabilities.current.observation_json).{field}}}"
+                        "${{jsondecode(data.host_engine.current.engine_json).{field}}}"
                     ));
                 }
             }
-            ("fabric_capabilities", inputs)
+            ("fabric_harnesses", "observation_json", inputs)
         }
-        DiscoveryQuery::Inference(request) => {
-            request
-                .validate()
-                .map_err(|_| ConfigError::new("discovery inputs are invalid"))?;
-            (
-                "inference_capabilities",
-                json!({"endpoint":literal(&request.endpoint),"api":request.api,"credential_env":request.credential_env}),
+        DiscoveryQuery::Gateway(_)
+        | DiscoveryQuery::Credential(_)
+        | DiscoveryQuery::Inference(_) => {
+            unreachable!(
+                "a plan reads the gateway, credentials, and model catalogs outside its discovery reads"
             )
-        }
-        DiscoveryQuery::Gateway(_) | DiscoveryQuery::Credential(_) => {
-            unreachable!("a plan reads the gateway and credentials outside its discovery reads")
         }
     })
 }
@@ -80,18 +79,12 @@ fn read(
     key: &str,
     extend: impl FnOnce(&mut Value),
 ) -> Result<(), ConfigError> {
-    let (kind, mut inputs) = inputs(query)?;
+    let (source, attribute, mut inputs) = inputs(query)?;
     extend(&mut inputs);
-    // Fabric image reads belong to the fabric provider; the others to nemoclaw.
-    let source = if kind == "fabric_capabilities" {
-        kind.to_owned()
-    } else {
-        format!("nemoclaw_{kind}")
-    };
-    graph["data"][&source][name] = inputs;
+    graph["data"][source][name] = inputs;
     observations.insert(
         key.into(),
-        json!(format!("${{data.{source}.{name}.observation_json}}")),
+        json!(format!("${{data.{source}.{name}.{attribute}}}")),
     );
     Ok(())
 }
@@ -101,7 +94,7 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
     let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();
     sandboxes.sort_by(|left, right| left.name.cmp(&right.name));
     let mut sandboxes = sandboxes.into_iter();
-    let (mut endpoints, mut targets, mut images) = (0, 0, 0);
+    let (mut targets, mut images) = (0, 0);
     for query in plan_queries(document)? {
         match &query {
             DiscoveryQuery::Gateway(_) => {
@@ -111,30 +104,38 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                     json!("${data.openshell_gateway.current.observation_json}"),
                 );
             }
-            DiscoveryQuery::Inference(_) => {
-                let name = format!("endpoint_{endpoints}");
-                read(graph, &mut observations, &query, &name, &name, |_| {})?;
-                endpoints += 1;
-            }
+            // The SDK reads model catalogs itself; they are advisory, not graph reads.
+            DiscoveryQuery::Inference(_) => {}
             DiscoveryQuery::Hardware(_) => {
                 let name = format!("target_{targets}");
                 read(graph, &mut observations, &query, &name, &name, |_| {})?;
                 targets += 1;
             }
-            DiscoveryQuery::Engine(_) => {
+            DiscoveryQuery::Engine(request) => {
                 read(
                     graph,
                     &mut observations,
                     &query,
                     "current",
                     "engine",
-                    |inputs| {
-                        inputs["lifecycle"] = json!({ "postcondition": [{
+                    |_| {},
+                )?;
+                // The openshell provider judges whether the engine can host
+                // the managed gateway; its installation types enforce the
+                // same check.
+                let source = crate::compile::data_source_type(GATEWAY_PREREQUISITES);
+                graph["data"][&source]["current"] = json!({
+                    "engine": literal(&request.engine),
+                    "compute_driver": request.compute_driver,
+                    "lifecycle": { "postcondition": [{
                         "condition": "${self.status != \"unavailable\"}",
                         "error_message": "The selected engine does not meet gateway prerequisites. Correct the runtime or target configuration."
-                    }] });
-                    },
-                )?;
+                    }] },
+                });
+                observations.insert(
+                    GATEWAY_PREREQUISITES.into(),
+                    json!(format!("${{data.{source}.current.observation_json}}")),
+                );
             }
             DiscoveryQuery::Fabric(FabricRequest {
                 requirements,
@@ -169,6 +170,20 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                         }
                     }] });
                 })?;
+                // The harness the sandbox launches, which its agent takes by ref.
+                let read = &graph["data"]["fabric_harnesses"][&name];
+                let mut harness = json!({
+                    "image": read["image"],
+                    "adapter_id": literal(adapter),
+                    "agent_name": literal(&sandbox.agent.name),
+                });
+                for field in ["engine", "metadata_env"] {
+                    if !read[field].is_null() {
+                        harness[field] = read[field].clone();
+                    }
+                }
+                // Named by sandbox, so adding a sandbox changes no agent's ref.
+                graph["data"]["fabric_harness"][&sandbox.name] = harness;
             }
             DiscoveryQuery::Credential(_) => {
                 unreachable!("a plan reads credentials separately from its provider reads")

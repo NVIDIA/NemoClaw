@@ -15,14 +15,10 @@ fn native_inference_attaches_provider_without_a_managed_route() {
     assert!(resources.iter().all(|r| r.kind != "route"));
     assert!(resources.iter().any(|r| {
         r.address
-            .starts_with("openshell_provider_profile.inference_local-")
+            .starts_with("openshell_inference.inference_local-")
     }));
-    let sandbox = &resources
-        .iter()
-        .find(|r| r.kind == "agent_configuration")
-        .unwrap()
-        .values;
-    let settings: serde_json::Value = serde_json::from_str(&sandbox["config_json"]).unwrap();
+    let sandbox = &resources.iter().find(|r| r.kind == "agent").unwrap().values;
+    let settings: serde_json::Value = nemoclaw_fabric::agent::compose(sandbox).unwrap();
     assert_eq!(settings["models"]["default"]["model"], "qwen3.5:0.8b");
     assert_eq!(
         settings["models"]["default"]["base_url"],
@@ -36,7 +32,7 @@ fn native_inference_attaches_provider_without_a_managed_route() {
 }
 
 #[test]
-fn explicit_protocol_is_preserved_for_selected_image_validation() {
+fn anthropic_providers_register_messages_without_a_per_model_api() {
     use nemoclaw_sdk::config::{InferenceApi, InferenceProviderKind};
     let mut document =
         Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
@@ -51,8 +47,15 @@ fn explicit_protocol_is_preserved_for_selected_image_validation() {
     let resources = targets(&document, &generations).unwrap();
     let sandbox = resources
         .iter()
-        .find(|resource| resource.kind == "agent_configuration")
+        .find(|resource| resource.kind == "agent")
         .unwrap();
-    let settings: serde_json::Value = serde_json::from_str(&sandbox.values["config_json"]).unwrap();
-    assert_eq!(settings["models"]["default"]["api"], "anthropic-messages");
+    let settings: serde_json::Value = nemoclaw_fabric::agent::compose(&sandbox.values).unwrap();
+    // Fabric v0.5.0 has no per-model API field (#13320); OpenShell routes the
+    // provider's protocol.
+    assert!(settings["models"]["default"].get("api").is_none());
+    let registration = resources
+        .iter()
+        .find(|resource| resource.kind == "inference")
+        .unwrap();
+    assert_eq!(registration.values["api"], "anthropic-messages");
 }

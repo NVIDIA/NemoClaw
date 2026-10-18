@@ -28,7 +28,7 @@ pub fn targets(
 ) -> Result<Vec<Target>, nemoclaw_sdk::config::ConfigError> {
     let mut targets = nemoclaw_sdk::compile::targets(document, generations)?;
     for target in &mut targets {
-        if target.kind == "provider_profile" {
+        if target.kind == "provider_profile" || target.kind == "web_search" {
             target.values.insert(
                 "binaries_json".into(),
                 serde_json::json!(["/usr/local/bin/python3.99"]).to_string(),
@@ -60,22 +60,8 @@ use crate::http_fixture as transport;
 
 /// Installed-image metadata for isolated fixtures.
 pub fn catalog() -> nemoclaw_sdk::fabric_catalog::FabricCatalog {
-    use nemoclaw_sdk::fabric_catalog::{BridgeCapabilities, FabricCatalog};
+    use nemoclaw_sdk::fabric_catalog::FabricCatalog;
     let mut catalog = FabricCatalog::bundled();
-    catalog.bridge = Some(BridgeCapabilities {
-        interface_version: 1,
-        operations: [
-            "validate",
-            "prepare",
-            "configure",
-            "check",
-            "invoke",
-            "serve",
-        ]
-        .map(String::from)
-        .to_vec(),
-        health_checks: vec![],
-    });
     let mut runtime = binding("fixture").runtime;
     runtime.binaries = catalog
         .adapters

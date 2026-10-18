@@ -19,6 +19,12 @@ slow-timeout = { period = "8s", terminate-after = 3 }
 [profile.ci.junit]
 path = "test.xml"
 
+# These fixtures spawn Git, Cargo and Bake processes. Limit their contention
+# on CI runners without serializing tests in the other binaries.
+[[profile.ci.overrides]]
+filter = 'binary_id(=nemoclaw-build::integration)'
+test-group = "build-integration"
+
 [profile.lifecycle]
 inherits = "ci"
 test-threads = 4
@@ -37,6 +43,8 @@ default-filter = '''
     | test(/^export_observations::/) | test(/^fabric_deployment::/)
     | test(/^multiple_providers::/) | test(/^remote_service::/)
     | test(/^inference_discovery::/) | test(/^helm_recovery::/)
+    | test(/^travel_example::/)
+    | test(/^travel_team_example::/)
 ))
 '''
 
@@ -48,15 +56,15 @@ path = "lifecycle.xml"
 # tests.
 [[profile.lifecycle.overrides]]
 filter = 'binary_id(=fabric-provider::contract)'
-slow-timeout = { period = "22s", terminate-after = 2 }
-
-[[profile.lifecycle.overrides]]
-filter = 'binary_id(=nemoclaw-provider::contract)'
 slow-timeout = { period = "10s", terminate-after = 2 }
 
 [[profile.lifecycle.overrides]]
+filter = 'binary_id(=nemoclaw-provider::contract)'
+slow-timeout = { period = "8s", terminate-after = 2 }
+
+[[profile.lifecycle.overrides]]
 filter = 'binary_id(=openshell-provider::contract)'
-slow-timeout = { period = "12s", terminate-after = 2 }
+slow-timeout = { period = "6s", terminate-after = 2 }
 
 # Real Docker and OpenTofu; run through `cargo ci live-docker`, which builds the
 # images and owned inputs these tests read. The Docker tests share one engine,
@@ -74,7 +82,7 @@ default-filter = '''
     | test(a_new_fabric_archive_cannot_reuse_an_older_compiled_core)
 ))
 | (package(nemoclaw-e2e) & binary(=integration) & (
-    test(/^cache_provider::/) | test(/^docker_provider_proxy::/)
+    test(/^cache_provider::/) | test(/^docker_provider_proxy::/) | test(/^docker_registry::/)
     | test(/^managed_gateway::/) | test(/^dummy_agent::/)
 ))
 | (package(nemoclaw-sdk) & test(the_issuer_image_serves_both_documents_over_https))
@@ -97,6 +105,7 @@ path = "live-docker.xml"
 
 [test-groups]
 docker-engine = { max-threads = 1 }
+build-integration = { max-threads = 2 }
 
 # Everything but the rebuild uses the engine.
 [[profile.live-docker.overrides]]

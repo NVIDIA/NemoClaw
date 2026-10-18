@@ -56,22 +56,14 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
     );
     assert_eq!(doc.credential_names(), vec!["HOSTED_KEY"]);
     let rows = targets(&doc, &generations()).unwrap();
-    assert_eq!(rows.iter().filter(|row| row.kind == "provider").count(), 2);
-    assert_eq!(
-        rows.iter()
-            .filter(|row| row.kind == "provider_profile")
-            .count(),
-        2
-    );
+    assert_eq!(rows.iter().filter(|row| row.kind == "inference").count(), 2);
     let sandbox = rows.iter().find(|row| row.kind == "sandbox").unwrap();
-    let settings: Value = serde_json::from_str(
+    let settings: Value = nemoclaw_fabric::agent::compose(
         &rows
             .iter()
-            .find(|row| {
-                row.kind == "agent_configuration" && row.values["name"] == sandbox.values["name"]
-            })
+            .find(|row| row.kind == "agent" && row.values["sandbox"] == sandbox.values["name"])
             .unwrap()
-            .values["config_json"],
+            .values,
     )
     .unwrap();
     assert!(sandbox.values["provider_names_json"].contains("hosted"));
@@ -80,7 +72,7 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
         format!(
             "NEMOCLAW_INFERENCE_{}_KEY",
             rows.iter()
-                .find(|row| row.kind == "provider" && row.values["name"].starts_with("hosted-"))
+                .find(|row| row.kind == "inference" && row.values["name"].starts_with("hosted-"))
                 .unwrap()
                 .values["name"]
                 .replace('-', "_")
@@ -91,12 +83,12 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
         .iter()
         .find(|row| row.kind == "sandbox" && row.values["name"] == "other")
         .unwrap();
-    let other_settings: Value = serde_json::from_str(
+    let other_settings: Value = nemoclaw_fabric::agent::compose(
         &rows
             .iter()
-            .find(|row| row.kind == "agent_configuration" && row.values["name"] == "other")
+            .find(|row| row.kind == "agent" && row.values["sandbox"] == "other")
             .unwrap()
-            .values["config_json"],
+            .values,
     )
     .unwrap();
     assert_eq!(
@@ -105,13 +97,13 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
     );
     assert!(other_settings["models"]["smart"].is_null());
     let other_policy: Value = serde_json::from_str(&other.values["policy_json"]).unwrap();
-    assert_eq!(other_policy["managed"].as_object().unwrap().len(), 1);
+    assert_eq!(other_policy["managed"].as_array().unwrap().len(), 1);
     let policy: Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
-    assert_eq!(policy["managed"].as_object().unwrap().len(), 2);
+    assert_eq!(policy["managed"].as_array().unwrap().len(), 2);
     let graph = compile(&doc, &generations(), "0.1.0").unwrap();
     let mut dependencies: Vec<_> = rows
         .iter()
-        .filter(|row| row.kind == "provider")
+        .filter(|row| row.kind == "inference")
         .map(|row| json!(row.address))
         .collect();
     dependencies.push(json!("data.openshell_gateway.apply"));
@@ -123,8 +115,8 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
         graph["resource"]["openshell_sandbox"]["other"]["depends_on"],
         json!([
             provider_scope::address(
-                &graph["resource"]["openshell_provider_registration"],
-                "provider",
+                &graph["resource"]["openshell_inference"],
+                "inference",
                 "local"
             ),
             "data.openshell_gateway.apply"
@@ -149,10 +141,10 @@ fn managed_inference_remains_owned_when_the_default_uses_a_hosted_provider() {
     let runtime = runtime_targets(&doc, &generations()).unwrap();
     assert!(runtime.iter().any(|row| row.kind == "inference_service"));
     let rows = targets(&doc, &generations()).unwrap();
-    assert_eq!(rows.iter().filter(|row| row.kind == "provider").count(), 2);
+    assert_eq!(rows.iter().filter(|row| row.kind == "inference").count(), 2);
     assert!(
         rows.iter()
-            .find(|row| row.kind == "provider"
+            .find(|row| row.kind == "inference"
                 && row.values["name"].starts_with(&format!("{local_name}-")))
             .unwrap()
             .values
@@ -161,7 +153,7 @@ fn managed_inference_remains_owned_when_the_default_uses_a_hosted_provider() {
     assert!(
         !rows
             .iter()
-            .find(|row| row.kind == "provider" && row.values["name"].starts_with("hosted-"))
+            .find(|row| row.kind == "inference" && row.values["name"].starts_with("hosted-"))
             .unwrap()
             .values
             .contains_key("credential_source")
@@ -185,22 +177,12 @@ fn managed_ollama_installs_while_an_external_provider_is_the_default() {
     );
     let graph = compile(&doc, &generations(), "0.1.0").unwrap();
     let dependencies = provider_scope::resource(
-        &graph["resource"]["openshell_provider_registration"],
+        &graph["resource"]["openshell_inference"],
         &local_name,
     )["depends_on"]
         .as_array()
         .unwrap();
-    assert_eq!(
-        dependencies,
-        &[
-            json!(provider_scope::address(
-                &graph["resource"]["openshell_provider_profile"],
-                "provider_profile",
-                &local_name
-            )),
-            json!("data.openshell_gateway.apply")
-        ]
-    );
+    assert_eq!(dependencies, &[json!("data.openshell_gateway.apply")]);
 }
 
 #[test]
@@ -283,7 +265,9 @@ fn managed_services_have_independent_storage_credentials_and_dependencies() {
         let credentials: Value = serde_json::from_str(
             &rows
                 .iter()
-                .find(|t| t.kind == "provider" && t.values["name"].starts_with(&format!("{name}-")))
+                .find(|t| {
+                    t.kind == "inference" && t.values["name"].starts_with(&format!("{name}-"))
+                })
                 .unwrap()
                 .values["credential_source"],
         )
@@ -301,7 +285,7 @@ fn managed_services_have_independent_storage_credentials_and_dependencies() {
             .as_array()
             .unwrap();
         assert!(dependencies.contains(&json!(format!(
-            "nemoclaw_inference_storage.inference_{name}_auth"
+            "vllm_credential_storage.inference_{name}_auth"
         ))));
     }
     // Duplicate bind ports must fail before creating either service.

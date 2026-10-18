@@ -2466,14 +2466,16 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "nemo-fabric-core"
-version = "0.4.0"
-source = "git+https://github.com/NVIDIA/NeMo-Fabric?rev=24f068c895e5cbc30286bc743498be4e5014d658#24f068c895e5cbc30286bc743498be4e5014d658"
+version = "0.5.0"
+source = "git+https://github.com/NVIDIA/NeMo-Fabric?rev=5574117feb4be948c1b03f4c36a2fe9a11af910d#5574117feb4be948c1b03f4c36a2fe9a11af910d"
 dependencies = [
  "jsonschema 0.49.9",
+ "libc",
  "schemars",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2563,14 +2565,12 @@ dependencies = [
  "nemoclaw-openshell",
  "nemoclaw-sdk",
  "openshell-sdk",
- "reqwest 0.13.5",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
  "tokio",
  "tonic",
- "url",
 ]
 
 [[package]]
@@ -2613,8 +2613,10 @@ dependencies = [
  "nemoclaw-test-fixtures",
  "nemoclaw-tofu",
  "openshell-core",
+ "openshell-provider",
  "prost",
  "rcgen",
+ "reqwest 0.13.5",
  "rustls",
  "serde",
  "serde-saphyr 1.2.0",
@@ -2626,6 +2628,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-stream",
+ "toml 1.1.5+spec-1.1.0",
  "tonic",
  "tonic-prost",
  "tower",
@@ -2640,6 +2643,7 @@ dependencies = [
  "nemoclaw-backend",
  "nemoclaw-docker",
  "nemoclaw-openshell",
+ "nemoclaw-tofu",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -2794,6 +2798,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bollard-stubs",
+ "futures-util",
  "getrandom 0.4.3",
  "interprocess",
  "ipnet",
@@ -3092,7 +3097,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 [[package]]
 name = "openshell-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=e1f3c82caa3ed3b65de22889ae7ef32a774878ef#e1f3c82caa3ed3b65de22889ae7ef32a774878ef"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=5a7728c304b5528e954e9ae900cf21f84e1a12b1#5a7728c304b5528e954e9ae900cf21f84e1a12b1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3126,7 +3131,7 @@ dependencies = [
 [[package]]
 name = "openshell-extension-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=e1f3c82caa3ed3b65de22889ae7ef32a774878ef#e1f3c82caa3ed3b65de22889ae7ef32a774878ef"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=5a7728c304b5528e954e9ae900cf21f84e1a12b1#5a7728c304b5528e954e9ae900cf21f84e1a12b1"
 dependencies = [
  "hyper-util",
  "serde",
@@ -3139,7 +3144,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=e1f3c82caa3ed3b65de22889ae7ef32a774878ef#e1f3c82caa3ed3b65de22889ae7ef32a774878ef"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=5a7728c304b5528e954e9ae900cf21f84e1a12b1#5a7728c304b5528e954e9ae900cf21f84e1a12b1"
 dependencies = [
  "hickory-proto",
  "miette",
@@ -3153,7 +3158,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy-schema"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=e1f3c82caa3ed3b65de22889ae7ef32a774878ef#e1f3c82caa3ed3b65de22889ae7ef32a774878ef"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=5a7728c304b5528e954e9ae900cf21f84e1a12b1#5a7728c304b5528e954e9ae900cf21f84e1a12b1"
 dependencies = [
  "miette",
  "noyalib",
@@ -3171,19 +3176,25 @@ dependencies = [
  "nemoclaw-backend",
  "nemoclaw-docker",
  "nemoclaw-openshell",
+ "nemoclaw-provider",
+ "nemoclaw-sdk",
  "nemoclaw-test-fixtures",
  "nemoclaw-tofu",
  "openshell-core",
  "openshell-policy",
  "openshell-sdk",
  "prost",
+ "prost-types",
  "rustls",
  "serde",
  "serde_json",
+ "tar",
+ "tempfile",
  "tf-provider",
  "tokio",
  "tokio-util",
  "tonic",
+ "url",
 ]
 
 [[package]]
@@ -4837,7 +4848,6 @@ dependencies = [
 [[package]]
 name = "tf-provider"
 version = "0.2.2"
-source = "git+https://github.com/aneoconsulting/tf-provider?rev=d4d1501e5e35d7d8d18184a319192c3f775d25f3#d4d1501e5e35d7d8d18184a319192c3f775d25f3"
 dependencies = [
  "anyhow",
  "async-stream",

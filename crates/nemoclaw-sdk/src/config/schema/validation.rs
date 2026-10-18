@@ -101,6 +101,23 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         );
     }
     property(&mut defs["Metadata"], "uid", json!({"pattern": c::UUID}));
+    // Integration kinds are inlined in Integration's variants.
+    for variant in defs["Integration"]["oneOf"]
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+    {
+        if variant["properties"]["kind"]["const"] == "webSearch" {
+            property(
+                variant,
+                "sandboxEnv",
+                json!({
+                    "pattern": c::ENV,
+                    "x-nemoclaw-error": "web search sandboxEnv must be an environment variable name"
+                }),
+            );
+        }
+    }
     property(
         &mut defs["Credential"],
         "env",
@@ -134,6 +151,18 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     // they follow the kubeconfig reference's rules and cannot replace those.
     let reserved =
         defs["ManagedKubernetes"]["properties"]["kubeconfig"]["properties"]["env"]["not"].clone();
+    property(
+        &mut defs["ManagedKubernetes"],
+        "imagePullSecrets",
+        json!({
+            "uniqueItems": true,
+            "items": {
+                "type": "string", "minLength": 1, "maxLength": 253,
+                "pattern": r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\s\S])"
+            },
+            "x-nemoclaw-error": "image pull Secret references must be unique Kubernetes Secret names"
+        }),
+    );
     property(
         &mut defs["ManagedKubernetes"],
         "environment",
@@ -378,10 +407,10 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     }));
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
-        "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
+        "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
         "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and development authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
-        "Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
+        "Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.",
         "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",
         "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and missing agent references, and permits at most one attached web search definition per sandbox. Native search must be authored separately through public Fabric configuration and validated by Fabric. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
         "The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",

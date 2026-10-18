@@ -34,15 +34,13 @@ fn api_and_tuning_survive_compilation_and_yaml() {
         .map(|k| (k.into(), format!("{k}-generation")))
         .into();
     let rows = targets(&d, &g).unwrap();
-    let settings: Value = serde_json::from_str(
-        &rows
-            .iter()
-            .find(|row| row.kind == "agent_configuration")
-            .unwrap()
-            .values["config_json"],
+    let settings: Value = nemoclaw_fabric::agent::compose(
+        &rows.iter().find(|row| row.kind == "agent").unwrap().values,
     )
     .unwrap();
-    assert_eq!(settings["models"]["default"]["api"], "openai-responses");
+    // The authored API selects how catalogs are read; Fabric v0.5.0 has no
+    // per-model API field (#13320).
+    assert!(settings["models"]["default"].get("api").is_none());
     assert_eq!(
         settings["models"]["default"]["settings"]["contextWindow"],
         65536

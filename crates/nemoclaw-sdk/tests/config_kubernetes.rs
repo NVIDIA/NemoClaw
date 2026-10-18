@@ -29,6 +29,42 @@ fn managed_document() -> Value {
 }
 
 #[test]
+fn image_pull_references_accept_only_unique_kubernetes_secret_names() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    for invalid in [
+        json!([""]),
+        json!(["Uppercase"]),
+        json!(["registry/token"]),
+        json!(["registry..token"]),
+        json!(["-registry"]),
+        json!(["registry."]),
+        json!(["registry\n"]),
+        json!(["a".repeat(254)]),
+        json!(["registry", "registry"]),
+        json!([{"name": "registry", "password": "registry-password-sentinel"}]),
+        json!(null),
+    ] {
+        let mut input = managed_document();
+        input["spec"]["gateway"]["kubernetes"]["imagePullSecrets"] = invalid;
+        assert!(!validator.is_valid(&input));
+        let error = Document::parse(input.to_string().as_bytes()).unwrap_err();
+        assert!(error.to_string().contains("imagePullSecrets"));
+        assert!(!error.to_string().contains("registry-password-sentinel"));
+    }
+    let mut document = Document::parse(managed_document().to_string().as_bytes()).unwrap();
+    document
+        .spec
+        .gateway
+        .as_managed_mut()
+        .unwrap()
+        .kubernetes
+        .as_mut()
+        .unwrap()
+        .image_pull_secrets = vec!["registry..token".into()];
+    assert!(document.validate().is_err());
+}
+
+#[test]
 fn managed_kubernetes_preserves_explicit_target_and_has_no_local_engine_defaults() {
     {
         let input = managed_document();

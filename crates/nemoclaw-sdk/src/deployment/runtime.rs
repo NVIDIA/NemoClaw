@@ -7,12 +7,11 @@ mod teardown;
 #[cfg(all(test, unix))]
 pub(super) mod tests;
 
-pub(super) use super::plan::check_plan as check_runtime_plan;
 use super::*;
 use crate::managed::{GATEWAY_KIND, Spec};
-const GATEWAY_STORAGE: &str = "nemoclaw_gateway_storage.runtime";
-const KUBERNETES_STORAGE: &str = "nemoclaw_kubernetes_storage.runtime";
-const KUBERNETES_AUTH: &str = "nemoclaw_kubernetes_auth.runtime";
+const GATEWAY_STORAGE: &str = "openshell_gateway_storage.runtime";
+const KUBERNETES_STORAGE: &str = "openshell_kubernetes_storage.runtime";
+const KUBERNETES_AUTH: &str = "openshell_kubernetes_auth.runtime";
 
 fn kubernetes_binding(
     target: &Target,
@@ -70,13 +69,9 @@ fn bound_spec(kind: &str, want: &Spec, binding: Option<&StateBinding>) -> Result
     }
     Ok(old)
 }
-struct RuntimeValidation {
-    expected: BTreeMap<String, Row>,
-    gateway_running: bool,
-}
 // Binding validation is local. Live identity and running state come from the
 // provider refresh in the saved plan, never from a separate SDK preflight.
-fn runtime_bindings(
+pub(super) fn runtime_bindings(
     targets: &[Target],
     bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<BTreeMap<String, Row>, Error> {
@@ -120,51 +115,24 @@ fn runtime_bindings(
     }
     Ok(expected)
 }
-fn runtime_observations(
-    document: &Document,
-    targets: &[Target],
+/// The saved bindings that belong to the runtime: everything but OpenShell and
+/// Fabric objects, which share the deployment's state.
+pub(super) fn runtime_saved(
+    record: &Record,
     bindings: &BTreeMap<String, StateBinding>,
-    plan: &Plan,
-) -> Result<RuntimeValidation, Error> {
-    let mut result = RuntimeValidation {
-        expected: runtime_bindings(targets, bindings)?,
-        gateway_running: document.spec.gateway.as_managed().is_none(),
-    };
-    preserve_docker_models(document, plan)?;
-    if let Some(gateway) = targets
+) -> Result<BTreeMap<String, StateBinding>, Error> {
+    let objects: BTreeSet<String> = compile::targets(&record.document, &record.generations)?
+        .into_iter()
+        .map(|target| target.address)
+        .collect();
+    Ok(bindings
         .iter()
-        .find(|target| target.kind == crate::kubernetes::GATEWAY_KIND)
-    {
-        result.gateway_running = plan.resource_changes.iter().any(|change| {
-            change.address == gateway.address
-                && change.change.actions == ["no-op"]
-                && change.change.before["running"] == "true"
-        });
-    }
-    if let Some(gateway) = targets
-        .iter()
-        .find(|target| target.kind == GATEWAY_KIND && plan::disposable(&target.address))
-    {
-        result.gateway_running = plan.resource_changes.iter().any(|change| {
-            change.address == gateway.address
-                && change.change.actions == ["no-op"]
-                && change.change.before["id"]
-                    .as_str()
-                    .is_some_and(|id| !id.is_empty())
-        });
-    }
-    if let Some(gateway) = targets
-        .iter()
-        .find(|target| target.kind == GATEWAY_KIND && !plan::disposable(&target.address))
-    {
-        result.gateway_running = plan.resource_changes.iter().any(|change| {
-            change.address == gateway.address && change.change.before["running"] == "true"
-        });
-    }
-    Ok(result)
+        .filter(|(address, _)| !objects.contains(*address) && !plan::reconstructible(address))
+        .map(|(address, binding)| (address.clone(), binding.clone()))
+        .collect())
 }
 
-fn preserve_docker_models(document: &Document, plan: &Plan) -> Result<(), Error> {
+pub(super) fn preserve_docker_models(document: &Document, plan: &Plan) -> Result<(), Error> {
     use crate::services::ServiceUpdatePolicy;
 
     for (name, service) in &document.spec.services {
@@ -205,115 +173,4 @@ fn preserve_docker_models(document: &Document, plan: &Plan) -> Result<(), Error>
         }
     }
     Ok(())
-}
-
-impl Deployment {
-    pub(super) async fn runtime_stage(
-        &self,
-        bundle: &Bundle,
-        store: &Store,
-        document: &Document,
-        record: &mut Record,
-        apply: bool,
-        cancel: &CancellationToken,
-    ) -> Result<(Vec<Change>, bool, Vec<String>, DiscoveryReport), Error> {
-        if !document.has_runtime() {
-            let directory = store.directory.join("runtime");
-            if directory.exists()
-                && !self
-                    .state_bindings(
-                        bundle,
-                        &Store::open(&directory)?,
-                        &record.document,
-                        &record.generations,
-                        true,
-                        cancel,
-                    )
-                    .await?
-                    .is_empty()
-            {
-                return Err(Error::Conflict(
-                    "a configuration without runtime requires a new state directory; retain the existing runtime configuration and state for recovery or destroy",
-                ));
-            }
-            return Ok((Vec::new(), false, Vec::new(), DiscoveryReport::default()));
-        }
-        let stage = Store::open(&store.directory.join("runtime"))?;
-        let (graph, targets) =
-            compile::compiled_runtime(document, &record.generations, &bundle.manifest.version)?;
-        self.initialize(bundle, &stage, &graph, cancel).await?;
-        let bindings = stage.bindings(&bundle.tofu(), cancel).await?;
-        runtime_bindings(&targets, &bindings)?;
-        let plan = self
-            .saved_plan(bundle, &stage, document, "apply.plan", cancel)
-            .await?;
-        let checked = runtime_observations(document, &targets, &bindings, &plan)?;
-        let changes = check_runtime_plan(
-            &plan,
-            &with_observations(&checked.expected, &compile::observations(&graph)),
-            &bindings,
-        )?;
-        if !apply {
-            if !checked.gateway_running
-                && !self
-                    .state_bindings(bundle, store, document, &record.generations, false, cancel)
-                    .await?
-                    .is_empty()
-            {
-                return Err(Error::Conflict(
-                    "the managed gateway is not running, so plan cannot inspect OpenShell resources; run apply with the same configuration and state directory to restore the gateway",
-                ));
-            }
-            store.save(record)?;
-            let retained = compile::compile_teardown(
-                document,
-                &record.generations,
-                &bundle.manifest.version,
-                &bindings.keys().cloned().collect(),
-                true,
-            )?
-            .retained;
-            let discovery = plan.discovery_report(DiscoveryScope::Runtime, &bindings, &retained)?;
-            return Ok((
-                changes,
-                !checked.gateway_running,
-                plan.discovery_deferred(&discovery),
-                discovery,
-            ));
-        }
-        // Apply-time observations still run for an unchanged runtime, but they
-        // must not commit proposed OpenShell intent before its plan is accepted.
-        if !changes.is_empty() {
-            record.begin_runtime_apply(document);
-            store.save(record)?;
-        }
-        self.tofu(
-            bundle,
-            &stage,
-            document,
-            &["apply", "-input=false", "-no-color", "apply.plan"],
-            cancel,
-        )
-        .await?;
-        if !changes.is_empty() {
-            record.finish_runtime_apply();
-            store.save(record)?;
-        }
-        Ok((changes, false, Vec::new(), DiscoveryReport::default()))
-    }
-    pub(super) async fn export_runtime(
-        &self,
-        bundle: &Bundle,
-        store: &Store,
-        record: &Record,
-        cancel: &CancellationToken,
-    ) -> Result<(), Error> {
-        if !record.document.has_runtime() {
-            return Ok(());
-        }
-        let stage = Store::open(&store.directory.join("runtime"))?;
-        self.export_observations(bundle, &stage, record, true, cancel)
-            .await?;
-        Ok(())
-    }
 }

@@ -263,15 +263,14 @@ fn supporting_resource(address: &str) -> bool {
     matches!(
         address,
         "openshell_workspace.deployment"
-            | "nemoclaw_gateway_storage.runtime"
+            | "openshell_gateway_storage.runtime"
             | "data.openshell_gateway.current"
             | "data.openshell_gateway.apply"
-            | "data.nemoclaw_gateway_readiness.current"
+            | "data.openshell_docker_gateway_readiness.current"
     ) || [
         "data.docker_image.image_",
         "docker_image.image_",
-        "openshell_provider_profile.inference_",
-        "openshell_provider_registration.inference_",
+        "openshell_inference.inference_",
     ]
     .iter()
     .any(|prefix| address.starts_with(prefix))
@@ -284,7 +283,6 @@ fn operation_label(operation: &str) -> Option<&str> {
         "tofu.apply" => Some("Applying infrastructure changes"),
         "runtime.ready" => Some("Waiting for gateway and inference readiness"),
         "sandbox.ready" => Some("Waiting for sandbox readiness"),
-        "fabric.health" => Some("Checking packaged Fabric health"),
         _ => None,
     }
 }

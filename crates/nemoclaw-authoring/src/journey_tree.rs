@@ -146,7 +146,11 @@ impl TreePrinter<'_> {
         let question = resolved
             .questions()
             .iter()
-            .filter(|question| !question.choices().is_empty() && !expanded.contains(question.id()))
+            .filter(|question| {
+                !question.choices().is_empty()
+                    && !question.allows_custom_answer()
+                    && !expanded.contains(question.id())
+            })
             .max_by_key(|question| self.branch_impact(state, &resolved, question));
         let Some(question) = question else {
             return Ok(());

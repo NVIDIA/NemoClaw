@@ -1,0 +1,120 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The ollama provider's schema, rendered by nemoclaw-test-fixtures.
+# Regenerate it after an intended change:
+#   NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-provider --test integration schema::
+# Lines starting with > quote descriptions; tf-provider's placeholder
+# description `empty` is omitted. Blocks are version 1 unless shown.
+
+provider ollama (version 0)
+  destroy: bool, optional
+
+resource ollama_proxy_credential_storage (version 0)
+  engine: string, required
+  generation: string, optional, computed
+  id: string, computed
+  name: string, required
+  owner: string, optional, computed
+
+data ollama_capacity (version 0)
+  compatible: bool, computed
+  contracts: list(string), required
+  engine: string, required
+  observed_bytes: number, computed
+  required_bytes: number, computed
+
+data ollama_model (version 0)
+  digest: string, required
+  name: string, required
+  ref: object({ digest = string, name = string, type = string, upstream = string }), computed
+  upstream: string, required
+
+data ollama_proxy_readiness (version 0)
+  container_id: string, optional
+  contract: string, required
+  endpoint: string, optional
+  engine: string, optional
+  name: string, optional
+  read_trigger: bool, optional
+  ready: bool, computed
+  ref: object({ credential_env = string, credential_source = string, endpoint = string, model = string, type = string }), computed
+  sandbox_endpoint: string, optional
+  wait_timeout_seconds: number, optional
+
+data ollama_proxy_runtime (version 0)
+  > Computes the Ollama proxy contract from typed settings without contacting any host.
+  bind_address: string, required
+    > Loopback or private address and port the proxy serves.
+  digest: string, required
+    > The model's 64-character SHA-256 digest.
+  model: string, required
+    > Ollama model name and tag.
+  spec: string, computed
+    > Validated value for the container's NEMOCLAW_OLLAMA_PROXY environment variable.
+  upstream: string, required
+    > Loopback HTTP Ollama endpoint, ending in /v1.
+
+data ollama_readiness (version 0)
+  container_id: string, optional
+  contract: string, required
+  endpoint: string, optional
+  engine: string, optional
+  name: string, optional
+  read_trigger: bool, optional
+  ready: bool, computed
+  ref: object({ credential_env = string, credential_source = string, endpoint = string, model = string, type = string }), computed
+  sandbox_endpoint: string, optional
+  wait_timeout_seconds: number, optional
+
+data ollama_runtime (version 0)
+  > Computes a runtime contract from typed settings without contacting any host.
+  launch: object({ command = list(string), data_path = string, entrypoint = list(string), environment = map(string), key_env = string, port = number }), computed
+    > What any platform runs: entrypoint, command, environment (including the contract), the port the server listens on, the path for its data, and key_env, the variable an authenticated server reads a supplied API key from (empty without authentication). Place it with any container platform.
+  requirements: object({ gpu = bool, shared_memory_bytes = number, ulimits = map(number) }), computed
+    > What the runtime needs from its platform: a GPU, shared memory (a recommended minimum), and process limits by name, where -1 is unlimited. Platforms that cannot set process limits leave them to the node.
+  spec: string, computed
+    > Validated runtime specification for the container's NEMOCLAW_RUNTIME_SPEC environment variable.
+  block hardware: optional
+    > Explicit supported GPU or system profile.
+    architecture: string, optional
+      > CPU architecture; this dedicated-memory contract requires amd64.
+    min_compute_capability: number, optional
+      > Minimum NVIDIA compute capability, encoded as major times ten plus minor; 90 means 9.0.
+    min_driver_major: number, optional
+      > Minimum installed NVIDIA driver major version.
+    min_gpu_memory_bytes: number, optional
+      > Minimum total dedicated GPU memory in bytes. Host RAM is measured separately.
+    profile: string, optional
+      > GPU family and memory architecture. Every profile requires observed compute capability and driver major 580 or newer. Unified-memory profiles budget host RAM; dedicated-memory profiles require GPU total/free counters.
+  block memory: optional
+    > GPU budget and resident memory-protection thresholds.
+    consecutive_samples: number, optional
+      > Consecutive low-memory samples before stopping the owned process.
+    free_gate_gib: number, optional
+      > Available-memory gate for the free-memory threshold.
+    gpu_memory_gib: number, optional
+      > Fixed serving budget in GiB when utilization is omitted. Omission or zero selects 16 GiB.
+    gpu_memory_utilization: number, optional
+      > Optional fraction of observed dedicated GPU memory.
+    host_reserve_gib: number, optional
+      > Host memory reserve excluded from serving.
+    min_available_gib: number, optional
+      > Available-memory threshold used by the bounded runtime watchdog.
+    min_free_gib: number, optional
+      > Free-memory threshold used below freeGateGiB.
+  block model: single
+    > Selected immutable Ollama registry model.
+    digest: string, required
+      > Lowercase SHA-256 of the registry manifest selected for that tag.
+    name: string, required
+      > Public library model name including its tag.
+  block serving: optional
+    > Ollama serving limits.
+    context_tokens: number, optional
+      > Maximum model context length.
+    max_sequences: number, optional
+      > Maximum concurrent sequences.
+    port: number, optional
+      > Inference listening port.
+    startup_timeout_seconds: number, optional
+      > Seconds allowed for model loading and readiness.

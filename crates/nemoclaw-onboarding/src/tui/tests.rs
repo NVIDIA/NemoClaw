@@ -197,11 +197,14 @@ fn configured_target_prerequisite_blocks_save_until_observed() {
     .unwrap();
     let state = JourneyDefinition::new("target-gated", base)
         .omit([
-            "adapter:nvidia.fabric.openclaw:/agent_name",
-            "adapter:nvidia.fabric.openclaw:/cli",
-            "adapter:nvidia.fabric.openclaw:/home",
-            "adapter:nvidia.fabric.openclaw:/native_config",
-            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            "adapter:nvidia.fabric.openclaw:/port_range",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
         ])
         .require_target([TargetPrerequisite::EngineAndImageCompatible])
         .start(&capabilities)
@@ -492,29 +495,41 @@ mod example_journeys {
 }
 
 #[test]
-fn existing_model_metadata_is_offered_as_an_editable_suggestion() {
+fn offline_vendor_menu_selects_a_catalog_alternative() {
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Defaults, &capabilities).unwrap();
     let mut wizard = JourneyWizard::new(capabilities, state);
-    let mut seen = Vec::new();
-    for _ in 0..40 {
+    for _ in 0..12 {
         if wizard
             .question()
             .unwrap()
-            .is_some_and(|question| question.id() == "model:/model_metadata")
+            .as_ref()
+            .is_some_and(|question| question.kind() == JourneyQuestionKind::InferenceModel)
         {
-            return;
+            break;
         }
-        seen.push(
-            wizard
-                .question()
-                .unwrap()
-                .map(|question| question.id().to_owned()),
-        );
         wizard.advance();
-        assert!(wizard.error.is_none(), "{:?}", wizard.error);
     }
-    panic!("The supplied model metadata was skipped; seen={seen:?}");
+    let question = wizard.question().unwrap().unwrap();
+    let model = serde_json::json!("nvidia/nemotron-3-ultra-550b-a55b");
+    wizard.selected = question
+        .choices()
+        .iter()
+        .position(|choice| choice == &model)
+        .unwrap();
+    wizard.selection_changed = true;
+    wizard.started = true;
+    let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    let screen = terminal.backend().to_string();
+    assert!(
+        screen.contains("nvidia/nemotron-3-ultra-550b-a55b"),
+        "{screen}"
+    );
+    assert!(screen.contains("Type another model"), "{screen}");
+    wizard.advance();
+    assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    assert_eq!(wizard.state().values().pointer(question.id()), Some(&model));
 }
 
 #[test]
@@ -683,11 +698,14 @@ fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
     .unwrap();
     let state = JourneyDefinition::new("conflicted-target", base)
         .omit([
-            "adapter:nvidia.fabric.openclaw:/agent_name",
-            "adapter:nvidia.fabric.openclaw:/cli",
-            "adapter:nvidia.fabric.openclaw:/home",
-            "adapter:nvidia.fabric.openclaw:/native_config",
-            "adapter:nvidia.fabric.openclaw:/timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agent_id",
+            "adapter:nvidia.fabric.openclaw:/channel_config",
+            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/openclaw_command",
+            "adapter:nvidia.fabric.openclaw:/port_range",
+            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
         ])
         .start(&capabilities)
         .unwrap();
@@ -866,7 +884,7 @@ fn missing_catalog_key_does_not_occupy_the_error_slot_or_hide_engine_failures() 
     use nemoclaw_sdk::{
         discovery::{FabricObservation, ObservationStatus, plan_queries},
         fabric_capabilities::{CompatibilityReport, ImageMetadata, Support},
-        fabric_catalog::{BridgeCapabilities, FabricCatalog},
+        fabric_catalog::FabricCatalog,
         inference_discovery::AuthenticationStatus,
     };
     let capabilities = Capabilities::available();
@@ -894,22 +912,7 @@ fn missing_catalog_key_does_not_occupy_the_error_slot_or_hide_engine_failures() 
         .clone();
     let mut wizard = JourneyWizard::new(capabilities, state);
     wizard.started = true;
-    let mut catalog = FabricCatalog::bundled();
-    catalog.bridge = Some(BridgeCapabilities {
-        interface_version: 1,
-        operations: [
-            "validate",
-            "prepare",
-            "configure",
-            "check",
-            "invoke",
-            "serve",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect(),
-        health_checks: Vec::new(),
-    });
+    let catalog = FabricCatalog::bundled();
     let engine_query = plan_queries(&document)
         .unwrap()
         .into_iter()

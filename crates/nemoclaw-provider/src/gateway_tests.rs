@@ -35,20 +35,17 @@ async fn exited_gateway_stops_readiness_without_waiting_for_a_stalled_api() {
         ))
     })
     .await;
-    let provider = NemoClawProvider::default();
     let mut diags = Diagnostics::default();
     // Readiness takes its gateway endpoint as an input, not from the provider.
-    provider
-        .configure(&mut diags, String::new(), ProviderConfig::default())
-        .await
-        .unwrap();
     let config = serde_json::from_value(json!({
         "engine":fixture.endpoint, "container_id":"provider-gateway-id",
         "name":spec.name, "owner":spec.owner, "endpoint":spec.gateway.endpoint,
         "wait_timeout_seconds":90, "read_trigger":true, "ready":null
     }))
     .unwrap();
-    let source = GatewayReadinessDataSource(provider.backend.clone());
+    let source = GatewayReadinessDataSource(std::sync::Arc::new(
+        crate::provider::ConfiguredBackend::default(),
+    ));
     let result = tokio::time::timeout(
         Duration::from_secs(2),
         DataSource::read(&source, &mut diags, config, ValueEmpty::default()),

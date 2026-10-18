@@ -19,7 +19,44 @@ fn policy_input() -> Shape {
     )
 }
 
-/// The typed inputs of an object kind.
+/// One sandbox service endpoint, in OpenShell's terms.
+fn service_input() -> nemoclaw_tofu::shape::Fields {
+    use nemoclaw_tofu::shape::Field;
+    let field = |json: &str, shape, required, description: &str| {
+        (
+            json.to_owned(),
+            Field {
+                json: json.into(),
+                shape,
+                required,
+                description: description.into(),
+            },
+        )
+    };
+    [
+        field(
+            "name",
+            Shape::String,
+            true,
+            "Service name within the sandbox; empty is OpenShell's unnamed endpoint.",
+        ),
+        field(
+            "target_port",
+            Shape::Number,
+            true,
+            "Loopback TCP port the service listens on inside the sandbox.",
+        ),
+        field(
+            "authorization_mode",
+            Shape::String,
+            false,
+            "STRIP or BEARER_PASSTHROUGH; OpenShell uses STRIP when omitted.",
+        ),
+    ]
+    .into()
+}
+
+/// The typed inputs of an object kind, and its typed observations.
 pub fn structured_inputs(kind: &str) -> Vec<Structured> {
     let input = |attribute, field, shape| Structured {
         attribute,
@@ -27,8 +64,24 @@ pub fn structured_inputs(kind: &str) -> Vec<Structured> {
         shape,
     };
     match kind {
-        "provider_profile" => vec![input("binaries", "binaries_json", strings())],
-        "sandbox" => vec![input("policy", "policy_json", policy_input())],
+        "web_search" | "inference" | "api" => {
+            vec![input("binaries", "binaries_json", strings())]
+        }
+        "sandbox" => vec![
+            input("policy", "policy_json", policy_input()),
+            input("driver_config", "driver_config_json", Shape::Json),
+            input(
+                "service",
+                "services_json",
+                Shape::ObjectList(service_input()),
+            ),
+            // Computed: the URLs the gateway reports, by service name.
+            input(
+                "service_urls",
+                "service_urls_json",
+                Shape::Map(Box::new(Shape::String)),
+            ),
+        ],
         _ => Vec::new(),
     }
 }
@@ -37,13 +90,20 @@ pub fn structured_inputs(kind: &str) -> Vec<Structured> {
 pub fn export(kind: &str) -> Option<Export> {
     let fields: &[&'static str] = match kind {
         "workspace" => &["name", "owner", "generation", "id"],
-        "provider" | "provider_profile" | "sandbox" => {
-            &["workspace", "name", "owner", "generation", "id"]
-        }
+        // Registrations name what sandboxes attach: `registration`.
+        "web_search" | "inference" | "api" => &[
+            "workspace",
+            "name",
+            "registration",
+            "owner",
+            "generation",
+            "id",
+        ],
+        "sandbox" => &["workspace", "name", "owner", "generation", "id"],
         _ => return None,
     };
     Some(Export {
-        kind: type_name(kind),
+        kind: crate::ref_type(kind),
         fields: fields.to_vec(),
     })
 }
@@ -51,14 +111,21 @@ pub fn export(kind: &str) -> Option<Export> {
 /// The type of the gateway's `ref`, which `data.openshell_gateway` exports.
 pub const GATEWAY_TYPE: &str = "openshell_gateway";
 
+/// The type of the `ref` a readiness read exports for a confirmed inference
+/// server, which inference registrations take as `server`.
+pub const INFERENCE_SERVER_TYPE: &str = "inference_server";
+
 /// How to reach a gateway: `(ref attribute, row field)` for each part of
-/// its `ref`. Rows carry them without the gateway observing them.
-pub const GATEWAY_FIELDS: [(&str, &str); 5] = [
+/// its `ref`. Rows carry them without the gateway observing them. A managed
+/// Kubernetes gateway's `kubernetes` specification replaces the credential
+/// variables: providers connect to it themselves.
+pub const GATEWAY_FIELDS: [(&str, &str); 6] = [
     ("endpoint", "gateway_endpoint"),
     ("credential_env", "gateway_credential_env"),
     ("tls_ca_env", "gateway_tls_ca_env"),
     ("tls_certificate_env", "gateway_tls_certificate_env"),
     ("tls_key_env", "gateway_tls_key_env"),
+    ("kubernetes", "gateway_kubernetes"),
 ];
 
 /// A row without the gateway connection it carries. Gateways never observe
@@ -86,8 +153,7 @@ pub fn gateway_reference() -> Reference {
 /// The inputs of an object kind that take other objects' `ref`s.
 pub fn references(kind: &str) -> Vec<Reference> {
     let mut references = object_references(kind);
-    // Fabric agent configurations reach their sandbox through the gateway too.
-    if !type_name(kind).is_empty() || kind == "agent_configuration" {
+    if !type_name(kind).is_empty() {
         references.insert(0, gateway_reference());
     }
     references
@@ -101,13 +167,30 @@ fn object_references(kind: &str) -> Vec<Reference> {
         list: false,
     };
     match kind {
-        "provider_profile" => vec![workspace],
-        "provider" => vec![
-            workspace,
+        // A web search registration belongs to its workspace's owner.
+        "web_search" | "api" => vec![Reference {
+            attribute: "workspace",
+            kind: "openshell_workspace",
+            fields: vec![("name", "workspace"), ("owner", "owner")],
+            list: false,
+        }],
+        // An inference registration belongs to its workspace's owner and
+        // reaches the server a readiness read confirmed.
+        "inference" => vec![
             Reference {
-                attribute: "profile",
-                kind: "openshell_provider_profile",
-                fields: vec![("name", "profile_name")],
+                attribute: "workspace",
+                kind: "openshell_workspace",
+                fields: vec![("name", "workspace"), ("owner", "owner")],
+                list: false,
+            },
+            Reference {
+                attribute: "server",
+                kind: INFERENCE_SERVER_TYPE,
+                fields: vec![
+                    ("endpoint", "endpoint"),
+                    ("credential_env", "credential_env"),
+                    ("credential_source", "credential_source"),
+                ],
                 list: false,
             },
         ],
@@ -115,8 +198,8 @@ fn object_references(kind: &str) -> Vec<Reference> {
             workspace,
             Reference {
                 attribute: "providers",
-                kind: "openshell_provider_registration",
-                fields: vec![("name", "provider_names_json")],
+                kind: crate::PROVIDER_TYPE,
+                fields: vec![("registration", "provider_names_json")],
                 list: true,
             },
         ],
@@ -133,7 +216,7 @@ pub fn flatten(resource_type: &str, values: &mut Value) {
     let Some(object) = values.as_object_mut() else {
         return;
     };
-    if type_name(kind) != resource_type && resource_type != "fabric_agent_configuration" {
+    if type_name(kind) != resource_type {
         return;
     }
     object.remove(nemoclaw_tofu::REF);

@@ -24,22 +24,19 @@ impl Deployment {
         bundle: &Bundle,
         store: &Store,
         record: &Record,
-        runtime: bool,
         cancel: &CancellationToken,
     ) -> Result<BTreeMap<String, Value>, Error> {
-        let (graph, targets) = if runtime {
-            compile::compiled_runtime(
-                &record.document,
-                &record.generations,
-                &bundle.manifest.version,
-            )?
-        } else {
-            compile::deployment_graph(
-                &record.document,
-                &record.generations,
-                &bundle.manifest.version,
-            )?
-        };
+        let compiled = compile::deployment_graph(
+            &record.document,
+            &record.generations,
+            &bundle.manifest.version,
+        )?;
+        let graph = compiled.graph;
+        let targets: Vec<_> = compiled
+            .objects
+            .into_iter()
+            .chain(compiled.runtime)
+            .collect();
         let temporary = tempfile::Builder::new()
             .prefix(".export-")
             .tempdir_in(&store.directory)
@@ -161,15 +158,9 @@ impl Deployment {
             ));
         }
 
-        let (operation, _connection) = self
-            .connected(&record.document, &record.generations, cancel)
-            .await?;
-        operation
-            .export_runtime(&bundle, &store, &record, cancel)
-            .await?;
         (self.progress)(Progress::Exporting);
-        let observations = operation
-            .export_observations(&bundle, &store, &record, false, cancel)
+        let observations = self
+            .export_observations(&bundle, &store, &record, cancel)
             .await?;
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
@@ -197,7 +188,12 @@ pub(super) fn exported(
 ) -> Result<Document, Error> {
     consistent_provider_credentials(&document, generations, observations)?;
     for target in compile::targets(&document, generations)? {
-        if target.address.starts_with("data.") || plan::disposable(&target.address) {
+        // An agent configuration is derived from the document; OpenTofu
+        // holds it only to replace the agent's sandbox.
+        if target.address.starts_with("data.")
+            || plan::disposable(&target.address)
+            || target.kind == compile::AGENT_CONFIGURATION
+        {
             continue;
         }
         let mut observation = observations
@@ -220,7 +216,8 @@ pub(super) fn exported(
         let mut expected = target.values;
         expected.insert("id".into(), observed["id"].clone());
         match target.kind.as_str() {
-            "provider" => export_provider(&mut document, &expected, &observed)?,
+            "inference" => export_provider(&mut document, &expected, &observed)?,
+            "web_search" => export_web_search(&expected, &observed)?,
             "sandbox" => export_sandbox(&expected, &observed)?,
             _ => {}
         }
@@ -284,6 +281,10 @@ fn validate_projection(target: &Target, observed: &Value) -> Result<(), Error> {
                     observed[field].as_str().unwrap_or("").to_owned(),
                 ),
             };
+            // An omitted optional input is empty on both sides.
+            if expected.is_empty() && observed.is_empty() {
+                continue;
+            }
             let expected: Value = serde_json::from_str(&expected)
                 .map_err(|_| Error::State("invalid authored export configuration"))?;
             let actual: Value = serde_json::from_str(&observed)
@@ -307,7 +308,7 @@ fn consistent_provider_credentials(
     let mut credentials = BTreeMap::new();
     for target in compile::targets(document, generations)?
         .into_iter()
-        .filter(|target| target.kind == "provider")
+        .filter(|target| target.kind == "inference")
     {
         let Some(provider) = selected
             .iter()
@@ -331,25 +332,23 @@ fn consistent_provider_credentials(
     Ok(())
 }
 
-fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> Result<(), Error> {
-    // Search targets come from selected integrations, not inference definitions.
-    // Keep their authored scopes and credential references unchanged on export.
+/// Web search comes from selected integrations, not inference definitions:
+/// export keeps their authored scopes and credential references unchanged,
+/// and refuses when the deployed resource drifted from them.
+fn export_web_search(expected: &Row, observed: &Row) -> Result<(), Error> {
     if expected
-        .get("provider_type")
-        .and_then(|kind| crate::config::SearchProvider::from_name(kind))
-        .is_some()
+        .iter()
+        .any(|(key, value)| observed.get(key) != Some(value))
     {
-        if expected
-            .iter()
-            .any(|(key, value)| observed.get(key) != Some(value))
-        {
-            return Err(Error::Conflict(
-                "web search provider drift requires inspection",
-            ));
-        }
-        return Ok(());
+        return Err(Error::Conflict(
+            "web search provider drift requires inspection",
+        ));
     }
-    if observed["provider_type"] != expected["provider_type"]
+    Ok(())
+}
+
+fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> Result<(), Error> {
+    if observed.get("api") != expected.get("api")
         || observed["endpoint"] != expected["endpoint"]
         || observed["credential_env"].is_empty() != expected["credential_env"].is_empty()
     {
@@ -447,11 +446,7 @@ mod tests {
 
     /// A generation for every kind `document` records.
     fn generations(document: &Document) -> compile::Generations {
-        ["workspace", "provider", "sandbox"]
-            .into_iter()
-            .chain(crate::services::generation_kinds(document).unwrap())
-            .map(|key| (key.into(), "a".repeat(32)))
-            .collect()
+        Record::new(document.clone()).unwrap().generations
     }
 
     /// Every example's saved document exports unchanged when the providers
@@ -459,24 +454,16 @@ mod tests {
     /// export.
     #[test]
     fn each_example_exports_its_applied_document_and_stops_on_drift() {
-        let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
         let mut exported_examples = 0;
-        for entry in fs::read_dir(&examples).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().and_then(|extension| extension.to_str()) != Some("yaml") {
-                continue;
-            }
-            let mut document = Document::parse(fs::read(&path).unwrap().as_slice())
-                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        for (name, mut document) in super::super::tests::example_documents() {
             document.defaults();
             let generations = generations(&document);
             let observations = echoed(&document, &generations);
             assert_eq!(
                 exported(document.clone(), &generations, &observations)
-                    .unwrap_or_else(|error| panic!("{}: {error}", path.display())),
+                    .unwrap_or_else(|error| panic!("{name}: {error}")),
                 document,
-                "{}",
-                path.display()
+                "{name}"
             );
             for (kind, field, value) in [
                 ("sandbox", "image", "drifted@sha256:0"),
@@ -494,8 +481,7 @@ mod tests {
                 drifted.get_mut(&address).unwrap()[field] = json!(value);
                 assert!(
                     exported(document.clone(), &generations, &drifted).is_err(),
-                    "{}: {kind}.{field} drift was exported",
-                    path.display()
+                    "{name}: {kind}.{field} drift was exported"
                 );
             }
             let mut missing = observations.clone();
@@ -552,7 +538,7 @@ mod tests {
         let mut observations: BTreeMap<String, Value> = compile::targets(&document, &generations)
             .unwrap()
             .into_iter()
-            .filter(|target| target.kind == "provider")
+            .filter(|target| target.kind == "inference")
             .map(|target| (target.address, json!({"credential_env":"SAME_KEY"})))
             .collect();
         assert_eq!(observations.len(), 2);
@@ -564,13 +550,18 @@ mod tests {
     #[test]
     fn export_rejects_configuration_and_intent_identity_drift_from_provider_observations() {
         let target = Target {
-            address: "fabric_agent_configuration.agent".into(),
-            kind: "agent_configuration".into(),
+            address: "fabric_agent.agent".into(),
+            kind: "agent".into(),
             values: Row::from([
                 ("owner".into(), "deployment".into()),
                 ("generation".into(), "generation".into()),
                 ("name".into(), "agent".into()),
-                ("config_json".into(), r#"{"model":"wanted"}"#.into()),
+                (
+                    "models_json".into(),
+                    r#"{"default":{"model":"wanted"}}"#.into(),
+                ),
+                // An omitted section is empty in the row and the observation.
+                ("tools_json".into(), String::new()),
             ]),
         };
         let observed = serde_json::to_value(&target.values).unwrap();
@@ -578,14 +569,15 @@ mod tests {
         for (key, value) in [
             ("owner", "foreign"),
             ("generation", "foreign"),
-            ("config_json", r#"{"model":"changed"}"#),
+            ("models_json", r#"{"default":{"model":"changed"}}"#),
+            ("tools_json", r#"{"enabled":["bash"]}"#),
         ] {
             let mut changed = observed.clone();
             changed[key] = json!(value);
             assert!(validate_projection(&target, &changed).is_err(), "{key}");
         }
         let mut reformatted = observed;
-        reformatted["config_json"] = json!(r#"{ "model": "wanted" }"#);
+        reformatted["models_json"] = json!(r#"{ "default": { "model": "wanted" } }"#);
         validate_projection(&target, &reformatted).unwrap();
     }
 
@@ -677,7 +669,7 @@ mod tests {
         compile::targets(document, &record.generations)
             .unwrap()
             .into_iter()
-            .find(|target| target.kind == "provider")
+            .find(|target| target.kind == "inference")
             .unwrap()
             .values
     }
@@ -710,16 +702,15 @@ mod tests {
                     .unwrap()
                     .into_iter()
                     .find(|target| {
-                        target.kind == "provider" && target.values["provider_type"] == provider
+                        target.kind == "web_search" && target.values["provider_type"] == provider
                     })
                     .unwrap()
                     .values;
-                let mut exported = document.clone();
-                export_provider(&mut exported, &expected, &expected).unwrap();
+                let exported = document.clone();
+                export_web_search(&expected, &expected).unwrap();
                 assert_eq!(exported, document, "{provider}/{scope}");
                 for field in [
                     "provider_type",
-                    "endpoint",
                     "credential_env",
                     "name",
                     "workspace",
@@ -734,7 +725,7 @@ mod tests {
                             observed.remove(field);
                         }
                         assert!(
-                            export_provider(&mut exported, &expected, &observed).is_err(),
+                            export_web_search(&expected, &observed).is_err(),
                             "{provider}/{scope}/{field}/{replacement:?}"
                         );
                         assert_eq!(exported, document);
@@ -791,7 +782,7 @@ mod tests {
         for (field, value) in [
             ("endpoint", "https://foreign.example/v1"),
             ("credential_env", "FOREIGN_KEY"),
-            ("provider_type", "anthropic"),
+            ("api", "anthropic-messages"),
         ] {
             let mut observed = expected.clone();
             observed.insert(field.into(), value.into());
@@ -824,7 +815,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .find(|target| {
-                target.kind == "provider"
+                target.kind == "inference"
                     && target.values["endpoint"] == "https://hosted.example/v1"
             })
             .unwrap()

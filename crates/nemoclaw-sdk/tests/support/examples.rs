@@ -9,7 +9,10 @@ pub fn yaml_files(directory: &Path) -> Vec<PathBuf> {
         let path = entry.path();
         if entry.file_type().unwrap().is_dir() {
             files.extend(yaml_files(&path));
-        } else if path.extension().is_some_and(|ext| ext == "yaml") {
+        } else if path
+            .extension()
+            .is_some_and(|ext| ext == "yaml" || ext == "yml")
+        {
             files.push(path);
         }
     }

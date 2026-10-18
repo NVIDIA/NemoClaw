@@ -17,12 +17,8 @@ fn native_telemetry_settings_are_opaque_and_do_not_implicitly_grant_network_acce
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let rows = targets(&document, &generations).unwrap();
-    let config: Value = serde_json::from_str(
-        &rows
-            .iter()
-            .find(|row| row.kind == "agent_configuration")
-            .unwrap()
-            .values["config_json"],
+    let config: Value = nemoclaw_fabric::agent::compose(
+        &rows.iter().find(|row| row.kind == "agent").unwrap().values,
     )
     .unwrap();
     assert_eq!(config["harness"]["settings"], settings);
@@ -36,15 +32,13 @@ fn native_telemetry_settings_are_opaque_and_do_not_implicitly_grant_network_acce
     .unwrap();
     assert!(
         !policy["managed"]
-            .as_object()
+            .as_array()
             .unwrap()
-            .contains_key("nemoclaw-otlp")
+            .iter()
+            .any(|rule| rule["name"] == "nemoclaw-otlp")
     );
     let graph = compile(&document, &generations, "0.1.0").unwrap();
-    let encoded = graph["resource"]["fabric_agent_configuration"][&document.spec.sandboxes[0].name]
-        ["config_json"]
-        .as_str()
-        .unwrap();
+    let encoded = graph["resource"]["fabric_agent"][&document.spec.sandboxes[0].name].to_string();
     assert!(encoded.contains("agent $${fixture} %%{literal}"));
     assert_eq!(
         Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),

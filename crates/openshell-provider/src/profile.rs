@@ -9,9 +9,12 @@ const PROVIDER_TYPE: &str = "nemoclaw.nvidia.com/provider-type";
 const AUTHENTICATED: &str = "nemoclaw.nvidia.com/authenticated";
 const CLUSTER_SOURCE: &str = "nemoclaw.nvidia.com/cluster-source";
 const CLUSTER_ADDRESSES: &str = "nemoclaw.nvidia.com/cluster-addresses";
+const AUTH_STYLE: &str = "nemoclaw.nvidia.com/auth-style";
+const HEADER_NAME: &str = "nemoclaw.nvidia.com/header-name";
+const SANDBOX_ENV: &str = "nemoclaw.nvidia.com/sandbox-env";
 
 /// Each ownership and definition field, and the profile annotation that carries it.
-const FIELDS: [(&str, &str); 8] = [
+const FIELDS: [(&str, &str); 11] = [
     ("owner", OWNER),
     ("generation", GENERATION),
     ("binaries_json", BINARIES),
@@ -20,6 +23,9 @@ const FIELDS: [(&str, &str); 8] = [
     ("authenticated", AUTHENTICATED),
     ("cluster_source", CLUSTER_SOURCE),
     ("cluster_addresses", CLUSTER_ADDRESSES),
+    ("auth_style", AUTH_STYLE),
+    ("header_name", HEADER_NAME),
+    ("sandbox_env", SANDBOX_ENV),
 ];
 
 fn annotations(fields: Row) -> Result<std::collections::HashMap<String, String>, ObservationError> {
@@ -92,9 +98,9 @@ fn definition_with_rule(
         description: format!("Declared {display} web search"),
         category: proto::ProviderProfileCategory::Knowledge as i32,
         credentials: vec![proto::ProviderProfileCredential {
-            name: provider.credential_env().into(),
+            name: sandbox_env(provider, want),
             description: format!("{display} Search API key"),
-            env_vars: vec![provider.credential_env().into()],
+            env_vars: vec![sandbox_env(provider, want)],
             required: true,
             auth_style: auth_style.into(),
             header_name: header_name.into(),
@@ -102,13 +108,26 @@ fn definition_with_rule(
         }],
         endpoints: network.endpoints.clone(),
         binaries: binaries(want)?,
+        // A default variable name is recorded as no annotation at all.
         annotations: annotations(
-            ["owner", "generation", "binaries_json"]
-                .map(|key| (key.into(), want[key].clone()))
-                .into(),
+            ["owner", "generation", "binaries_json", "sandbox_env"]
+                .into_iter()
+                .filter_map(|key| {
+                    let value = want.get(key).cloned().unwrap_or_default();
+                    (key != "sandbox_env" || !value.is_empty()).then(|| (key.into(), value))
+                })
+                .collect(),
         )?,
         ..Default::default()
     })
+}
+/// The variable sandboxes see the search key in: the one named, or the
+/// provider's default.
+pub(super) fn sandbox_env(provider: SearchProvider, want: &Row) -> String {
+    want.get("sandbox_env")
+        .filter(|name| !name.is_empty())
+        .cloned()
+        .unwrap_or_else(|| provider.credential_env().into())
 }
 pub(super) fn cluster_source(
     want: &Row,
@@ -184,6 +203,33 @@ fn native_definition(
     Ok(profile)
 }
 
+pub(super) fn api_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationError> {
+    let name = want["name"]
+        .strip_prefix("nemoclaw-api-")
+        .ok_or(ObservationError::Query)?;
+    let mut profile = nemoclaw_openshell::api::definition(
+        name,
+        &want["endpoint"],
+        &want["auth_style"],
+        &want["header_name"],
+    )?;
+    profile.binaries = binaries(want)?;
+    profile.annotations = annotations(
+        [
+            "owner",
+            "generation",
+            "endpoint",
+            "binaries_json",
+            "auth_style",
+            "header_name",
+        ]
+        .into_iter()
+        .map(|field| (field.into(), want[field].clone()))
+        .collect(),
+    )?;
+    Ok(profile)
+}
+
 fn row(
     mut profile: proto::ProviderProfile,
     workspace: &str,
@@ -201,7 +247,8 @@ fn row(
     let owner = metadata.get("owner").cloned().unwrap_or_default();
     let generation = metadata.get("generation").cloned().unwrap_or_default();
     let search = SearchProvider::from_profile(name);
-    if (!name.starts_with("nemoclaw-inference-") && search.is_none())
+    let api = name.starts_with("nemoclaw-api-");
+    if (!name.starts_with("nemoclaw-inference-") && !api && search.is_none())
         || profile.id != name
         || profile.resource_version == 0
         || if catalog_entry {
@@ -238,7 +285,25 @@ fn row(
                 .ok_or(ObservationError::Incomplete)?,
         ),
     ]);
-    let expected = if name.starts_with("nemoclaw-inference-") {
+    if search.is_some() {
+        // Empty means the provider's default variable name.
+        fields.insert(
+            "sandbox_env".into(),
+            metadata.get("sandbox_env").cloned().unwrap_or_default(),
+        );
+    }
+    let expected = if api {
+        for field in ["endpoint", "auth_style", "header_name"] {
+            fields.insert(
+                field.into(),
+                metadata
+                    .get(field)
+                    .cloned()
+                    .ok_or(ObservationError::Incomplete)?,
+            );
+        }
+        api_definition(&fields)?
+    } else if name.starts_with("nemoclaw-inference-") {
         fields.extend([
             ("name".into(), name.into()),
             ("owner".into(), owner.clone()),
@@ -312,9 +377,16 @@ pub(super) fn provider_row(
     {
         return Err(ObservationError::BindingMismatch);
     }
+    // OpenShell reports credential names with their values redacted. The
+    // one name is the variable sandboxes see; empty means the default.
+    let sandbox_env = match provider.credentials.keys().collect::<Vec<_>>()[..] {
+        [key] if key != search.credential_env() => key.clone(),
+        _ => String::new(),
+    };
     let mut result = base(provider.metadata, name, removing)?;
     result.insert("credential_source".into(), String::new());
     result.extend([
+        ("sandbox_env".into(), sandbox_env),
         ("endpoint".into(), search.endpoint().into()),
         ("provider_type".into(), search.name().into()),
         ("profile_name".into(), provider.r#type),
@@ -431,7 +503,8 @@ impl ConnectedOpenShellGateway {
     }
     pub(super) async fn create_profile(&self, want: &Row) -> Result<String, ObservationError> {
         let search = SearchProvider::from_profile(&want["name"]);
-        if search.is_none() && !want["name"].starts_with("nemoclaw-inference-") {
+        let api = want["name"].starts_with("nemoclaw-api-");
+        if search.is_none() && !api && !want["name"].starts_with("nemoclaw-inference-") {
             return Err(ObservationError::Query);
         }
         let mut observed = want.clone();
@@ -451,7 +524,9 @@ impl ConnectedOpenShellGateway {
             .import_provider_profiles(self.request(proto::ImportProviderProfilesRequest {
                 workspace_scope: Some(proto::workspace_selector(&want["workspace"])),
                 profiles: vec![proto::ProviderProfileImportItem {
-                    profile: Some(if let Some(search) = search {
+                    profile: Some(if api {
+                        api_definition(want)?
+                    } else if let Some(search) = search {
                         definition(search, want)?
                     } else {
                         native_definition(&observed, self.services.as_ref())?
@@ -873,7 +948,13 @@ mod tests {
         );
         let mut sandbox = row("sandbox");
         let mut policy: serde_json::Value = serde_json::from_str(&sandbox["policy_json"]).unwrap();
-        let endpoint = &mut policy["managed"][fields["name"].as_str()]["endpoints"][0];
+        let grant = policy["managed"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|rule| rule["name"] == fields["name"].as_str())
+            .unwrap();
+        let endpoint = &mut grant["endpoints"][0];
         endpoint["host"] = "model.agents.svc.cluster.local".into();
         endpoint["port"] = 8000.into();
         endpoint["allowed_ips"] = serde_json::json!([]);

@@ -1,42 +1,49 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The Fabric agent configuration resource: a running runtime's applied
-//! configuration in a Fabric sandbox, written through the Fabric bridge.
-
+//! The Fabric agent configuration resource: the one runtime a Fabric sandbox
+//! runs, started and stopped through Fabric's `fabric-agent-ctl`.
 use crate::bridge::{AgentBridge, value};
 use nemoclaw_backend::{Error, Mutation, ObservationError, Row};
-use openshell_provider::{OpenShell, SandboxPhase, verify_identity};
+use openshell_provider::{OpenShell, verify_identity};
 use serde_json::Value;
-use std::time::Duration;
 
-fn configuration_failure(stage: &str, code: &str, runtime_state: Option<&str>) -> ObservationError {
-    // Only fixed public vocabulary crosses the diagnostic boundary.
+/// A failed bridge operation as a public diagnostic: only Fabric's fixed
+/// stages and codes cross the boundary, never its message.
+pub(crate) fn configuration_failure(stage: &str, code: &str, effects: &str) -> ObservationError {
     let stage = match stage {
-        "validate" => "validate",
-        "start" => "start",
-        "stop" => "stop",
-        "invoke" => "invoke",
-        "generation" => "generation",
         "request" => "request",
         "transport" => "transport",
+        "validation" => "validation",
+        "start" => "start",
+        "invoke" => "invoke",
+        "stop" => "stop",
         _ => "unknown",
     };
     let code = match code {
-        "pi_model_unknown" => "pi_model_unknown",
-        "pi_model_invalid" => "pi_model_invalid",
-        "lifecycle_adapter_start_failed" => "lifecycle_adapter_start_failed",
-        "lifecycle_adapter_stop_failed" => "lifecycle_adapter_stop_failed",
-        "lifecycle_adapter_invoke_failed" => "lifecycle_adapter_invoke_failed",
-        "fabric_validate_failed" => "fabric_validate_failed",
-        "stale_generation" => "stale_generation",
-        "fabric_start_failed" => "fabric_start_failed",
-        "fabric_stop_failed" => "fabric_stop_failed",
-        "fabric_invoke_failed" => "fabric_invoke_failed",
+        "validation_failed" => "validation_failed",
+        "validation_unavailable" => "validation_unavailable",
+        "start_failed" => "start_failed",
+        "stop_failed" => "stop_failed",
+        "invoke_failed" => "invoke_failed",
+        "invalid_input" => "invalid_input",
+        "invalid_request" => "invalid_request",
+        "interface_unsupported" => "interface_unsupported",
+        "wrong_agent" => "wrong_agent",
+        "platform_unsupported" => "platform_unsupported",
+        "cleanup_unconfirmed" => "cleanup_unconfirmed",
+        "host_stopping" => "host_stopping",
+        "host_unavailable" => "host_unavailable",
+        "runtime_unavailable" => "runtime_unavailable",
+        "streaming_unsupported" => "streaming_unsupported",
+        "request_too_large" => "request_too_large",
+        "response_too_large" => "response_too_large",
+        "invalid_response" => "invalid_response",
         _ => "fabric_configuration_failed",
     };
-    let runtime_state = match runtime_state {
-        Some("running") => "running",
-        Some("stopped") => "unavailable",
+    // Fabric reports whether the failure changed anything; with no effects,
+    // no runtime is running.
+    let runtime_state = match effects {
+        "none" => "unavailable",
         _ => "unknown",
     };
     ObservationError::FabricConfiguration {
@@ -121,8 +128,24 @@ pub fn fabric_binding(mut sandbox: Row) -> Result<Row, ObservationError> {
     Ok(sandbox)
 }
 pub(crate) async fn plan(client: &OpenShell, want: &Row) -> Result<(), Error> {
-    configuration(value(want, "config_json"))?;
-    configuration_parent(client, want, false).await?;
+    let config = configuration(value(want, "config_json"))?;
+    let sandbox = configuration_parent(client, want, false)
+        .await?
+        .ok_or(ObservationError::BindingMismatch)?;
+    // The sandbox launches one agent with one harness; configure only that.
+    if config["metadata"]["name"] != value(&sandbox, "agent_name") {
+        return Err(Error::Conflict(
+            "the agent name must match the agent its sandbox launches",
+        ));
+    }
+    let binding: Value = serde_json::from_str(value(&sandbox, "runtime_json"))
+        .map_err(|_| ObservationError::BindingMismatch)?;
+    let image = value(want, "harness_image");
+    if binding["adapter_id"] != config["harness"]["adapter_id"]
+        || (!image.is_empty() && image != value(&sandbox, "image"))
+    {
+        return Err(Error::Conflict("the sandbox does not launch this harness"));
+    }
     Ok(())
 }
 pub(crate) async fn read(
@@ -130,68 +153,34 @@ pub(crate) async fn read(
     prior: &Row,
     removing: bool,
 ) -> Result<Option<Row>, ObservationError> {
+    // The agent lives as long as its sandbox. Fabric reports no runtime
+    // status (NVIDIA/NeMo-Fabric#420), so a stopped or changed runtime inside
+    // the sandbox is found when it is next invoked, not here.
     let Some(parent) = configuration_parent(client, prior, removing).await? else {
         return Ok(None);
     };
     if value(prior, "id") != value(&parent, "id") {
         return Err(ObservationError::BindingMismatch);
     }
-    if removing {
-        return Ok(Some(prior.clone()));
-    }
-    let status = client
-        .agent_snapshot(&parent)
-        .await
-        .map_err(Error::into_observation)?;
-    let ready = match status.runtime_state.as_str() {
-        "running" => true,
-        "stopped" => false,
-        _ => return Err(ObservationError::Incomplete),
-    };
-    let config = status.applied_config.unwrap_or(Value::Null);
-    let mut row = prior.clone();
-    row.insert("running".into(), ready.to_string());
-    if config.is_null() && !ready {
-        return Ok(Some(row));
-    }
-    if config["metadata"]["name"] != value(&parent, "agent_name") {
-        return Err(ObservationError::BindingMismatch);
-    }
-    if ready && status.runtime_id.as_deref().is_none_or(str::is_empty) {
-        return Err(ObservationError::Incomplete);
-    }
-    let observed = config.to_string();
-    if configuration(value(prior, "config_json"))? != configuration(&observed)? {
-        row.insert("config_json".into(), observed.clone());
-    }
-    Ok(Some(row))
+    Ok(Some(prior.clone()))
 }
+
 pub(crate) async fn ensure(client: &OpenShell, desired: &Row) -> Mutation {
     let result = async {
-        configuration(value(desired, "config_json"))?;
-        let encoded = value(desired, "config_json").to_owned();
-        let mut parent = configuration_parent(client, desired, false)
+        let config = configuration(value(desired, "config_json"))?;
+        let parent = configuration_parent(client, desired, false)
             .await?
             .ok_or(ObservationError::BindingMismatch)?;
         if !value(desired, "id").is_empty() && value(desired, "id") != parent["id"] {
             return Err(ObservationError::BindingMismatch);
         }
-        parent.insert("config_json".into(), encoded);
-        configure_agent(client, &parent)
+        let runtime_id = client
+            .start_agent(&parent, &config)
             .await
             .map_err(Error::into_observation)?;
         let mut row = desired.clone();
         row.insert("id".into(), parent["id"].clone());
-        row.insert("running".into(), "true".into());
-        let observed = read(client, &row, false)
-            .await?
-            .ok_or(ObservationError::Incomplete)?;
-        if configuration(&observed["config_json"])? != configuration(value(desired, "config_json"))?
-            || observed["running"] != "true"
-        {
-            return Err(ObservationError::Incomplete);
-        }
-        // Preserve the configured JSON spelling after semantic readback.
+        row.insert("runtime_id".into(), runtime_id);
         Ok(row)
     }
     .await;
@@ -200,61 +189,29 @@ pub(crate) async fn ensure(client: &OpenShell, desired: &Row) -> Mutation {
         Err(error) => Mutation::failed(error),
     }
 }
+
 pub(crate) async fn remove(
     client: &OpenShell,
     prior: &Row,
     _destroying: bool,
 ) -> Result<(), ObservationError> {
-    read(client, prior, true).await?;
-    // The sandbox owns this runtime. Forgetting its configuration binding
-    // must not mutate or delete a runtime independently of that sandbox.
-    Ok(())
-}
-pub(crate) async fn configure_agent(client: &OpenShell, binding: &Row) -> Result<(), Error> {
-    let generation = tokio::time::timeout(Duration::from_secs(120), async {
-        loop {
-            let phase = client.sandbox_phase(binding, true).await?;
-            if phase == SandboxPhase::Ready
-                && let Some(generation) = client.agent_snapshot(binding).await?.generation
-            {
-                return Ok::<_, Error>(generation);
-            }
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    })
-    .await
-    .map_err(|_| Error::Conflict("Fabric sandbox startup timed out; resources retained"))??;
-    let config: serde_json::Value =
-        serde_json::from_str(value(binding, "config_json")).map_err(|_| ObservationError::Query)?;
-    let response =
-        crate::bridge::bridge_input(client, binding, "configure", &config, Some(&generation))
-            .await?;
-    if response.status != "succeeded" {
-        let failure = response
-            .error
-            .as_ref()
-            .ok_or(ObservationError::Incomplete)?;
-        return Err(configuration_failure(
-            &failure.stage,
-            &failure.code,
-            response
-                .result
-                .as_ref()
-                .and_then(|result| result["runtime_state"].as_str()),
-        )
-        .into());
+    // A sandbox that is already gone took its agent with it.
+    let Some(parent) = configuration_parent(client, prior, true).await? else {
+        return Ok(());
+    };
+    if value(prior, "id") != value(&parent, "id") {
+        return Err(ObservationError::BindingMismatch);
     }
-    let result = response
-        .result
-        .as_ref()
-        .ok_or(ObservationError::Incomplete)?;
-    if result["generation"].as_str().is_none_or(str::is_empty)
-        || result["runtime_state"] != "running"
-        || result["runtime_id"].as_str().is_none_or(str::is_empty)
-    {
-        return Err(ObservationError::Incomplete.into());
+    // Removing the agent stops its runtime, as removing an attachment does.
+    // The sandbox stays, and can never start another runtime.
+    let runtime_id = value(prior, "runtime_id");
+    if runtime_id.is_empty() {
+        return Ok(());
     }
-    Ok(())
+    client
+        .stop_agent(&parent, runtime_id)
+        .await
+        .map_err(Error::into_observation)
 }
 
 #[cfg(test)]
@@ -286,17 +243,13 @@ mod tests {
 
     #[test]
     fn configuration_diagnostics_preserve_only_known_fields() {
-        let failure = super::configuration_failure(
-            "start",
-            "lifecycle_adapter_start_failed",
-            Some("stopped"),
-        );
+        let failure = super::configuration_failure("start", "start_failed", "none");
         let text = failure.to_string();
-        assert!(text.contains("lifecycle_adapter_start_failed"));
+        assert!(text.contains("start_failed"));
         assert!(text.contains("agent runtime is unavailable"));
         assert!(!text.contains("private-value"));
         assert_eq!(
-            super::configuration_failure("private-value", "private-value", Some("private-value")),
+            super::configuration_failure("private-value", "private-value", "private-value"),
             nemoclaw_backend::ObservationError::FabricConfiguration {
                 stage: "unknown",
                 code: "fabric_configuration_failed",
@@ -306,12 +259,12 @@ mod tests {
     }
 
     #[test]
-    fn pi_model_failure_keeps_the_code_and_named_sandbox_without_native_details() {
-        let error = super::configuration_failure("start", "pi_model_unknown", Some("stopped"));
+    fn start_failure_keeps_the_code_and_named_sandbox_without_native_details() {
+        let error = super::configuration_failure("start", "start_failed", "none");
         let message = nemoclaw_tofu::observation_message(error, Some("coder"));
         for expected in [
             "sandbox/coder",
-            "pi_model_unknown",
+            "start_failed",
             "start",
             "resources retained",
         ] {

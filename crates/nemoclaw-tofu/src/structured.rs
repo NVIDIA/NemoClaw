@@ -8,7 +8,7 @@
 
 use crate::{
     Definition, ResourceAdapter, State,
-    shape::{Dynamic, Fields, Shape, block, dynamic, from_hcl, json, single_blocks, to_hcl},
+    shape::{Dynamic, Fields, Shape, block, dynamic, json, single_blocks},
 };
 use async_trait::async_trait;
 use serde_json::Value as Json;
@@ -242,11 +242,7 @@ impl Structured {
         if value.is_null() {
             return Ok(None);
         }
-        let value = single_blocks(&self.shape, value);
-        let value = match &self.shape {
-            Shape::Object(fields) => from_hcl(fields, &value),
-            _ => value,
-        };
+        let value = crate::shape::inward(&self.shape, &single_blocks(&self.shape, value));
         serde_json::to_string(&value)
             .map(Some)
             .map_err(|_| "cannot encode input")
@@ -254,22 +250,13 @@ impl Structured {
     /// OpenTofu configuration for the row field's JSON, as a graph declares it.
     pub fn configuration(&self, encoded: &str) -> Result<Json, &'static str> {
         let value: Json = serde_json::from_str(encoded).map_err(|_| "invalid input JSON")?;
-        Ok(match &self.shape {
-            Shape::Object(fields) => to_hcl(fields, &value),
-            _ => value,
-        })
+        Ok(crate::shape::outward(&self.shape, &value))
     }
     fn decode(&self, value: &Value<String>) -> Value<Dynamic> {
         match value {
             Value::Value(encoded) if !encoded.is_empty() => {
                 match serde_json::from_str::<Json>(encoded) {
-                    Ok(value) => wire(
-                        &self.shape,
-                        &match &self.shape {
-                            Shape::Object(fields) => to_hcl(fields, &value),
-                            _ => value,
-                        },
-                    ),
+                    Ok(value) => wire(&self.shape, &crate::shape::outward(&self.shape, &value)),
                     Err(_) => Value::Unknown,
                 }
             }
@@ -418,7 +405,9 @@ impl StructuredAdapter {
                 .iter()
                 .find(|structured| structured.field == name)
             {
+                // An observation is the backend's, never the plan's.
                 let value = planned
+                    .filter(|_| !self.definition().is_computed(structured.field))
                     .and_then(|planned| planned.get(structured.attribute).cloned())
                     .unwrap_or_else(|| structured.decode(&value));
                 outward.insert(structured.attribute.into(), value);
@@ -489,12 +478,26 @@ impl Resource for StructuredAdapter {
                         },
                     );
                 }
+                Shape::ObjectList(fields) => {
+                    schema.block.blocks.insert(
+                        structured.attribute.into(),
+                        NestedBlock::List(block(fields, "")),
+                    );
+                }
+                Shape::ObjectMap(fields) => {
+                    schema.block.blocks.insert(
+                        structured.attribute.into(),
+                        NestedBlock::Map(block(fields, "")),
+                    );
+                }
                 shape => {
                     schema.block.attributes.insert(
                         structured.attribute.into(),
                         Attribute {
                             attr_type: crate::shape::attribute_type(shape),
-                            constraint: if optional {
+                            constraint: if self.definition().is_computed(structured.field) {
+                                AttributeConstraint::Computed
+                            } else if optional {
                                 AttributeConstraint::Optional
                             } else {
                                 AttributeConstraint::Required
@@ -737,6 +740,54 @@ mod tests {
         serde_json::from_value(json).unwrap()
     }
 
+    /// Objects keyed by name are labeled blocks, as in other providers.
+    #[test]
+    fn named_objects_are_labeled_blocks() {
+        let model = fields(
+            &json!({"type": "object", "required": ["model"], "properties": {
+                "model": {"type": "string"}, "temperature": {"type": "number"}
+            }}),
+            &[],
+        )
+        .unwrap();
+        let definition = Definition::new("agent", &["name", "models_json"], &[])
+            .optional(&["models_json"])
+            .structured("models", "models_json", Shape::ObjectMap(model));
+        let schema = StructuredAdapter(ResourceAdapter::new(
+            definition,
+            Arc::new(Recorder::default()),
+        ))
+        .schema(&mut Diagnostics::default())
+        .unwrap();
+        assert!(matches!(schema.block.blocks["models"], NestedBlock::Map(_)));
+        assert!(!schema.block.attributes.contains_key("models"));
+    }
+
+    /// JSON text carries an open object; its row field holds the object itself.
+    #[test]
+    fn json_text_inputs_hold_their_object_in_the_row() {
+        let settings = Structured {
+            attribute: "settings",
+            field: "settings_json",
+            shape: Shape::Json,
+        };
+        assert_eq!(
+            settings
+                .row_value(json!("{ \"budget\": 4 }"))
+                .unwrap()
+                .as_deref(),
+            Some(r#"{"budget":4}"#)
+        );
+        assert_eq!(
+            settings.configuration(r#"{"budget":4}"#).unwrap(),
+            json!(r#"{"budget":4}"#)
+        );
+        assert_eq!(
+            settings.decode(&Value::Value(r#"{"budget":4}"#.into())),
+            value(json!(r#"{"budget":4}"#))
+        );
+    }
+
     #[test]
     fn typed_inputs_replace_their_json_row_fields_in_the_schema() {
         let schema = adapter(Arc::default())
@@ -789,6 +840,28 @@ mod tests {
             r#"{"rules":{"github":{"hostName":"api.github.com"}}}"#
         );
         assert_eq!(row["names_json"], r#"["b","a"]"#);
+    }
+
+    /// A computed field with a shape, such as URLs a gateway assigns, is a
+    /// typed computed attribute that other resources read.
+    #[test]
+    fn a_typed_observation_is_a_computed_attribute() {
+        let definition = Definition::new("sandbox", &["name"], &[])
+            .computed("urls_json", crate::carry_prior)
+            .structured("urls", "urls_json", Shape::Map(Box::new(Shape::String)));
+        let schema = StructuredAdapter(ResourceAdapter::new(
+            definition,
+            Arc::new(Recorder::default()),
+        ))
+        .schema(&mut Diagnostics::default())
+        .unwrap();
+        let urls = &schema.block.attributes["urls"];
+        assert_eq!(
+            urls.attr_type,
+            AttributeType::Map(Box::new(AttributeType::String))
+        );
+        assert!(matches!(urls.constraint, AttributeConstraint::Computed));
+        assert!(!schema.block.attributes.contains_key("urls_json"));
     }
 
     #[tokio::test]

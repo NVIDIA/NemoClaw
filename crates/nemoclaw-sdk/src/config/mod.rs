@@ -38,7 +38,7 @@ pub(crate) mod validation;
 use sha2::{Digest, Sha256};
 use std::io::Read;
 pub use types::*;
-pub use validation::{is_fabric_harness, valid_name, validate_endpoint};
+pub use validation::{is_fabric_harness, valid_name, validate_endpoint, validate_endpoint_url};
 
 pub const API_VERSION: &str = "nemoclaw.nvidia.com/v1alpha1";
 pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
@@ -183,6 +183,7 @@ impl Document {
             {
                 match binding.definition {
                     Integration::WebSearch(search) => names.push(&search.credential.env),
+                    Integration::Api(api) => names.push(&api.credential.env),
                 }
             }
         }

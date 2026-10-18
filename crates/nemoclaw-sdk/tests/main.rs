@@ -3,6 +3,7 @@
 //! SDK integration tests, linked into one binary so the SDK links once.
 //! Each file is a module; helpers under support/ are shared by all of them.
 
+mod api_integration;
 #[path = "support/bundle.rs"]
 mod bundle;
 #[path = "support/examples.rs"]
@@ -24,6 +25,7 @@ mod scripted_tofu;
 mod support;
 #[path = "../../test-support/http.rs"]
 mod transport;
+mod travel_team;
 
 #[path = "agent_tools.rs"]
 mod agent_tools;
@@ -63,8 +65,8 @@ mod execution_settings;
 mod explicit_hardware;
 #[path = "fabric_capabilities.rs"]
 mod fabric_capabilities;
-#[path = "fabric_planner.rs"]
-mod fabric_planner;
+#[path = "fabric_compatibility.rs"]
+mod fabric_compatibility;
 #[path = "gpu_inventory.rs"]
 mod gpu_inventory;
 #[path = "hardware_discovery.rs"]

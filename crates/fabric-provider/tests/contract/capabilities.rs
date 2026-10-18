@@ -3,27 +3,12 @@
 //! Image capabilities through OpenTofu, read from a fake Docker engine.
 
 use super::*;
-use nemoclaw_fabric::catalog::{BridgeCapabilities, FabricCatalog, IMAGE_CATALOG_LABEL};
+use nemoclaw_fabric::catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
 
 /// A Docker engine that serves one image declaring the bundled Fabric
 /// catalog, and no image for references containing `missing`.
 async fn engine(digest: String) -> http::Fixture {
     let mut catalog = FabricCatalog::bundled();
-    catalog.bridge = Some(BridgeCapabilities {
-        interface_version: 1,
-        operations: [
-            "validate",
-            "prepare",
-            "configure",
-            "check",
-            "invoke",
-            "serve",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect(),
-        health_checks: Vec::new(),
-    });
     // One adapter, so the image's runtime declares binaries for all of them.
     catalog
         .adapters
@@ -63,7 +48,7 @@ fn configuration(image: &str, architecture: &str, reads: &[&str]) -> String {
 }}
 variable "engine" {{ type = string }}
 provider "fabric" {{}}
-data "fabric_capabilities" "agent" {{
+data "fabric_harnesses" "agent" {{
   engine            = var.engine
   image             = "{image}"
   architecture      = "{architecture}"
@@ -71,9 +56,9 @@ data "fabric_capabilities" "agent" {{
   config_json       = {configuration}
   filesystem_read   = {reads}
 }}
-output "compatibility" {{ value = data.fabric_capabilities.agent.compatibility_status }}
-output "binaries" {{ value = jsondecode(data.fabric_capabilities.agent.binaries_json) }}
-output "observation" {{ value = data.fabric_capabilities.agent.observation_json }}
+output "compatibility" {{ value = data.fabric_harnesses.agent.compatibility_status }}
+output "binaries" {{ value = jsondecode(data.fabric_harnesses.agent.binaries_json) }}
+output "observation" {{ value = data.fabric_harnesses.agent.observation_json }}
 "#,
         configuration = serde_json::to_string(&configuration.to_string()).unwrap(),
         reads = serde_json::to_string(reads).unwrap()

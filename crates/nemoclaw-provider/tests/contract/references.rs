@@ -14,7 +14,7 @@ struct References {
 impl References {
     fn new() -> Self {
         let this = Self {
-            dir: TofuWorkspace::new(
+            dir: TofuWorkspace::with_fixture(
                 &nemoclaw_test_fixtures::Bundle::from_env(),
                 nemoclaw_test_fixtures::fixture_executable("nemoclaw-fixture-provider"),
             ),

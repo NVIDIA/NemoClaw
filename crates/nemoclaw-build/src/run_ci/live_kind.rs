@@ -150,21 +150,27 @@ pub(super) async fn run_live_kind(
     let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
     let prefix = format!("{name}-agent");
     let tag = format!("{prefix}:{target}");
-    let cleanup = ImagesCleanup(tag.clone());
-    match images {
-        Some(archive) => live_images::load(archive, &prefix, platform, &[target], &mut Vec::new())?,
-        None => live_images::build_agent(platform, &prefix)?,
-    }
-    let id = String::from_utf8(
-        Command::new("docker")
-            .args(["image", "inspect", "--format", "{{.Id}}", &tag])
-            .output()?
-            .stdout,
-    )?;
-    let image = format!("docker.io/library/{prefix}@{}", id.trim());
     let metadata = inputs.path().join("agent.metadata.json");
-    nemoclaw_build::images::export_metadata(&tag, &docker_platform, &metadata)?;
-    run(Command::new(&kind).args(["load", "docker-image", "--name", &name, &tag]))?;
+    let cleanup = images.is_none().then(|| ImagesCleanup(tag.clone()));
+    let (id, node_image) = match images {
+        Some(archive) => (
+            load_archived_agent(&kind, &name, platform, archive, inputs.path())?,
+            format!("docker.io/library/{}:{target}", live_images::SHARED),
+        ),
+        None => {
+            live_images::build_agent(platform, &prefix)?;
+            let id = String::from_utf8(
+                Command::new("docker")
+                    .args(["image", "inspect", "--format", "{{.Id}}", &tag])
+                    .output()?
+                    .stdout,
+            )?;
+            nemoclaw_build::images::export_metadata(&tag, &docker_platform, &metadata)?;
+            run(Command::new(&kind).args(["load", "docker-image", "--name", &name, &tag]))?;
+            (id, format!("docker.io/library/{tag}"))
+        }
+    };
+    let image = format!("docker.io/library/{prefix}@{}", id.trim());
     // kind loads the image by tag only; name it by digest too, so a sandbox
     // that references the digest finds it on the node instead of pulling.
     run(Command::new("docker").args([
@@ -175,7 +181,7 @@ pub(super) async fn run_live_kind(
         "k8s.io",
         "images",
         "tag",
-        &format!("docker.io/library/{tag}"),
+        &node_image,
         &image,
     ]))?;
 
@@ -194,6 +200,7 @@ pub(super) async fn run_live_kind(
     command
         .env("NEMOCLAW_TEST_KUBECONFIG", &kubeconfig)
         .env("NEMOCLAW_TEST_KUBE_CONTEXT", format!("kind-{name}"))
+        .env("NEMOCLAW_TEST_KIND_NODE", &node_container)
         .env("NEMOCLAW_TEST_BUNDLE", &bundle)
         .env("NEMOCLAW_TEST_AGENT_IMAGE", &image)
         .env("NEMOCLAW_TEST_AGENT_HARNESS", harness)
@@ -202,6 +209,32 @@ pub(super) async fn run_live_kind(
     drop(cluster);
     drop(cleanup);
     result
+}
+
+/// Import the saved images into the node without a host Docker load or re-export.
+fn load_archived_agent(
+    kind: &Path,
+    name: &str,
+    platform: &str,
+    images: &Path,
+    inputs: &Path,
+) -> Result<String> {
+    let archive = inputs.join("images.tar");
+    run(Command::new("zstd")
+        .args(["-d", "-q", "-f", "-o"])
+        .arg(&archive)
+        .arg(images))?;
+    let target = live_images::agent(platform).0;
+    let (digest, metadata) = nemoclaw_build::images::archived_image_metadata(
+        &archive,
+        &format!("docker.io/library/{}:{target}", live_images::SHARED),
+        &format!("linux/{}", platform.trim_start_matches("linux_")),
+    )?;
+    fs::write(inputs.join("agent.metadata.json"), metadata)?;
+    run(Command::new(kind)
+        .args(["load", "image-archive", "--name", name])
+        .arg(&archive))?;
+    Ok(digest)
 }
 
 /// Removes the agent image this run built.
@@ -215,5 +248,108 @@ impl Drop for ImagesCleanup {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn archived_agent_reaches_kind_without_loading_or_saving_host_images() {
+        let root = tempfile::tempdir().unwrap();
+        let config = br#"{"os":"linux","architecture":"arm64"}"#;
+        let digest =
+            |bytes: &[u8]| format!("sha256:{}", nemoclaw_build::hex(&Sha256::digest(bytes)));
+        let manifest = serde_json::json!({"schemaVersion": 2, "config": {"digest": digest(config)}, "layers": []}).to_string();
+        let id = digest(manifest.as_bytes());
+        let index = serde_json::json!({"manifests": [{"digest": id, "annotations": {"io.containerd.image.name": "docker.io/library/nc-live-images:pi"}}]}).to_string();
+        let mut archive = tar::Builder::new(Vec::new());
+        for (path, bytes) in [
+            (
+                format!("blobs/sha256/{}", &digest(config)[7..]),
+                config.as_slice(),
+            ),
+            (format!("blobs/sha256/{}", &id[7..]), manifest.as_bytes()),
+            ("index.json".into(), index.as_bytes()),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            archive.append_data(&mut header, path, bytes).unwrap();
+        }
+        let archive = archive.into_inner().unwrap();
+        fs::write(root.path().join("images.tar.zst"), &archive).unwrap();
+        // The fake decompressor copies the fixture bytes; the real zstd path is
+        // exercised by the live suite. Commands run in a child with its own PATH.
+        for (name, script) in [
+            (
+                "zstd",
+                "#!/bin/sh\nif [ \"$3\" = -c ]; then /bin/cat \"$4\"; else /bin/cp \"$6\" \"$5\"; fi\n",
+            ),
+            (
+                "kind",
+                "#!/bin/sh\n[ \"$1 $2 $3 $4\" = 'load image-archive --name nc-test' ] || exit 90\n/bin/cp \"$5\" \"$FAKE_ROOT/imported.tar\"\nexit \"${FAKE_KIND_EXIT:-0}\"\n",
+            ),
+            (
+                "docker",
+                "#!/bin/sh\nprintf unexpected > \"$FAKE_ROOT/docker-called\"\nexit 91\n",
+            ),
+        ] {
+            let path = root.path().join(name);
+            fs::write(&path, script).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        for failure in [false, true] {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "run_ci::live_kind::tests::archive_load_child",
+                    "--nocapture",
+                ])
+                .env("FAKE_ROOT", root.path())
+                .env("FAKE_DIGEST", &id)
+                .env("FAKE_KIND_EXIT", if failure { "1" } else { "0" })
+                .env("PATH", root.path())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(fs::read(root.path().join("imported.tar")).unwrap(), archive);
+            assert!(!root.path().join("docker-called").exists());
+        }
+    }
+
+    #[test]
+    fn archive_load_child() {
+        let Some(root) = std::env::var_os("FAKE_ROOT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let result = load_archived_agent(
+            &root.join("kind"),
+            "nc-test",
+            "linux_arm64",
+            &root.join("images.tar.zst"),
+            &root,
+        );
+        if std::env::var("FAKE_KIND_EXIT").unwrap() == "1" {
+            assert!(result.is_err(), "failed Kind import must fail the step");
+        } else {
+            assert_eq!(result.unwrap(), std::env::var("FAKE_DIGEST").unwrap());
+            let metadata: serde_json::Value =
+                serde_json::from_slice(&fs::read(root.join("agent.metadata.json")).unwrap())
+                    .unwrap();
+            assert_eq!(
+                metadata["manifest_digest"],
+                std::env::var("FAKE_DIGEST").unwrap()
+            );
+        }
     }
 }

@@ -125,7 +125,7 @@ The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `
 
 Live tests use real Docker engines, kind clusters, images, or remote hosts, and touch only resources they own.
 The `live-docker` profile selects the Docker tests in `nemoclaw-runtime`, `nemoclaw-build`, `nemoclaw-e2e`, `nemoclaw-sdk`, and `nemoclaw-provider`; the `live-kind` profile selects `nemoclaw-e2e`'s `kubernetes_live` and `kubernetes_chart` tests.
-The `live-docker` profile's `managed_gateway` test in `nemoclaw-e2e` runs a managed gateway's runtime stage with real Docker; [Docker Gateway Recovery](live-tests.md#docker-gateway-recovery) gives its inputs.
+The `live-docker` profile's `managed_gateway` test in `nemoclaw-e2e` plans and applies only a managed gateway's runtime resources with real Docker; [Docker Gateway Recovery](live-tests.md#docker-gateway-recovery) gives its inputs.
 Other ignored tests, such as the Brev, Spark, and hosted-model tests, run only when selected by hand or by the Live / Brev workflow.
 [Run live tests](live-tests.md) gives each test's prerequisites and the state it retains.
 
@@ -169,6 +169,9 @@ It deletes the cluster and its image tag whether or not the tests pass; set `NEM
 
 To build the live images once for both suites, run `cargo ci live-images`.
 It builds the agent image, the reference dummy image, and both proxy images under `nc-live-images`, saves them to `.build/ci/live-images.tar.zst` through the `zstd` command, and removes the local names.
+The command exports directly from Docker's local containerd store before compression.
+This requires Docker to report its containerd address and namespace, `sudo -n ctr` access, and temporary disk space for the uncompressed archive.
+The archive retains the image contents, names, digests, and attestations; the job logs archive size and export, compression, and cleanup timings.
 Then pass `--images .build/ci/live-images.tar.zst` to `cargo ci live-docker` or `cargo ci live-kind`: each loads the archive and names the images it needs under its own fresh prefix instead of building them, so its cleanup still removes only what it created.
 
 ## Budgets and Per-Test Limits
@@ -409,11 +412,9 @@ Native adapter implementation and its behavioral tests live in Fabric and use Fa
 The [image workflow](../../.github/workflows/images.yml) builds the selected platform's agent images plus the proxy, verifies retained source hashes, and checks installed discovery metadata.
 It first builds and qualifies the separate dummy image, then runs the same [command contract suite](../../image/test_agent_contract.py) against every selected agent image.
 Use the [reference image procedure](../build.md#reference-contract-image) to run that suite locally against explicit image references.
-The suite tests real entrypoints, file and stdin inputs, exit codes, capability labels, standalone validation, host startup and shutdown, and retained files.
-The dummy, OpenClaw, Hermes, and Pi also run shared configuration, generation, no-op, invocation, and preparation assertions, using the lifecycle profiles in the reference image procedure.
+The suite checks each image's runtime command and catalog, then starts, invokes, and stops one runtime through `fabric-agent-ctl` in a network-isolated container.
+The dummy, OpenClaw, Hermes, and Pi run that lifecycle, using the lifecycle profiles in the reference image procedure.
 Native profiles use isolated local inference; images without a selected profile report lifecycle coverage as skipped.
-Readiness qualification is separate and reports unsupported native health as skipped unless `--require-ready` requires it to pass.
-The workflow requires dummy readiness and retains the dummy-specific readiness-failure test; it separately checks OpenClaw reconfiguration and Hermes security.
 
 The image workflow obtains its image decision from the shared validation plan and skips image steps when their inputs are unaffected; the `Build` checks still report.
 A failed planning job fails those checks instead of skipping them.

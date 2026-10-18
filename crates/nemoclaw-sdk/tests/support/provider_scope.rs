@@ -11,7 +11,7 @@ pub fn normalized(rows: Vec<Target>) -> Vec<Target> {
 pub fn normalized_as(rows: Vec<Target>, original: &str) -> Vec<Target> {
     let names: Vec<_> = rows
         .iter()
-        .filter(|row| row.kind == "provider")
+        .filter(|row| row.kind == "inference")
         .map(|row| row.values["name"].clone())
         .collect();
     let mut text = serde_json::to_string(&rows).unwrap();

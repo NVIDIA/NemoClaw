@@ -51,7 +51,7 @@ async fn a_deleted_or_truncated_receipt_stops_destroy_while_planning_and_a_resto
         damaged.assert_state_unchanged(&fixture, name);
         // The failed plan did not start the destroy.
         fixture
-            .assert_export_refused("cannot export while apply is unfinished")
+            .assert_export_refused("export requires all declared resource bindings")
             .await;
         fs::write(fixture.receipt(), &receipt).unwrap();
     }

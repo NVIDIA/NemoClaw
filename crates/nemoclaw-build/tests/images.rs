@@ -7,56 +7,64 @@ use serde_json::json;
 use std::path::Path;
 
 #[test]
-fn harness_images_carry_a_catalog_that_agrees_with_their_bridge() {
-    let bridge = json!({"interface_version": 1});
-    let catalog = json!({"bridge": bridge, "adapters": []});
-    let published = labels("openclaw", bridge.clone(), catalog.clone()).unwrap();
+fn harness_images_carry_their_catalog() {
+    let catalog = json!({"adapters": [{"descriptor": {"adapter_id": "nvidia.fabric.pi"}}]});
     assert_eq!(
-        published,
-        [
-            ("io.nemoclaw.fabric.bridge".to_owned(), bridge.to_string()),
-            ("io.nemoclaw.fabric.catalog".to_owned(), catalog.to_string()),
-        ]
+        labels("pi", catalog.clone()).unwrap(),
+        [("io.nemoclaw.fabric.catalog".to_owned(), catalog.to_string())]
     );
-    let disagreeing = json!({"bridge": {"interface_version": 2}});
-    assert!(labels("openclaw", bridge.clone(), disagreeing).is_err());
     // Only the reference image may publish the reference adapter.
-    let impostor = json!({"bridge": bridge, "adapters": [{"descriptor": {"adapter_id": "org.nemoclaw.dummy"}}]});
-    assert!(labels("openclaw", bridge, impostor).is_err());
+    let impostor = json!({"adapters": [{"descriptor": {"adapter_id": "org.nemoclaw.dummy"}}]});
+    assert!(labels("pi", impostor).is_err());
 }
 
 #[test]
 fn the_reference_image_carries_a_catalog_so_deployments_can_select_it() {
-    let bridge = json!({"interface_version": 1});
-    let catalog = json!({"bridge": bridge, "adapters": [{"descriptor": {"adapter_id": "org.nemoclaw.dummy"}}]});
+    let catalog = json!({"adapters": [{"descriptor": {"adapter_id": "org.nemoclaw.dummy"}}]});
     assert_eq!(
-        labels("dummy", bridge.clone(), catalog.clone()).unwrap(),
-        [
-            ("io.nemoclaw.fabric.bridge".to_owned(), bridge.to_string()),
-            ("io.nemoclaw.fabric.catalog".to_owned(), catalog.to_string()),
-        ]
+        labels("dummy", catalog.clone()).unwrap(),
+        [("io.nemoclaw.fabric.catalog".to_owned(), catalog.to_string())]
     );
-    // A catalog from Fabric discovery, read by mistake, lists other adapters.
-    let discovered =
-        json!({"bridge": bridge, "adapters": [{"descriptor": {"adapter_id": "nvidia.fabric.pi"}}]});
-    assert!(labels("dummy", bridge.clone(), discovered).is_err());
-    assert!(
-        labels(
-            "dummy",
-            bridge.clone(),
-            json!({"bridge": bridge, "adapters": []})
-        )
-        .is_err()
-    );
+    // The reference image lists only the reference adapter.
+    let production = json!({"adapters": [{"descriptor": {"adapter_id": "nvidia.fabric.pi"}}]});
+    assert!(labels("dummy", production).is_err());
+    assert!(labels("dummy", json!({"adapters": []})).is_err());
 }
 
 #[test]
 fn builds_require_one_of_the_qualified_platforms() {
-    assert_eq!(PLATFORMS, ["linux/arm64", "linux/amd64"]);
     // Rejected before Docker runs, so this needs no daemon.
     let error = plan(Path::new("."), "linux/riscv64", &["agents".into()]).unwrap_err();
     assert!(error.contains("--platform"), "{error}");
+    for platform in PLATFORMS {
+        assert!(error.contains(platform), "{error}");
+    }
 }
+
+/// A Bake file whose `agents` group builds `armonly` only for linux/arm64.
+const PLATFORM_BAKE: &str = r#"variable "AGENT_PLATFORM" {
+  default = "linux/arm64"
+}
+
+group "agents" {
+  targets = AGENT_PLATFORM == "linux/amd64" ? ["shared"] : ["armonly", "shared"]
+}
+
+target "shared" {
+  platforms = [AGENT_PLATFORM]
+  tags      = ["fixture/shared:local"]
+}
+
+target "armonly" {
+  platforms = [AGENT_PLATFORM]
+  tags      = ["fixture/armonly:local"]
+}
+
+target "reference" {
+  platforms = [AGENT_PLATFORM]
+  tags      = ["fixture/reference:local"]
+}
+"#;
 
 #[test]
 fn harnesses_missing_from_the_selected_platform_name_the_platforms_that_build_them() {
@@ -69,22 +77,24 @@ fn harnesses_missing_from_the_selected_platform_name_the_platforms_that_build_th
         eprintln!("skipping: docker buildx is unavailable");
         return;
     }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let error = plan(&root, "linux/amd64", &["openclaw".into(), "hermes".into()]).unwrap_err();
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("docker-bake.hcl"), PLATFORM_BAKE).unwrap();
+    let root = directory.path();
+    let error = plan(root, "linux/amd64", &["shared".into(), "armonly".into()]).unwrap_err();
     assert_eq!(
         error,
-        "hermes is built only for linux/arm64; linux/amd64 builds deepagents, openclaw (docs/build.md#build-agent-images)"
+        "armonly is built only for linux/arm64; linux/amd64 builds shared (docs/build.md#build-agent-images)"
     );
     let planned = |platform, name: &str| {
-        plan(&root, platform, &[name.into()])
+        plan(root, platform, &[name.into()])
             .unwrap()
             .into_iter()
             .map(|(target, _)| target)
             .collect::<Vec<_>>()
     };
-    assert_eq!(planned("linux/amd64", "openclaw"), ["openclaw"]);
-    assert_eq!(planned("linux/arm64", "hermes"), ["hermes"]);
+    assert_eq!(planned("linux/amd64", "shared"), ["shared"]);
+    assert_eq!(planned("linux/arm64", "armonly"), ["armonly"]);
     // Selections that are not harnesses keep Bake's own resolution.
-    assert_eq!(planned("linux/amd64", "dummy"), ["dummy"]);
-    assert!(plan(&root, "linux/amd64", &["no-such-target".into()]).is_err());
+    assert_eq!(planned("linux/amd64", "reference"), ["reference"]);
+    assert!(plan(root, "linux/amd64", &["no-such-target".into()]).is_err());
 }

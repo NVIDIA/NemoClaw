@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The managed gateway's runtime stage with a real gateway, Docker, both
-//! providers, and the bundled OpenTofu. The test plans and applies only that
-//! stage through the SDK's `test-scenarios` setup, so it creates no sandboxes,
-//! then exercises the public `plan_destroy` and `destroy`.
+//! The managed gateway's runtime with a real gateway, Docker, both providers,
+//! and the bundled OpenTofu. The test plans and applies only the runtime
+//! through the SDK's `test-scenarios` setup, so it creates no sandboxes, then
+//! exercises the public `plan_destroy` and `destroy`.
 
 use nemoclaw_sdk::{
     CancellationToken, Deployment,
@@ -16,12 +16,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// The runtime stage's OpenTofu state.
+/// The deployment's OpenTofu state.
 fn state(directory: &Path) -> Value {
-    serde_json::from_slice(&fs::read(directory.join("runtime/terraform.tfstate")).unwrap()).unwrap()
+    serde_json::from_slice(&fs::read(directory.join("terraform.tfstate")).unwrap()).unwrap()
 }
 
-/// Identities of the runtime stage's managed resources, by address.
+/// Identities of the deployment's managed resources, by address.
 fn bindings(directory: &Path) -> BTreeMap<String, String> {
     state(directory)["resources"]
         .as_array()
@@ -44,7 +44,7 @@ fn bindings(directory: &Path) -> BTreeMap<String, String> {
         .collect()
 }
 
-const STORAGE: &str = "nemoclaw_gateway_storage.runtime";
+const STORAGE: &str = "openshell_gateway_storage.runtime";
 
 #[tokio::test]
 #[ignore = "creates and removes only an explicitly configured test gateway; retains its storage"]
@@ -105,7 +105,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
     let compute = if docker {
         "docker_container.managed_gateway_runtime"
     } else {
-        "nemoclaw_managed_gateway.runtime"
+        "openshell_podman_gateway.runtime"
     };
     assert_eq!(first.len(), if docker { 3 } else { 2 });
     assert!(
@@ -151,7 +151,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
             .unwrap();
         assert_ne!(engine.container(&name).await.unwrap().unwrap().id, old);
         assert_eq!(bindings(&directory)[STORAGE], first[STORAGE]);
-        let state_path = directory.join("runtime/terraform.tfstate");
+        let state_path = directory.join("terraform.tfstate");
         let prior = fs::read(&state_path).unwrap();
         let data_path = engine
             .volume(&format!("{name}-data"))
@@ -206,16 +206,10 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
             .await
             .unwrap();
     }
-    // A runtime apply that failed after OpenTofu saved every declared
-    // identity. Preview must remain read-only; destroy owns the recovery.
-    deployment
-        .scenario_interrupt_runtime_apply(&document)
-        .unwrap();
+    // Preview must remain read-only.
     let plan = deployment.plan_destroy(&cancel).await.unwrap();
     assert_eq!(plan.changes.len(), if docker { 2 } else { 1 });
     assert_eq!(plan.retained, vec![STORAGE]);
-    let refusal = deployment.export(&cancel).await.unwrap_err().to_string();
-    assert!(refusal.contains("apply is unfinished"), "{refusal}");
     deployment.destroy(&cancel).await.unwrap();
     assert!(engine.container(&name).await.unwrap().is_none());
     let refusal = deployment.export(&cancel).await.unwrap_err().to_string();

@@ -132,7 +132,7 @@ fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
 }
 
 #[test]
-fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
+fn input_schema_preserves_defaults_strict_objects_and_opaque_route_settings() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let mut value = input("spark/spark-inline.yaml");
     for key in ["endpoint", "engine", "image", "networkCIDR"] {
@@ -157,6 +157,9 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
     value["spec"]["gateway"]["surprise"] = json!(true);
     agrees(&validator, &value, false);
     let mut value = input("fabric-pi.yaml");
+    value
+        .pointer_mut("/spec/sandboxes/0/agent/inference/routes/0/overrides")
+        .unwrap()["settings"] = json!({});
     let path = "/spec/sandboxes/0/agent/inference/routes/0/overrides/settings";
     *value.pointer_mut(path).unwrap() = json!({"future": [null, {"value": null}]});
     agrees(&validator, &value, true);
@@ -412,13 +415,19 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
 }
 
 #[test]
-fn example_discovery_includes_nested_yaml_and_excludes_other_files() {
+fn example_discovery_includes_nested_yaml_and_yml_and_excludes_other_files() {
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("nested/deeper")).unwrap();
-    let expected: std::collections::BTreeSet<_> =
-        ["top.yaml", "nested/child.yaml", "nested/deeper/leaf.yaml"]
-            .map(|name| root.path().join(name))
-            .into();
+    let expected: std::collections::BTreeSet<_> = [
+        "top.yaml",
+        "top.yml",
+        "nested/child.yaml",
+        "nested/child.yml",
+        "nested/deeper/leaf.yaml",
+        "nested/deeper/leaf.yml",
+    ]
+    .map(|name| root.path().join(name))
+    .into();
     for path in &expected {
         std::fs::write(path, "name: fixture\n").unwrap();
     }

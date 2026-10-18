@@ -7,7 +7,6 @@ use std::collections::BTreeMap;
 
 #[test]
 fn gateway_capabilities_gate_deployment_and_follow_bootstrap_reconciliation() {
-    use nemoclaw_sdk::compile::compile_runtime;
     let document = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
     let generations = [
         "workspace",
@@ -23,7 +22,12 @@ fn gateway_capabilities_gate_deployment_and_follow_bootstrap_reconciliation() {
         graph["data"]["openshell_gateway"]["current"]["required_compute_drivers"],
         serde_json::json!(["docker"])
     );
-    for resources in graph["resource"].as_object().unwrap().values() {
+    for (kind, resources) in graph["resource"].as_object().unwrap() {
+        if !(kind.starts_with("openshell_") && !kind.contains("gateway")
+            || kind.starts_with("fabric_"))
+        {
+            continue;
+        }
         for resource in resources.as_object().unwrap().values() {
             assert_eq!(
                 resource["lifecycle"]["precondition"][0]["condition"],
@@ -31,12 +35,18 @@ fn gateway_capabilities_gate_deployment_and_follow_bootstrap_reconciliation() {
             );
         }
     }
-    let bootstrap = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    let apply = &graph["data"]["openshell_gateway"]["apply"]["depends_on"];
+    assert!(
+        apply.as_array().unwrap().contains(&serde_json::json!(
+            "docker_container.managed_gateway_runtime"
+        )),
+        "objects change only after the gateway they use settles"
+    );
     assert_eq!(
-        bootstrap["data"]["openshell_gateway"]["current"]["depends_on"],
+        graph["data"]["openshell_gateway"]["current"]["depends_on"],
         serde_json::json!([
             "docker_container.managed_gateway_runtime",
-            "data.nemoclaw_gateway_readiness.current"
+            "data.openshell_docker_gateway_readiness.current"
         ]),
         "bootstrap must reconcile its gateway and wait for its process before observing capabilities"
     );
@@ -120,10 +130,6 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
     before_container.as_object_mut().unwrap().remove("image");
     after_container.as_object_mut().unwrap().remove("image");
     assert_eq!(before_container, after_container);
-    assert_eq!(
-        before["resource"]["nemoclaw_ollama_service_storage"],
-        after["resource"]["nemoclaw_ollama_service_storage"]
-    );
 }
 
 fn ownership_generations() -> BTreeMap<String, String> {
@@ -169,9 +175,10 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
     let graph = compile(&document, &generations, "0.1.0").unwrap();
     // Providers take no connection; the gateway data source does, and
     // objects take its ref.
-    for provider in ["nemoclaw", "openshell", "fabric"] {
+    for provider in ["openshell", "fabric", "host"] {
         assert_eq!(graph["provider"][provider], json!({}), "{provider}");
     }
+    assert!(graph["provider"].get("nemoclaw").is_none());
     for read in ["current", "apply"] {
         let connection = &graph["data"]["openshell_gateway"][read];
         for (field, expected) in [
@@ -186,82 +193,114 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
     }
     let resources = &graph["resource"];
     let workspace = &resources["openshell_workspace"]["deployment"];
-    let provider =
-        &provider_scope::resource(&resources["openshell_provider_registration"], "remote");
-    let profile = &provider_scope::resource(&resources["openshell_provider_profile"], "remote");
+    let provider = &provider_scope::resource(&resources["openshell_inference"], "remote");
     let sandbox = &resources["openshell_sandbox"]["worker"];
     assert_eq!(workspace["name"], document.workspace());
     for (resource, generation) in [
         (workspace, "workspace"),
         (provider, "provider"),
-        (profile, "provider"),
         (sandbox, "sandbox"),
     ] {
-        assert_eq!(resource["owner"], document.metadata.uid);
-        assert_eq!(resource["generation"], generations[generation]);
+        // An inference provider's owner comes from its workspace ref.
         if generation == "provider" {
-            assert!(resource["lifecycle"].get("prevent_destroy").is_none());
+            assert!(resource.get("owner").is_none());
         } else {
+            assert_eq!(resource["owner"], document.metadata.uid);
+        }
+        assert_eq!(resource["generation"], generations[generation]);
+        // Only the workspace is retained; a sandbox is replaced with its agent.
+        if generation == "workspace" {
             assert_eq!(resource["lifecycle"]["prevent_destroy"], true);
+        } else {
+            assert!(resource["lifecycle"].get("prevent_destroy").is_none());
         }
     }
-    assert_eq!(provider["credential_env"], "MODEL_TOKEN");
-    assert_eq!(provider["endpoint"], "https://models.example.test/v1");
-    assert_eq!(profile["authenticated"], "true");
-    assert!(
-        provider["depends_on"]
-            .as_array()
-            .unwrap()
-            .contains(&json!(provider_scope::address(
-                &resources["openshell_provider_profile"],
-                "provider_profile",
-                "remote"
-            )))
+    // A changed agent configuration replaces the sandbox, through a
+    // terraform_data holding the configuration Fabric receives.
+    assert_eq!(
+        sandbox["lifecycle"]["replace_triggered_by"],
+        json!(["terraform_data.agent_worker"])
+    );
+    let configuration = &resources["terraform_data"]["agent_worker"];
+    let input: serde_json::Value =
+        serde_json::from_str(configuration["input"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        input["metadata"]["name"],
+        resources["fabric_agent"]["worker"]["name"]
+    );
+    assert_eq!(
+        configuration["depends_on"],
+        json!(["data.openshell_gateway.apply"])
+    );
+    assert!(configuration.get("lifecycle").is_none());
+    assert_eq!(provider["server"]["credential_env"], "MODEL_TOKEN");
+    assert_eq!(
+        provider["server"]["endpoint"],
+        "https://models.example.test/v1"
     );
     assert!(
         sandbox["depends_on"]
             .as_array()
             .unwrap()
             .contains(&json!(provider_scope::address(
-                &resources["openshell_provider_registration"],
-                "provider",
+                &resources["openshell_inference"],
+                "inference",
                 "remote"
             )))
     );
-    for resource in [provider, profile, sandbox] {
+    for resource in [provider, sandbox] {
         assert_eq!(
             resource["workspace"],
             "${openshell_workspace.deployment.ref}"
         );
     }
+    // Objects take a literal gateway ref, known while planning, equal to
+    // what the gateway data source exports; that read gates the resources.
+    let read = &graph["data"]["openshell_gateway"]["current"];
     for resource in [
         workspace,
         provider,
-        profile,
         sandbox,
-        &resources["fabric_agent_configuration"]["worker"],
-        &graph["data"]["fabric_sandbox_readiness"]["worker"],
+        &resources["fabric_agent"]["worker"],
+    ] {
+        assert!(
+            resource["depends_on"].as_array().is_some_and(
+                |dependencies| dependencies.contains(&json!("data.openshell_gateway.apply"))
+            ),
+            "the gateway read gates {resource}"
+        );
+    }
+    for resource in [
+        workspace,
+        provider,
+        sandbox,
+        &resources["fabric_agent"]["worker"],
     ] {
         assert_eq!(
-            resource["gateway"], "${data.openshell_gateway.current.ref}",
+            resource["gateway"]["type"], "openshell_gateway",
             "{resource}"
         );
+        for (attribute, _) in nemoclaw_openshell::GATEWAY_FIELDS {
+            assert_eq!(
+                resource["gateway"][attribute],
+                read.get(attribute).cloned().unwrap_or(json!("")),
+                "{attribute}: {resource}"
+            );
+        }
         for field in [
             "gateway_endpoint",
             "gateway_credential_env",
             "gateway_tls_ca_env",
             "gateway_tls_certificate_env",
             "gateway_tls_key_env",
+            "gateway_kubernetes",
         ] {
             assert!(resource.get(field).is_none(), "{field}: {resource}");
         }
     }
     // Sandboxes name their provider registrations by ref.
-    let registration = provider_scope::address(
-        &resources["openshell_provider_registration"],
-        "provider",
-        "remote",
-    );
+    let registration =
+        provider_scope::address(&resources["openshell_inference"], "inference", "remote");
     assert!(
         sandbox["providers"]
             .as_array()
@@ -296,17 +335,34 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
         compile(&document, &generations, "0.1.0").unwrap(),
         nemoclaw_sdk::compile::compile_runtime(&document, &generations, "0.1.0").unwrap(),
     ] {
-        let engine = &graph["data"]["nemoclaw_engine_capabilities"]["current"];
-        assert_eq!(
-            engine["engine"],
-            document.spec.gateway.as_managed().unwrap().engine
-        );
-        assert_eq!(engine["compute_driver"], "docker");
+        // The engine's facts and the gateway's prerequisites are separate
+        // reads: the facts serve every reader, and the openshell provider
+        // judges whether the engine can host its gateway.
+        let selected = &document.spec.gateway.as_managed().unwrap().engine;
+        let engine = &graph["data"]["host_engine"]["current"];
+        assert_eq!(engine["engine"], *selected);
+        assert!(engine.get("compute_driver").is_none());
+        assert!(engine.get("lifecycle").is_none());
+        let prerequisites = &graph["data"]["openshell_gateway_prerequisites"]["current"];
+        assert_eq!(prerequisites["engine"], *selected);
+        assert_eq!(prerequisites["compute_driver"], "docker");
         assert!(
-            engine.get("depends_on").is_none(),
-            "read existing capabilities during plan"
+            prerequisites["lifecycle"]["postcondition"][0]["error_message"]
+                .as_str()
+                .unwrap()
+                .contains("does not meet gateway prerequisites")
         );
-        let image = &graph["data"]["fabric_capabilities"]["sandbox_0"];
+        for read in [engine, prerequisites] {
+            assert!(
+                read.get("depends_on").is_none(),
+                "read existing capabilities during plan"
+            );
+        }
+        assert_eq!(
+            graph["output"]["discovery"]["value"]["gateway_prerequisites"],
+            "${data.openshell_gateway_prerequisites.current.observation_json}"
+        );
+        let image = &graph["data"]["fabric_harnesses"]["sandbox_0"];
         assert_eq!(image["image"], document.spec.sandboxes[0].image.ref_);
         assert!(
             image.get("depends_on").is_none(),
@@ -328,10 +384,10 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
                 .kind
                 .as_str()
         );
-        assert_eq!(
-            configuration["models"]["default"]["api"],
-            "openai-completions"
-        );
+        // Fabric v0.5.0 has no per-model API field (#13320); the adapter
+        // selects the protocol from the model's provider.
+        assert!(configuration["models"]["default"].get("api").is_none());
+        assert_eq!(configuration["models"]["default"]["provider"], "openai");
         assert!(graph["output"]["discovery"]["value"].is_object());
     }
 }
@@ -351,15 +407,16 @@ fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
         .find(|target| target.kind == "sandbox")
         .unwrap();
     assert!(!sandbox.values.contains_key("agent_runtime"));
-    let settings: serde_json::Value = serde_json::from_str(
+    let settings: serde_json::Value = nemoclaw_fabric::agent::compose(
         &targets
             .iter()
-            .find(|target| target.kind == "agent_configuration")
+            .find(|target| target.kind == "agent")
             .unwrap()
-            .values["config_json"],
+            .values,
     )
     .unwrap();
-    assert!(settings.to_string().contains("openai-responses"));
+    // Fabric v0.5.0 has no per-model API field (#13320).
+    assert!(settings["models"]["default"].get("api").is_none());
     assert_eq!(
         settings["harness"]["settings"]["custom_option"],
         "fixture-value"
@@ -368,7 +425,7 @@ fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
     // The sandbox launches what Fabric computed; it holds no agent runtime of its own.
     assert_eq!(
         graph["resource"]["openshell_sandbox"]["assistant"]["launch_json"],
-        "${data.fabric_capabilities.sandbox_0.launch_json}"
+        "${data.fabric_harnesses.sandbox_0.launch_json}"
     );
     assert!(
         graph["resource"]["openshell_sandbox"]["assistant"]
@@ -388,7 +445,7 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
     let before = targets(&document, &generations).unwrap();
     let original = before
         .iter()
-        .find(|target| target.kind == "provider")
+        .find(|target| target.kind == "inference")
         .unwrap();
     let mut changed = document.clone();
     let mut second = changed.spec.sandboxes[0].clone();
@@ -400,7 +457,7 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
     assert_eq!(
         after
             .iter()
-            .filter(|target| target.kind == "provider")
+            .filter(|target| target.kind == "inference")
             .count(),
         2
     );
@@ -416,16 +473,149 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
             graph["resource"]["openshell_sandbox"][name]["launch_json"]
                 .as_str()
                 .unwrap()
-                .contains("fabric_capabilities")
+                .contains("fabric_harnesses")
         );
     }
-    for profile in graph["resource"]["openshell_provider_profile"]
+    for profile in graph["resource"]["openshell_inference"]
         .as_object()
         .unwrap()
         .values()
     {
         let binaries = profile["binaries"].as_str().unwrap();
-        assert!(binaries.starts_with("${jsondecode(data.fabric_capabilities."));
+        assert!(binaries.starts_with("${jsondecode(data.fabric_harnesses."));
         assert!(binaries.ends_with(".binaries_json)}"));
     }
+}
+
+#[test]
+fn sandboxes_pass_driver_configuration_through() {
+    let generations: nemoclaw_sdk::compile::Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let mut value: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).unwrap();
+    let name = doc.spec.sandboxes[0].name.clone();
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    assert!(
+        graph["resource"]["openshell_sandbox"][&name]
+            .get("driver_config")
+            .is_none()
+    );
+
+    let mounts = serde_json::json!({"docker": {"mounts": [
+        {"type": "volume", "source": "skills", "target": "/sandbox/skills"}
+    ]}});
+    value["spec"]["sandboxes"][0]["driverConfig"] = mounts.clone();
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
+        .expect("driverConfig must parse");
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    // However OpenTofu takes it, OpenShell receives it unchanged.
+    let attribute = &graph["resource"]["openshell_sandbox"][&name]["driver_config"];
+    let decoded: serde_json::Value = match attribute.as_str() {
+        Some(text) => serde_json::from_str(text).unwrap(),
+        None => attribute.clone(),
+    };
+    assert_eq!(decoded, mounts, "{attribute}");
+    // The document round-trips with it.
+    assert_eq!(
+        nemoclaw_sdk::config::Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
+        doc
+    );
+}
+
+#[test]
+fn isolated_sandboxes_take_extra_network_grants() {
+    let generations: nemoclaw_sdk::compile::Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let mut value: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+    let grant = serde_json::json!({"endpoints": [{
+        "host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce",
+        "rules": [{"allow": {"method": "GET", "path": "/**"}}]
+    }]});
+    value["spec"]["sandboxes"][0]["network"] =
+        serde_json::json!({"tier": "isolated", "grants": {"docs": grant}});
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
+        .expect("grants must parse");
+    assert_eq!(
+        nemoclaw_sdk::config::Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
+        doc
+    );
+    let rows = nemoclaw_sdk::compile::targets(&doc, &generations).unwrap();
+    let sandbox = rows.iter().find(|r| r.kind == "sandbox").unwrap();
+    let input: serde_json::Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
+    // The grant joins the managed rules, on top of the isolated preset, and
+    // without executables it takes the harness's.
+    assert!(input["explicit"].is_null(), "{input}");
+    let rules: Vec<_> = input["managed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|rule| rule["name"] == "docs")
+        .collect();
+    assert_eq!(rules.len(), 1, "{input}");
+    assert_eq!(rules[0]["endpoints"][0]["host"], "docs.example.com");
+    assert_eq!(rules[0]["binaries"], serde_json::json!([]));
+
+    // An explicit policy already holds every grant.
+    value["spec"]["sandboxes"][0]["network"] = serde_json::json!({
+        "policy": {"explicit": {"version": 1}},
+        "grants": {"docs": grant}
+    });
+    assert!(nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).is_err());
+}
+
+#[test]
+fn docker_providers_authenticate_to_listed_registries() {
+    let generations: nemoclaw_sdk::compile::Generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+        "inference_service",
+        "ollama_service",
+    ]
+    .map(|key| (key.into(), "a".repeat(32)))
+    .into();
+    let mut value: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/managed-ollama.yaml")).unwrap();
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).unwrap();
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    let providers = graph["provider"]["docker"]
+        .as_array()
+        .expect("Docker providers");
+    assert!(
+        providers
+            .iter()
+            .all(|provider| provider.get("registry_auth").is_none())
+    );
+
+    value["spec"]["registries"] = serde_json::json!([
+        {"address": "nvcr.io"},
+        {"address": "registry.example.com:5000", "configFile": "/srv/ci/docker/config.json"}
+    ]);
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
+        .expect("registries must parse");
+    assert_eq!(
+        nemoclaw_sdk::config::Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
+        doc
+    );
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    // Every Docker provider reads the logins of the machine running OpenTofu;
+    // the graph names only the registries.
+    for provider in graph["provider"]["docker"].as_array().unwrap() {
+        assert_eq!(
+            provider["registry_auth"],
+            serde_json::json!([
+                {"address": "nvcr.io"},
+                {"address": "registry.example.com:5000", "config_file": "/srv/ci/docker/config.json"}
+            ]),
+            "{provider}"
+        );
+    }
+
+    value["spec"]["registries"] = serde_json::json!([{"address": "nvcr.io", "password": "x"}]);
+    assert!(nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).is_err());
 }

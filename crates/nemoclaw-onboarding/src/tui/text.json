@@ -176,14 +176,8 @@
     "/spec/services/*/serving/toolParser": {
       "title": "Tool-call parser"
     },
-    "adapter:*:/home": {
-      "title": "Home directory"
-    },
     "adapter:*:/max_tokens": {
       "title": "Maximum response tokens"
-    },
-    "adapter:*:/native_config": {
-      "title": "Native configuration"
     },
     "adapter:nvidia.fabric.claude:/max_budget_usd": {
       "title": "Maximum budget (USD)"
@@ -193,33 +187,6 @@
     },
     "adapter:nvidia.fabric.codex:/sandbox": {
       "title": "Sandbox access"
-    },
-    "adapter:nvidia.fabric.hermes:/api_mode": {
-      "title": "API mode"
-    },
-    "adapter:nvidia.fabric.hermes:/interfaces/api": {
-      "title": "API interface"
-    },
-    "adapter:nvidia.fabric.hermes:/interfaces/api/port": {
-      "title": "API port"
-    },
-    "adapter:nvidia.fabric.hermes:/interfaces/dashboard/enabled": {
-      "title": "Enable dashboard"
-    },
-    "adapter:nvidia.fabric.hermes:/interfaces/dashboard/internalPort": {
-      "title": "Dashboard internal port"
-    },
-    "adapter:nvidia.fabric.hermes:/interfaces/dashboard/port": {
-      "title": "Dashboard port"
-    },
-    "adapter:nvidia.fabric.hermes:/interfaces/dashboard/tui": {
-      "title": "Dashboard terminal UI"
-    },
-    "adapter:nvidia.fabric.hermes:/interfaces/dashboard/tui/enabled": {
-      "title": "Enable dashboard terminal UI"
-    },
-    "adapter:nvidia.fabric.hermes:/mode": {
-      "title": "Run mode"
     },
     "adapter:nvidia.fabric.hermes:/plugins_enabled": {
       "title": "Enabled plugins"
@@ -236,11 +203,11 @@
     "adapter:nvidia.fabric.mini-swe-agent:/timeout": {
       "title": "Command timeout"
     },
-    "adapter:nvidia.fabric.openclaw:/cli": {
-      "title": "CLI command"
+    "adapter:nvidia.fabric.openclaw:/openclaw_command": {
+      "title": "OpenClaw command"
     },
-    "adapter:nvidia.fabric.openclaw:/timeout_seconds": {
-      "title": "Timeout (seconds)"
+    "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds": {
+      "title": "Startup timeout (seconds)"
     },
     "adapter:nvidia.fabric.remote-agent:/api_type": {
       "title": "API type"
@@ -257,9 +224,6 @@
     "inference:preset": {
       "title": "How should your agent reach its model?",
       "description": "Hosted inference keeps model compute outside the sandbox."
-    },
-    "model:/api": {
-      "title": "Which API should this route's model use?"
     },
     "model:/max_tokens": {
       "title": "Maximum response tokens"
@@ -312,6 +276,7 @@
     "/spec/services/*/hardware/profile": {
       "dgx-spark": "DGX Spark",
       "dgx-station": "DGX Station",
+      "rtx-spark": "RTX Spark",
       "rtx-6000-ada": "RTX 6000 Ada",
       "rtx-pro-6000-blackwell": "RTX PRO 6000 Blackwell",
       "rtx-3090": "RTX 3090",
@@ -363,21 +328,7 @@
       "workspace-write": "Write to workspace",
       "danger-full-access": "Full access (dangerous)"
     },
-    "adapter:nvidia.fabric.hermes:/api_mode": {
-      "chat_completions": "OpenAI chat completions",
-      "codex_responses": "OpenAI Responses",
-      "anthropic_messages": "Anthropic Messages"
-    },
-    "adapter:nvidia.fabric.hermes:/mode": {
-      "sdk": "SDK",
-      "service": "Service"
-    },
     "adapter:nvidia.fabric.remote-agent:/api_type": {
-      "openai-completions": "OpenAI chat completions",
-      "openai-responses": "OpenAI Responses",
-      "anthropic-messages": "Anthropic Messages"
-    },
-    "model:/api": {
       "openai-completions": "OpenAI chat completions",
       "openai-responses": "OpenAI Responses",
       "anthropic-messages": "Anthropic Messages"
@@ -385,16 +336,6 @@
     "model:/client_type": {
       "completion": "Completions",
       "responses": "Responses"
-    },
-    "model:/reasoning_effort": {
-      "none": "Off",
-      "off": "Off",
-      "minimal": "Minimal",
-      "low": "Low",
-      "medium": "Medium",
-      "high": "High",
-      "xhigh": "Extra high",
-      "adaptive": "Adaptive"
     }
   }
 }

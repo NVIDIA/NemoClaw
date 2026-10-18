@@ -46,19 +46,25 @@ fn fixture(mut document: Document) -> Option<String> {
         encoded = encoded
             .replace(
                 &format!(
-                    "\"${{jsondecode(data.fabric_capabilities.sandbox_{index}.binaries_json)}}\""
+                    "\"${{jsondecode(data.fabric_harnesses.sandbox_{index}.binaries_json)}}\""
                 ),
                 &serde_json::to_string(&binding.binaries()).unwrap(),
             )
             .replace(
-                &format!("\"${{data.fabric_capabilities.sandbox_{index}.launch_json}}\""),
+                &format!("\"${{data.fabric_harnesses.sandbox_{index}.launch_json}}\""),
                 &launch.replace("${", "$${"),
             );
     }
     let mut resources = Map::new();
     let compiled: Value = serde_json::from_str(&encoded).unwrap();
     for (kind, bodies) in compiled.as_object().unwrap() {
-        if !kind.starts_with("openshell_") {
+        // OpenShell objects, and the agent configurations that replace their
+        // sandboxes; the gateway installation types have their own contract
+        // tests.
+        if !(kind.starts_with("openshell_") || kind == "terraform_data")
+            || nemoclaw_openshell::installation_type(nemoclaw_openshell::object_kind(kind))
+                .is_some()
+        {
             continue;
         }
         let mut bodies = bodies.clone();
@@ -71,7 +77,16 @@ fn fixture(mut document: Document) -> Option<String> {
             if let Some(depends) = body.get_mut("depends_on").and_then(Value::as_array_mut) {
                 depends.retain(|address| {
                     address.as_str().is_some_and(|address| {
-                        address.starts_with("openshell_") || address.starts_with("data.openshell_")
+                        let kind = address
+                            .trim_start_matches("data.")
+                            .split('.')
+                            .next()
+                            .unwrap_or_default();
+                        kind.starts_with("openshell_")
+                            && nemoclaw_openshell::installation_type(
+                                nemoclaw_openshell::object_kind(kind),
+                            )
+                            .is_none()
                     })
                 });
                 if depends.is_empty() {
@@ -81,7 +96,28 @@ fn fixture(mut document: Document) -> Option<String> {
         }
         resources.insert(kind.clone(), bodies);
     }
-    let resources = Value::Object(resources);
+    // Objects carry the gateway's ref literally; they reach the same fake
+    // gateway, which takes no credentials.
+    let mut resources = Value::Object(resources);
+    for bodies in resources.as_object_mut().unwrap().values_mut() {
+        for body in bodies.as_object_mut().unwrap().values_mut() {
+            if let Some(gateway) = body
+                .get_mut("gateway")
+                .filter(|gateway| gateway["type"] == "openshell_gateway")
+            {
+                for attribute in [
+                    "credential_env",
+                    "tls_ca_env",
+                    "tls_certificate_env",
+                    "tls_key_env",
+                    "kubernetes",
+                ] {
+                    gateway[attribute] = json!("");
+                }
+                gateway["endpoint"] = json!("${var.endpoint}");
+            }
+        }
+    }
     let text = resources.to_string();
     assert!(
         !text.contains("data.fabric_") && !text.contains("nemoclaw_"),
@@ -97,6 +133,7 @@ fn fixture(mut document: Document) -> Option<String> {
             "tls_ca_env",
             "tls_certificate_env",
             "tls_key_env",
+            "kubernetes",
         ] {
             read.remove(attribute);
         }

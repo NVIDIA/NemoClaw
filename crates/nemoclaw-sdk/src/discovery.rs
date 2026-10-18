@@ -286,6 +286,14 @@ pub struct DiscoveryRequest {
     pub compute_driver: ComputeDriver,
 }
 
+/// Whether an engine can host a managed OpenShell gateway with a compute
+/// driver, and why not.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewayPrerequisitesObservation {
+    pub status: ObservationStatus,
+    pub reason: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EngineObservation {
     pub status: ObservationStatus,
@@ -298,7 +306,26 @@ pub struct EngineObservation {
     pub cpus: Option<i64>,
 }
 
+/// The discovery observation a managed gateway's prerequisite read reports;
+/// plan reports fold it into the engine observation.
+pub const GATEWAY_PREREQUISITES: &str = "gateway_prerequisites";
+
 impl EngineObservation {
+    /// This engine as a managed gateway's host: its facts, taking the status
+    /// and reason of `prerequisites` when they are less available.
+    pub fn with_prerequisites(mut self, prerequisites: GatewayPrerequisitesObservation) -> Self {
+        let rank = |status: &ObservationStatus| match status {
+            ObservationStatus::Unavailable => 0,
+            ObservationStatus::Unknown => 1,
+            ObservationStatus::Available => 2,
+        };
+        if rank(&prerequisites.status) < rank(&self.status) {
+            self.status = prerequisites.status;
+            self.reason = prerequisites.reason;
+        }
+        self
+    }
+
     /// A read that could not be made, recorded as unknown rather than absent.
     pub fn unknown(reason: &str) -> Self {
         Self {
@@ -321,5 +348,4 @@ pub use nemoclaw_fabric::FabricObservation;
 pub struct RuntimeImageObservation {
     pub status: ObservationStatus,
     pub source: String,
-    pub required_version: String,
 }

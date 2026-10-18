@@ -39,7 +39,7 @@ impl Experiment {
     }
     fn new(provider: impl AsRef<Path>) -> Self {
         let this = Self {
-            dir: TofuWorkspace::new(&nemoclaw_test_fixtures::Bundle::from_env(), provider),
+            dir: TofuWorkspace::with_fixture(&nemoclaw_test_fixtures::Bundle::from_env(), provider),
         };
         this.config("https://initial.example/v1");
         this.mode("normal");
@@ -210,114 +210,4 @@ fn real_tofu_retains_a_tainted_instance_and_plans_its_replacement_after_creation
         json!(["delete", "create"]),
         "the next plan must replace the tainted instance"
     );
-}
-
-// A managed gateway needs a local engine, which only Unix clients reach.
-#[cfg(unix)]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
-async fn production_provider_rechecks_network_and_image_prerequisites_before_saved_plan_apply() {
-    use nemoclaw_sdk::{compile, config::Document};
-    use std::sync::{Arc, Mutex};
-
-    let provider = crate::provider();
-    let mode = Arc::new(Mutex::new("normal"));
-    let shared = mode.clone();
-    let fixture = crate::http_fixture::Fixture::engine(move |request| {
-        assert_eq!(request.method, "GET", "planning or rejected apply mutated Docker");
-        let mode = *shared.lock().unwrap();
-        let response = match request.path.split('?').next().unwrap() {
-            "/info" => (200, json!({"ID":"engine", "Architecture":"x86_64"})),
-            "/networks" => (200, if mode == "overlap" {
-                json!([{"IPAM":{"Config":[{"Subnet":"172.30.121.0/24"}]}}])
-            } else { json!([]) }),
-            path if path.starts_with("/networks/") => (404, json!({})),
-            path if path.starts_with("/containers/") => (404, json!({})),
-            path if path.starts_with("/images/") => {
-                if mode == "missing-image" {
-                    (404, json!({}))
-                } else {
-                    (200, json!({"Id":"sha256:gateway", "Os":"linux", "Architecture":if mode == "wrong-architecture" { "arm64" } else { "amd64" }}))
-                }
-            }
-            _ => panic!("unexpected prerequisite observation {}", request.path),
-        };
-        Some((response.0, serde_json::to_vec(&response.1).unwrap()))
-    }).await;
-    let e = Experiment::new(provider);
-    let document =
-        Document::parse(include_bytes!("../../../../examples/spark/vllm.yaml").as_slice()).unwrap();
-    let generations = [
-        ("managed_gateway".into(), "a".repeat(32)),
-        ("inference_service".into(), "b".repeat(32)),
-    ]
-    .into();
-    let target = compile::runtime_targets(&document, &generations)
-        .unwrap()
-        .into_iter()
-        .find(|target| target.kind == "managed_gateway")
-        .unwrap();
-    // Planning checks prerequisites only for known identity; omitted identity
-    // is generated during apply.
-    let mut settings = target.values.clone();
-    settings.remove("image_pull_policy");
-    settings.insert("engine".into(), fixture.endpoint.clone());
-    fs::remove_file(e.dir.path().join("main.tf.json")).unwrap();
-    let configure = |policy: &str| {
-        let attributes: String = settings
-            .iter()
-            .chain([(&"image_pull_policy".to_owned(), &policy.to_owned())])
-            .map(|(name, value)| format!("  {name} = {}\n", json!(value)))
-            .collect();
-        fs::write(
-            e.dir.path().join("main.tf"),
-            format!(
-                r#"terraform {{
-  required_version = "= 1.12.6"
-  required_providers {{
-    nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw" }}
-  }}
-}}
-provider "nemoclaw" {{}}
-resource "nemoclaw_managed_gateway" "gateway" {{
-{attributes}}}
-"#
-            ),
-        )
-        .unwrap();
-    };
-    configure("Never");
-    e.success(&["validate"]);
-    for (failure, expected) in [
-        ("overlap", "subnet overlaps"),
-        (
-            "wrong-architecture",
-            "incompatible with the execution target",
-        ),
-        ("missing-image", "image is absent"),
-    ] {
-        *mode.lock().unwrap() = failure;
-        let output = e.run(&["plan", "-input=false"]);
-        assert!(!output.status.success());
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains(expected),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        *mode.lock().unwrap() = "normal";
-        e.success(&["plan", "-input=false", "-out=prerequisites.plan"]);
-        *mode.lock().unwrap() = failure;
-        let output = e.run(&["apply", "-input=false", "prerequisites.plan"]);
-        assert!(!output.status.success());
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains(expected),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    for policy in ["Always", "IfNotPresent"] {
-        configure(policy);
-        *mode.lock().unwrap() = "missing-image";
-        e.success(&["plan", "-input=false"]);
-    }
 }
