@@ -87,6 +87,17 @@ pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, Conf
         if let Some(limit) = route.overrides.tuning.max_tokens {
             projected["max_tokens"] = limit.into();
         }
+        if let Some(provider) = &route.overrides.harness_provider {
+            projected["provider"] = provider.clone().into();
+        }
+        for (field, value) in [
+            ("temperature", &route.overrides.tuning.temperature),
+            ("top_p", &route.overrides.tuning.top_p),
+        ] {
+            if let Some(value) = value {
+                projected[field] = Value::Number(value.clone());
+            }
+        }
         // Authored extensions may set an API explicitly, but not a field the
         // deployment owns or already sets.
         for (field, value) in route.overrides.extensions.iter().flatten() {

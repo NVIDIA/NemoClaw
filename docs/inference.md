@@ -413,6 +413,11 @@ overrides:
   maxTokens: 8192
 ```
 
+A route can also set `temperature` and `topP`, which the SDK passes to Fabric's `temperature` and `top_p`.
+`harnessProvider` sets the Fabric model provider the harness uses; without it, the SDK uses the inference provider's API family, `openai` or `anthropic`.
+For example, Hermes's `custom` provider turns reasoning off by default, which a hosted reasoning model may need to answer within Fabric's invocation deadline.
+Fabric validates these values when it configures the agent.
+
 The pinned OpenClaw adapter takes no native model settings, so its routes leave `overrides.settings` unset.
 For adapters that take them, the SDK forwards `settings` unchanged into the public Fabric model configuration, keeping nested null values intact.
 The selected adapter's model schema and implementation own the meanings, accepted values, and defaults.

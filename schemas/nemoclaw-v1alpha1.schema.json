@@ -1775,6 +1775,10 @@
           "description": "Model fields the selected adapter declares as extensions, such as Pi's context_window; Fabric validates them.",
           "type": "object"
         },
+        "harnessProvider": {
+          "description": "Fabric model provider the harness uses, such as custom. Defaults to the inference provider's API family.",
+          "type": "string"
+        },
         "maxTokens": {
           "description": "Maximum output tokens requested from the native adapter.",
           "format": "uint32",
@@ -1791,6 +1795,16 @@
           "additionalProperties": true,
           "description": "Opaque native model settings validated by Fabric's selected model schema.",
           "type": "object"
+        },
+        "temperature": {
+          "description": "Sampling temperature, passed to Fabric's temperature; Fabric validates the range.",
+          "format": "double",
+          "type": "number"
+        },
+        "topP": {
+          "description": "Nucleus sampling probability, passed to Fabric's top_p; Fabric validates the range.",
+          "format": "double",
+          "type": "number"
         }
       },
       "required": [

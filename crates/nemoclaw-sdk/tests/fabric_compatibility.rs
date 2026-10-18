@@ -293,3 +293,29 @@ fn declared_model_extensions_get_the_provider_api_and_authored_fields() {
         nemoclaw_sdk::fabric_config::for_sandbox(&reserved, &reserved.spec.sandboxes[0]).is_err()
     );
 }
+
+#[test]
+fn routes_set_the_harness_provider_and_sampling() {
+    let text = include_str!("../../../examples/openclaw.yaml");
+    let plain = nemoclaw_sdk::config::Document::parse(text.as_bytes()).unwrap();
+    let model = &nemoclaw_sdk::fabric_config::for_sandbox(&plain, &plain.spec.sandboxes[0])
+        .unwrap()["models"]["default"];
+    // Without them, the provider is the inference provider's API family and
+    // no sampling is sent.
+    assert_eq!(model["provider"], "openai", "{model}");
+    assert!(model.get("temperature").is_none(), "{model}");
+    assert!(model.get("top_p").is_none(), "{model}");
+
+    let tuned = text.replace(
+        "                maxTokens: 8192\n",
+        "                maxTokens: 8192\n                harnessProvider: custom\n                temperature: 0.2\n                topP: 0.9\n",
+    );
+    assert_ne!(tuned, text);
+    let tuned = nemoclaw_sdk::config::Document::parse(tuned.as_bytes()).unwrap();
+    let model = &nemoclaw_sdk::fabric_config::for_sandbox(&tuned, &tuned.spec.sandboxes[0])
+        .unwrap()["models"]["default"];
+    assert_eq!(model["provider"], "custom", "{model}");
+    assert_eq!(model["temperature"], 0.2, "{model}");
+    assert_eq!(model["top_p"], 0.9, "{model}");
+    assert_eq!(model["max_tokens"], 8192, "{model}");
+}
