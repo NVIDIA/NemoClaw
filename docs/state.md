@@ -133,7 +133,7 @@ Paths describe the pinned Fabric adapters linked above, not a common history imp
 
 Mounting the whole home or a temporary directory does not establish conversation resume.
 Homes can contain login tokens and generated authentication configuration, while adapter cleanup can still delete files on a mounted temporary directory.
-Native conversation reattachment needs support from Fabric and the selected harness; remaining limits are tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
+Native conversation reattachment needs support from Fabric and the selected harness.
 
 ### Verify Retention before Relying on It
 
@@ -166,7 +166,7 @@ openshell sandbox exec -n assistant --no-tty --no-login-shell -- cat /sandbox/wo
 
 Expect the two marker lines again and inspect the named volume or PVC from the platform side to confirm the intended storage is attached.
 Remove only the two marker files you created after checking them.
-These commands are checked against the pinned CLI parser; retention through replacement has not been qualified by this guide.
+These commands are checked against the pinned CLI parser. Retention of both directories through a sandbox replacement was verified on a managed Docker gateway.
 The check verifies file retention only; separately verify any native history workflow before depending on conversation continuity.
 If the mount is rejected or unwritable, retain the original state and volumes, correct admission labels, driver settings, policy, or filesystem ownership, then retry with the same deployment state.
 Do not delete the volume as a recovery step.
