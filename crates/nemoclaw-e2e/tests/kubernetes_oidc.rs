@@ -156,6 +156,84 @@ spec:
     Document::parse(yaml.as_bytes()).unwrap()
 }
 
+/// What the deployment's namespace shows when apply fails: each pod's phase
+/// and container states, recent events, and the end of each container's log.
+/// Live failures otherwise leave only the SDK's summary in CI logs.
+async fn namespace_diagnostics(client: &kube::Client, namespace: &str) -> String {
+    use k8s_openapi::api::core::v1::{Event, Pod};
+    use kube::api::LogParams;
+    let mut out = format!("diagnostics for namespace {namespace}:\n");
+    let pods = Api::<Pod>::namespaced(client.clone(), namespace);
+    match pods.list(&ListParams::default()).await {
+        Ok(list) => {
+            for pod in list.items {
+                let name = pod.metadata.name.clone().unwrap_or_default();
+                let status = pod.status.clone().unwrap_or_default();
+                out += &format!("pod {name}: {}\n", status.phase.unwrap_or_default());
+                for container in status.container_statuses.unwrap_or_default() {
+                    let state = container.state.as_ref().map(|state| {
+                        if let Some(waiting) = &state.waiting {
+                            format!(
+                                "waiting {} {}",
+                                waiting.reason.clone().unwrap_or_default(),
+                                waiting.message.clone().unwrap_or_default()
+                            )
+                        } else if let Some(done) = &state.terminated {
+                            format!(
+                                "terminated {} exit {}",
+                                done.reason.clone().unwrap_or_default(),
+                                done.exit_code
+                            )
+                        } else {
+                            "running".into()
+                        }
+                    });
+                    out += &format!(
+                        "  container {}: ready={} restarts={} {}\n",
+                        container.name,
+                        container.ready,
+                        container.restart_count,
+                        state.unwrap_or_default()
+                    );
+                    let params = LogParams {
+                        container: Some(container.name.clone()),
+                        tail_lines: Some(40),
+                        ..LogParams::default()
+                    };
+                    if let Ok(log) = pods.logs(&name, &params).await {
+                        for line in log.lines() {
+                            out += &format!("    | {line}\n");
+                        }
+                    }
+                }
+            }
+        }
+        Err(error) => out += &format!("cannot list pods: {error}\n"),
+    }
+    if let Ok(list) = Api::<Event>::namespaced(client.clone(), namespace)
+        .list(&ListParams::default())
+        .await
+    {
+        let mut events = list.items;
+        events.sort_by_key(|event| event.last_timestamp.clone().map(|time| time.0));
+        for event in events.iter().rev().take(15).rev() {
+            out += &format!(
+                "event {} {}: {}\n",
+                event.reason.clone().unwrap_or_default(),
+                event.involved_object.name.clone().unwrap_or_default(),
+                event
+                    .message
+                    .clone()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(240)
+                    .collect::<String>()
+            );
+        }
+    }
+    out
+}
+
 #[tokio::test]
 #[ignore = "needs a Kubernetes cluster with Agent Sandbox and a loaded agent image; run through cargo ci live-kind"]
 async fn a_managed_gateway_accepts_an_existing_issuers_tokens_and_refuses_another_audience() {
@@ -264,7 +342,10 @@ async fn a_managed_gateway_accepts_an_existing_issuers_tokens_and_refuses_anothe
         result = &mut apply => result,
         () = provision => apply.await,
     };
-    applied.expect("the gateway accepts the existing issuer's token");
+    if let Err(error) = &applied {
+        eprintln!("{}", namespace_diagnostics(&client, &namespace).await);
+        panic!("the gateway accepts the existing issuer's token: {error:?}");
+    }
     eprintln!("applied with the issuer's token");
 
     // No development issuer runs in the deployment's namespace.
