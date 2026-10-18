@@ -213,6 +213,9 @@ pub(crate) async fn read(
                     observed.insert(field.into(), value(&profile, field).into());
                 }
             }
+            if kind == WEB_SEARCH {
+                observed.insert("sandbox_env".into(), value(&profile, "sandbox_env").into());
+            }
             for field in registration_fields(kind).iter().chain(&["id"]) {
                 observed.insert((*field).into(), value(&registration, field).into());
             }

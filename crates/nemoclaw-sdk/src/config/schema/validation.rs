@@ -101,6 +101,23 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         );
     }
     property(&mut defs["Metadata"], "uid", json!({"pattern": c::UUID}));
+    // Integration kinds are inlined in Integration's variants.
+    for variant in defs["Integration"]["oneOf"]
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+    {
+        if variant["properties"]["kind"]["const"] == "webSearch" {
+            property(
+                variant,
+                "sandboxEnv",
+                json!({
+                    "pattern": c::ENV,
+                    "x-nemoclaw-error": "web search sandboxEnv must be an environment variable name"
+                }),
+            );
+        }
+    }
     property(
         &mut defs["Credential"],
         "env",

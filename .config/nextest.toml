@@ -44,6 +44,7 @@ default-filter = '''
     | test(/^multiple_providers::/) | test(/^remote_service::/)
     | test(/^inference_discovery::/) | test(/^helm_recovery::/)
     | test(/^travel_example::/)
+    | test(/^travel_team_example::/)
 ))
 '''
 

@@ -584,3 +584,32 @@ fn attaching_brave_and_tavily_to_one_agent_does_not_discard_either_intent() {
         "a sandbox supports only one attached web search definition"
     );
 }
+
+#[test]
+fn search_sets_the_key_variable_the_sandbox_sees() {
+    let generations: Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    // Without sandboxEnv, the sandbox sees the credential's own variable.
+    let doc = Document::parse(input().to_string().as_bytes()).unwrap();
+    let rows = targets(&doc, &generations).unwrap();
+    let search = rows.iter().find(|r| r.kind == "web_search").unwrap();
+    assert!(!search.values.contains_key("sandbox_env"));
+
+    let mut value = input();
+    value["spec"]["sandboxes"][0]["integrations"]["search"]["sandboxEnv"] =
+        json!("BRAVE_SEARCH_API_KEY");
+    let doc = Document::parse(value.to_string().as_bytes()).expect("sandboxEnv must parse");
+    let rows = targets(&doc, &generations).unwrap();
+    let search = rows.iter().find(|r| r.kind == "web_search").unwrap();
+    assert_eq!(search.values["sandbox_env"], "BRAVE_SEARCH_API_KEY");
+    assert_eq!(search.values["credential_env"], "SEARCH_KEY");
+    let graph = compile(&doc, &generations, "0.1.0").unwrap();
+    let resource =
+        &graph["resource"]["openshell_web_search"][search.address.split_once('.').unwrap().1];
+    assert_eq!(resource["sandbox_env"], "BRAVE_SEARCH_API_KEY");
+
+    // The name must be an environment variable name.
+    value["spec"]["sandboxes"][0]["integrations"]["search"]["sandboxEnv"] = json!("not a name");
+    assert!(Document::parse(value.to_string().as_bytes()).is_err());
+}

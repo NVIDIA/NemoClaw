@@ -119,11 +119,51 @@ The managed binding does not enable a native search tool.
 Declare its native plugin or public Fabric MCP configuration separately and validate it against the selected adapter.
 A deployment credential grant is not a native capability claim.
 
+## Key-Authenticated APIs
+
+Use `kind: api` when an agent calls an HTTP API, such as an MCP service, with a key the gateway holds:
+
+```yaml
+agent:
+  name: buyer
+  integrations:
+    bookings:
+      kind: api
+      endpoint: https://bookings.example.com/mcp
+      credential:
+        env: BOOKINGS_API_KEY
+```
+
+NemoClaw registers the API with OpenShell for each image and harness that attaches it, as `openshell_api` does in HCL.
+OpenShell injects the key into requests to the endpoint's host, port and path subtree, from the harness's executables only, and the sandbox never sees the value.
+The key goes in `Authorization` as a bearer token by default; set `authStyle: header` and `headerName` to send the raw value in another header.
+Set the referenced variable on the applying host; exported YAML and OpenTofu state retain only the reference.
+Whether the harness sends the placeholder depends on the harness; Hermes doesn't yet send it to MCP servers ([#13313](https://github.com/NVIDIA/NemoClaw/issues/13313)).
+
 ## Skills on a Mounted Volume
 
 Fabric reads skills from the paths in `fabric_agent`'s `skills` block.
-To give an agent skills that outlive its sandbox, mount a volume into the sandbox with `openshell_sandbox`'s [`driver_config`](provider.md#openshell-resources-and-data-sources) and point `skills` at the mount.
-This is available in HCL only, with a gateway configured to allow driver configuration.
+To give an agent skills that outlive its sandbox, mount a volume into the sandbox through OpenShell's driver configuration and point `skills` at the mount.
+The gateway must be configured to allow driver configuration.
+In YAML, set the sandbox's `driverConfig` and list the mount in the harness configuration's `skills`:
+
+```yaml
+sandboxes:
+  - name: assistant
+    driverConfig:
+      docker:
+        mounts:
+          - type: volume
+            source: assistant-skills
+            target: /sandbox/skills
+    agent:
+      harness:
+        config:
+          skills:
+            paths: [/sandbox/skills]
+```
+
+In HCL, use `openshell_sandbox`'s [`driver_config`](provider.md#openshell-resources-and-data-sources) and `fabric_agent`'s `skills` block:
 
 ```hcl
 resource "openshell_sandbox" "assistant" {
@@ -166,6 +206,17 @@ Use `provider: tavily` for Tavily; the [web search example](../examples/web-sear
 Set the referenced variable on the applying host through your secret-management mechanism.
 NemoClaw creates a workspace-scoped provider profile and credential-bearing provider in OpenShell.
 The sandbox receives a placeholder, `BRAVE_API_KEY` or `TAVILY_API_KEY` even when the host reference has another name, and OpenShell substitutes the real key for authorized requests to the search API.
+Set `sandboxEnv` when the harness reads the key under another name; Hermes's Brave plugin, for example, reads `BRAVE_SEARCH_API_KEY`:
+
+```yaml
+    search:
+      kind: webSearch
+      provider: brave
+      credential:
+        env: BRAVE_API_KEY
+      sandboxEnv: BRAVE_SEARCH_API_KEY
+```
+
 Exported YAML and OpenTofu state retain the host reference, not its value.
 Destroy removes the owned provider and profile without revoking the upstream key.
 Unchanged apply does not rotate a changed value behind an unchanged reference; follow [credential retirement](security.md#credentials-and-authentication) when replacing or revoking the key.

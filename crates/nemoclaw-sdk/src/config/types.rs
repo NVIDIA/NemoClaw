@@ -264,6 +264,14 @@ pub struct Sandbox {
     #[schemars(default)]
     /// Sandbox network policy; omission selects isolated egress with grants for declared inference.
     pub network: super::Network,
+    #[serde(
+        rename = "driverConfig",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
+    /// OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.
+    pub driver_config: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(rename = "agent")]
     /// The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes.
     pub agent: Agent,
@@ -388,6 +396,14 @@ pub struct Overrides {
     #[serde(flatten)]
     /// Shared public model limits. Native model settings belong in settings.
     pub tuning: super::RouteTuning,
+    #[serde(
+        rename = "harnessProvider",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "String")]
+    /// Fabric model provider the harness uses, such as custom. Defaults to the inference provider's API family.
+    pub harness_provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
     /// Opaque native model settings validated by Fabric's selected model schema.

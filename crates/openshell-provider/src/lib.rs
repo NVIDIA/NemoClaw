@@ -317,18 +317,25 @@ fn sandbox_row(
     row.insert("driver_config_json".into(), driver_config);
     row.insert("policy_json".into(), policy_input);
     row.insert("launch_json".into(), launch_json);
+    // Empty until the loaded policy is observed.
+    row.insert(POLICY_HASH.into(), String::new());
     // Phase is used by active checks, but is not a Terraform schema attribute.
     Ok((row, ready, grants))
 }
+/// The state attribute recording the loaded policy revision's hash.
+pub(crate) const POLICY_HASH: &str = "policy_hash";
+
+/// The hash of the loaded policy revision, once it keeps every declared rule.
 fn active_policy(
     response: proto::GetSandboxPolicyStatusResponse,
     expected: &str,
-) -> Result<(), ObservationError> {
+) -> Result<String, ObservationError> {
     let revision = response.revision.ok_or(ObservationError::Incomplete)?;
     if response.active_version == 0
         || response.active_version != revision.version
         || revision.status != proto::PolicyStatus::Loaded as i32
-        || !network::loaded_policy_matches(
+        || revision.policy_hash.is_empty()
+        || !network::loaded_policy_contains(
             revision
                 .policy
                 .as_ref()
@@ -338,7 +345,7 @@ fn active_policy(
     {
         return Err(ObservationError::Incomplete);
     }
-    Ok(())
+    Ok(revision.policy_hash)
 }
 
 async fn checked_sandbox_row_with<F>(
@@ -425,6 +432,25 @@ fn provider_registration(known: &Row, unknown: &[&str]) -> Option<String> {
     (!unknown.contains(&"name")).then(|| known.get("name").cloned().unwrap_or_default())
 }
 
+/// The variable sandboxes see an inference registration's key in; empty for
+/// a server that needs none.
+fn inference_sandbox_env(known: &Row, unknown: &[&str]) -> Option<String> {
+    if ["name", "credential_env", "credential_source"]
+        .iter()
+        .any(|field| unknown.contains(field))
+    {
+        return None;
+    }
+    let value = |field: &str| known.get(field).map(String::as_str).unwrap_or_default();
+    let authenticated =
+        !value("credential_env").is_empty() || !value("credential_source").is_empty();
+    Some(if authenticated {
+        nemoclaw_openshell::profile::inference_key_env(value("name"))
+    } else {
+        String::new()
+    })
+}
+
 /// The registration a web search row registers, derived from the inputs that
 /// name it.
 fn web_search_registration(known: &Row, unknown: &[&str]) -> Option<String> {
@@ -488,13 +514,14 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
                 "generation",
                 "provider_type",
                 "credential_env",
+                "sandbox_env",
                 "binaries_json",
             ],
             &["binaries_json"],
         )
-        .optional(&["credential_env", "binaries_json"])
+        .optional(&["credential_env", "sandbox_env", "binaries_json"])
         // Omission selects the default, not the previous value.
-        .reset_when_omitted(&["credential_env", "binaries_json"])
+        .reset_when_omitted(&["credential_env", "sandbox_env", "binaries_json"])
         .replaces(binaries_changes)
         .derived("registration", web_search_registration),
         // An inference server's profile and registration, as one resource
@@ -536,7 +563,8 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "cluster_source",
         ])
         .replaces(inference_changes)
-        .derived("registration", provider_registration),
+        .derived("registration", provider_registration)
+        .derived("sandbox_env", inference_sandbox_env),
         Definition::new(
             "sandbox",
             &[
@@ -553,15 +581,20 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             ],
             &[],
         )
+        // The policy hash is empty until the loaded policy is observed.
         .optional(&[
             "policy_json",
             "provider_names_json",
             "driver_config_json",
             services::FIELD,
+            POLICY_HASH,
         ])
         .validate_inputs(network::validate_grant_names)
         // The URLs of the sandbox's exposures, which are part of its creation.
-        .computed(services::URLS, nemoclaw_tofu::carry_prior),
+        .computed(services::URLS, nemoclaw_tofu::carry_prior)
+        // The loaded policy's hash, OpenShell's additions included; later
+        // observations must find the same one.
+        .computed(POLICY_HASH, nemoclaw_tofu::carry_prior),
     ]
     .map(lifecycle_rules)
     .map(|mut definition| {

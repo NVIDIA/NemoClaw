@@ -48,101 +48,156 @@ fn cargo() -> String {
 /// reaches the SDK only through its default feature, and the proxy uses the runtime.
 struct Repo(tempfile::TempDir);
 
+/// The fixture workspace's files, by path.
+fn fixture_files() -> Vec<(String, String)> {
+    let build = manifest(
+        "nemoclaw-build",
+        "nemoclaw-runtime = { path = \"../nemoclaw-runtime\" }\nnemoclaw-sdk = { path = \"../nemoclaw-sdk\", optional = true }\n\n[features]\ndefault = [\"sdk\"]\nsdk = [\"dep:nemoclaw-sdk\"]\n",
+    );
+    let files = [
+        (
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/*\"]\nresolver = \"2\"\n".to_owned(),
+        ),
+        ("crates/nemoclaw-build/Cargo.toml", build),
+        (
+            "crates/nemoclaw-ollama-proxy/Cargo.toml",
+            manifest(
+                "nemoclaw-ollama-proxy",
+                "nemoclaw-runtime = { path = \"../nemoclaw-runtime\" }\n",
+            ),
+        ),
+        (
+            "crates/nemoclaw-runtime/Cargo.toml",
+            manifest("nemoclaw-runtime", ""),
+        ),
+        (
+            "crates/nemoclaw-sdk/Cargo.toml",
+            manifest("nemoclaw-sdk", ""),
+        ),
+        ("crates/nemoclaw-sdk/src/extra.rs", String::new()),
+        (
+            "crates/nemoclaw-e2e/Cargo.toml",
+            manifest(
+                "nemoclaw-e2e",
+                "nemoclaw-sdk = { path = \"../nemoclaw-sdk\" }\n",
+            ),
+        ),
+        (".config/determinator-images.toml", RULES.to_owned()),
+        (".config/determinator-live.toml", LIVE_RULES.to_owned()),
+        (".config/determinator-bundle.toml", BUNDLE_RULES.to_owned()),
+        (
+            ".config/determinator-lifecycle.toml",
+            LIFECYCLE_RULES.to_owned(),
+        ),
+        (".config/nextest.toml", "\n".into()),
+        (
+            ".github/workflows/bundle-platform.yml",
+            "name: native\n".into(),
+        ),
+        ("examples/local.yaml", "kind: Deployment\n".into()),
+        ("versions.json", "{}\n".into()),
+        (".dockerignore", "*\n".into()),
+        (".github/workflows/images.yml", "name: images\n".into()),
+        (".github/workflows/rust.yml", "name: rust\n".into()),
+        ("LICENSE", "license\n".into()),
+        ("docker-bake.hcl", "\n".into()),
+        ("docs/guide.md", "# Guide\n".into()),
+        ("image/fabric/Dockerfile", "FROM scratch\n".into()),
+        ("ruff.toml", "\n".into()),
+        ("runtimes/vllm/build.json", "{}\n".into()),
+        (
+            "rust-toolchain.toml",
+            "[toolchain]\nchannel = \"1.98.1\"\n".into(),
+        ),
+    ];
+    let mut files: Vec<(String, String)> = files
+        .into_iter()
+        .map(|(path, contents)| (path.to_owned(), contents))
+        .collect();
+    // The rest of the live build: the CLI and providers in the bundle, and a
+    // package outside it.
+    for name in [
+        "nemoclaw-cli",
+        "nemoclaw-provider",
+        "openshell-provider",
+        "fabric-provider",
+        "nemoclaw-onboarding",
+        "nemoclaw-fixture-provider",
+    ] {
+        files.push((
+            format!("crates/{name}/Cargo.toml"),
+            manifest(name, "nemoclaw-sdk = { path = \"../nemoclaw-sdk\" }\n"),
+        ));
+        files.push((format!("crates/{name}/src/lib.rs"), String::new()));
+    }
+    for name in ["build", "ollama-proxy", "runtime", "sdk", "e2e"] {
+        files.push((format!("crates/nemoclaw-{name}/src/lib.rs"), String::new()));
+    }
+    files
+}
+
+/// The committed fixture workspace. Building it runs Cargo and Git, which is
+/// slow on a loaded runner, so it's built once per fixture and toolchain in
+/// Cargo's test directory and each test copies it.
+fn template() -> std::path::PathBuf {
+    use sha2::{Digest, Sha256};
+    let files = fixture_files();
+    let mut hash = Sha256::new();
+    hash.update(include_str!("../../../rust-toolchain.toml"));
+    for (path, contents) in &files {
+        hash.update(path);
+        hash.update([0]);
+        hash.update(contents);
+        hash.update([0]);
+    }
+    let key: String = hash.finalize()[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let template = root.join(format!("changes-fixture-{key}"));
+    if template.join(".git").is_dir() {
+        return template;
+    }
+    let building = tempfile::tempdir_in(root).unwrap();
+    for (path, contents) in &files {
+        write(building.path(), path, contents);
+    }
+    succeed(
+        building.path(),
+        &cargo(),
+        &["generate-lockfile", "--offline"],
+    );
+    succeed(building.path(), "git", &["init", "-q"]);
+    succeed(building.path(), "git", &["add", "-A"]);
+    succeed(building.path(), "git", &["commit", "-q", "-m", "base"]);
+    // A concurrent test may finish first; the copies are equivalent.
+    let building = building.keep();
+    if fs::rename(&building, &template).is_err() {
+        let _ = fs::remove_dir_all(&building);
+    }
+    template
+}
+
+/// Copy a directory tree, Git metadata included.
+fn copy_tree(from: &Path, to: &Path) {
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            fs::create_dir_all(&target).unwrap();
+            copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
 impl Repo {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let build = manifest(
-            "nemoclaw-build",
-            "nemoclaw-runtime = { path = \"../nemoclaw-runtime\" }\nnemoclaw-sdk = { path = \"../nemoclaw-sdk\", optional = true }\n\n[features]\ndefault = [\"sdk\"]\nsdk = [\"dep:nemoclaw-sdk\"]\n",
-        );
-        let files = [
-            (
-                "Cargo.toml",
-                "[workspace]\nmembers = [\"crates/*\"]\nresolver = \"2\"\n".to_owned(),
-            ),
-            ("crates/nemoclaw-build/Cargo.toml", build),
-            (
-                "crates/nemoclaw-ollama-proxy/Cargo.toml",
-                manifest(
-                    "nemoclaw-ollama-proxy",
-                    "nemoclaw-runtime = { path = \"../nemoclaw-runtime\" }\n",
-                ),
-            ),
-            (
-                "crates/nemoclaw-runtime/Cargo.toml",
-                manifest("nemoclaw-runtime", ""),
-            ),
-            (
-                "crates/nemoclaw-sdk/Cargo.toml",
-                manifest("nemoclaw-sdk", ""),
-            ),
-            ("crates/nemoclaw-sdk/src/extra.rs", String::new()),
-            (
-                "crates/nemoclaw-e2e/Cargo.toml",
-                manifest(
-                    "nemoclaw-e2e",
-                    "nemoclaw-sdk = { path = \"../nemoclaw-sdk\" }\n",
-                ),
-            ),
-            (".config/determinator-images.toml", RULES.to_owned()),
-            (".config/determinator-live.toml", LIVE_RULES.to_owned()),
-            (".config/determinator-bundle.toml", BUNDLE_RULES.to_owned()),
-            (
-                ".config/determinator-lifecycle.toml",
-                LIFECYCLE_RULES.to_owned(),
-            ),
-            (".config/nextest.toml", "\n".into()),
-            (
-                ".github/workflows/bundle-platform.yml",
-                "name: native\n".into(),
-            ),
-            ("examples/local.yaml", "kind: Deployment\n".into()),
-            ("versions.json", "{}\n".into()),
-            (".dockerignore", "*\n".into()),
-            (".github/workflows/images.yml", "name: images\n".into()),
-            (".github/workflows/rust.yml", "name: rust\n".into()),
-            ("LICENSE", "license\n".into()),
-            ("docker-bake.hcl", "\n".into()),
-            ("docs/guide.md", "# Guide\n".into()),
-            ("image/fabric/Dockerfile", "FROM scratch\n".into()),
-            ("ruff.toml", "\n".into()),
-            ("runtimes/vllm/build.json", "{}\n".into()),
-            (
-                "rust-toolchain.toml",
-                "[toolchain]\nchannel = \"1.98.1\"\n".into(),
-            ),
-        ];
-        for (path, contents) in files {
-            write(dir.path(), path, &contents);
-        }
-        // The rest of the live build: the CLI and providers in the bundle, and a
-        // package outside it.
-        for name in [
-            "nemoclaw-cli",
-            "nemoclaw-provider",
-            "openshell-provider",
-            "fabric-provider",
-            "nemoclaw-onboarding",
-            "nemoclaw-fixture-provider",
-        ] {
-            write(
-                dir.path(),
-                &format!("crates/{name}/Cargo.toml"),
-                &manifest(name, "nemoclaw-sdk = { path = \"../nemoclaw-sdk\" }\n"),
-            );
-            write(dir.path(), &format!("crates/{name}/src/lib.rs"), "");
-        }
-        for name in ["build", "ollama-proxy", "runtime", "sdk", "e2e"] {
-            write(
-                dir.path(),
-                &format!("crates/nemoclaw-{name}/src/lib.rs"),
-                "",
-            );
-        }
-        succeed(dir.path(), &cargo(), &["generate-lockfile", "--offline"]);
-        succeed(dir.path(), "git", &["init", "-q"]);
-        succeed(dir.path(), "git", &["add", "-A"]);
-        succeed(dir.path(), "git", &["commit", "-q", "-m", "base"]);
+        copy_tree(&template(), dir.path());
         Self(dir)
     }
 

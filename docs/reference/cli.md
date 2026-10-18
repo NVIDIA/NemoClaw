@@ -86,7 +86,7 @@ Text output also summarizes advertised models and credential-reference availabil
 JSON output preserves the full discovery report, including query provenance and separate runtime/deployment resource scopes.
 
 Apply summarizes actual changes; a successful operation does not establish working model or agent responses.
-Destroy distinguishes removed resources from retained storage and warns that retaining the OpenShell workspace does not preserve sandbox files or conversations.
+Destroy distinguishes removed resources from retained storage.
 The retained list describes tracked resources, not every surviving host file or external service.
 See [agent runtimes during apply](../usage.md#agent-runtimes-during-apply) and [retention](../state.md#deletion-and-retention).
 

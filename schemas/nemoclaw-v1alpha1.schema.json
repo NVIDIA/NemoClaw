@@ -126,6 +126,14 @@
       ],
       "type": "object"
     },
+    "ApiAuthStyle": {
+      "description": "How an API key is sent.",
+      "enum": [
+        "bearer",
+        "header"
+      ],
+      "type": "string"
+    },
     "AuthMethod": {
       "description": "Authentication method supported through the OpenShell provider.",
       "enum": [
@@ -766,6 +774,30 @@
         }
       ]
     },
+    "Grant": {
+      "additionalProperties": false,
+      "description": "Endpoint grants added to the isolated preset, restricted to executables.",
+      "properties": {
+        "binaries": {
+          "description": "Executables allowed to use the endpoints. Omitted or empty selects the harness's executables.",
+          "items": {
+            "$ref": "#/$defs/PolicyBinary"
+          },
+          "type": "array"
+        },
+        "endpoints": {
+          "description": "Allowed destinations and optional application-protocol restrictions, in OpenShell's endpoint shape.",
+          "items": {
+            "$ref": "#/$defs/PolicyEndpoint"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "endpoints"
+      ],
+      "type": "object"
+    },
     "HardwareProfile": {
       "description": "GPU-family contracts, not model or whole-system qualifications. System profiles fix ARM64; GPU profiles require architecture. Each currently requires one visible GPU.",
       "enum": [
@@ -1141,11 +1173,50 @@
             "provider": {
               "$ref": "#/$defs/SearchProvider",
               "description": "Supported search service."
+            },
+            "sandboxEnv": {
+              "description": "Variable name the sandbox sees for the key, such as BRAVE_SEARCH_API_KEY for Hermes's Brave plugin. Defaults to the credential's variable.",
+              "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+              "type": "string",
+              "x-nemoclaw-error": "web search sandboxEnv must be an environment variable name"
             }
           },
           "required": [
             "kind",
             "provider",
+            "credential"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A key-authenticated HTTP API, such as an MCP service, with a gateway-held key.",
+          "properties": {
+            "authStyle": {
+              "$ref": "#/$defs/ApiAuthStyle",
+              "description": "How the key is sent: bearer, the default, as a bearer token, or header, as the raw value of headerName."
+            },
+            "credential": {
+              "$ref": "#/$defs/Credential",
+              "description": "Host environment reference holding the API key."
+            },
+            "endpoint": {
+              "description": "The API's HTTPS URL.",
+              "type": "string"
+            },
+            "headerName": {
+              "description": "The header that carries the key. Defaults to Authorization for bearer; required for header.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "api",
+              "description": "Integration implementation selected by this definition.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "endpoint",
             "credential"
           ],
           "type": "object"
@@ -1549,6 +1620,13 @@
         ]
       },
       "properties": {
+        "grants": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Grant"
+          },
+          "description": "Named grants added to the isolated preset, each like an OpenShell network policy rule without its name. An explicit policy holds its own grants.",
+          "type": "object"
+        },
         "policy": {
           "$ref": "#/$defs/ExplicitPolicySelection",
           "description": "Complete authored OpenShell policy, replacing the isolated preset."
@@ -1788,6 +1866,10 @@
           "description": "Model fields the selected adapter declares as extensions, such as Pi's context_window; Fabric validates them.",
           "type": "object"
         },
+        "harnessProvider": {
+          "description": "Fabric model provider the harness uses, such as custom. Defaults to the inference provider's API family.",
+          "type": "string"
+        },
         "maxTokens": {
           "description": "Maximum output tokens requested from the native adapter.",
           "format": "uint32",
@@ -1804,6 +1886,16 @@
           "additionalProperties": true,
           "description": "Opaque native model settings validated by Fabric's selected model schema.",
           "type": "object"
+        },
+        "temperature": {
+          "description": "Sampling temperature, passed to Fabric's temperature; Fabric validates the range.",
+          "format": "double",
+          "type": "number"
+        },
+        "topP": {
+          "description": "Nucleus sampling probability, passed to Fabric's top_p; Fabric validates the range.",
+          "format": "double",
+          "type": "number"
         }
       },
       "required": [
@@ -2357,6 +2449,11 @@
         "agent": {
           "$ref": "#/$defs/Agent",
           "description": "The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes."
+        },
+        "driverConfig": {
+          "additionalProperties": true,
+          "description": "OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.",
+          "type": "object"
         },
         "harness": {
           "$ref": "#/$defs/Harness",

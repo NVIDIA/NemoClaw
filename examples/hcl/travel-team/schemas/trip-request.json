@@ -1,0 +1,36 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Trip request",
+  "type": "object",
+  "required": ["travelers", "stops", "budget"],
+  "additionalProperties": false,
+  "properties": {
+    "travelers": { "type": "integer", "minimum": 1 },
+    "origin": { "type": "string", "description": "Where the trip starts and ends." },
+    "stops": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["city", "arrive", "depart"],
+        "additionalProperties": false,
+        "properties": {
+          "city": { "type": "string" },
+          "arrive": { "type": "string", "format": "date" },
+          "depart": { "type": "string", "format": "date" },
+          "interests": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "required": ["amount", "currency"],
+      "additionalProperties": false,
+      "properties": {
+        "amount": { "type": "number", "exclusiveMinimum": 0 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+      }
+    }
+  }
+}

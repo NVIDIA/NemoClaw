@@ -396,7 +396,10 @@ fn get_provider(
         .get(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
         .ok_or_else(|| Status::not_found("absent"))?
         .clone();
-    provider.credentials.clear();
+    // OpenShell reports credential names with their values redacted.
+    for value in provider.credentials.values_mut() {
+        *value = "REDACTED".into();
+    }
     Ok(p::ProviderResponse {
         provider: Some(provider),
         ..Default::default()
@@ -443,7 +446,10 @@ fn create_provider(
     if std::mem::take(&mut state.lose_create) {
         return Err(Status::unavailable("lost create reply secret"));
     }
-    provider.credentials.clear();
+    // OpenShell reports credential names with their values redacted.
+    for value in provider.credentials.values_mut() {
+        *value = "REDACTED".into();
+    }
     Ok(p::ProviderResponse {
         provider: Some(provider),
         ..Default::default()
@@ -480,7 +486,10 @@ fn update_provider(
     state.conditional_updates += 1;
     state.effects += 1;
     state.providers.insert(key, provider.clone());
-    provider.credentials.clear();
+    // OpenShell reports credential names with their values redacted.
+    for value in provider.credentials.values_mut() {
+        *value = "REDACTED".into();
+    }
     Ok(p::ProviderResponse {
         provider: Some(provider),
         ..Default::default()
@@ -759,24 +768,36 @@ fn policy_status(
         .sandboxes
         .get(&format!("{}/{}", workspace(&q.workspace_scope)?, q.sandbox))
         .ok_or_else(|| Status::not_found("absent"))?;
+    let policy = state.active_policy.clone().or_else(|| {
+        let mut policy = sandbox.spec.as_ref().unwrap().policy.clone()?;
+        if !policy.network_policies.is_empty()
+            && let Some(fs) = &mut policy.filesystem
+            && !fs
+                .read_only
+                .iter()
+                .chain(&fs.read_write)
+                .any(|p| p == "/var/log")
+        {
+            fs.read_only.push("/var/log".into());
+        }
+        Some(policy)
+    });
+    // Like OpenShell's, the hash identifies the loaded policy's content.
+    let policy_hash = policy
+        .as_ref()
+        .map(|policy| {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::hash::DefaultHasher::new();
+            prost::Message::encode_to_vec(policy).hash(&mut hasher);
+            format!("fixture:{:016x}", hasher.finish())
+        })
+        .unwrap_or_default();
     Ok(p::GetSandboxPolicyStatusResponse {
         active_version: 1,
         revision: Some(p::SandboxPolicyRevision {
             version: 1,
-            policy: state.active_policy.clone().or_else(|| {
-                let mut policy = sandbox.spec.as_ref().unwrap().policy.clone()?;
-                if !policy.network_policies.is_empty()
-                    && let Some(fs) = &mut policy.filesystem
-                    && !fs
-                        .read_only
-                        .iter()
-                        .chain(&fs.read_write)
-                        .any(|p| p == "/var/log")
-                {
-                    fs.read_only.push("/var/log".into());
-                }
-                Some(policy)
-            }),
+            policy_hash,
+            policy,
             status: p::PolicyStatus::Loaded as i32,
             ..Default::default()
         }),

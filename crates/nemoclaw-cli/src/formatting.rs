@@ -462,15 +462,6 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         for resource in &result.retained {
             let label = resource_label(resource);
             output.push_str(&format!("  {label}\n"));
-            if resource == "openshell_workspace.deployment" {
-                output.push_str(&format!(
-                    "    {}\n",
-                    context.output_palette.paint(
-                        "Retaining the workspace does not preserve sandbox files or conversation history.",
-                        Tone::Warning
-                    )
-                ));
-            }
             if context.verbose && label != *resource {
                 output.push_str(&format!("    {}\n", terminal_text(resource)));
             }
@@ -737,7 +728,7 @@ mod tests {
         let value = json!({
             "outcome": "destroyed",
             "changes": [{"resource": "openshell_sandbox.assistant", "actions": ["delete"]}],
-            "retained": ["openshell_workspace.deployment"]
+            "retained": ["docker_volume.inference_storage_inference_qwen"]
         });
         let colored = super::render(
             CommandResult::Operation(serde_json::from_value(value.clone()).unwrap()),
@@ -748,7 +739,6 @@ mod tests {
         assert!(colored.contains("\x1b[38;2;118;185;0mDestroy complete"));
         assert!(colored.contains("\x1b[33mdelete\x1b[0m  sandbox/assistant"));
         assert!(colored.contains("\x1b[33mSandbox files and conversation history deleted.\x1b[0m"));
-        assert!(colored.contains("\x1b[33mRetaining the workspace does not preserve sandbox files or conversation history.\x1b[0m"));
         let machine = super::render(
             CommandResult::Operation(serde_json::from_value(value).unwrap()),
             OutputFormat::Json,
@@ -935,17 +925,13 @@ mod tests {
     }
 
     #[test]
-    fn destroy_separates_sandbox_loss_from_retained_workspace() {
+    fn destroy_separates_sandbox_loss_from_retained_data() {
         let text = render(
             &["nemoclaw", "plan", "--destroy"],
-            json!({"outcome":"planned","changes":[{"resource":"openshell_sandbox.assistant","actions":["delete"]}],"retained":["openshell_workspace.deployment","docker_volume.inference_storage_inference_qwen"]}),
+            json!({"outcome":"planned","changes":[{"resource":"openshell_sandbox.assistant","actions":["delete"]}],"retained":["docker_volume.inference_storage_inference_qwen"]}),
         );
         let (remove, keep) = text.split_once("Retained resources:").unwrap();
         assert!(remove.contains("Deletes sandbox files"));
-        assert!(keep.contains("OpenShell workspace\n"));
-        assert!(keep.contains(
-            "Retaining the workspace does not preserve sandbox files or conversation history."
-        ));
         assert!(keep.contains("model cache/qwen"));
     }
 

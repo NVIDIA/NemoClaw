@@ -58,6 +58,7 @@ mod tls;
 mod transport;
 #[path = "travel_example.rs"]
 mod travel_example;
+mod travel_team_example;
 #[path = "web_search.rs"]
 mod web_search;
 

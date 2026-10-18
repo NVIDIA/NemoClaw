@@ -183,6 +183,7 @@ impl Document {
             {
                 match binding.definition {
                     Integration::WebSearch(search) => names.push(&search.credential.env),
+                    Integration::Api(api) => names.push(&api.credential.env),
                 }
             }
         }

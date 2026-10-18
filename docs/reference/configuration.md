@@ -112,6 +112,22 @@ Paths:
 |---|---|---|---|---|
 | `allow` | array of string | Yes | — | Native tool identifiers. Fabric validates availability and semantics. Constraints: minimum items 1; maximum items 128; items: pattern `^[^\u0000-\u001f\u007f]+$(?![\s\S])`; minimum characters 1; maximum characters 256. |
 
+## ApiAuthStyle
+
+How an API key is sent.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.integrations.{key}.authStyle`
+- `spec.sandboxes[].agent.integrations.{key}.authStyle`
+- `spec.sandboxes[].integrations.{key}.authStyle`
+
+Accepted input: string.
+
+Constraints: `"bearer"` or `"header"`.
+
 ## AuthMethod
 
 Authentication method supported through the OpenShell provider.
@@ -389,6 +405,21 @@ An existing gateway managed outside this deployment.
 | `runtime` | [Runtime](#runtime) | No | — | Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports. |
 | `tls` | [TLS](#tls) | No | — | Optional mutual TLS references for an external HTTPS gateway. |
 
+## Grant
+
+Endpoint grants added to the isolated preset, restricted to executables.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.sandboxes[].network.grants.{key}`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `binaries` | array of [PolicyBinary](#policybinary) | No | — | Executables allowed to use the endpoints. Omitted or empty selects the harness's executables. |
+| `endpoints` | array of [PolicyEndpoint](#policyendpoint) | Yes | — | Allowed destinations and optional application-protocol restrictions, in OpenShell's endpoint shape. |
+
 ## HardwareProfile
 
 GPU-family contracts, not model or whole-system qualifications. System profiles fix ARM64; GPU profiles require architecture. Each currently requires one visible GPU.
@@ -557,6 +588,20 @@ Web search with gateway-held credentials and explicit agent grants.
 | `credential` | [Credential](#credential) | Yes | — | Host environment reference. OpenShell supplies the search provider's placeholder to the sandbox. |
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"webSearch"`. |
 | `provider` | [SearchProvider](#searchprovider) | Yes | — | Supported search service. |
+| `sandboxEnv` | string | No | — | Variable name the sandbox sees for the key, such as BRAVE_SEARCH_API_KEY for Hermes's Brave plugin. Defaults to the credential's variable. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
+
+### Alternative 2
+
+A key-authenticated HTTP API, such as an MCP service, with a gateway-held key.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `authStyle` | [ApiAuthStyle](#apiauthstyle) | No | — | How the key is sent: bearer, the default, as a bearer token, or header, as the raw value of headerName. |
+| `credential` | [Credential](#credential) | Yes | — | Host environment reference holding the API key. |
+| `endpoint` | string | Yes | — | The API's HTTPS URL. |
+| `headerName` | string | No | — | The header that carries the key. Defaults to Authorization for bearer; required for header. |
+| `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"api"`. |
 
 ## KubernetesAuthentication
 
@@ -672,6 +717,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
+| `grants` | map of [Grant](#grant) | No | — | Named grants added to the isolated preset, each like an OpenShell network policy rule without its name. An explicit policy holds its own grants. |
 | `policy` | [ExplicitPolicySelection](#explicitpolicyselection) | No | — | Complete authored OpenShell policy, replacing the isolated preset. |
 | `tier` | string | No | `"isolated"` | Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated. Constraints: `""` or `"isolated"`. Omitted or empty selects isolated only without policy.explicit. |
 
@@ -742,9 +788,12 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `extensions` | object | No | — | Model fields the selected adapter declares as extensions, such as Pi's context_window; Fabric validates them. |
+| `harnessProvider` | string | No | — | Fabric model provider the harness uses, such as custom. Defaults to the inference provider's API family. |
 | `maxTokens` | integer | No | — | Maximum output tokens requested from the native adapter. Constraints: minimum 1; maximum 4294967295. |
 | `model` | string | Yes | — | Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
 | `settings` | object | No | — | Opaque native model settings validated by Fabric's selected model schema. |
+| `temperature` | number | No | — | Sampling temperature, passed to Fabric's temperature; Fabric validates the range. |
+| `topP` | number | No | — | Nucleus sampling probability, passed to Fabric's top_p; Fabric validates the range. |
 
 ## PolicyAllowRule
 
@@ -754,6 +803,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[]`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[]`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -768,6 +818,10 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].tool`
+- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.tool`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].tool`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.params.{key}`
@@ -785,6 +839,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.binaries[]`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.binaries[]`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -799,6 +854,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.endpoints[]`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[]`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -844,6 +900,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.endpoints[].json_rpc`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].json_rpc`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -872,6 +929,8 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[]`
+- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[]`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow`
 
@@ -890,6 +949,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.endpoints[].mcp`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].mcp`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -938,6 +998,10 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].tool`
+- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.tool`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].tool`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.params.{key}`
@@ -1023,6 +1087,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `agent` | [Agent](#agent) | Yes | — | The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes. |
+| `driverConfig` | object | No | — | OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration. |
 | `harness` | [Harness](#harness) | No | — | Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation. |
 | `harnessRef` | string | No | — | Name of a visible harness configuration. Excludes inline harness. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
