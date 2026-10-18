@@ -193,12 +193,18 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
 
     // The runner derives the image from the reference image, adding one
     // executable; the sandbox runs the derived image, so it is there.
-    let containers = docker_objects(
-        &engine,
-        "container",
-        &format!("name=openshell-{}--{}", document.workspace(), sandbox.name),
-    );
-    let container = containers.first().expect("the sandbox has a container");
+    // Select the container running the image: each sandbox also has a
+    // supervisor container.
+    let image_id = sandbox
+        .image
+        .ref_
+        .rsplit_once('@')
+        .map(|(_, id)| id.to_owned())
+        .expect("the sandbox image is referenced by digest");
+    let containers = docker_objects(&engine, "container", &format!("ancestor={image_id}"));
+    let container = containers
+        .first()
+        .expect("a container runs the derived image");
     let check = Command::new("docker")
         .args([
             "--host",
