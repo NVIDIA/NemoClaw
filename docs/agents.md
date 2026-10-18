@@ -247,7 +247,8 @@ NemoClaw sends the provider's API to any adapter whose Fabric descriptor declare
 `extensions` holds the model fields the selected adapter declares, and Fabric validates them; it cannot set a field the deployment already sets.
 The SDK preserves each named route plus the `default` role.
 
-Any model or settings update replaces the agent and its sandbox, deleting the sandbox's files and conversations; keep data that must survive on a [mounted volume](#skills-on-a-mounted-volume).
+Any model or settings update replaces the agent and its sandbox, deleting its writable layer and in-memory conversation.
+Use [mounted agent-data volumes](state.md#keep-agent-files-on-mounted-volumes) for files that must survive; retained files do not by themselves resume a native conversation.
 
 ## Runtime Lifecycle
 

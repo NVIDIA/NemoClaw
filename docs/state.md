@@ -37,11 +37,13 @@ Native settings can select other locations; inspect the selected harness configu
 | Agent data | Location and lifetime |
 |---|---|
 | Agent working files | `/sandbox/workspace`, the Fabric environment workspace NemoClaw configures |
-| Agent artifacts | `/sandbox/artifacts`; Hermes Relay traces go under `relay/`; deleted with the sandbox |
+| Agent artifacts | `/sandbox/artifacts`; Hermes Relay traces go under `relay/`; deleted with the sandbox unless stored on a mounted volume |
 | Harness configuration, history, and caches | Owned by the selected Fabric adapter, under its own home or temporary directories; see the adapter's documentation |
 | Claude adapter files | `/sandbox/artifacts/.fabric/claude`; generated MCP configuration and skill plugins, not a conversation backup |
 | Codex adapter files | `/sandbox/artifacts/.fabric/codex`; for a non-OpenAI model provider, the adapter sets `CODEX_HOME` to its `custom-provider-home` subdirectory |
 | Deep Agents conversation checkpoints | `/sandbox/artifacts/.fabric/deepagents/runtimes/<key>.sqlite`, where `<key>` is the SHA-256 hexadecimal digest of the Fabric runtime ID |
+| Hermes native home | `/sandbox/artifacts/.fabric/hermes/runtimes/<runtime-id>`; contains the runtime's generated configuration and native session database |
+| OpenClaw native state | A private temporary directory selected by the adapter, removed when the runtime stops; setting `OPENCLAW_STATE_DIR` does not relocate it |
 | Pi conversation | Held in the running Pi process; switching declared choices preserves it, while applying configuration changes or restarting the runtime loses it |
 | mini-SWE-agent conversation | Held by the live runtime; discarded when that runtime stops |
 | OO Agents (`nooa`) and BenchAgent (`nooa-bench`) | Working files use the configured workspace; persistence beyond those files belongs to the selected native target, with no common backup path defined by these adapters |
@@ -49,7 +51,8 @@ Native settings can select other locations; inspect the selected harness configu
 
 NemoClaw sets the workspace and artifact locations in the agent's Fabric configuration; the [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python) define the rest.
 The table covers the harness targets in the [image build matrix](../docker-bake.hcl); a descriptor in the image catalog alone does not establish that a harness is installed or qualified on a platform.
-Agent state can survive a process restart while its files remain; replacing or deleting the sandbox, as any agent configuration change does, deletes its files.
+Replacing or deleting the sandbox, as any agent configuration change does, deletes files in its writable layer.
+Use mounted volumes for files that must survive replacement; retaining files does not by itself resume a native conversation.
 Each declared agent runs in its own OpenShell sandbox; workspace directories do not further isolate processes within that sandbox.
 
 ### Conversation and Credential Boundaries
@@ -67,7 +70,103 @@ Relay traces are telemetry artifacts, not an import format for restoring native 
 
 Treat collected native homes, checkpoints, workspaces, and traces as sensitive: they can contain credentials, prompts, tool output, and conversation data.
 Keep them separate from public diagnostics; see [credential ownership](security.md#credentials-and-authentication).
-Complete native-storage inventories, tested backup and restore procedures, and version compatibility remain tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
+The mounted-volume guidance below describes file retention and the pinned adapters' conversation limits; it does not qualify conversation restore or compatibility across harness versions.
+
+## Keep Agent Files on Mounted Volumes
+
+Ask the platform operator to provision storage before applying the deployment.
+Backing up, restoring, and moving that storage is the platform's job; NemoClaw has no native-data backup or transfer command.
+Use a separate volume for each agent's workspace and artifacts so unrelated agents do not share credentials or conversation data.
+
+For a Docker gateway, merge this fragment into the selected sandbox in the deployment YAML:
+
+```yaml
+sandboxes:
+  - name: assistant
+    driverConfig:
+      docker:
+        mounts:
+          - type: volume
+            source: assistant-workspace
+            target: /sandbox/workspace
+            read_only: false
+          - type: volume
+            source: assistant-artifacts
+            target: /sandbox/artifacts
+            read_only: false
+```
+
+The platform must create both named volumes on the gateway's Docker engine, grant the deployment's OpenShell workspace access through the required approval labels, and make their contents writable by the sandbox's identity.
+Default admission requires `openshell.ai/sandbox-attachable=true` and `openshell.ai/sandbox-attachable-workspace=<OpenShell-workspace-name>` on each volume; an operator-configured label map replaces these defaults.
+Use the authorized OpenShell workspace name, not the sandbox name or Kubernetes namespace; see [external resource admission](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/configuration.mdx#external-resource-admission).
+The bundled images use UID/GID `10001:10001`; check the identity for a custom image or OpenShift namespace.
+The gateway must allow driver configuration, and the sandbox's filesystem policy must allow writes to both target paths.
+Mounts default to read-only, so `read_only: false` is required for agent writes.
+Do not mount over `/sandbox` or the image's working directory: OpenShell protects its workspace root and control paths.
+For driver-specific settings and admission labels, follow the pinned OpenShell [Docker](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/crates/openshell-driver-docker/README.md), [Podman](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/crates/openshell-driver-podman/README.md), or [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/crates/openshell-driver-kubernetes/README.md) instructions; Kubernetes uses PVCs rather than Docker named volumes.
+
+### Choose What to Retain for Each Harness
+
+All image-build targets use `/sandbox/workspace` for working files.
+Mount that directory for each target below; add the listed mounts for native files when needed.
+Paths describe the pinned Fabric adapters linked above, not a common history import format.
+
+| Harness | Additional mount and retained files | Conversation after runtime replacement |
+|---|---|---|
+| [OpenClaw](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/openclaw/src/nemo_fabric_adapters/openclaw/adapter.py) | Workspace files only; the adapter overrides native state/config paths with its private temporary directory and removes it on stop | Mounting the workspace does not preserve the adapter's temporary native history |
+| [Hermes](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/hermes/src/nemo_fabric_adapters/hermes/adapter.py) | `/sandbox/artifacts` retains the native home and session database under `.fabric/hermes/runtimes/<runtime-id>`, plus Relay traces when enabled | A new runtime starts with empty conversation memory; retaining its database does not establish automatic resume |
+| [Claude Code](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/claude/src/nemo_fabric_adapters/claude/adapter.py) | `/sandbox/artifacts` retains generated MCP configuration and skill plugins under `.fabric/claude`; this is not an inventory of the native client's home | The adapter starts a new native client; no saved-conversation reattachment procedure is provided |
+| [Codex](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/codex/README.md#authentication) | `/sandbox/artifacts` retains `.fabric/codex`, including `custom-provider-home` for non-OpenAI providers; cached native login uses `CODEX_HOME` (default `/sandbox/.codex`), which needs its own mount if retained | The adapter starts a new thread; OpenAI API-key login instead uses a temporary home outside artifacts and removes it on stop, even if `CODEX_HOME` was supplied |
+| [LangChain Deep Agents](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/deepagents/src/nemo_fabric_adapters/deepagents/adapter.py) | `/sandbox/artifacts` retains the SQLite checkpoints under `.fabric/deepagents/runtimes` | Each runtime creates a new LangGraph thread ID; the saved SQLite file alone does not resume the old thread |
+| [Pi](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/typescript/pi/src/pi-sdk.ts) | Workspace files; the adapter uses an in-memory session manager | No conversation file to retain; stopping the runtime loses its conversation |
+| [mini-SWE-agent](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/mini-swe-agent/src/nemo_fabric_adapters/mini_swe_agent/adapter.py) | Workspace files; the adapter keeps the conversation in the live runtime | No conversation file to retain; stopping the runtime loses its conversation |
+| [OO Agents (`nooa`)](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/nooa/src/nemo_fabric_adapters/nooa/adapter.py) | Workspace files; additional storage depends on the selected native target | The adapter defines no common persistent conversation path or restore procedure |
+| [BenchAgent (`nooa-bench`)](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/nooa/src/nemo_fabric_adapters/nooa/bench_adapter.py) | Workspace files; additional storage depends on the selected native target | The adapter defines no common persistent conversation path or restore procedure |
+| [Remote agent](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/remote-agent/src/nemo_fabric_adapters/remote_agent/adapter.py) | Workspace files and any requested local artifacts; remote service data stays with that service | Local adapter history is in memory; a local volume does not back up the remote service |
+
+Mounting the whole home or a temporary directory does not establish conversation resume.
+Homes can contain login tokens and generated authentication configuration, while adapter cleanup can still delete files on a mounted temporary directory.
+Native conversation reattachment needs support from Fabric and the selected harness; remaining limits are tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
+
+### Verify Retention before Relying on It
+
+From the deployment's working directory, plan and apply the edited YAML with its original state directory using [the update procedure](usage.md#updates-and-recovery).
+Adding or changing `driverConfig` replaces the sandbox, so first preserve any files needed from its existing writable layer through authenticated native access.
+A new mount does not move those files into the volume.
+
+Select the authenticated gateway and workspace using [native access](interfaces.md#select-the-gateway-and-workspace).
+From the same client terminal, replace `assistant` with the sandbox name and create two non-sensitive markers:
+
+```sh
+openshell sandbox exec -n assistant --no-tty --no-login-shell -- sh -c '
+  set -eu
+  umask 077
+  for directory in /sandbox/workspace /sandbox/artifacts; do
+    marker=$(mktemp "$directory/nemoclaw-retention.XXXXXX")
+    printf "%s\n" "nemoclaw-retention-check" > "$marker"
+    cat "$marker"
+    printf "marker: %s\n" "$marker"
+  done
+'
+```
+
+Expect `nemoclaw-retention-check` and a newly created file path for each directory; record both paths.
+For a deployment whose replacement you have authorized, read those exact paths after replacement, substituting the suffixes printed above:
+
+```sh
+openshell sandbox exec -n assistant --no-tty --no-login-shell -- cat /sandbox/workspace/nemoclaw-retention.REPLACE /sandbox/artifacts/nemoclaw-retention.REPLACE
+```
+
+Expect the two marker lines again and inspect the named volume or PVC from the platform side to confirm the intended storage is attached.
+Remove only the two marker files you created after checking them.
+These commands are checked against the pinned CLI parser; retention through replacement has not been qualified by this guide.
+The check verifies file retention only; separately verify any native history workflow before depending on conversation continuity.
+If the mount is rejected or unwritable, retain the original state and volumes, correct admission labels, driver settings, policy, or filesystem ownership, then retry with the same deployment state.
+Do not delete the volume as a recovery step.
+
+Before the platform takes a backup or transfers a volume, stop writers and follow the native harness's database consistency requirements.
+Keep the source volumes and the original harness version until the destination can read the required files and its native history workflow has been verified.
+Protect native homes and artifacts as credential-bearing data; volume retention is separate from credential revocation.
 
 ## Configuration Export and Agent Data
 
@@ -75,12 +174,13 @@ Export produces checked desired-state YAML with credential references.
 It does not copy agent files, histories, native settings, or model weights.
 Use [the export workflow](usage.md) for configuration and [native agent access](agents.md) to identify agent-owned state.
 
-Backup, restore and portable snapshots of native data are tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
+Use [mounted volumes](#keep-agent-files-on-mounted-volumes) to retain agent files; the platform owns backups, restore and transfer of those volumes.
 The current CLI has no snapshot or lost-state adoption command.
 
 ## Deletion and Retention
 
-**Destroy deletes sandbox files and conversation history.**
+**Destroy deletes the sandbox's writable layer and its in-memory conversation history.**
+Files on caller-supplied mounted volumes remain under the platform's control; preserve or retire them separately.
 The [destroy guide](usage.md#destroy) owns the workload removal, retained-storage, and recovery procedure.
 The retained OpenShell workspace resource does not imply that sandbox files survive.
 
@@ -93,7 +193,7 @@ To retire a deployment whose retained resources are on Docker engines, follow [R
 
 | Resource or data | Result of a completed destroy |
 |---|---|
-| Sandbox and its native files, settings, tokens, and conversations | Deleted |
+| Sandbox writable layer and in-memory conversation history | Deleted; caller-supplied mounted volumes remain under platform control |
 | Deployment provider profiles and registrations, including declared Brave integration resources | Removed; upstream keys are not revoked |
 | External gateway, inference service, external Ollama daemon/model, and externally owned engine/network | Remain under their operators' control |
 | OpenShell workspace | Retained and tracked; does not preserve the deleted sandbox's files |
@@ -129,4 +229,5 @@ On an external gateway, the `OpenShell workspace` entry stays on that gateway.
 Use [operation recovery](usage.md#updates-and-recovery) with the original configuration and retained state.
 For a failed or interrupted native Helm release removal, use [Helm removal recovery](usage.md#recover-an-interrupted-helm-removal); preserve the checkpoint and current state together.
 For a move from an earlier product version, use [migration](migration.md).
-Moving state to another host and migrating native data are tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
+The platform owns transfer of mounted native data; a copied volume does not move deployment ownership or establish compatibility with another harness version.
+Moving deployment state to another host and native conversation continuity remain unqualified ([#12639](https://github.com/NVIDIA/NemoClaw/issues/12639)).
