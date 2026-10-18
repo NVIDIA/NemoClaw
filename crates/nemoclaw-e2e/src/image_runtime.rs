@@ -60,22 +60,8 @@ use crate::http_fixture as transport;
 
 /// Installed-image metadata for isolated fixtures.
 pub fn catalog() -> nemoclaw_sdk::fabric_catalog::FabricCatalog {
-    use nemoclaw_sdk::fabric_catalog::{BridgeCapabilities, FabricCatalog};
+    use nemoclaw_sdk::fabric_catalog::FabricCatalog;
     let mut catalog = FabricCatalog::bundled();
-    catalog.bridge = Some(BridgeCapabilities {
-        interface_version: 1,
-        operations: [
-            "validate",
-            "prepare",
-            "configure",
-            "check",
-            "invoke",
-            "serve",
-        ]
-        .map(String::from)
-        .to_vec(),
-        health_checks: vec![],
-    });
     let mut runtime = binding("fixture").runtime;
     runtime.binaries = catalog
         .adapters

@@ -15,6 +15,7 @@ mod gateway_source;
 mod network;
 mod profile;
 mod provider;
+mod services;
 pub use nemoclaw_openshell::pairs::{inference_rows, web_search_rows};
 pub use nemoclaw_openshell::{policy::policy_json, profile::definition as inference_profile};
 mod inference;
@@ -167,6 +168,41 @@ fn provider_row(
     services: &dyn Services,
 ) -> Result<Row, ObservationError> {
     let provider = response.provider.ok_or(ObservationError::Incomplete)?;
+    if provider.r#type == format!("nemoclaw-api-{name}") {
+        let metadata = provider
+            .metadata
+            .as_ref()
+            .ok_or(ObservationError::Incomplete)?;
+        if metadata.workspace.is_empty()
+            || provider.profile_workspace != metadata.workspace
+            || provider.config.len() != 1
+            || metadata.labels.contains_key(CREDENTIAL_SOURCE)
+            || !credential_metadata::unpack(&metadata.annotations)?.is_empty()
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
+        let endpoint = provider
+            .config
+            .get("NEMOCLAW_API_ENDPOINT")
+            .filter(|endpoint| !endpoint.is_empty())
+            .ok_or(ObservationError::Incomplete)?
+            .clone();
+        let credential = metadata
+            .labels
+            .get(CREDENTIAL)
+            .filter(|credential| !credential.is_empty())
+            .ok_or(ObservationError::Incomplete)?
+            .clone();
+        let mut row = base(provider.metadata, name, removing)?;
+        row.extend([
+            ("endpoint".into(), endpoint),
+            ("credential_env".into(), credential),
+            ("provider_type".into(), "api".into()),
+            ("profile_name".into(), provider.r#type),
+            ("credential_source".into(), String::new()),
+        ]);
+        return Ok(row);
+    }
     if nemoclaw_openshell::search::SearchProvider::from_profile(&provider.r#type).is_some() {
         return profile::provider_row(provider, name, removing);
     }
@@ -281,18 +317,25 @@ fn sandbox_row(
     row.insert("driver_config_json".into(), driver_config);
     row.insert("policy_json".into(), policy_input);
     row.insert("launch_json".into(), launch_json);
+    // Empty until the loaded policy is observed.
+    row.insert(POLICY_HASH.into(), String::new());
     // Phase is used by active checks, but is not a Terraform schema attribute.
     Ok((row, ready, grants))
 }
+/// The state attribute recording the loaded policy revision's hash.
+pub(crate) const POLICY_HASH: &str = "policy_hash";
+
+/// The hash of the loaded policy revision, once it keeps every declared rule.
 fn active_policy(
     response: proto::GetSandboxPolicyStatusResponse,
     expected: &str,
-) -> Result<(), ObservationError> {
+) -> Result<String, ObservationError> {
     let revision = response.revision.ok_or(ObservationError::Incomplete)?;
     if response.active_version == 0
         || response.active_version != revision.version
         || revision.status != proto::PolicyStatus::Loaded as i32
-        || !network::loaded_policy_matches(
+        || revision.policy_hash.is_empty()
+        || !network::loaded_policy_contains(
             revision
                 .policy
                 .as_ref()
@@ -302,7 +345,7 @@ fn active_policy(
     {
         return Err(ObservationError::Incomplete);
     }
-    Ok(())
+    Ok(revision.policy_hash)
 }
 
 async fn checked_sandbox_row_with<F>(
@@ -389,6 +432,25 @@ fn provider_registration(known: &Row, unknown: &[&str]) -> Option<String> {
     (!unknown.contains(&"name")).then(|| known.get("name").cloned().unwrap_or_default())
 }
 
+/// The variable sandboxes see an inference registration's key in; empty for
+/// a server that needs none.
+fn inference_sandbox_env(known: &Row, unknown: &[&str]) -> Option<String> {
+    if ["name", "credential_env", "credential_source"]
+        .iter()
+        .any(|field| unknown.contains(field))
+    {
+        return None;
+    }
+    let value = |field: &str| known.get(field).map(String::as_str).unwrap_or_default();
+    let authenticated =
+        !value("credential_env").is_empty() || !value("credential_source").is_empty();
+    Some(if authenticated {
+        nemoclaw_openshell::profile::inference_key_env(value("name"))
+    } else {
+        String::new()
+    })
+}
+
 /// The registration a web search row registers, derived from the inputs that
 /// name it.
 fn web_search_registration(known: &Row, unknown: &[&str]) -> Option<String> {
@@ -402,10 +464,42 @@ fn web_search_registration(known: &Row, unknown: &[&str]) -> Option<String> {
 }
 
 /// OpenShell objects and their planning rules.
-pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
+pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
     use nemoclaw_tofu::Definition;
     [
         Definition::new("workspace", &["name", "owner", "generation"], &[]),
+        Definition::new(
+            composite::API,
+            &[
+                "workspace",
+                "name",
+                "owner",
+                "generation",
+                "endpoint",
+                "credential_env",
+                "binaries_json",
+                "auth_style",
+                "header_name",
+            ],
+            &["credential_env", "binaries_json"],
+        )
+        .optional(&[
+            "endpoint",
+            "credential_env",
+            "binaries_json",
+            "auth_style",
+            "header_name",
+        ])
+        .reset_when_omitted(&[
+            "endpoint",
+            "credential_env",
+            "binaries_json",
+            "auth_style",
+            "header_name",
+        ])
+        .validate_inputs(composite::validate_api)
+        .replaces(binaries_changes)
+        .derived("registration", provider_registration),
         // A web search provider's profile and registration, as one resource
         // whose owner is its workspace's. Every input names them, so changes
         // replace. `credential_env` and `binaries` are required by plans,
@@ -420,13 +514,14 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
                 "generation",
                 "provider_type",
                 "credential_env",
+                "sandbox_env",
                 "binaries_json",
             ],
             &["binaries_json"],
         )
-        .optional(&["credential_env", "binaries_json"])
+        .optional(&["credential_env", "sandbox_env", "binaries_json"])
         // Omission selects the default, not the previous value.
-        .reset_when_omitted(&["credential_env", "binaries_json"])
+        .reset_when_omitted(&["credential_env", "sandbox_env", "binaries_json"])
         .replaces(binaries_changes)
         .derived("registration", web_search_registration),
         // An inference server's profile and registration, as one resource
@@ -468,7 +563,8 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
             "cluster_source",
         ])
         .replaces(inference_changes)
-        .derived("registration", provider_registration),
+        .derived("registration", provider_registration)
+        .derived("sandbox_env", inference_sandbox_env),
         Definition::new(
             "sandbox",
             &[
@@ -481,10 +577,24 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
                 "policy_json",
                 "provider_names_json",
                 "driver_config_json",
+                services::FIELD,
             ],
             &[],
         )
-        .optional(&["policy_json", "provider_names_json", "driver_config_json"]),
+        // The policy hash is empty until the loaded policy is observed.
+        .optional(&[
+            "policy_json",
+            "provider_names_json",
+            "driver_config_json",
+            services::FIELD,
+            POLICY_HASH,
+        ])
+        .validate_inputs(network::validate_grant_names)
+        // The URLs of the sandbox's exposures, which are part of its creation.
+        .computed(services::URLS, nemoclaw_tofu::carry_prior)
+        // The loaded policy's hash, OpenShell's additions included; later
+        // observations must find the same one.
+        .computed(POLICY_HASH, nemoclaw_tofu::carry_prior),
     ]
     .map(lifecycle_rules)
     .map(|mut definition| {
@@ -509,18 +619,14 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
     })
 }
 
-/// Retained and stateful objects keep their bindings and refuse replacement.
+/// Retained objects keep their bindings and refuse replacement.
 fn lifecycle_rules(definition: nemoclaw_tofu::Definition) -> nemoclaw_tofu::Definition {
     use nemoclaw_openshell::{OpenShellLifecycle, openshell_lifecycle};
     use nemoclaw_tofu::Protection;
     match openshell_lifecycle(definition.kind) {
         // OpenTofu's prevent_destroy retains a workspace; generated graphs set
-        // it. Without it, explicit teardown may delete the workspace, as it may
-        // a sandbox.
+        // it. Without it, explicit teardown may delete the workspace.
         Some(OpenShellLifecycle::Retained) => definition
-            .protect(Protection::UnlessDestroying)
-            .refuse_replacement(),
-        Some(OpenShellLifecycle::Stateful) => definition
             .protect(Protection::UnlessDestroying)
             .refuse_replacement(),
         Some(OpenShellLifecycle::Reconstructible) | None => definition,

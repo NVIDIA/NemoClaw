@@ -60,7 +60,7 @@ resource "openshell_sandbox" "agent" {
   launch_json         = var.launch_json
   providers      = [openshell_inference.inference[0].ref]
   policy {
-    managed "nemoclaw-inference-local-fcb7b1f1af3733764900def4" {
+    managed {
       endpoints {
         access = "full"
         allowed_ips = ["127.0.0.1/32"]

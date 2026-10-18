@@ -7,10 +7,9 @@
 pub enum OpenShellLifecycle {
     /// Workspace identity survives deployment teardown.
     Retained,
-    /// Sandbox files and history have no separately managed persistent storage.
-    /// Deletion requires explicit teardown; absence and replacement need recovery.
-    Stateful,
-    /// Registrations and configuration can be rebuilt from declared intent.
+    /// Sandboxes, registrations and configuration can be rebuilt from
+    /// declared intent. Replacing a sandbox deletes its files and history;
+    /// data that must survive belongs on a mounted volume.
     Reconstructible,
 }
 
@@ -18,19 +17,18 @@ pub enum OpenShellLifecycle {
 pub fn openshell_lifecycle(kind: &str) -> Option<OpenShellLifecycle> {
     match object_kind(kind) {
         "workspace" => Some(OpenShellLifecycle::Retained),
-        "sandbox" => Some(OpenShellLifecycle::Stateful),
-        "provider" | "provider_profile" | "web_search" | "inference" | "agent" => {
-            Some(OpenShellLifecycle::Reconstructible)
-        }
+        "sandbox" | "provider" | "provider_profile" | "web_search" | "inference" | "api"
+        | "agent" => Some(OpenShellLifecycle::Reconstructible),
         _ => None,
     }
 }
 
 /// The `openshell` provider's resource type name, after its prefix, for each object kind.
-pub const RESOURCE_TYPES: [(&str, &str); 4] = [
+pub const RESOURCE_TYPES: [(&str, &str); 5] = [
     ("workspace", "workspace"),
     ("web_search", "web_search"),
     ("inference", "inference"),
+    ("api", "api"),
     ("sandbox", "sandbox"),
 ];
 
@@ -84,6 +82,7 @@ pub fn type_name(kind: &str) -> &'static str {
         "workspace" => "openshell_workspace",
         "web_search" => "openshell_web_search",
         "inference" => "openshell_inference",
+        "api" => "openshell_api",
         "sandbox" => "openshell_sandbox",
         _ => "",
     }
@@ -96,7 +95,7 @@ pub const PROVIDER_TYPE: &str = "openshell_provider";
 /// The type of the `ref` an object kind exports.
 pub fn ref_type(kind: &str) -> &'static str {
     match kind {
-        "web_search" | "inference" => PROVIDER_TYPE,
+        "web_search" | "inference" | "api" => PROVIDER_TYPE,
         kind => type_name(kind),
     }
 }
@@ -108,7 +107,7 @@ pub fn registration_name(
 ) -> Option<String> {
     let value = |field: &str| values.get(field).map(String::as_str).unwrap_or_default();
     match kind {
-        "inference" => Some(value("name").to_owned()),
+        "inference" | "api" => Some(value("name").to_owned()),
         "web_search" => {
             let provider = crate::search::SearchProvider::from_name(value("provider_type"))?;
             Some(

@@ -16,6 +16,10 @@ pub type PlanComputed = fn(name: &str, prior: &State) -> Option<Value<String>>;
 /// Whether a change to a mutable field still requires replacement.
 pub type Replaces = fn(field: &str, prior: &State, proposed: &State) -> bool;
 
+/// Refuses a planned replacement, from the prior and planned state, with the
+/// reason and the way to make it possible.
+pub type RefuseReplacement = fn(prior: &State, planned: &State) -> Option<&'static str>;
+
 /// Validates an encoded `spec` input for a resource kind.
 pub type ValidateSpec = fn(kind: &str, encoded: &str) -> Result<(), nemoclaw_backend::Error>;
 
@@ -72,6 +76,8 @@ pub struct Definition {
     pub protection: Protection,
     /// Refuse replacement because it would discard retained identity or files.
     pub refuse_replacement: bool,
+    /// Refuse replacement in particular circumstances only.
+    pub refuse_replacement_when: Option<RefuseReplacement>,
     /// During teardown, keep the prior `running` observation instead of
     /// planning another installation attempt.
     pub keep_running_during_destroy: bool,
@@ -108,6 +114,7 @@ impl Definition {
             generated: Vec::new(),
             protection: Protection::None,
             refuse_replacement: false,
+            refuse_replacement_when: None,
             keep_running_during_destroy: false,
             replaces: None,
             validate_spec: None,
@@ -148,6 +155,10 @@ impl Definition {
     }
     pub fn refuse_replacement(mut self) -> Self {
         self.refuse_replacement = true;
+        self
+    }
+    pub fn refuse_replacement_when(mut self, rule: RefuseReplacement) -> Self {
+        self.refuse_replacement_when = Some(rule);
         self
     }
     pub fn keep_running_during_destroy(mut self) -> Self {

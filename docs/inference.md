@@ -137,12 +137,12 @@ OpenShell authorizes native endpoint access and substitutes the provider credent
 | `anthropic` | `anthropic-messages` |
 
 An explicit `api` can select `openai-completions`, `openai-responses`, or `anthropic-messages` with the matching provider transport.
-For example, configure `api: openai-responses` explicitly when an adapter expects the Responses protocol.
+NemoClaw uses it to read the endpoint's model catalog.
 The harness name does not change these defaults.
-The selected image's Fabric metadata supplies adapter capabilities; known conflicts stop planning, and missing metadata leaves compatibility unverified.
-Fabric validates its own configuration against the installed descriptor.
-The SDK forwards the selected protocol as the public model `api` extension.
-Fabric validates that extension against its canonical descriptor; a missing extension contract remains unknown, while an explicitly excluded protocol is unsupported.
+
+Agents use the protocol their harness's adapter selects for the provider transport.
+Fabric v0.5.0 has no per-model API setting, so an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent ([#13320](https://github.com/NVIDIA/NemoClaw/issues/13320)).
+Fabric validates the rest of its configuration when the agent is configured.
 
 Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with either OpenAI API.
 The provider name is the local reference used by routes; it does not select a vendor.
@@ -352,7 +352,6 @@ Ollama must listen only on a loopback address.
 NemoClaw observes its model inventory and never installs, stops, or deletes the daemon or model.
 The proxy exposes `openai-completions`; its service contract does not restrict the harness identifier.
 The selected adapter must accept that protocol and model configuration.
-For Pi models absent from its native registry, supply `overrides.settings.model_metadata` as shown in the [Pi example](../examples/fabric-pi.yaml).
 
 Use a Docker image store that records a repository digest for locally built images, as described in the [image build prerequisites](build.md#build-agent-images).
 Build the proxy image from the repository root, explicitly selecting the native host platform (`linux/arm64` below, or `linux/amd64`):
@@ -408,49 +407,36 @@ When retiring the deployment, remove the retained credential volume with [Remove
 
 ## Tune OpenClaw's Primary Route
 
-Set the public model output limit with `maxTokens`; put native model settings in `overrides.settings`.
+Set the public model output limit with `maxTokens`.
 The [tuning example](../examples/inference-tuning.yaml) uses:
 
 ```yaml
 overrides:
   model: example-reasoning-model
   maxTokens: 8192
-  settings:
-    model_metadata:
-      contextWindow: 65536
-      reasoning: true
-    reasoning_effort: high
 ```
 
-The SDK forwards `settings` unchanged into the public Fabric model configuration.
+A route can also set `temperature` and `topP`, which the SDK passes to Fabric's `temperature` and `top_p`.
+`harnessProvider` sets the Fabric model provider the harness uses; without it, the SDK uses the inference provider's API family, `openai` or `anthropic`.
+For example, Hermes's `custom` provider turns reasoning off by default, which a hosted reasoning model may need to answer within Fabric's invocation deadline.
+Fabric validates these values when it configures the agent.
+
+The pinned OpenClaw adapter takes no native model settings, so its routes leave `overrides.settings` unset.
+For adapters that take them, the SDK forwards `settings` unchanged into the public Fabric model configuration, keeping nested null values intact.
 The selected adapter's model schema and implementation own the meanings, accepted values, and defaults.
 These settings do not resize a managed inference server; configure that service's limits separately.
 The SDK does not infer native support from an adapter name or from accepting the YAML structure.
 
-The managed Ollama examples set both the service's `serving.contextTokens` and the route's `overrides.settings.model_metadata.contextWindow` to `32768`.
+The managed Ollama examples set the service's `serving.contextTokens` to `32768`.
 That suits OpenClaw; [Hermes needs at least `64000`](#size-the-context-for-hermes).
-An operator-reported prompt used 19,947 tokens in one setup, before allowing space for a reply.
-Keep the two limits aligned and size the model, KV cache, and GPU memory for the selected context.
-
-For an OpenClaw route to managed vLLM or Ollama, plan and apply compare the smaller of the service context and the effective route context window with `20000` plus the effective reply allowance.
-At the pinned adapter revision, omitted route context defaults to `32768`; `overrides.settings.model_metadata.contextWindow` replaces that default.
-The reply allowance defaults to `4096`; `overrides.maxTokens` replaces that default, and `overrides.settings.model_metadata.maxTokens` takes precedence over both.
-A smaller available context produces a budget warning; explicit token metadata that cannot be assessed instead produces a warning without substituting defaults.
-The `20000`-token prompt allowance is an estimate from the report; longer prompts and conversations need more.
-Plan and apply also warn whenever the effective route context window exceeds the managed service's `serving.contextTokens`, even when the initial prompt and reply allowance fit.
-For example, a service context of `24576` with the default route window of `32768` can permit longer conversations to exceed the server limit.
-Set `overrides.settings.model_metadata.contextWindow` no higher than the service context, or increase the service context and size memory for it.
-This mismatch warning can appear alongside the budget warning, or alongside the cannot-assess warning when the route window is valid but the reply allowance is not.
-The advisories appear in text output and the JSON result's `warnings` field; they neither reject the configuration nor measure the current prompt or available memory.
-These budgets do not qualify a model, GPU, or deployment path.
-
-Pi's native model metadata likewise belongs in `overrides.settings.model_metadata`; see the [Pi example](../examples/fabric-pi.yaml).
-Nested null values remain intact in opaque native settings.
+An operator-reported OpenClaw prompt used 19,947 tokens in one setup, before allowing space for a reply.
+Size the model, KV cache, and GPU memory for the selected context.
+The OpenClaw adapter owns how it uses the context window; NemoClaw does not assess an OpenClaw route's context budget.
 
 ## Size the Context for Hermes
 
 The pinned Hermes Agent requires a model context window of at least 64,000 tokens.
-It reads the window from the model server; route settings such as `overrides.settings.model_metadata` do not change it.
+It reads the window from the model server; route settings do not change it.
 For a Hermes route to managed vLLM or Ollama, set `serving.contextTokens` between `64000` and the schema maximum, `65536`, and choose a model that supports that context.
 The models in the managed Ollama examples and the [Spark vLLM example](../examples/spark/vllm.yaml), `qwen3:0.6b` and `Qwen/Qwen3-4B`, have 40,960-token native context windows and cannot serve Hermes.
 In one operator test, Hermes answered a request through cluster vLLM serving `Qwen/Qwen3-4B-Instruct-2507` with `serving.contextTokens: 65536`; that test does not qualify the model.
@@ -529,12 +515,12 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 | Managed service readiness from the SDK, including model preparation | Fixed 9-hour wait; expiration leaves the owned container and data in place |
 | Each packaged recipe preparation or verification execution | Fixed 8-hour limit; staged data remains after failure |
 | Managed gateway readiness | Fixed 90-second wait |
-| Sandbox/agent readiness | Fixed 300-second wait |
+| Agent start | Waits up to 120 seconds for the sandbox to serve `fabric-agent-ctl` |
 
 These are phase limits, not a promised total duration for apply.
 Other bounded observations can fail earlier, and request or transport failures are not automatically retried as mutations.
 The old onboarding timeout environment variables are not configuration inputs for these SDK paths.
-Use the [field reference](reference/configuration.md), [bound execution](../crates/openshell-provider/src/transport.rs), [agent configuration](../crates/fabric-provider/src/configuration.rs), [agent readiness](../crates/fabric-provider/src/bridge.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.
+Use the [field reference](reference/configuration.md), [bound execution](../crates/openshell-provider/src/transport.rs), [agent configuration](../crates/fabric-provider/src/configuration.rs), [agent start](../crates/fabric-provider/src/bridge.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.
 For a stopped managed service, inspect its [retained status](models.md#diagnose-and-recover-a-stopped-runtime) before choosing recovery.
 
 ## Verify the Result
@@ -563,11 +549,28 @@ Use [change constraints](usage.md#choose-the-change-path) before changing the AP
 The lifecycle fixture exercises apply, CLI export, unchanged reapply, drift rejection, and destroy.
 The [offline harness fixture](contributing/integration-tests.md#inference-api-fixtures) checks actual request paths with local protocol servers; it does not qualify a public endpoint, model quality, or live Nous authentication.
 
+## Onboarding Model Catalogs
+
+Guided onboarding offers curated models for NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and Nous Research.
+The [provider presets](../crates/nemoclaw-authoring/src/provider_presets.rs) own these reviewed lists; they are available without credentials or endpoint discovery.
+The selected model is checked for catalog membership.
+An unlisted identifier remains a custom model and produces an informational notice rather than a deployment restriction.
+SDK and Fabric validation still apply.
+
+The menu keeps an authored model selected, including a custom identifier.
+You can choose **Type another model**; generic OpenAI-compatible and Anthropic-compatible endpoints have no vendor catalog.
+Changing a vendor or endpoint recomputes the recommendations and membership check for the selected route.
+
+Endpoint discovery can add advertised identifiers without changing the curated list.
+A missing catalog credential leaves offline recommendations available and reports the missing credential; it does not allow bulk acceptance without the existing target and endpoint evidence.
+Catalog membership does not verify account access, current availability, API compatibility, tool support, or successful inference.
+Use an explicit request to qualify inference.
+
 ## Additional Inference Workflows
 
 The documented service paths are external API endpoints, managed Ollama, [external Ollama through a managed proxy](#use-external-ollama-through-a-managed-proxy), and [managed vLLM](models.md).
 Use [inline recipes](recipes.md) for declared model preparation and [SSH placement](remote-service.md) for the implemented remote-engine contract.
 
 Managed llama.cpp, Model Router and Gemini are tracked in [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035), hosted-provider guides in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038), and distributed inference, separate inference hosts and other model formats in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
-A managed NVIDIA NIM service is tracked in [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649), and vendor model catalogs in [#12650](https://github.com/NVIDIA/NemoClaw/issues/12650).
+A managed NVIDIA NIM service is tracked in [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649).
 None of these limits prevents using a separately verified external endpoint with an accepted API.

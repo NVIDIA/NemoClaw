@@ -143,10 +143,12 @@ async fn travel_example_applies_as_plain_hcl_against_the_shipped_providers() {
 
     run(&["init", "-input=false"], true);
     run(&["apply", "-auto-approve", "-input=false"], true);
-    let ready = run(&["output", "-json", "ready"], true);
-    assert_eq!(
-        serde_json::from_slice::<Value>(&ready.stdout).unwrap(),
-        true
+    let runtime_id = run(&["output", "-json", "runtime_id"], true);
+    assert!(
+        serde_json::from_slice::<Value>(&runtime_id.stdout)
+            .unwrap()
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
     );
 
     {

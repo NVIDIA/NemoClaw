@@ -11,7 +11,7 @@ use nemoclaw_fabric::agent::{
 use openshell_provider::OpenShell;
 use std::borrow::Cow;
 
-/// Reconciles agents through the Fabric bridge of their sandbox.
+/// Starts and stops agents through Fabric's `fabric-agent-ctl` in their sandbox.
 #[derive(Clone)]
 pub struct AgentBackend(pub OpenShell);
 
@@ -29,7 +29,7 @@ fn configuration_row(row: &Row) -> Result<Row, ObservationError> {
 /// observed document differs from the one they compose.
 fn agent_row(agent: &Row, configured: &Row, observed: &Row) -> Row {
     let mut row = agent.clone();
-    for field in ["id", "running"] {
+    for field in ["id", "runtime_id"] {
         if let Some(value) = observed.get(field) {
             row.insert(field.into(), value.clone());
         }
@@ -92,29 +92,31 @@ fn validate(known: &Row, unknown: &[&str]) -> Result<(), Cow<'static, str>> {
         return Ok(());
     }
     let config = agent::compose(known)?;
+    // Whether the harness accepts the configuration is Fabric's to decide,
+    // inside the sandbox when the agent is configured.
     configuration::check(&config.to_string())
         .map_err(|requirement| format!("The agent configuration {requirement}"))?;
-    if let Some(catalog) = known
-        .get(HARNESS_CATALOG)
-        .filter(|catalog| !catalog.is_empty())
-    {
-        let catalog = nemoclaw_fabric::catalog::FabricCatalog::from_json(catalog)
-            .map_err(|_| "The harness ref carries no valid Fabric catalog")?;
-        if let Some(reason) =
-            nemoclaw_fabric::capabilities::configuration_rejection(&catalog, config)
-        {
-            return Err(format!(
-                "The harness does not accept this agent configuration at {reason}"
-            )
-            .into());
-        }
-    }
     Ok(())
+}
+
+/// An agent changes only with its sandbox: its replacement plans while the
+/// sandbox is replaced too, which makes the sandbox's ID unknown.
+fn sandbox_kept(
+    prior: &nemoclaw_tofu::State,
+    planned: &nemoclaw_tofu::State,
+) -> Option<&'static str> {
+    use tf_provider::value::Value;
+    match (prior.get("sandbox_id"), planned.get("sandbox_id")) {
+        (Some(Value::Value(prior)), Some(Value::Value(planned))) if prior == planned => Some(
+            "A changed agent needs a new sandbox. Replace the sandbox with the agent: give it lifecycle { replace_triggered_by = [terraform_data.<agent>] }, where that terraform_data's input is the agent's configuration",
+        ),
+        _ => None,
+    }
 }
 
 /// The Fabric agent resource and its planning rules.
 pub fn definitions() -> [nemoclaw_tofu::Definition; 1] {
-    use nemoclaw_tofu::{Definition, rerun_when_stopped};
+    use nemoclaw_tofu::{Definition, carry_prior};
     let references = agent::references();
     let inputs = agent::structured_inputs();
     let carried: Vec<&'static str> = references
@@ -122,17 +124,17 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 1] {
         .flat_map(|reference| reference.fields.iter().map(|(_, field)| *field))
         .collect();
     let sections: Vec<&'static str> = inputs.iter().map(|input| input.field).collect();
-    let fields: Vec<&'static str> = [NAME, DESCRIPTION, "running"]
+    let fields: Vec<&'static str> = [NAME, DESCRIPTION, "runtime_id"]
         .into_iter()
         .chain(carried.iter().copied())
         .chain(sections.iter().copied())
         .collect();
     let gateway = nemoclaw_openshell::GATEWAY_FIELDS.map(|(_, field)| field);
-    // Another endpoint is another gateway; credentials rotate in place. A
-    // newer image catalog for the same harness changes no agent.
-    let mutable: Vec<&'static str> = [DESCRIPTION, HARNESS_CATALOG, "running"]
+    // A changed agent is a new agent in a new sandbox. Another endpoint is
+    // another gateway; credentials rotate in place. A newer image catalog for
+    // the same harness changes no agent.
+    let mutable: Vec<&'static str> = [HARNESS_CATALOG, "runtime_id"]
         .into_iter()
-        .chain(sections.iter().copied())
         .chain(gateway[1..].iter().copied())
         .collect();
     let optional: Vec<&'static str> = [DESCRIPTION]
@@ -142,8 +144,10 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 1] {
         .collect();
     let mut definition = Definition::new("agent", &fields, &mutable)
         .optional(&optional)
-        .computed("running", rerun_when_stopped)
+        // The ID Fabric gives the sandbox's one runtime, for invocations.
+        .computed("runtime_id", carry_prior)
         .validate_inputs(validate)
+        .refuse_replacement_when(sandbox_kept)
         // Readiness compares the applied document with this digest.
         .derived(CONFIG_SHA256, agent::config_digest)
         .exports(

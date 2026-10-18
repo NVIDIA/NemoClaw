@@ -19,7 +19,44 @@ fn policy_input() -> Shape {
     )
 }
 
-/// The typed inputs of an object kind.
+/// One sandbox service endpoint, in OpenShell's terms.
+fn service_input() -> nemoclaw_tofu::shape::Fields {
+    use nemoclaw_tofu::shape::Field;
+    let field = |json: &str, shape, required, description: &str| {
+        (
+            json.to_owned(),
+            Field {
+                json: json.into(),
+                shape,
+                required,
+                description: description.into(),
+            },
+        )
+    };
+    [
+        field(
+            "name",
+            Shape::String,
+            true,
+            "Service name within the sandbox; empty is OpenShell's unnamed endpoint.",
+        ),
+        field(
+            "target_port",
+            Shape::Number,
+            true,
+            "Loopback TCP port the service listens on inside the sandbox.",
+        ),
+        field(
+            "authorization_mode",
+            Shape::String,
+            false,
+            "STRIP or BEARER_PASSTHROUGH; OpenShell uses STRIP when omitted.",
+        ),
+    ]
+    .into()
+}
+
+/// The typed inputs of an object kind, and its typed observations.
 pub fn structured_inputs(kind: &str) -> Vec<Structured> {
     let input = |attribute, field, shape| Structured {
         attribute,
@@ -27,12 +64,23 @@ pub fn structured_inputs(kind: &str) -> Vec<Structured> {
         shape,
     };
     match kind {
-        "web_search" | "inference" => {
+        "web_search" | "inference" | "api" => {
             vec![input("binaries", "binaries_json", strings())]
         }
         "sandbox" => vec![
             input("policy", "policy_json", policy_input()),
             input("driver_config", "driver_config_json", Shape::Json),
+            input(
+                "service",
+                "services_json",
+                Shape::ObjectList(service_input()),
+            ),
+            // Computed: the URLs the gateway reports, by service name.
+            input(
+                "service_urls",
+                "service_urls_json",
+                Shape::Map(Box::new(Shape::String)),
+            ),
         ],
         _ => Vec::new(),
     }
@@ -43,7 +91,7 @@ pub fn export(kind: &str) -> Option<Export> {
     let fields: &[&'static str] = match kind {
         "workspace" => &["name", "owner", "generation", "id"],
         // Registrations name what sandboxes attach: `registration`.
-        "web_search" | "inference" => &[
+        "web_search" | "inference" | "api" => &[
             "workspace",
             "name",
             "registration",
@@ -120,7 +168,7 @@ fn object_references(kind: &str) -> Vec<Reference> {
     };
     match kind {
         // A web search registration belongs to its workspace's owner.
-        "web_search" => vec![Reference {
+        "web_search" | "api" => vec![Reference {
             attribute: "workspace",
             kind: "openshell_workspace",
             fields: vec![("name", "workspace"), ("owner", "owner")],

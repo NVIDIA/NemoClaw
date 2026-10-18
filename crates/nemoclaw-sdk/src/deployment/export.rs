@@ -188,7 +188,12 @@ pub(super) fn exported(
 ) -> Result<Document, Error> {
     consistent_provider_credentials(&document, generations, observations)?;
     for target in compile::targets(&document, generations)? {
-        if target.address.starts_with("data.") || plan::disposable(&target.address) {
+        // An agent configuration is derived from the document; OpenTofu
+        // holds it only to replace the agent's sandbox.
+        if target.address.starts_with("data.")
+            || plan::disposable(&target.address)
+            || target.kind == compile::AGENT_CONFIGURATION
+        {
             continue;
         }
         let mut observation = observations
@@ -441,11 +446,7 @@ mod tests {
 
     /// A generation for every kind `document` records.
     fn generations(document: &Document) -> compile::Generations {
-        ["workspace", "provider", "sandbox"]
-            .into_iter()
-            .chain(crate::services::generation_kinds(document).unwrap())
-            .map(|key| (key.into(), "a".repeat(32)))
-            .collect()
+        Record::new(document.clone()).unwrap().generations
     }
 
     /// Every example's saved document exports unchanged when the providers
@@ -453,24 +454,16 @@ mod tests {
     /// export.
     #[test]
     fn each_example_exports_its_applied_document_and_stops_on_drift() {
-        let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
         let mut exported_examples = 0;
-        for entry in fs::read_dir(&examples).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().and_then(|extension| extension.to_str()) != Some("yaml") {
-                continue;
-            }
-            let mut document = Document::parse(fs::read(&path).unwrap().as_slice())
-                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        for (name, mut document) in super::super::tests::example_documents() {
             document.defaults();
             let generations = generations(&document);
             let observations = echoed(&document, &generations);
             assert_eq!(
                 exported(document.clone(), &generations, &observations)
-                    .unwrap_or_else(|error| panic!("{}: {error}", path.display())),
+                    .unwrap_or_else(|error| panic!("{name}: {error}")),
                 document,
-                "{}",
-                path.display()
+                "{name}"
             );
             for (kind, field, value) in [
                 ("sandbox", "image", "drifted@sha256:0"),
@@ -488,8 +481,7 @@ mod tests {
                 drifted.get_mut(&address).unwrap()[field] = json!(value);
                 assert!(
                     exported(document.clone(), &generations, &drifted).is_err(),
-                    "{}: {kind}.{field} drift was exported",
-                    path.display()
+                    "{name}: {kind}.{field} drift was exported"
                 );
             }
             let mut missing = observations.clone();

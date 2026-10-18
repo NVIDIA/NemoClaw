@@ -70,17 +70,17 @@ OpenShell owns sandbox creation and policy enforcement.
 | **1–2. Validate and compile** | The CLI acquires required credential values. The SDK validates configuration, locks deployment state, checks identity and recovery constraints, and compiles one graph: the runtime, OpenShell resource dependencies, sandbox policy, and startup settings. |
 | **3. Runtime prerequisites** | Providers reconcile the declared gateway, inference services, storage, and networks. Provider data sources check gateway compatibility and service readiness before any OpenShell or Fabric object changes. |
 | **4. OpenShell registrations** | The OpenShell provider reconciles the workspace, provider profiles, and credential-bearing provider registrations. Gateway version and compute-driver checks gate deployment mutations. |
-| **5. Sandbox reconciliation** | The OpenShell provider sends OpenShell the image, network and filesystem policy, provider attachments, launch command, and environment. Existing bindings are observed; apply protects sandboxes against replacement or recreation of a missing bound sandbox. |
+| **5. Sandbox reconciliation** | The OpenShell provider sends OpenShell the image, network and filesystem policy, provider attachments, launch command, and environment. Existing bindings are observed; a changed sandbox specification or agent configuration replaces the sandbox. |
 | **6. Fabric configuration** | OpenShell starts the generic Fabric host. The Fabric provider's `fabric_agent` resource composes canonical Fabric configuration from its SDK-compiled typed inputs after routes are established; the host validates and starts it through Fabric's public API. |
 | **7. Native configuration** | The selected Fabric adapter maps the public configuration into native settings and owns native validation. The NemoClaw host performs no adapter-specific translation. |
 | **8. Harness runtime** | The adapter starts its runtime and launches the harness or connects to an independently deployed remote service. The harness uses its installed components and configured settings. |
 | **Optional Relay** | Explicitly enabled Hermes Relay tracing runs in process and writes artifacts inside the sandbox. It is an experimental integration. |
-| **Readiness and result** | Provider data sources observe sandbox configuration, startup, and the packaged bridge's health response within the deployment graph. The pinned bridge reports health as unsupported, which fails apply without deleting completed resources. The SDK reads those observations, retains operation state, and the CLI reports the outcome. |
+| **Agent start and result** | `fabric_agent` starts each new agent through Fabric's `fabric-agent-ctl` once its sandbox is ready. Fabric reports no runtime status or health, so a successful apply does not establish that agents answer. The SDK retains operation state, and the CLI reports the outcome. |
 | **T. Port forwarding** | An operator runs `openshell forward service` using a separately configured OpenShell CLI connection. Forwarding to an enabled listener lasts while that foreground command runs. |
 
 The Docker provider owns disposable Docker compute, images, model-cache volumes, and service networks.
 The OpenShell provider owns OpenShell operations and gateway installation: Podman gateway processes, gateway initialization and retained bridges, and Kubernetes gateway storage and authentication.
-The Fabric provider owns Fabric runtime configuration; the vLLM and Ollama providers own model-server contracts, readiness, capacity, and credential storage.
+The Fabric provider owns starting and stopping agent runtimes; the vLLM and Ollama providers own model-server contracts, readiness, capacity, and credential storage.
 The selected engine, any SSH execution setup, and the harness image are [operator prerequisites](../prerequisites.md).
 
 ## Conditions Summarized by the Diagram
@@ -89,9 +89,9 @@ The selected engine, any SSH execution setup, and the harness image are [operato
   An external gateway must already be reachable for planning.
 - The deployment graph can also contain an [Ollama proxy](../inference.md#use-external-ollama-through-a-managed-proxy), its credential storage, model observation, and readiness dependencies.
 - Each adapter uses `fabric_agent` after sandbox creation and route setup.
-  Its host waits for explicit configuration before starting Fabric, including after a process restart.
-- The pinned Fabric lacks `runtime.check_health()`.
-  Unsupported health fails apply while preserving resources and state; see [Fabric health during apply](../usage.md#fabric-health-during-apply).
+  A sandbox runs one agent runtime, so a new agent always gets a new sandbox.
+- Fabric reports no runtime status ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)); a runtime that stops is found at its next invocation.
+  See [agent runtimes during apply](../usage.md#agent-runtimes-during-apply).
 
 For native configuration and optional tracing, see [agent runtimes](../agents.md).
 For listener setup and forwarding, see [agent interfaces](../interfaces.md).

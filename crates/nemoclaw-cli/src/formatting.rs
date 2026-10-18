@@ -222,7 +222,6 @@ pub(crate) fn resource_label(address: &str) -> String {
                 ),
                 ("docker_volume.inference_storage_inference_", "model cache/"),
                 ("openshell_sandbox.", "sandbox/"),
-                ("data.fabric_agent_readiness.", "sandbox readiness/"),
                 ("openshell_inference.inference_", "provider/"),
                 ("docker_image.", "image binding/"),
             ];
@@ -344,13 +343,6 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             if context.verbose && label != change.resource {
                 output.push_str(&format!("    {}\n", terminal_text(&change.resource)));
             }
-            if planned
-                && result.discovery.resources.iter().any(|resource| {
-                    resource.address == change.resource && resource.agent_running == Some(false)
-                })
-            {
-                output.push_str("    Agent runtime is not running; apply restarts it.\n");
-            }
             if change.resource.starts_with("openshell_sandbox.")
                 && change.actions.iter().any(|action| action == "delete")
             {
@@ -470,15 +462,6 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         for resource in &result.retained {
             let label = resource_label(resource);
             output.push_str(&format!("  {label}\n"));
-            if resource == "openshell_workspace.deployment" {
-                output.push_str(&format!(
-                    "    {}\n",
-                    context.output_palette.paint(
-                        "Retaining the workspace does not preserve sandbox files or conversation history.",
-                        Tone::Warning
-                    )
-                ));
-            }
             if context.verbose && label != *resource {
                 output.push_str(&format!("    {}\n", terminal_text(resource)));
             }
@@ -507,18 +490,6 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         for reason in &result.unverified {
             output.push_str(&format!("  {}\n", terminal_text(reason)));
         }
-    }
-    for health in &result.health {
-        let runtime = &health.health;
-        let status = context.output_palette.paint("unsupported", Tone::Warning);
-        output.push_str(&format!(
-            "\nFabric health · sandbox/{}: {status}",
-            terminal_text(&health.sandbox)
-        ));
-        if let Some(reason) = &runtime.reason_code {
-            output.push_str(&format!(" ({})", terminal_text(reason)));
-        }
-        output.push('\n');
     }
     if planned {
         output.push_str("\nNo runtime resources changed.\n");
@@ -757,7 +728,7 @@ mod tests {
         let value = json!({
             "outcome": "destroyed",
             "changes": [{"resource": "openshell_sandbox.assistant", "actions": ["delete"]}],
-            "retained": ["openshell_workspace.deployment"]
+            "retained": ["docker_volume.inference_storage_inference_qwen"]
         });
         let colored = super::render(
             CommandResult::Operation(serde_json::from_value(value.clone()).unwrap()),
@@ -768,7 +739,6 @@ mod tests {
         assert!(colored.contains("\x1b[38;2;118;185;0mDestroy complete"));
         assert!(colored.contains("\x1b[33mdelete\x1b[0m  sandbox/assistant"));
         assert!(colored.contains("\x1b[33mSandbox files and conversation history deleted.\x1b[0m"));
-        assert!(colored.contains("\x1b[33mRetaining the workspace does not preserve sandbox files or conversation history.\x1b[0m"));
         let machine = super::render(
             CommandResult::Operation(serde_json::from_value(value).unwrap()),
             OutputFormat::Json,
@@ -794,7 +764,7 @@ mod tests {
         ], "resourceSources": {
             "openshell_inference.inference_local-1234":{"name":"responses", "path":"spec.sandboxes[host].inferenceProviders[responses]"}
         }, "deferred":["Gateway is required"], "discovery":{"resources":[
-            {"address":"fabric_agent.host", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":true, "retained":false, "reusePlanned":false, "agentRunning":false},
+            {"address":"fabric_agent.host", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":true, "retained":false, "reusePlanned":false},
             {"address":"openshell_inference.inference_local-1234", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":false, "retained":false, "reusePlanned":false},
             {"address":"docker_container.managed_gateway_runtime", "scope":"runtime", "existed":true, "plannedActions":["no-op"], "drifted":true, "retained":false, "reusePlanned":false}
         ]}});
@@ -806,7 +776,6 @@ mod tests {
             "inference credentials/tiny",
             "ollama proxy/local",
             "proxy credentials/local",
-            "Agent runtime is not running; apply restarts it.",
             "Resources: 3 established (1 unchanged, 2 with planned changes); 0 new.",
             "Refresh differences: 2 resources; may include computed metadata.",
         ] {
@@ -825,7 +794,6 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(json["resourceSources"], result["resourceSources"]);
-        assert_eq!(json["discovery"]["resources"][0]["agentRunning"], false);
     }
 
     #[test]
@@ -957,28 +925,22 @@ mod tests {
     }
 
     #[test]
-    fn destroy_separates_sandbox_loss_from_retained_workspace() {
+    fn destroy_separates_sandbox_loss_from_retained_data() {
         let text = render(
             &["nemoclaw", "plan", "--destroy"],
-            json!({"outcome":"planned","changes":[{"resource":"openshell_sandbox.assistant","actions":["delete"]}],"retained":["openshell_workspace.deployment","docker_volume.inference_storage_inference_qwen"]}),
+            json!({"outcome":"planned","changes":[{"resource":"openshell_sandbox.assistant","actions":["delete"]}],"retained":["docker_volume.inference_storage_inference_qwen"]}),
         );
         let (remove, keep) = text.split_once("Retained resources:").unwrap();
         assert!(remove.contains("Deletes sandbox files"));
-        assert!(keep.contains("OpenShell workspace\n"));
-        assert!(keep.contains(
-            "Retaining the workspace does not preserve sandbox files or conversation history."
-        ));
         assert!(keep.contains("model cache/qwen"));
     }
 
     #[test]
-    fn unsupported_health_is_not_healthy_and_json_keeps_sdk_facts() {
-        let result = json!({"outcome":"succeeded","changes":[],"health":[{"sandbox":"assistant","agents":[],"supported":false,"report":null,"reason_code":"fabric_health_unsupported"}]});
+    fn a_completed_apply_does_not_claim_responses_and_json_keeps_sdk_facts() {
+        let result = json!({"outcome":"succeeded","changes":[]});
         let text = render(&["nemoclaw", "apply", "spark.yaml"], result.clone());
         assert!(text.contains("Apply complete"));
-        assert!(text.contains("unsupported"));
         assert!(text.contains("responses were not tested"));
-        assert!(!text.contains("readiness confirmed"));
         let json: Value = serde_json::from_str(&render(
             &["nemoclaw", "apply", "spark.yaml", "-o", "json"],
             result.clone(),

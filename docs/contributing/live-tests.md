@@ -22,8 +22,8 @@ cargo ci live-kind
 The runner builds Pi on ARM64 or OpenClaw on AMD64, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
 The agent test uses the public SDK to deploy a gateway and sandbox from that image.
-It supplies a caller-relative kubeconfig and expects apply to fail only at `data.fabric_agent_readiness.assistant`, because the pinned Fabric reports agent health as unsupported ([#13031](https://github.com/NVIDIA/NemoClaw/issues/13031)).
-Export must still reproduce the authored configuration without readiness checks; destroy then retains gateway storage.
+It supplies a caller-relative kubeconfig and expects apply to complete with the agent started.
+Export must reproduce the authored configuration; destroy then retains gateway storage.
 The OpenShift-profile test supplies namespace UID-range annotations on kind and checks that gateway and sandbox pods use the assigned UID through the same SDK flow.
 These three live tests request no inference and need no GPU or credentials.
 The two render tests check the Kubernetes gateway UID and observed OpenShift namespace UID and group, with `runAsNonRoot` retained.
@@ -388,9 +388,9 @@ The container's Python process simulates model reconstruction and a credential; 
 ## Dummy Agent Lifecycle
 
 nemoclaw-e2e's `dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle` test deploys the [reference dummy image](../build.md#reference-contract-image) through a managed Docker gateway.
-The dummy reports native health without Fabric, a model, or credentials, so apply completes its readiness check.
-The test checks plan, a successful bundled-CLI apply with supported health, an invocation that returns the configured `reply` setting, unchanged apply, export/reapply with the same runtime identity, and destroy, after which Docker holds no sandbox containers or volumes but still holds the gateway's storage.
-It requests no inference and does not qualify a production adapter's health.
+The dummy runs Fabric's real `fabric-agent-ctl` with NemoClaw's test adapter, so it needs no model or credentials.
+The test checks plan, a successful bundled-CLI apply, an invocation that returns the configured `reply` setting, unchanged apply that keeps the same runtime, export/reapply, and destroy, after which Docker holds no sandbox containers or volumes but still holds the gateway's storage.
+It requests no inference and does not qualify a production adapter.
 
 Supply a verified bundle and an owned document like the gateway tests', with a fresh UID, free gateway port and subnet, the local dummy image by digest, `harness.kind: org.nemoclaw.dummy`, and a `harness.settings.reply` string:
 

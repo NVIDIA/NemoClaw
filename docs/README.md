@@ -37,7 +37,7 @@ These guides describe the v1 development branch.
 | Select inference APIs, OpenClaw limits, and Hermes authentication | [Inference configuration](inference.md) |
 | Configure and access native dashboards | [Agent interfaces](interfaces.md) |
 | Choose an agent and access its native runtime | [Agent runtimes](agents.md) |
-| Enable tracing or selected-agent web search | [OpenClaw OTLP](agents.md#openclaw-tracing), experimental [Hermes Relay](agents.md#hermes-relay-tracing), and [Brave search](agents.md#brave-web-search) |
+| Enable tracing or selected-agent web search | experimental [Hermes Relay](agents.md#hermes-relay-tracing) and [web search](agents.md#web-search) |
 | Choose a public model for managed vLLM | [Select a managed model](models.md) |
 | Package model-specific preparation | [Inline model recipes](recipes.md) |
 | Place inference on an SSH-selected Docker engine | [Configure an SSH model service](remote-service.md) |
@@ -48,6 +48,7 @@ These guides describe the v1 development branch.
 |---|---|
 | Call deployment operations programmatically | [Use the SDK](sdk.md) |
 | Understand the bundled OpenTofu provider | [Provider](provider.md) |
+| Integrate an image-owned service or adapt VoiceClaw | [Container service contract](design/container-contract.md) |
 | Look up CLI commands and options | [CLI reference](reference/cli.md) |
 | Look up YAML fields, defaults, and constraints | [Configuration reference](reference/configuration.md) |
 | Find documentation for coding agents, contribution guidance, and licenses | [Resources](resources.md) |

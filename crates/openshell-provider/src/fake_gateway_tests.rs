@@ -238,9 +238,9 @@ async fn a_service_name_profile_and_a_sandbox_without_grants_pass_endpoint_ambig
                 "sandbox" => {
                     // The rule the SDK compiles for this endpoint.
                     let mut policy: Value = serde_json::from_str(&row["policy_json"]).unwrap();
-                    let rules = policy["managed"].as_object_mut().unwrap();
+                    let rules = policy["managed"].as_array_mut().unwrap();
                     assert_eq!(rules.len(), 1, "{name}");
-                    for rule in rules.values_mut() {
+                    for rule in rules {
                         rule["endpoints"] = serde_json::json!([{
                             "host": HOST, "port": 8000, "path": "/v1/**",
                             "protocol": "rest", "access": "full"
@@ -673,6 +673,25 @@ async fn explicit_policy_reaches_the_gateway_and_detects_drift() {
     fixture.state.lock().unwrap().active_policy = Some(image_policy());
     assert!(client.read("sandbox", &sandbox, false).await.is_err());
     fixture.state.lock().unwrap().active_policy = None;
+    // Once recorded, the loaded policy's hash must not change.
+    let recorded = client
+        .read("sandbox", &sandbox, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!recorded["policy_hash"].is_empty());
+    assert!(client.read("sandbox", &recorded, false).await.is_ok());
+    let mut widened = spec.policy.clone().unwrap();
+    widened
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_only
+        .push("/opt/extra".into());
+    fixture.state.lock().unwrap().active_policy = Some(widened);
+    assert!(client.read("sandbox", &recorded, false).await.is_err());
+    fixture.state.lock().unwrap().active_policy = None;
+    assert!(client.read("sandbox", &recorded, false).await.is_ok());
     // A coherent but different policy is observed as drift and never overwritten.
     let edit = |change: &dyn Fn(&mut proto::SandboxSpec)| {
         let mut state = fixture.state.lock().unwrap();
@@ -697,9 +716,9 @@ async fn explicit_policy_reaches_the_gateway_and_detects_drift() {
     });
     assert!(client.read("sandbox", &sandbox, false).await.is_err());
     edit(&|current| *current = spec.clone());
-    assert!(client.remove("sandbox", &sandbox, false).await.is_err());
-    assert!(fixture.state.lock().unwrap().sandboxes.contains_key(&key));
-    assert!(client.remove("sandbox", &sandbox, true).await.is_ok());
+    // A sandbox is replaceable: removing it needs no teardown.
+    assert!(client.remove("sandbox", &sandbox, false).await.is_ok());
+    assert!(!fixture.state.lock().unwrap().sandboxes.contains_key(&key));
 }
 
 #[tokio::test]

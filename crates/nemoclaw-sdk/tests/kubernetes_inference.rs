@@ -240,8 +240,13 @@ fn a_cluster_service_compiles_to_a_literal_server_and_an_fqdn_sandbox_rule() {
         assert!(inference.get("cluster_source").is_none(), "{driver}");
         let policy = &graph["resource"]["openshell_sandbox"]["assistant"]["policy"];
         assert!(policy.get("cluster_grants").is_none(), "{driver}");
-        let rule = &policy["managed"]
-            [format!("nemoclaw-inference-{}", inference["name"].as_str().unwrap())];
+        let name = format!("nemoclaw-inference-{}", inference["name"].as_str().unwrap());
+        let rule = policy["managed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|rule| rule["name"] == name.as_str())
+            .unwrap();
         assert_eq!(
             rule["endpoints"],
             json!([{

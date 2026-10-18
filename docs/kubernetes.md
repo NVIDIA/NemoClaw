@@ -7,7 +7,6 @@ Run agent sandboxes on an existing Kubernetes or OpenShift cluster.
 NemoClaw either installs a development OpenShell gateway in a namespace it creates, or uses a gateway you already run.
 The same agent images serve Docker, Podman, Kubernetes and OpenShift.
 
-The pinned Fabric reports agent health as unsupported, so apply stops at the agent's health check after creating every resource ([#13031](https://github.com/NVIDIA/NemoClaw/issues/13031)).
 The managed gateway's authentication is a development fixture, not a production identity service ([#12692](https://github.com/NVIDIA/NemoClaw/issues/12692)).
 OpenShift's security policy admitting these pods is untested; [current limits](limits.md#platforms-models-and-placement) lists what else is untested.
 
@@ -79,8 +78,7 @@ nemoclaw plan --state-dir .local/kubernetes deployment.yaml
 nemoclaw apply --state-dir .local/kubernetes deployment.yaml
 ```
 
-Apply creates the gateway and every sandbox, then fails at the agent health check with `data.fabric_agent_readiness`; that is the expected result at this Fabric pin.
-The resources stay in place, and a later apply with the same state checks them again.
+Apply creates the gateway and every sandbox, and starts each agent.
 Keep the state directory: it holds the cluster ownership receipt and the development issuer's keys, and destroy needs both.
 [Managed Kubernetes ownership](design/architecture.md#managed-kubernetes-ownership) describes which component owns each resource.
 

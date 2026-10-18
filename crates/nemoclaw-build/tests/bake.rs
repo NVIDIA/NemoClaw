@@ -24,6 +24,11 @@ const AMD64_HARNESSES: [&str; 2] = ["deepagents", "openclaw"];
 
 /// Whether Docker Buildx can run here; the Windows and macOS runners lack it.
 fn buildx_available() -> bool {
+    // Agent images are Linux images, built on Linux hosts; planning them
+    // elsewhere adds no coverage, and buildx is slow on Windows runners.
+    if !cfg!(target_os = "linux") {
+        return false;
+    }
     Command::new("docker")
         .args(["buildx", "version"])
         .output()
@@ -32,7 +37,7 @@ fn buildx_available() -> bool {
 
 fn bake(platform: Option<&str>, targets: &[&str]) -> Option<std::process::Output> {
     if !buildx_available() {
-        eprintln!("skipping: docker buildx is unavailable");
+        eprintln!("skipping: agent images are planned only on Linux hosts with docker buildx");
         return None;
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

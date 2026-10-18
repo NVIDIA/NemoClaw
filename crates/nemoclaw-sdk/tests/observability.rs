@@ -32,9 +32,10 @@ fn native_telemetry_settings_are_opaque_and_do_not_implicitly_grant_network_acce
     .unwrap();
     assert!(
         !policy["managed"]
-            .as_object()
+            .as_array()
             .unwrap()
-            .contains_key("nemoclaw-otlp")
+            .iter()
+            .any(|rule| rule["name"] == "nemoclaw-otlp")
     );
     let graph = compile(&document, &generations, "0.1.0").unwrap();
     let encoded = graph["resource"]["fabric_agent"][&document.spec.sandboxes[0].name].to_string();

@@ -346,7 +346,9 @@ fn pi_model_is_an_optional_opaque_object() {
 }
 
 #[test]
-fn pi_model_updates_leave_the_sandbox_connection_unchanged() {
+/// A model change changes only the agent and the configuration that
+/// replaces its sandbox; the sandbox's own inputs stay the same.
+fn pi_model_updates_change_only_the_agent_and_its_configuration() {
     use nemoclaw_sdk::compile::{Generations, targets};
     let mut document =
         Document::parse(include_str!("fixtures/config/fabric-pi.yaml").as_bytes()).unwrap();
@@ -376,6 +378,18 @@ fn pi_model_updates_leave_the_sandbox_connection_unchanged() {
     configuration
         .values
         .insert("models_json".into(), prior.values["models_json"].clone());
+    let trigger = after
+        .iter_mut()
+        .find(|target| target.kind == nemoclaw_sdk::compile::AGENT_CONFIGURATION)
+        .unwrap();
+    let prior = before
+        .iter()
+        .find(|target| target.address == trigger.address)
+        .unwrap();
+    assert_ne!(trigger.values["input"], prior.values["input"]);
+    trigger
+        .values
+        .insert("input".into(), prior.values["input"].clone());
     assert_eq!(after, before);
 }
 

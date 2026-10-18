@@ -39,11 +39,10 @@ Other pages state a limit where it affects a procedure and link the same issue.
 
 | Limit | Issue |
 |---|---|
-| Real Fabric adapters report health as unsupported, so [apply fails at agent readiness](usage.md#fabric-health-during-apply) | [#13031](https://github.com/NVIDIA/NemoClaw/issues/13031) |
+| Fabric reports no runtime status, so a stopped agent runtime is found only at its [next invocation](usage.md#agent-runtimes-during-apply) | [NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420) |
 | Managed llama.cpp, Model Router and Gemini | [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035) |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous | [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038) |
 | Managed NVIDIA NIM service | [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649) |
-| Vendor model catalogs during onboarding | [#12650](https://github.com/NVIDIA/NemoClaw/issues/12650) |
 
 ## Agents and Integrations
 
@@ -52,6 +51,10 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Messaging channels | [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037) |
 | Managed MCP servers | [#12137](https://github.com/NVIDIA/NemoClaw/issues/12137) |
 | Hermes OAuth and managed tools | [#12042](https://github.com/NVIDIA/NemoClaw/issues/12042) |
+| Hermes's native API server, dashboard and browser TUI | [#13321](https://github.com/NVIDIA/NemoClaw/issues/13321) |
+| OpenClaw agents don't start in OpenShell sandboxes with the pinned Fabric | [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) |
+| OpenClaw's dashboard | [#13360](https://github.com/NVIDIA/NemoClaw/issues/13360) |
+| OpenClaw's Brave and Tavily web search plugins | [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361) |
 | Collector provisioning, production collector troubleshooting and Deep Agents trace export | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144) |
 | Tavily and Brave search have not been tested live through OpenShell | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 
@@ -61,7 +64,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 |---|---|
 | Native login, browser pairing and token rotation, rehearsed from apply to a first reply for each harness | [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642) |
 | A headless request walkthrough, and Hermes Relay tracing with retained sessions | [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642) |
-| Log collection for other harnesses, Hermes dashboard logs and an inaccessible sandbox | [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642) |
+| Log collection and an inaccessible sandbox | [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642) |
 | Creating an authenticated OpenShell CLI profile for an external gateway | [#12642](https://github.com/NVIDIA/NemoClaw/issues/12642) |
 
 ## Data and Cleanup

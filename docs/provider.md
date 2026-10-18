@@ -6,7 +6,7 @@
 The native bundle includes the NemoClaw, OpenShell, Fabric, Docker, and Helm OpenTofu providers.
 The SDK compiles desired-state YAML into resource graphs and runs bundled OpenTofu.
 OpenShell manages workspaces, provider registrations and profiles, and sandboxes through a gateway's API.
-Fabric configures the Fabric host in each agent sandbox and waits for its runtime, through the same gateway.
+Fabric starts and stops the one agent runtime in each sandbox through Fabric's `fabric-agent-ctl`, through the same gateway.
 Docker manages disposable service compute and Docker gateway processes; Helm installs the managed Kubernetes gateway chart; OpenShell installs Podman gateway processes, Kubernetes gateway prerequisites, initialization, and retained gateway bridges; NemoClaw manages durable data bindings for inference services.
 Use [the SDK](sdk.md) or [CLI](reference/cli.md) for the documented deployment workflow.
 
@@ -42,7 +42,8 @@ The generated graphs manage these objects and observations:
 | OpenShell provider | Kubernetes namespace and encryption key (`openshell_kubernetes_storage`), development issuer (`openshell_kubernetes_auth`), and gateway readiness (`openshell_kubernetes_gateway`) |
 | Host provider data source | Engine facts and advertised hardware (`host_engine`) |
 | Host provider data source | Managed vLLM and Ollama image platform and labels (`host_image`) |
-| Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
+| Host provider data source | Application container health (`host_container_health`) |
+| Docker provider | Docker gateway, inference, proxy, and application containers; model-cache and application volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 | Helm provider | The managed Kubernetes gateway's OpenShell chart release (`helm_release.gateway`) |
 
@@ -80,6 +81,7 @@ None of them exposes ephemeral resources or provider functions.
 | `openshell_workspace` | Workspace |
 | `openshell_inference` | [An inference server's provider and its profile](#inference-providers) |
 | `openshell_web_search` | [A web search provider and its profile](#web-search) |
+| `openshell_api` | [Credentials for another API and its profile](#api-credentials) |
 | `openshell_sandbox` | Sandbox |
 | `openshell_gateway` data source | [Gateway version and compute drivers](#gateway-capabilities) |
 
@@ -90,14 +92,14 @@ For a managed Kubernetes gateway, it takes `kubernetes`, the gateway's specifica
 Each provider that reaches such a gateway opens its own port forward on a free loopback port, with the kubeconfig the specification names and the development credentials in the SDK's state directory, and keeps it open while OpenTofu runs.
 A literal object of the same shape, with `type = "openshell_gateway"`, also works where no data source is read, such as an SDK teardown graph.
 Objects keep their gateway connection in state, so refresh and removal reach the same gateway without provider configuration.
-Credential and TLS references update in place; a different endpoint is a different gateway, so it replaces reconstructible objects and retained or stateful objects refuse it.
+Credential and TLS references update in place; a different endpoint is a different gateway, so it replaces reconstructible objects, sandboxes included, and the retained workspace refuses it.
 These schemas are version 1; state from an earlier provider is rejected rather than upgraded.
 When a registration names a managed vLLM or Ollama proxy credential, the provider reads the key from the owning container during apply, so the key never enters OpenTofu state.
 
 Each OpenShell resource exports a computed `ref` object identifying it: its `type`, `name`, `owner`, `generation`, and `id`, plus `workspace` for objects inside a workspace.
 Objects name each other by `ref`, never by separate name strings:
 
-- Inference and web search resources and sandboxes take `workspace = openshell_workspace.<label>.ref`.
+- Inference, web search, API credential resources and sandboxes take `workspace = openshell_workspace.<label>.ref`.
 - A sandbox takes `providers`, a list of registration refs.
 
 A consumer checks the ref's `type` and rejects a ref of another type.
@@ -108,16 +110,22 @@ These schemas are version 1; state recorded by an earlier provider schema is rej
 Other inputs are typed too:
 
 - `openshell_sandbox` takes a `policy` block.
-  The block's attributes and blocks follow the sandbox policy model with snake_case names: optional `explicit` policy and `managed` deployment grants, whose named network rules are labeled blocks.
+  The block's attributes and blocks follow the sandbox policy model with snake_case names: an optional `explicit` policy, whose named network rules are labeled blocks, and `managed` deployment grants, a list of blocks with unique `name`s.
+  Because grants are unlabeled, a `dynamic "managed"` block can generate them in a sandbox that uses `for_each`; OpenTofu requires the labels of dynamic blocks to be known when it validates, before `each.key` is.
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
-- `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference` or `openshell_web_search`. Each ref names the OpenShell registration it attaches in `registration`.
+- `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference`, `openshell_web_search` or `openshell_api`. Each ref names the OpenShell registration it attaches in `registration`.
 - `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables managed endpoint grants allow.
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox; it does not depend on the agent runtime that produced the launch.
   `fabric_harnesses` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
 - `openshell_sandbox`'s optional `driver_config` is OpenShell's per-driver sandbox configuration (`SandboxTemplate.driver_config`) as JSON text, usually from `jsonencode()`, keyed by driver, such as volume mounts.
   It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/sandboxes/runtimes.mdx).
   The gateway accepts it only when its driver allows driver configuration, which OpenShell disables by default, NemoClaw-installed gateways included.
-  It is part of the sandbox's immutable specification: changing it, or a different configuration observed on the gateway, would replace the sandbox, which apply refuses, as for the image; see [change paths](usage.md#choose-the-change-path).
+  It is part of the sandbox's immutable specification: changing it, or a different configuration observed on the gateway, replaces the sandbox, as for the image; see [change paths](usage.md#choose-the-change-path).
+- `openshell_sandbox`'s optional `service` blocks are OpenShell's sandbox service exposures: `name`, `target_port`, and optional `authorization_mode` (`STRIP` or `BEARER_PASSTHROUGH`).
+  They are passed through unchanged in the creation request, so OpenShell's defaults apply: an omitted mode is `STRIP`, and an empty name is the unnamed endpoint.
+  Like `driver_config`, they are part of the sandbox's creation: changing them, or a different endpoint observed on the gateway, replaces the sandbox.
+- The computed `policy_hash` is the hash OpenShell reports for the sandbox's loaded policy, including paths OpenShell adds itself. It's recorded when the policy first loads with every declared rule intact; a different hash later is drift.
+- The computed `service_urls` maps each service name to the URL the gateway reports for it, such as `openshell_sandbox.researcher.service_urls["research"]`. A service the gateway reports without a URL has no entry.
 - `owner` and `generation` are optional; when omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [credential storage](#vllm-and-ollama-types).
 
 ```hcl
@@ -128,6 +136,10 @@ resource "openshell_sandbox" "assistant" {
   image        = var.image
   launch_json  = data.fabric_harnesses.assistant.launch_json
   providers    = [openshell_inference.local.ref]
+  service {
+    name        = "research"
+    target_port = 8080
+  }
   policy {
     explicit {
       version = 1
@@ -174,6 +186,53 @@ resource "openshell_inference" "nemotron" {
   binaries  = ["/usr/local/bin/pi"]
 }
 ```
+
+#### API Credentials
+
+Use `openshell_api` when a sandbox needs to authenticate to an API other than inference or web search, such as a booking service over HTTP MCP.
+It owns an OpenShell profile and registration; attach its `ref` to the sandbox's `providers`.
+The profile binds credential injection to the endpoint's host, port and path subtree, and the named executables.
+OpenShell owns injection and destination checks when the sandbox connects.
+
+Set the credential in the environment of the process running OpenTofu, then name that variable in `credential_env`:
+
+```hcl
+resource "openshell_api" "booking" {
+  gateway        = data.openshell_gateway.example.ref
+  workspace      = openshell_workspace.example.ref
+  name           = "booking"
+  endpoint       = "https://booking.example.com/mcp"
+  credential_env = "BOOKING_API_KEY"
+  binaries       = ["/usr/bin/curl"]
+}
+
+# In openshell_sandbox.buyer:
+# providers = [openshell_api.booking.ref]
+```
+
+`auth_style` defaults to `bearer`, using `Authorization` unless `header_name` overrides it.
+For an API key sent without the Bearer prefix, set `auth_style = "header"` and `header_name = "X-API-Key"`.
+Query parameters, OAuth and refresh flows are not supported by this resource.
+Endpoints must use HTTP(S) without embedded credentials, queries, fragments or globs.
+For `/mcp`, the profile allows `/mcp` and its descendants, not sibling paths.
+A literal IP grants only that address; a DNS name receives no private-network grant.
+`binaries` must list the absolute paths of the callers allowed to use the credential.
+
+The provider resolves the host variable during apply and sends its value to OpenShell's credential store.
+OpenTofu state and the exported `ref` contain the variable name, never its value.
+OpenShell projects a credential placeholder into `NEMOCLAW_API_BOOKING_KEY` for `name = "booking"`; the agent does not receive the stored credential value.
+The registration is named `booking` and its profile `nemoclaw-api-booking`.
+
+Changing `credential_env` updates the stored credential in place on the next apply, retaining the registration and attached sandbox.
+Changing only the value of the same host variable does not create a plan change; use a new variable reference to rotate it.
+Credential propagation to an already-running client has not been qualified.
+An unchanged plan reads the binding without resolving the host secret.
+A missing profile is recreated in place; a missing registration replaces the reconstructible pair without replacing its sandbox.
+Foreign ownership or an incomplete observation stops planning.
+
+To remove the credential, first detach or explicitly remove sandboxes using its registration, then remove the API resource and apply.
+Removal deletes the registration and its owned profile; it does not unset the host variable or revoke the key at the API service.
+Endpoint, authentication and executable changes replace the pair, so detach consumers before making those changes.
 
 #### Web Search
 
@@ -233,17 +292,16 @@ The storage volume, bridge network, and initialization labels derive from `name`
 | Type | Manages or observes |
 |---|---|
 | `fabric_agent` | The [agent a sandbox launches](#fabric-agents) and its Fabric configuration |
-| `fabric_agent_readiness` data source | [Sandbox completion](#sandbox-completion) |
 | `fabric_harnesses` data source | [Fabric image catalog and compatibility](#engine-and-fabric-discovery) |
 | `fabric_harness` data source | One harness in an image, selected by `adapter_id`: the `launch_json` that starts it for `agent_name`, and a `ref` naming the harness (`type`, `adapter_id`, `image`, and `catalog_json`, the image catalog's records for the adapter); fails when the image installs no runtime for the adapter |
 
-The `fabric` provider also takes only `destroy`; `fabric_agent` and `fabric_agent_readiness` take the same `gateway` ref as the sandbox they configure.
+The `fabric` provider also takes only `destroy`; `fabric_agent` takes the same `gateway` ref as the sandbox it starts.
 It also accepts `destroy`, but no Fabric type requires it: removing an agent stops it and leaves its sandbox.
-It reaches each sandbox's Fabric host by running commands in the sandbox through the gateway; `fabric_harnesses` instead reads the container engine named on it.
+It runs Fabric's `fabric-agent-ctl` in each sandbox through the gateway; `fabric_harnesses` instead reads the container engine named on it.
 
 #### Fabric Agents
 
-`fabric_agent` configures the agent a sandbox launches.
+`fabric_agent` starts the agent in a sandbox, through the `fabric-agent-ctl serve` process the sandbox runs.
 It takes the sandbox as `sandbox = openshell_sandbox.<name>.ref`, the harness that sandbox launches as `harness = data.fabric_harness.<name>.ref`, and `gateway`.
 `name` is the agent's name, Fabric's `metadata.name`, and optional `description` is `metadata.description`.
 `settings` is the harness's `harness.settings`.
@@ -251,7 +309,7 @@ Every section of Fabric's agent configuration is an input with Fabric's name: `i
 Their types come from Fabric's published configuration schema, with snake_case names.
 Named objects, such as model roles, are labeled blocks: `models "default" { ... }`.
 A value Fabric leaves open, such as `settings`, is JSON text; write it with `jsonencode`.
-Fields an object accepts beyond those Fabric's schema declares, such as a model's `api`, go in that object's `extensions` attribute, also as JSON text.
+Fields an object accepts beyond those Fabric's schema declares, such as one an adapter documents for its models, go in that object's `extensions` attribute, also as JSON text.
 Fabric requires a `runtime` section, so omitting `runtime` sends an empty one.
 
 ```hcl
@@ -278,13 +336,44 @@ resource "fabric_agent" "travel" {
 ```
 
 Planning rejects a configuration Fabric cannot parse, naming the field but not its value.
-It also rejects one the harness does not accept, using the catalog records in the harness ref: Pi, for example, replaces system instructions and cannot append to them.
+Whether the harness accepts a configuration is Fabric's to decide, inside the sandbox when the agent starts: Pi, for example, replaces system instructions and cannot append to them, so asking it to append fails during apply ([#13319](https://github.com/NVIDIA/NemoClaw/issues/13319)).
 Once the sandbox is known, planning refuses a `name` or harness other than the agent and harness the sandbox launches.
-Changing the sandbox, harness, or `name` replaces the agent; any other change reconfigures it through the sandbox's Fabric host without replacing the sandbox.
-Removing the resource stops the agent, as removing an attachment does: Fabric stops its runtime through the host's `prepare` operation and the host forgets the configuration, while the sandbox stays.
-If the sandbox is already gone, removal succeeds; if stopping fails, the binding is kept so the next apply or destroy retries.
+Any change replaces the agent, and a changed agent needs a new sandbox, so planning refuses to replace an agent while its sandbox stays the same.
+Replace the sandbox with the agent through a `terraform_data` holding the agent's configuration, as generated graphs do:
 
-`fabric_agent` exports a `ref` with its sandbox's `workspace`, `sandbox` name, `sandbox_id`, `owner`, and `generation`, its own `name`, and `config_sha256`.
+```hcl
+resource "terraform_data" "assistant" {
+  input = { model = var.model, instructions = var.instructions }
+}
+
+resource "openshell_sandbox" "assistant" {
+  # ...
+  lifecycle {
+    replace_triggered_by = [terraform_data.assistant]
+  }
+}
+```
+
+Triggering on the `fabric_agent` itself would be a cycle, because the agent refers to its sandbox.
+Keep the input to values known while planning: a value known only during apply, such as a read postponed to apply, replaces the sandbox on every apply.
+Replacing a sandbox deletes its files and conversation history; keep data that must survive on a [mounted volume](agents.md#skills-on-a-mounted-volume).
+
+A Fabric sandbox runs one agent runtime in its lifetime.
+Once its agent stops, or a start fails or loses its reply, the sandbox cannot start another, and creating the agent there again fails with guidance to replace the sandbox: `tofu apply -replace=openshell_sandbox.<name>`.
+Generated graphs need no such step: when a plan would create an agent in a sandbox that already exists, the SDK plans again with that sandbox replaced, and the plan shows it.
+
+Starting an agent waits for its sandbox to be ready and for `fabric-agent-ctl serve` to answer.
+An explicit `Rejected` OpenShell configuration admission stops the wait even while the sandbox is `Starting`.
+The diagnostic names the sandbox and includes only recognized gateway reasons; unknown backend text becomes a fixed repair message.
+See [runtime policy rejection recovery](sandbox-network.md#recover-from-runtime-policy-rejection).
+
+Fabric reports neither the configuration a runtime applied nor whether it is still running ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)).
+So refresh checks only the sandbox: a configuration changed inside the sandbox outside OpenTofu is not reported as drift, and a runtime that stops is found when it is next invoked.
+Removing the resource stops the agent through `fabric-agent-ctl stop`, as removing an attachment does, and the sandbox stays.
+A runtime that already stopped, or a sandbox already gone, counts as removed; if stopping fails, the binding is kept so the next apply or destroy retries.
+
+`fabric_agent` exports `runtime_id`, the ID Fabric gave the runtime, for invoking it with `fabric-agent-ctl invoke --runtime-id`.
+It also exports a `ref` with its sandbox's `workspace`, `sandbox` name, `sandbox_id`, `owner`, and `generation`, its own `name`, and `config_sha256`.
 `config_sha256` is `sha256:<hex>` over the composed document's JSON with object keys sorted; it is known while planning once the agent's inputs are.
 
 ### vLLM and Ollama Types
@@ -343,6 +432,7 @@ The `host` provider observes container engines and changes nothing; it has no se
 |---|---|
 | `host_engine` | [Engine version, platform, CPUs, memory](#engine-and-fabric-discovery), and [advertised hardware](#target-hardware) |
 | `host_image` | [An image's platform and labels](#runtime-image-compatibility) |
+| `host_container_health` | [Owned container readiness](#application-container-health): Docker HEALTHCHECK, HTTP, or managed-runtime status |
 
 ### Docker and Helm Types
 
@@ -364,7 +454,7 @@ Generated graphs declare only the types marked as used; NemoClaw does not qualif
 
 ## OpenShell Resource Lifecycles
 
-The shared [resource lifecycle contract](../crates/nemoclaw-openshell/src/lifecycle.rs) distinguishes reconstructible configuration from protected identity and sandbox data.
+The shared [resource lifecycle contract](../crates/nemoclaw-openshell/src/lifecycle.rs) distinguishes reconstructible objects, sandboxes included, from retained workspace identity.
 The provider owns observation and update/replacement behavior; OpenTofu owns action ordering and resource state.
 The SDK checks deployment scope and recovery constraints without imposing a second blanket ban on OpenShell changes.
 For reconstructible resources, OpenTofu and the provider own confirmed absence, physical identity, and replacement cleanup; the SDK does not require a second drift history to report those actions during apply or teardown.
@@ -372,21 +462,20 @@ For reconstructible resources, OpenTofu and the provider own confirmed absence, 
 | Resource | Reconciliation | Protection |
 |---|---|---|
 | Inference and web search | Create the profile and then the registration; recreate a missing profile and rotate an inference credential reference in place; replace on any other input change or a missing registration | The same checks for both objects; a failure between them records the identity, so the next apply replaces the resource |
-| Fabric runtime configuration | Apply the public Fabric document and reconcile its resource lifecycle | Verify the parent sandbox identity; a changed configuration can restart its runtime and lose native session state |
-| Sandbox | Create and observe the declared sandbox | During apply, refuse deletion, replacement, or recreation of a missing binding because deletion loses agent files and history |
-| Workspace | Create and observe; delete only during explicit teardown | Refuse replacement and automatic recreation of a missing binding; `lifecycle { prevent_destroy = true }` retains it, as generated graphs do |
+| Fabric agent | Apply the public Fabric document; replace the agent on any input change | Verify the parent sandbox identity; refuse a replacement unless the sandbox is replaced too |
+| Sandbox | Create and observe the declared sandbox; replace it on any change to its specification | Replacement and deletion delete its files and conversation history; data that must survive belongs on a mounted volume |
+| Workspace | Create and observe; delete only during explicit teardown | Refuse replacement and automatic recreation of a missing binding; `lifecycle { prevent_destroy = true }` retains it, as generated graphs do during apply |
 
 OpenShell refuses deletion of profiles referenced by registrations and registrations attached to sandboxes.
 Inference and web search resources therefore recreate a missing profile in place, and remove the registration before its profile.
 Generated graphs create an `openshell_inference` only for definitions selected by sandboxes; unused YAML definitions have no resource lifecycle.
-Standalone HCL can remove or replace an inference resource, while removing a last selection in SDK YAML also changes the protected sandbox specification.
-Replacing a registration still attached to a protected sandbox is not a supported shortcut around sandbox lifecycle rules.
-Endpoint and policy changes that also change a sandbox's launch specification remain protected; see [change paths](usage.md#choose-the-change-path).
+Standalone HCL can remove or replace an inference resource, while removing a last selection in SDK YAML also changes the sandbox's specification, which replaces the sandbox.
+Endpoint and policy changes that also change a sandbox's launch specification replace the sandbox; see [change paths](usage.md#choose-the-change-path).
 
-The provider's `destroy` setting authorizes explicit teardown of sandboxes and workspaces; reconstructible registrations and configuration do not require it.
+The provider's `destroy` setting authorizes explicit teardown of workspaces; reconstructible objects, sandboxes included, do not require it.
 It never authorizes deleting the workspace or bypassing identity checks.
 Removing Fabric configuration stops the agent and leaves the sandbox-owned runtime host and its sandbox in place.
-The SDK's destroy operation still retains durable storage and the workspace.
+The SDK's destroy operation retains durable storage and deletes the workspace with the rest of the deployment's objects.
 See [deletion and retention](state.md#deletion-and-retention) before removing workloads.
 
 An observation error is not absence.
@@ -448,12 +537,9 @@ Optional `filesystem_read` lists the paths the sandbox policy grants for reading
 A configuration without `harness.adapter_id` is rejected.
 Optional `architecture` and `operating_system` supply the execution engine's platform.
 The computed `compatibility_status` is `supported`, `unsupported`, or `unknown`, with details in `observation_json.compatibility`.
-The SDK checks image identity, source revision and platform, then calls Fabric's pure planner with the selected image's descriptors.
-Fabric owns settings, model, extension and workflow validation.
-Missing native capability contracts and mismatched Fabric revisions remain unknown; explicit schema violations are unsupported.
-The `fabric_plan` check retains a bounded canonical field path and a fixed explanation for classified planner failures.
-Raw schema messages and rejected values are omitted; unsafe or overlong field identifiers fall back to `configuration`.
-For a rejected model token limit, the reason also names `overrides.maxTokens` and up to 16 model routes carrying that setting, including Fabric's generated `default` role.
+The SDK checks image identity, source revision and platform, and that the image provides the selected adapter (the `fabric_adapter` check).
+A mismatched Fabric revision leaves compatibility unknown; an image without the adapter is unsupported.
+Fabric owns settings, model, extension and workflow validation, which it performs inside the sandbox when the agent is configured.
 Deployment postconditions name the sandbox and adapter and preserve unsupported check reasons in text and JSON errors.
 Onboarding uses the same assessment; unknown error variants retain a generic rejection.
 Omitting `config_json` preserves metadata-only discovery.
@@ -555,7 +641,7 @@ Teardown omits the capability gates so a version or driver mismatch alone does n
 
 [OpenShell contract tests](../crates/openshell-provider/tests/contract) exercise the production provider and pinned OpenTofu without SDK orchestration: early planning errors, saved-plan drift, unchanged apply, failed observation, recovery, and teardown.
 [Deployment fixtures](../crates/nemoclaw-e2e/tests/deployment.rs) and [Fabric lifecycle fixtures](../crates/nemoclaw-e2e/tests/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
-Fabric configuration writes are owned by `fabric_agent`; unchanged apply preserves the active runtime handle.
+Starting and stopping agent runtimes is owned by `fabric_agent`; an unchanged apply leaves the running runtime alone.
 Its inputs compose the canonical public Fabric configuration, separate from immutable sandbox identity.
 
 ## vLLM Runtime Contract
@@ -674,6 +760,22 @@ An absent image may therefore be pulled before a compatibility failure, but stor
 SDK plan reports preserve unresolved runtime-image checks in `deferred`, separate from supplemental catalog and service-readiness advisories.
 Teardown removes both image observations and their dependency gates.
 
+## Application Container Health
+
+`host_container_health` requires an `engine`, a container `name`, and a `container_id`.
+Optional `labels` maps each label the container must carry to its value; generated graphs require the deployment owner, generation, and compiled launch digest.
+The source verifies that the selected container is running and matches its identity and labels; it never runs a command in it.
+By default it requires Docker HEALTHCHECK to report `healthy`.
+Optional `http_url` selects an HTTP GET that must return 200, without credentials in the URL or redirects.
+Optional `runtime_status` instead selects a managed-runtime status file: `phase`, `updated`, `detail`, and `pid`, with a ready report no older than the container's start time.
+These modes are mutually exclusive; neither interprets application configuration or invokes a model.
+A successful read sets `healthy`.
+It waits for startup within `wait_timeout_seconds` (capped at 3600, default 0); zero performs one bounded observation.
+Missing or stopped containers, mismatched labels, malformed or stopped runtime reports, rejected HTTP reads, and unhealthy Docker reports fail the read.
+A stale runtime report or loading phase is not readiness; it can be polled within the deadline.
+Failed engine observations are not absence.
+Generated graphs set `read_trigger` so every apply, including an unchanged apply, observes current health before dependent services start.
+
 ## Runtime Capacity and Readiness
 
 Configuration validation checks hardware profiles, architecture selections, and memory settings without contacting an execution host.
@@ -721,35 +823,6 @@ The SDK runs no readiness loop of its own.
 The [standalone readiness fixture](contributing/integration-tests.md#standalone-service-readiness) exercises this contract without SDK deployment orchestration.
 A failed read retains managed bindings, and SDK teardown omits readiness gates.
 See [runtime ownership](design/runtime.md) and [recovery](models.md#diagnose-and-recover-a-stopped-runtime).
-
-## Sandbox Completion
-
-The OpenShell graph uses `fabric_agent_readiness` after sandbox creation and any runtime configuration resource.
-It takes `agent = fabric_agent.<name>.ref` and the same `gateway` ref.
-The agent's ref carries its sandbox's identity, the agent's `name`, and `config_sha256`, the digest of the document its inputs compose.
-The provider checks that the sandbox still has that identity and launches that agent, waits for startup, and confirms the host applied a document with that digest before requesting the packaged bridge's health response.
-It does not invoke an agent or model.
-The optional string `read_trigger` uses `uuid()` in generated graphs, making the read unknown during planning and recording a fresh token on every apply.
-
-Agent configuration and sandbox completion inspect the bound sandbox's OpenShell configuration admission before executing runtime commands.
-An explicit `Rejected` admission stops the startup wait even while the sandbox is `Starting`.
-The diagnostic names the sandbox and includes only recognized gateway reasons; unknown backend text becomes a fixed repair message.
-Passive refresh retains a rejected nonterminal sandbox so apply can repair attached providers, and teardown does not require admission.
-See [runtime policy rejection recovery](sandbox-network.md#recover-from-runtime-policy-rejection).
-
-The data source returns `ready`, nullable `health_json`, and nullable `error_message`.
-Runtime observation failures return `ready: false` with an error message.
-The pinned bridge's explicit unsupported response is retained in `health_json`; unrecognized reports are errors.
-The graph must enforce `ready` with a lifecycle postcondition: a data-source observation alone does not reject an unsuccessful result.
-Failed postconditions retain observations and resource bindings for recovery.
-The SDK reads these values through OpenTofu JSON and includes the unsupported bridge response in successful apply results.
-Failures preserve execution or observation errors without an unverified health payload.
-SDK-generated graphs defer health until apply; export and teardown omit the observation.
-Standalone configurations with known inputs may read during planning unless the trigger defers them.
-Existing sandbox resource refresh still verifies configuration.
-
-The [standalone sandbox fixture](contributing/integration-tests.md#standalone-sandbox-completion) checks this contract through the production provider without SDK deployment orchestration.
-The shared backend compares public Fabric configuration and runtime handle state; fresh native configuration and health remain subject to [Fabric observation limits](design/fabric-management.md#observation-limits).
 
 ## Service Capacity
 
@@ -834,6 +907,7 @@ Supported HCL examples, import, adoption, remote-state backends and compatibilit
 Every resource and data source takes inputs that can be written in HCL.
 [`examples/hcl/travel`](../examples/hcl/travel/main.tf) is a complete hand-written configuration: a Pi agent in an OpenShell sandbox, answering with a local Ollama server placed with Docker, and allowed only HTTPS `GET` requests to one site.
 A system test applies it unchanged against the bundle's providers.
+[`examples/hcl/travel-team`](../examples/hcl/travel-team/README.md) scales the same pattern to a team of six agents with their own sandboxes, models, and grants.
 Writing one by hand:
 
 - Install the providers from a bundle: name its `providers` directory as a filesystem mirror, and pin each NVIDIA provider to the bundle's version. Development bundles carry pre-release versions, which OpenTofu selects only when pinned exactly.

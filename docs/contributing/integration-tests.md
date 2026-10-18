@@ -63,6 +63,7 @@ Its modules run the `nemoclaw` types against fake Docker engines, gateways, mode
 | `service_storage`, `gateway_storage` | Retained service storage and, on Unix, Docker gateway storage against a fake engine |
 | `gateway_readiness` | Managed-gateway exit diagnostics, bootstrap state kept after failure, corrected retry, unchanged-apply rechecks, and teardown without the readiness data source |
 | `runtime_image`, `vllm_runtime` | Runtime image compatibility and, on Unix, the vLLM runtime contract |
+| `host_container_health` | Authored application health reads: an owned healthy container passes and an unhealthy one fails the plan |
 | `discovery` | Discovery plans that read target metadata without mutations |
 | `kubernetes_hcl`, `kubernetes_lifecycle` | Kubernetes planning, and apply, refresh, and teardown against the in-memory API in `crates/test-support/kube_api.rs`; the test writes and deletes the objects Helm would, and the live Kind suite runs the chart itself |
 
@@ -98,8 +99,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p fabric-provider --test contract -- --ignored
 ```
 
-`fabric_agent` applies a Pi agent from `tests/contract/fixtures` to a sandbox: an invalid configuration fails validation at its field without repeating the value, one the harness cannot apply fails at plan, the configuration updates without replacing the sandbox, a stopped host is reconfigured, and a lost reply is not retried.
-`fabric_agent_readiness` reports the configured agent ready, and not ready while its health fails, without writing to the sandbox.
+`fabric_agent` starts a Pi agent from `tests/contract/fixtures` in a sandbox: an invalid configuration fails validation at its field without repeating the value, a changed configuration replaces the sandbox, a lost start reply is not retried and recovers in a replaced sandbox, and removing the agent stops it and keeps its sandbox.
 On Unix, `fabric_harnesses` reads a fake Docker engine's image metadata: a compatible image reports its runtime binaries; another platform, or a read policy without the runtime's paths, is unsupported; a missing image is unknown.
 `every_fabric_type_has_a_contract_test` requires a contract test for every Fabric type.
 
@@ -119,20 +119,21 @@ The fixtures return protocol responses; they do not establish agent inference, n
 
 | Module | Checks |
 |---|---|
-| `deployment` | Configuration lifecycles through the SDK and CLI: shared state, interrupted creation, unchanged apply, readiness failure without replacement, failed observation without state loss, export and reapply, policy and tool drift, web search, credential redaction, startup failure messages, and destroy |
-| `export_observations` | Export through provider refresh without applying, without inference or search credentials, and rejection of observed drift without changes to saved state |
-| `fabric_deployment` | One harness test each for OpenClaw and Pi, which reconcile configuration and protect sandbox identity, and missing or failed runtime declarations |
+| `deployment` | Configuration lifecycles through the SDK and CLI: shared state, interrupted creation, unchanged apply, startup failure recovered in a new sandbox, failed observation without state loss, export and reapply, policy and tool drift, web search, credential redaction, startup failure messages, and destroy |
+| `export_observations` | Export through provider refresh without applying, without inference or search credentials, rejection of observed drift without changes to saved state, and a Pi model changed inside the sandbox, which export ignores |
+| `fabric_deployment` | One harness test each for OpenClaw and Pi, where a changed configuration replaces the agent with its sandbox, and missing or failed runtime declarations |
 | `multiple_providers` | Two deployments' provider attachments, export and reapply, drift, and destroy, each scoped to its sandbox |
 | `inference_discovery` | Optional catalog failures that keep complete unchanged plans and report uncertainty |
-| `sandbox_readiness` | Standalone sandbox completion; see [below](#standalone-sandbox-completion) |
+| `fabric_bridge` | The provider's `fabric-agent-ctl` client: the image's own command and environment, input on stdin, and uncertain invocations never replayed |
 | `remote_service` | Services on simulated SSH hosts; see [SSH service fixtures](#ssh-service-fixtures) |
 | `travel_example` | `examples/hcl/travel` applied unchanged as plain HCL from the bundle's provider mirror: Ollama placed from its runtime launch on a simulated SSH engine, endpoint readiness against a fake model server, OpenShell objects and the Pi agent on the fixture gateway, agent readiness, and an unchanged second plan |
+| `travel_team_example` | `examples/hcl/travel-team` applied the same way: six Hermes agents in `for_each` sandboxes with per-role providers, grants, toolsets, and models; an unchanged second plan; a hosted-model change replacing only the scheduler's and buyer's sandboxes; and teardown that fails without `destroy = true` and removes everything with it. It reports each OpenTofu command's duration |
 | `helm_recovery` | On Unix, destroy and its recovery against an in-memory Kubernetes API, after failures, a second destroy, and cancellation; see [below](#helm-release-recovery) |
 
 In `deployment`, `cli_terminal_outputs_preserve_lifecycle_and_json_contract` checks text plans, JSON apply, unchanged text apply, JSON plan completeness, text destroy, and repeated JSON destroy against one fixture state.
 `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` changes the gateway driver after planning to check OpenTofu's apply-time check, recovery, and teardown.
 `rejected_policy_fails_promptly_with_context_and_allows_recovery_or_destroy` checks a simulated gateway admission rejection with sandbox context in text and JSON output, retained bindings, recovery, and destroy.
-`separate_agent_sandboxes_cli_export_reapply_and_policy_drift` and `tool_disclosure_cli_export_reapply_and_native_settings_drift` check OpenClaw tool policies, with observation failures that change nothing.
+`separate_agent_sandboxes_cli_export_reapply_and_policy_drift` and `tool_disclosure_cli_export_reapply_and_configuration_on_stdin` check OpenClaw tool policies, whose changes replace the sandbox, with observation failures that change nothing.
 
 ### Helm Release Recovery
 
@@ -157,12 +158,6 @@ Each test that makes destroy fail or stop ends by removing the cause, if any, an
 | `helm_recovery::receipt` | A deleted or truncated receipt stops destroy and its preview while OpenTofu plans, without changing state, bindings, objects, or the receipt; the restored receipt lets destroy finish |
 | `helm_recovery::release_record` | A Helm release record with no binding stops destroy before it deletes any issuer object, and apply and export stay refused; destroy finishes once the record is gone |
 | `helm_recovery::destroy_faults` | A second destroy launches no plan or apply; an authentication failure (HTTP 401) before planning, after the saved plan, or after it on the issuer's ConfigMap reads alone stops destroy, keeps the issuer, and lets a retry finish; cancelling at the first refresh returns promptly while the API is unreachable and changes nothing |
-
-### Standalone Sandbox Completion
-
-On Unix, run `cargo test -p nemoclaw-e2e --test integration sandbox_readiness:: -- --ignored` with the bundle set as above; the test runs the bundle's providers.
-It runs the sandbox completion data source through OpenTofu against the local gRPC fixture, without SDK orchestration.
-It checks deferred health reads, failed postconditions with retained observations and bindings, unchanged-apply rechecks, prompt configuration-admission rejection with safe sandbox context, and teardown without readiness.
 
 ### SSH Service Fixtures
 
@@ -193,7 +188,7 @@ The [Docker-provider lifecycle fixture](live-tests.md#docker-provider-lifecycle)
 
 The OpenShell and Fabric backends' tests against the fake gateway, in each provider's `src/fake_gateway_tests.rs`, run in the default workspace suite; they include bound exec identity and a deadline for an exec stream that never finishes.
 Launch compatibility runs there too.
-`agent_compatibility` checks passive launch mode, caller identity, harness selection, and default policy restrictions without frozen launch snapshots.
+`agent_compatibility` checks that the launch serves Fabric's bridge without naming an agent, harness selection, and default policy restrictions without frozen launch snapshots.
 The separately scheduled Fabric lifecycle cases and installed-adapter image tests exercise the supported harnesses.
 The `tls` test generates certificates and verifies both trust directions and bearer references through a real TLS connection.
 
@@ -227,29 +222,14 @@ The fixture checks that the supervisor runs independently of the CLI; it does no
 
 ### Fabric Discovery and Execution
 
-The image `unit-tests` stage installs Fabric's `tests/fixtures/discovery` adapter beside the pinned Fabric runtime.
-Its tests package that adapter's installed discovery output and deliver its settings to Fabric's installed runner through the bridge host.
-The SDK's [planner tests](../../crates/nemoclaw-sdk/tests/fabric_planner.rs) plan the same unknown adapter's settings from an image catalog.
+The image's [reference tests](../../image/fabric/test_reference.py) run NemoClaw's test adapter through Fabric's real `fabric-agent-ctl`.
+The SDK's [compatibility tests](../../crates/nemoclaw-sdk/tests/fabric_compatibility.rs) check an image catalog's adapters, revision and filesystem requirements; NemoClaw doesn't plan adapter settings.
 
 
 ### Inference API Fixtures
 
-Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/tests/native), alongside the implementation.
-Build the selected image using the [agent image procedure](../build.md#build-agent-images), then run its retained Fabric tests in a disposable container:
-
-```sh
-docker run --rm --runtime=runc --network none --entrypoint /bin/sh nc-fabric:openclaw -ec '
-  fixture=$(mktemp -d)
-  tar -xzf /opt/nemoclaw/source/fabric.tar.gz -C "$fixture" --strip-components=1
-  /opt/fabric/bin/python "$fixture/tests/native/qualify.py" nvidia.fabric.openclaw --settings "{\"cli\":\"/app/openclaw.mjs\"}"
-'
-```
-
-For Hermes, select `nc-fabric:hermes`, adapter ID `nvidia.fabric.hermes`, and settings `{"mode":"service"}`.
-The script starts the installed native runtime, sends two turns to an isolated local inference fixture, and stops the runtime.
-Expect a JSON result with `result: passed`; the container is removed on exit.
-These checks use no live credentials or external model endpoints and do not qualify external search APIs.
-The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging and the generic host separately.
+Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/5574117feb4be948c1b03f4c36a2fe9a11af910d/tests), alongside the implementation.
+The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging separately.
 
 
 ### Hermes Relay Tracing Fixture

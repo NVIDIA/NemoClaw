@@ -38,7 +38,9 @@ fn api_and_tuning_survive_compilation_and_yaml() {
         &rows.iter().find(|row| row.kind == "agent").unwrap().values,
     )
     .unwrap();
-    assert_eq!(settings["models"]["default"]["api"], "openai-responses");
+    // The authored API selects how catalogs are read; Fabric v0.5.0 has no
+    // per-model API field (#13320).
+    assert!(settings["models"]["default"].get("api").is_none());
     assert_eq!(
         settings["models"]["default"]["settings"]["contextWindow"],
         65536

@@ -756,7 +756,7 @@ fn public_operation_futures_fit_the_async_callers_stack_budget() {
 
 #[test]
 fn destroy_drift_errors_distinguish_undeclared_resources_from_missing_saved_ids() {
-    let address = "openshell_sandbox.assistant";
+    let address = "openshell_workspace.workspace";
     let plan: Plan = serde_json::from_value(json!({
         "resource_drift":[{
             "address": address, "change": {"actions":["update"], "before":{"id":"saved-id"}}
@@ -1043,7 +1043,7 @@ fn replacement_cleanup_reports_opentofu_objects_within_deployment_scope() {
     }
 }
 
-fn example_documents() -> Vec<(String, Document)> {
+pub(super) fn example_documents() -> Vec<(String, Document)> {
     fn walk(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
         for entry in fs::read_dir(directory).unwrap() {
             let path = entry.unwrap().path();
@@ -1051,7 +1051,7 @@ fn example_documents() -> Vec<(String, Document)> {
                 walk(&path, found);
             } else if path
                 .extension()
-                .is_some_and(|extension| extension == "yaml")
+                .is_some_and(|extension| extension == "yaml" || extension == "yml")
             {
                 found.push(path);
             }

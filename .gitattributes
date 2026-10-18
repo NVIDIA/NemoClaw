@@ -5,4 +5,3 @@
 crates/vendor/openshell-sdk/THIRD-PARTY-NOTICES -text -whitespace
 
 # Unified patches encode empty context lines with a single space.
-image/fabric/openclaw-reconfigure.patch whitespace=-blank-at-eol

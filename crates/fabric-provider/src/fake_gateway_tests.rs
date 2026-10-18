@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The agent bridge and configuration backend against the fake OpenShell
+//! The agent's Fabric bridge client and backend against the fake OpenShell
 //! gateway, without OpenTofu. Sandboxes come from the openshell provider's
 //! contract fixtures.
 
@@ -10,7 +10,6 @@ use nemoclaw_test_fixtures::openshell::{Fixture, contract_rows};
 use openshell_core::proto;
 use openshell_provider::{GENERATION, OWNER, OpenShell};
 use std::sync::Arc;
-use tokio_util::sync::CancellationToken;
 
 fn client(fixture: &Fixture) -> OpenShell {
     let connection = nemoclaw_openshell::Connection {
@@ -38,21 +37,33 @@ fn key(row: &Row) -> String {
     format!("{}/{}", row["workspace"], row["name"])
 }
 
-#[tokio::test]
-async fn public_configuration_refresh_verifies_runtime_intent_without_mutation() {
-    let fixture = Fixture::start().await;
-    let client = client(&fixture);
-    // Native startup can lag behind sandbox creation; SDK readiness waits separately.
-    fixture.state.lock().unwrap().exec_exit = 2;
-    let sandbox = create_sandbox(&client, "fabric-openclaw").await;
-    fixture.state.lock().unwrap().exec_exit = 0;
-    let mut desired = nemoclaw_fabric::agent::decompose(&serde_json::json!({
+fn config() -> serde_json::Value {
+    serde_json::json!({
         "schema_version": "fabric.agent/v1alpha1",
         "runtime": {},
         "metadata": {"name": "main"},
         "harness": {"adapter_id": "nvidia.fabric.openclaw"},
         "models": {"default": {"provider": "openai", "model": "fixture-model"}},
-    }));
+    })
+}
+
+fn operations(fixture: &Fixture, operation: &str) -> usize {
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .exec_calls
+        .iter()
+        .filter(|command| command.get(1).is_some_and(|arg| arg == operation))
+        .count()
+}
+
+#[tokio::test]
+async fn an_agent_starts_once_its_bridge_serves_and_stops_when_removed() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture);
+    let sandbox = create_sandbox(&client, "fabric-openclaw").await;
+    let mut desired = nemoclaw_fabric::agent::decompose(&config());
     desired.extend(
         [
             ("workspace", sandbox["workspace"].as_str()),
@@ -63,78 +74,66 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
         ]
         .map(|(key, value)| (key.to_owned(), value.to_owned())),
     );
-    fixture.state.lock().unwrap().host_unavailable_checks = 1;
+    // Until `fabric-agent-ctl serve` listens, start is asked again.
+    fixture.state.lock().unwrap().host_unavailable_starts = 2;
     let fabric = AgentBackend(client.clone());
-    let configured = fabric.ensure("agent", &desired).await;
-    assert!(configured.error().is_none(), "{:?}", configured.error());
-    let binding = configured.into_parts().0.unwrap();
-    let configures = |calls: &[Vec<String>]| {
-        calls
-            .iter()
-            .filter(|command| command.get(1).is_some_and(|arg| arg == "configure"))
-            .count()
-    };
+    let started = fabric.ensure("agent", &desired).await;
+    assert!(started.error().is_none(), "{:?}", started.error());
+    let agent = started.into_parts().0.unwrap();
+    let runtime_id = format!("fixture-runtime-{}", sandbox["id"]);
+    assert_eq!(agent["runtime_id"], runtime_id);
+    assert_eq!(operations(&fixture, "start"), 3);
     {
         let state = fixture.state.lock().unwrap();
+        let command = state.exec_calls.last().unwrap();
         assert_eq!(
-            configures(&state.exec_calls),
-            1,
-            "only passive observation may be retried during host startup"
-        );
-        let index = state
-            .exec_calls
-            .iter()
-            .position(|args| args.get(1).is_some_and(|arg| arg == "configure"))
-            .unwrap();
-        let command = &state.exec_calls[index];
-        assert_eq!(
-            &command[..4],
-            [
-                "/usr/local/bin/fabric-agent",
-                "configure",
+            command,
+            &[
+                "/opt/fabric/bin/fabric-agent-ctl",
+                "start",
                 "--agent",
-                "main"
+                "main",
+                "--config",
+                "-"
             ]
         );
-        assert_eq!(command[4..6], ["--config", "-"]);
-        let sent: serde_json::Value = serde_json::from_slice(&state.exec_stdin[index]).unwrap();
+        let sent: serde_json::Value =
+            serde_json::from_slice(state.exec_stdin.last().unwrap()).unwrap();
         assert_eq!(sent["metadata"]["name"], "main");
-        assert_eq!(command[6], "--expected-generation");
-        assert_eq!(command[7], "fixture:0");
-        assert!(!command.iter().any(|arg| arg.contains("schema_version")));
     }
-    fixture.state.lock().unwrap().health_report = Some(
-        serde_json::json!({"supported":false,"report":null,"reason_code":"fabric_health_unsupported"}),
+
+    // Reading an agent checks its sandbox and leaves the runtime alone.
+    let calls = fixture.state.lock().unwrap().exec_calls.len();
+    assert_eq!(
+        fabric.read("agent", &agent, false).await.unwrap(),
+        Some(agent.clone())
     );
-    let effects = fixture.state.lock().unwrap().effects;
-    let writes = configures(&fixture.state.lock().unwrap().exec_calls);
-    fabric
-        .read("agent", &binding, false)
+    assert_eq!(fixture.state.lock().unwrap().exec_calls.len(), calls);
+
+    let parent = crate::configuration::fabric_binding(sandbox.clone()).unwrap();
+    let reply = client
+        .invoke_agent(&parent, &runtime_id, &serde_json::json!("hello"))
         .await
-        .unwrap()
         .unwrap();
-    {
-        let state = fixture.state.lock().unwrap();
-        assert_eq!(state.effects, effects);
-        assert_eq!(configures(&state.exec_calls), writes);
-        assert!(
-            state
-                .exec_calls
-                .iter()
-                .any(|command| command.get(1).is_some_and(|arg| arg == "check"))
-        );
-    }
-    fixture.state.lock().unwrap().exec_exit = 2;
-    assert!(fabric.read("agent", &binding, false).await.is_err());
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    // An unavailable configuration observation does not prevent owned teardown.
+    assert_eq!(reply["output"]["message"], "hello");
+
+    // A sandbox runs one runtime: another start is refused with guidance.
+    let again = fabric.ensure("agent", &desired).await;
+    let message = again.error().unwrap().to_string();
+    assert!(message.contains("replace the sandbox"), "{message}");
+
+    fabric.remove("agent", &agent, false).await.unwrap();
+    assert_eq!(operations(&fixture, "stop"), 1);
     assert!(
-        fabric
-            .read("agent", &binding, true)
-            .await
+        fixture
+            .state
+            .lock()
             .unwrap()
-            .is_some()
+            .fabric_stopped
+            .contains(&sandbox["id"])
     );
+    // A runtime that is already stopped counts as stopped.
+    fabric.remove("agent", &agent, false).await.unwrap();
 }
 
 #[tokio::test]
@@ -163,7 +162,7 @@ async fn terminal_startup_reports_phase_and_exit_without_echoing_backend_text() 
         }
         let error = tokio::time::timeout(
             std::time::Duration::from_secs(2),
-            client.ready(&binding, &CancellationToken::new()),
+            client.start_agent(&binding, &config()),
         )
         .await
         .expect("terminal phases must fail immediately")
@@ -212,24 +211,19 @@ async fn rejected_configuration_stops_startup_without_exec_and_preserves_binding
                     ..Default::default()
                 });
             }
-            for configure in [false, true] {
-                let error = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-                    if configure {
-                        client.configure_agent(&binding).await
-                    } else {
-                        client.ready(&binding, &CancellationToken::new()).await
-                    }
-                })
-                .await
-                .expect("a reported configuration rejection must not wait for startup timeout")
-                .unwrap_err()
-                .into_observation()
-                .to_string();
-                assert!(error.contains("configuration rejected"), "{error}");
-                assert!(error.contains(expected), "{error}");
-                assert!(error.contains("resources retained"), "{error}");
-                assert!(!error.contains("PRIVATE_SENTINEL"), "{error}");
-            }
+            let error = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                client.start_agent(&binding, &config()),
+            )
+            .await
+            .expect("a reported configuration rejection must not wait for startup timeout")
+            .unwrap_err()
+            .into_observation()
+            .to_string();
+            assert!(error.contains("configuration rejected"), "{error}");
+            assert!(error.contains(expected), "{error}");
+            assert!(error.contains("resources retained"), "{error}");
+            assert!(!error.contains("PRIVATE_SENTINEL"), "{error}");
             assert_eq!(fixture.state.lock().unwrap().effects, effects);
             assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
         }
@@ -256,7 +250,7 @@ async fn rejected_configuration_stops_startup_without_exec_and_preserves_binding
             .sandboxes
             .insert(key.clone(), changed);
         let error = client
-            .ready(&binding, &CancellationToken::new())
+            .start_agent(&binding, &config())
             .await
             .unwrap_err()
             .into_observation();
@@ -278,7 +272,7 @@ async fn rejected_configuration_stops_startup_without_exec_and_preserves_binding
     ] {
         fixture.state.lock().unwrap().fail_read = Some(("sandbox", code));
         let error = client
-            .ready(&binding, &CancellationToken::new())
+            .start_agent(&binding, &config())
             .await
             .unwrap_err()
             .into_observation();

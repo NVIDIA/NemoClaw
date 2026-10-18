@@ -35,7 +35,6 @@ fn unknown_id_reuses_state_and_only_immutable_fields_require_replacement() {
 fn stopped_managed_process_reapplies_install_without_promising_readiness_or_replacement() {
     for kind in [
         "managed_gateway",
-        "agent",
         "kubernetes_gateway",
         "kubernetes_storage",
     ] {

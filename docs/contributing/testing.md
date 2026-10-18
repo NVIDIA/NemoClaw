@@ -412,11 +412,9 @@ Native adapter implementation and its behavioral tests live in Fabric and use Fa
 The [image workflow](../../.github/workflows/images.yml) builds the selected platform's agent images plus the proxy, verifies retained source hashes, and checks installed discovery metadata.
 It first builds and qualifies the separate dummy image, then runs the same [command contract suite](../../image/test_agent_contract.py) against every selected agent image.
 Use the [reference image procedure](../build.md#reference-contract-image) to run that suite locally against explicit image references.
-The suite tests real entrypoints, file and stdin inputs, exit codes, capability labels, standalone validation, host startup and shutdown, and retained files.
-The dummy, OpenClaw, Hermes, and Pi also run shared configuration, generation, no-op, invocation, and preparation assertions, using the lifecycle profiles in the reference image procedure.
+The suite checks each image's runtime command and catalog, then starts, invokes, and stops one runtime through `fabric-agent-ctl` in a network-isolated container.
+The dummy, OpenClaw, Hermes, and Pi run that lifecycle, using the lifecycle profiles in the reference image procedure.
 Native profiles use isolated local inference; images without a selected profile report lifecycle coverage as skipped.
-Readiness qualification is separate and reports unsupported native health as skipped unless `--require-ready` requires it to pass.
-The workflow requires dummy readiness and retains the dummy-specific readiness-failure test; it separately checks OpenClaw reconfiguration and Hermes security.
 
 The image workflow obtains its image decision from the shared validation plan and skips image steps when their inputs are unaffected; the `Build` checks still report.
 A failed planning job fails those checks instead of skipping them.

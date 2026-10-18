@@ -43,6 +43,7 @@ pub(super) fn create_sandbox_request(
             policy: Some(network::granted_row_policy(want, grants)?),
             ..Default::default()
         }),
+        service_exposures: crate::services::request(value(want, crate::services::FIELD))?,
         ..Default::default()
     })
 }
@@ -56,7 +57,19 @@ impl ConnectedOpenShellGateway {
 
     async fn provider(&self, want: &Row) -> Result<proto::Provider, ObservationError> {
         let search = SearchProvider::from_name(value(want, "provider_type"));
+        let api = value(want, "provider_type") == "api";
+        // The variable sandboxes see a search key in.
+        let search_key = search
+            .map(|provider| profile::sandbox_env(provider, want))
+            .unwrap_or_default();
         let (kind, endpoint_key, secret_key) = match value(want, "provider_type") {
+            "api"
+                if value(want, "profile_name")
+                    == format!("nemoclaw-api-{}", value(want, "name"))
+                    && !value(want, "credential_env").is_empty() =>
+            {
+                ("api", "NEMOCLAW_API_ENDPOINT", "")
+            }
             "" => ("openai", "OPENAI_BASE_URL", "OPENAI_API_KEY"),
             "anthropic" => ("anthropic", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
             "brave" | "tavily"
@@ -75,14 +88,26 @@ impl ConnectedOpenShellGateway {
                         && !value(want, "credential_env").is_empty()
                 }) =>
             {
-                let search = search.unwrap();
-                (value(want, "profile_name"), "", search.credential_env())
+                (value(want, "profile_name"), "", search_key.as_str())
             }
             _ => return Err(ObservationError::Query),
         };
-        let native = search.is_none();
+        let native = search.is_none() && !api;
         let source = value(want, "credential_source");
-        let profile = if native {
+        let profile = if api {
+            let bound = self
+                .observe_profile(value(want, "workspace"), value(want, "profile_name"), false)
+                .await?
+                .ok_or(ObservationError::BindingMismatch)?;
+            if ["owner", "generation", "endpoint"]
+                .iter()
+                .any(|field| value(&bound, field) != value(want, field))
+                || !source.is_empty()
+            {
+                return Err(ObservationError::BindingMismatch);
+            }
+            Some(profile::api_definition(&bound)?)
+        } else if native {
             let id = format!("nemoclaw-inference-{}", value(want, "name"));
             let bound = self
                 .observe_profile(value(want, "workspace"), &id, false)
@@ -219,6 +244,26 @@ impl ConnectedOpenShellGateway {
         let row = base(response.sandbox.and_then(|s| s.metadata), name, false)?;
         verify_identity(want, &row)?;
         Ok(row["id"].clone())
+    }
+
+    pub(crate) async fn service(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+        name: &str,
+    ) -> Result<Option<crate::services::Endpoint>, ObservationError> {
+        authoritative(
+            self.client
+                .raw_grpc()
+                .get_service(self.request(proto::GetServiceRequest {
+                    workspace_scope: Some(proto::workspace_selector(workspace)),
+                    sandbox: value(sandbox, "name").into(),
+                    name: name.into(),
+                }))
+                .await,
+        )?
+        .map(|response| crate::services::endpoint(response, workspace, sandbox))
+        .transpose()
     }
 
     pub(crate) async fn update_provider(

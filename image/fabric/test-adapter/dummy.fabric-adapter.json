@@ -1,0 +1,92 @@
+{
+  "contract_version": "fabric.adapter/v1alpha2",
+  "adapter_id": "org.nemoclaw.dummy",
+  "adapter_kind": "python",
+  "runner": {
+    "module": "nemoclaw_test_adapter.adapter"
+  },
+  "capabilities": {
+    "cancellation": false,
+    "service": false,
+    "streaming": false,
+    "updates": false
+  },
+  "config": {
+    "accepts": [
+      "models",
+      "models.base_url",
+      "models.max_tokens"
+    ]
+  },
+  "requirements": {
+    "binaries": []
+  },
+  "settings_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "reply": {
+        "type": "string",
+        "description": "Reply to every invocation instead of echoing its message."
+      },
+      "fail_start": {
+        "type": "boolean",
+        "description": "Fail when the runtime starts."
+      },
+      "fail_stop": {
+        "type": "boolean",
+        "description": "Fail when the runtime stops."
+      }
+    }
+  },
+  "model_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "provider",
+      "model"
+    ],
+    "properties": {
+      "provider": {
+        "type": "string",
+        "minLength": 1
+      },
+      "model": {
+        "type": "string",
+        "minLength": 1
+      },
+      "base_url": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "api_key_env": {
+        "type": "string",
+        "minLength": 1
+      },
+      "api": {
+        "type": "string"
+      },
+      "max_tokens": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "settings": {
+        "type": "object"
+      }
+    }
+  },
+  "extension_schemas": {
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "api": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

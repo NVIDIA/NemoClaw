@@ -140,11 +140,19 @@ case "$1 $2" in
     'buildx bake')
         if [ "$3" = --print ]; then
             printf '{"target":{"%s":{"tags":["%s:%s"]}}}\n' "$4" "$IMAGE_PREFIX" "$4"
+        else
+            # The image a following `docker run` reads its catalog from.
+            printf '%s\n' "$3" > "${0%/*}/last-bake"
         fi ;;
     'run '*)
         case "$*" in
-            *dummy_catalog.py*) printf '{"bridge":{"protocol":1},"adapters":[{"descriptor":{"adapter_id":"org.nemoclaw.dummy"}}]}\n' ;;
-            *--installed*) printf '{"bridge":{"protocol":1},"adapters":[]}\n' ;;
+            *--installed*)
+                last=; IFS= read -r last < "${0%/*}/last-bake" 2>/dev/null
+                if [ "$last" = dummy ]; then
+                    printf '{"adapters":[{"descriptor":{"adapter_id":"org.nemoclaw.dummy"}}]}\n'
+                else
+                    printf '{"adapters":[]}\n'
+                fi ;;
             *) printf '{"protocol":1}\n' ;;
         esac ;;
     'image inspect') printf 'sha256:0123456789abcdef\n' ;;
@@ -451,7 +459,10 @@ fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compr
     assert!(log.contains("--tag nc-live-images:pi"), "{log}");
     // The reference dummy runs the full Docker lifecycle without Fabric.
     assert!(log.contains("buildx bake dummy --load"), "{log}");
-    assert!(log.contains("/opt/nemoclaw/dummy_catalog.py"), "{log}");
+    assert!(
+        log.contains("/opt/nemoclaw/catalog.py --installed"),
+        "{log}"
+    );
     for variant in ["dummy", "proxy-a", "proxy-b"] {
         assert!(
             log.contains(&format!("--tag nc-live-images:{variant}")),

@@ -94,7 +94,10 @@ impl JourneyState {
         };
         if let Some(note) = catalog_credential_note(&request, observed) {
             resolution.information.push(note);
-            if let Some(path) = self.route_model_path()
+            // An authentication requirement says nothing about the offline
+            // recommendations. It still blocks fact-gated bulk acceptance.
+            if self.catalog_preset().is_none()
+                && let Some(path) = self.route_model_path()
                 && let Some(question) = resolution
                     .questions
                     .iter_mut()
@@ -116,7 +119,9 @@ impl JourneyState {
             .iter_mut()
             .find(|question| question.id == path)
         {
-            if let Some(suggestion) = question.suggestion.clone() {
+            if let Some(suggestion) = question.suggestion.clone()
+                && !question.choices.contains(&suggestion)
+            {
                 question.choices.push(suggestion);
             }
             for model in &observed.models {

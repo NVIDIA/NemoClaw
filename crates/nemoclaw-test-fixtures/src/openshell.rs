@@ -39,10 +39,9 @@ pub struct State {
     pub sandbox_conditions: Vec<p::SandboxCondition>,
     pub configuration_admission: Option<p::SandboxConfigurationAdmission>,
     pub exec_exit: i32,
-    pub health_report: Option<serde_json::Value>,
     pub inference_exit: i32,
     pub exec_truncated: bool,
-    pub lose_configure_reply: bool,
+    pub lose_start_reply: bool,
     pub exec_stalled: bool,
     pub exec_calls: Vec<Vec<String>>,
     pub exec_environments: Vec<HashMap<String, String>>,
@@ -52,8 +51,8 @@ pub struct State {
     pub exec_stdin: Vec<Vec<u8>>,
     /// Files present in the fake sandbox for bridge commands that name a path.
     pub sandbox_files: HashMap<String, Vec<u8>>,
-    pub fabric_generations: HashMap<String, usize>,
-    pub host_unavailable_checks: usize,
+    /// Start requests answered as though `serve` were not yet listening.
+    pub host_unavailable_starts: usize,
     pub exec_response: Option<Vec<u8>>,
     pub configuration_error: Option<serde_json::Value>,
     pub effects: usize,
@@ -72,6 +71,10 @@ pub struct State {
     /// Reject one RPC before its handler can mutate fixture state.
     pub reject_rpc: Option<(&'static str, tonic::Code, String)>,
     pub rejected_rpcs: Vec<String>,
+    /// Sandbox service endpoints by workspace, sandbox, and service name.
+    pub services: std::collections::BTreeMap<(String, String, String), p::ServiceEndpoint>,
+    /// The exposures each CreateSandbox request carried, as sent.
+    pub sandbox_exposures: Vec<Vec<p::SandboxServiceExposure>>,
 }
 impl State {
     fn created(&mut self, kind: &str) {
@@ -136,7 +139,17 @@ impl Fixture {
             server
                 .add_service(InferenceService(service.clone()))
                 .add_service(service)
-                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+                // gRPC replies are small writes; without TCP_NODELAY, each
+                // waits on Nagle's algorithm and the provider's delayed
+                // acknowledgment, about 40 ms per call on Linux.
+                .serve_with_incoming(tokio_stream::StreamExt::map(
+                    tokio_stream::wrappers::TcpListenerStream::new(listener),
+                    |stream| {
+                        let stream = stream?;
+                        stream.set_nodelay(true)?;
+                        Ok::<_, std::io::Error>(stream)
+                    },
+                ))
                 .await
                 .unwrap();
         });
@@ -315,6 +328,7 @@ impl tower::Service<http::Request<Body>> for Service {
                 "/openshell.v1.OpenShell/DeleteWorkspace" => {
                     unary(request, state, delete_workspace).await
                 }
+                "/openshell.v1.OpenShell/GetService" => unary(request, state, get_service).await,
                 "/openshell.v1.OpenShell/DeleteProvider" => {
                     unary(request, state, |state, request| {
                         delete_provider(state, &request)
@@ -382,7 +396,10 @@ fn get_provider(
         .get(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
         .ok_or_else(|| Status::not_found("absent"))?
         .clone();
-    provider.credentials.clear();
+    // OpenShell reports credential names with their values redacted.
+    for value in provider.credentials.values_mut() {
+        *value = "REDACTED".into();
+    }
     Ok(p::ProviderResponse {
         provider: Some(provider),
         ..Default::default()
@@ -429,7 +446,10 @@ fn create_provider(
     if std::mem::take(&mut state.lose_create) {
         return Err(Status::unavailable("lost create reply secret"));
     }
-    provider.credentials.clear();
+    // OpenShell reports credential names with their values redacted.
+    for value in provider.credentials.values_mut() {
+        *value = "REDACTED".into();
+    }
     Ok(p::ProviderResponse {
         provider: Some(provider),
         ..Default::default()
@@ -466,7 +486,10 @@ fn update_provider(
     state.conditional_updates += 1;
     state.effects += 1;
     state.providers.insert(key, provider.clone());
-    provider.credentials.clear();
+    // OpenShell reports credential names with their values redacted.
+    for value in provider.credentials.values_mut() {
+        *value = "REDACTED".into();
+    }
     Ok(p::ProviderResponse {
         provider: Some(provider),
         ..Default::default()
@@ -581,6 +604,7 @@ fn create_sandbox(
     if state.sandboxes.contains_key(&key) {
         return Err(Status::already_exists("collision"));
     }
+    state.sandbox_exposures.push(q.service_exposures.clone());
     let sandbox = p::Sandbox {
         metadata: Some(p::ObjectMeta {
             annotations: q.annotations,
@@ -622,9 +646,42 @@ fn create_sandbox(
         }
     }
     state.created("sandbox");
+    // The gateway stores each exposure as an endpoint, resolving an omitted
+    // authorization mode to STRIP, and reports each endpoint's URL.
+    let mut service_urls = HashMap::new();
+    for exposure in q.service_exposures {
+        let meta = sandbox.metadata.as_ref().unwrap();
+        let mode = match p::ServiceAuthorizationMode::try_from(exposure.authorization_mode) {
+            Ok(p::ServiceAuthorizationMode::Unspecified) => p::ServiceAuthorizationMode::Strip,
+            Ok(mode) => mode,
+            Err(_) => return Err(Status::invalid_argument("authorization_mode is invalid")),
+        };
+        let endpoint = p::ServiceEndpoint {
+            metadata: Some(state.metadata(
+                format!("{}--{}", meta.name, exposure.service),
+                meta.workspace.clone(),
+                HashMap::from([("sandbox".into(), meta.name.clone())]),
+            )),
+            sandbox_id: meta.id.clone(),
+            sandbox: meta.name.clone(),
+            name: exposure.service.clone(),
+            target_port: exposure.target_port,
+            domain: true,
+            authorization_mode: mode as i32,
+        };
+        service_urls.insert(exposure.service, service_response(endpoint.clone()).url);
+        state.services.insert(
+            (
+                meta.workspace.clone(),
+                meta.name.clone(),
+                endpoint.name.clone(),
+            ),
+            endpoint,
+        );
+    }
     Ok(p::SandboxResponse {
         sandbox: Some(sandbox),
-        ..Default::default()
+        service_urls,
     })
 }
 fn get_sandbox(state: &mut State, q: &p::GetSandboxRequest) -> Result<p::SandboxResponse, Status> {
@@ -653,6 +710,11 @@ fn delete_sandbox(
         execution.delete(sandbox)?;
     }
     let sandbox = state.sandboxes.remove(&key).unwrap();
+    // The gateway removes a deleted sandbox's endpoints by its ID.
+    let id = sandbox.metadata.as_ref().unwrap().id.clone();
+    state
+        .services
+        .retain(|_, endpoint| endpoint.sandbox_id != id);
     state.effects += 1;
     if std::mem::take(&mut state.lose_delete) {
         return Err(Status::unavailable("secret-sentinel: deletion reply lost"));
@@ -661,6 +723,41 @@ fn delete_sandbox(
         outcome: p::DeletionOutcome::Completed.into(),
         sandbox_id: sandbox.metadata.unwrap().id,
     })
+}
+fn service_response(endpoint: p::ServiceEndpoint) -> p::ServiceEndpointResponse {
+    let workspace = endpoint
+        .metadata
+        .as_ref()
+        .map(|m| m.workspace.clone())
+        .unwrap_or_default();
+    let host = if endpoint.name.is_empty() {
+        format!("{workspace}--{}", endpoint.sandbox)
+    } else {
+        format!("{workspace}--{}--{}", endpoint.sandbox, endpoint.name)
+    };
+    p::ServiceEndpointResponse {
+        endpoint: Some(endpoint),
+        url: format!("http://{host}.services.fixture.test/"),
+    }
+}
+fn get_service(
+    state: &mut State,
+    q: p::GetServiceRequest,
+) -> Result<p::ServiceEndpointResponse, Status> {
+    state.read("service")?;
+    let workspace = workspace(&q.workspace_scope)?;
+    if !state
+        .sandboxes
+        .contains_key(&format!("{workspace}/{}", q.sandbox))
+    {
+        return Err(Status::not_found("sandbox not found"));
+    }
+    let endpoint = state
+        .services
+        .get(&(workspace, q.sandbox, q.name))
+        .ok_or_else(|| Status::not_found("service endpoint not found"))?
+        .clone();
+    Ok(service_response(endpoint))
 }
 fn policy_status(
     state: &mut State,
@@ -671,24 +768,36 @@ fn policy_status(
         .sandboxes
         .get(&format!("{}/{}", workspace(&q.workspace_scope)?, q.sandbox))
         .ok_or_else(|| Status::not_found("absent"))?;
+    let policy = state.active_policy.clone().or_else(|| {
+        let mut policy = sandbox.spec.as_ref().unwrap().policy.clone()?;
+        if !policy.network_policies.is_empty()
+            && let Some(fs) = &mut policy.filesystem
+            && !fs
+                .read_only
+                .iter()
+                .chain(&fs.read_write)
+                .any(|p| p == "/var/log")
+        {
+            fs.read_only.push("/var/log".into());
+        }
+        Some(policy)
+    });
+    // Like OpenShell's, the hash identifies the loaded policy's content.
+    let policy_hash = policy
+        .as_ref()
+        .map(|policy| {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::hash::DefaultHasher::new();
+            prost::Message::encode_to_vec(policy).hash(&mut hasher);
+            format!("fixture:{:016x}", hasher.finish())
+        })
+        .unwrap_or_default();
     Ok(p::GetSandboxPolicyStatusResponse {
         active_version: 1,
         revision: Some(p::SandboxPolicyRevision {
             version: 1,
-            policy: state.active_policy.clone().or_else(|| {
-                let mut policy = sandbox.spec.as_ref().unwrap().policy.clone()?;
-                if !policy.network_policies.is_empty()
-                    && let Some(fs) = &mut policy.filesystem
-                    && !fs
-                        .read_only
-                        .iter()
-                        .chain(&fs.read_write)
-                        .any(|p| p == "/var/log")
-                {
-                    fs.read_only.push("/var/log".into());
-                }
-                Some(policy)
-            }),
+            policy_hash,
+            policy,
             status: p::PolicyStatus::Loaded as i32,
             ..Default::default()
         }),
@@ -747,7 +856,8 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
         }
         let sandbox_id = sandbox.metadata.as_ref().unwrap().id.clone();
         let launch = &sandbox.spec.as_ref().unwrap().command;
-        let operation_index = launch.len() - 3;
+        // The launch is `fabric-agent-ctl serve`; operations replace `serve`.
+        let operation_index = launch.len() - 1;
         let is_bridge = request.command.starts_with(&launch[..operation_index]);
 
         if state.exec_stalled {
@@ -769,117 +879,94 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                     .find(|args| args[0] == name)
                     .map(|args| args[1].as_str())
             };
+            let failure = |code: &str, stage: &str, effects: &str| serde_json::json!({"code":code, "stage":stage, "message":"fixture failure", "effects":effects});
+            let runtime_id = format!("fixture-runtime-{sandbox_id}");
+            let running = state.fabric_configurations.contains_key(&sandbox_id)
+                && !state.fabric_stopped.contains(&sandbox_id);
             let mut error = None;
-            let mut changed = false;
-            // Like the image host, read `-` from stdin and any other value as a sandbox file.
-            let config = match flag("--config") {
-                Some("-") => serde_json::from_slice::<serde_json::Value>(&request.stdin).ok(),
-                Some(path) => state
-                    .sandbox_files
-                    .get(path)
-                    .and_then(|payload| serde_json::from_slice(payload).ok()),
-                None => None,
-            };
-            if matches!(operation, "configure" | "prepare") && exit == 0 {
-                if flag("--expected-generation")
-                    != Some(
-                        format!(
-                            "fixture:{}",
+            let mut changed = None;
+            let mut result = serde_json::Value::Null;
+            match operation {
+                // Like fabric-agent-ctl: one runtime lifecycle per sandbox.
+                "start" => {
+                    if state.host_unavailable_starts > 0 {
+                        state.host_unavailable_starts -= 1;
+                        error = Some(failure("host_unavailable", "transport", "none"));
+                    } else if state.fabric_configurations.contains_key(&sandbox_id)
+                        || state.fabric_stopped.contains(&sandbox_id)
+                    {
+                        error = Some(failure("runtime_exists", "start", "none"));
+                    } else if let Some(config) = (flag("--config") == Some("-"))
+                        .then(|| serde_json::from_slice::<serde_json::Value>(&request.stdin).ok())
+                        .flatten()
+                    {
+                        if let Some(rejected) = state.configuration_error.clone() {
+                            let code = rejected["error"]["code"].as_str().unwrap_or("start_failed");
+                            // Fabric rejects an invalid configuration before
+                            // starting anything; any other failed start may
+                            // have consumed the sandbox's one runtime.
+                            let effects = if code.starts_with("validation_") {
+                                "none"
+                            } else {
+                                "unknown"
+                            };
+                            if effects != "none" {
+                                state.fabric_stopped.insert(sandbox_id.clone());
+                            }
+                            error = Some(failure(
+                                code,
+                                rejected["error"]["stage"].as_str().unwrap_or("start"),
+                                effects,
+                            ));
+                        } else {
+                            result = serde_json::json!({
+                                "runtime_id": runtime_id,
+                                "agent_name": flag("--agent"),
+                                "adapter_id": config["harness"]["adapter_id"],
+                            });
                             state
-                                .fabric_generations
-                                .get(&sandbox_id)
-                                .copied()
-                                .unwrap_or_default()
-                        )
-                        .as_str(),
-                    )
-                {
-                    error = Some(
-                        serde_json::json!({"code":"stale_generation", "stage":"generation", "message":"stale generation", "effects":"none"}),
-                    );
-                    exit = 1;
-                } else if let Some(config) = config {
-                    changed = if operation == "prepare" {
-                        state.fabric_configurations.contains_key(&sandbox_id)
-                            && !state.fabric_stopped.contains(&sandbox_id)
+                                .fabric_configurations
+                                .insert(sandbox_id.clone(), config);
+                            changed = Some(true);
+                        }
                     } else {
-                        state.fabric_configurations.get(&sandbox_id) != Some(&config)
-                            || state.fabric_stopped.contains(&sandbox_id)
-                    };
-                    if changed {
-                        *state
-                            .fabric_generations
-                            .entry(sandbox_id.clone())
-                            .or_default() += 1;
+                        error = Some(failure("invalid_request", "request", "none"));
                     }
-                    let stopped = operation == "prepare" || state.configuration_error.is_some();
-                    if stopped {
+                }
+                "invoke" => {
+                    if running && flag("--runtime-id") == Some(runtime_id.as_str()) {
+                        let input = serde_json::from_slice::<serde_json::Value>(&request.stdin)
+                            .unwrap_or(serde_json::Value::Null);
+                        result =
+                            serde_json::json!({"status":"succeeded", "output":{"message":input}});
+                    } else {
+                        error = Some(failure("runtime_unavailable", "invoke", "none"));
+                    }
+                }
+                "stop" => {
+                    if running && flag("--runtime-id") == Some(runtime_id.as_str()) {
                         state.fabric_stopped.insert(sandbox_id.clone());
-                    } else {
-                        state.fabric_stopped.remove(&sandbox_id);
-                    }
-                    if let Some(failure) = &state.configuration_error {
-                        error = Some(
-                            serde_json::json!({"code":failure["error"]["code"], "stage":failure["error"]["stage"], "message":"safe fixture failure", "effects":"applied"}),
-                        );
-                        exit = 1;
-                    } else if operation == "configure" {
-                        state
-                            .fabric_configurations
-                            .insert(sandbox_id.clone(), config);
-                    }
-                    if stopped {
                         state.fabric_configurations.remove(&sandbox_id);
+                        changed = Some(true);
+                    } else {
+                        error = Some(failure("runtime_unavailable", "stop", "none"));
                     }
-                } else {
-                    error = Some(
-                        serde_json::json!({"code":"invalid_file","stage":"request","message":"invalid input","effects":"none"}),
-                    );
-                    exit = 1;
                 }
-            }
-            let model = state.fabric_configurations.get(&sandbox_id);
-            let running = model.is_some() && !state.fabric_stopped.contains(&sandbox_id);
-            let mut result = serde_json::json!({"runtime_id": if running { Some("fixture-runtime") } else { None }, "runtime_state":if running {"running"} else {"stopped"}, "generation":format!("fixture:{}", state.fabric_generations.get(&sandbox_id).copied().unwrap_or_default()), "applied_config":if running { model } else { None }});
-            let mut status = if exit == 0 { "succeeded" } else { "failed" };
-            if operation == "prepare" {
-                result["prepared"] = serde_json::json!(exit == 0 && !running);
-            }
-            if operation == "check" {
-                let health = state.health_report.clone().unwrap_or_else(|| serde_json::json!({"supported":true,"report":{"fixture":true},"reason_code":null}));
-                result["health"] = health["report"].clone();
-                if health["supported"] == false {
-                    status = "unsupported";
-                    exit = 1;
-                    error = Some(
-                        serde_json::json!({"code":"fabric_health_unsupported","stage":"check","message":"health unsupported","effects":"none"}),
-                    );
-                } else if !health["report"].is_object() || !health["reason_code"].is_null() {
-                    status = "failed";
-                    exit = 1;
-                    error = Some(
-                        serde_json::json!({"code":"fabric_health_failed","stage":"check","message":"health failed","effects":"none"}),
-                    );
-                }
-            }
-            if operation == "check" && state.host_unavailable_checks > 0 {
-                state.host_unavailable_checks -= 1;
-                result = serde_json::json!({"runtime_id":null,"runtime_state":"unknown","generation":null,"applied_config":null,"health":null});
-                status = "failed";
-                exit = 1;
-                error = Some(
-                    serde_json::json!({"code":"host_unavailable","stage":"transport","message":"host unavailable","effects":"none"}),
-                );
+                _ => error = Some(failure("invalid_request", "request", "none")),
             }
             if state.exec_exit != 0 {
-                exit = state.exec_exit;
-                status = "failed";
+                error.get_or_insert_with(|| failure("fixture_failed", operation, "unknown"));
+            } else {
+                exit = i32::from(error.is_some());
             }
-            if exit != 0 && error.is_none() {
-                error = Some(
-                    serde_json::json!({"code":"fixture_failed","stage":operation,"message":"fixture failed","effects":"unknown"}),
-                );
+            if error.is_some() {
+                result = serde_json::Value::Null;
             }
+            let status = if error.is_some() {
+                "failed"
+            } else {
+                "succeeded"
+            };
             if state.exec_response.is_none() {
                 let mut bytes = serde_json::to_vec(&serde_json::json!({"operation":operation,"status":status,"changed":changed,"result":result,"error":error})).unwrap();
                 bytes.push(b'\n');
@@ -904,8 +991,8 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                 && request
                     .command
                     .get(operation_index)
-                    .is_some_and(|operation| operation == "configure")
-                && std::mem::take(&mut state.lose_configure_reply));
+                    .is_some_and(|operation| operation == "start")
+                && std::mem::take(&mut state.lose_start_reply));
         state.exec_environments.push(request.environment);
         state.exec_stdin.push(request.stdin);
         state.exec_calls.push(request.command);

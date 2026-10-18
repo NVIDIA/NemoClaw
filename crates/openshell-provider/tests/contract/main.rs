@@ -18,6 +18,7 @@ mod kube_api;
 use http_fixture as transport;
 pub use nemoclaw_test_fixtures::{openshell, tofu};
 
+mod api;
 mod capabilities;
 mod driver_config;
 // Gateway installation: Docker gateway reads, the Podman gateway and its
@@ -34,6 +35,7 @@ mod inference;
 mod kubernetes_hcl;
 mod kubernetes_lifecycle;
 mod sandbox_providers;
+mod services;
 mod standalone;
 mod web_search;
 
@@ -196,6 +198,7 @@ fn every_type_has_a_contract_test() {
         )
         .collect();
     let mut sources = [
+        include_str!("api.rs"),
         include_str!("capabilities.rs"),
         include_str!("gateway_installation.rs"),
         include_str!("gateway_readiness.rs"),
@@ -287,14 +290,12 @@ fixtures! {
     fabric_pi => "fabric-pi",
     fabric_remote_agent => "fabric-remote-agent",
     hermes_auth => "hermes-auth",
-    hermes_interfaces => "hermes-interfaces",
     inference_tuning => "inference-tuning",
     inline_inference => "inline-inference",
     local => "local",
     multiple_models => "multiple-models",
     multiple_providers => "multiple-providers",
     multiple_sandboxes => "multiple-sandboxes",
-    openclaw_dashboard => "openclaw-dashboard",
-    openclaw_web_search => "openclaw-web-search",
-    tavily_web_search => "tavily-web-search",
+    openclaw => "openclaw",
+    web_search => "web-search",
 }

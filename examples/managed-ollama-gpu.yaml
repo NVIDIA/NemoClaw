@@ -53,6 +53,3 @@ spec:
               overrides:
                 model: qwen3:0.6b
                 maxTokens: 2048
-                settings:
-                  model_metadata:
-                    contextWindow: 32768
