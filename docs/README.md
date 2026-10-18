@@ -49,6 +49,7 @@ These guides describe the v1 development branch.
 |---|---|
 | Call deployment operations programmatically | [Use the SDK](sdk.md) |
 | Understand the bundled OpenTofu provider | [Provider](provider.md) |
+| Check what each release guarantees | [Compatibility](compatibility.md) |
 | Integrate an image-owned service or adapt VoiceClaw | [Container service contract](design/container-contract.md) |
 | Look up CLI commands and options | [CLI reference](reference/cli.md) |
 | Look up YAML fields, defaults, and constraints | [Configuration reference](reference/configuration.md) |

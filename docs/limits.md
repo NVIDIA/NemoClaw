@@ -90,9 +90,9 @@ Other pages state a limit where it affects a procedure and link the same issue.
 
 | Limit | Issue |
 |---|---|
-| A compatibility policy for the SDK, provider, schema and state across releases | [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645) |
-| A hosted Rust API reference | [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645) |
-| Supported HCL examples, import, adoption and remote-state backends | [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645) |
+| Configuration or state migration between releases | Not during alpha; see [compatibility](compatibility.md) |
+| A hosted Rust API reference | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) |
+| `tofu import`, adoption, and remote state for CLI and SDK deployments | Not supported; see [compatibility](compatibility.md) |
 
 ## Documentation Site
 

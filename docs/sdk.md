@@ -241,4 +241,5 @@ See [the provider guide](provider.md) for the bundled OpenTofu boundary and [CLI
 The SDK crate is not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 Generate the API reference from the repository root with `cargo doc --locked -p nemoclaw-sdk --no-deps`; open `target/doc/nemoclaw_sdk/index.html` locally.
 The examples above can be compiled as a local application without contacting live resources; running the preview requires the declared services and credentials.
-A hosted API reference, a live rehearsal of the application and secret-store integration, and a compatibility policy across releases are tracked in [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645).
+See [compatibility](compatibility.md) for what each release guarantees.
+A hosted API reference follows the documentation site ([#12644](https://github.com/NVIDIA/NemoClaw/issues/12644)); a live rehearsal of an application with a secret store is part of [qualification](https://github.com/NVIDIA/NemoClaw/issues/12641).

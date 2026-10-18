@@ -908,7 +908,7 @@ The Docker and Helm providers have fixed release versions and checksum-pinned na
 ## Direct OpenTofu Usage
 
 The providers are not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
-Supported HCL examples, import, adoption, remote-state backends and compatibility across releases are tracked in [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645).
+See [compatibility](compatibility.md) for the supported examples, import, adoption, state backends, and what each release guarantees.
 
 Every resource and data source takes inputs that can be written in HCL.
 [`examples/hcl/travel`](../examples/hcl/travel/main.tf) is a complete hand-written configuration: a Pi agent in an OpenShell sandbox, answering with a local Ollama server placed with Docker, and allowed only HTTPS `GET` requests to one site.

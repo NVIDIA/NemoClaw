@@ -43,6 +43,7 @@
       "pages": [
         {"title": "Use the Rust SDK", "source": "docs/sdk.md", "slug": "sdk"},
         {"title": "OpenTofu provider", "source": "docs/provider.md", "slug": "provider"},
+        {"title": "Compatibility across releases", "source": "docs/compatibility.md", "slug": "compatibility"},
         {"title": "Container service contract", "source": "docs/design/container-contract.md", "slug": "container-contract"},
         {"title": "CLI reference", "source": "docs/reference/cli.md", "slug": "reference/cli"},
         {"title": "YAML configuration reference", "source": "docs/reference/configuration.md", "slug": "reference/configuration"},
