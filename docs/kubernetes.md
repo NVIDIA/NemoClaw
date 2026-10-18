@@ -7,7 +7,7 @@ Run agent sandboxes on an existing Kubernetes or OpenShift cluster.
 NemoClaw either installs a development OpenShell gateway in a namespace it creates, or uses a gateway you already run.
 The same agent images serve Docker, Podman, Kubernetes and OpenShift.
 
-The managed gateway's authentication is a development fixture, not a production identity service ([#12692](https://github.com/NVIDIA/NemoClaw/issues/12692)).
+The managed gateway authenticates users through a development issuer it runs, or through [an existing OIDC issuer](#authenticate-through-an-existing-oidc-issuer).
 OpenShift's security policy admitting these pods is untested; [current limits](limits.md#platforms-models-and-placement) lists what else is untested.
 
 ## Prerequisites
@@ -22,7 +22,7 @@ OpenShift's security policy admitting these pods is untested; [current limits](l
   - [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox), with its controller running in `agent-sandbox-system`; CI tests version 0.5.0.
   - Exactly one default StorageClass.
 - **Agent images:** pushed to a registry the cluster can pull from, and referenced by digest.
-- **Inference:** an endpoint reachable from inside the sandboxes.
+- **Inference:** an endpoint reachable from inside the sandboxes, such as a [model server you run in the cluster](#use-a-model-server-in-the-cluster).
   Managed model services under `spec.services` are not supported on Kubernetes ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 NemoClaw installs nothing cluster-wide and never selects a context for you.
@@ -82,6 +82,43 @@ Apply creates the gateway and every sandbox, and starts each agent.
 Keep the state directory: it holds the cluster ownership receipt and the development issuer's keys, and destroy needs both.
 [Managed Kubernetes ownership](design/architecture.md#managed-kubernetes-ownership) describes which component owns each resource.
 
+### Authenticate Through an Existing OIDC Issuer
+
+The `development` profile runs a token issuer for this deployment, which is not an identity service.
+To have the gateway authenticate users through your identity provider instead, use the `oidc` profile:
+
+```yaml
+spec:
+  gateway:
+    kubernetes:
+      authentication:
+        profile: oidc
+        issuer: https://login.example.com/realms/openshell
+        audience: openshell
+        rolesClaim: groups
+        adminRole: openshell-admins
+        userRole: openshell-users
+        caConfigMap: issuer-ca
+        tokenEnv: NEMOCLAW_GATEWAY_TOKEN
+```
+
+- `issuer` and `audience` are passed to OpenShell, which validates every request's bearer token against them.
+- `rolesClaim`, `adminRole` and `userRole` map the token's roles to OpenShell's administrator and user access. Set both roles or neither; with neither, any valid token is accepted. `scopesClaim` names a scopes claim, if your tokens carry one.
+- `caConfigMap` names a ConfigMap in the deployment's namespace whose `ca.crt` verifies the issuer's certificate. Omit it for a publicly trusted issuer. Like registry Secrets, create it after NemoClaw creates the namespace, then rerun apply with the same state directory.
+- `tokenEnv` names the variable holding the bearer token NemoClaw sends to the gateway.
+
+NemoClaw runs no sign-in flow and stores no token.
+Before each plan, apply or destroy, get an access token for the audience from your identity provider, for example with its command-line tool, and put it in the variable `tokenEnv` names:
+
+```sh
+export NEMOCLAW_GATEWAY_TOKEN="$(your-identity-provider-cli token --audience openshell)"
+nemoclaw apply --state-dir .local/kubernetes deployment.yaml
+```
+
+When the token expires, get a new one and rerun.
+The gateway still requires its client certificate; the token adds user identity on top.
+With this profile, the namespace holds no development issuer, and the state directory holds no issuer keys.
+
 ### Reference Registry Credentials
 
 For a managed gateway, `gateway.kubernetes.imagePullSecrets` names Kubernetes Secrets in the deployment's namespace.
@@ -139,6 +176,35 @@ To use an OpenShell gateway someone else runs on the cluster, set `gateway.manag
 Give its endpoint, credential and TLS material as environment references, as in [the external gateway example](../examples/kubernetes/external-gateway.yaml).
 NemoClaw then manages only the sandboxes; it neither installs nor removes the gateway.
 Sandboxes still need `image.metadata`.
+
+## Use a Model Server in the Cluster
+
+Sandboxes can use a model server that you run in the gateway's cluster.
+NemoClaw creates nothing for it: you deploy the server with your platform's own tools, and the sandboxes reach it through its Service.
+This has been tried on one kind cluster; [current limits](limits.md#platforms-models-and-placement) lists what is untested.
+Name the Service by its cluster DNS name and port:
+
+```yaml
+spec:
+  inferenceProviders:
+    - name: qwen
+      provider: openai
+      api: openai-completions
+      endpoint: http://qwen.models.svc.cluster.local:8000/v1
+      credential: {env: QWEN_INFERENCE_KEY}
+```
+
+- **Destination:** OpenShell decides which address the name may reach when sandboxes connect; NemoClaw grants no address.
+  OpenShell refuses the Kubernetes control-plane ports 2379, 2380, 6443, 10250 and 10255, so serve the model on another port.
+- **Key:** `credential` is optional.
+  It names the variable that holds the server's key where you run `nemoclaw`; OpenShell stores the key and adds it to sandbox requests.
+  Give the server the same key from a Secret, as [Supply the Key on Other Platforms](inference.md#supply-the-key-on-other-platforms) shows.
+  The key crosses the cluster network over plain HTTP unless your network plugin or a service mesh encrypts Pod traffic.
+- **Model IDs:** the machine running `nemoclaw` usually can't resolve cluster names, so onboarding can't list the server's models; write the route's model ID yourself.
+- **The server:** NemoClaw's vLLM and Ollama runtime images can run it; `vllm_runtime` and `ollama_runtime` describe the launch and requirements a platform needs ([Direct OpenTofu Usage](provider.md#direct-opentofu-usage)). Readiness is the platform's: point its probe at the server's health endpoint.
+
+Start from [the in-cluster vLLM example](../examples/kubernetes/in-cluster-vllm.yaml), or from [the in-cluster Ollama example](../examples/kubernetes/in-cluster-ollama.yaml) for a server without a key.
+Both examples use OpenClaw, which can't start in an OpenShell sandbox with the pinned Fabric, so apply stops at the agent until [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) is fixed.
 
 ## Destroy a Deployment
 

@@ -155,6 +155,7 @@ impl Document {
         if let Some(kubernetes) = g.as_kubernetes() {
             names.push(kubernetes.kubeconfig.env.as_str());
             names.extend(kubernetes.environment.iter().map(String::as_str));
+            names.extend(kubernetes.authentication.token_env.as_deref());
         }
         if let Some(c) = g.credential() {
             names.push(c.env.as_str());
@@ -200,7 +201,6 @@ impl Document {
             if gateway.runtime.provider == ComputeDriver::Docker {
                 default_string(&mut gateway.engine, constraints::GATEWAY_ENGINE);
             }
-            default_string(&mut gateway.image, DEFAULT_GATEWAY_IMAGE);
             default_string(
                 &mut gateway.network_cidr,
                 &format!(
@@ -256,9 +256,10 @@ fn network_address(
     Ok(std::net::Ipv4Addr::from(address).to_string())
 }
 impl ManagedGateway {
+    /// These settings without the image acquisition policy, a mutable provider
+    /// attribute rather than container identity.
     pub(crate) fn runtime_settings(&self) -> Self {
         let mut settings = self.clone();
-        // Acquisition policy is a mutable provider attribute, not container identity.
         settings.image_pull_policy = None;
         settings
     }
@@ -318,7 +319,7 @@ impl Gateway {
     /// Explicit existing-cluster settings for a managed Kubernetes gateway.
     pub fn as_kubernetes(&self) -> Option<&ManagedKubernetes> {
         self.as_managed()
-            .and_then(|gateway| gateway.kubernetes.as_ref())
+            .and_then(|gateway| gateway.kubernetes.as_deref())
     }
     /// Local Docker or Podman installation settings; excludes Kubernetes targets.
     pub fn as_local_managed(&self) -> Option<&ManagedGateway> {

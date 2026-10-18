@@ -4,6 +4,8 @@
 //! and providers, with no Helm executable on PATH. Requires an owned cluster
 //! with Agent Sandbox, its explicit kubeconfig/context, and a verified bundle.
 
+#[path = "kubernetes_oidc.rs"]
+mod oidc;
 #[path = "kubernetes_registry.rs"]
 mod registry;
 
@@ -481,6 +483,44 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
             );
         }
     }
+    // Removing what destroy retains: deleting the namespace removes the key
+    // and claims, and with kind's Delete reclaim policy, their volumes.
+    let volumes: Vec<String> =
+        Api::<PersistentVolumeClaim>::namespaced(operations.client.clone(), &namespace)
+            .list(&ListParams::default())
+            .await
+            .unwrap()
+            .items
+            .into_iter()
+            .filter_map(|claim| claim.spec.and_then(|spec| spec.volume_name))
+            .collect();
+    assert!(
+        !volumes.is_empty(),
+        "the gateway's claims are bound to volumes"
+    );
+    let namespaces = Api::<Namespace>::all(operations.client.clone());
+    namespaces
+        .delete(&namespace, &kube::api::DeleteParams::foreground())
+        .await
+        .unwrap();
+    let persistent =
+        Api::<k8s_openapi::api::core::v1::PersistentVolume>::all(operations.client.clone());
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        let namespace_gone = namespaces.get_opt(&namespace).await.unwrap().is_none();
+        let mut volumes_gone = true;
+        for volume in &volumes {
+            volumes_gone &= persistent.get_opt(volume).await.unwrap().is_none();
+        }
+        if namespace_gone && volumes_gone {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "deleting the namespace removes the deployment's retained resources"
+        );
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
 }
 
 /// A full deployment on a real cluster through the public SDK: the managed
@@ -632,12 +672,6 @@ spec:
         "export recovers the authored configuration without readiness checks"
     );
     state_snapshot
-}
-
-#[tokio::test]
-#[ignore = "needs a Kubernetes cluster with Agent Sandbox and a loaded agent image; run through cargo ci live-kind"]
-async fn an_agent_sandbox_starts_and_destroy_keeps_storage() {
-    deploy_and_export("kubernetes", async |_| {}).await;
 }
 
 /// The OpenShift profile on kind. kind does not enforce OpenShift's security

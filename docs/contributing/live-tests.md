@@ -261,7 +261,7 @@ Use an owned native Linux Docker daemon, a fresh deployment UID, an available ga
 Supply `NVIDIA_INFERENCE_API_KEY` through the process environment; never put its value in YAML, arguments, state, or repository files.
 The test installs that credential in OpenShell and does not revoke the upstream key.
 Keep the fixture's provider, sandbox, and agent names; the expected results name those resources.
-Build a matching bundle and load the YAML's immutable gateway and agent images, including the Hermes image for the Hermes test, into the selected daemon.
+Build a matching bundle and load the gateway image pinned in [versions.json](../../versions.json) and the YAML's immutable agent images, including the Hermes image for the Hermes test, into the selected daemon.
 A GPU is not required.
 
 From the repository root, with absolute paths and one test selected:

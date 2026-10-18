@@ -3185,6 +3185,7 @@ dependencies = [
  "openshell-sdk",
  "prost",
  "prost-types",
+ "rcgen",
  "rustls",
  "serde",
  "serde_json",

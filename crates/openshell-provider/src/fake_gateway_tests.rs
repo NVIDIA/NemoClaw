@@ -212,6 +212,101 @@ async fn gateway_validation_rejections_preserve_details_for_credential_free_muta
     }
 }
 
+/// A Kubernetes gateway's sandboxes reach a model server in its cluster by
+/// the Service's DNS name, and OpenShell decides which addresses that name
+/// may reach. The profile then grants no address, and neither does the
+/// sandbox's rule for it. The gateway composes the profile's rule into the
+/// sandbox's policy and rejects ambiguous endpoints; composed from what this
+/// fake gateway received, the policy has none. An address on one side only is
+/// the ambiguity a cluster gateway reported for an earlier address grant.
+#[tokio::test]
+async fn a_service_name_profile_and_a_sandbox_without_grants_pass_endpoint_ambiguity_checks() {
+    const HOST: &str = "qwen.models.svc.cluster.local";
+    for name in ["local", "hermes-auth"] {
+        let fixture = Fixture::start().await;
+        let client = client(&fixture, Arc::new(Keys));
+        let mut rows = fixture_rows(name);
+        let mut registration = String::new();
+        for (kind, row) in &mut rows {
+            match *kind {
+                "provider_profile" | "provider" => {
+                    row.insert("endpoint".into(), format!("http://{HOST}:8000/v1"));
+                    if *kind == "provider" {
+                        registration = row["name"].clone();
+                    }
+                }
+                "sandbox" => {
+                    // The rule the SDK compiles for this endpoint.
+                    let mut policy: Value = serde_json::from_str(&row["policy_json"]).unwrap();
+                    let rules = policy["managed"].as_array_mut().unwrap();
+                    assert_eq!(rules.len(), 1, "{name}");
+                    for rule in rules {
+                        rule["endpoints"] = serde_json::json!([{
+                            "host": HOST, "port": 8000, "path": "/v1/**",
+                            "protocol": "rest", "access": "full"
+                        }]);
+                    }
+                    row.insert("policy_json".into(), policy.to_string());
+                }
+                _ => {}
+            }
+        }
+        create(&client, &rows).await;
+        let state = fixture.state.lock().unwrap();
+        let [profile] = state.profiles.values().collect::<Vec<_>>()[..] else {
+            panic!("{name}: one inference profile");
+        };
+        let [sandbox] = state.sandboxes.values().collect::<Vec<_>>()[..] else {
+            panic!("{name}: one sandbox");
+        };
+        let policy = sandbox.spec.as_ref().unwrap().policy.clone().unwrap();
+        let rule = &policy.network_policies[&profile.id];
+        assert_eq!(rule.endpoints.len(), 1, "{name}");
+        assert_eq!(profile.endpoints.len(), 1, "{name}");
+        for endpoint in [&rule.endpoints[0], &profile.endpoints[0]] {
+            assert_eq!((endpoint.host.as_str(), endpoint.port), (HOST, 8000));
+            assert!(endpoint.allowed_ips.is_empty(), "{name}");
+        }
+        let rule_name = openshell_policy::provider_rule_name(&registration);
+        let layer = openshell_policy::ProviderPolicyLayer {
+            rule: proto::NetworkPolicyRule {
+                name: rule_name.clone(),
+                endpoints: profile.endpoints.clone(),
+                binaries: profile.binaries.clone(),
+            },
+            rule_name,
+        };
+        let ambiguities = |policy: &proto::SandboxPolicy| {
+            openshell_policy::find_endpoint_ambiguities(
+                &openshell_policy::compose_effective_policy(policy, std::slice::from_ref(&layer)),
+            )
+        };
+        assert_eq!(ambiguities(&policy), [], "{name}");
+        let mut granted = policy.clone();
+        granted
+            .network_policies
+            .get_mut(&profile.id)
+            .unwrap()
+            .endpoints[0]
+            .allowed_ips = vec!["10.96.189.228/32".into()];
+        let [ambiguity] = &ambiguities(&granted)[..] else {
+            panic!("{name}: one ambiguity");
+        };
+        // Either rule may come first: the policy's rules are an unordered map.
+        let [conflict] = &ambiguity.conflicts[..] else {
+            panic!("{name}: one conflict");
+        };
+        assert!(
+            [
+                r#"allowed_ips=["10.96.189.228/32"] vs []"#,
+                r#"allowed_ips=[] vs ["10.96.189.228/32"]"#
+            ]
+            .contains(&conflict.as_str()),
+            "{name}: {conflict}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn credential_requests_reads_and_exec_keep_backend_rejection_text_private() {
     for rpc in [
@@ -666,4 +761,144 @@ async fn native_provider_union_is_attached_and_attachment_drift_is_rejected() {
         sandbox.providers.pop();
     }
     assert!(client.read("sandbox", &row, false).await.is_err());
+}
+
+/// The bearer token the forward below supplies.
+const FORWARD_TOKEN: &str = "forward-token-sentinel";
+
+/// A forward that supplies a bearer token and TLS files, as `SdkKubernetes`
+/// does, to a fixture gateway that requires them.
+struct Forward {
+    endpoint: String,
+    tls: [String; 3],
+}
+
+#[async_trait::async_trait]
+impl KubernetesConnector for Forward {
+    async fn open(&self, _: &str) -> Result<KubernetesConnection, ObservationError> {
+        Ok(KubernetesConnection {
+            endpoint: self.endpoint.clone(),
+            token: Some(FORWARD_TOKEN.into()),
+            tls: Some(self.tls.clone()),
+            forward: Box::new(()),
+        })
+    }
+}
+
+/// A fixture gateway that requires mutual TLS and the forward's token, and a
+/// client that reaches it as a managed Kubernetes gateway. The TLS files are
+/// written to `directory`.
+async fn forwarded(directory: &std::path::Path) -> (Fixture, OpenShell) {
+    use rcgen::{
+        BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
+        KeyUsagePurpose,
+    };
+    use tonic::transport::{Certificate, Identity, ServerTlsConfig};
+    let key = KeyPair::generate().unwrap();
+    let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    params.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+    let ca = params.self_signed(&key).unwrap().pem();
+    let issuer = Issuer::new(params, key);
+    let leaf = |usage| {
+        let key = KeyPair::generate().unwrap();
+        let mut params = CertificateParams::new(vec!["127.0.0.1".into()]).unwrap();
+        params.extended_key_usages = vec![usage];
+        (
+            params.signed_by(&key, &issuer).unwrap().pem(),
+            key.serialize_pem(),
+        )
+    };
+    let (server, server_key) = leaf(ExtendedKeyUsagePurpose::ServerAuth);
+    let fixture = Fixture::start_with_tls(Some(
+        ServerTlsConfig::new()
+            .identity(Identity::from_pem(server, server_key))
+            .client_ca_root(Certificate::from_pem(&ca)),
+    ))
+    .await;
+    fixture.state.lock().unwrap().expected_bearer = Some(format!("Bearer {FORWARD_TOKEN}"));
+    let (certificate, certificate_key) = leaf(ExtendedKeyUsagePurpose::ClientAuth);
+    let tls = [
+        ("ca", ca),
+        ("tls.crt", certificate),
+        ("tls.key", certificate_key),
+    ]
+    .map(|(name, content)| {
+        let path = directory.join(name);
+        std::fs::write(&path, content).unwrap();
+        path.to_str().unwrap().to_owned()
+    });
+    let forward = Forward {
+        endpoint: fixture.endpoint.clone(),
+        tls,
+    };
+    let client = GatewayClient::default()
+        .with_kubernetes(Arc::new(forward))
+        .connect(&GatewayConnection::Kubernetes("{}".into()))
+        .await
+        .unwrap();
+    (fixture, client)
+}
+
+/// A provider's credential variable through a managed Kubernetes gateway
+/// resolves from this process's environment, as it does on a direct
+/// connection. The forward holds only the gateway's own credentials.
+#[tokio::test]
+async fn a_managed_kubernetes_gateway_resolves_provider_credentials_from_the_environment() {
+    // Every test process has a non-empty PATH; a test cannot set a variable
+    // safely while other tests run.
+    let value = std::env::var("PATH").unwrap();
+    assert!(!value.is_empty());
+    let directory = tempfile::tempdir().unwrap();
+    let (fixture, client) = forwarded(directory.path()).await;
+    let mut rows = fixture_rows("hermes-auth");
+    let (_, registration) = rows
+        .iter_mut()
+        .find(|(kind, _)| *kind == "provider")
+        .unwrap();
+    assert!(!registration["credential_env"].is_empty());
+    registration.insert("credential_env".into(), "PATH".into());
+    let rows: Vec<_> = rows
+        .into_iter()
+        .filter(|(kind, _)| *kind != "sandbox")
+        .collect();
+    create(&client, &rows).await;
+    let state = fixture.state.lock().unwrap();
+    let [provider] = state.providers.values().collect::<Vec<_>>()[..] else {
+        panic!("one provider");
+    };
+    assert_eq!(provider.credentials.values().collect::<Vec<_>>(), [&value]);
+}
+
+/// The forward's names for its token and TLS files are not variables a
+/// provider can name: each resolves from the environment, where it is unset,
+/// so the provider fails before the gateway sees it.
+#[tokio::test]
+async fn a_providers_credential_variable_never_resolves_to_the_forwards_credentials() {
+    let directory = tempfile::tempdir().unwrap();
+    let (fixture, client) = forwarded(directory.path()).await;
+    let rows = fixture_rows("hermes-auth");
+    let [(_, workspace), (_, profile), (_, registration), ..] = rows.as_slice() else {
+        panic!("hermes-auth declares a workspace, a profile, and a registration");
+    };
+    create(
+        &client,
+        &[
+            ("workspace", workspace.clone()),
+            ("provider_profile", profile.clone()),
+        ],
+    )
+    .await;
+    for name in ["token", "ca", "certificate", "key"] {
+        assert!(std::env::var_os(name).is_none(), "{name}");
+        let mut named = registration.clone();
+        named.insert("credential_env".into(), name.into());
+        let result = client.ensure("provider", &named).await;
+        assert_eq!(
+            result.error(),
+            Some(ObservationError::Authentication),
+            "{name}"
+        );
+    }
+    assert!(fixture.state.lock().unwrap().providers.is_empty());
 }

@@ -136,7 +136,7 @@ impl super::ManagedGateway {
         require(
             bind.is_some_and(|a| a.port() >= 1024)
                 && crate::config::validate_engine_endpoint(&self.engine).is_ok(),
-            "managed gateway requires pinned image, a local engine socket, and unprivileged loopback HTTP port without credentials",
+            "managed gateway requires a local engine socket and an unprivileged loopback HTTP port without credentials",
         )?;
         let net = self.network_cidr.parse::<ipnet::Ipv4Net>().ok();
         require(

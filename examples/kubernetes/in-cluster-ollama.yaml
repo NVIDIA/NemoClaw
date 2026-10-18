@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# An agent on a managed Kubernetes gateway uses an Ollama server that you run
+# in the same cluster: the Service ollama in the namespace models.
+# Ollama takes no key, so a NetworkPolicy is its only access control.
+# NemoClaw creates nothing for the server. Deploy it and wait until it has
+# loaded the model; see "Run Ollama Instead" in docs/kubernetes.md.
+# Replace the deployment UID, the context, and the image digest before applying.
+# Write the image's metadata bundle with `cargo images export-metadata` and set
+# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build.md.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: kubernetes-in-cluster-ollama
+  uid: 576101e0-89dc-4408-abcc-801bc52b527a
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: kubernetes
+    endpoint: https://127.0.0.1:17671
+    kubernetes:
+      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+      context: replace-with-explicit-context
+      namespace: nemoclaw-in-cluster-ollama
+      authentication:
+        profile: development
+  inferenceProviders:
+    - name: ollama
+      provider: openai
+      api: openai-completions
+      # http://<service>.<namespace>.svc.cluster.local:<port>, resolved in the cluster.
+      endpoint: http://ollama.models.svc.cluster.local:11434/v1
+  sandboxes:
+    - name: assistant
+      harness:
+        kind: nvidia.fabric.openclaw
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: ollama
+              overrides:
+                model: qwen3:0.6b
+                # OpenClaw otherwise requests more output tokens than the context allows.
+                maxTokens: 2048

@@ -221,6 +221,20 @@ Their names start with the deployment's workspace, `WS` below: `nc-` followed by
 | `inference credentials/NAME` | Volume `WS-inference-NAME-auth` |
 | `proxy credentials/NAME` | Volume `WS-ollama-proxy-NAME-auth` |
 
+On Podman, the same objects exist with the same names and label, in the Podman engine the deployment selects.
+
+### Find Retained Kubernetes Objects
+
+On a managed Kubernetes or OpenShift gateway, destroy keeps these objects, all in the namespace that `gateway.kubernetes.namespace` names:
+
+| Object | Holds |
+|---|---|
+| The namespace itself | Everything below; NemoClaw creates it and never adopts an existing one |
+| Secret `GATEWAY-kek`, where `GATEWAY` is the gateway's release name | The gateway's key-encryption key |
+| The gateway's PersistentVolumeClaims, and the volumes bound to them | The gateway's database |
+
+The state directory keeps the cluster ownership receipt and, for the `development` authentication profile, the development issuer's keys.
+
 ## Recovery and Transfer
 
 Use [operation recovery](usage.md#updates-and-recovery) with the original configuration and retained state.

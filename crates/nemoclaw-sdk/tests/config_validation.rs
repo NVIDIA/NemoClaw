@@ -75,7 +75,7 @@ fn directly_constructed_documents_and_services_enforce_normalized_bounds() {
 #[test]
 fn normalization_markers_are_accepted_only_before_defaults() {
     let baseline = document("spark/vllm.yaml");
-    for path in ["/spec/gateway/image", "/spec/sandboxes/0/image/ref"] {
+    for path in ["/spec/gateway/networkCIDR", "/spec/sandboxes/0/image/ref"] {
         let mut value = serde_json::to_value(&baseline).unwrap();
         *value.pointer_mut(path).unwrap() = json!("");
         assert!(

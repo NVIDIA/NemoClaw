@@ -436,6 +436,7 @@ mod tests {
         };
         let client = ConnectedOpenShellGateway::connect(
             &connection,
+            &SearchSecrets,
             Arc::new(SearchSecrets),
             Arc::new(crate::DockerServices),
         )

@@ -85,7 +85,7 @@ pub struct Registry {
     /// Registry address, such as nvcr.io or registry.example.com:5000, matching its entry in the Docker configuration file.
     pub address: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(length(min = 1, max = 4096))]
+    #[schemars(default, with = "String", length(min = 1, max = 4096))]
     /// Absolute path of the Docker configuration file that holds the login, on the machine running OpenTofu. Defaults to `.docker/config.json` in the user's home directory; `DOCKER_CONFIG` is not read.
     pub config_file: Option<String>,
 }
@@ -120,7 +120,7 @@ pub struct TLS {
 #[serde(tag = "management", rename_all = "lowercase")]
 /// Install a local or explicitly configured Kubernetes gateway, or connect to an existing gateway.
 pub enum Gateway {
-    /// A gateway installed and managed by this deployment.
+    /// A gateway installed and managed by this deployment. The SDK pins its image.
     /// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
     #[schemars(title = "Managed gateway")]
     Managed(ManagedGateway),
@@ -152,10 +152,6 @@ pub struct ManagedGateway {
     #[schemars(default)]
     /// Managed local gateway Unix engine socket; Podman requires its API service socket. Excluded by kubernetes.
     pub engine: String,
-    #[serde(rename = "image", skip_serializing_if = "String::is_empty")]
-    #[schemars(default)]
-    /// Managed local gateway image pinned by the SDK. Excluded by kubernetes, whose component images are also SDK-pinned.
-    pub image: String,
     #[serde(
         rename = "imagePullPolicy",
         default,
@@ -170,8 +166,8 @@ pub struct ManagedGateway {
     pub network_cidr: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::ManagedKubernetes")]
-    /// Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services.
-    pub kubernetes: Option<super::ManagedKubernetes>,
+    /// Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services.
+    pub kubernetes: Option<Box<super::ManagedKubernetes>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

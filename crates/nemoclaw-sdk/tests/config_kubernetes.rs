@@ -118,7 +118,6 @@ fn a_managed_gateway_schema_still_states_its_local_defaults() {
         managed["properties"]["endpoint"]["default"],
         "http://127.0.0.1:17681"
     );
-    assert!(managed["properties"]["image"]["default"].is_string());
 }
 
 /// A kubeconfig's exec plugin, such as a cloud CLI, may need the caller's
@@ -280,7 +279,6 @@ fn managed_kubernetes_rejects_other_transports_targets_and_implicit_authenticati
         ("engine", json!("unix:///var/run/docker.sock")),
         ("engine", json!("")),
         ("networkCIDR", json!("172.30.1.0/24")),
-        ("image", json!(nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE)),
         ("imagePullPolicy", json!("Never")),
         ("credential", json!({"env":"GATEWAY_TOKEN"})),
         (
@@ -600,4 +598,52 @@ fn managed_services_with_a_kubernetes_runtime_state_the_cluster_rule() {
             ),
         "{error}"
     );
+}
+
+#[test]
+fn an_oidc_profile_requires_its_issuer_and_development_takes_no_oidc_settings() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    let oidc = json!({
+        "profile": "oidc",
+        "issuer": "https://login.example.com/realms/openshell",
+        "audience": "openshell",
+        "tokenEnv": "OPENSHELL_TOKEN"
+    });
+    let mut input = managed_document();
+    input["spec"]["gateway"]["kubernetes"]["authentication"] = oidc.clone();
+    let document =
+        Document::parse(input.to_string().as_bytes()).expect("a minimal oidc profile is valid");
+    assert_eq!(serde_json::to_value(&document).unwrap(), input);
+
+    let mut invalid: Vec<(&str, Value)> = Vec::new();
+    for field in ["issuer", "audience", "tokenEnv"] {
+        let mut missing = oidc.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        invalid.push((field, missing));
+    }
+    for (field, value) in [
+        ("issuer", json!("http://login.example.com")),
+        ("issuer", json!("https://user:password@login.example.com")),
+        ("issuer", json!("https://login.example.com/?tenant=x")),
+        ("tokenEnv", json!("KUBECONFIG")),
+        ("tokenEnv", json!("lowercase")),
+        ("caConfigMap", json!("Issuer_CA")),
+        ("adminRole", json!("openshell-admins")),
+    ] {
+        let mut changed = oidc.clone();
+        changed[field] = value;
+        invalid.push((field, changed));
+    }
+    let mut development = json!({"profile": "development"});
+    development["issuer"] = oidc["issuer"].clone();
+    invalid.push(("development", development));
+    for (field, authentication) in invalid {
+        let mut input = managed_document();
+        input["spec"]["gateway"]["kubernetes"]["authentication"] = authentication;
+        assert!(!validator.is_valid(&input), "accepted invalid {field}");
+        assert!(
+            Document::parse(input.to_string().as_bytes()).is_err(),
+            "parsed invalid {field}"
+        );
+    }
 }

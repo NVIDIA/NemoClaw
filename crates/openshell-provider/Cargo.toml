@@ -46,6 +46,8 @@ tonic.workspace = true
 [dev-dependencies]
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 nemoclaw-test-fixtures = { path = "../nemoclaw-test-fixtures" }
+# Certificates for a fake gateway that requires mutual TLS.
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
 tar.workspace = true
 tempfile.workspace = true
 url.workspace = true

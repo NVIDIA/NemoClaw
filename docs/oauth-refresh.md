@@ -5,7 +5,7 @@
 
 Register an OAuth-refresh provider directly with OpenShell when a sandbox needs an API on behalf of a signed-in user.
 OpenShell holds the refresh material and rotates the access token; NemoClaw does not perform OAuth sign-in or refresh.
-Gateway-user OIDC sign-in is a separate operation ([#12692](https://github.com/NVIDIA/NemoClaw/issues/12692)).
+Gateway users authenticating through an OIDC issuer is separate; see [Authenticate Through an Existing OIDC Issuer](kubernetes.md#authenticate-through-an-existing-oidc-issuer).
 NemoClaw's [`api` integration](agents.md#key-authenticated-apis) declares a key-authenticated API, not an OAuth-refresh profile.
 
 This guide uses Microsoft Graph with Entra as the example supported by OpenShell's [provider-refresh tutorial](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/tutorials/microsoft-graph-provider-refresh.mdx).

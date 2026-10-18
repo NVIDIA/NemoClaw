@@ -97,7 +97,6 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
     assert!(matches!(gateway, Gateway::Managed(_)));
     let gateway = gateway.as_managed().unwrap();
     assert_eq!(gateway.engine, "unix:///var/run/docker.sock");
-    assert_eq!(gateway.image, nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE);
 
     let provider = &document.spec.inference_providers[0];
     assert_eq!(provider.name, "hosted-nvidia-prod");

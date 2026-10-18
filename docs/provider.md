@@ -281,6 +281,7 @@ These types name the engine or cluster they use instead of taking a gateway `ref
 
 - `name` is `nc-`, 16 lowercase hexadecimal characters, a hyphen, and a lowercase name.
 - `engine` is a local Unix engine socket; Podman requires its API service socket.
+- `image` must be the bundle's gateway image pin, which generated graphs supply; documents do not name it.
 - `network_cidr` is a private IPv4 `/24`.
 
 `openshell_podman_gateway` also requires the gateway `endpoint`, an HTTP origin with an unprivileged loopback port.
@@ -660,6 +661,11 @@ data "vllm_runtime" "qwen" {
   model {
     repository = "Qwen/Qwen3-4B"
     revision   = "1cfa9a7208912126459214e8b04321603b3df60c"
+  }
+  # The weights, about 7.5 GiB, the KV cache and 2 GiB must fit in the budget.
+  memory {
+    gpu_memory_gib = 20
+    kv_cache_gib   = 6
   }
   serving {
     port = 18898

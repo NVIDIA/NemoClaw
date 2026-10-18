@@ -54,6 +54,7 @@ pub(crate) fn specification(
         owner: document.metadata.uid.clone(),
         generation: generation.clone(),
         gateway,
+        image: String::new(),
         process: Some(process),
     };
     spec.validate()?;

@@ -88,9 +88,23 @@ impl OpenShell {
         secrets: Arc<dyn Secrets>,
         services: Arc<dyn Services>,
     ) -> Result<Self, ObservationError> {
+        Self::connect_with_credentials(connection, secrets.as_ref(), secrets.clone(), services)
+    }
+
+    /// Connect with `credentials` resolving the connection's own references,
+    /// and `secrets` resolving those of the objects it reconciles.
+    pub(crate) fn connect_with_credentials(
+        connection: &nemoclaw_openshell::Connection,
+        credentials: &dyn Secrets,
+        secrets: Arc<dyn Secrets>,
+        services: Arc<dyn Services>,
+    ) -> Result<Self, ObservationError> {
         Ok(Self {
             gateway: Arc::new(ConnectedOpenShellGateway::connect(
-                connection, secrets, services,
+                connection,
+                credentials,
+                secrets,
+                services,
             )?),
         })
     }
@@ -154,13 +168,16 @@ impl OpenShell {
 }
 
 impl ConnectedOpenShellGateway {
+    /// `credentials` resolves the connection's own references, and `secrets`
+    /// those of the objects this client reconciles.
     pub(crate) fn connect(
         connection: &nemoclaw_openshell::Connection,
+        credentials: &dyn Secrets,
         secrets: Arc<dyn Secrets>,
         services: Arc<dyn Services>,
     ) -> Result<Self, ObservationError> {
         Ok(Self {
-            client: Arc::new(nemoclaw_openshell::client(connection, secrets.as_ref())?),
+            client: Arc::new(nemoclaw_openshell::client(connection, credentials)?),
             secrets,
             services,
         })
