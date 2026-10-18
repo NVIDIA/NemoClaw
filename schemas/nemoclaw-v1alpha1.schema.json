@@ -2345,6 +2345,11 @@
           "$ref": "#/$defs/Agent",
           "description": "The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes."
         },
+        "driverConfig": {
+          "additionalProperties": true,
+          "description": "OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.",
+          "type": "object"
+        },
         "harness": {
           "$ref": "#/$defs/Harness",
           "description": "Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation."

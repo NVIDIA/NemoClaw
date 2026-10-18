@@ -122,8 +122,27 @@ A deployment credential grant is not a native capability claim.
 ## Skills on a Mounted Volume
 
 Fabric reads skills from the paths in `fabric_agent`'s `skills` block.
-To give an agent skills that outlive its sandbox, mount a volume into the sandbox with `openshell_sandbox`'s [`driver_config`](provider.md#openshell-resources-and-data-sources) and point `skills` at the mount.
-This is available in HCL only, with a gateway configured to allow driver configuration.
+To give an agent skills that outlive its sandbox, mount a volume into the sandbox through OpenShell's driver configuration and point `skills` at the mount.
+The gateway must be configured to allow driver configuration.
+In YAML, set the sandbox's `driverConfig` and list the mount in the harness configuration's `skills`:
+
+```yaml
+sandboxes:
+  - name: assistant
+    driverConfig:
+      docker:
+        mounts:
+          - type: volume
+            source: assistant-skills
+            target: /sandbox/skills
+    agent:
+      harness:
+        config:
+          skills:
+            paths: [/sandbox/skills]
+```
+
+In HCL, use `openshell_sandbox`'s [`driver_config`](provider.md#openshell-resources-and-data-sources) and `fabric_agent`'s `skills` block:
 
 ```hcl
 resource "openshell_sandbox" "assistant" {

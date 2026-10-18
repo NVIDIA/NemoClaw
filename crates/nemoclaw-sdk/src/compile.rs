@@ -161,6 +161,12 @@ fn targets_with_plans(
             serde_json::to_string(&crate::image_runtime::policy_input(document, sandbox)?)
                 .expect("policy input"),
         );
+        if let Some(config) = &sandbox.driver_config {
+            values.insert(
+                "driver_config_json".into(),
+                serde_json::to_string(config).expect("driver configuration"),
+            );
+        }
         {
             // The agent's inputs are Fabric's configuration sections; the
             // sandbox fields name the sandbox whose ref the graph passes.

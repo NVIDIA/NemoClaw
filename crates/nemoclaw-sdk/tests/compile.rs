@@ -486,3 +486,40 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
         assert!(binaries.ends_with(".binaries_json)}"));
     }
 }
+
+#[test]
+fn sandboxes_pass_driver_configuration_through() {
+    let generations: nemoclaw_sdk::compile::Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let mut value: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).unwrap();
+    let name = doc.spec.sandboxes[0].name.clone();
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    assert!(
+        graph["resource"]["openshell_sandbox"][&name]
+            .get("driver_config")
+            .is_none()
+    );
+
+    let mounts = serde_json::json!({"docker": {"mounts": [
+        {"type": "volume", "source": "skills", "target": "/sandbox/skills"}
+    ]}});
+    value["spec"]["sandboxes"][0]["driverConfig"] = mounts.clone();
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
+        .expect("driverConfig must parse");
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    // However OpenTofu takes it, OpenShell receives it unchanged.
+    let attribute = &graph["resource"]["openshell_sandbox"][&name]["driver_config"];
+    let decoded: serde_json::Value = match attribute.as_str() {
+        Some(text) => serde_json::from_str(text).unwrap(),
+        None => attribute.clone(),
+    };
+    assert_eq!(decoded, mounts, "{attribute}");
+    // The document round-trips with it.
+    assert_eq!(
+        nemoclaw_sdk::config::Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
+        doc
+    );
+}
