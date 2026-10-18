@@ -1244,16 +1244,15 @@ describe("LangChain Deep Agents Code image contracts", () => {
       '[models.providers.openai]\nbase_url = "https://inference-api.nvidia.com/v1"\n' +
         '# api_key_env = "COMPATIBLE_API_KEY"\napi_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
     ],
-    [
-      "compatible key in another provider table",
+    ...["[models.providers.other]", "[[other]]"].map((header) => [
+      `compatible key in ${header}`,
       [
         "[models.providers.openai]",
         'base_url = "https://inference-api.nvidia.com/v1"',
-        'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
-        "[models.providers.other]",
+        header,
         'api_key_env = "COMPATIBLE_API_KEY"',
       ].join("\n"),
-    ],
+    ]),
   ])("rejects an inconsistent Deep Agents Code route contract: %s", (_case, config) => {
     expect(() => runHeadlessCheckHelper("inference-route-contract", { CONFIG: config })).toThrow();
   });

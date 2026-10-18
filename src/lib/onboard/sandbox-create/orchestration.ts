@@ -1784,21 +1784,11 @@ function directCreateHermesToolGatewayProfile(input: {
   readonly providerNames: readonly string[];
   readonly getBroker: () => {
     getHermesToolGatewayProviderName(sandboxName: string): string;
-    HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE: string;
-    HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV: string;
   };
 }): { readonly hermesToolGateway?: ProviderPreparationInput["hermesToolGateway"] } {
   if (!input.enabled) return {};
-  const broker = input.getBroker();
-  const providerName = broker.getHermesToolGatewayProviderName(input.sandboxName);
-  if (!input.providerNames.includes(providerName)) return {};
-  return {
-    hermesToolGateway: {
-      providerName,
-      profileType: broker.HERMES_TOOL_GATEWAY_PROVIDER_PROFILE_TYPE,
-      credentialEnv: broker.HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
-    },
-  };
+  const providerName = input.getBroker().getHermesToolGatewayProviderName(input.sandboxName);
+  return input.providerNames.includes(providerName) ? { hermesToolGateway: { providerName } } : {};
 }
 
 /**

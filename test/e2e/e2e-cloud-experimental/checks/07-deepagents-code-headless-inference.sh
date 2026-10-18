@@ -386,7 +386,7 @@ references_attached_provider_placeholder_key() {
 selected_openai_provider_scalar() {
   local key="$1"
   awk -v key="$key" '
-    /^\[[^]]+\][[:space:]]*$/ {
+    /^\[\[?[^]]+\]\]?[[:space:]]*$/ {
       selected = ($0 == "[models.providers.openai]")
       next
     }
