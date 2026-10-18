@@ -64,7 +64,7 @@ The API service is an operator prerequisite; NemoClaw manages its gateway, netwo
 Load the harness image into the selected Podman image store and use the digest reported there.
 
 Rootless operation requires an API that reports `pasta` networking, as required by the pinned OpenShell callback listener.
-Older APIs that omit this information fail during plan.
+Podman 5 and later report it; older APIs omit it and fail during plan, including Ubuntu 24.04's Podman 4.9.3, even with `pasta` installed.
 The host must have a private IPv4 address on its default-route interface.
 OpenShell uses that address for sandbox-only callbacks while keeping its user API on loopback.
 Every managed gateway uses one compute driver; use separate deployments to select different drivers.

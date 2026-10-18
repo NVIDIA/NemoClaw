@@ -619,3 +619,38 @@ fn docker_providers_authenticate_to_listed_registries() {
     value["spec"]["registries"] = serde_json::json!([{"address": "nvcr.io", "password": "x"}]);
     assert!(nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).is_err());
 }
+
+/// A managed gateway's apply-time read waits for the gateway the same apply
+/// just started, as the plan-time read does. Podman has no other readiness
+/// check before it, so without the wait the read raced the gateway's startup.
+#[test]
+fn the_apply_time_gateway_read_waits_for_a_managed_gateway() {
+    let generations: nemoclaw_sdk::compile::Generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+        "inference_service",
+        "ollama_service",
+    ]
+    .map(|key| (key.into(), "a".repeat(32)))
+    .into();
+    for (name, source) in [
+        (
+            "podman",
+            include_str!("../../../examples/managed-podman.yaml"),
+        ),
+        (
+            "docker",
+            include_str!("../../../examples/managed-ollama.yaml"),
+        ),
+    ] {
+        let document = nemoclaw_sdk::config::Document::parse(source.as_bytes()).unwrap();
+        let graph = nemoclaw_sdk::compile::compile(&document, &generations, "0.1.0").unwrap();
+        assert_eq!(
+            graph["data"]["openshell_gateway"]["apply"]["wait_timeout_seconds"],
+            serde_json::json!(90),
+            "{name}"
+        );
+    }
+}
