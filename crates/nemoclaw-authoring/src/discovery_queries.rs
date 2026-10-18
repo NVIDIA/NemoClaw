@@ -11,8 +11,6 @@ use nemoclaw_sdk::{
 /// Read the currently selected route's endpoint request from SDK-valid state.
 /// A route backed by a managed service has no external catalog to read, and
 /// the SDK leaves its readiness to the service owner, so it returns `None`.
-/// So does a route to a Service in a Kubernetes or OpenShift gateway's
-/// cluster, whose name the control host cannot resolve; plan skips it too.
 pub fn inference_request_for_document(
     document: &Document,
     route_name: Option<&str>,
@@ -35,7 +33,7 @@ pub fn inference_request_for_document(
     let provider = document
         .sandbox_route_provider(sandbox, route)
         .map_err(|error| crate::diagnostics::diagnostic("provider", &error.to_string()))?;
-    EndpointRequest::for_provider(document, provider)
+    EndpointRequest::for_external_provider(provider)
         .map_err(|error| crate::diagnostics::diagnostic("provider", &error.to_string()))
 }
 

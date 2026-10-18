@@ -80,7 +80,7 @@ A timed step reports when it returns, including cooperative cancellation; droppi
 | `apply(&document, &cancel)` | `OperationResult` after checked planning/readiness | Can create/change resources, download models, and check readiness without generation |
 | `export(&cancel)` | Observed `Document`; call `yaml()` to serialize it | Checks retained intent and observations; does not back up agent data |
 | `plan_destroy(&cancel)` | `OperationResult` from retained state | Previews owned workload removal and retained resources |
-| `destroy(&cancel)` | `OperationResult` from retained state | Deletes sandbox files/history under the [retention rules](state.md) |
+| `destroy(&cancel)` | `OperationResult` from retained state | Deletes sandbox writable layers and in-memory conversations under the [retention rules](state.md) |
 
 Use the same state directory across CLI and SDK operations for this deployment, with compatible bundles and credentials.
 Each operation holds the deployment lock; schedule callers so they do not operate concurrently on that state.
@@ -155,7 +155,7 @@ For each resource, `existed` means it appeared in retained state or the refreshe
 `drifted` records OpenTofu refresh differences, including computed metadata; it can be true with `plannedActions: ["no-op"]` and does not mean the caller requested a configuration change.
 `retained` identifies an established resource retained by the owning teardown compiler, and `reusePlanned` means its plan is unchanged with no reported drift.
 These entries contain no resource IDs, specifications, or credential values.
-Retaining a workspace does not preserve sandbox files; see [retention](state.md#deletion-and-retention).
+Destroy deletes the OpenShell workspace and sandbox writable layers; caller-supplied mounted volumes follow the [retention rules](state.md#deletion-and-retention).
 Always inspect the operation's `deferred` list before treating the resource preview as complete.
 `OperationResult.resource_sources` maps opaque scoped provider registrations to their authored `name` and definition `path`, including route-inline providers.
 These source entries describe intent and can precede resource creation; they contain no credential references or values.

@@ -152,6 +152,9 @@ pub(crate) fn runtime_graph(
                 if name == crate::kubernetes::ENVIRONMENT_FIELD {
                     attributes["environment"] = serde_json::from_str(value)
                         .map_err(|_| Error::State("invalid Kubernetes environment"))?;
+                } else if name == crate::kubernetes::OIDC_FIELD {
+                    // The provider takes the settings as JSON text.
+                    attributes["oidc"] = json!(value.replace("${", "$${").replace("%{", "%%{"));
                 } else {
                     attributes[name] = json!(value.replace("${", "$${").replace("%{", "%%{"));
                 }
@@ -232,6 +235,7 @@ pub(crate) fn compiled_runtime(
 ) -> Result<(Value, Vec<Target>), Error> {
     let (mut graph, targets) = runtime_graph(document, generations, version)?;
     crate::docker_compute::configure(&mut graph, &targets)?;
+    crate::docker_compute::authenticate(&mut graph, &document.spec.registries);
     if let Some(gateway) = targets.iter().find(|target| target.kind == GATEWAY_KIND)
         && document.spec.gateway.runtime().provider == ComputeDriver::Docker
     {

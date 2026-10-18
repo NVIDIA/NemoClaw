@@ -63,6 +63,7 @@ resource openshell_kubernetes_auth (version 0)
   kubeconfig_env: string, required
   name: string, required
   namespace: string, required
+  oidc: string, optional
   owner: string, optional, computed
   release_present: string, computed
   running: string, computed
@@ -78,6 +79,7 @@ resource openshell_kubernetes_gateway (version 0)
   kubeconfig_env: string, required
   name: string, required
   namespace: string, required
+  oidc: string, optional
   owner: string, optional, computed
   running: string, computed
 
@@ -92,6 +94,7 @@ resource openshell_kubernetes_storage (version 0)
   kubeconfig_env: string, required
   name: string, required
   namespace: string, required
+  oidc: string, optional
   owner: string, optional, computed
   running: string, computed
 

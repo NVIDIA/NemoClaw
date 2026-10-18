@@ -109,6 +109,30 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
         values["gatewayConfig"]["openshell.drivers.kubernetes"]["image_pull_secrets"] =
             json!(target.image_pull_secrets);
     }
+    // An existing issuer replaces the development issuer's settings; its
+    // CA comes from the user's ConfigMap, if any.
+    let authentication = &target.authentication;
+    if authentication.profile == crate::config::KubernetesAuthenticationProfile::Oidc {
+        let mut oidc = json!({
+            "issuer": authentication.issuer,
+            "audience": authentication.audience,
+            "jwks_ttl_secs": 3600,
+            "dangerously_allow_insecure_http": false,
+        });
+        for (key, value) in [
+            ("roles_claim", &authentication.roles_claim),
+            ("admin_role", &authentication.admin_role),
+            ("user_role", &authentication.user_role),
+            ("scopes_claim", &authentication.scopes_claim),
+        ] {
+            if let Some(value) = value {
+                oidc[key] = json!(value);
+            }
+        }
+        values["gatewayConfig"]["openshell.gateway.oidc"] = oidc;
+        values["server"]["oidc"]["caConfigMapName"] =
+            json!(authentication.ca_config_map.clone().unwrap_or_default());
+    }
     Ok(values)
 }
 

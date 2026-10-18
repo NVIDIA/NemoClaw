@@ -54,6 +54,9 @@ fn row(spec: &Spec, response: Response) -> Result<Option<Row>, ObservationError>
     result
         .entry(nemoclaw_sdk::kubernetes::ENVIRONMENT_FIELD.into())
         .or_default();
+    result
+        .entry(nemoclaw_sdk::kubernetes::OIDC_FIELD.into())
+        .or_default();
     result.insert("id".into(), id);
     result.insert("running".into(), running.to_string());
     if spec.kind == AUTH_KIND {
@@ -169,16 +172,17 @@ impl Backend for KubernetesBackend {
 /// Kubernetes platform resources and their planning rules.
 pub(crate) fn definitions() -> [crate::Definition; 3] {
     use crate::{Protection, carry_prior, rerun_when_stopped};
-    use nemoclaw_sdk::kubernetes::{ENVIRONMENT_FIELD, check_attribute};
+    use nemoclaw_sdk::kubernetes::{ENVIRONMENT_FIELD, OIDC_FIELD, check_attribute};
     use nemoclaw_tofu::shape::Shape;
     let typed = |kind| {
         crate::services::schema_definition(kind)
-            .optional(&[ENVIRONMENT_FIELD])
+            .optional(&[ENVIRONMENT_FIELD, OIDC_FIELD])
             .structured(
                 "environment",
                 ENVIRONMENT_FIELD,
                 Shape::List(Box::new(Shape::String)),
             )
+            .structured("oidc", OIDC_FIELD, Shape::Json)
             .validate_attribute(|attribute, value| {
                 check_attribute(attribute, value).map_err(Into::into)
             })

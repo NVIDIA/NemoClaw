@@ -92,7 +92,7 @@ The [subprocess tests](../crates/nemoclaw-sdk/src/process.rs) and [bundled CLI f
 |---|---|
 | Client to OpenShell gateway | HTTPS uses trust verification; optional `gateway.tls` selects CA, client certificate, and key through environment references to file paths |
 | Client to inference catalog during onboarding | Uses the client machine's trust store or `SSL_CERT_FILE`; this trust does not configure the inference path |
-| OpenShell to external inference | NemoClaw accepts HTTP and HTTPS URLs; OpenShell checks destinations when a sandbox connects. Use HTTPS for credentialed endpoints; a key for an in-cluster Service endpoint crosses the cluster network over plain HTTP |
+| OpenShell to external inference | NemoClaw accepts HTTP and HTTPS URLs, with or without a credential; OpenShell checks destinations when a sandbox connects. Prefer HTTPS for credentialed endpoints: over plain HTTP, the key crosses the network unencrypted |
 | Managed vLLM or Ollama proxy private endpoint | Optional/generated bearer authentication does not add TLS to the private HTTP transport |
 | Client to native dashboard | Authenticated OpenShell forwarding carries the connection to the sandbox-local listener; keep the local bind on loopback |
 

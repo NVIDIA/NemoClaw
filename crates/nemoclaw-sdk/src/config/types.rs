@@ -71,6 +71,23 @@ pub struct Spec {
     #[serde(rename = "sandboxes")]
     /// One to 32 uniquely named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.
     pub sandboxes: Vec<Sandbox>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(default, length(max = 32))]
+    /// Registries whose images NemoClaw pulls through Docker with the logins of the machine running OpenTofu, from its Docker configuration file. Lists addresses only; credentials stay in that file or its credential store.
+    pub registries: Vec<Registry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+/// A registry NemoClaw authenticates to when pulling images through Docker.
+pub struct Registry {
+    #[schemars(length(min = 1, max = 253))]
+    /// Registry address, such as nvcr.io or registry.example.com:5000, matching its entry in the Docker configuration file.
+    pub address: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String", length(min = 1, max = 4096))]
+    /// Absolute path of the Docker configuration file that holds the login, on the machine running OpenTofu. Defaults to `.docker/config.json` in the user's home directory; `DOCKER_CONFIG` is not read.
+    pub config_file: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -154,7 +171,7 @@ pub struct ManagedGateway {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::ManagedKubernetes")]
     /// Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services.
-    pub kubernetes: Option<super::ManagedKubernetes>,
+    pub kubernetes: Option<Box<super::ManagedKubernetes>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -198,12 +215,12 @@ pub struct InferenceProvider {
     pub api: Option<super::InferenceApi>,
     #[serde(default, rename = "endpoint", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. With a Kubernetes or OpenShift gateway, `http://SERVICE.NAMESPACE.svc.cluster.local:PORT` with an optional path names a Service in the gateway's cluster; sandboxes reach it through OpenShell, and plan and onboarding do not read its model catalog.
+    /// Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef.
     #[schemars(extend("x-nemoclaw-required" = "Without serviceRef"))]
     pub endpoint: String,
     #[serde(rename = "credential", skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "Credential")]
-    /// Optional API credential reference for an external HTTPS endpoint or, with a Kubernetes or OpenShift gateway, for an in-cluster `http://SERVICE.NAMESPACE.svc.cluster.local:PORT` endpoint; the key then crosses the cluster network over plain HTTP. Excluded by serviceRef.
+    /// Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef.
     pub credential: Option<Credential>,
     #[serde(
         rename = "serviceRef",

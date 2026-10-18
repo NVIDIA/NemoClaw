@@ -153,8 +153,8 @@ For example, a Nous endpoint using the OpenAI protocol still uses `provider: ope
 Before writing its provider declaration, obtain the base URL, API, exact model ID, required credential, and model limits from the endpoint operator.
 Confirm that the selected image's Fabric descriptor accepts that API.
 Catalog metadata and `/models` responses do not establish successful inference.
-For a credentialed endpoint, declare an HTTPS URL and an environment reference; [credential ownership](security.md#credentials-and-authentication) describes where the resolved key persists.
-The one exception is a [model server in a Kubernetes or OpenShift gateway's cluster](kubernetes.md#use-a-model-server-in-the-cluster), which takes the key over HTTP.
+For a credentialed endpoint, declare an environment reference; [credential ownership](security.md#credentials-and-authentication) describes where the resolved key persists.
+Prefer HTTPS: over plain HTTP, the key crosses the network unencrypted.
 OpenShell decides which inference destinations a sandbox can reach.
 
 The endpoint must be reachable from the sandbox's OpenShell proxy, not just from your client terminal.
@@ -341,7 +341,7 @@ env:
 
 Register the server with OpenShell using the same key: give `openshell_inference` a `server` object whose `credential_env` names a variable holding the key where OpenTofu runs.
 Readiness on those platforms is the platform's job; point its readiness probe at `GET /health`, which needs no key.
-For a YAML deployment on Kubernetes or OpenShift, [Use a Model Server in the Cluster](kubernetes.md#use-a-model-server-in-the-cluster) runs the server this way and sets the provider's `credential` to that variable.
+In YAML, set the provider's `credential` to that variable; [Use a Model Server in the Cluster](kubernetes.md#use-a-model-server-in-the-cluster) shows a Kubernetes example.
 
 ## Use External Ollama through a Managed Proxy
 

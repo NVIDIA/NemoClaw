@@ -30,8 +30,6 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | OpenShift admitting the gateway and sandbox pods; kind runs the OpenShift profile but does not enforce its security constraints | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Model services that NemoClaw places with a Kubernetes or OpenShift gateway; sandboxes can use [a server you run in the cluster](kubernetes.md#use-a-model-server-in-the-cluster) | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | [A model server you run in the cluster](kubernetes.md#use-a-model-server-in-the-cluster) has been tried only with NemoClaw's vLLM and Ollama runtimes on one kind cluster; OpenShift and other network plugins are untested | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
-| A managed Kubernetes gateway authenticating through an existing identity provider; only the development profile exists | [#12692](https://github.com/NVIDIA/NemoClaw/issues/12692) |
-| Docker/Podman private image pulls and qualification across all runtimes; managed Kubernetes/OpenShift gateways can [reference existing pull Secrets](kubernetes.md#reference-registry-credentials) | [#12709](https://github.com/NVIDIA/NemoClaw/issues/12709) |
 | Live GPU inference, tools and replies through managed Ollama | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Gated repositories, custom remote-code models, GGUF in vLLM, and nested Hugging Face checkpoints | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | A tested matrix of harness, model, provider and platform combinations | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
@@ -72,11 +70,11 @@ Other pages state a limit where it affects a procedure and link the same issue.
 
 | Limit | Issue |
 |---|---|
-| Backup, restore, snapshots and transfer of native agent data | [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
-| File locations for harnesses other than OpenClaw, Hermes and Pi | [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
+| Native conversation continuity across runtime replacement | [Per-harness limits](state.md#choose-what-to-retain-for-each-harness); [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
+| Backup, restore, snapshots and transfer of mounted agent data | [Platform-owned storage](state.md#keep-agent-files-on-mounted-volumes); no NemoClaw command |
 | Moving data from the earlier product to v1 and back | [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
 | A purge command | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
-| Removing retained Podman, Kubernetes, and external-gateway workspace resources | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
+| Removing retained Podman and Kubernetes gateway resources | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
 | Verified removal of managed service volumes and of objects on SSH engines | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
 
 ## Security

@@ -22,7 +22,7 @@ pub struct ManagedKubernetes {
         regex(pattern = r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\s\S])")
     )]
     pub namespace: String,
-    /// Explicit generated development authentication profile; this is not a production identity service.
+    /// How the managed gateway authenticates users: a generated development issuer, or an existing OIDC issuer.
     pub authentication: KubernetesAuthentication,
     /// Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -38,8 +38,40 @@ pub struct ManagedKubernetes {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct KubernetesAuthentication {
-    /// Development generates the scoped local authentication fixture. Existing production issuers use gateway.management: external.
+    /// `development` generates a scoped local issuer for isolated qualification; `oidc` uses an existing OIDC issuer.
     pub profile: KubernetesAuthenticationProfile,
+    /// HTTPS URL of the existing OIDC issuer. Required for `oidc`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String", length(min = 9, max = 2048))]
+    pub issuer: Option<String>,
+    /// Audience the gateway requires in tokens. Required for `oidc`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String", length(min = 1, max = 253))]
+    pub audience: Option<String>,
+    /// Dot-separated path to the roles array in token claims, such as `groups` or `realm_access.roles`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String", length(min = 1, max = 253))]
+    pub roles_claim: Option<String>,
+    /// Role that grants administrator access; set together with `userRole`, or neither for authentication only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String", length(min = 1, max = 253))]
+    pub admin_role: Option<String>,
+    /// Role that grants user access; set together with `adminRole`, or neither for authentication only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String", length(min = 1, max = 253))]
+    pub user_role: Option<String>,
+    /// Dot-separated path to the scopes array in token claims.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String", length(min = 1, max = 253))]
+    pub scopes_claim: Option<String>,
+    /// Existing ConfigMap in this deployment's namespace whose `ca.crt` verifies the issuer's TLS certificate; omit for a publicly trusted issuer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String", length(min = 1, max = 253))]
+    pub ca_config_map: Option<String>,
+    /// Environment variable holding the bearer token NemoClaw sends to the gateway. Required for `oidc`; your identity provider's tooling obtains and refreshes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String", length(min = 1, max = 253))]
+    pub token_env: Option<String>,
 }
 
 /// Supported managed gateway authentication profile.
@@ -49,4 +81,6 @@ pub struct KubernetesAuthentication {
 pub enum KubernetesAuthenticationProfile {
     /// Generated authentication for isolated development qualification only.
     Development,
+    /// An existing OIDC issuer.
+    Oidc,
 }
