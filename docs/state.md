@@ -78,9 +78,13 @@ Ask the platform operator to provision storage before applying the deployment.
 Backing up, restoring, and moving that storage is the platform's job; NemoClaw has no native-data backup or transfer command.
 Use a separate volume for each agent's workspace and artifacts so unrelated agents do not share credentials or conversation data.
 
-For a Docker gateway, merge this fragment into the selected sandbox in the deployment YAML:
+For a managed Docker gateway, merge this fragment into the deployment YAML: the gateway setting allows sandboxes to use driver configuration, and the sandbox mounts the volumes.
 
 ```yaml
+gateway:
+  management: managed
+  sandboxDriverConfig:
+    allow: true
 sandboxes:
   - name: assistant
     driverConfig:
@@ -101,6 +105,9 @@ Default admission requires `openshell.ai/sandbox-attachable=true` and `openshell
 Use the authorized OpenShell workspace name, not the sandbox name or Kubernetes namespace; see [external resource admission](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/configuration.mdx#external-resource-admission).
 The bundled images use UID/GID `10001:10001`; check the identity for a custom image or OpenShift namespace.
 The gateway must allow driver configuration, and the sandbox's filesystem policy must allow writes to both target paths.
+For a managed gateway, set `spec.gateway.sandboxDriverConfig.allow: true`, as above. Docker and Podman gateways keep this setting in their retained storage, so set it when you create the deployment; changing it later requires a fresh deployment UID and state directory. Managed Kubernetes gateways apply a change through the gateway chart.
+`sandboxDriverConfig.resourceAdmission` passes OpenShell's admission settings through, such as a replacement `requiredLabels` map.
+For an external gateway, its administrator enables OpenShell's `allow_driver_config` for the compute driver.
 Mounts default to read-only, so `read_only: false` is required for agent writes.
 Do not mount over `/sandbox` or the image's working directory: OpenShell protects its workspace root and control paths.
 For driver-specific settings and admission labels, follow the pinned OpenShell [Docker](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/crates/openshell-driver-docker/README.md), [Podman](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/crates/openshell-driver-podman/README.md), or [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/crates/openshell-driver-kubernetes/README.md) instructions; Kubernetes uses PVCs rather than Docker named volumes.

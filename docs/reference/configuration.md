@@ -389,6 +389,7 @@ Managed Podman targets local rootless Linux; rootful, remote, and other platform
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"managed"`. |
 | `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed local gateway. Excluded by kubernetes. Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes. |
 | `runtime` | [Runtime](#runtime) | No | — | Compute driver the gateway runs every sandbox with; omission selects Docker. |
+| `sandboxDriverConfig` | [SandboxDriverConfig](#sandboxdriverconfig) | No | — | OpenShell's setting that lets sandboxes use driverConfig, such as mounted volumes, passed through unchanged to the gateway's compute driver. Docker and Podman gateways keep it in their retained storage, so it is fixed when the deployment is created; Kubernetes applies a change through the chart. |
 
 ### Alternative 2
 
@@ -1031,6 +1032,21 @@ Paths:
 | `address` | string | Yes | — | Registry address, such as nvcr.io or registry.example.com:5000, matching its entry in the Docker configuration file. Constraints: minimum characters 1; maximum characters 253. |
 | `configFile` | string | No | — | Absolute path of the Docker configuration file that holds the login, on the machine running OpenTofu. Defaults to `.docker/config.json` in the user's home directory; `DOCKER_CONFIG` is not read. Constraints: minimum characters 1; maximum characters 4096. |
 
+## ResourceAdmission
+
+OpenShell's resource admission settings, passed through unchanged.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.sandboxDriverConfig.resourceAdmission`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `enabled` | any JSON value | No | — | Require approval labels on external resources; omission keeps OpenShell's default, enabled. |
+| `requiredLabels` | any JSON value | No | — | Labels an external resource must carry, replacing OpenShell's built-in approval labels. Must not be empty. |
+
 ## Resources
 
 Resource declarations checked against host observations and produced data.
@@ -1119,6 +1135,21 @@ Paths:
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `name` | string | Yes | — | Lowercase sandbox name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `network` | [Network](#network) | No | — | Sandbox network policy; omission selects isolated egress with grants for declared inference. |
+
+## SandboxDriverConfig
+
+OpenShell's driver configuration admission for a managed gateway's compute driver.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.sandboxDriverConfig`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `allow` | boolean | No | — | Accept sandboxes' driverConfig (OpenShell's allow_driver_config). Defaults to false, OpenShell's default. |
+| `resourceAdmission` | [ResourceAdmission](#resourceadmission) | No | — | OpenShell's resource admission for external resources such as volumes; omission keeps OpenShell's defaults. |
 
 ## SearchProvider
 

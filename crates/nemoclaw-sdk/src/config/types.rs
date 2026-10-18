@@ -168,6 +168,43 @@ pub struct ManagedGateway {
     #[schemars(default, with = "super::ManagedKubernetes")]
     /// Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services.
     pub kubernetes: Option<Box<super::ManagedKubernetes>>,
+    #[serde(
+        rename = "sandboxDriverConfig",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "SandboxDriverConfig")]
+    /// OpenShell's setting that lets sandboxes use driverConfig, such as mounted volumes, passed through unchanged to the gateway's compute driver. Docker and Podman gateways keep it in their retained storage, so it is fixed when the deployment is created; Kubernetes applies a change through the chart.
+    pub sandbox_driver_config: Option<SandboxDriverConfig>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// OpenShell's driver configuration admission for a managed gateway's compute driver.
+pub struct SandboxDriverConfig {
+    #[serde(rename = "allow")]
+    #[schemars(default)]
+    /// Accept sandboxes' driverConfig (OpenShell's allow_driver_config). Defaults to false, OpenShell's default.
+    pub allow: bool,
+    #[serde(rename = "resourceAdmission", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "ResourceAdmission")]
+    /// OpenShell's resource admission for external resources such as volumes; omission keeps OpenShell's defaults.
+    pub resource_admission: Option<ResourceAdmission>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// OpenShell's resource admission settings, passed through unchanged.
+pub struct ResourceAdmission {
+    #[serde(rename = "enabled", skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    /// Require approval labels on external resources; omission keeps OpenShell's default, enabled.
+    pub enabled: Option<bool>,
+    #[serde(rename = "requiredLabels", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, extend("minProperties" = 1))]
+    /// Labels an external resource must carry, replacing OpenShell's built-in approval labels. Must not be empty.
+    pub required_labels: Option<std::collections::BTreeMap<String, String>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -446,3 +446,37 @@ fn an_existing_oidc_issuer_replaces_the_development_issuer() {
     .unwrap();
     assert_eq!(values["server"]["oidc"]["caConfigMapName"], "");
 }
+
+#[test]
+fn sandbox_driver_config_reaches_the_kubernetes_chart() {
+    let generations = ["kubernetes_gateway", "kubernetes_storage"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    let values_of = |setting: Option<serde_json::Value>| {
+        let mut value = serde_json::to_value(document()).unwrap();
+        if let Some(setting) = setting {
+            value["spec"]["gateway"]["sandboxDriverConfig"] = setting;
+        }
+        let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+        let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+        serde_json::from_str::<serde_json::Value>(
+            graph["resource"]["helm_release"]["gateway"]["values"][0]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let values = values_of(Some(json!({
+        "allow": true,
+        "resourceAdmission": {"requiredLabels": {"team.example/attachable": "true"}}
+    })));
+    assert_eq!(
+        values["server"]["drivers"]["kubernetes"],
+        json!({
+            "allowDriverConfig": true,
+            "resourceAdmission": {"requiredLabels": {"team.example/attachable": "true"}}
+        })
+    );
+    // Without the setting, the chart keeps its own defaults.
+    assert!(values_of(None)["server"].get("drivers").is_none());
+}

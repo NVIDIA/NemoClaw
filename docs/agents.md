@@ -147,7 +147,7 @@ NemoClaw does not wrap its refresh contract, and manual sandbox attachments affe
 
 Fabric reads skills from the paths in `fabric_agent`'s `skills` block.
 To give an agent skills that outlive its sandbox, mount a volume into the sandbox through OpenShell's driver configuration and point `skills` at the mount.
-The gateway must be configured to allow driver configuration.
+The gateway must allow driver configuration: for a managed gateway, set `spec.gateway.sandboxDriverConfig.allow: true` when you create the deployment (see [mounted volumes](state.md#keep-agent-files-on-mounted-volumes)); for an external gateway, its administrator enables OpenShell's `allow_driver_config`.
 In YAML, set the sandbox's `driverConfig` and list the mount in the harness configuration's `skills`:
 
 ```yaml

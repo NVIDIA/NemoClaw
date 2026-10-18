@@ -183,6 +183,9 @@ pub const GATEWAY_ATTRIBUTES: [&str; 8] = [
     "image",
     "network_cidr",
 ];
+/// OpenShell's sandbox driver configuration setting, as JSON, when the
+/// deployment sets it; absent otherwise, so existing rows are unchanged.
+pub const DRIVER_CONFIG_ATTRIBUTE: &str = "sandbox_driver_config";
 /// Docker gateway data does not depend on the listen port, so its storage
 /// records this endpoint instead of the gateway's.
 const DOCKER_STORAGE_ENDPOINT: &str = "http://127.0.0.1:8080";
@@ -203,6 +206,20 @@ pub fn check_gateway_attribute(attribute: &str, value: &str) -> Result<(), &'sta
         "engine" => {
             return crate::config::validate_engine_endpoint(value)
                 .map_err(|_| "must be a local Unix engine socket");
+        }
+        DRIVER_CONFIG_ATTRIBUTE => {
+            return match serde_json::from_str::<crate::config::SandboxDriverConfig>(value) {
+                Ok(setting)
+                    if setting
+                        .resource_admission
+                        .as_ref()
+                        .and_then(|admission| admission.required_labels.as_ref())
+                        .is_none_or(|labels| !labels.is_empty()) =>
+                {
+                    Ok(())
+                }
+                _ => Err("must be a sandboxDriverConfig object with non-empty requiredLabels"),
+            };
         }
         _ => return Ok(()),
     };
@@ -260,7 +277,7 @@ impl Spec {
     pub fn gateway_row(&self, kind: &str) -> Result<crate::backend::Row, Error> {
         self.validate()?;
         let docker_storage = kind == GATEWAY_STORAGE_KIND && self.layout == 1;
-        Ok(GATEWAY_ATTRIBUTES
+        let mut row: crate::backend::Row = GATEWAY_ATTRIBUTES
             .into_iter()
             .zip([
                 self.name.as_str(),
@@ -274,7 +291,15 @@ impl Spec {
             ])
             .filter(|(attribute, _)| !(docker_storage && *attribute == "endpoint"))
             .map(|(attribute, value)| (attribute.to_owned(), value.to_owned()))
-            .collect())
+            .collect();
+        if let Some(setting) = &self.gateway.sandbox_driver_config {
+            row.insert(
+                DRIVER_CONFIG_ATTRIBUTE.into(),
+                serde_json::to_string(setting)
+                    .map_err(|_| Error::State("cannot encode sandboxDriverConfig"))?,
+            );
+        }
+        Ok(row)
     }
     /// Gateway or storage specification named by resource attributes.
     ///
@@ -288,8 +313,14 @@ impl Spec {
                 .cloned()
                 .ok_or(crate::ObservationError::Incomplete)
         };
-        for attribute in GATEWAY_ATTRIBUTES {
-            if let Some(value) = row.get(attribute) {
+        for attribute in GATEWAY_ATTRIBUTES
+            .into_iter()
+            .chain([DRIVER_CONFIG_ATTRIBUTE])
+        {
+            if let Some(value) = row
+                .get(attribute)
+                .filter(|value| !value.is_empty() || attribute != DRIVER_CONFIG_ATTRIBUTE)
+            {
                 check_gateway_attribute(attribute, value)
                     .map_err(|_| Error::Conflict("invalid managed gateway attribute"))?;
             }
@@ -327,6 +358,16 @@ impl Spec {
                 image_pull_policy: None,
                 network_cidr: get("network_cidr")?,
                 kubernetes: None,
+                sandbox_driver_config: match row
+                    .get(DRIVER_CONFIG_ATTRIBUTE)
+                    .filter(|value| !value.is_empty())
+                {
+                    Some(value) => Some(
+                        serde_json::from_str(value)
+                            .map_err(|_| Error::Conflict("invalid managed gateway attribute"))?,
+                    ),
+                    None => None,
+                },
             },
             image: get("image")?,
             process: None,
@@ -683,7 +724,7 @@ impl Spec {
         } else {
             format!("network_name = {:?}\n", self.network())
         };
-        format!(
+        let config = format!(
             "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = {:?}\ndisable_tls = true\n\n[openshell.drivers.{}]{}\n{}sandbox_runtime_image = {:?}\nsupervisor_image = {:?}\n{}\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
             self.compute_driver.as_str(),
             self.compute_driver,
@@ -700,6 +741,39 @@ impl Spec {
             format!("{data_path}/tls/jwt/public.pem"),
             format!("{data_path}/tls/jwt/kid"),
             self.name
-        )
+        );
+        self.with_driver_admission(config)
+    }
+    /// OpenShell's driver configuration admission, when the deployment sets
+    /// it: `allow_driver_config` joins the driver's table, and admission
+    /// settings follow as its subtables. Without the setting the file is
+    /// unchanged, so existing gateway storage still matches.
+    fn with_driver_admission(&self, mut config: String) -> String {
+        let Some(setting) = &self.gateway.sandbox_driver_config else {
+            return config;
+        };
+        let driver = self.compute_driver.as_str();
+        let header = format!("[openshell.drivers.{driver}]");
+        if let Some(at) = config.find(&header) {
+            let line = format!("\nallow_driver_config = {}", setting.allow);
+            config.insert_str(at + header.len(), &line);
+        }
+        if let Some(admission) = &setting.resource_admission {
+            config.push_str(&format!(
+                "\n[openshell.drivers.{driver}.resource_admission]\n"
+            ));
+            if let Some(enabled) = admission.enabled {
+                config.push_str(&format!("enabled = {enabled}\n"));
+            }
+            if let Some(labels) = &admission.required_labels {
+                config.push_str(&format!(
+                    "\n[openshell.drivers.{driver}.resource_admission.required_labels]\n"
+                ));
+                for (key, value) in labels {
+                    config.push_str(&format!("{key:?} = {value:?}\n"));
+                }
+            }
+        }
+        config
     }
 }

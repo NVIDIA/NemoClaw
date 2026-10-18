@@ -133,6 +133,19 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
         values["server"]["oidc"]["caConfigMapName"] =
             json!(authentication.ca_config_map.clone().unwrap_or_default());
     }
+    // OpenShell's driver configuration admission, passed through unchanged.
+    if let Some(setting) = &spec.settings.sandbox_driver_config {
+        let mut driver = json!({"allowDriverConfig": setting.allow});
+        if let Some(admission) = &setting.resource_admission {
+            if let Some(enabled) = admission.enabled {
+                driver["resourceAdmission"]["enabled"] = json!(enabled);
+            }
+            if let Some(labels) = &admission.required_labels {
+                driver["resourceAdmission"]["requiredLabels"] = json!(labels);
+            }
+        }
+        values["server"]["drivers"]["kubernetes"] = driver;
+    }
     Ok(values)
 }
 
