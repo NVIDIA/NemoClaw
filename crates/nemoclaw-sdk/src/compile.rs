@@ -198,7 +198,7 @@ fn targets_with_plans(
         // One web search resource per provider, credential reference, and
         // image: sandboxes sharing all three share it.
         if let Some(search) = web_search {
-            let target = Target {
+            let mut target = Target {
                 kind: "web_search".into(),
                 address: format!(
                     "openshell_web_search.{}_{}_{}",
@@ -219,6 +219,9 @@ fn targets_with_plans(
                 ]
                 .into(),
             };
+            if let Some(name) = &search.sandbox_env {
+                target.values.insert("sandbox_env".into(), name.clone());
+            }
             if let Some(previous) = result.iter().find(|t| t.address == target.address) {
                 if previous != &target {
                     return Err(ConfigError::new(

@@ -19,6 +19,10 @@ pub struct WebSearch {
     pub provider: SearchProvider,
     /// Host environment reference. OpenShell supplies the search provider's placeholder to the sandbox.
     pub credential: Credential,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String")]
+    /// Variable name the sandbox sees for the key, such as BRAVE_SEARCH_API_KEY for Hermes's Brave plugin. Defaults to the credential's variable.
+    pub sandbox_env: Option<String>,
 }
 
 /// A definition and its explicitly attached agents in one sandbox.
@@ -131,6 +135,7 @@ impl Document {
                     selected = Some(RuntimeWebSearch {
                         provider: search.provider,
                         credential: search.credential.clone(),
+                        sandbox_env: search.sandbox_env.clone(),
                         agent_refs: binding.agent_refs.into_iter().map(str::to_owned).collect(),
                     });
                 }
@@ -154,6 +159,7 @@ pub(crate) struct RuntimeWebSearch {
     pub provider: SearchProvider,
     pub agent_refs: Vec<String>,
     pub credential: Credential,
+    pub sandbox_env: Option<String>,
 }
 pub use nemoclaw_openshell::search::{SearchProvider, search_provider_name};
 

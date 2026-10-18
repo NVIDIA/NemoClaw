@@ -166,6 +166,17 @@ Use `provider: tavily` for Tavily; the [web search example](../examples/web-sear
 Set the referenced variable on the applying host through your secret-management mechanism.
 NemoClaw creates a workspace-scoped provider profile and credential-bearing provider in OpenShell.
 The sandbox receives a placeholder, `BRAVE_API_KEY` or `TAVILY_API_KEY` even when the host reference has another name, and OpenShell substitutes the real key for authorized requests to the search API.
+Set `sandboxEnv` when the harness reads the key under another name; Hermes's Brave plugin, for example, reads `BRAVE_SEARCH_API_KEY`:
+
+```yaml
+    search:
+      kind: webSearch
+      provider: brave
+      credential:
+        env: BRAVE_API_KEY
+      sandboxEnv: BRAVE_SEARCH_API_KEY
+```
+
 Exported YAML and OpenTofu state retain the host reference, not its value.
 Destroy removes the owned provider and profile without revoking the upstream key.
 Unchanged apply does not rotate a changed value behind an unchanged reference; follow [credential retirement](security.md#credentials-and-authentication) when replacing or revoking the key.

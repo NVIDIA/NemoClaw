@@ -1141,6 +1141,12 @@
             "provider": {
               "$ref": "#/$defs/SearchProvider",
               "description": "Supported search service."
+            },
+            "sandboxEnv": {
+              "description": "Variable name the sandbox sees for the key, such as BRAVE_SEARCH_API_KEY for Hermes's Brave plugin. Defaults to the credential's variable.",
+              "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+              "type": "string",
+              "x-nemoclaw-error": "web search sandboxEnv must be an environment variable name"
             }
           },
           "required": [
