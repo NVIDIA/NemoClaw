@@ -426,11 +426,9 @@ fn an_existing_oidc_issuer_replaces_the_development_issuer() {
     assert!(!values.to_string().contains("nemoclaw-development"));
     let auth = &graph["resource"]["openshell_kubernetes_auth"]["runtime"];
     assert_eq!(auth["authentication_profile"], "oidc");
-    assert_eq!(auth["oidc"]["tokenEnv"], "OPENSHELL_TOKEN");
-    assert_eq!(
-        auth["oidc"]["issuer"],
-        "https://login.example.com/realms/openshell"
-    );
+    let oidc: serde_json::Value = serde_json::from_str(auth["oidc"].as_str().unwrap()).unwrap();
+    assert_eq!(oidc["tokenEnv"], "OPENSHELL_TOKEN");
+    assert_eq!(oidc["issuer"], "https://login.example.com/realms/openshell");
 
     // Without a CA ConfigMap, the chart mounts none.
     let mut value = serde_json::to_value(oidc_document()).unwrap();

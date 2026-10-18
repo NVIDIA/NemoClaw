@@ -4,6 +4,8 @@
 //! and providers, with no Helm executable on PATH. Requires an owned cluster
 //! with Agent Sandbox, its explicit kubeconfig/context, and a verified bundle.
 
+#[path = "kubernetes_oidc.rs"]
+mod oidc;
 #[path = "kubernetes_registry.rs"]
 mod registry;
 
@@ -632,12 +634,6 @@ spec:
         "export recovers the authored configuration without readiness checks"
     );
     state_snapshot
-}
-
-#[tokio::test]
-#[ignore = "needs a Kubernetes cluster with Agent Sandbox and a loaded agent image; run through cargo ci live-kind"]
-async fn an_agent_sandbox_starts_and_destroy_keeps_storage() {
-    deploy_and_export("kubernetes", async |_| {}).await;
 }
 
 /// The OpenShift profile on kind. kind does not enforce OpenShift's security

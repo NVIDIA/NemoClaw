@@ -205,6 +205,8 @@ pub(super) fn gateway_environment(
     if let Some(kubernetes) = gateway.as_kubernetes() {
         names.insert(kubernetes.kubeconfig.env.as_str());
         names.extend(kubernetes.environment.iter().map(String::as_str));
+        // An existing issuer's token authenticates every gateway request.
+        names.extend(kubernetes.authentication.token_env.as_deref());
     }
     if let Some(credential) = gateway.credential() {
         names.insert(credential.env.as_str());

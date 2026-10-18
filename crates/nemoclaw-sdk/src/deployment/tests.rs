@@ -1282,3 +1282,24 @@ fn declared_observations_still_reject_deposed_objects_and_unsupported_modes() {
         ))
     ));
 }
+
+#[test]
+fn an_existing_issuers_token_reaches_gateway_only_runs() {
+    struct OidcValues;
+    impl Secrets for OidcValues {
+        fn resolve(&self, name: &str) -> Result<String, crate::ObservationError> {
+            Ok(format!("test-{name}"))
+        }
+    }
+    let (document, _) = kubernetes_context();
+    let mut value = serde_json::to_value(&document).unwrap();
+    value["spec"]["gateway"]["kubernetes"]["authentication"] = json!({
+        "profile": "oidc",
+        "issuer": "https://login.example.com",
+        "audience": "openshell",
+        "tokenEnv": "OIDC_TOKEN"
+    });
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    let environment = gateway_environment(&document, &OidcValues, Path::new("state")).unwrap();
+    assert_eq!(environment["OIDC_TOKEN"], "test-OIDC_TOKEN");
+}
