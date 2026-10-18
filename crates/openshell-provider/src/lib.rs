@@ -317,18 +317,25 @@ fn sandbox_row(
     row.insert("driver_config_json".into(), driver_config);
     row.insert("policy_json".into(), policy_input);
     row.insert("launch_json".into(), launch_json);
+    // Empty until the loaded policy is observed.
+    row.insert(POLICY_HASH.into(), String::new());
     // Phase is used by active checks, but is not a Terraform schema attribute.
     Ok((row, ready, grants))
 }
+/// The state attribute recording the loaded policy revision's hash.
+pub(crate) const POLICY_HASH: &str = "policy_hash";
+
+/// The hash of the loaded policy revision, once it keeps every declared rule.
 fn active_policy(
     response: proto::GetSandboxPolicyStatusResponse,
     expected: &str,
-) -> Result<(), ObservationError> {
+) -> Result<String, ObservationError> {
     let revision = response.revision.ok_or(ObservationError::Incomplete)?;
     if response.active_version == 0
         || response.active_version != revision.version
         || revision.status != proto::PolicyStatus::Loaded as i32
-        || !network::loaded_policy_matches(
+        || revision.policy_hash.is_empty()
+        || !network::loaded_policy_contains(
             revision
                 .policy
                 .as_ref()
@@ -338,7 +345,7 @@ fn active_policy(
     {
         return Err(ObservationError::Incomplete);
     }
-    Ok(())
+    Ok(revision.policy_hash)
 }
 
 async fn checked_sandbox_row_with<F>(
@@ -574,15 +581,20 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             ],
             &[],
         )
+        // The policy hash is empty until the loaded policy is observed.
         .optional(&[
             "policy_json",
             "provider_names_json",
             "driver_config_json",
             services::FIELD,
+            POLICY_HASH,
         ])
         .validate_inputs(network::validate_grant_names)
         // The URLs of the sandbox's exposures, which are part of its creation.
-        .computed(services::URLS, nemoclaw_tofu::carry_prior),
+        .computed(services::URLS, nemoclaw_tofu::carry_prior)
+        // The loaded policy's hash, OpenShell's additions included; later
+        // observations must find the same one.
+        .computed(POLICY_HASH, nemoclaw_tofu::carry_prior),
     ]
     .map(lifecycle_rules)
     .map(|mut definition| {

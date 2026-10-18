@@ -140,6 +140,9 @@ The key goes in `Authorization` as a bearer token by default; set `authStyle: he
 Set the referenced variable on the applying host; exported YAML and OpenTofu state retain only the reference.
 Whether the harness sends the placeholder depends on the harness; Hermes doesn't yet send it to MCP servers ([#13313](https://github.com/NVIDIA/NemoClaw/issues/13313)).
 
+For OAuth-refresh credentials, use an [operator-managed OpenShell provider](oauth-refresh.md).
+NemoClaw does not wrap its refresh contract, and manual sandbox attachments affect drift checks.
+
 ## Skills on a Mounted Volume
 
 Fabric reads skills from the paths in `fabric_agent`'s `skills` block.

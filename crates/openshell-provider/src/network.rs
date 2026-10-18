@@ -38,68 +38,48 @@ pub(super) fn recorded_grants(
         .collect()
 }
 
-// Baseline grants follow NVIDIA/OpenShell crates/openshell-supervisor/src/lib.rs
-// at 7e7a8d5610f336f5f7f9f60da0951adbf295475d (Apache-2.0).
-// 2026-09-17: compare image-dependent proxy additions without changing authored
-// grants, accepting unrelated paths, or upgrading explicit read-only grants.
-pub(super) fn loaded_policy_matches(
+/// Whether a loaded policy keeps every declared rule. OpenShell adds paths of
+/// its own when it loads a policy; they're accepted here, and the loaded
+/// revision's recorded hash pins them, so NemoClaw keeps no copy of them.
+pub(super) fn loaded_policy_contains(
     loaded: &proto::SandboxPolicy,
     expected: &str,
 ) -> Result<bool, ObservationError> {
-    let actual = policy_json(loaded)?;
-    if actual == expected {
+    // Exactly as declared, with nothing added.
+    if policy_json(loaded)? == expected {
         return Ok(true);
     }
     let input: ExplicitPolicy =
         serde_json::from_str(expected).map_err(|_| ObservationError::Query)?;
-    // Attached providers put a sandbox in proxy mode even without network
-    // rules of its own, so the same additions apply.
-    let mut baseline = input.to_proto().map_err(|_| ObservationError::Query)?;
+    let declared = input.to_proto().map_err(|_| ObservationError::Query)?;
     let Some(observed) = &loaded.filesystem else {
         return Ok(false);
     };
-    let fs = baseline
+    let filesystem = declared
         .filesystem
-        .get_or_insert_with(|| proto::FilesystemPolicy {
+        .clone()
+        .unwrap_or(proto::FilesystemPolicy {
             include_workdir: true,
             ..Default::default()
         });
-    // OpenShell adds only paths present in the sandbox image. Host filesystem
-    // probes cannot establish that set; accept only observed, known additions.
-    for (paths, writable) in [
-        (
-            &[
-                "/usr",
-                "/lib",
-                "/etc",
-                "/app",
-                "/var/log",
-                "/proc",
-                "/dev/urandom",
-            ][..],
-            false,
-        ),
-        (&["/tmp", "/dev/null"][..], true),
-    ] {
-        for path in paths {
-            let observed_paths = if writable {
-                &observed.read_write
-            } else {
-                &observed.read_only
-            };
-            if observed_paths.iter().any(|p| p == path)
-                && !fs.read_only.iter().chain(&fs.read_write).any(|p| p == path)
-            {
-                if writable {
-                    &mut fs.read_write
-                } else {
-                    &mut fs.read_only
-                }
-                .push((*path).into());
-            }
-        }
+    // Each declared path stays in its own list, so a read-only path made
+    // writable is a difference.
+    if observed.include_workdir != filesystem.include_workdir
+        || !filesystem
+            .read_only
+            .iter()
+            .all(|path| observed.read_only.contains(path))
+        || !filesystem
+            .read_write
+            .iter()
+            .all(|path| observed.read_write.contains(path))
+    {
+        return Ok(false);
     }
-    Ok(policy_json(&baseline)? == actual)
+    // Everything else must be exactly as declared.
+    let mut comparable = loaded.clone();
+    comparable.filesystem.clone_from(&declared.filesystem);
+    Ok(policy_json(&comparable)? == policy_json(&declared)?)
 }
 
 pub(super) fn row_policy(row: &Row) -> Result<proto::SandboxPolicy, ObservationError> {

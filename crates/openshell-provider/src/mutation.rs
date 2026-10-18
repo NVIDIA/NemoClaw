@@ -78,8 +78,9 @@ impl OpenShell {
                 let mut row = want.clone();
                 row.insert("id".into(), id);
                 if kind == "sandbox" {
-                    // Until readback, the binding records no URLs.
+                    // Until readback, the binding records no URLs or policy.
                     row.insert(services::URLS.into(), "{}".into());
+                    row.insert(crate::POLICY_HASH.into(), String::new());
                 }
                 row
             }
@@ -99,10 +100,12 @@ impl OpenShell {
                 if let Err(error) = verify_identity(&established, &row) {
                     return Ok(Mutation::partial(established, error));
                 }
-                if want
-                    .iter()
-                    .any(|(key, v)| key != "id" && key != services::URLS && row.get(key) != Some(v))
-                {
+                // The ID and the computed URLs and policy hash come from the
+                // gateway; every other field must read back as written.
+                if want.iter().any(|(key, v)| {
+                    !["id", services::URLS, crate::POLICY_HASH].contains(&key.as_str())
+                        && row.get(key) != Some(v)
+                }) {
                     return Ok(Mutation::partial(row, ObservationError::Incomplete));
                 }
                 Ok(Mutation::complete(row))
@@ -169,6 +172,17 @@ impl Backend for OpenShell {
             && let Some(row) = &observed
         {
             verify_identity(prior, row)?;
+            // The loaded policy, as recorded when it was applied, must not
+            // have changed since.
+            if let Some(recorded) = prior
+                .get(crate::POLICY_HASH)
+                .filter(|hash| !hash.is_empty())
+                && row
+                    .get(crate::POLICY_HASH)
+                    .is_some_and(|observed| !observed.is_empty() && observed != recorded)
+            {
+                return Err(ObservationError::BindingMismatch);
+            }
             self.check_sandbox_phase(row)
                 .await
                 .map_err(nemoclaw_backend::Error::into_observation)?;
@@ -176,6 +190,13 @@ impl Backend for OpenShell {
         if kind == "sandbox"
             && let Some(row) = &mut observed
         {
+            // Teardown, or a sandbox that isn't ready yet, doesn't observe the
+            // loaded policy, so the recorded hash still stands.
+            if row.get(crate::POLICY_HASH).is_none_or(String::is_empty)
+                && let Some(recorded) = prior.get(crate::POLICY_HASH)
+            {
+                row.insert(crate::POLICY_HASH.into(), recorded.clone());
+            }
             self.observe_services(row, prior, removing).await?;
         }
         Ok(observed)

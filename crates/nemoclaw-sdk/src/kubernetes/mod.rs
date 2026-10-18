@@ -178,6 +178,9 @@ impl Spec {
                             .map_err(|_| invalid())?,
                     },
                     environment,
+                    // Pull Secrets configure the Helm release, not these
+                    // platform resources; their values stay in Kubernetes.
+                    image_pull_secrets: Vec::new(),
                 }),
                 ..Default::default()
             },

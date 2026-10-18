@@ -216,7 +216,7 @@ impl ConnectedOpenShellGateway {
                 else {
                     return Ok(None);
                 };
-                let (row, ready, grants) = checked_sandbox_row_with(
+                let (mut row, ready, grants) = checked_sandbox_row_with(
                     response,
                     workspace,
                     name,
@@ -238,10 +238,11 @@ impl ConnectedOpenShellGateway {
                         .await
                         .map_err(|error| remote_error(&error))?
                         .into_inner();
-                    active_policy(
+                    let hash = active_policy(
                         status,
                         &policy_json(&network::granted_row_policy(&row, &grants)?)?,
                     )?;
+                    row.insert(crate::POLICY_HASH.into(), hash);
                 }
                 Some(row)
             }

@@ -51,8 +51,9 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](interfaces.md#diagnose-failures); retained public configuration checks do not audit native files or tokens |
 | After a malformed OpenClaw request: `runtime_unavailable` | The runtime is unusable and only a new sandbox recovers it; change the agent's configuration, or follow the [whole-deployment replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime), including loss of sandbox files and history |
 
-For proxy policies, the pinned OpenShell supervisor can add read-only `/var/log` access to the loaded policy.
-NemoClaw accepts that runtime addition while preserving the authored policy; other loaded-policy differences still fail observation.
+OpenShell can add paths of its own, such as read-only `/var/log`, when it loads a sandbox policy.
+NemoClaw accepts those additions when the policy first loads, as long as every declared rule is intact, and records the loaded policy's hash.
+Any later change to the loaded policy, including new additions, fails observation as drift.
 
 The [SDK errors](../crates/nemoclaw-backend/src/error.rs), [plan checks](../crates/nemoclaw-sdk/src/deployment/plan.rs), and [lifecycle tests](../crates/nemoclaw-sdk/tests/deployment.rs) define these failure boundaries.
 
