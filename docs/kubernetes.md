@@ -106,6 +106,7 @@ Sandboxes still need `image.metadata`.
 
 Sandboxes can use a model server that you run in the gateway's cluster.
 NemoClaw creates nothing for it; you deploy the server, and the sandboxes reach it through its Service.
+This has been tried on one kind cluster; [current limits](limits.md#platforms-models-and-placement) lists what is untested.
 Name the Service by its cluster DNS name and port:
 
 ```yaml
@@ -123,6 +124,7 @@ spec:
 - **No catalog read:** cluster names resolve only inside the cluster, so plan and onboarding do not read the server's model catalog.
   A successful plan does not show that the server is running or serves the route's model.
 - **Destination:** OpenShell decides which address the name may reach when sandboxes connect; NemoClaw grants no address.
+  OpenShell refuses the Kubernetes control-plane ports 2379, 2380, 6443, 10250 and 10255, so serve the model on another port.
 - **Key:** `credential` is optional.
   It names the variable that holds the server's key where you run `nemoclaw`; OpenShell stores the key and adds it to sandbox requests.
   The key crosses the cluster network over plain HTTP unless your network plugin or a service mesh encrypts Pod traffic.
@@ -155,8 +157,14 @@ Run `kubectl` against the gateway's cluster, for example with `--context my-clus
        repository = "Qwen/Qwen3-4B"
        revision   = "1cfa9a7208912126459214e8b04321603b3df60c"
      }
+     memory {
+       gpu_memory_gib = 20
+       kv_cache_gib   = 6
+     }
      serving {
-       port = 8000
+       port             = 8000
+       tool_parser      = "hermes"
+       reasoning_parser = "qwen3"
      }
    }
 
@@ -170,6 +178,11 @@ Run `kubectl` against the gateway's cluster, for example with `--context my-clus
    tofu apply
    tofu output -raw spec > runtime-spec.json
    ```
+
+   - **`memory`:** the model's weights, the KV cache and 2 GiB must fit in `gpu_memory_gib`.
+     Qwen3-4B's weights take about 7.5 GiB, so the defaults, 16 GiB with an 8 GiB KV cache, are too small, and the server stops with "model weights exceed the declared GPU memory budget".
+   - **Parsers:** OpenClaw lets the model choose tools, and vLLM answers such requests with HTTP 400 unless `tool_parser` is set.
+     `reasoning_parser` returns Qwen3's reasoning apart from its reply.
 
    The Deployment below follows the rest of its [`launch` and `requirements`](provider.md#vllm-runtime-contract): the entrypoint, the spec in `NEMOCLAW_RUNTIME_SPEC`, the key in `NEMOCLAW_INFERENCE_KEY`, port 8000, the model cache at `/data`, one GPU, and 8 GiB of shared memory.
    Kubernetes cannot set the `memlock` and `stack` limits, so the node's limits apply.
@@ -187,6 +200,7 @@ Run `kubectl` against the gateway's cluster, for example with `--context my-clus
 
 3. Create the server's storage, Deployment, Service and NetworkPolicy.
    Replace the image digest, and the sandbox namespace in the NetworkPolicy; a managed gateway runs sandboxes in `gateway.kubernetes.namespace`.
+   If the node's default container runtime is not NVIDIA's, set `runtimeClassName` to the cluster's GPU RuntimeClass, such as `nvidia`.
 
    ```sh
    kubectl apply -f - <<'EOF'
@@ -217,6 +231,7 @@ Run `kubectl` against the gateway's cluster, for example with `--context my-clus
        metadata:
          labels: {app: qwen}
        spec:
+         # runtimeClassName: nvidia
          automountServiceAccountToken: false
          containers:
            - name: vllm
@@ -301,10 +316,69 @@ Run `kubectl` against the gateway's cluster, for example with `--context my-clus
 
 Each sandbox's OpenShell supervisor Pod makes the sandbox's network connections, so the NetworkPolicy admits only those Pods.
 Its selector uses OpenShell's own Pod labels, which OpenShell does not document as a stable interface ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
-Without a network plugin that enforces it, every Pod in the cluster can reach the server; an Ollama server, which has no key, is then open to all of them.
-For Ollama, compute `ollama_runtime` instead and leave out the Secret and `NEMOCLAW_INFERENCE_KEY`.
+The policy trusts those labels: anyone who can create a Pod in the sandbox namespace can give it the labels and reach the server.
+Without a network plugin that enforces the policy, every Pod in the cluster can reach the server.
+For a server without a key, such as Ollama, the NetworkPolicy is the only access control.
 
-NemoClaw's destroy leaves the server, its storage and its Secret in place; delete them yourself.
+To change the key, give the new key a new variable name.
+Apply does not notice a new value behind the same name, so OpenShell would keep sending the old key.
+
+1. Set the new key in a new variable, such as `QWEN_INFERENCE_KEY_2`, and replace the Secret's value:
+
+   ```sh
+   printf %s "$QWEN_INFERENCE_KEY_2" |
+     kubectl -n models create secret generic qwen-inference-key --from-file=key=/dev/stdin \
+       --dry-run=client -o yaml | kubectl apply -f -
+   ```
+
+2. Restart the server, which reads the key when it starts, and wait for it as in step 4:
+
+   ```sh
+   kubectl -n models rollout restart deployment/qwen
+   kubectl -n models rollout status deployment/qwen --timeout=9h
+   ```
+
+3. Change the provider's `credential` to `{env: QWEN_INFERENCE_KEY_2}`, then plan and apply.
+   Apply [updates OpenShell's registration in place](provider.md#inference-providers) with the new key.
+
+Requests fail from the restart until the apply finishes.
+Whether a running sandbox uses the new key without a restart is untested.
+
+NemoClaw's destroy leaves the server, its storage and its Secret in place; delete them yourself, for example with `kubectl delete namespace models`.
+
+### Run Ollama Instead
+
+The [in-cluster Ollama example](../examples/kubernetes/in-cluster-ollama.yaml) uses NemoClaw's Ollama runtime as the Service `ollama` on port 11434, without a key.
+Follow the vLLM steps with these changes:
+
+- **Image:** the [Ollama runtime image](inference.md#run-managed-ollama) for the node's architecture.
+- **Step 1:** compute `ollama_runtime` instead, with the same `hardware` and the `spec` output.
+  It takes no `authentication`, `memory` or parsers here; Ollama's default 16 GiB budget holds `qwen3:0.6b`:
+
+  ```hcl
+  data "ollama_runtime" "ollama" {
+    hardware {
+      profile      = "l40s"
+      architecture = "amd64"
+    }
+    model {
+      name   = "qwen3:0.6b"
+      digest = "7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435"
+    }
+    serving {
+      port = 11434
+    }
+  }
+  ```
+
+- **Step 2:** skip the key and the Secret, and name the ConfigMap `ollama-runtime`.
+- **Step 3:**
+  - Name the PVC `ollama-data`, and the Deployment, its container, the Service, the NetworkPolicy and the `app` label `ollama`.
+  - Leave out `NEMOCLAW_INFERENCE_KEY`.
+  - Use port 11434 in `containerPort`, the probes, the Service and the NetworkPolicy.
+  - Point both probes at `GET /api/version`; Ollama has no `/health`.
+  - Admit the example's sandbox namespace, `nemoclaw-in-cluster-ollama`.
+- **Steps 4 and 5:** wait for `deployment/ollama`, then plan and apply; no key variable is needed.
 
 ## Destroy a Deployment
 

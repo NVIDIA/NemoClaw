@@ -661,6 +661,11 @@ data "vllm_runtime" "qwen" {
     repository = "Qwen/Qwen3-4B"
     revision   = "1cfa9a7208912126459214e8b04321603b3df60c"
   }
+  # The weights, about 7.5 GiB, the KV cache and 2 GiB must fit in the budget.
+  memory {
+    gpu_memory_gib = 20
+    kv_cache_gib   = 6
+  }
   serving {
     port = 18898
   }
