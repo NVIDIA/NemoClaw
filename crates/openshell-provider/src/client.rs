@@ -225,7 +225,8 @@ impl KubernetesConnector for NoKubernetes {
 }
 
 /// Secrets a forward supplies, resolved from memory rather than the
-/// environment. Names are local to one client.
+/// environment. Names are local to one client, and only its connection
+/// resolves them: objects resolve their references from the environment.
 struct ForwardSecrets(BTreeMap<&'static str, String>);
 
 impl nemoclaw_backend::Secrets for ForwardSecrets {
@@ -338,10 +339,17 @@ impl GatewayClient {
             .open(spec)
             .await
             .map_err(|error| error.to_string())?;
-        let (connection, secrets) = forwarded(&opened);
-        let client =
-            OpenShell::connect_with_services(&connection, Arc::new(secrets), self.services.clone())
-                .map_err(|error| error.to_string())?;
+        let (connection, credentials) = forwarded(&opened);
+        // The forward's secrets authenticate only the connection. Objects
+        // name their credentials in the environment, as on a direct
+        // connection, so no reference resolves to the forward's values.
+        let client = OpenShell::connect_with_credentials(
+            &connection,
+            &credentials,
+            Arc::new(EnvironmentSecrets),
+            self.services.clone(),
+        )
+        .map_err(|error| error.to_string())?;
         self.forwards
             .lock()
             .map_err(|_| "Gateway forward lock failed".to_owned())?
