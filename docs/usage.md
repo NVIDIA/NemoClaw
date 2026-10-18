@@ -523,7 +523,7 @@ The [live Docker suite](contributing/testing.md) removes its gateways' UID-label
 
 A managed Podman gateway keeps the same objects, with the same names and label, as on Docker ([retained Docker objects](state.md#find-retained-docker-objects)).
 Follow the Docker steps with `podman --url "$deployment_engine"` in place of `docker --host "$deployment_engine"`, where `deployment_engine` is the gateway's `spec.gateway.engine`, such as `unix:///run/user/1000/podman/podman.sock`.
-This procedure has not yet been run against a Podman gateway ([current limits](limits.md#data-and-cleanup)).
+It has been run against a managed rootless Podman 5.8.8 gateway.
 
 #### On Kubernetes or OpenShift
 

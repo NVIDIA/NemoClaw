@@ -73,7 +73,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Native conversation continuity across runtime replacement | [Per-harness limits](state.md#choose-what-to-retain-for-each-harness); [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
 | Backup, restore, snapshots and transfer of mounted agent data | [Platform-owned storage](state.md#keep-agent-files-on-mounted-volumes); no NemoClaw command |
 | Moving data from the earlier product to v1 and back | [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
-| Verified removal of retained objects on Podman, of managed service volumes, and of objects on SSH engines; the [procedures](usage.md#remove-retained-resources) cover them | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
+| Verified removal of retained objects on SSH engines; the [Docker procedure](usage.md#remove-retained-resources) covers them | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
 
 ## Security
 
