@@ -154,7 +154,7 @@ pub struct ManagedGateway {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::ManagedKubernetes")]
     /// Explicit Kubernetes provisioning target. Excludes local engine, image, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services.
-    pub kubernetes: Option<super::ManagedKubernetes>,
+    pub kubernetes: Option<Box<super::ManagedKubernetes>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

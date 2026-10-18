@@ -7,7 +7,7 @@ Run agent sandboxes on an existing Kubernetes or OpenShift cluster.
 NemoClaw either installs a development OpenShell gateway in a namespace it creates, or uses a gateway you already run.
 The same agent images serve Docker, Podman, Kubernetes and OpenShift.
 
-The managed gateway's authentication is a development fixture, not a production identity service ([#12692](https://github.com/NVIDIA/NemoClaw/issues/12692)).
+The managed gateway authenticates users through a development issuer it runs, or through [an existing OIDC issuer](#authenticate-through-an-existing-oidc-issuer).
 OpenShift's security policy admitting these pods is untested; [current limits](limits.md#platforms-models-and-placement) lists what else is untested.
 
 ## Prerequisites
@@ -81,6 +81,43 @@ nemoclaw apply --state-dir .local/kubernetes deployment.yaml
 Apply creates the gateway and every sandbox, and starts each agent.
 Keep the state directory: it holds the cluster ownership receipt and the development issuer's keys, and destroy needs both.
 [Managed Kubernetes ownership](design/architecture.md#managed-kubernetes-ownership) describes which component owns each resource.
+
+### Authenticate Through an Existing OIDC Issuer
+
+The `development` profile runs a token issuer for this deployment, which is not an identity service.
+To have the gateway authenticate users through your identity provider instead, use the `oidc` profile:
+
+```yaml
+spec:
+  gateway:
+    kubernetes:
+      authentication:
+        profile: oidc
+        issuer: https://login.example.com/realms/openshell
+        audience: openshell
+        rolesClaim: groups
+        adminRole: openshell-admins
+        userRole: openshell-users
+        caConfigMap: issuer-ca
+        tokenEnv: NEMOCLAW_GATEWAY_TOKEN
+```
+
+- `issuer` and `audience` are passed to OpenShell, which validates every request's bearer token against them.
+- `rolesClaim`, `adminRole` and `userRole` map the token's roles to OpenShell's administrator and user access. Set both roles or neither; with neither, any valid token is accepted. `scopesClaim` names a scopes claim, if your tokens carry one.
+- `caConfigMap` names a ConfigMap in the deployment's namespace whose `ca.crt` verifies the issuer's certificate. Omit it for a publicly trusted issuer. Like registry Secrets, create it after NemoClaw creates the namespace, then rerun apply with the same state directory.
+- `tokenEnv` names the variable holding the bearer token NemoClaw sends to the gateway.
+
+NemoClaw runs no sign-in flow and stores no token.
+Before each plan, apply or destroy, get an access token for the audience from your identity provider, for example with its command-line tool, and put it in the variable `tokenEnv` names:
+
+```sh
+export NEMOCLAW_GATEWAY_TOKEN="$(your-identity-provider-cli token --audience openshell)"
+nemoclaw apply --state-dir .local/kubernetes deployment.yaml
+```
+
+When the token expires, get a new one and rerun.
+The gateway still requires its client certificate; the token adds user identity on top.
+With this profile, the namespace holds no development issuer, and the state directory holds no issuer keys.
 
 ### Reference Registry Credentials
 

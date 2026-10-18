@@ -155,6 +155,7 @@ impl Document {
         if let Some(kubernetes) = g.as_kubernetes() {
             names.push(kubernetes.kubeconfig.env.as_str());
             names.extend(kubernetes.environment.iter().map(String::as_str));
+            names.extend(kubernetes.authentication.token_env.as_deref());
         }
         if let Some(c) = g.credential() {
             names.push(c.env.as_str());
@@ -318,7 +319,7 @@ impl Gateway {
     /// Explicit existing-cluster settings for a managed Kubernetes gateway.
     pub fn as_kubernetes(&self) -> Option<&ManagedKubernetes> {
         self.as_managed()
-            .and_then(|gateway| gateway.kubernetes.as_ref())
+            .and_then(|gateway| gateway.kubernetes.as_deref())
     }
     /// Local Docker or Podman installation settings; excludes Kubernetes targets.
     pub fn as_local_managed(&self) -> Option<&ManagedGateway> {

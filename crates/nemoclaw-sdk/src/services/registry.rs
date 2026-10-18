@@ -59,7 +59,7 @@ pub struct ResourceSchema {
 
 /// Managed Kubernetes resource fields: the cluster target and identity, the
 /// environment list as JSON, and the observed reconciliation.
-const KUBERNETES_FIELDS: [&str; 11] = [
+const KUBERNETES_FIELDS: [&str; 12] = [
     "name",
     "owner",
     "generation",
@@ -70,9 +70,10 @@ const KUBERNETES_FIELDS: [&str; 11] = [
     "namespace",
     "authentication_profile",
     crate::kubernetes::ENVIRONMENT_FIELD,
+    crate::kubernetes::OIDC_FIELD,
     "running",
 ];
-const KUBERNETES_AUTH_FIELDS: [&str; 13] = [
+const KUBERNETES_AUTH_FIELDS: [&str; 14] = [
     "name",
     "owner",
     "generation",
@@ -83,6 +84,7 @@ const KUBERNETES_AUTH_FIELDS: [&str; 13] = [
     "namespace",
     "authentication_profile",
     crate::kubernetes::ENVIRONMENT_FIELD,
+    crate::kubernetes::OIDC_FIELD,
     "running",
     "release_present",
     "gateway_values",

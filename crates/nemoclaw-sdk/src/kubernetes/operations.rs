@@ -85,7 +85,7 @@ impl Operations {
     ) -> Result<&'a crate::config::ManagedKubernetes, ObservationError> {
         spec.settings
             .kubernetes
-            .as_ref()
+            .as_deref()
             .ok_or(ObservationError::Query)
     }
 
@@ -283,10 +283,27 @@ impl Operations {
         } else {
             None
         };
+        // With an existing OIDC issuer there are no issuer objects; once
+        // ready, the resource is identified by its namespace.
+        let oidc = self.target(spec)?.authentication.profile
+            == crate::config::KubernetesAuthenticationProfile::Oidc;
+        let (id, running) = if oidc {
+            let ready = receipt.issuer_ready.then_some(true);
+            let id = match ready {
+                Some(_) => Some(self.namespace(spec, &receipt)?.uid.clone()),
+                None => None,
+            };
+            (id, ready)
+        } else {
+            (
+                receipt.issuer.first().map(|owned| owned.uid.clone()),
+                (!receipt.issuer.is_empty()).then_some(receipt.issuer_ready),
+            )
+        };
         Ok((
             Response {
-                id: receipt.issuer.first().map(|owned| owned.uid.clone()),
-                running: (!receipt.issuer.is_empty()).then_some(receipt.issuer_ready),
+                id,
+                running,
                 release_present: Some(self.release_present(spec).await?),
                 gateway_values: Some(values.unwrap_or_else(|| serde_json::json!({})).to_string()),
             },
@@ -408,14 +425,22 @@ impl Operations {
                     receipt.namespace_identity = Some(identity);
                     receipt.save(&self.state)?;
                 }
-                let development = self.development(spec)?;
-                let material = if receipt.issuer.is_empty() {
-                    development.ensure()?
+                // An existing OIDC issuer needs no development issuer here.
+                let oidc = self.target(spec)?.authentication.profile
+                    == crate::config::KubernetesAuthenticationProfile::Oidc;
+                let objects = if oidc {
+                    Vec::new()
                 } else {
-                    development.load()?
+                    let development = self.development(spec)?;
+                    let material = if receipt.issuer.is_empty() {
+                        development.ensure()?
+                    } else {
+                        development.load()?
+                    };
+                    let namespace = self.target(spec)?.namespace.clone();
+                    issuer::objects(&material, &spec.name, &namespace)
                 };
-                let namespace = self.target(spec)?.namespace.clone();
-                for object in issuer::objects(&material, &spec.name, &namespace) {
+                for object in objects {
                     let address = Owned::new(&object, "");
                     let recorded = receipt
                         .issuer
@@ -487,7 +512,6 @@ impl Operations {
         if authentication.running != Some(true) {
             return Err(ObservationError::Incomplete.into());
         }
-        let material = material.ok_or(ObservationError::Incomplete)?;
         let gateway = self.read(&spec.with_kind(GATEWAY_KIND), None).await?;
         if gateway.running != Some(true) {
             return Err(ObservationError::Backend(
@@ -540,8 +564,23 @@ impl Operations {
             crate::state::atomic_write(&path, &bytes).map_err(|_| ObservationError::Incomplete)?;
             environment.insert(name.to_owned(), path.to_string_lossy().into_owned());
         }
-        let now = time::OffsetDateTime::now_utc().unix_timestamp();
-        let token = material.token(now);
+        // A development token is signed here; an existing issuer's token
+        // comes from the variable tokenEnv names, refreshed by its tooling.
+        let authentication = &target.authentication;
+        let token = match authentication.profile {
+            crate::config::KubernetesAuthenticationProfile::Development => {
+                let material = material.ok_or(ObservationError::Incomplete)?;
+                material.token(time::OffsetDateTime::now_utc().unix_timestamp())
+            }
+            crate::config::KubernetesAuthenticationProfile::Oidc => authentication
+                .token_env
+                .as_deref()
+                .and_then(|name| std::env::var(name).ok())
+                .filter(|token| !token.trim().is_empty())
+                .ok_or(ObservationError::Backend(
+                    "the variable tokenEnv names holds no OIDC token; obtain one from your identity provider",
+                ))?,
+        };
         environment.insert(super::TOKEN_ENV.to_owned(), token);
         let pods: kube::Api<k8s_openapi::api::core::v1::Pod> =
             kube::Api::namespaced(self.client.clone(), &target.namespace);

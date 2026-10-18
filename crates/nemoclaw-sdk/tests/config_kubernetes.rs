@@ -548,3 +548,51 @@ fn kubernetes_does_not_relax_gateway_transport_or_credential_validation() {
         assert!(Document::parse(input.to_string().as_bytes()).is_err());
     }
 }
+
+#[test]
+fn an_oidc_profile_requires_its_issuer_and_development_takes_no_oidc_settings() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    let oidc = json!({
+        "profile": "oidc",
+        "issuer": "https://login.example.com/realms/openshell",
+        "audience": "openshell",
+        "tokenEnv": "OPENSHELL_TOKEN"
+    });
+    let mut input = managed_document();
+    input["spec"]["gateway"]["kubernetes"]["authentication"] = oidc.clone();
+    let document =
+        Document::parse(input.to_string().as_bytes()).expect("a minimal oidc profile is valid");
+    assert_eq!(serde_json::to_value(&document).unwrap(), input);
+
+    let mut invalid: Vec<(&str, Value)> = Vec::new();
+    for field in ["issuer", "audience", "tokenEnv"] {
+        let mut missing = oidc.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        invalid.push((field, missing));
+    }
+    for (field, value) in [
+        ("issuer", json!("http://login.example.com")),
+        ("issuer", json!("https://user:password@login.example.com")),
+        ("issuer", json!("https://login.example.com/?tenant=x")),
+        ("tokenEnv", json!("KUBECONFIG")),
+        ("tokenEnv", json!("lowercase")),
+        ("caConfigMap", json!("Issuer_CA")),
+        ("adminRole", json!("openshell-admins")),
+    ] {
+        let mut changed = oidc.clone();
+        changed[field] = value;
+        invalid.push((field, changed));
+    }
+    let mut development = json!({"profile": "development"});
+    development["issuer"] = oidc["issuer"].clone();
+    invalid.push(("development", development));
+    for (field, authentication) in invalid {
+        let mut input = managed_document();
+        input["spec"]["gateway"]["kubernetes"]["authentication"] = authentication;
+        assert!(!validator.is_valid(&input), "accepted invalid {field}");
+        assert!(
+            Document::parse(input.to_string().as_bytes()).is_err(),
+            "parsed invalid {field}"
+        );
+    }
+}

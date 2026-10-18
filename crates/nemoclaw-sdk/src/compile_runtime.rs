@@ -152,6 +152,10 @@ pub(crate) fn runtime_graph(
                 if name == crate::kubernetes::ENVIRONMENT_FIELD {
                     attributes["environment"] = serde_json::from_str(value)
                         .map_err(|_| Error::State("invalid Kubernetes environment"))?;
+                } else if name == crate::kubernetes::OIDC_FIELD {
+                    let settings: serde_json::Value = serde_json::from_str(value)
+                        .map_err(|_| Error::State("invalid Kubernetes OIDC settings"))?;
+                    attributes["oidc"] = json!(literal_json(settings));
                 } else {
                     attributes[name] = json!(value.replace("${", "$${").replace("%{", "%%{"));
                 }
@@ -257,4 +261,20 @@ pub(crate) fn compiled_runtime(
     }
     crate::services::configure_readiness(&mut graph, &targets)?;
     Ok((graph, crate::docker_compute::targets(&targets)?))
+}
+
+/// A JSON value whose strings OpenTofu reads literally, without templates.
+fn literal_json(value: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match value {
+        Value::String(text) => Value::String(text.replace("${", "$${").replace("%{", "%%{")),
+        Value::Array(items) => Value::Array(items.into_iter().map(literal_json).collect()),
+        Value::Object(object) => Value::Object(
+            object
+                .into_iter()
+                .map(|(key, value)| (key, literal_json(value)))
+                .collect(),
+        ),
+        other => other,
+    }
 }

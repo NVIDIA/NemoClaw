@@ -128,6 +128,15 @@ impl Spec {
                     .map_err(|_| Error::State("cannot encode Kubernetes environment"))?,
             );
         }
+        // An OIDC profile's settings travel as JSON; development has none.
+        if target.authentication.profile == crate::config::KubernetesAuthenticationProfile::Oidc {
+            let mut settings = serde_json::to_value(&target.authentication)
+                .map_err(|_| Error::State("cannot encode Kubernetes authentication"))?;
+            settings
+                .as_object_mut()
+                .map(|object| object.remove("profile"));
+            row.insert(OIDC_FIELD.into(), settings.to_string());
+        }
         Ok(row)
     }
     /// The `kind` resource's specification named by its attributes.
@@ -158,6 +167,18 @@ impl Spec {
             Some(encoded) => serde_json::from_str(encoded).map_err(|_| invalid())?,
             None => Vec::new(),
         };
+        let mut authentication = match row.get(OIDC_FIELD).filter(|value| !value.is_empty()) {
+            Some(encoded) => {
+                serde_json::from_str::<serde_json::Value>(encoded).map_err(|_| invalid())?
+            }
+            None => serde_json::json!({}),
+        };
+        if !authentication.is_object() {
+            return Err(invalid());
+        }
+        authentication["profile"] = parse("authentication_profile")?;
+        let authentication: crate::config::KubernetesAuthentication =
+            serde_json::from_value(authentication).map_err(|_| invalid())?;
         let spec = Self {
             layout: 1,
             kind: kind.into(),
@@ -167,21 +188,18 @@ impl Spec {
             settings: ManagedGateway {
                 runtime: crate::config::Runtime { provider },
                 endpoint: get("endpoint")?,
-                kubernetes: Some(crate::config::ManagedKubernetes {
+                kubernetes: Some(Box::new(crate::config::ManagedKubernetes {
                     kubeconfig: crate::config::Credential {
                         env: get("kubeconfig_env")?,
                     },
                     context: get("context")?,
                     namespace: get("namespace")?,
-                    authentication: crate::config::KubernetesAuthentication {
-                        profile: serde_json::from_value(parse("authentication_profile")?)
-                            .map_err(|_| invalid())?,
-                    },
+                    authentication,
                     environment,
                     // Pull Secrets configure the Helm release, not these
                     // platform resources; their values stay in Kubernetes.
                     image_pull_secrets: Vec::new(),
-                }),
+                })),
                 ..Default::default()
             },
         };
@@ -204,6 +222,8 @@ pub const ATTRIBUTES: [&str; 9] = [
 ];
 /// Row field carrying the `environment` list as JSON.
 pub const ENVIRONMENT_FIELD: &str = "environment_json";
+/// Row field carrying an OIDC profile's settings as JSON.
+pub const OIDC_FIELD: &str = "oidc_json";
 
 /// Check one attribute without the others, explaining a rejected value
 /// without echoing it.
@@ -222,7 +242,7 @@ pub fn check_attribute(attribute: &str, value: &str) -> Result<(), &'static str>
             r"^(kubernetes|openshift)$",
             "must be kubernetes or openshift",
         ),
-        "authentication_profile" => (r"^development$", "must be development"),
+        "authentication_profile" => (r"^(development|oidc)$", "must be development or oidc"),
         "namespace" => (
             r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
             "must be a Kubernetes namespace name",

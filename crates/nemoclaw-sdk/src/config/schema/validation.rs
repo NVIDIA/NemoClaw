@@ -180,6 +180,56 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "x-nemoclaw-error": "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
         }),
     );
+    // OIDC settings belong to the oidc profile, which requires the issuer,
+    // audience, and token variable; roles come in pairs, as in OpenShell.
+    let oidc_fields = [
+        "issuer",
+        "audience",
+        "rolesClaim",
+        "adminRole",
+        "userRole",
+        "scopesClaim",
+        "caConfigMap",
+        "tokenEnv",
+    ];
+    let reserved_names =
+        defs["ManagedKubernetes"]["properties"]["kubeconfig"]["properties"]["env"]["not"].clone();
+    let authentication = &mut defs["KubernetesAuthentication"];
+    property(
+        authentication,
+        "issuer",
+        json!({"pattern": r"^https://[^\s/?#@]+(?:/[^\s?#]*)?$(?![\s\S])", "x-nemoclaw-error": "the OIDC issuer must be an https URL without credentials, query, or fragment"}),
+    );
+    property(
+        authentication,
+        "caConfigMap",
+        json!({
+            "pattern": r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\s\S])",
+            "x-nemoclaw-error": "caConfigMap must be a Kubernetes ConfigMap name"
+        }),
+    );
+    property(
+        authentication,
+        "tokenEnv",
+        json!({
+            "pattern": c::ENV,
+            "not": {"anyOf": [
+                reserved_names,
+                {"const": "NEMOCLAW_KUBERNETES_STATE"},
+                {"pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"}
+            ]},
+            "x-nemoclaw-error": "tokenEnv must be an environment variable name that does not shadow process, trust, proxy, or cluster controls"
+        }),
+    );
+    authentication["dependentRequired"] =
+        json!({"adminRole": ["userRole"], "userRole": ["adminRole"]});
+    authentication["allOf"] = json!([
+        {
+            "if": {"properties": {"profile": {"const": "oidc"}}, "required": ["profile"]},
+            "then": {"required": ["issuer", "audience", "tokenEnv"]},
+            "else": {"not": {"anyOf": oidc_fields.iter().map(|field| json!({"required": [field]})).collect::<Vec<_>>()}}
+        }
+    ]);
     property(
         &mut defs["Spec"],
         "sandboxes",
@@ -408,7 +458,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
         "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
-        "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and development authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
+        "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.",
         "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",
