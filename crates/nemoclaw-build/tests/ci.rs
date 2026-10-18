@@ -73,6 +73,75 @@ fn live_kind_requires_its_bundle_before_downloading_tools_or_creating_a_cluster(
     assert!(!root.path().join("cluster-accessed").exists());
 }
 
+// `cargo ci` runs this tool through `cargo run`, which describes the tool's own
+// package in the environment. Build scripts such as ring's rerun when
+// CARGO_MANIFEST_DIR changes, so passing it on would rebuild them.
+#[cfg(target_os = "linux")]
+#[test]
+fn cargo_steps_do_not_inherit_the_package_description_from_cargo_run() {
+    use std::{fs, os::unix::fs::PermissionsExt, process::Command};
+    let root = tempfile::tempdir().unwrap();
+    let bin = root.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    for (name, script) in [
+        ("protoc", "#!/bin/sh\nprintf 'libprotoc 36.1\\n'\n"),
+        (
+            "cargo",
+            "#!/bin/sh\nif [ \"$1 $2\" = 'nextest --version' ]; then printf 'cargo-nextest 0.9.144\\n'; exit 0; fi\nexport -p > cargo-environment\n",
+        ),
+    ] {
+        let path = bin.join(name);
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    fs::write(
+        root.path().join("versions.json"),
+        serde_json::json!({
+            "rust":"1.98.1", "protobuf":"36.1", "nextest":"0.9.144",
+            "opentofu":"1.12.6", "dockerProvider":"4.6.0", "helmProvider":"3.3.0",
+            "platforms":{}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
+        .args(["ci", "fmt"])
+        .current_dir(root.path())
+        .env("CARGO", bin.join("cargo"))
+        .env("PROTOC", bin.join("protoc"))
+        .env("PATH", &bin)
+        .env("TEST_PLATFORM", "linux_amd64")
+        .env("CARGO_MANIFEST_DIR", "/workspace/crates/nemoclaw-build")
+        .env(
+            "CARGO_MANIFEST_PATH",
+            "/workspace/crates/nemoclaw-build/Cargo.toml",
+        )
+        .env("CARGO_PKG_NAME", "nemoclaw-build")
+        .env("CARGO_HOME", "/cargo-home")
+        .env_remove("GITHUB_ENV")
+        .env_remove("GITHUB_PATH")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let environment = fs::read_to_string(root.path().join("cargo-environment")).unwrap();
+    let names: Vec<_> = environment
+        .lines()
+        .filter_map(|line| line.strip_prefix("export ")?.split('=').next())
+        .collect();
+    for removed in [
+        "CARGO_MANIFEST_DIR",
+        "CARGO_MANIFEST_PATH",
+        "CARGO_PKG_NAME",
+    ] {
+        assert!(!names.contains(&removed), "cargo received {removed}");
+    }
+    assert!(names.contains(&"CARGO_HOME"), "cargo lost CARGO_HOME");
+}
+
 #[test]
 fn gateway_documents_are_fresh_and_avoid_ports_and_subnets_in_use() {
     use ci::live::{GatewayInputs, free_subnet, gateway_document, uuid};
