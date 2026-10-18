@@ -137,12 +137,18 @@ export function configuration(revision = 3) {
   };
 }
 
-export function ollamaSource(model: string = "qwen3.5:9b", environment: NodeJS.ProcessEnv = {}) {
+export function ollamaSource(
+  model: string = "qwen3.5:9b",
+  environment: NodeJS.ProcessEnv = {},
+  nativeEndpointUrl?: string,
+) {
   const route = resolveManagedStartupInferenceRoute(
     "openclaw",
     "ollama-local",
     model,
     "openai-completions",
+    true,
+    nativeEndpointUrl,
   );
   const built = buildManagedStartupProfile({
     ...startupInput,

@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeNativeLocalProviderAttachment } from "../../../inference/native-local/contract";
+import { verifyNativeLocalStatusAttachment } from "../inference-route-health";
+
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { createCliOpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter-cli";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../../adapters/openshell/sandbox-command";
@@ -81,6 +84,7 @@ export interface LaunchReadinessHealthDeps {
     gatewayName: string,
   ) => Promise<ReturnType<typeof parseSandboxInferenceRouteProbeResult>>;
   inferenceInvocationProbe?: typeof runSandboxInferenceInvocationProbe;
+  verifyNativeLocalAttachment?: typeof verifyNativeLocalStatusAttachment;
   verifyNativeNvidiaAttachment?: (input: {
     sandboxName: string;
     gatewayName: string;
@@ -225,6 +229,36 @@ export async function requireNativeInferenceHealth(input: {
   entry: SandboxEntry;
   deps: LaunchReadinessHealthDeps;
 }): Promise<boolean> {
+  if (input.entry.nativeLocalProviderAttachment !== undefined) {
+    const expected = normalizeNativeLocalProviderAttachment(
+      input.entry.nativeLocalProviderAttachment,
+    );
+    if (
+      !expected ||
+      !input.entry.model ||
+      ((input.agentName ?? input.entry.agent) === "hermes" &&
+        (expected.agent !== "hermes" || input.entry.provider !== expected.provider))
+    )
+      throw new LaunchReadinessEvidenceError();
+    await (input.deps.verifyNativeLocalAttachment ?? verifyNativeLocalStatusAttachment)({
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      expected,
+    });
+    const result = await (
+      input.deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe
+    )({
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      agentName: input.agentName,
+      provider: expected.provider,
+      model: input.entry.model,
+      preferredInferenceApi: "openai-completions",
+      nativeLocalProviderAttachment: expected,
+    });
+    if (!result.ok) throw new LaunchReadinessObservationError("health", "inference request");
+    return true;
+  }
   const expected = getNativeProviderAttachment(input.entry);
   if (!expected) return false;
   const provider = normalizedString(input.entry.provider);
@@ -373,7 +407,7 @@ export async function requireLaunchSemanticHealth(
   }
   if (inferenceConfigured) {
     const inferenceStartedAt = performance.now();
-    if (getNativeProviderAttachment(entry)) {
+    if (getNativeProviderAttachment(entry) || entry.nativeLocalProviderAttachment !== undefined) {
       try {
         await requireNativeInferenceHealth({
           sandboxName,
@@ -438,6 +472,10 @@ export async function requireLaunchSemanticHealth(
     }
     if (inference.broken || (inference.httpStatus >= 100 && inference.httpStatus < 600)) {
       recordLaunchReadinessObservationFailure(deps, "inference-route");
+      const curlExit = /^BROKEN 000 curl_exit=([0-9]{1,3})$/.exec(inference.detail)?.[1];
+      console.error(
+        `  Inference route readiness failed: HTTP ${String(inference.httpStatus)}; probe_broken=${String(inference.broken)}${curlExit ? `; curl_exit=${curlExit}` : ""}.`,
+      );
       throw new LaunchReadinessObservationError("health");
     }
     recordLaunchReadinessObservationFailure(deps, "inference-route");

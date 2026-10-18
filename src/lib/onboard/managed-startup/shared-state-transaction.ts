@@ -448,6 +448,7 @@ function managedOutputTargets(
     case "pi":
       directories.add(path.join(root, "agent"));
       files.add(path.join(root, "agent", "models.json"));
+      files.add(path.join(root, "agent", "settings.json"));
       break;
   }
 

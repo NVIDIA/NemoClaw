@@ -102,7 +102,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(79);
+    expect(plan.coverageMatrix).toHaveLength(80);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-github-read",
       "catalogue-nvidia-api",
@@ -155,7 +155,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(48);
+    expect(catalogueIds).toHaveLength(49);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -264,6 +264,16 @@ describe("E2E workflow plan", () => {
   ])("selects live config export coverage when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
       "network-policy",
+    );
+  });
+
+  it.each([
+    "src/lib/actions/inference-set/native-local.ts",
+    "src/lib/actions/inference-set/local-runtime.ts",
+    "src/lib/inference/native-local/profile.ts",
+  ])("selects native OpenClaw live evidence when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "inference-routing-openclaw-native",
     );
   });
 
@@ -735,6 +745,18 @@ describe("E2E workflow plan", () => {
       "openshell-gateway-upgrade-v0-0-89-x86-64",
       "openshell-gateway-upgrade-v0-0-123-x86-64",
     ]);
+  });
+
+  it("selects Hermes Slack when its shared placeholder probe owner changes", () => {
+    const changedFile = "test/e2e/live/hermes-slack-e2e-helpers.ts";
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "hermes-slack",
+    );
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "hermes-slack",
+    );
   });
 
   it("selects sandbox operations when its gateway client changes", () => {
@@ -1380,7 +1402,7 @@ describe("E2E workflow plan", () => {
       "| Repository install onboarding and hosted inference succeed | `ubuntu-repo-cloud-langchain-deepagents-code / docker`, `ubuntu-repo-cloud-openclaw / docker` | agent runtime |",
     );
     expect(complete.stdout).toContain("### Intentional exclusions");
-    expect(complete.stdout).not.toContain("llama-cpp-dgx-spark-qualification");
+    expect(complete.stdout).toContain("llama-cpp-dgx-spark-qualification");
     expect(complete.stdout).not.toContain("Unsupported or unresolved typed declarations");
     expect(complete.stdout).not.toContain("inert typed declarations");
   });

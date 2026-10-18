@@ -206,6 +206,29 @@ afterEach(() => {
 });
 
 describe("trusted OpenShell SDK archive preparation", () => {
+  it("does not pass API or package credentials to the offline cache process", async () => {
+    const source = fixture();
+    const bin = join(source.root, "bin");
+    mkdirSync(bin);
+    const trace = join(source.root, "environment.json");
+    writeFileSync(
+      join(bin, "npm"),
+      `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(trace)}, JSON.stringify(process.env));\n`,
+    );
+    chmodSync(join(bin, "npm"), 0o700);
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
+    vi.stubEnv("GITHUB_TOKEN", "fixture-credential-sentinel");
+    vi.stubEnv("GH_TOKEN", "fixture-credential-sentinel");
+    vi.stubEnv("NODE_AUTH_TOKEN", "fixture-credential-sentinel");
+    vi.stubEnv("NPM_TOKEN", "fixture-credential-sentinel");
+    vi.stubEnv("NPM_CONFIG__AUTH_TOKEN", "fixture-credential-sentinel");
+    await seedReviewedSourceRegistryArtifact(request(source));
+    const environment = JSON.parse(readFileSync(trace, "utf8"));
+    expect(environment.PATH).toBe(process.env.PATH);
+    expect(environment.NPM_CONFIG_UPDATE_NOTIFIER).toBe("false");
+    expect(readFileSync(trace, "utf8")).not.toContain("fixture-credential-sentinel");
+  });
+
   it("reports a bounded redacted npm cache-stage failure", async () => {
     const source = fixture();
     const executableDirectory = join(source.root, "bin");

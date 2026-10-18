@@ -24,6 +24,7 @@ import {
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const META_JOBS = new Set([
+  "llama-cpp-dgx-spark-plan",
   "package-openshell-sdk",
   "native-runtime-qualification-podman-toolchain",
   "portable-podman-toolchain",
@@ -151,6 +152,7 @@ const GENERIC_GITHUB_WRITE_SURFACE =
 const GH_API_WRITE_METHOD =
   /\bgh\s+api\b[\s\S]{0,160}?(?:(?:--method|-X)\s+(?:POST|PUT|PATCH|DELETE)\b|graphql\b[\s\S]{0,160}?\bmutation\b)/iu;
 const NATIVE_RUNTIME_QUALIFICATION_READ_JOBS = new Set([
+  "llama-cpp-dgx-spark-plan",
   "native-runtime-qualification-producer-plan",
   "native-runtime-qualification-producer-aggregate",
 ]);
@@ -175,6 +177,8 @@ type WorkflowStep = {
 type WorkflowPermissions = Record<string, unknown> | string;
 
 type WorkflowJob = {
+  environment?: unknown;
+  concurrency?: unknown;
   env?: Record<string, unknown>;
   if?: string;
   name?: unknown;
@@ -376,7 +380,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   if (
     workflow.concurrency?.["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
+    "${{ inputs.checkout_sha != '' && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
   ) {
     errors.push(
       "Manual PR E2E concurrency must not cancel an active hardware or Launchable dispatch",
@@ -508,7 +512,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const validation = validationIndex >= 0 ? steps[validationIndex] : {};
   if (
     validation.if !==
-    "${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}"
+    "${{ inputs.checkout_sha != '' && ((inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '') }}"
   ) {
     errors.push("Manual PR checkout validation must skip qualification producer dispatches");
   }
@@ -554,7 +558,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     matrixJob.outputs?.e2e_credentials_allowed !== "${{ steps.e2e_credentials.outputs.allowed }}" ||
     credentialAuthorization.id !== "e2e_credentials" ||
     credentialAuthorization.if !==
-      "${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
+      "${{ inputs.checkout_sha != '' && ((inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '') }}" ||
     credentialAuthorization.shell !== "bash"
   ) {
     errors.push("Manual PR credential authorization must expose only the authorization result");
@@ -711,6 +715,16 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.with?.path === ".trusted-ci-actions" &&
         step.with?.["persist-credentials"] === false;
       const trustedCheckout =
+        (["llama-cpp-dgx-spark-plan", "llama-cpp-dgx-spark-qualification"].includes(jobName) &&
+          step.with?.repository === "NVIDIA/NemoClaw" &&
+          step.with?.["persist-credentials"] === false &&
+          ((step.name === "Check out inert Spark candidate data" &&
+            step.with?.ref === "${{ inputs.checkout_sha }}" &&
+            step.with?.path === ".candidate-source" &&
+            step.with?.["fetch-depth"] === 0) ||
+            ((step.name === "Check out trusted Spark plan compiler" ||
+              step.name === "Check out trusted Spark qualification harness") &&
+              step.with?.ref === "${{ github.workflow_sha }}"))) ||
         trustedCompilerCheckout ||
         trustedHermesFixtureCheckout ||
         trustedPortablePodmanCleanupCheckout ||
@@ -1201,7 +1215,9 @@ function validatePrGateEvidenceProducers(errors: string[], workflow: OperationsW
 }
 
 function validateAggregation(errors: string[], workflow: OperationsWorkflow): void {
-  const executionJobs = Object.keys(workflow.jobs).filter((name) => !META_JOBS.has(name));
+  const executionJobs = Object.keys(workflow.jobs).filter(
+    (name) => !META_JOBS.has(name) || name === "llama-cpp-dgx-spark-plan",
+  );
   const reportNeeds = needs(workflow.jobs["report-to-pr"] ?? {});
   for (const name of executionJobs) {
     if (!reportNeeds.includes(name)) errors.push(`report-to-pr must wait for ${name}`);
@@ -1346,7 +1362,7 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       }
       if (
         job.if !==
-        "${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference'))) }}"
+        "${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && (contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference') || contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'llama-cpp-dgx-spark-qualification')))) }}"
       ) {
         errors.push("report-to-pr must run only for manual workflow dispatches");
       }
@@ -1425,11 +1441,12 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
     const trustedQualificationReadJob = NATIVE_RUNTIME_QUALIFICATION_READ_JOBS.has(name);
     if (
       trustedQualificationReadJob &&
-      (!isDeepStrictEqual(permissions, {
-        actions: "read",
-        contents: "read",
-        "pull-requests": "read",
-      }) ||
+      (!isDeepStrictEqual(
+        permissions,
+        name === "llama-cpp-dgx-spark-plan"
+          ? { contents: "read", "pull-requests": "read" }
+          : { actions: "read", contents: "read", "pull-requests": "read" },
+      ) ||
         GH_API_WRITE_METHOD.test(jobSource))
     ) {
       errors.push(`${name} must limit GitHub API access to the reviewed read-only contract`);
@@ -1688,6 +1705,105 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
   }
 }
 
+function validateSparkQualificationBoundary(errors: string[], workflow: OperationsWorkflow): void {
+  const plan = workflow.jobs["llama-cpp-dgx-spark-plan"] ?? {};
+  const qualification = workflow.jobs["llama-cpp-dgx-spark-qualification"] ?? {};
+  if (
+    plan.if !==
+      "${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.jobs == 'llama-cpp-dgx-spark-qualification' && inputs.targets == '' }}" ||
+    !sameMembers(needs(plan), ["generate-matrix"]) ||
+    qualification.if !== "${{ needs.llama-cpp-dgx-spark-plan.result == 'success' }}" ||
+    !sameMembers(needs(qualification), ["llama-cpp-dgx-spark-plan"])
+  )
+    errors.push("Spark qualification must depend on authenticated trusted-main planning");
+  if (
+    qualification["runs-on"] !== "${{ needs.llama-cpp-dgx-spark-plan.outputs.runner }}" ||
+    qualification.environment !== "${{ needs.llama-cpp-dgx-spark-plan.outputs.environment }}" ||
+    !isDeepStrictEqual(qualification.concurrency, {
+      group: "llama-cpp-dgx-spark-protected-runner",
+      "cancel-in-progress": false,
+    }) ||
+    !isDeepStrictEqual(qualification.permissions, { contents: "read" })
+  )
+    errors.push(
+      "Spark qualification must preserve protected infrastructure and read-only authority",
+    );
+  const authentication = findStep(plan, "Authenticate Spark qualification dispatch");
+  for (const predicate of [
+    '"$ALLOW_QUEUE" == true',
+    '"$CHECKOUT_REPOSITORY" == NVIDIA/NemoClaw',
+    '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
+    ".head.sha == $head",
+    ".base.sha == $base",
+    "merge-base --is-ancestor",
+    "':!managed-inference/images/llama-cpp/image.yaml'",
+  ])
+    if (!String(authentication.run).includes(predicate))
+      errors.push(`Spark qualification authentication must retain ${predicate}`);
+  if (
+    findStep(plan, "Export the digest-bound Spark plan").run !==
+    'node --no-warnings scripts/checks/export-llama-cpp-dgx-spark-qualification-plan.mts --source-root "$GITHUB_WORKSPACE/.candidate-source"'
+  )
+    errors.push("Spark qualification must use the trusted plan exporter on inert candidate data");
+  for (const [key, value] of Object.entries({
+    BASE_SHA: "${{ inputs.base_sha }}",
+    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+    WORKFLOW_SHA: "${{ github.workflow_sha }}",
+    QUALIFICATION_PLAN: "${{ needs.llama-cpp-dgx-spark-plan.outputs.plan }}",
+    PLAN_SHA256: "${{ needs.llama-cpp-dgx-spark-plan.outputs.plan_sha256 }}",
+    MODEL_HOST_PATH: "${{ needs.llama-cpp-dgx-spark-plan.outputs.model_host_path }}",
+    E2E_DEFAULT_ENABLED: "0",
+  }))
+    if (qualification.env?.[key] !== value)
+      errors.push(`Spark qualification must bind ${key} to its authenticated plan`);
+  const execution = findStep(qualification, "Run the trusted Spark qualification");
+  for (const argument of [
+    "node --no-warnings --import tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.cts",
+    '--head-sha "$CHECKOUT_SHA"',
+    '--base-sha "$BASE_SHA"',
+    '--workflow-sha "$WORKFLOW_SHA"',
+    '--plan-sha256 "$PLAN_SHA256"',
+    '--run-id "$GITHUB_RUN_ID"',
+    '--run-attempt "$GITHUB_RUN_ATTEMPT"',
+  ])
+    if (!String(execution.run).includes(argument))
+      errors.push(`Spark qualification must pass ${argument}`);
+  const steps = qualification.steps ?? [];
+  const cleanup = findStep(qualification, "Remove owned Spark qualification resources");
+  const validation = findStep(qualification, "Validate the revision-bound Spark receipt");
+  const upload = findStep(qualification, "Upload validated Spark qualification evidence");
+  if (
+    !String(cleanup.if).includes("always()") ||
+    cleanup.id !== "cleanup" ||
+    !String(cleanup.run).includes("--cleanup-only") ||
+    !String(cleanup.run).includes(
+      "node --no-warnings --import tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.cts",
+    ) ||
+    !String(validation.run).includes("scripts/checks/validate-llama-cpp-dgx-spark-receipt.mts") ||
+    !String(validation.run).includes(
+      '--publish "$artifact_dir" "$EXECUTION_OUTCOME" "$CLEANUP_OUTCOME" "$PLAN_SHA256"',
+    ) ||
+    validation.id !== "evidence" ||
+    validation.if !== "${{ always() && steps.qualification.outcome != 'skipped' }}" ||
+    !isDeepStrictEqual(validation.env, {
+      EXECUTION_OUTCOME: "${{ steps.qualification.outcome }}",
+      CLEANUP_OUTCOME: "${{ steps.cleanup.outcome }}",
+    }) ||
+    !(
+      steps.indexOf(execution) < steps.indexOf(cleanup) &&
+      steps.indexOf(cleanup) < steps.indexOf(validation) &&
+      steps.indexOf(validation) < steps.indexOf(upload)
+    ) ||
+    upload.if !== "${{ always() && steps.evidence.outcome == 'success' }}"
+  )
+    errors.push("Spark qualification must clean up and validate its receipt before upload");
+  for (const job of [plan, qualification])
+    for (const step of job.steps ?? []) {
+      if (Object.hasOwn(step, "working-directory") || step["continue-on-error"])
+        errors.push("Spark qualification must not execute candidate code or ignore step failures");
+    }
+}
+
 export function validateE2eOperationsWorkflow(workflow: OperationsWorkflow): string[] {
   const errors = validateStandardProfileWorkflowBoundary(
     workflow as unknown as Record<string, unknown>,
@@ -1695,6 +1811,7 @@ export function validateE2eOperationsWorkflow(workflow: OperationsWorkflow): str
   errors.push(...validateBaseImagePublicationGate(workflow));
   errors.push(...validateStockOnboardingPublicationBoundary(workflow));
   validateManualPrDispatch(errors, workflow);
+  validateSparkQualificationBoundary(errors, workflow);
   validatePrGateEvidenceProducers(errors, workflow);
   validateAggregation(errors, workflow);
   validateRelevantE2e(errors, workflow);

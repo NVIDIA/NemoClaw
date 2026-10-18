@@ -11,7 +11,7 @@ export const PROTECTED_DCODE_BASE_REPOSITORY =
   "localhost:5000/nemoclaw-managed-protected-base/langchain-deepagents-code";
 const SHA = /^[a-f0-9]{40}$/u;
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
-const COHORT = /^protected-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$/u;
+const COHORT = /^protected-([1-9][0-9]{0,19})-([1-9][0-9]{0,9})$/u;
 const MANIFEST = "application/vnd.oci.image.manifest.v1+json";
 const CONFIG = "application/vnd.oci.image.config.v1+json";
 const LAYERS = new Set([
@@ -50,6 +50,17 @@ function validateIdentity(identity: ProtectedDcodeBaseIdentity): void {
   ) {
     throw new Error("protected DCode base identity is invalid");
   }
+}
+
+function parseCohort(value: unknown): { runId: bigint; attempt: bigint; value: string } {
+  if (typeof value !== "string") {
+    throw new Error("protected DCode base cohort is invalid");
+  }
+  const match = COHORT.exec(value);
+  if (!match) {
+    throw new Error("protected DCode base cohort is invalid");
+  }
+  return { runId: BigInt(match[1]), attempt: BigInt(match[2]), value };
 }
 
 function regularFile(filename: string): number {
@@ -202,6 +213,15 @@ export function verifyProtectedDcodeBaseReceipt(
   agent: (typeof PROTECTED_MANAGED_IMAGE_AGENTS)[number] = "langchain-deepagents-code",
 ): ProtectedDcodeBaseReceipt {
   const receipt = readJson(receiptPath);
+  return verifyReceipt(layout, receipt, expected, agent);
+}
+
+function verifyReceipt(
+  layout: string,
+  receipt: Record<string, unknown>,
+  expected: ProtectedDcodeBaseIdentity,
+  agent: (typeof PROTECTED_MANAGED_IMAGE_AGENTS)[number],
+): ProtectedDcodeBaseReceipt {
   const actual = inspectProtectedDcodeBase(layout, expected, agent);
   const keys = Object.keys(actual) as (keyof ProtectedDcodeBaseReceipt)[];
   if (
@@ -215,12 +235,33 @@ export function verifyProtectedDcodeBaseReceipt(
   return actual;
 }
 
+export function verifyReusableProtectedDcodeBaseReceipt(
+  layout: string,
+  receiptPath: string,
+  expected: ProtectedDcodeBaseIdentity,
+  agent: (typeof PROTECTED_MANAGED_IMAGE_AGENTS)[number] = "langchain-deepagents-code",
+): ProtectedDcodeBaseReceipt {
+  validateIdentity(expected);
+  const receipt = readJson(receiptPath);
+  const producer = parseCohort(receipt.cohort);
+  const consumer = parseCohort(expected.cohort);
+  if (producer.runId !== consumer.runId || producer.attempt > consumer.attempt) {
+    throw new Error("protected DCode base cohort cannot satisfy this workflow attempt");
+  }
+  return verifyReceipt(layout, receipt, { ...expected, cohort: producer.value }, agent);
+}
+
 function main(): void {
   const [command, layout, receiptPath, agent = "langchain-deepagents-code", ...extra] =
     process.argv.slice(2);
-  if (!["write", "verify"].includes(command) || !layout || !receiptPath || extra.length) {
+  if (
+    !["write", "verify", "verify-reusable"].includes(command) ||
+    !layout ||
+    !receiptPath ||
+    extra.length
+  ) {
     throw new Error(
-      "usage: protected-dcode-base-receipt.mts <write|verify> <OCI layout> <receipt> [agent]",
+      "usage: protected-dcode-base-receipt.mts <write|verify|verify-reusable> <OCI layout> <receipt> [agent]",
     );
   }
   const expected: ProtectedDcodeBaseIdentity = {
@@ -230,19 +271,13 @@ function main(): void {
     platform: (process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM ??
       "") as ProtectedDcodeBaseIdentity["platform"],
   };
+  const selectedAgent = agent as (typeof PROTECTED_MANAGED_IMAGE_AGENTS)[number];
   const receipt =
     command === "write"
-      ? inspectProtectedDcodeBase(
-          layout,
-          expected,
-          agent as (typeof PROTECTED_MANAGED_IMAGE_AGENTS)[number],
-        )
-      : verifyProtectedDcodeBaseReceipt(
-          layout,
-          receiptPath,
-          expected,
-          agent as (typeof PROTECTED_MANAGED_IMAGE_AGENTS)[number],
-        );
+      ? inspectProtectedDcodeBase(layout, expected, selectedAgent)
+      : command === "verify-reusable"
+        ? verifyReusableProtectedDcodeBaseReceipt(layout, receiptPath, expected, selectedAgent)
+        : verifyProtectedDcodeBaseReceipt(layout, receiptPath, expected, selectedAgent);
   if (command === "write") {
     fs.writeFileSync(receiptPath, `${JSON.stringify(receipt)}\n`, {
       flag: "wx",

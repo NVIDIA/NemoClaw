@@ -32,6 +32,56 @@ import {
   trackPreinstallSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
 
+export const HERMES_SLACK_INJECTED_TOKEN_PATTERN =
+  "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_(SLACK_BOT_TOKEN|SLACK_APP_TOKEN)$";
+
+// Startup persists the current generation-scoped handles for both providers.
+export const HERMES_SLACK_ENV_PROBE = String.raw`
+import glob
+import os
+import re
+import sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+lines = text.splitlines()
+required = {"API_SERVER_PORT=18642"}
+missing = sorted(required - set(lines))
+# Hermes loads this file with override=True. Its startup guard intentionally
+# persists OpenShell's scoped placeholders here, so each assignment must match
+# the currently injected generation exactly. A raw, stale, or duplicate value
+# would shadow that injection and fail this boundary.
+def assignment_key(line):
+    stripped = line.strip()
+    if stripped.startswith("export "):
+        stripped = stripped[len("export ") :].lstrip()
+    return stripped.split("=", 1)[0].strip() if "=" in stripped else ""
+
+def scoped_placeholder(value, key):
+    match = re.fullmatch(${JSON.stringify(HERMES_SLACK_INJECTED_TOKEN_PATTERN)}, value)
+    return match is not None and match.group(1) == key
+
+def injected_placeholder(key):
+    direct = os.environ.get(key, "")
+    observed = {direct} - {""}
+    for entry in glob.glob("/proc/[0-9]*/environ"):
+        try:
+            items = Path(entry).read_bytes().decode("utf-8", errors="replace").split("\0")
+        except (OSError, PermissionError):
+            continue
+        observed.update(item.split("=", 1)[1] for item in items if item.startswith(key + "=") and item.split("=", 1)[1])
+    value = next(iter(observed), "")
+    return value if len(observed) == 1 and scoped_placeholder(value, key) else ""
+
+injected = {key: injected_placeholder(key) for key in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN")}
+invalid = sorted(
+    key for key in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN")
+    if [line.split("=", 1)[1].strip() for line in lines if assignment_key(line) == key] != [injected[key]]
+    or not injected[key]
+)
+failures = missing + invalid
+print("FAIL missing or unsafe " + ", ".join(failures) if failures else "OK")
+`;
+
 const HERMES_SLACK_E2E_SANDBOX_NAME = "e2e-hermes-slack";
 
 export function assertHermesSlackSandboxName(sandboxName: string): void {
@@ -512,48 +562,8 @@ PY`,
   const envProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
-    String.raw`python3 - <<'PY'
-import glob
-import os
-import re
-from pathlib import Path
-text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
-lines = text.splitlines()
-required = {"API_SERVER_PORT=18642"}
-missing = sorted(required - set(lines))
-# Hermes loads this file with override=True. Its startup guard intentionally
-# persists OpenShell's scoped placeholders here, so each assignment must match
-# the currently injected generation exactly. A raw, stale, or duplicate value
-# would shadow that injection and fail this boundary.
-def assignment_key(line):
-    stripped = line.strip()
-    if stripped.startswith("export "):
-        stripped = stripped[len("export ") :].lstrip()
-    return stripped.split("=", 1)[0].strip() if "=" in stripped else ""
-
-def scoped_placeholder(value, key):
-    return re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + key, value) is not None
-
-def injected_placeholder(key):
-    direct = os.environ.get(key, "")
-    observed = {direct} - {""}
-    for entry in glob.glob("/proc/[0-9]*/environ"):
-        try:
-            items = Path(entry).read_bytes().decode("utf-8", errors="replace").split("\0")
-        except (OSError, PermissionError):
-            continue
-        observed.update(item.split("=", 1)[1] for item in items if item.startswith(key + "=") and item.split("=", 1)[1])
-    value = next(iter(observed), "")
-    return value if len(observed) == 1 and scoped_placeholder(value, key) else ""
-
-injected = {key: injected_placeholder(key) for key in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN")}
-invalid = sorted(
-    key for key in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN")
-    if [line.split("=", 1)[1].strip() for line in lines if assignment_key(line) == key] != [injected[key]]
-    or not injected[key]
-)
-failures = missing + invalid
-print("FAIL missing or unsafe " + ", ".join(failures) if failures else "OK")
+    String.raw`python3 - /sandbox/.hermes/.env <<'PY'
+${HERMES_SLACK_ENV_PROBE}
 PY`,
     [],
     {
@@ -711,7 +721,7 @@ import urllib.request
 # provider egress. Upstream authentication responses prove reachability; the
 # messaging-providers target owns capture-based credential-rewrite proof.
 TLS_CONTEXT = ssl.create_default_context()
-INJECTED_RE = re.compile(r"^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_(SLACK_BOT_TOKEN|SLACK_APP_TOKEN)$")
+INJECTED_RE = re.compile(${JSON.stringify(HERMES_SLACK_INJECTED_TOKEN_PATTERN)})
 
 def injected_token(env_key):
     """Read the value OpenShell injected, never a fabricated alias.
@@ -736,7 +746,8 @@ def injected_token(env_key):
 
 def call(label, path, env_key, allowed_errors):
     token = injected_token(env_key)
-    if not INJECTED_RE.fullmatch(token):
+    match = INJECTED_RE.fullmatch(token)
+    if not match or match.group(1) != env_key:
         print(f"FAIL {label}: {env_key} is not a revision-scoped injected placeholder")
         return False
     req = urllib.request.Request(

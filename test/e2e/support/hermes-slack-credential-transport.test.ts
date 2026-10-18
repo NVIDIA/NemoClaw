@@ -13,23 +13,12 @@ import {
   hermesSlackCredentialFingerprints,
   hermesSlackCredentialScanScript,
 } from "../live/hermes-slack-credential-transport.ts";
-import { assertHermesSlackCredentialFingerprintScanResult } from "../live/hermes-slack-e2e-helpers.ts";
+import {
+  HERMES_SLACK_ENV_PROBE,
+  assertHermesSlackCredentialFingerprintScanResult,
+} from "../live/hermes-slack-e2e-helpers.ts";
 
 const temporaryDirectories: string[] = [];
-
-function livePlaceholderProbeScript(): string {
-  const source = readFileSync(
-    new URL("../live/hermes-slack-e2e-helpers.ts", import.meta.url),
-    "utf8",
-  );
-  const marker = "String.raw`python3 - <<'PY'\nimport glob\n";
-  const start = source.indexOf(marker);
-  expect(start, "Hermes Slack live placeholder probe missing").toBeGreaterThanOrEqual(0);
-  const bodyStart = start + "String.raw`".length;
-  const end = source.indexOf("\nPY`", bodyStart);
-  expect(end, "Hermes Slack live placeholder probe unterminated").toBeGreaterThanOrEqual(0);
-  return `${source.slice(bodyStart, end + 3)}\n`;
-}
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
@@ -114,10 +103,8 @@ describe("Hermes Slack credential-fingerprint scan", () => {
         ...(kind === "duplicate" ? [`SLACK_BOT_TOKEN=${bot}`] : []),
       ].join("\n"),
     );
-    const script = livePlaceholderProbeScript()
-      .replace("/sandbox/.hermes/.env", fixture)
-      .replace('glob.glob("/proc/[0-9]*/environ")', "[]");
-    const result = spawnSync("bash", ["-c", script], {
+    const script = HERMES_SLACK_ENV_PROBE.replace('glob.glob("/proc/[0-9]*/environ")', "[]");
+    const result = spawnSync("python3", ["-c", script, fixture], {
       encoding: "utf8",
       env: {
         PATH: process.env.PATH ?? "",

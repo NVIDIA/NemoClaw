@@ -48,6 +48,8 @@ export type ResumeProviderRecoveryDeps = {
 };
 
 export type ResumeProviderRecoveryResult = {
+  /** Route recovery through native setup; this is not evidence of credential ownership. */
+  nativeCustomSetup?: boolean;
   forceInferenceSetup: boolean;
   credentialEnv: string | null;
 };

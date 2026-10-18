@@ -8,7 +8,9 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { parse as parseYaml } from "yaml";
 import {
+  writeExecutable,
   writeFakeOpenshell,
   writeFakeSsh,
   writeSnapshotRegistry,
@@ -49,10 +51,6 @@ afterAll(() => {
 beforeEach(() => {
   fs.rmSync(BACKUPS_ROOT, { recursive: true, force: true });
 });
-
-function writeExecutable(filePath: string, source: string): void {
-  fs.writeFileSync(filePath, source, { mode: 0o755 });
-}
 
 function restoreEnv(name: string, value: string | undefined): void {
   value === undefined
@@ -675,7 +673,20 @@ describe("complete native home persistence", () => {
         ["unknown.txt", "undeclared"],
         ["workspace/project.txt", "workspace"],
         ["work/user-data.txt", "credential-rotation-workspace"],
-        [".openclaw/openclaw.json", '{"native":true}'],
+        [
+          ".openclaw/openclaw.json",
+          JSON.stringify({
+            native: true,
+            models: {
+              providers: {
+                inference: {
+                  baseUrl: "https://integrate.api.nvidia.com/v1",
+                  apiKey: "${NVIDIA_INFERENCE_API_KEY}",
+                },
+              },
+            },
+          }),
+        ],
         [".local/share/packages/tool.txt", "package"],
         [".openclaw/plugins/custom/index.js", "plugin"],
         [".openclaw/hooks/preflight.sh", "hook"],
@@ -1052,29 +1063,57 @@ describe("complete native home persistence", () => {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
-  it("restores an escaping symlink without following it outside the target root", async () => {
+  it("restores expanded Hermes configs and preserves an escaping symlink (#13044)", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-link-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
     const oldNativeRoot = process.env.NEMOCLAW_TEST_NATIVE_ROOT;
     const oldCommandLog = process.env.NEMOCLAW_TEST_SSH_COMMAND_LOG;
+    const oldNativeHome = process.env.NEMOCLAW_TEST_NATIVE_HOME;
+    const oldNativeWorkspace = process.env.NEMOCLAW_TEST_NATIVE_WORKSPACE;
+    const oldExecuteRestore = process.env.NEMOCLAW_TEST_EXECUTE_RESTORE_SCRIPT;
     try {
       const binDir = path.join(fixture, "bin");
       const nativeRoot = path.join(fixture, "native-home");
       const commandLog = path.join(fixture, "ssh-commands.log");
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(nativeRoot, { recursive: true });
-      fs.writeFileSync(path.join(nativeRoot, "original.txt"), "payload");
+      const settings = Object.fromEntries(
+        Array.from({ length: 2000 }, (_, index) => [`setting${index}`, "on"]),
+      );
+      const source = `${Object.keys(settings)
+        .map((key) => `${key}: on\n`)
+        .join("")}api_key: private-fixture-value\n`;
+      const config = path.join(nativeRoot, ".hermes/config.yaml");
+      const saved = path.join(nativeRoot, ".hermes/backups/config/config.yml.saved");
+      fs.mkdirSync(path.dirname(saved), { recursive: true });
+      fs.writeFileSync(config, source);
+      fs.writeFileSync(saved, source);
+      const trailing = Buffer.alloc(1024 * 1024 + 513, 0x61);
+      fs.writeFileSync(path.join(nativeRoot, "original.txt"), trailing);
       fs.symlinkSync("../../outside", path.join(nativeRoot, "unsafe-link"));
       writeFakeOpenshell(binDir);
       writeFakeSsh(binDir);
+      writeExecutable(
+        path.join(binDir, "stat"),
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+if (process.argv[2] !== "-c" || process.argv[3] !== "%u") process.exit(95);
+process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
+`,
+      );
       process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
       process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
       process.env.NEMOCLAW_TEST_SSH_COMMAND_LOG = commandLog;
       process.env.PATH = `${binDir}:${oldPath ?? ""}`;
-      writeSandboxRegistry("alpha");
+      process.env.NEMOCLAW_TEST_NATIVE_HOME = nativeRoot;
+      process.env.NEMOCLAW_TEST_NATIVE_WORKSPACE = nativeRoot;
+      process.env.NEMOCLAW_TEST_EXECUTE_RESTORE_SCRIPT = "1";
+      writeSandboxRegistry("alpha", "hermes");
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success, backup.error).toBe(true);
+      expect(fs.readFileSync(config, "utf8")).toBe(source);
+      expect(fs.readFileSync(saved, "utf8")).toBe(source);
       for (const entry of fs.readdirSync(nativeRoot)) {
         fs.rmSync(path.join(nativeRoot, entry), {
           recursive: true,
@@ -1083,7 +1122,10 @@ describe("complete native home persistence", () => {
       }
       const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
       expect(restore.success, restore.error).toBe(true);
-      expect(fs.readFileSync(path.join(nativeRoot, "original.txt"), "utf8")).toBe("payload");
+      expect(fs.readFileSync(path.join(nativeRoot, "original.txt"))).toEqual(trailing);
+      const expected = { ...settings, api_key: "[STRIPPED_BY_MIGRATION]" };
+      expect(parseYaml(fs.readFileSync(config, "utf8"))).toEqual(expected);
+      expect(parseYaml(fs.readFileSync(saved, "utf8"))).toEqual(expected);
       expect(fs.readlinkSync(path.join(nativeRoot, "unsafe-link"))).toBe("../../outside");
       const commands = fs.readFileSync(commandLog, "utf8");
       expect(commands).toContain('kill -STOP "$pid"');
@@ -1106,6 +1148,9 @@ describe("complete native home persistence", () => {
       restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
       restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);
       restoreEnv("NEMOCLAW_TEST_SSH_COMMAND_LOG", oldCommandLog);
+      restoreEnv("NEMOCLAW_TEST_NATIVE_HOME", oldNativeHome);
+      restoreEnv("NEMOCLAW_TEST_NATIVE_WORKSPACE", oldNativeWorkspace);
+      restoreEnv("NEMOCLAW_TEST_EXECUTE_RESTORE_SCRIPT", oldExecuteRestore);
       restoreEnv("PATH", oldPath);
       fs.rmSync(fixture, { recursive: true, force: true });
     }

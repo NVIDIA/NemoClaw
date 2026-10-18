@@ -109,6 +109,7 @@ describe("onboard helpers", () => {
       }));
       const setupBedrockRuntimeInference = bedrockRuntimeOnboard.setupBedrockRuntimeInference;
       const harness = createDirectSetupInferenceHarness({
+        legacyCustomRoute: true,
         runOpenshell: (args) =>
           args.join(" ") === "provider get -g nemoclaw compatible-anthropic-endpoint"
             ? { status: 1, stdout: "", stderr: "" }
@@ -538,14 +539,22 @@ const { onboard } = require(${onboardPath});
         "hermes-resume",
         "resume inference persists the canonical sandbox identity before sandbox creation",
       );
-      assert.ok(
-        payload.registryUpdates.some(
-          (call) =>
-            call.name === "hermes-resume" &&
-            call.updates.provider === "hermes-provider" &&
-            call.updates.model === "moonshotai/kimi-k2.6",
-        ),
-        "Hermes setup should reconcile inference against the resolved sandbox name",
+      assert.deepEqual(
+        payload.registryUpdates.map(({ name, updates }) => ({
+          name,
+          provider: updates.provider,
+          model: updates.model,
+          endpointUrl: updates.endpointUrl,
+        })),
+        [
+          {
+            name: "hermes-resume",
+            provider: "hermes-provider",
+            model: "moonshotai/kimi-k2.6",
+            endpointUrl: "https://8.8.8.8/v1",
+          },
+        ],
+        "a non-staged Hermes route must keep the registry aligned with the immediate gateway update",
       );
     },
   );
@@ -949,6 +958,7 @@ const { isOpenclawReady } = require(${onboardPath});
   it("updates OpenAI-compatible providers without passing an unsupported --type flag", async () => {
     await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
       const harness = createDirectSetupInferenceHarness({
+        legacyCustomRoute: true,
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
             ? { status: 0, stdout: COMPATIBLE_PROVIDER_METADATA, stderr: "" }
@@ -989,6 +999,7 @@ const { isOpenclawReady } = require(${onboardPath});
         },
       ]);
       const harness = createDirectSetupInferenceHarness({
+        legacyCustomRoute: true,
         runOpenshell: commandRouter.runOpenshell,
         overrides: {
           promptValidationRecovery: async () => {
@@ -1034,6 +1045,7 @@ const { isOpenclawReady } = require(${onboardPath});
         },
       ]);
       const harness = createDirectSetupInferenceHarness({
+        legacyCustomRoute: true,
         runOpenshell: commandRouter.runOpenshell,
         overrides: { promptValidationRecovery: async () => "selection" },
       });
@@ -1418,15 +1430,20 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     }
     // A serialized re-onboard can neither replace the row under the read nor
     // select the captured model before this cleanup runs.
-    expect(events).toEqual([
+    expect(events.filter((event) => event !== "read-prior-route")).toEqual([
       "lock-enter",
-      "read-prior-route",
       "ownership-lock-enter",
       "peer-scan",
       "unload",
       "ownership-lock-exit",
       "lock-exit",
     ]);
+    const priorReads = events.flatMap((event, index) =>
+      event === "read-prior-route" ? [index] : [],
+    );
+    expect(priorReads.length).toBeGreaterThan(0);
+    expect(Math.min(...priorReads)).toBeGreaterThan(events.indexOf("lock-enter"));
+    expect(Math.max(...priorReads)).toBeLessThan(events.indexOf("ownership-lock-enter"));
   });
 
   it("skips the release when the route returns to selection (#9110)", async () => {

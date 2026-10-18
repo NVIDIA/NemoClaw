@@ -18,7 +18,7 @@ const REPO_ROOT = path.join(import.meta.dirname, "../..");
 
 describe("onboard recovered remote-provider credential reuse", () => {
   it(
-    "re-applies an exact compatible route without exporting or directly validating its gateway credential",
+    "re-applies a registered legacy route and requires a new credential after its authority is removed",
     testTimeoutOptions(90_000),
     () => {
       const workspace = createOnboardProcessWorkspace("nemoclaw-remote-recreate-", {
@@ -103,8 +103,11 @@ if (process.env.NEMOCLAW_TEST_CONFLICTING_ENDPOINT === "1") {
     credentialEnv: "COMPATIBLE_API_KEY",
   });
 }
-registry.removeSandbox("recovered-custom");
-const { setupNim, setupInference } = require(${onboardPath});
+if (process.env.NEMOCLAW_TEST_RECREATE === "1") registry.removeSandbox("recovered-custom");
+const { setupNim, createSetupInference } = require(${onboardPath});
+const setupInference = createSetupInference({
+  resolveEndpointHost: async () => [{ address: "8.8.8.8", family: 4 }],
+});
 
 (async () => {
   const selected = await setupNim(null, "recovered-custom", null, true, {
@@ -191,6 +194,22 @@ const { setupNim, setupInference } = require(${onboardPath});
         );
         assert.ok(!openshellLog.includes("OPENAI_BASE_URL="), openshellLog);
         assert.ok(!openshellLog.includes("--credential"), openshellLog);
+
+        fs.writeFileSync(openshellLogPath, "");
+        const recreateResult = runOnboardProcess([scriptPath], {
+          env: scenarioEnv({ NEMOCLAW_TEST_RECREATE: "1" }),
+          timeoutMs: 80_000,
+        });
+        assert.notEqual(recreateResult.status, 0, recreateResult.output);
+        assert.match(
+          recreateResult.output,
+          /A new credential is required for this endpoint and API/,
+        );
+        assert.doesNotMatch(recreateResult.output, /Reusing existing gateway credential/);
+        assert.doesNotMatch(
+          fs.readFileSync(openshellLogPath, "utf8"),
+          /provider (create|update)|inference set/,
+        );
 
         fs.writeFileSync(openshellLogPath, "");
         const overrideResult = runOnboardProcess([scriptPath], {

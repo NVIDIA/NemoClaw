@@ -103,29 +103,40 @@ describe("messaging provider application planning", () => {
     expect(result.refreshes).toEqual([]);
   });
 
-  it("routes an OpenShell built-in type without importing a custom profile (#9806)", () => {
-    const result = buildMessagingProviderApplication({
-      tokenDefs: [
-        {
-          name: "legacy-openai",
-          envKey: "OPENAI_API_KEY",
-          token: "openai-secret",
-        },
-      ],
-      root: "/repo",
-      agent: "openclaw",
-      getCredential: () => null,
-      profiles: [googlechatProfile],
-    });
+  it("rejects an omitted provider type before preparing a credential application (#13344)", () => {
+    expect(() =>
+      buildMessagingProviderApplication({
+        tokenDefs: [
+          {
+            name: "legacy-openai",
+            envKey: "OPENAI_API_KEY",
+            token: "openai-secret",
+          },
+        ],
+        root: "/repo",
+        agent: "openclaw",
+        getCredential: () => null,
+        profiles: [googlechatProfile],
+      }),
+    ).toThrow(/provider 'legacy-openai'.*explicit owned profile/u);
+  });
 
-    expect(result.definitions).toEqual([
-      {
-        channelId: "messaging",
-        credentialId: "OPENAI_API_KEY",
-        providerName: "legacy-openai",
-        providerType: "generic",
-        credentials: [{ name: "OPENAI_API_KEY", value: "openai-secret" }],
-      },
-    ]);
+  it("rejects an explicit built-in type without an owned profile (#13344)", () => {
+    expect(() =>
+      buildMessagingProviderApplication({
+        tokenDefs: [
+          {
+            name: "legacy-openai",
+            envKey: "OPENAI_API_KEY",
+            token: "openai-secret",
+            providerType: "generic",
+          },
+        ],
+        root: "/repo",
+        agent: "openclaw",
+        getCredential: () => null,
+        profiles: [googlechatProfile],
+      }),
+    ).toThrow(/no NemoClaw-owned profile/u);
   });
 });

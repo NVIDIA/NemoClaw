@@ -341,6 +341,7 @@ async function probeOpenClawConfig(
     inferenceApi: string;
     artifactName: string;
     nativeNvidia?: boolean;
+    nativeCustomEndpoint?: string;
   },
 ) {
   const result = await readOpenClawConfig(sandbox, "switch-test", {
@@ -348,6 +349,7 @@ async function probeOpenClawConfig(
     env: { HOME: home },
     timeoutMs: 1000,
     nativeNvidia: expected.nativeNvidia,
+    nativeCustomApi: expected.nativeCustomEndpoint ? expected.inferenceApi : undefined,
   });
   expect(result.exitCode).toBe(0);
   const config = JSON.parse(result.stdout);
@@ -355,7 +357,9 @@ async function probeOpenClawConfig(
   const provider = config.models.providers[providerKey];
   expect(config.agents.defaults.model.primary).toBe(`${providerKey}/${expected.model}`);
   expect(provider.api).toBe(expected.inferenceApi);
-  expect(provider.apiKey).toBe(expected.nativeNvidia ? undefined : "unused");
+  expect(provider.apiKey).toBe(
+    expected.nativeNvidia || expected.nativeCustomEndpoint ? undefined : "unused",
+  );
   const model = provider.models.find((entry: { id: string }) => entry.id === expected.model);
   expect(
     expected.inferenceApi === "anthropic-messages"
@@ -382,7 +386,12 @@ function sandboxForOpenClawConfig(config: object, handle = scopedNativeHandle) {
             .map((arg) => arg.replaceAll("/sandbox/.openclaw/openclaw.json", configPath)),
           {
             encoding: "utf8",
-            env: { ...process.env, NVIDIA_INFERENCE_API_KEY: handle },
+            env: {
+              ...process.env,
+              NVIDIA_INFERENCE_API_KEY: handle,
+              COMPATIBLE_ANTHROPIC_API_KEY: handle,
+              COMPATIBLE_API_KEY: handle,
+            },
             stdio: ["pipe", "pipe", "pipe"],
           },
         ),
@@ -420,6 +429,55 @@ it("checks the actual switched Anthropic model budget", async () => {
     artifactName: "switched-anthropic-config",
   });
 });
+
+it.each([
+  ["anthropic-messages", true],
+  ["anthropic-messages", false],
+  ["openai-completions", true],
+  ["openai-completions", false],
+] as const)(
+  "checks native custom %s credentials before redaction (valid=%s)",
+  async (api, valid) => {
+    const model = "mock-anthropic-model";
+    const endpoint = "http://10.20.30.40:3000";
+    const provider =
+      api === "anthropic-messages" ? "compatible-anthropic-endpoint" : "compatible-endpoint";
+    const providerKey = api === "anthropic-messages" ? "anthropic" : "inference";
+    const credentialEnv =
+      api === "anthropic-messages" ? "COMPATIBLE_ANTHROPIC_API_KEY" : "COMPATIBLE_API_KEY";
+    const handle = `openshell:resolve:env:v7_${credentialEnv}`;
+    const config: any = {};
+    patchOpenClawInferenceConfig(
+      config,
+      provider,
+      model,
+      api,
+      undefined,
+      provider,
+      { effort: null, explicit: false },
+      false,
+      endpoint,
+      true,
+    );
+    config.models.providers[providerKey].apiKey = valid ? handle : "synthetic-raw-credential";
+    const result = probeOpenClawConfig(
+      sandboxForOpenClawConfig(config, handle) as never,
+      "/tmp/switch-home",
+      {
+        model,
+        inferenceApi: api,
+        artifactName: "native-anthropic-config",
+        nativeCustomEndpoint: endpoint,
+      },
+    );
+    await expect(
+      result.then(
+        () => true,
+        () => false,
+      ),
+    ).resolves.toBe(valid);
+  },
+);
 
 it.each([
   "unused",

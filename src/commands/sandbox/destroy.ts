@@ -26,7 +26,9 @@ export default class DestroyCliCommand extends NemoClawCommand {
   };
   static flags = {
     yes: yesFlag(),
-    force: forceFlag(),
+    force: forceFlag(
+      "Skip confirmation. For eligible recovery records with no sandbox identity, archive and remove local tracking after current absence checks. Original runtime cleanup remains unverified.",
+    ),
     "cleanup-gateway": Flags.boolean({
       description:
         "When destroying the last sandbox, also tear down the shared NemoClaw gateway. Default: preserve on Linux; cleanup for unattended macOS destroys. NEMOCLAW_CLEANUP_GATEWAY overrides the platform default.",

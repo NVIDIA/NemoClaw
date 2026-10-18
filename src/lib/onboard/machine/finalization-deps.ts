@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  OpenClawPairingIncompatibleError,
   OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
@@ -47,6 +48,7 @@ export type OrdinaryOpenClawPairingSettlementResult =
         | "runtime-identity-invalid"
         | "pairing-lock-unavailable"
         | "pairing-unavailable"
+        | "pairing-incompatible"
         | "scope-warmup-failed"
         | "scope-upgrade-not-requested"
         | "scope-upgrade-not-approved"
@@ -68,6 +70,8 @@ const ORDINARY_OPENCLAW_PAIRING_INCOMPLETE_CAUSES: Record<
   "runtime-identity-invalid": "its recorded OpenClaw runtime identity changed or is invalid",
   "pairing-lock-unavailable": "NemoClaw could not acquire the pairing settlement locks",
   "pairing-unavailable": "its canonical CLI device pairing did not appear",
+  "pairing-incompatible":
+    "its existing CLI pairing has incompatible metadata, scopes, or credentials",
   "scope-warmup-failed": "the bounded CLI scope warm-up could not run",
   "scope-upgrade-not-requested": "its canonical CLI scope upgrade was not requested",
   "scope-upgrade-not-approved": "its canonical CLI scope upgrade remained pending",
@@ -155,6 +159,7 @@ type PairingWaitResult =
   | {
       readonly kind: "timeout";
       readonly last: OpenClawPairingSettlementObservation | null;
+      readonly incompatible: boolean;
     };
 
 async function waitForPairingObservation(
@@ -166,9 +171,10 @@ async function waitForPairingObservation(
   expectedDeviceIdentitySha256?: string,
 ): Promise<PairingWaitResult> {
   let last: OpenClawPairingSettlementObservation | null = null;
+  let incompatible = false;
   while (true) {
     const remaining = deadline - deps.now();
-    if (remaining <= 0) return { kind: "timeout", last };
+    if (remaining <= 0) return { kind: "timeout", last, incompatible };
     if (!samePairingTarget(target, deps.getTarget(name))) return { kind: "target-changed" };
     try {
       const value = deps.observePairing(
@@ -184,14 +190,16 @@ async function waitForPairingObservation(
         return { kind: "identity-changed" };
       }
       last = value;
+      incompatible = false;
       if (!samePairingTarget(target, deps.getTarget(name))) return { kind: "target-changed" };
-      if (deadline - deps.now() <= 0) return { kind: "timeout", last };
+      if (deadline - deps.now() <= 0) return { kind: "timeout", last, incompatible };
       if (accept(value)) return { kind: "observed", value };
-    } catch {
+    } catch (error) {
+      if (error instanceof OpenClawPairingIncompatibleError) incompatible = true;
       // Pairing state can be absent or changing while the startup watcher runs.
     }
     const remainingAfterAttempt = deadline - deps.now();
-    if (remainingAfterAttempt <= 0) return { kind: "timeout", last };
+    if (remainingAfterAttempt <= 0) return { kind: "timeout", last, incompatible };
     await deps.sleep(Math.min(OPENCLAW_ONBOARDING_PAIRING_POLL_MS, remainingAfterAttempt));
   }
 }
@@ -232,7 +240,7 @@ function defaultPairingSettlementDeps(): OrdinaryOpenClawPairingSettlementDeps {
 
 /**
  * Observe canonical state, run one bounded request producer for an exact
- * pairing-only device, then wait while the sandbox watcher owns approval.
+ * verified device missing write access, then wait for sandbox watcher approval.
  * Canonical state for the same device is the only success authority.
  */
 export async function settleOrdinaryOpenClawPairing(
@@ -262,6 +270,7 @@ export async function settleOrdinaryOpenClawPairing(
           // Avoid creating another hidden warm-up session when re-onboarding an
           // already-settled device, and reuse an exact upgrade already pending.
           let initial: OpenClawPairingSettlementObservation | null = null;
+          let initiallyIncompatible = false;
           try {
             initial = deps.observePairing(
               name,
@@ -269,12 +278,16 @@ export async function settleOrdinaryOpenClawPairing(
               target.version,
               target.stateDirectory,
             );
-          } catch {
+          } catch (error) {
+            initiallyIncompatible = error instanceof OpenClawPairingIncompatibleError;
             // Pairing may not have appeared yet. Wait for the canonical device
             // before running the request producer.
           }
           if (!samePairingTarget(target, deps.getTarget(name))) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
+          }
+          if (initiallyIncompatible) {
+            return { kind: "incomplete", reason: "pairing-incompatible" };
           }
           if (deps.now() >= settlementDeadline) {
             return { kind: "incomplete", reason: "pairing-unavailable" };
@@ -298,7 +311,12 @@ export async function settleOrdinaryOpenClawPairing(
               return { kind: "incomplete", reason: "runtime-identity-invalid" };
             }
             if (pairingAppearance.kind === "timeout") {
-              return { kind: "incomplete", reason: "pairing-unavailable" };
+              return {
+                kind: "incomplete",
+                reason: pairingAppearance.incompatible
+                  ? "pairing-incompatible"
+                  : "pairing-unavailable",
+              };
             }
             initial = pairingAppearance.value;
           }
@@ -308,7 +326,7 @@ export async function settleOrdinaryOpenClawPairing(
 
           const deviceIdentitySha256 = initial.deviceIdentitySha256;
           let warmupResult: SandboxScopeWarmupResult | null = null;
-          if (initial.state === "pairing-only") {
+          if (initial.state === "pairing-only" || initial.state === "scope-upgrade-required") {
             try {
               warmupResult = await deps.runWarmup(name, target.gatewayName);
             } catch {
@@ -332,14 +350,21 @@ export async function settleOrdinaryOpenClawPairing(
           if (final.kind === "observed") {
             return { kind: "settled" };
           }
+          if (final.incompatible) {
+            return { kind: "incomplete", reason: "pairing-incompatible" };
+          }
 
           if (
-            final.last?.state === "pairing-only" &&
+            (final.last?.state === "pairing-only" ||
+              final.last?.state === "scope-upgrade-required") &&
             (warmupResult === "exec-failed" || warmupResult === "exec-timeout")
           ) {
             return { kind: "incomplete", reason: "scope-warmup-failed" };
           }
-          if (final.last?.state === "pairing-only") {
+          if (
+            final.last?.state === "pairing-only" ||
+            final.last?.state === "scope-upgrade-required"
+          ) {
             return { kind: "incomplete", reason: "scope-upgrade-not-requested" };
           }
 
@@ -398,11 +423,15 @@ export const finalizationHandlerDeps = {
     if (typeof gatewayName !== "string" || !gatewayName) {
       return { ok: false, detail: "the sandbox gateway identity is unavailable" };
     }
-    return finalizationHandlerRuntime.loadVerifyDeployment().probeOnboardInferenceInvocation({
-      ...entry,
-      ...input,
+    const verification = finalizationHandlerRuntime.loadVerifyDeployment();
+    const context = verification.onboardInferenceVerificationContext(
+      input.sandboxName,
       gatewayName,
-    });
+      input.agentName,
+      { ...input, endpointUrl: entry.endpointUrl },
+      entry,
+    );
+    return verification.probeOnboardInferenceInvocation(context.invocation);
   },
   async waitForSandboxControlPlaneReady(name: string): Promise<boolean> {
     return finalizationHandlerRuntime

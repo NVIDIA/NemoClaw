@@ -10,6 +10,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import { HERMES_INTERFACE_DEFAULTS } from "../../../src/lib/config/model.ts";
+import { hasExportExcludedMessaging } from "../../../src/lib/domain/config/verify-export-source.ts";
 import {
   V1ALPHA1_RUNTIME_DEFAULTS,
   V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
@@ -97,6 +98,14 @@ const CREDENTIAL_HTTP_REFUSAL =
 const PODMAN_REFUSAL =
   "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.";
 const MESSAGING_REFUSAL = "V1 export does not support messaging.";
+const POLICY_REFUSAL =
+  "Verified effective policy is malformed, unknown, or cannot be represented losslessly.";
+// The exporter reports these v1 compatibility limits alongside excluded messaging.
+const MESSAGING_ADDITIONAL_REFUSALS = [
+  "The sandbox provider attachments do not match its supported configuration.",
+  "The managed startup profile is not the canonical profile supported by v1 export.",
+  POLICY_REFUSAL,
+];
 
 function normalizeCommandDiagnostics(stdout: string, stderr: string): string {
   return [stdout, stderr]
@@ -340,8 +349,9 @@ export async function verifyHermesConfigExportLive(
     typeof entry.credentialEnv === "string" &&
     entry.credentialEnv.length > 0 &&
     entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
+  const expectsMessagingRefusal = hasExportExcludedMessaging(entry);
   const expectedRefusals = [
-    ...(entry.messaging != null ? [MESSAGING_REFUSAL] : []),
+    ...(expectsMessagingRefusal ? [MESSAGING_REFUSAL] : []),
     ...(entry.openshellDriver === "podman" ? [PODMAN_REFUSAL] : []),
     ...(expectsCredentialHttpRefusal ? [CREDENTIAL_HTTP_REFUSAL] : []),
   ];
@@ -352,11 +362,24 @@ export async function verifyHermesConfigExportLive(
       );
       const refusalDiagnosticMatches = [nemoclawDiagnostics, nemohermesDiagnostics].every(
         (diagnostic) => {
-          if (entry.messaging == null) return diagnostic === expectedDiagnostic;
-          const lines = diagnostic.split("\n");
+          if (!expectsMessagingRefusal) return diagnostic === expectedDiagnostic;
+          const [header, ...findings] = diagnostic.split("\n");
+          const categories = /^Config export failed \(([^)]+)\)\.$/u
+            .exec(header ?? "")?.[1]
+            ?.split(", ");
+          const expectedCategories = [
+            "unsupported",
+            ...(findings.includes(POLICY_REFUSAL) ? ["policy-not-representable"] : []),
+          ];
           return (
-            lines[0] === "Config export failed (unsupported)." &&
-            expectedRefusals.every((refusal) => lines.includes(refusal))
+            categories?.length === expectedCategories.length &&
+            expectedCategories.every((category) => categories.includes(category)) &&
+            expectedRefusals.every((refusal) => findings.includes(refusal)) &&
+            findings.every(
+              (finding) =>
+                expectedRefusals.includes(finding) ||
+                MESSAGING_ADDITIONAL_REFUSALS.includes(finding),
+            )
           );
         },
       );
