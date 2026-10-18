@@ -131,41 +131,10 @@ fn deletion_timestamp_presence_blocks_observation_but_allows_cleanup() {
 }
 
 #[test]
-fn a_policy_without_its_own_grants_accepts_the_proxy_mode_enrichment() {
-    // Attached providers alone put a sandbox in proxy mode, where OpenShell adds
-    // its known filesystem paths even to a policy with no network rules.
-    let mut declared = policy();
-    declared.network_policies.clear();
-    let expected = policy_json(&declared).unwrap();
-    let mut loaded = declared.clone();
-    loaded
-        .filesystem
-        .as_mut()
-        .unwrap()
-        .read_only
-        .push("/var/log".into());
-    let response = |policy| proto::GetSandboxPolicyStatusResponse {
-        active_version: 2,
-        revision: Some(proto::SandboxPolicyRevision {
-            version: 2,
-            status: proto::PolicyStatus::Loaded as i32,
-            policy: Some(policy),
-            ..Default::default()
-        }),
-    };
-    assert!(active_policy(response(loaded.clone()), &expected).is_ok());
-    // Unknown additions are still refused.
-    loaded
-        .filesystem
-        .as_mut()
-        .unwrap()
-        .read_only
-        .push("/private".into());
-    assert!(active_policy(response(loaded), &expected).is_err());
-}
-
-#[test]
-fn loaded_policy_accepts_only_the_runtime_log_directory_enrichment() {
+fn a_loaded_policy_keeps_the_declared_rules_and_reports_its_hash() {
+    // OpenShell adds paths of its own when it loads a policy. NemoClaw accepts
+    // them at that moment and records the revision's hash; later observations
+    // compare the hash exactly, so it keeps no copy of OpenShell's additions.
     let mut declared = policy();
     let profile = inference_profile(
         "local",
@@ -183,117 +152,60 @@ fn loaded_policy_accepts_only_the_runtime_log_directory_enrichment() {
         },
     );
     let expected = policy_json(&declared).unwrap();
-    let mut loaded = declared.clone();
-    loaded
-        .filesystem
-        .as_mut()
-        .unwrap()
-        .read_only
-        .push("/var/log".into());
-    let response = |policy| proto::GetSandboxPolicyStatusResponse {
-        active_version: 2,
-        revision: Some(proto::SandboxPolicyRevision {
-            version: 2,
-            status: proto::PolicyStatus::Loaded as i32,
-            policy: Some(policy),
-            ..Default::default()
-        }),
+    let response = |policy: proto::SandboxPolicy, hash: &str, status: proto::PolicyStatus| {
+        proto::GetSandboxPolicyStatusResponse {
+            active_version: 2,
+            revision: Some(proto::SandboxPolicyRevision {
+                version: 2,
+                status: status as i32,
+                policy_hash: hash.into(),
+                policy: Some(policy),
+                ..Default::default()
+            }),
+        }
     };
-    assert!(active_policy(response(loaded.clone()), &expected).is_ok());
-    loaded
-        .filesystem
-        .as_mut()
-        .unwrap()
-        .read_only
-        .push("/private".into());
-    assert!(active_policy(response(loaded), &expected).is_err());
-    let mut writable = declared.clone();
-    writable
-        .filesystem
-        .as_mut()
-        .unwrap()
-        .read_write
-        .push("/var/log".into());
-    assert!(active_policy(response(writable), &expected).is_err());
-    let mut missing = declared.clone();
+    let loaded = proto::PolicyStatus::Loaded;
+    let mut enriched = declared.clone();
+    let fs = enriched.filesystem.as_mut().unwrap();
+    fs.read_only
+        .extend(["/var/log", "/proc", "/opt/anything"].map(String::from));
+    fs.read_write.push("/scratch".into());
+    assert_eq!(
+        active_policy(response(enriched.clone(), "sha256:a", loaded), &expected).unwrap(),
+        "sha256:a"
+    );
+    assert_eq!(
+        active_policy(response(declared.clone(), "sha256:b", loaded), &expected).unwrap(),
+        "sha256:b"
+    );
+    // A missing declared path, a read-only path made writable, or a different
+    // network rule means the loaded policy isn't the declared one.
+    let first = declared.filesystem.as_ref().unwrap().read_only[0].clone();
+    let mut missing = enriched.clone();
     missing
         .filesystem
         .as_mut()
         .unwrap()
         .read_only
-        .retain(|p| p != "/usr");
-    assert!(active_policy(response(missing), &expected).is_err());
-    assert!(active_policy(response(declared), &expected).is_ok());
-}
-
-#[test]
-fn sparse_filesystem_policy_accepts_proxy_baseline_but_rejects_other_drift() {
-    let mut declared = policy();
-    declared.filesystem = Some(proto::FilesystemPolicy {
-        include_workdir: true,
-        read_only: vec![
-            "/usr".into(),
-            "/opt/fabric".into(),
-            "/opt/nemoclaw".into(),
-            "/app".into(),
-        ],
-        read_write: vec!["/sandbox".into()],
-    });
-    let profile = inference_profile(
-        "inference",
-        "https://example.com/v1",
-        nemoclaw_openshell::profile::InferenceProviderKind::Openai,
-        false,
-    )
-    .unwrap();
-    declared.network_policies.insert(
-        "inference".into(),
-        proto::NetworkPolicyRule {
-            name: "inference".into(),
-            endpoints: profile.endpoints,
-            binaries: profile.binaries,
-        },
+        .retain(|path| path != &first);
+    assert!(active_policy(response(missing, "sha256:c", loaded), &expected).is_err());
+    let mut writable = enriched.clone();
+    let fs = writable.filesystem.as_mut().unwrap();
+    fs.read_only.retain(|path| path != &first);
+    fs.read_write.push(first.clone());
+    assert!(active_policy(response(writable, "sha256:d", loaded), &expected).is_err());
+    let mut network = enriched.clone();
+    network.network_policies.clear();
+    assert!(active_policy(response(network, "sha256:e", loaded), &expected).is_err());
+    // An unloaded revision, or one without a hash, has nothing to record.
+    assert!(
+        active_policy(
+            response(enriched.clone(), "sha256:f", proto::PolicyStatus::Pending),
+            &expected
+        )
+        .is_err()
     );
-    let expected = policy_json(&declared).unwrap();
-    let mut loaded = declared.clone();
-    let fs = loaded.filesystem.as_mut().unwrap();
-    fs.read_only
-        .extend(["/lib", "/etc", "/var/log", "/proc", "/dev/urandom"].map(String::from));
-    fs.read_write
-        .extend(["/tmp", "/dev/null"].map(String::from));
-    assert!(network::loaded_policy_matches(&loaded, &expected).unwrap());
-    let mut drift = loaded.clone();
-    drift
-        .filesystem
-        .as_mut()
-        .unwrap()
-        .read_write
-        .push("/etc".into());
-    assert!(!network::loaded_policy_matches(&drift, &expected).unwrap());
-    let mut drift = loaded.clone();
-    drift
-        .filesystem
-        .as_mut()
-        .unwrap()
-        .read_only
-        .retain(|p| p != "/opt/fabric");
-    assert!(!network::loaded_policy_matches(&drift, &expected).unwrap());
-    let mut drift = loaded.clone();
-    drift
-        .network_policies
-        .get_mut("inference")
-        .unwrap()
-        .endpoints[0]
-        .host = "other.example.com".into();
-    assert!(!network::loaded_policy_matches(&drift, &expected).unwrap());
-    // Existing explicit read-only restrictions must not be promoted to writable.
-    declared
-        .filesystem
-        .as_mut()
-        .unwrap()
-        .read_only
-        .push("/tmp".into());
-    assert!(!network::loaded_policy_matches(&loaded, &policy_json(&declared).unwrap()).unwrap());
+    assert!(active_policy(response(enriched, "", loaded), &expected).is_err());
 }
 
 #[test]

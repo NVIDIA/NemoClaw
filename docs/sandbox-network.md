@@ -125,8 +125,9 @@ flowchart LR
 Use the plan/apply/export commands in [deployment usage](usage.md), then reapply the exported document.
 A successful unchanged reapply preserves the sandbox identity and creates no replacement.
 Export compares the observed policy and launch settings with retained intent and checks that a ready sandbox has loaded the matching policy revision.
-OpenShell can persist supervisor-added filesystem grants in the active policy revision without recording their source.
-NemoClaw accepts only the bounded baseline additions checked by this version; other differences or incomplete observations stop export and preserve state.
+OpenShell can add filesystem grants of its own to the loaded policy revision without recording their source.
+When a policy first loads, NemoClaw accepts those additions as long as every declared rule is intact, and records the loaded revision's hash; it keeps no list of OpenShell's additions.
+Afterwards the loaded policy must keep that hash: any change, including new additions, or an incomplete observation stops export and preserves state.
 OpenShell v0.1.4 applies GPU filesystem additions inside the workload without writing them back to the gateway policy.
 This removes the upstream cause of suspected GPU false drift; live GPU export and reapply remain unverified.
 Missing policy observations or drift do not produce a partial configuration.

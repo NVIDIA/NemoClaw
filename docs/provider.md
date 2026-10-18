@@ -124,6 +124,7 @@ Other inputs are typed too:
 - `openshell_sandbox`'s optional `service` blocks are OpenShell's sandbox service exposures: `name`, `target_port`, and optional `authorization_mode` (`STRIP` or `BEARER_PASSTHROUGH`).
   They are passed through unchanged in the creation request, so OpenShell's defaults apply: an omitted mode is `STRIP`, and an empty name is the unnamed endpoint.
   Like `driver_config`, they are part of the sandbox's creation: changing them, or a different endpoint observed on the gateway, replaces the sandbox.
+- The computed `policy_hash` is the hash OpenShell reports for the sandbox's loaded policy, including paths OpenShell adds itself. It's recorded when the policy first loads with every declared rule intact; a different hash later is drift.
 - The computed `service_urls` maps each service name to the URL the gateway reports for it, such as `openshell_sandbox.researcher.service_urls["research"]`. A service the gateway reports without a URL has no entry.
 - `owner` and `generation` are optional; when omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [credential storage](#vllm-and-ollama-types).
 
