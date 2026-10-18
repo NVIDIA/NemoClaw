@@ -85,7 +85,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Corporate CA provisioning across the client, image builds, gateway and native runtimes | [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643) |
 | A rotation runbook for every credential type | [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643) |
 | Privacy review and retention guidance for production tracing | [#12643](https://github.com/NVIDIA/NemoClaw/issues/12643) |
-| Okta and Entra runtime identity | [#12652](https://github.com/NVIDIA/NemoClaw/issues/12652) |
+| OAuth-refresh credentials have no NemoClaw YAML wrapper; use [operator-managed OpenShell providers](oauth-refresh.md), with separate sandbox attachments | [#12652](https://github.com/NVIDIA/NemoClaw/issues/12652) |
 | Interactive network-request approval, named policy presets, and explaining policy to an agent | [#12651](https://github.com/NVIDIA/NemoClaw/issues/12651) |
 
 ## SDK and Provider
