@@ -70,9 +70,9 @@ Other pages state a limit where it affects a procedure and link the same issue.
 
 | Limit | Issue |
 |---|---|
-| Native conversation continuity across runtime replacement | [Per-harness limits](state.md#choose-what-to-retain-for-each-harness); [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
+| Native conversation continuity across runtime replacement | [Per-harness limits](state.md#choose-what-to-retain-for-each-harness); depends on Fabric and the selected harness |
 | Backup, restore, snapshots and transfer of mounted agent data | [Platform-owned storage](state.md#keep-agent-files-on-mounted-volumes); no NemoClaw command |
-| Moving data from the earlier product to v1 and back | [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639) |
+| Moving data from the earlier product to v1 and back | No NemoClaw procedure; native data belongs to the harness and moving its storage to the platform ([migration](migration.md)) |
 | Verified removal of retained objects on SSH engines; the [Docker procedure](usage.md#remove-retained-resources) covers them | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
 
 ## Security

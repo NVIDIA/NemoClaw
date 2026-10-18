@@ -7,7 +7,7 @@ The desired-state SDK, schema, and state format do not promise compatibility wit
 The current CLI has no general state adoption or migration command.
 Keep the earlier deployment's tooling, configuration, and state while evaluating a separate v1 deployment.
 
-There is no rehearsed upgrade, native-data transfer or rollback procedure yet ([#12639](https://github.com/NVIDIA/NemoClaw/issues/12639)).
+NemoClaw has no upgrade, native-data transfer or rollback procedure: native data belongs to the harness, and moving its storage belongs to the platform.
 The evaluation steps below create a separate deployment; they do not provide an in-place upgrade or data conversion.
 
 ## Map the User Task
@@ -53,7 +53,7 @@ These checks are not a conversion mechanism.
    Preview any v1 teardown separately and retain data needed for investigation before destroying its sandbox.
 
 Continuing to use an untouched earlier deployment is not a rollback of data written in v1.
-Transferring those changes back to the earlier runtime is tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
+NemoClaw has no procedure to transfer those changes back to the earlier runtime.
 Do not retire the old deployment when the required native-data backup, transfer, or return path is unverified.
 
 ## Preserve Data before Retirement

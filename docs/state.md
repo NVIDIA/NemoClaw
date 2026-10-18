@@ -248,4 +248,4 @@ Use [operation recovery](usage.md#updates-and-recovery) with the original config
 For a failed or interrupted native Helm release removal, use [Helm removal recovery](usage.md#recover-an-interrupted-helm-removal); preserve the checkpoint and current state together.
 For a move from an earlier product version, use [migration](migration.md).
 The platform owns transfer of mounted native data; a copied volume does not move deployment ownership or establish compatibility with another harness version.
-Moving deployment state to another host and native conversation continuity remain unqualified ([#12639](https://github.com/NVIDIA/NemoClaw/issues/12639)).
+Moving deployment state to another host is unqualified, and native conversation continuity depends on Fabric and the selected harness.
