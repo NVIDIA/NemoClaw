@@ -81,31 +81,76 @@ pub enum PathSegment {
 /// Where a runtime specification value first violates the schema.
 pub fn violation(value: &Value) -> Option<Vec<PathSegment>> {
     let error = VALIDATOR.validate(value).err()?;
-    Some(segments(innermost(&error)))
+    Some(segments(innermost(&SCHEMA, &error)))
+}
+
+/// The `oneOf` or `anyOf` variant that an instance names, so a diagnostic can
+/// describe that variant's fields instead of the whole union: a `kind` or
+/// `management` constant, the one key of an externally tagged variant that
+/// the instance contains, or a hardware `profile`.
+pub fn select_variant(variants: &[Value], instance: &Value) -> Option<usize> {
+    for tag in ["kind", "management"] {
+        if let Some(value) = instance.get(tag)
+            && let Some(index) = variants
+                .iter()
+                .position(|variant| variant["properties"][tag].get("const") == Some(value))
+        {
+            return Some(index);
+        }
+    }
+    // Several present keys name no single variant.
+    let mut named = variants
+        .iter()
+        .enumerate()
+        .filter(|(_, variant)| single_key(variant).is_some_and(|key| instance.get(key).is_some()));
+    if let (Some((index, _)), None) = (named.next(), named.next()) {
+        return Some(index);
+    }
+    variants.iter().position(|variant| {
+        variant["properties"].get("profile").is_some() && instance.get("profile").is_some()
+    })
+}
+
+/// The declared keys of an externally tagged union, when every variant is a
+/// single-key object. They are schema names, never input, so diagnostics may
+/// show them.
+pub fn variant_keys(variants: &[Value]) -> Option<Vec<&str>> {
+    let keys = variants
+        .iter()
+        .map(single_key)
+        .collect::<Option<Vec<_>>>()?;
+    (!keys.is_empty()).then_some(keys)
+}
+
+// An externally tagged variant is a closed object with one required property.
+// Exclusive forms that only forbid their alternatives do not qualify.
+fn single_key(variant: &Value) -> Option<&str> {
+    let [key] = variant.get("required")?.as_array()?.as_slice() else {
+        return None;
+    };
+    let key = key.as_str()?;
+    let properties = variant.get("properties")?.as_object()?;
+    (variant.get("additionalProperties") == Some(&Value::Bool(false))
+        && properties.len() == 1
+        && properties.contains_key(key))
+    .then_some(key)
 }
 
 // Report the failing variant that the instance selected, not the union.
 fn innermost<'e, 'a>(
+    schema: &Value,
     error: &'e jsonschema::ValidationError<'a>,
 ) -> &'e jsonschema::ValidationError<'a> {
     use jsonschema::error::ValidationErrorKind as Kind;
     if let Kind::OneOfNotValid { context } | Kind::AnyOf { context } = error.kind()
-        && let Some(variants) = SCHEMA
+        && let Some(variants) = schema
             .pointer(error.schema_path().as_str())
             .and_then(Value::as_array)
+        && let Some(errors) =
+            select_variant(variants, error.instance()).and_then(|index| context.get(index))
+        && let Some(error) = errors.first()
     {
-        for (variant, errors) in variants.iter().zip(context) {
-            let matches_kind = variant["properties"]["kind"]
-                .get("const")
-                .is_some_and(|kind| error.instance().get("kind") == Some(kind));
-            let matches_profile = variant["properties"].get("profile").is_some()
-                && error.instance().get("profile").is_some();
-            if (matches_kind || matches_profile)
-                && let Some(error) = errors.first()
-            {
-                return innermost(error);
-            }
-        }
+        return innermost(schema, error);
     }
     error
 }
@@ -156,7 +201,7 @@ fn segments(error: &jsonschema::ValidationError<'_>) -> Vec<PathSegment> {
 }
 
 fn diagnostic(error: &jsonschema::ValidationError<'_>) -> ConfigError {
-    let error = innermost(error);
+    let error = innermost(&SCHEMA, error);
     let path: Vec<_> = segments(error)
         .into_iter()
         .map(|segment| match segment {
@@ -185,4 +230,103 @@ pub fn validate_recipe(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keyed(key: &str, schema: Value) -> Value {
+        json!({"type": "object", "properties": {key: schema}, "required": [key], "additionalProperties": false})
+    }
+
+    fn targets() -> Vec<Value> {
+        vec![
+            keyed("docker", json!({"type": "object"})),
+            keyed("podman", json!({"type": "object"})),
+            keyed("kubernetes", json!({"$ref": "#/$defs/Cluster"})),
+        ]
+    }
+
+    #[test]
+    fn a_kind_or_management_constant_selects_its_variant() {
+        let variants = [
+            json!({"properties": {"management": {"const": "managed"}}}),
+            json!({"properties": {"management": {"const": "external"}}}),
+        ];
+        assert_eq!(
+            select_variant(&variants, &json!({"management": "external"})),
+            Some(1)
+        );
+        assert_eq!(
+            select_variant(&variants, &json!({"management": "other"})),
+            None
+        );
+    }
+
+    #[test]
+    fn the_one_key_present_selects_its_single_key_variant() {
+        let variants = targets();
+        assert_eq!(select_variant(&variants, &json!({"podman": {}})), Some(1));
+        // An unknown field beside the key still selects the named variant.
+        assert_eq!(
+            select_variant(&variants, &json!({"kubernetes": 1, "extra": {}})),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn a_missing_doubled_or_unknown_key_selects_no_variant() {
+        let variants = targets();
+        for instance in [
+            json!({}),
+            json!({"docker": {}, "podman": {}}),
+            json!({"dokcer": {}}),
+            json!("docker"),
+        ] {
+            assert_eq!(select_variant(&variants, &instance), None, "{instance}");
+        }
+    }
+
+    #[test]
+    fn exclusive_forms_that_do_not_close_their_object_are_not_keyed_variants() {
+        let variants = [
+            json!({"required": ["inference"], "not": {"required": ["inferenceRef"]}}),
+            json!({"required": ["inferenceRef"], "not": {"required": ["inference"]}}),
+        ];
+        assert_eq!(select_variant(&variants, &json!({"inference": {}})), None);
+    }
+
+    #[test]
+    fn open_variants_that_each_require_one_field_are_not_keyed_variants() {
+        // Both fields may appear together, so neither one names a variant.
+        let variants = [
+            json!({"properties": {"host": {"minLength": 1}}, "required": ["host"]}),
+            json!({"properties": {"allowed_ips": {"minItems": 1}}, "required": ["allowed_ips"]}),
+        ];
+        assert_eq!(select_variant(&variants, &json!({"host": ""})), None);
+        assert_eq!(variant_keys(&variants), None);
+    }
+
+    #[test]
+    fn a_violation_inside_a_keyed_variant_is_reported_at_its_field() {
+        let schema = json!({
+            "type": "object",
+            "properties": {"target": {"oneOf": targets()}},
+            "$defs": {"Cluster": {
+                "type": "object",
+                "properties": {"endpoint": {"type": "string"}},
+                "required": ["endpoint"]
+            }}
+        });
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        let instance = json!({"target": {"kubernetes": {"endpoint": 1}}});
+        let error = validator.validate(&instance).unwrap_err();
+        let error = innermost(&schema, &error);
+        assert_eq!(
+            error.instance_path().as_str(),
+            "/target/kubernetes/endpoint"
+        );
+        assert_eq!(error.kind().keyword(), "type");
+    }
 }

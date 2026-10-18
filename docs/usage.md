@@ -64,7 +64,7 @@ The API service is an operator prerequisite; NemoClaw manages its gateway, netwo
 Load the harness image into the selected Podman image store and use the digest reported there.
 
 Rootless operation requires an API that reports `pasta` networking, as required by the pinned OpenShell callback listener.
-Older APIs that omit this information fail during plan.
+Podman 5 and later report it; older APIs omit it and fail during plan, including Ubuntu 24.04's Podman 4.9.3, even with `pasta` installed.
 The host must have a private IPv4 address on its default-route interface.
 OpenShell uses that address for sandbox-only callbacks while keeping its user API on loopback.
 Every managed gateway uses one compute driver; use separate deployments to select different drivers.
@@ -523,7 +523,7 @@ The [live Docker suite](contributing/testing.md) removes its gateways' UID-label
 
 A managed Podman gateway keeps the same objects, with the same names and label, as on Docker ([retained Docker objects](state.md#find-retained-docker-objects)).
 Follow the Docker steps with `podman --url "$deployment_engine"` in place of `docker --host "$deployment_engine"`, where `deployment_engine` is the gateway's `spec.gateway.engine`, such as `unix:///run/user/1000/podman/podman.sock`.
-This procedure has not yet been run against a Podman gateway ([current limits](limits.md#data-and-cleanup)).
+It has been run against a managed rootless Podman 5.8.8 gateway.
 
 #### On Kubernetes or OpenShift
 

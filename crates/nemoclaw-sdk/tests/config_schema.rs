@@ -548,6 +548,14 @@ fn managed_podman_requires_an_explicit_engine() {
 
     value["spec"]["gateway"]["engine"] = json!("");
     agrees(&validator, &value, false);
+    let error = Document::parse(value.to_string().as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("schema at spec.gateway.engine (line")
+            && error.contains("Podman requires spec.gateway.engine"),
+        "{error}"
+    );
 }
 
 #[test]

@@ -928,6 +928,12 @@ fn compile_with_plans(
         graph["data"]["openshell_gateway"]["current"]["required_compute_drivers"].clone(),
     );
     apply_readiness["read_trigger"] = json!("${timestamp() != \"\"}");
+    // A managed gateway may have started moments earlier in this apply, and
+    // a Podman gateway has no other readiness check, so the read waits for it
+    // as the plan-time read does.
+    if document.spec.gateway.as_managed().is_some() {
+        apply_readiness["wait_timeout_seconds"] = json!(90);
+    }
     apply_readiness["lifecycle"] = json!({"postcondition":[{
         "condition":"${self.compatible}",
         "error_message":gateway_error_message("self")
