@@ -14,13 +14,6 @@ pub enum Error {
     #[error("{0}")]
     Conflict(&'static str),
     #[error(
-        "apply cannot {action} sandbox '{sandbox}'; its files and conversation history are not separately retained"
-    )]
-    SandboxChangeRefused {
-        sandbox: String,
-        action: &'static str,
-    },
-    #[error(
         "Docker model service '{service}' is preserved by updatePolicy: Preserve; replacing a running or incompletely observed container requires explicit updatePolicy: Recreate, which permits downtime if the replacement cannot start; resources retained"
     )]
     DockerModelUpdateRefused { service: String },

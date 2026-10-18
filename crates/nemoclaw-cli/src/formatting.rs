@@ -578,9 +578,6 @@ pub(crate) fn render_error(
         details["remainingState"] = serde_json::json!(remaining);
     }
     let help = match sdk {
-        Some(Error::SandboxChangeRefused { .. }) => Some(Cow::Borrowed(
-            "Keep this deployment's state. Use a separate deployment with a fresh UID and state directory; see docs/usage.md#choose-the-change-path. Export and destroy still use the retained configuration.",
-        )),
         Some(Error::SandboxStartup { .. }) => Some(Cow::Borrowed(
             "Inspect the sandbox with OpenShell using this deployment's gateway and workspace; collect gateway and supervisor logs before cleanup.",
         )),
@@ -1005,33 +1002,6 @@ mod tests {
         assert_eq!(
             json["remainingState"],
             "Resource state is not confirmed. Changes may already have been made; preserve the deployment state directory."
-        );
-    }
-
-    #[test]
-    fn sandbox_refusal_reports_unchanged_resources_and_retained_configuration() {
-        let cli = Cli::try_parse_from(["nemoclaw", "apply", "spark.yaml"]).unwrap();
-        let context = RenderContext::new(&cli);
-        let error = Error::SandboxChangeRefused {
-            sandbox: "reviewer".into(),
-            action: "remove",
-        };
-        let text = render_error(&error, OutputFormat::Text, &context);
-        // One apply mode exists; the message must not imply a stronger one.
-        assert!(text.contains("apply cannot remove sandbox 'reviewer'"));
-        assert!(!text.contains("ordinary"), "{text}");
-        assert!(text.contains("No runtime resources changed."));
-        assert!(text.contains("fresh UID and state directory"));
-        assert!(!text.contains("Changes may already have been made"));
-        let json: Value =
-            serde_json::from_str(&render_error(&error, OutputFormat::Json, &context)).unwrap();
-        assert_eq!(json["outcome"], "failed");
-        assert_eq!(json["remainingState"], "No runtime resources changed.");
-        assert!(
-            json["help"]
-                .as_str()
-                .unwrap()
-                .contains("docs/usage.md#choose-the-change-path")
         );
     }
 

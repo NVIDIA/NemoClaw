@@ -313,12 +313,12 @@ async fn managed_bearer_cleanup_recovers_damage_keeps_bindings_and_teardown_acce
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
-async fn managed_pi_applies_without_generation_and_refused_sandbox_changes_keep_intent() {
+async fn managed_pi_applies_without_generation_and_failed_sandbox_changes_keep_intent() {
     let s = Scenario::new("nvidia.fabric.pi", false, "vllm").await;
     present_incompatible_images_fail_before_effects(&s).await;
     plan_collects_no_host_capacity(&s).await;
     s.apply().await;
-    refused_sandbox_and_runtime_change_preserves_retained_intent(&s.root, &s.bundle, &s.gateway)
+    failed_sandbox_and_runtime_change_preserves_retained_intent(&s.root, &s.bundle, &s.gateway)
         .await;
     s.run("destroy", "", true).await;
     assert!(read(&s.root, "engine.json")["container"].is_null());
@@ -960,7 +960,7 @@ async fn replacement_cleanup(root: &Path, bundle: &Path) {
     assert_eq!(read(root, "engine.json")["container"], before["container"]);
 }
 
-async fn refused_sandbox_and_runtime_change_preserves_retained_intent(
+async fn failed_sandbox_and_runtime_change_preserves_retained_intent(
     root: &Path,
     bundle: &Path,
     gateway: &Fixture,
@@ -979,7 +979,8 @@ async fn refused_sandbox_and_runtime_change_preserves_retained_intent(
     let engine = read(root, "engine.json");
     let effects = gateway.state.lock().unwrap().effects;
     // The SDK integration matrix covers individual sandbox edits. This native
-    // case proves a refused replacement cannot partially update its model runtime.
+    // case proves a replacement whose new images fail their checks stops before
+    // any change, without partially updating its model runtime.
     let mut rejected = original.clone();
     rejected["spec"]["sandboxes"][1]["image"]["ref"] =
         json!(format!("sandbox@sha256:{}", "c".repeat(64)));
@@ -1001,17 +1002,14 @@ async fn refused_sandbox_and_runtime_change_preserves_retained_intent(
         assert_eq!(gateway.state.lock().unwrap().effects, effects);
         let message = result["error"]["message"].as_str().unwrap();
         assert!(message.contains("reviewer"), "{result}");
-        assert!(message.contains("apply cannot"), "{result}");
-        assert!(!message.contains("ordinary"), "{result}");
         // Only operations that can mutate resources report remaining state.
         if operation == "apply" {
             assert_eq!(result["remainingState"], "No runtime resources changed.");
         } else {
             assert!(result.get("remainingState").is_none(), "{result}");
         }
-        assert!(result["help"].as_str().unwrap().contains("docs/usage.md"));
     }
-    // The saved intent is byte-identical after each refusal, so one export
+    // The saved intent is byte-identical after each failure, so one export
     // shows it still reproduces the accepted document.
     let exported = run(root, bundle, "export", "", true).await;
     assert_eq!(

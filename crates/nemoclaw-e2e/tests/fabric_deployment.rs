@@ -308,46 +308,30 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
         .routes[0]
         .overrides
         .settings = None;
-    // An adapter change selects different image-scoped executable grants and
-    // provider attachments. It cannot replace the retained sandbox implicitly.
-    let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
-    for error in [
-        deployment.plan(&changed, &cancel).await.unwrap_err(),
-        deployment.apply(&changed, &cancel).await.unwrap_err(),
-    ] {
-        assert!(
-            matches!(&error, nemoclaw_sdk::Error::SandboxChangeRefused { sandbox, action: "replace" } if sandbox == &document.spec.sandboxes[0].name),
-            "{error}"
+    // An adapter change replaces the sandbox: apply deletes the old sandbox and
+    // creates one for the new adapter, as the plan shows.
+    deployment.apply(&changed, &cancel).await.unwrap();
+    {
+        let current = fixture.state.lock().unwrap();
+        assert_eq!(
+            current.sandboxes.len(),
+            1,
+            "{harness}: one sandbox after replacement"
         );
+        assert_ne!(
+            current.sandboxes, sandboxes,
+            "{harness}: adapter change must replace the sandbox"
+        );
+        assert!(current.effects > effects);
     }
-    assert_eq!(writes(), before_writes);
-    assert_eq!(fixture.state.lock().unwrap().sandboxes, sandboxes);
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(
-        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-        state
-    );
+    assert!(writes() > before_writes);
+    assert_eq!(deployment.export(&cancel).await.unwrap(), changed);
+    // Changing the adapter back replaces the sandbox again.
+    deployment.apply(&document, &cancel).await.unwrap();
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
-
+    let effects = fixture.state.lock().unwrap().effects;
+    let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
     let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
-    let before_writes = writes();
-    let mut replacement = document.clone();
-    replacement.spec.sandboxes[0].image.ref_ = format!("replacement@sha256:{}", "a".repeat(64));
-    assert!(
-        deployment.plan(&replacement, &cancel).await.is_err(),
-        "{harness} sandbox replacement must be refused during plan"
-    );
-    assert!(
-        deployment.apply(&replacement, &cancel).await.is_err(),
-        "{harness} sandbox replacement must be refused during apply"
-    );
-    assert_eq!(writes(), before_writes);
-    assert_eq!(fixture.state.lock().unwrap().sandboxes, sandboxes);
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(
-        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-        state
-    );
     fixture
         .state
         .lock()
