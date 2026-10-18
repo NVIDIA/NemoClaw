@@ -178,6 +178,30 @@ Switching between managed acquisition and local-only lookup changes image resour
 This setting does not control model downloads or sandbox images acquired by OpenShell.
 The pinned OpenShell API has no per-sandbox pull-policy field; external gateways and sandboxes reject this YAML field.
 
+### Pull from Private Registries
+
+Each image authenticates through whatever pulls it, and the configuration names registries, never credentials:
+
+| Image | Pulled by | Authenticates with |
+|---|---|---|
+| Managed gateway and service images on Docker | NemoClaw, through the Docker provider | Logins in the Docker configuration file on the machine running OpenTofu, for each registry listed in `spec.registries` |
+| Podman gateway image | Podman | Podman's own login on the engine's host |
+| Agent images on Docker or Podman | OpenShell's driver | The container runtime's login on the engine's host |
+| Images on Kubernetes or OpenShift | The cluster | Image-pull Secrets; see [Kubernetes and OpenShift](kubernetes.md) |
+
+To have NemoClaw's pulls authenticate, log in on the machine running OpenTofu, for example with `docker login nvcr.io`, and list the registry:
+
+```yaml
+spec:
+  registries:
+    - address: nvcr.io
+```
+
+The Docker provider then reads `~/.docker/config.json`, or the file `DOCKER_CONFIG` names, for each listed address, including a `credsStore` credential store, even when the engine is reached over SSH.
+The address must match the file's entry for that registry, such as `registry.example.com:5000`.
+The provider documents `auths` entries and `credsStore`; if your file uses per-registry `credHelpers`, check that a pull succeeds before relying on it.
+The configuration, the compiled graph, and OpenTofu state hold only the addresses.
+
 ## Resource Ownership
 
 Ownership follows the configuration form; do not repeat it on services, models, storage, networks, or inference providers.

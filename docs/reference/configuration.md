@@ -1008,6 +1008,20 @@ Paths:
 
 Accepted input: string or [PolicyAnyMatcher](#policyanymatcher).
 
+## Registry
+
+A registry NemoClaw authenticates to when pulling images through Docker.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.registries[]`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `address` | string | Yes | — | Registry address, such as nvcr.io or registry.example.com:5000, matching its entry in the Docker configuration file. Constraints: minimum characters 1; maximum characters 253. |
+
 ## Resources
 
 Resource declarations checked against host observations and produced data.
@@ -1374,6 +1388,7 @@ Paths:
 | `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements. |
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `registries` | array of [Registry](#registry) | No | — | Registries whose images NemoClaw pulls through Docker with the logins of the machine running OpenTofu, from its Docker configuration file. Lists addresses only; credentials stay in that file or its credential store. Constraints: maximum items 32. |
 | `sandboxes` | array of [Sandbox](#sandbox) | Yes | — | One to 32 uniquely named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent. Constraints: minimum items 1; maximum items 32. |
 | `services` | map of [ServiceDefinition](#servicedefinition) | No | — | Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 

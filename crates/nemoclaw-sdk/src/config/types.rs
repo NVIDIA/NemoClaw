@@ -71,6 +71,19 @@ pub struct Spec {
     #[serde(rename = "sandboxes")]
     /// One to 32 uniquely named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.
     pub sandboxes: Vec<Sandbox>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(default, length(max = 32))]
+    /// Registries whose images NemoClaw pulls through Docker with the logins of the machine running OpenTofu, from its Docker configuration file. Lists addresses only; credentials stay in that file or its credential store.
+    pub registries: Vec<Registry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+/// A registry NemoClaw authenticates to when pulling images through Docker.
+pub struct Registry {
+    #[schemars(length(min = 1, max = 253))]
+    /// Registry address, such as nvcr.io or registry.example.com:5000, matching its entry in the Docker configuration file.
+    pub address: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
