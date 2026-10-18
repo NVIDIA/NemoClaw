@@ -19,7 +19,7 @@ import {
   pinTrustedAgentRemoteBaseImageOverrideForOperation,
 } from "../../agent/onboard";
 import { CLI_NAME } from "../../cli/branding";
-import { RD as _RD, G, R, YW } from "../../cli/terminal-style";
+import { D, RD as _RD, G, R, YW } from "../../cli/terminal-style";
 import {
   BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
   BACKUP_FAILURE_PERMISSION_DENIED,
@@ -53,6 +53,7 @@ import {
 } from "./gateway-state";
 import * as snapshotBackup from "./snapshot/backup-authority";
 import type { PreparedStoppedNativeState } from "../../state/state-directory-restore";
+import { planRecordedDashboardOriginForRecreate } from "./rebuild-env-isolation";
 import {
   backupStartedSandboxState,
   returnSandboxContainerToStopped,
@@ -483,6 +484,41 @@ export function ensureRebuildAgentBaseImage(
     bail(safeMessage);
     return { ok: false, imageRef: null, overrideEnvVar: null };
   }
+}
+
+/**
+ * Point the inner onboard at the dashboard origin recorded for an OpenClaw
+ * sandbox so an exported `CHAT_UI_URL` cannot change what the replacement
+ * dashboard allows (#13177). Prints a warning when it ignores such an export.
+ * Returns a function that restores the caller's `CHAT_UI_URL`.
+ */
+export function pinRecordedOpenClawDashboardOriginForRecreate(
+  input: {
+    readonly sandboxName: string;
+    readonly sandboxEntry: Pick<SandboxEntry, "dashboardExternalUrl">;
+    readonly rebuildAgent: string | null;
+    readonly controlUiPort: number | null;
+    readonly replacementDashboard?: { readonly agent: string; readonly url?: string };
+  },
+  env: NodeJS.ProcessEnv = process.env,
+): () => void {
+  const previousChatUiUrl = env.CHAT_UI_URL;
+  const plan = planRecordedDashboardOriginForRecreate({
+    sandboxName: input.sandboxName,
+    cliName: CLI_NAME,
+    recordedExternalUrl: input.sandboxEntry.dashboardExternalUrl,
+    rebuildAgent: input.rebuildAgent,
+    controlUiPort: input.controlUiPort,
+    replacementDashboard: input.replacementDashboard,
+    env: { CHAT_UI_URL: previousChatUiUrl },
+  });
+  if (!plan) return () => undefined;
+  for (const line of plan.warnings) console.log(`  ${D}${line}${R}`);
+  env.CHAT_UI_URL = plan.chatUiUrl;
+  return () => {
+    if (previousChatUiUrl === undefined) delete env.CHAT_UI_URL;
+    else env.CHAT_UI_URL = previousChatUiUrl;
+  };
 }
 
 export function pinRebuildAgentBaseImageForRecreate(

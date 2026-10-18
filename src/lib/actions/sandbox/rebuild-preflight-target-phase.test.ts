@@ -239,6 +239,20 @@ describe("stageRebuildBaseImageResolutionHandoff", () => {
 
 describe("rebuild legacy local route preflight", () => {
   it.each([
+    { agent: "hermes", provider: "ollama-local", createdAt: "2026-09-01T00:00:00Z" },
+    {
+      agent: "hermes",
+      provider: "compatible-endpoint",
+      endpointUrl: "http://localhost:8000/v1",
+      createdAt: "2026-09-01T00:00:00Z",
+    },
+    { agent: "pi", provider: "ollama-local", createdAt: undefined },
+    {
+      agent: "pi",
+      provider: "ollama-local",
+      createdAt: "2026-09-01T00:00:00Z",
+      pendingRouteReservation: true,
+    },
     {
       agent: "langchain-deepagents-code",
       provider: "ollama-local",
@@ -261,7 +275,7 @@ describe("rebuild legacy local route preflight", () => {
       pendingRouteReservation: true,
     },
   ])(
-    "blocks legacy $provider rebuild with createdAt=$createdAt",
+    "blocks legacy $agent $provider rebuild with createdAt=$createdAt",
     ({ agent, provider, createdAt, ...state }) => {
       const error = vi.spyOn(console, "error").mockImplementation(() => {});
       const bail = vi.fn((message: string): never => {
@@ -316,6 +330,28 @@ describe("rebuild legacy local route preflight", () => {
       blockRebuildOnLegacySharedLocalRoute(
         "alpha",
         { ...entry, pendingRouteReservation: true },
+        bail,
+      ),
+    ).toBe(false);
+    expect(bail).not.toHaveBeenCalled();
+  });
+});
+
+describe("Pi shared local rebuild compatibility", () => {
+  it("keeps a published Pi shared route eligible for rebuild (#12975)", () => {
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+    expect(
+      blockRebuildOnLegacySharedLocalRoute(
+        "alpha",
+        {
+          name: "alpha",
+          createdAt: "2026-09-01T00:00:00Z",
+          agent: "pi",
+          provider: "ollama-local",
+          model: "local-model",
+        },
         bail,
       ),
     ).toBe(false);

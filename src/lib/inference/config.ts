@@ -39,7 +39,10 @@ export {
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
 };
-export { normalizeNativeLocalProviderAttachment } from "./native-local/contract";
+export {
+  isPersistedPiSharedLocalInferenceRoute,
+  normalizeNativeLocalProviderAttachment,
+} from "./native-local/contract";
 export { hasLegacySharedLocalInferenceRoute } from "./selection";
 export type { NativeLocalProviderAttachment } from "./native-local/contract";
 export { OLLAMA_LOCAL_CREDENTIAL_ENV };
@@ -349,7 +352,8 @@ export function getSandboxInferenceConfig(
   const nativeCustom =
     nativeProvider === true &&
     isCustomHostedProvider(provider) &&
-    !usesNativeLocalInference(provider, nativeEndpointUrl);
+    !usesNativeLocalInference(provider, nativeEndpointUrl) &&
+    !usesNativeLocalInferenceForAgent(agentName, provider, nativeEndpointUrl);
   const selectedApi = resolveCustomNativeApi(provider, preferredInferenceApi, nativeCustom);
   let providerKey: string = nativeOpenClawProviderKey(provider, selectedApi) ?? MANAGED_PROVIDER_ID;
   let primaryModelRef: string;
@@ -455,10 +459,9 @@ export function getSandboxInferenceConfig(
 
   if (
     useNativeProvider &&
-    (agentName === "langchain-deepagents-code" || agentName === "openclaw") &&
     nativeEndpointUrl &&
     usesNativeLocalInferenceForAgent(agentName, provider, nativeEndpointUrl) &&
-    nativeLocalCredentialReference(provider, nativeEndpointUrl)
+    nativeLocalCredentialReference(provider, nativeEndpointUrl, agentName)
   ) {
     inferenceBaseUrl = nativeEndpointUrl;
     inferenceApi = "openai-completions";

@@ -248,6 +248,8 @@ function runExtractedProviderPlaceholderRefresh(opts: {
       `_HERMES_RUNTIME_CONFIG_GUARD=${shellQuote(RUNTIME_CONFIG_GUARD)}`,
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR)}`,
       "refresh_hermes_provider_placeholders strict",
+      `cp ${shellQuote(logPath)} ${shellQuote(`${logPath}.first`)}`,
+      "refresh_hermes_provider_placeholders strict",
     ].join("\n"),
     { mode: 0o700 },
   );
@@ -260,7 +262,8 @@ function runExtractedProviderPlaceholderRefresh(opts: {
     });
     return {
       result,
-      args: fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8").trim().split("\n") : [],
+      args: fs.readFileSync(`${logPath}.first`, "utf-8").trim().split("\n"),
+      restartArgs: fs.readFileSync(logPath, "utf-8").trim().split("\n"),
       runtimePlanPath,
     };
   } finally {
@@ -948,6 +951,8 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(absent.result.status, absent.result.stderr).toBe(0);
     expect(brokenSymlink.result.status, brokenSymlink.result.stderr).toBe(0);
     expect(present.args.slice(0, 2)).toEqual(["-I", RUNTIME_CONFIG_GUARD]);
+    expect(present.args).toContain("--refresh-native-local");
+    expect(present.restartArgs).not.toContain("--refresh-native-local");
     expect(absent.args.slice(0, 2)).toEqual(["-I", RUNTIME_CONFIG_GUARD]);
     expect(brokenSymlink.args.slice(0, 2)).toEqual(["-I", RUNTIME_CONFIG_GUARD]);
     expect(present.args).toContain("--runtime-plan");

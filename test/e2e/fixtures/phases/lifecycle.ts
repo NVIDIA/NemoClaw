@@ -126,6 +126,11 @@ export function buildOpenShellGatewayUserServiceStopScript(
     "  exit 1",
     "fi",
     'source "$installer"',
+    'if [ "$(uname -s)" = Linux ] && command -v systemctl >/dev/null 2>&1; then',
+    '  runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"',
+    '  export XDG_RUNTIME_DIR="$runtime_dir"',
+    '  export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$runtime_dir/bus}"',
+    "fi",
     ...(options.permanent
       ? [
           'if [ "$(uname -s)" = Linux ] && command -v systemctl >/dev/null 2>&1; then',

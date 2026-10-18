@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,9 +18,12 @@ import {
 const runtime =
   process.argv[2] ??
   "/usr/local/lib/nemoclaw/pi-runtime/node_modules/@earendil-works/pi-coding-agent";
-const { resolveConfigValue, getMissingConfigValueEnvVarNames } = await import(
-  pathToFileURL(join(runtime, "dist/core/resolve-config-value.js")).href
-);
+const {
+  clearConfigValueCache,
+  resolveConfigValue,
+  resolveHeadersOrThrow,
+  getMissingConfigValueEnvVarNames,
+} = await import(pathToFileURL(join(runtime, "dist/core/resolve-config-value.js")).href);
 for (const provider of [
   ...HOSTED_NATIVE_PROVIDERS.filter((item) => item.api === "openai-completions"),
   {
@@ -66,4 +69,70 @@ for (const provider of [
     rmSync(home, { recursive: true, force: true });
   }
 }
-console.log("Pi native credential resolution passed for NVIDIA and four hosted providers.");
+
+const nativeHome = mkdtempSync(join(tmpdir(), "pi-native-local-credential-"));
+try {
+  const result = spawnSync(
+    process.execPath,
+    [fileURLToPath(new URL("./generate-config.ts", import.meta.url))],
+    {
+      encoding: "utf8",
+      env: {
+        HOME: nativeHome,
+        NEMOCLAW_MODEL: "synthetic-local-model",
+        NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+        NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+        NEMOCLAW_LOCAL_INFERENCE_TOKEN: "raw-build-secret-must-not-be-written",
+      },
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const text = readFileSync(join(nativeHome, ".pi/agent/models.json"), "utf8");
+  assert.equal(text.includes("raw-build-secret-must-not-be-written"), false);
+  const provider = JSON.parse(text).providers.openshell;
+  for (const scope of ["v7", `s${"a".repeat(64)}`]) {
+    const handle = `openshell:resolve:env:${scope}_NEMOCLAW_LOCAL_INFERENCE_TOKEN`;
+    process.env.NEMOCLAW_LOCAL_INFERENCE_TOKEN = handle;
+    clearConfigValueCache();
+    assert.equal(resolveConfigValue(provider.apiKey), handle);
+    assert.equal(
+      resolveHeadersOrThrow(provider.headers, "Pi native-local request").Authorization,
+      `Bearer ${handle}`,
+    );
+    assert.equal(text.includes(handle), false);
+  }
+  delete process.env.NEMOCLAW_LOCAL_INFERENCE_TOKEN;
+  clearConfigValueCache();
+  assert.equal(resolveConfigValue(provider.apiKey), undefined);
+  assert.throws(() => resolveHeadersOrThrow(provider.headers, "Pi native-local request"));
+
+  const settingsPath = join(nativeHome, ".pi/agent/settings.json");
+  writeFileSync(
+    settingsPath,
+    '{"defaultProvider":"openshell","defaultModel":"old-model","futurePiSetting":true}\n',
+  );
+  const switched = spawnSync(
+    process.execPath,
+    [fileURLToPath(new URL("./generate-config.ts", import.meta.url))],
+    {
+      encoding: "utf8",
+      env: {
+        HOME: nativeHome,
+        NEMOCLAW_MODEL: "switched-local-model",
+        NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+        NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+      },
+    },
+  );
+  assert.equal(switched.status, 0, switched.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(settingsPath, "utf8")), {
+    defaultProvider: "openshell",
+    defaultModel: "switched-local-model",
+    futurePiSetting: true,
+  });
+} finally {
+  delete process.env.NEMOCLAW_LOCAL_INFERENCE_TOKEN;
+  clearConfigValueCache();
+  rmSync(nativeHome, { recursive: true, force: true });
+}
+console.log("Pi native credential resolution passed for hosted and local providers.");

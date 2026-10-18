@@ -573,7 +573,7 @@ it.each([undefined, "2026-10-01T00:00:00Z"])(
   },
 );
 
-it.each(["openclaw", "langchain-deepagents-code"] as const)(
+it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
   "resumes an owned Local NIM %s shared route without requiring a native attachment",
   async (agentName) => {
     const { deps, calls } = createDeps();

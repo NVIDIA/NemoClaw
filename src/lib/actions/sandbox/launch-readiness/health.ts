@@ -233,7 +233,13 @@ export async function requireNativeInferenceHealth(input: {
     const expected = normalizeNativeLocalProviderAttachment(
       input.entry.nativeLocalProviderAttachment,
     );
-    if (!expected || !input.entry.model) throw new LaunchReadinessEvidenceError();
+    if (
+      !expected ||
+      !input.entry.model ||
+      ((input.agentName ?? input.entry.agent) === "hermes" &&
+        (expected.agent !== "hermes" || input.entry.provider !== expected.provider))
+    )
+      throw new LaunchReadinessEvidenceError();
     await (input.deps.verifyNativeLocalAttachment ?? verifyNativeLocalStatusAttachment)({
       sandboxName: input.sandboxName,
       gatewayName: input.gatewayName,

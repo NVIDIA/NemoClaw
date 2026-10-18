@@ -37,7 +37,7 @@ const routes = [
   },
 ] as const;
 
-type AgentName = "openclaw" | "hermes" | "langchain-deepagents-code";
+type AgentName = "openclaw" | "hermes" | "langchain-deepagents-code" | "pi";
 
 function prepareProfile(
   agentName: AgentName,
@@ -71,7 +71,7 @@ function prepareProfile(
         chatUiUrl: "http://localhost:18789",
         effectiveDashboardPort: 18789,
         dashboardBindAddress: undefined,
-        manageDashboard: agentName !== "langchain-deepagents-code",
+        manageDashboard: agentName !== "langchain-deepagents-code" && agentName !== "pi",
         wslExposure: false,
         hermesDashboardState: {
           config: { enabled: false, port: 19189, internalPort: 29189, tuiEnabled: false },
@@ -93,7 +93,7 @@ function prepareProfile(
   return runtime.ensurePreparedProfile({ source: { kind: "managed-image" } } as never);
 }
 
-describe.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+describe.each(["openclaw", "langchain-deepagents-code"] as const)(
   "%s managed startup inference",
   (agentName) => {
     it.each(routes)("keeps $name on its selected transport (#12558)", (route) => {
@@ -162,5 +162,68 @@ it("routes new OpenClaw Ollama through its sandbox attachment", () => {
     upstreamProvider: "ollama-local",
     routedBaseUrl: localBinding.endpointUrl,
     upstreamEndpointUrl: null,
+  });
+});
+
+it("projects the Hermes-scoped native attachment into managed startup", () => {
+  const binding = { ...nativeBinding, agent: "hermes" as const };
+  const attachment = { ...nativeAttachment, ...binding, ...nativeLocalIdentity(binding) };
+  const prepared = prepareProfile("hermes", { endpointUrl: null, attachment });
+  expect(prepared?.profile.inference).toMatchObject({
+    model: "fixture-model",
+    upstreamProvider: "compatible-endpoint",
+    routedBaseUrl: nativeBinding.endpointUrl,
+  });
+});
+
+const piBinding = { ...nativeBinding, agent: "pi" as const };
+const piCustomBinding = { ...piBinding, endpointUrl: "http://host.openshell.internal:12345/v1" };
+const piCustomAttachment = {
+  ...nativeAttachment,
+  ...piCustomBinding,
+  ...nativeLocalIdentity(piCustomBinding),
+};
+const piAttachment = { ...nativeAttachment, ...piBinding, ...nativeLocalIdentity(piBinding) };
+it.each([
+  {
+    name: "attached compatible endpoint on a nonstandard port",
+    endpointUrl: piCustomBinding.endpointUrl,
+    attachment: piCustomAttachment,
+    expected: piCustomBinding.endpointUrl,
+  },
+  {
+    name: "unattached compatible endpoint on a nonstandard port",
+    endpointUrl: piCustomBinding.endpointUrl,
+    expected: "https://inference.local/v1",
+  },
+  {
+    name: "attached local",
+    endpointUrl: nativeBinding.endpointUrl,
+    attachment: piAttachment,
+    expected: nativeBinding.endpointUrl,
+  },
+  {
+    name: "unattached local",
+    endpointUrl: nativeBinding.endpointUrl,
+    expected: "https://inference.local/v1",
+  },
+  {
+    name: "hosted with stale local attachment",
+    endpointUrl: "https://example.com/v1",
+    attachment: piAttachment,
+    expected: "https://inference.local/v1",
+  },
+  {
+    name: "another agent attachment",
+    endpointUrl: nativeBinding.endpointUrl,
+    attachment: nativeAttachment,
+    expected: "https://inference.local/v1",
+  },
+])("keeps Pi $name on its selected transport", ({ expected, ...route }) => {
+  const prepared = prepareProfile("pi", route);
+  expect(prepared?.profile.inference).toMatchObject({
+    model: "fixture-model",
+    upstreamProvider: "compatible-endpoint",
+    routedBaseUrl: expected,
   });
 });

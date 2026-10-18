@@ -103,6 +103,7 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
       ],
     ]);
     expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
+      agentName: "openclaw",
       gatewayName: "nemoclaw",
       sandboxName: "alpha",
       provider: "compatible-endpoint",
@@ -211,6 +212,7 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
         ],
       ]);
       expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
+        agentName: "openclaw",
         gatewayName: "nemoclaw",
         sandboxName: "alpha",
         provider: "compatible-endpoint",

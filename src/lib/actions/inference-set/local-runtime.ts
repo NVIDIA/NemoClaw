@@ -11,6 +11,7 @@ import {
   LLAMA_CPP_CREDENTIAL_ENV,
   LLAMA_CPP_GATEWAY_BASE_URL,
 } from "../../inference/llama-cpp/contract";
+import type { InferenceSetProviderBinding } from "../inference-set-route-containment";
 import { InferenceSetError } from "../inference-set-error";
 
 export { validateLocalProvider, type ValidationResult } from "../../inference/local";
@@ -57,4 +58,41 @@ export function resolveLocalSwitchRuntime(
     };
   }
   throw new InferenceSetError("Unsupported local provider selection.");
+}
+
+/** Resolve Hermes binding overrides without changing its existing credential fallback rules. */
+export function resolveHermesLocalSwitchRuntime(
+  provider: string,
+  binding: InferenceSetProviderBinding | null,
+  resolveCredentialValue: (name: string) => string,
+) {
+  const vllm = provider === "vllm-local" ? getManagedVllmProviderBinding() : null;
+  const proxy = provider === "ollama-local" && shouldFrontOllamaWithProxy();
+  const endpointUrl =
+    binding?.baseUrl ??
+    vllm?.baseUrl ??
+    (provider === "llama-cpp-local"
+      ? LLAMA_CPP_GATEWAY_BASE_URL
+      : getLocalProviderBaseUrl(provider));
+  if (!endpointUrl)
+    throw new Error("The local inference endpoint is unavailable. Run onboarding to qualify it.");
+  const credentialValue =
+    binding?.token ??
+    vllm?.apiKey ??
+    (provider === "ollama-local"
+      ? proxy
+        ? getOllamaProxyToken()
+        : "ollama"
+      : provider === "vllm-local"
+        ? "dummy"
+        : resolveCredentialValue(LLAMA_CPP_CREDENTIAL_ENV));
+  return {
+    endpointUrl,
+    credentialValue,
+    authMode:
+      !binding && !vllm && !proxy && provider !== "llama-cpp-local"
+        ? ("sentinel" as const)
+        : ("authenticated" as const),
+    ownedProxy: proxy,
+  };
 }

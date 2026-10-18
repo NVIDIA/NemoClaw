@@ -425,6 +425,53 @@ export async function runHermesPongWithRetry(
   throw new Error("Hermes live probe completed without an attempt result.");
 }
 
+/** Real Hermes gateway requests must cross the attached local provider boundary. */
+export async function expectNativeLocalHermesTurn(options: {
+  sandbox: SandboxClient;
+  endpoint: FakeOpenAiCompatibleServer;
+  model: string;
+  artifactName: string;
+  redactionValues: string[];
+  onEvidence: NonNullable<HermesProbeRetryOptions["onEvidence"]>;
+}): Promise<void> {
+  const offset = options.endpoint.requests().length;
+  const payload = JSON.stringify({
+    model: options.model,
+    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+    max_tokens: 100,
+  });
+  const result = await runHermesPongWithRetry({
+    expectedModel: options.model,
+    onEvidence: options.onEvidence,
+    run: (attempt) =>
+      options.sandbox.execShell(
+        SANDBOX_NAME,
+        trustedSandboxShellScript(hermesApiCommand(payload)),
+        {
+          artifactName: `${options.artifactName}-${attempt}`,
+          env: env(),
+          redactionValues: options.redactionValues,
+          timeoutMs: 150_000,
+        },
+      ),
+  });
+  expect(result.exitCode, resultText(result)).toBe(0);
+  expect(chatContent(result.stdout)).toMatch(/PONG/i);
+  expect(inferenceResponseModel(result.stdout)).toBe(options.model);
+  expect(
+    options.endpoint
+      .requests()
+      .slice(offset)
+      .some(
+        (request) =>
+          request.auth === "ok" &&
+          request.method === "POST" &&
+          request.path === "/v1/chat/completions" &&
+          request.model === options.model,
+      ),
+  ).toBe(true);
+}
+
 export async function runHermesCliPongWithRetry(
   options: HermesProbeRetryOptions & {
     accept?: (result: ShellProbeResult, attempt: number) => boolean;

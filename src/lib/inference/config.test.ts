@@ -652,10 +652,12 @@ describe("formatInferenceRouteDriftForDisplay", () => {
 
 it.each([
   ["openclaw", true, "https://inference.local/v1"],
-  ["hermes", true, "https://inference.local/v1"],
-  ["pi", true, "https://inference.local/v1"],
+  ["pi", true, "http://host.openshell.internal:8000/v1"],
+  ["pi", false, "https://inference.local/v1"],
   ["langchain-deepagents-code", false, "https://inference.local/v1"],
   ["langchain-deepagents-code", true, "http://host.openshell.internal:8000/v1"],
+  ["hermes", true, "http://host.openshell.internal:8000/v1"],
+  ["hermes", false, "https://inference.local/v1"],
 ] as const)("routes %s with native attachment %s to %s (#13197)", (agent, attached, expected) => {
   expect(
     getSandboxInferenceConfig(
@@ -672,8 +674,9 @@ it.each([
 it.each([
   ["openclaw", true, "http://host.openshell.internal:8000/v1"],
   ["openclaw", false, "https://inference.local/v1"],
-  ["hermes", true, "https://inference.local/v1"],
-  ["pi", true, "https://inference.local/v1"],
+  ["hermes", true, "http://host.openshell.internal:8000/v1"],
+  ["pi", true, "http://host.openshell.internal:8000/v1"],
+  ["pi", false, "https://inference.local/v1"],
 ] as const)(
   "routes %s standalone vLLM with native attachment %s to %s",
   (agent, attached, expected) => {
@@ -689,3 +692,20 @@ it.each([
     ).toBe(expected);
   },
 );
+
+it.each([
+  ["pi", "openai-completions"],
+  ["hermes", "openai-responses"],
+] as const)("preserves the %s private compatible route family", (agent, expectedApi) => {
+  const endpoint = "http://192.168.1.20:9001/v1";
+  const config = getSandboxInferenceConfig(
+    "fixture-model",
+    "compatible-endpoint",
+    "openai-responses",
+    true,
+    endpoint,
+    agent,
+  );
+  expect(config.inferenceBaseUrl).toBe(endpoint);
+  expect(config.inferenceApi).toBe(expectedApi);
+});
