@@ -28,7 +28,7 @@ jobs:
       - uses: ./.github/actions/setup-docs
       # CI / Bundle runs the docs:: and fern:: tests with the rest of the workspace.
       - name: Check generated reference, local links, and Fern routes
-        run: cargo run --locked -p nemoclaw-build -- fern check
+        run: cargo run -v --locked -p nemoclaw-build -- fern check
       # Publication jobs run this binary, built from the same commit in this run,
       # instead of compiling it again. The attempt keeps a rerun's name unique.
       - name: Name the build tool artifact
