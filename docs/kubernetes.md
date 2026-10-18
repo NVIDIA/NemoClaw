@@ -168,6 +168,7 @@ spec:
   The key crosses the cluster network over plain HTTP unless your network plugin or a service mesh encrypts Pod traffic.
 
 Start from [the in-cluster vLLM example](../examples/kubernetes/in-cluster-vllm.yaml), or from [the in-cluster Ollama example](../examples/kubernetes/in-cluster-ollama.yaml) for a server without a key.
+Both examples use OpenClaw, which can't start in an OpenShell sandbox with the pinned Fabric, so apply stops at the agent until [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) is fixed.
 
 ### Run NemoClaw's vLLM Runtime in the Cluster
 
@@ -176,6 +177,10 @@ They are a starting point, not a qualified configuration; choose the GPU, storag
 You need:
 
 - A GPU node with the NVIDIA device plugin.
+- At least 52 GiB of available memory on that node when the server starts.
+  For a GPU with its own memory, the runtime reads the node's available memory from `/proc/meminfo` and requires `memory.host_reserve_gib` (default 32) plus 20 GiB.
+  With less it stops with "host available memory (bytes) requires at least …", even when the GPU budget fits.
+  On `dgx-spark` and `rtx-spark`, which share memory with the GPU, it requires the GPU budget plus 20 GiB instead.
 - A network plugin that enforces NetworkPolicies.
 - The [vLLM runtime image](build.md#build-a-runtime-image) for the node's architecture, pushed to a registry the cluster can pull from and referenced by digest.
 
@@ -381,6 +386,7 @@ Apply does not notice a new value behind the same name, so OpenShell would keep 
 
 Requests fail from the restart until the apply finishes.
 Whether a running sandbox uses the new key without a restart is untested.
+After the apply, remove the old key from your secret manager and unset `QWEN_INFERENCE_KEY`; later plans and applies need `QWEN_INFERENCE_KEY_2`.
 
 NemoClaw's destroy leaves the server, its storage and its Secret in place; delete them yourself, for example with `kubectl delete namespace models`.
 
@@ -390,8 +396,9 @@ The [in-cluster Ollama example](../examples/kubernetes/in-cluster-ollama.yaml) u
 Follow the vLLM steps with these changes:
 
 - **Image:** the [Ollama runtime image](inference.md#run-managed-ollama) for the node's architecture.
-- **Step 1:** compute `ollama_runtime` instead, with the same `hardware` and the `spec` output.
-  It takes no `authentication`, `memory` or parsers here; Ollama's default 16 GiB budget holds `qwen3:0.6b`:
+- **Step 1:** install the bundle's `ollama` provider instead of `vllm`, and compute `ollama_runtime` with the same `hardware`.
+  It takes no `authentication`, `memory` or parsers here; Ollama's default 16 GiB budget holds `qwen3:0.6b`.
+  The `spec` output reads `data.ollama_runtime.ollama.spec`:
 
   ```hcl
   data "ollama_runtime" "ollama" {
@@ -407,16 +414,33 @@ Follow the vLLM steps with these changes:
       port = 11434
     }
   }
+
+  output "spec" {
+    value = data.ollama_runtime.ollama.spec
+  }
   ```
 
 - **Step 2:** skip the key and the Secret, and name the ConfigMap `ollama-runtime`.
 - **Step 3:**
   - Name the PVC `ollama-data`, and the Deployment, its container, the Service, the NetworkPolicy and the `app` label `ollama`.
+  - In the Deployment, set `configMapKeyRef.name` to `ollama-runtime` and `claimName` to `ollama-data`.
   - Leave out `NEMOCLAW_INFERENCE_KEY`.
   - Use port 11434 in `containerPort`, the probes, the Service and the NetworkPolicy.
   - Point both probes at `GET /api/version`; Ollama has no `/health`.
+    Replace the comment above them with `# GET /api/version answers once Ollama listens, before the model is loaded.`
   - Admit the example's sandbox namespace, `nemoclaw-in-cluster-ollama`.
-- **Steps 4 and 5:** wait for `deployment/ollama`, then plan and apply; no key variable is needed.
+- **Step 4:** the rollout finishes as soon as Ollama listens, and the runtime then loads the model, which took about 50 seconds for `qwen3:0.6b` on a GB300 node.
+  Requests can fail until then, so also wait for the runtime's log line:
+
+  ```sh
+  kubectl -n models rollout status deployment/ollama --timeout=9h
+  until kubectl -n models logs deployment/ollama | grep -q 'ready: managed service readiness confirmed'; do
+    sleep 10
+  done
+  ```
+
+  If the loop does not end, read the Pod's log; a line starting with `stopped:` gives the reason the runtime stopped.
+- **Step 5:** plan and apply; no key variable is needed.
 
 ## Destroy a Deployment
 

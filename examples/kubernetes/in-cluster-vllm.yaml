@@ -51,3 +51,5 @@ spec:
               overrides:
                 # vLLM serves the model under its Hugging Face repository name.
                 model: Qwen/Qwen3-4B
+                # OpenClaw otherwise requests more output tokens than the context allows; vLLM answers 400.
+                maxTokens: 2048
