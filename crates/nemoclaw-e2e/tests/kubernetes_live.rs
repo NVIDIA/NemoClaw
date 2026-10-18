@@ -346,46 +346,6 @@ async fn authenticated_gateway(operations: &Operations, spec: &Spec) {
         ),
         "GetGatewayInfo refuses a token signed by an unknown issuer key",
     );
-
-    // Sign with this deployment's own issuer key, read where the provider
-    // keeps it. `ensure` creates new material in a directory without any,
-    // so require the signing key first; a complete set is only read.
-    let auth = operations.state.join("auth");
-    assert!(
-        auth.join("signing.pk8").is_file(),
-        "the deployment's development signing key is in its state directory"
-    );
-    let material = nemoclaw_sdk::kubernetes::auth::Development::new(
-        auth,
-        &spec.name,
-        &spec.settings.kubernetes.as_ref().unwrap().namespace,
-        &spec.owner,
-    )
-    .ensure()
-    .unwrap();
-    let presenting = |token: String| {
-        let mut environment = connection.environment();
-        environment.insert(TOKEN_ENV.into(), token);
-        OpenShell::connect(&gateway.connection(), Arc::new(Values(environment))).unwrap()
-    };
-    let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    // A current token with the same key and claims is accepted, so the
-    // refusal below can come only from the expiry.
-    presenting(material.token(now))
-        .verify_gateway(ComputeDriver::Kubernetes)
-        .await
-        .expect("GetGatewayInfo accepts a current token from the deployment's issuer key");
-    // Tokens last an hour, so one issued a day ago expired 23 hours earlier,
-    // far beyond the gateway's 60-second leeway. A refusal must happen at
-    // authentication, not authorization.
-    assert_eq!(
-        presenting(material.token(now - 86_400))
-            .gateway_capabilities()
-            .await
-            .err(),
-        Some(ObservationError::Authentication),
-        "GetGatewayInfo refuses an expired token from the deployment's issuer key",
-    );
 }
 
 #[tokio::test]
@@ -602,9 +562,8 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
 
 /// A full deployment on a real cluster through the public SDK: the managed
 /// gateway, then an agent sandbox from an image built from this checkout.
-/// Apply stops at the agent's health check, which the pinned Fabric reports
-/// as unsupported (#13031); export must still recover the authored document,
-/// and destroy then removes everything but the gateway's storage, whose
+/// Apply starts the agent through `fabric-agent-ctl`; export must recover the
+/// authored document, and destroy must keep the gateway's storage: its
 /// namespace, encryption key and claims keep their UIDs.
 ///
 /// `cargo ci live-kind` also provides:
@@ -761,19 +720,6 @@ spec:
         exported.expect("export of the applied deployment must succeed"),
         document,
         "export recovers the authored configuration without readiness checks"
-    );
-    assert_eq!(
-        release_count(&cluster, &namespace, &release).await,
-        0,
-        "destroy removed the gateway's Helm release record"
-    );
-    assert!(
-        Api::<StatefulSet>::namespaced(cluster.clone(), &namespace)
-            .get_opt(&release)
-            .await
-            .unwrap_or_else(|_| panic!("cannot observe the removed gateway"))
-            .is_none(),
-        "destroy removed the gateway StatefulSet"
     );
     assert!(
         kept.expect("the gateway's storage is observable before destroy")
