@@ -465,3 +465,42 @@ if [ "$#" = 0 ]; then /bin/cat > "$destination"; else /bin/cat "$1" > "$destinat
         }
     }
 }
+
+/// An image derived from the reference image, as a downstream build would
+/// make one: the base plus one executable. Docker's default builder sees
+/// local images, which a container builder doesn't.
+pub(super) const DERIVED: &str = "dummy-derived";
+pub(super) fn build_derived(prefix: &str) -> Result<()> {
+    let context = std::env::temp_dir().join(format!("nemoclaw-derived-{}", std::process::id()));
+    std::fs::create_dir_all(&context)?;
+    std::fs::write(
+        context.join("Dockerfile"),
+        format!(
+            "FROM {prefix}:{DUMMY}\nCOPY --chmod=755 nemoclaw-derived-check /usr/local/bin/nemoclaw-derived-check\n"
+        ),
+    )?;
+    std::fs::write(
+        context.join("nemoclaw-derived-check"),
+        "#!/bin/sh\necho derived-image-ok\n",
+    )?;
+    let status = Command::new("docker")
+        .args([
+            "buildx",
+            "build",
+            "--builder",
+            "default",
+            "--load",
+            "--quiet",
+            "--tag",
+        ])
+        .arg(format!("{prefix}:{DERIVED}"))
+        .arg(&context)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .status();
+    let _ = std::fs::remove_dir_all(&context);
+    if !status?.success() {
+        return Err("cannot build the derived reference image".into());
+    }
+    Ok(())
+}

@@ -209,7 +209,13 @@ fn prepare(
         }
     }
     let agent = by_digest(&prefix, target)?;
-    let dummy = by_digest(&prefix, live_images::DUMMY)?;
+    // The lifecycle runs an image derived from the reference image, so it
+    // also checks that derived images deploy.
+    live_images::build_derived(&prefix)?;
+    owned
+        .images
+        .push(format!("{prefix}:{}", live_images::DERIVED));
+    let dummy = by_digest(&prefix, live_images::DERIVED)?;
 
     let used: Vec<String> = docker_output(&["network", "ls", "--quiet"])?
         .lines()

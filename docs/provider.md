@@ -539,7 +539,7 @@ A configuration without `harness.adapter_id` is rejected.
 Optional `architecture` and `operating_system` supply the execution engine's platform.
 The computed `compatibility_status` is `supported`, `unsupported`, or `unknown`, with details in `observation_json.compatibility`.
 The SDK checks image identity, source revision and platform, and that the image provides the selected adapter (the `fabric_adapter` check).
-A mismatched Fabric revision leaves compatibility unknown; an image without the adapter is unsupported.
+An image without the adapter is unsupported. NemoClaw doesn't compare Fabric revisions: the image's own Fabric runtime reports an incompatibility when the agent starts.
 Fabric owns settings, model, extension and workflow validation, which it performs inside the sandbox when the agent is configured.
 Deployment postconditions name the sandbox and adapter and preserve unsupported check reasons in text and JSON errors.
 Onboarding uses the same assessment; unknown error variants retain a generic rejection.

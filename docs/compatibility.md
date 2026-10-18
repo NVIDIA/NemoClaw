@@ -32,6 +32,11 @@ The providers refuse state recorded under an older version of a resource's schem
 The crate isn't published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 Generate its API reference locally as [the SDK guide](sdk.md#package-distribution-and-api-reference) describes; a hosted reference follows the documentation site ([#12644](https://github.com/NVIDIA/NemoClaw/issues/12644)).
 
+## Derived Agent Images
+
+An image derived from a NemoClaw agent image belongs to the release of its base image.
+Rebuild it from the new release's base when you upgrade; see [derived agent images](derived-images.md).
+
 ## Hand-Written HCL
 
 Provider type names, inputs, and outputs can change between releases.

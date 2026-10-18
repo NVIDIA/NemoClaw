@@ -446,7 +446,7 @@ impl DataSource for FabricHarnessDataSource {
         if matches!(&config.launch_json, Value::Value(launch) if launch.is_empty()) {
             diags.root_error(
                 "Harness unavailable",
-                "The image declares no runtime for this adapter; select an image that installs it",
+                "The image's io.nemoclaw.fabric.catalog label declares no runtime for this adapter. Select an image that installs it; an image derived from a NemoClaw agent image must keep its base image's labels.",
             );
             return None;
         }
@@ -642,6 +642,39 @@ mod tests {
         assert!(requirements(&config).unwrap().is_none());
         config.config_json = Value::Value(r#"{"harness":{}}"#.into());
         assert!(requirements(&config).is_err(), "an adapter_id is required");
+    }
+
+    // An image without NemoClaw's catalog label, such as a derived image that
+    // dropped its base's labels, fails with an error naming the label.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_image_without_the_catalog_label_names_it() {
+        let digest = format!("registry/agent@sha256:{}", "b".repeat(64));
+        let served = digest.clone();
+        let fixture = crate::fixture::Fixture::start(move |_| {
+            let image = serde_json::json!({"Id":"sha256:config", "Architecture":"arm64", "Os":"linux", "RepoDigests":[served], "Config":{"Labels":{}}});
+            Some((200, serde_json::to_vec(&image).unwrap()))
+        })
+        .await;
+        let source = FabricHarnessDataSource::default();
+        let mut diagnostics = Diagnostics::default();
+        let output = source
+            .read(
+                &mut diagnostics,
+                FabricHarnessState {
+                    engine: Value::Value(fixture.endpoint.clone()),
+                    image: Value::Value(digest.clone()),
+                    adapter_id: Value::Value("nvidia.fabric.pi".into()),
+                    agent_name: Value::Value("travel".into()),
+                    ..Default::default()
+                },
+                ValueEmpty::default(),
+            )
+            .await;
+        assert!(output.is_none());
+        let errors = format!("{diagnostics:?}");
+        assert!(errors.contains("io.nemoclaw.fabric.catalog"), "{errors}");
+        assert!(errors.contains("keep its base image's labels"), "{errors}");
     }
 
     // The fake engine listens on a Unix socket, as the test above.

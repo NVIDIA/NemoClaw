@@ -71,9 +71,10 @@ fn overall(checks: &[CapabilityCheck]) -> Support {
     }
 }
 
-/// Whether an image can run a configuration's harness: its catalog matches
-/// NemoClaw's Fabric revision, it provides the selected adapter, and an
-/// explicit filesystem policy lets that adapter read its files. Whether the
+/// Whether an image can run a configuration's harness: it provides the
+/// selected adapter, and an explicit filesystem policy lets that adapter read
+/// its files. Whether the image's Fabric runtime is compatible is Fabric's to
+/// report when the agent starts. Whether the
 /// harness accepts the configuration is Fabric's to decide, inside the sandbox
 /// when the agent is configured.
 pub fn assess_fabric(catalog: &FabricCatalog, request: &FabricRequirements) -> CompatibilityReport {
@@ -82,13 +83,6 @@ pub fn assess_fabric(catalog: &FabricCatalog, request: &FabricRequirements) -> C
         .pointer("/harness/adapter_id")
         .and_then(Value::as_str);
     let mut checks = Vec::new();
-    if catalog.fabric_revision != FabricCatalog::bundled().fabric_revision {
-        checks.push(CapabilityCheck {
-            requirement: "fabric_contract".into(),
-            status: Support::Unknown,
-            reason: "fabric_contract: the image does not establish the SDK Fabric revision".into(),
-        });
-    }
     let adapter = adapter_id.and_then(|id| {
         catalog
             .adapters

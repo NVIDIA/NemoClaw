@@ -111,6 +111,35 @@ pub(crate) fn sandbox_startup_guidance(reason: &str) -> &'static str {
         "ControlSupervisorStartFailed" => {
             "; control supervisor could not start; check the sandbox policy and attached providers"
         }
-        _ => "",
+        // OpenShell's own log shows why the process exited, for example an
+        // image without the launch command its harness declares.
+        _ => "; `openshell logs SANDBOX --source sandbox` shows why its process exited",
+    }
+}
+
+#[cfg(test)]
+mod sandbox_startup_tests {
+    use super::*;
+
+    #[test]
+    fn an_unexplained_sandbox_exit_points_to_openshell_logs() {
+        let message = Error::SandboxStartup {
+            phase: "SANDBOX_PHASE_ERROR",
+            reason: "unknown",
+            exit_code: "1".into(),
+        }
+        .to_string();
+        assert!(
+            message.contains("openshell logs SANDBOX --source sandbox"),
+            "{message}"
+        );
+        // A recognized reason keeps its specific guidance.
+        let identity = Error::SandboxStartup {
+            phase: "SANDBOX_PHASE_ERROR",
+            reason: "IdentityResolutionFailed",
+            exit_code: "1".into(),
+        }
+        .to_string();
+        assert!(identity.contains("run_as_user"), "{identity}");
     }
 }

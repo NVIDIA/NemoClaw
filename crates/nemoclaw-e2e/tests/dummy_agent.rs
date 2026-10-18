@@ -191,6 +191,30 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     assert_eq!(reply["status"], "succeeded", "{reply}");
     assert_eq!(reply["output"]["message"], configured_reply, "{reply}");
 
+    // The runner derives the image from the reference image, adding one
+    // executable; the sandbox runs the derived image, so it is there.
+    let containers = docker_objects(
+        &engine,
+        "container",
+        &format!("name=openshell-{}--{}", document.workspace(), sandbox.name),
+    );
+    let container = containers.first().expect("the sandbox has a container");
+    let check = Command::new("docker")
+        .args([
+            "--host",
+            &engine,
+            "exec",
+            container,
+            "/usr/local/bin/nemoclaw-derived-check",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&check.stdout).trim(),
+        "derived-image-ok",
+        "the derived image's executable runs in the sandbox"
+    );
+
     let unchanged = deployment.apply(&document, &cancel).await.unwrap();
     assert_eq!(unchanged.outcome, Outcome::Succeeded);
     assert!(unchanged.changes.is_empty(), "{:?}", unchanged.changes);

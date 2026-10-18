@@ -199,6 +199,8 @@ The dummy selects its lifecycle profile automatically; an explicit profile makes
 A passing lifecycle does not establish that a runtime stays healthy: Fabric reports no runtime status.
 See [upstream ownership](design/fabric-management.md#upstream-ownership) for the remaining Fabric and OpenShell work.
 
+To extend an agent image with your own skills and tools, see [derived agent images](derived-images.md).
+
 ## Build a Runtime Image
 
 Runtime image builds require Linux, Buildx, and a Docker daemon using the containerd image store.
