@@ -27,7 +27,7 @@ fn kubernetes_compiles_only_openshell_resources_and_checks_the_driver_before_mut
             .all(|target| {
                 matches!(
                     target.kind.as_str(),
-                    "workspace" | "provider_profile" | "provider" | "sandbox" | "agent"
+                    "workspace" | "inference" | "sandbox" | "agent" | "agent_configuration"
                 )
             })
     );
@@ -44,6 +44,11 @@ fn kubernetes_compiles_only_openshell_resources_and_checks_the_driver_before_mut
         );
     }
     for (kind, resources) in graph["resource"].as_object().unwrap() {
+        // OpenTofu's own terraform_data holds agent configurations; it takes
+        // no gateway precondition.
+        if kind == "terraform_data" {
+            continue;
+        }
         assert!(
             ["nemoclaw_", "openshell_", "fabric_"]
                 .iter()
@@ -62,8 +67,10 @@ fn kubernetes_compiles_only_openshell_resources_and_checks_the_driver_before_mut
             );
         }
     }
+    let sandbox = &graph["resource"]["openshell_sandbox"]["assistant"];
+    assert!(sandbox["lifecycle"].get("prevent_destroy").is_none());
     assert_eq!(
-        graph["resource"]["openshell_sandbox"]["assistant"]["lifecycle"]["prevent_destroy"],
-        true
+        sandbox["lifecycle"]["replace_triggered_by"],
+        json!(["terraform_data.agent_assistant"])
     );
 }

@@ -66,5 +66,13 @@ widestring = "1"
 workspace = true
 
 [[bin]]
-name = "terraform-provider-nemoclaw"
-path = "src/main.rs"
+name = "terraform-provider-vllm"
+path = "src/bin/vllm.rs"
+
+[[bin]]
+name = "terraform-provider-ollama"
+path = "src/bin/ollama.rs"
+
+[[bin]]
+name = "terraform-provider-host"
+path = "src/bin/host.rs"

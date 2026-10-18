@@ -126,6 +126,14 @@
       ],
       "type": "object"
     },
+    "ApiAuthStyle": {
+      "description": "How an API key is sent.",
+      "enum": [
+        "bearer",
+        "header"
+      ],
+      "type": "string"
+    },
     "AuthMethod": {
       "description": "Authentication method supported through the OpenShell provider.",
       "enum": [
@@ -230,6 +238,115 @@
         "cudagraphMode",
         "captureSizes"
       ],
+      "type": "object"
+    },
+    "ContainerData": {
+      "additionalProperties": false,
+      "description": "An owned disposable data volume. The image must supply a mount directory writable by its configured user.",
+      "properties": {
+        "mountPath": {
+          "description": "/data or one application directory below /var/lib.",
+          "pattern": "^(/data|/var/lib/[a-z][a-z0-9-]{0,62})$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mountPath"
+      ],
+      "type": "object"
+    },
+    "ContainerExecution": {
+      "additionalProperties": false,
+      "description": "Container execution limits, independent of application/model memory policy.",
+      "properties": {
+        "cpuLimitMillis": {
+          "description": "CPU limit in millicores. Omission leaves CPU usage unrestricted.",
+          "format": "uint32",
+          "maximum": 4294967295,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "gpu": {
+          "description": "Expose the engine's GPU devices. Omission leaves GPU access disabled.",
+          "type": "boolean"
+        },
+        "ipc": {
+          "$ref": "#/$defs/ServiceIpc",
+          "description": "Private IPC by default; host shares the host IPC namespace."
+        },
+        "memoryLimitGiB": {
+          "description": "Container memory limit in GiB; not a GPU-memory reservation. Omission selects 1 GiB.",
+          "format": "uint64",
+          "maximum": 8589934591,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "sharedMemoryGiB": {
+          "description": "Shared memory in GiB. Omission selects 64 MiB.",
+          "format": "uint64",
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "ulimits": {
+          "additionalProperties": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "description": "Process limits by Docker limit name. Each value sets both soft and hard limits; -1 means unlimited.",
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "ContainerPublication": {
+      "additionalProperties": false,
+      "description": "One application TCP listener on the host.",
+      "properties": {
+        "bindAddress": {
+          "description": "Loopback or private host IPv4 address.",
+          "type": "string"
+        },
+        "port": {
+          "description": "Same unprivileged TCP port inside the container and on the host.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1024,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "bindAddress",
+        "port"
+      ],
+      "type": "object"
+    },
+    "ContainerReadiness": {
+      "additionalProperties": false,
+      "description": "Readiness observation. Omission uses the image's Docker HEALTHCHECK.",
+      "properties": {
+        "path": {
+          "description": "HTTP GET path on the container's listener. Success requires HTTP 200; redirects are not followed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "runtimeStatus": {
+          "description": "Managed-runtime status file containing phase and updated. Requires a ready report from this container start, not an old volume's report.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeoutSeconds": {
+          "description": "Startup wait in seconds, 1–3600. Omission selects 300.",
+          "format": "uint64",
+          "maximum": 3600,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
       "type": "object"
     },
     "Credential": {
@@ -500,7 +617,7 @@
           "properties": {
             "endpoint": {
               "default": "http://127.0.0.1:17681",
-              "description": "Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; commands forward that local port to the owned gateway.",
+              "description": "Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; providers forward free local ports of their own to the owned gateway, so this port is not bound.",
               "type": "string",
               "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS loopback endpoint and port."
             },
@@ -639,10 +756,35 @@
         }
       ]
     },
+    "Grant": {
+      "additionalProperties": false,
+      "description": "Endpoint grants added to the isolated preset, restricted to executables.",
+      "properties": {
+        "binaries": {
+          "description": "Executables allowed to use the endpoints. Omitted or empty selects the harness's executables.",
+          "items": {
+            "$ref": "#/$defs/PolicyBinary"
+          },
+          "type": "array"
+        },
+        "endpoints": {
+          "description": "Allowed destinations and optional application-protocol restrictions, in OpenShell's endpoint shape.",
+          "items": {
+            "$ref": "#/$defs/PolicyEndpoint"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "endpoints"
+      ],
+      "type": "object"
+    },
     "HardwareProfile": {
       "description": "GPU-family contracts, not model or whole-system qualifications. System profiles fix ARM64; GPU profiles require architecture. Each currently requires one visible GPU.",
       "enum": [
         "dgx-spark",
+        "rtx-spark",
         "dgx-station",
         "gb200",
         "gb300",
@@ -867,7 +1009,7 @@
       "properties": {
         "api": {
           "$ref": "#/$defs/InferenceApi",
-          "description": "Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers; explicit values are preserved for Fabric validation."
+          "description": "Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers. NemoClaw uses it to read the endpoint's model catalog; agents use the protocol their adapter selects for the provider."
         },
         "credential": {
           "$ref": "#/$defs/Credential",
@@ -1013,6 +1155,12 @@
             "provider": {
               "$ref": "#/$defs/SearchProvider",
               "description": "Supported search service."
+            },
+            "sandboxEnv": {
+              "description": "Variable name the sandbox sees for the key, such as BRAVE_SEARCH_API_KEY for Hermes's Brave plugin. Defaults to the credential's variable.",
+              "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+              "type": "string",
+              "x-nemoclaw-error": "web search sandboxEnv must be an environment variable name"
             }
           },
           "required": [
@@ -1021,22 +1169,237 @@
             "credential"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A key-authenticated HTTP API, such as an MCP service, with a gateway-held key.",
+          "properties": {
+            "authStyle": {
+              "$ref": "#/$defs/ApiAuthStyle",
+              "description": "How the key is sent: bearer, the default, as a bearer token, or header, as the raw value of headerName."
+            },
+            "credential": {
+              "$ref": "#/$defs/Credential",
+              "description": "Host environment reference holding the API key."
+            },
+            "endpoint": {
+              "description": "The API's HTTPS URL.",
+              "type": "string"
+            },
+            "headerName": {
+              "description": "The header that carries the key. Defaults to Authorization for bearer; required for header.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "api",
+              "description": "Integration implementation selected by this definition.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "endpoint",
+            "credential"
+          ],
+          "type": "object"
         }
       ]
     },
     "KubernetesAuthentication": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "issuer"
+                  ]
+                },
+                {
+                  "required": [
+                    "audience"
+                  ]
+                },
+                {
+                  "required": [
+                    "rolesClaim"
+                  ]
+                },
+                {
+                  "required": [
+                    "adminRole"
+                  ]
+                },
+                {
+                  "required": [
+                    "userRole"
+                  ]
+                },
+                {
+                  "required": [
+                    "scopesClaim"
+                  ]
+                },
+                {
+                  "required": [
+                    "caConfigMap"
+                  ]
+                },
+                {
+                  "required": [
+                    "tokenEnv"
+                  ]
+                }
+              ]
+            }
+          },
+          "if": {
+            "properties": {
+              "profile": {
+                "const": "oidc"
+              }
+            },
+            "required": [
+              "profile"
+            ]
+          },
+          "then": {
+            "required": [
+              "issuer",
+              "audience",
+              "tokenEnv"
+            ]
+          }
+        }
+      ],
+      "dependentRequired": {
+        "adminRole": [
+          "userRole"
+        ],
+        "userRole": [
+          "adminRole"
+        ]
+      },
       "description": "Authentication provisioned for a managed Kubernetes gateway.",
       "properties": {
+        "adminRole": {
+          "description": "Role that grants administrator access; set together with `userRole`, or neither for authentication only.",
+          "maxLength": 253,
+          "minLength": 1,
+          "type": "string"
+        },
+        "audience": {
+          "description": "Audience the gateway requires in tokens. Required for `oidc`.",
+          "maxLength": 253,
+          "minLength": 1,
+          "type": "string"
+        },
+        "caConfigMap": {
+          "description": "Existing ConfigMap in this deployment's namespace whose `ca.crt` verifies the issuer's TLS certificate; omit for a publicly trusted issuer.",
+          "maxLength": 253,
+          "minLength": 1,
+          "pattern": "^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\\s\\S])",
+          "type": "string",
+          "x-nemoclaw-error": "caConfigMap must be a Kubernetes ConfigMap name"
+        },
+        "issuer": {
+          "description": "HTTPS URL of the existing OIDC issuer. Required for `oidc`.",
+          "maxLength": 2048,
+          "minLength": 9,
+          "pattern": "^https://[^\\s/?#@]+(?:/[^\\s?#]*)?$(?![\\s\\S])",
+          "type": "string",
+          "x-nemoclaw-error": "the OIDC issuer must be an https URL without credentials, query, or fragment"
+        },
         "profile": {
-          "description": "Development generates the scoped local authentication fixture. Existing production issuers use gateway.management: external.",
+          "description": "`development` generates a scoped local issuer for isolated qualification; `oidc` uses an existing OIDC issuer.",
           "oneOf": [
             {
               "const": "development",
               "description": "Generated authentication for isolated development qualification only.",
               "type": "string"
+            },
+            {
+              "const": "oidc",
+              "description": "An existing OIDC issuer.",
+              "type": "string"
             }
           ]
+        },
+        "rolesClaim": {
+          "description": "Dot-separated path to the roles array in token claims, such as `groups` or `realm_access.roles`.",
+          "maxLength": 253,
+          "minLength": 1,
+          "type": "string"
+        },
+        "scopesClaim": {
+          "description": "Dot-separated path to the scopes array in token claims.",
+          "maxLength": 253,
+          "minLength": 1,
+          "type": "string"
+        },
+        "tokenEnv": {
+          "description": "Environment variable holding the bearer token NemoClaw sends to the gateway. Required for `oidc`; your identity provider's tooling obtains and refreshes it.",
+          "maxLength": 253,
+          "minLength": 1,
+          "not": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "PATH",
+                      "HOME",
+                      "USERPROFILE",
+                      "KUBECONFIG",
+                      "TMPDIR",
+                      "TMP",
+                      "TEMP",
+                      "SYSTEMROOT",
+                      "COMSPEC",
+                      "PATHEXT",
+                      "SHELL",
+                      "ENV",
+                      "BASH_ENV",
+                      "IFS",
+                      "CDPATH",
+                      "SSL_CERT_FILE",
+                      "SSL_CERT_DIR",
+                      "REQUESTS_CA_BUNDLE",
+                      "CURL_CA_BUNDLE",
+                      "HTTP_PROXY",
+                      "HTTPS_PROXY",
+                      "ALL_PROXY",
+                      "NO_PROXY",
+                      "KUBERNETES_MASTER",
+                      "KUBERNETES_SERVICE_HOST",
+                      "KUBERNETES_SERVICE_PORT",
+                      "KUBERNETES_SERVICE_PORT_HTTPS"
+                    ]
+                  },
+                  {
+                    "pattern": "^(?:PYTHON|HELM|LD_|DYLD_|TF_|TOFU_|PLUGIN_|NEMOCLAW_INTERNAL_)"
+                  }
+                ]
+              },
+              {
+                "const": "NEMOCLAW_KUBERNETES_STATE"
+              },
+              {
+                "pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"
+              }
+            ]
+          },
+          "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+          "type": "string",
+          "x-nemoclaw-error": "tokenEnv must be an environment variable name that does not shadow process, trust, proxy, or cluster controls"
+        },
+        "userRole": {
+          "description": "Role that grants user access; set together with `adminRole`, or neither for authentication only.",
+          "maxLength": 253,
+          "minLength": 1,
+          "type": "string"
         }
       },
       "required": [
@@ -1050,7 +1413,7 @@
       "properties": {
         "authentication": {
           "$ref": "#/$defs/KubernetesAuthentication",
-          "description": "Explicit generated development authentication profile; this is not a production identity service."
+          "description": "How the managed gateway authenticates users: a generated development issuer, or an existing OIDC issuer."
         },
         "context": {
           "description": "Exact kubeconfig context used for every cluster operation.",
@@ -1117,6 +1480,19 @@
           "type": "array",
           "uniqueItems": true,
           "x-nemoclaw-error": "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
+        },
+        "imagePullSecrets": {
+          "description": "Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them after the SDK creates the namespace, before its pods need to pull images.",
+          "items": {
+            "maxLength": 253,
+            "minLength": 1,
+            "pattern": "^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\\s\\S])",
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array",
+          "uniqueItems": true,
+          "x-nemoclaw-error": "image pull Secret references must be unique Kubernetes Secret names"
         },
         "kubeconfig": {
           "$ref": "#/$defs/Credential",
@@ -1408,6 +1784,13 @@
         ]
       },
       "properties": {
+        "grants": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Grant"
+          },
+          "description": "Named grants added to the isolated preset, each like an OpenShell network policy rule without its name. An explicit policy holds its own grants.",
+          "type": "object"
+        },
         "policy": {
           "$ref": "#/$defs/ExplicitPolicySelection",
           "description": "Complete authored OpenShell policy, replacing the isolated preset."
@@ -1642,6 +2025,15 @@
       "additionalProperties": false,
       "description": "Model settings for one named inference choice.",
       "properties": {
+        "extensions": {
+          "additionalProperties": true,
+          "description": "Model fields the selected adapter declares as extensions, such as Pi's context_window; Fabric validates them.",
+          "type": "object"
+        },
+        "harnessProvider": {
+          "description": "Fabric model provider the harness uses, such as custom. Defaults to the inference provider's API family.",
+          "type": "string"
+        },
         "maxTokens": {
           "description": "Maximum output tokens requested from the native adapter.",
           "format": "uint32",
@@ -1658,6 +2050,16 @@
           "additionalProperties": true,
           "description": "Opaque native model settings validated by Fabric's selected model schema.",
           "type": "object"
+        },
+        "temperature": {
+          "description": "Sampling temperature, passed to Fabric's temperature; Fabric validates the range.",
+          "format": "double",
+          "type": "number"
+        },
+        "topP": {
+          "description": "Nucleus sampling probability, passed to Fabric's top_p; Fabric validates the range.",
+          "format": "double",
+          "type": "number"
         }
       },
       "required": [
@@ -2047,6 +2449,28 @@
       ],
       "description": "A literal glob or a nonempty list of alternative globs."
     },
+    "Registry": {
+      "additionalProperties": false,
+      "description": "A registry NemoClaw authenticates to when pulling images through Docker.",
+      "properties": {
+        "address": {
+          "description": "Registry address, such as nvcr.io or registry.example.com:5000, matching its entry in the Docker configuration file.",
+          "maxLength": 253,
+          "minLength": 1,
+          "type": "string"
+        },
+        "configFile": {
+          "description": "Absolute path of the Docker configuration file that holds the login, on the machine running OpenTofu. Defaults to `.docker/config.json` in the user's home directory; `DOCKER_CONFIG` is not read.",
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "address"
+      ],
+      "type": "object"
+    },
     "Resources": {
       "additionalProperties": false,
       "description": "Resource declarations checked against host observations and produced data.",
@@ -2212,6 +2636,11 @@
           "$ref": "#/$defs/Agent",
           "description": "The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes."
         },
+        "driverConfig": {
+          "additionalProperties": true,
+          "description": "OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.",
+          "type": "object"
+        },
         "harness": {
           "$ref": "#/$defs/Harness",
           "description": "Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation."
@@ -2288,7 +2717,7 @@
       "type": "string"
     },
     "ServiceAuthentication": {
-      "description": "Generated bearer authentication for a managed inference service.",
+      "description": "Bearer authentication for a managed inference service.",
       "enum": [
         "bearer"
       ],
@@ -2372,7 +2801,8 @@
                           "profile": {
                             "not": {
                               "enum": [
-                                "dgx-spark"
+                                "dgx-spark",
+                                "rtx-spark"
                               ]
                             }
                           }
@@ -2587,7 +3017,8 @@
                           "profile": {
                             "not": {
                               "enum": [
-                                "dgx-spark"
+                                "dgx-spark",
+                                "rtx-spark"
                               ]
                             }
                           }
@@ -2711,7 +3142,7 @@
           "properties": {
             "authentication": {
               "$ref": "#/$defs/ServiceAuthentication",
-              "description": "Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving."
+              "description": "Optional native bearer authentication. The runtime uses a key supplied in NEMOCLAW_INFERENCE_KEY, or generates and retains one in its credential storage; omission preserves unauthenticated serving."
             },
             "container": {
               "$ref": "#/$defs/ServiceContainer",
@@ -2791,6 +3222,84 @@
             }
           },
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Image-owned container with explicit launch settings and bounded readiness.",
+          "properties": {
+            "command": {
+              "description": "Optional argument list for the image entrypoint, without implicit shell expansion.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "container": {
+              "$ref": "#/$defs/ContainerExecution",
+              "description": "Execution limits. These do not replace the image's model-memory policy."
+            },
+            "data": {
+              "$ref": "#/$defs/ContainerData",
+              "description": "Disposable application data. Omission provides /data; destroy removes this volume. Typed model services retain their own storage policy."
+            },
+            "environment": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Literal application settings, visible in configuration, plans/state, exports, and Docker inspection. No host-variable expansion or protected credential delivery.",
+              "propertyNames": {
+                "pattern": "^[A-Z_][A-Z0-9_]{0,127}$"
+              },
+              "type": "object"
+            },
+            "files": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Literal nonsecret configuration files uploaded before startup with mode 0444. Contents are retained in plans and state; these are not secret files or immutable mounts.",
+              "type": "object"
+            },
+            "image": {
+              "description": "Immutable application image. The image owns its entrypoint and default command.",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "type": "string",
+              "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
+            },
+            "kind": {
+              "const": "container",
+              "description": "Supported installer selected by this service definition.",
+              "type": "string"
+            },
+            "port": {
+              "description": "Listener inside the container. It must match the application's own configuration; omission uses publication.port when published.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "publication": {
+              "$ref": "#/$defs/ContainerPublication",
+              "description": "Optional loopback or private IPv4 TCP publication. Omission publishes no port."
+            },
+            "readiness": {
+              "$ref": "#/$defs/ContainerReadiness",
+              "description": "HTTP, managed-runtime status, or image HEALTHCHECK readiness on every apply."
+            },
+            "user": {
+              "default": "65532:65532",
+              "description": "Numeric UID:GID. Omission selects 65532:65532; root requires an explicit 0:0 for images that need it.",
+              "pattern": "^[0-9]{1,9}:[0-9]{1,9}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "image"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -2814,6 +3323,7 @@
                   "profile": {
                     "enum": [
                       "dgx-spark",
+                      "rtx-spark",
                       "dgx-station",
                       "gb200",
                       "gb300",
@@ -2838,7 +3348,8 @@
                 "properties": {
                   "profile": {
                     "enum": [
-                      "dgx-spark"
+                      "dgx-spark",
+                      "rtx-spark"
                     ]
                   }
                 },
@@ -3258,6 +3769,14 @@
             "pattern": "^[a-z][a-z0-9-]{0,39}$"
           },
           "type": "object"
+        },
+        "registries": {
+          "description": "Registries whose images NemoClaw pulls through Docker with the logins of the machine running OpenTofu, from its Docker configuration file. Lists addresses only; credentials stay in that file or its credential store.",
+          "items": {
+            "$ref": "#/$defs/Registry"
+          },
+          "maxItems": 32,
+          "type": "array"
         },
         "sandboxes": {
           "description": "One to 32 uniquely named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.",
@@ -3724,10 +4243,10 @@
   "type": "object",
   "x-nemoclaw-parser-checks": [
     "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
-    "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
-    "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and development authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
+    "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
+    "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
-    "Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
+    "Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.",
     "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",
     "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and missing agent references, and permits at most one attached web search definition per sandbox. Native search must be authored separately through public Fabric configuration and validated by Fabric. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
     "The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",

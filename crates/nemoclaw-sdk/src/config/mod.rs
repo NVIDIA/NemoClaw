@@ -38,7 +38,7 @@ pub(crate) mod validation;
 use sha2::{Digest, Sha256};
 use std::io::Read;
 pub use types::*;
-pub use validation::{is_fabric_harness, valid_name, validate_endpoint};
+pub use validation::{is_fabric_harness, valid_name, validate_endpoint, validate_endpoint_url};
 
 pub const API_VERSION: &str = "nemoclaw.nvidia.com/v1alpha1";
 pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
@@ -155,6 +155,7 @@ impl Document {
         if let Some(kubernetes) = g.as_kubernetes() {
             names.push(kubernetes.kubeconfig.env.as_str());
             names.extend(kubernetes.environment.iter().map(String::as_str));
+            names.extend(kubernetes.authentication.token_env.as_deref());
         }
         if let Some(c) = g.credential() {
             names.push(c.env.as_str());
@@ -183,6 +184,7 @@ impl Document {
             {
                 match binding.definition {
                     Integration::WebSearch(search) => names.push(&search.credential.env),
+                    Integration::Api(api) => names.push(&api.credential.env),
                 }
             }
         }
@@ -254,6 +256,13 @@ fn network_address(
     Ok(std::net::Ipv4Addr::from(address).to_string())
 }
 impl ManagedGateway {
+    /// These settings without the image acquisition policy, a mutable provider
+    /// attribute rather than container identity.
+    pub(crate) fn runtime_settings(&self) -> Self {
+        let mut settings = self.clone();
+        settings.image_pull_policy = None;
+        settings
+    }
     /// Resolve the first address after the configured network address.
     ///
     /// # Errors
@@ -310,7 +319,7 @@ impl Gateway {
     /// Explicit existing-cluster settings for a managed Kubernetes gateway.
     pub fn as_kubernetes(&self) -> Option<&ManagedKubernetes> {
         self.as_managed()
-            .and_then(|gateway| gateway.kubernetes.as_ref())
+            .and_then(|gateway| gateway.kubernetes.as_deref())
     }
     /// Local Docker or Podman installation settings; excludes Kubernetes targets.
     pub fn as_local_managed(&self) -> Option<&ManagedGateway> {

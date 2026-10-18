@@ -1,0 +1,49 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Itinerary",
+  "type": "object",
+  "required": ["days", "total"],
+  "additionalProperties": false,
+  "properties": {
+    "days": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["date", "items"],
+        "additionalProperties": false,
+        "properties": {
+          "date": { "type": "string", "format": "date" },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["topic", "option"],
+              "additionalProperties": false,
+              "properties": {
+                "topic": { "type": "string" },
+                "option": { "type": "string", "description": "A research result option ID." },
+                "start": { "type": "string", "format": "date-time" },
+                "price": { "type": "number", "minimum": 0 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "total": {
+      "type": "object",
+      "required": ["amount", "currency"],
+      "additionalProperties": false,
+      "properties": {
+        "amount": { "type": "number", "minimum": 0 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+      }
+    },
+    "problems": {
+      "type": "array",
+      "description": "Constraints the itinerary can't meet, and what would fix them.",
+      "items": { "type": "string" }
+    }
+  }
+}

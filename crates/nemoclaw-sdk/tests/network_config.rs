@@ -253,7 +253,10 @@ fn policy_choice_preserves_the_export_shape() {
             json!({"policy": explicit_input}),
         ),
     ] {
-        let network = Network { policy };
+        let network = Network {
+            policy,
+            grants: Default::default(),
+        };
         network.validate().unwrap();
         assert_eq!(serde_json::to_value(&network).unwrap(), expected);
         assert_eq!(

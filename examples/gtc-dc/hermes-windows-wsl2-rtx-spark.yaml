@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# GTC DC planned target, not live-qualified. See README.md.
+# Replace the deployment UID and zero image digests with owned build references.
+# Run the Linux ARM64 bundle in WSL2 on the 128 GB RTX Spark N1X configuration.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: gtc-dc-hermes-windows-wsl2-rtx-spark
+  uid: 2a960156-8713-4eda-9e2f-4f1810a7bb0b
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17907
+    engine: unix:///var/run/docker.sock
+    networkCIDR: 172.30.186.0/24
+  services:
+    super:
+      kind: vllm
+      hardware:
+        profile: rtx-spark
+      image: nc-prototype-vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      authentication: bearer
+      model:
+        repository: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+        revision: ff433f5493e25d631c9f12b5d55c674229923d02
+      container:
+        ipc: host
+        sharedMemoryGiB: 32
+      serving:
+        modelName: nemotron-3-super
+        toolParser: qwen3_coder
+        reasoningParser: nemotron_v3
+        mambaBackend: flashinfer
+        enforceEager: true
+        port: 19107
+        contextTokens: 65536
+        maxSequences: 1
+        batchTokens: 1024
+        speculativeTokens: 0
+        startupTimeoutSeconds: 3600
+      memory:
+        gpuMemoryGiB: 88
+        hostReserveGiB: 28
+        kvCacheGiB: 8
+        minAvailableGiB: 8
+        minFreeGiB: 3
+        freeGateGiB: 12
+        consecutiveSamples: 5
+  inferenceProviders:
+    - name: super
+      provider: openai
+      serviceRef: super
+  sandboxes:
+    - name: assistant
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.hermes
+        execution:
+          timeoutSeconds: 300
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: super
+              overrides:
+                model: nemotron-3-super
+                maxTokens: 1024

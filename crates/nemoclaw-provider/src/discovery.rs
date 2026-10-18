@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Engine reads for discovery: the selected engine's facts, and whether it
-//! meets a managed gateway's prerequisites for a compute driver.
+//! Whether an engine meets a managed gateway's prerequisites for a compute
+//! driver. `host_engine` reads the engine's facts.
 
 use crate::provider::ConfiguredBackend;
 use async_trait::async_trait;
-use nemoclaw_discovery::{observe_engine_facts, observe_gateway_prerequisites};
+use nemoclaw_discovery::observe_gateway_prerequisites;
 use nemoclaw_sdk::discovery::{DiscoveryRequest, ObservationStatus};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -15,20 +15,9 @@ use tf_provider::{
     value::{Value, ValueEmpty},
 };
 
-/// Data source for an engine's facts: version, platform, memory, and CPUs.
-pub(crate) struct EngineCapabilitiesDataSource(pub Arc<ConfiguredBackend>);
-
 /// Data source for whether an engine can host a managed gateway with a
 /// compute driver. The gateway installation types enforce the same check.
 pub(crate) struct GatewayPrerequisitesDataSource(pub Arc<ConfiguredBackend>);
-
-#[derive(Default, Serialize, Deserialize)]
-pub(crate) struct EngineCapabilitiesState {
-    engine: Value<String>,
-    observation_json: Value<String>,
-    available: Value<bool>,
-    status: Value<String>,
-}
 
 #[derive(Default, Serialize, Deserialize)]
 pub(crate) struct GatewayPrerequisitesState {
@@ -115,51 +104,6 @@ fn invalid(diags: &mut Diagnostics) {
 }
 
 #[async_trait]
-impl DataSource for EngineCapabilitiesDataSource {
-    type State<'a> = EngineCapabilitiesState;
-    type ProviderMetaState<'a> = ValueEmpty;
-
-    fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
-        Some(schema(&["engine"]))
-    }
-
-    async fn validate<'a>(
-        &self,
-        diags: &mut Diagnostics,
-        config: EngineCapabilitiesState,
-    ) -> Option<()> {
-        if engine_valid(&config.engine) {
-            Some(())
-        } else {
-            invalid(diags);
-            None
-        }
-    }
-
-    async fn read<'a>(
-        &self,
-        diags: &mut Diagnostics,
-        mut config: EngineCapabilitiesState,
-        _: ValueEmpty,
-    ) -> Option<EngineCapabilitiesState> {
-        if !engine_valid(&config.engine) {
-            invalid(diags);
-            return None;
-        }
-        let Value::Value(engine) = &config.engine else {
-            config.observation_json = Value::Unknown;
-            config.available = Value::Unknown;
-            config.status = Value::Unknown;
-            return Some(config);
-        };
-        let observation = observe_engine_facts(self.0.connections(), engine).await;
-        (config.observation_json, config.available, config.status) =
-            outputs(diags, &observation, observation.status)?;
-        Some(config)
-    }
-}
-
-#[async_trait]
 impl DataSource for GatewayPrerequisitesDataSource {
     type State<'a> = GatewayPrerequisitesState;
     type ProviderMetaState<'a> = ValueEmpty;
@@ -218,13 +162,6 @@ mod tests {
 
     const UNREACHABLE: &str = "unix:///does-not-exist/nemoclaw.sock";
 
-    fn engine_config() -> EngineCapabilitiesState {
-        EngineCapabilitiesState {
-            engine: Value::Value(UNREACHABLE.into()),
-            ..Default::default()
-        }
-    }
-
     fn prerequisites_config(driver: &str) -> GatewayPrerequisitesState {
         GatewayPrerequisitesState {
             engine: Value::Value(UNREACHABLE.into()),
@@ -242,16 +179,8 @@ mod tests {
 
     #[tokio::test]
     async fn unavailable_transport_returns_completed_unknown_observation_without_provider_error() {
-        let backend = Arc::new(ConfiguredBackend::default());
         let mut diagnostics = Diagnostics::default();
-        let engine = EngineCapabilitiesDataSource(backend.clone())
-            .read(&mut diagnostics, engine_config(), ValueEmpty::default())
-            .await
-            .unwrap();
-        assert!(matches!(engine.available, Value::Value(false)));
-        assert!(matches!(engine.status, Value::Value(ref status) if status == "unknown"));
-        assert_eq!(status(&engine.observation_json), "unknown");
-        let prerequisites = GatewayPrerequisitesDataSource(backend)
+        let prerequisites = GatewayPrerequisitesDataSource(Arc::new(ConfiguredBackend::default()))
             .read(
                 &mut diagnostics,
                 prerequisites_config("podman"),
@@ -266,13 +195,8 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_inputs_validate_without_connecting_and_invalid_values_do_not_leak() {
-        let backend = Arc::new(ConfiguredBackend::default());
-        let engine = EngineCapabilitiesDataSource(backend.clone());
-        let prerequisites = GatewayPrerequisitesDataSource(backend);
+        let prerequisites = GatewayPrerequisitesDataSource(Arc::new(ConfiguredBackend::default()));
         let mut diagnostics = Diagnostics::default();
-        let mut unknown = engine_config();
-        unknown.engine = Value::Unknown;
-        assert!(engine.validate(&mut diagnostics, unknown).await.is_some());
         let mut unknown = prerequisites_config("docker");
         unknown.engine = Value::Unknown;
         unknown.compute_driver = Value::Unknown;
@@ -282,9 +206,6 @@ mod tests {
                 .await
                 .is_some()
         );
-        let mut invalid = engine_config();
-        invalid.engine = Value::Value("PRIVATE_SENTINEL".into());
-        assert!(engine.validate(&mut diagnostics, invalid).await.is_none());
         let invalid = prerequisites_config("PRIVATE_SENTINEL");
         assert!(
             prerequisites
@@ -293,46 +214,5 @@ mod tests {
                 .is_none()
         );
         assert!(!format!("{diagnostics:?}").contains("PRIVATE_SENTINEL"));
-    }
-
-    /// Engine facts serve every reader, so they take no compute driver; the
-    /// gateway's driver-specific check is a separate read.
-    #[test]
-    fn engine_facts_take_only_the_engine_and_prerequisites_take_the_driver() {
-        let backend = Arc::new(ConfiguredBackend::default());
-        let names = |schema: Schema| {
-            let mut names: Vec<_> = schema.block.attributes.into_keys().collect();
-            names.sort();
-            names
-        };
-        let engine = EngineCapabilitiesDataSource(backend.clone())
-            .schema(&mut Diagnostics::default())
-            .unwrap();
-        assert_eq!(
-            names(engine),
-            ["available", "engine", "observation_json", "status"]
-        );
-        let prerequisites = GatewayPrerequisitesDataSource(backend)
-            .schema(&mut Diagnostics::default())
-            .unwrap();
-        assert_eq!(
-            names(prerequisites),
-            [
-                "available",
-                "compute_driver",
-                "engine",
-                "observation_json",
-                "status"
-            ]
-        );
-        for (state, attributes) in [
-            (serde_json::to_value(engine_config()).unwrap(), 4),
-            (
-                serde_json::to_value(prerequisites_config("docker")).unwrap(),
-                5,
-            ),
-        ] {
-            assert_eq!(state.as_object().unwrap().len(), attributes);
-        }
     }
 }

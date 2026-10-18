@@ -1,16 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! vLLM installer launch behavior; model and hardware qualification belongs to recipes.
-use crate::config::ComputeDriver;
+use super::container::base;
 mod config;
-mod container;
 mod hardware_profile;
 mod service_hardware;
+pub use super::container::{ServiceContainer, ServiceIpc};
 use crate::Error;
 pub use crate::services::placement::{ServicePlacement, ServicePublication};
 pub use config::{Memory, Model, Service, ServiceAuthentication, Serving};
-pub(crate) use container::DEFAULT_MEMORY_LIMIT_GIB;
-pub use container::{ServiceContainer, ServiceIpc};
 pub use hardware_profile::HardwareProfile;
 #[cfg(test)]
 use nemoclaw_runtime::vllm::arguments;
@@ -20,12 +18,11 @@ pub(crate) mod schema;
 mod tests;
 
 use crate::{
-    compile::{Generations, Target},
+    compile::Generations,
     config::{ConfigError, Document},
-    managed::{Process, Spec, Storage},
+    managed::{Process, Spec},
     services::contract::{InstallPlan, Installer, RemovePlan},
 };
-use std::collections::BTreeMap;
 
 pub const SERVICE_KIND: &str = "inference_service";
 pub const STORAGE_KIND: &str = "inference_storage";
@@ -63,21 +60,15 @@ pub(crate) fn service_address(name: &str) -> String {
 }
 
 fn address(kind: &str, name: &str) -> String {
-    format!("nemoclaw_{kind}.inference_{name}")
+    format!("{}.inference_{name}", crate::compile::resource_type(kind))
 }
 
-fn targets(
+fn specification(
     document: &Document,
     name: &str,
     service: &Service,
     generations: &Generations,
-) -> Result<(Vec<Target>, Spec), Error> {
-    let generation = generations
-        .get(SERVICE_KIND)
-        .filter(|value| !value.is_empty())
-        .ok_or(crate::config::ConfigError::new(
-            "missing resource generation",
-        ))?;
+) -> Result<Spec, Error> {
     let runtime_service = service.runtime_settings();
     let mut image_labels = service
         .recipe
@@ -85,10 +76,6 @@ fn targets(
         .map(|recipe| recipe.compatibility.image_labels.clone())
         .unwrap_or_default();
     image_labels.insert("org.nemoclaw.backend".into(), "vllm".into());
-    image_labels.insert(
-        nemoclaw_runtime::SPEC_VERSION_LABEL.into(),
-        nemoclaw_runtime::SPEC_VERSION.into(),
-    );
     if service.authentication.is_some() {
         image_labels.insert(
             "org.nemoclaw.inference.authentication".into(),
@@ -102,77 +89,34 @@ fn targets(
         service.serving.port,
     )?;
     let architecture = service.architecture()?.to_owned();
-    let resources = ServiceContainer::resources(service.container.as_ref());
-    let process = Process {
-        engine: placed.engine.clone(),
-        image: service.image.clone(),
-        network_cidr: placed.network_cidr.clone(),
-        create_network: placed.explicit,
-        architecture,
-        image_labels,
-        pull_image: false,
-        image_pull_policy: None,
-        configuration: serde_json::to_string(&nemoclaw_runtime::RuntimeSpec::Vllm(Box::new(
-            runtime_service,
-        )))
-        .map_err(|_| Error::State("cannot serialize service runtime configuration"))?,
-        entrypoint: vec!["/usr/local/bin/nemoclaw-runtime".into()],
-        command: Vec::new(),
-        mount_target: "/data".into(),
-        bind_address: placed.bind_address,
-        port: service.serving.port as u16,
-        shared_memory_bytes: resources.shared_memory_bytes,
-        host_ipc: resources.host_ipc,
-        cpu_limit_millis: resources.cpu_limit_millis,
-        memory_bytes: resources.memory_bytes,
-        gpu: true,
-    };
-    let spec = Spec {
-        layout: 0,
-        compute_driver: ComputeDriver::Docker,
-        kind: SERVICE_KIND.into(),
-        name: format!("{}-inference-{name}", document.workspace()),
-        owner: document.metadata.uid.clone(),
-        generation: generation.clone(),
-        gateway: if placed.explicit {
+    let process = base::managed_process(
+        nemoclaw_runtime::RuntimeSpec::Vllm(Box::new(runtime_service)),
+        service.container.as_ref(),
+        Process {
+            engine: placed.engine.clone(),
+            image: service.image.clone(),
+            network_cidr: placed.network_cidr.clone(),
+            create_network: placed.explicit,
+            architecture,
+            image_labels,
+
+            bind_address: placed.bind_address,
+            port: service.serving.port as u16,
+            ..Process::default()
+        },
+    )?;
+    base::specification(
+        document,
+        generations,
+        SERVICE_KIND,
+        format!("{}-inference-{name}", document.workspace()),
+        if placed.explicit {
             Default::default()
         } else {
             document.spec.gateway.managed()?.runtime_settings()
         },
-        process: Some(process),
-    };
-    let storage = Storage {
-        name: format!("{}-data", spec.name),
-        owner: spec.owner.clone(),
-        generation: spec.generation.clone(),
-        engine: spec.engine().to_owned(),
-    };
-    let mut values = crate::backend::Row::from([("spec".into(), spec.json()?)]);
-    if let Some(policy) = service.image_pull_policy {
-        values.insert("image_pull_policy".into(), policy.as_str().into());
-    }
-    let mut result = vec![
-        Target {
-            kind: STORAGE_KIND.into(),
-            address: address(STORAGE_KIND, name),
-            values: storage.row()?,
-        },
-        Target {
-            kind: SERVICE_KIND.into(),
-            address: address(SERVICE_KIND, name),
-            values,
-        },
-    ];
-    if service.authentication.is_some() {
-        let mut credentials = storage.clone();
-        credentials.name = format!("{}-auth", spec.name);
-        result.push(Target {
-            kind: STORAGE_KIND.into(),
-            address: address(STORAGE_KIND, &format!("{name}_auth")),
-            values: credentials.row()?,
-        });
-    }
-    Ok((result, spec))
+        process,
+    )
 }
 
 impl Installer for Service {
@@ -182,19 +126,35 @@ impl Installer for Service {
         name: &str,
         generations: &Generations,
     ) -> Result<InstallPlan, Error> {
-        let (targets, _) = targets(document, name, self, generations)?;
-        let service = address(SERVICE_KIND, name);
-        let mut service_dependencies = vec![address(STORAGE_KIND, name)];
+        let spec = specification(document, name, self, generations)?;
+        let mut preparation = InstallPlan::default();
         if self.authentication.is_some() {
-            service_dependencies.push(address(STORAGE_KIND, &format!("{name}_auth")));
+            let credentials = address(STORAGE_KIND, &format!("{name}_auth"));
+            preparation.targets.push(base::storage_target(
+                &spec,
+                STORAGE_KIND,
+                credentials.clone(),
+                format!("{}-auth", spec.name),
+            )?);
+            preparation
+                .dependencies
+                .insert(address(SERVICE_KIND, name), vec![credentials]);
         }
         if document.spec.gateway.as_managed().is_some() && self.placement.is_none() {
-            service_dependencies.insert(0, "openshell_podman_gateway.runtime".into());
+            preparation
+                .dependencies
+                .entry(address(SERVICE_KIND, name))
+                .or_default()
+                .push("openshell_podman_gateway.runtime".into());
         }
-        Ok(InstallPlan {
-            targets,
-            dependencies: BTreeMap::from([(service, service_dependencies)]),
-        })
+        base::install(
+            spec,
+            &format!("inference_{name}"),
+            STORAGE_KIND,
+            self.image_pull_policy,
+            Default::default(),
+            preparation,
+        )
     }
 
     fn remove(
@@ -203,18 +163,17 @@ impl Installer for Service {
         name: &str,
         _generations: &Generations,
     ) -> Result<RemovePlan, Error> {
-        let mut retained = vec![crate::docker_compute::address(&address(STORAGE_KIND, name))];
+        let mut plan = RemovePlan {
+            retained: vec![crate::docker_compute::address(&address(STORAGE_KIND, name))],
+            required_storage: Vec::new(),
+        };
         if self.authentication.is_some() {
-            retained.insert(0, address(STORAGE_KIND, &format!("{name}_auth")));
+            let storage = address(STORAGE_KIND, &format!("{name}_auth"));
+            plan.retained.insert(0, storage.clone());
+            plan.required_storage
+                .push((address(SERVICE_KIND, name), storage));
         }
-        Ok(RemovePlan {
-            required_storage: retained
-                .iter()
-                .filter(|storage| !storage.starts_with("docker_volume."))
-                .map(|storage| (address(SERVICE_KIND, name), storage.clone()))
-                .collect(),
-            retained,
-        })
+        Ok(plan)
     }
 }
 
@@ -228,15 +187,10 @@ impl Service {
         if self.authentication.is_none() {
             return Ok(None);
         }
-        let (_, spec) = targets(document, name, self, generations)?;
+        let spec = specification(document, name, self, generations)?;
         Ok(Some(crate::services::authentication::source_json(
             &crate::services::authentication::Source::ManagedService {
-                storage: crate::managed::Storage {
-                    name: format!("{}-auth", spec.name),
-                    owner: spec.owner.clone(),
-                    generation: spec.generation.clone(),
-                    engine: spec.engine().into(),
-                },
+                storage: base::storage(&spec, format!("{}-auth", spec.name)),
                 container: spec.name.clone(),
                 endpoint: {
                     let process = spec

@@ -30,9 +30,12 @@ pub fn policy_input(
             ));
         }
         let mut rule = crate::config::search_policy(search.provider);
-        rule.name = search
-            .provider
-            .image_profile(&document.image_scope(sandbox)?);
+        rule.name = nemoclaw_openshell::search::web_search_names(
+            search.provider,
+            &search.credential.env,
+            &document.image_scope(sandbox)?,
+        )
+        .0;
         rule.binaries.clear();
         managed.insert(rule.name.clone(), rule);
     }
@@ -64,6 +67,21 @@ pub fn policy_input(
             .map_err(|_| ConfigError::new("cannot represent inference policy"))?;
         managed.extend(policy.network_policies);
     }
+    for (name, grant) in &sandbox.network.grants {
+        if managed.contains_key(name) {
+            return Err(ConfigError::new(
+                "a network grant name is reserved for inference or web search",
+            ));
+        }
+        managed.insert(
+            name.clone(),
+            crate::config::PolicyRule {
+                name: name.clone(),
+                endpoints: grant.endpoints.clone(),
+                binaries: grant.binaries.clone(),
+            },
+        );
+    }
     if explicit.as_ref().is_some_and(|policy| {
         managed
             .keys()
@@ -75,7 +93,14 @@ pub fn policy_input(
     }
     Ok(PolicyInput {
         explicit,
-        managed,
+        // Each grant is named by its rule.
+        managed: managed
+            .into_iter()
+            .map(|(name, mut rule)| {
+                rule.name = name;
+                rule
+            })
+            .collect(),
         cluster_grants: Default::default(),
     })
 }

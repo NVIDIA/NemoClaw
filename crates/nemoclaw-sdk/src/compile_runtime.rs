@@ -56,7 +56,7 @@ fn runtime_targets_with_plans(
                     },
                 )?
                 .into(),
-                settings: settings.runtime_settings(),
+                settings: settings.clone(),
             };
             Ok(Target {
                 kind: kind.into(),
@@ -92,6 +92,7 @@ fn runtime_targets_with_plans(
         owner: document.metadata.uid.clone(),
         generation: generation(generations, GATEWAY_KIND)?.into(),
         gateway: settings.runtime_settings(),
+        image: crate::config::DEFAULT_GATEWAY_IMAGE.into(),
         process: None,
     };
     // The listen port changes Docker compute, not initialized data or credentials.
@@ -127,7 +128,7 @@ pub(crate) fn runtime_graph(
         generations,
         crate::services::InstallStage::Runtime,
     )?;
-    let mut graph = graph_base(document, version)?;
+    let mut graph = graph_base(document, generations, version)?;
     if document.spec.gateway.as_kubernetes().is_some() {
         // Platform resources must be plannable before the gateway exists. The
         // openshell provider installs it here; the fabric provider only
@@ -152,6 +153,9 @@ pub(crate) fn runtime_graph(
                 if name == crate::kubernetes::ENVIRONMENT_FIELD {
                     attributes["environment"] = serde_json::from_str(value)
                         .map_err(|_| Error::State("invalid Kubernetes environment"))?;
+                } else if name == crate::kubernetes::OIDC_FIELD {
+                    // The provider takes the settings as JSON text.
+                    attributes["oidc"] = json!(value.replace("${", "$${").replace("%{", "%%{"));
                 } else {
                     attributes[name] = json!(value.replace("${", "$${").replace("%{", "%%{"));
                 }
@@ -170,11 +174,10 @@ pub(crate) fn runtime_graph(
             let (kind, name) = target.address.split_once('.').unwrap();
             graph["resource"][kind][name] = attributes;
         }
-        let gateway = targets
-            .iter()
-            .find(|target| target.kind == crate::kubernetes::GATEWAY_KIND)
-            .expect("Kubernetes gateway target");
-        let spec = crate::kubernetes::Spec::from_row(&gateway.kind, &gateway.values)?;
+        // Helm also consumes settings that the platform resources do not need.
+        let spec = crate::kubernetes::gateway_spec(document, generations)?.ok_or(Error::State(
+            "managed Kubernetes gateway settings are missing",
+        ))?;
         crate::kubernetes::gateway::configure(&mut graph, &spec)?;
         return Ok((graph, targets));
     }
@@ -233,6 +236,7 @@ pub(crate) fn compiled_runtime(
 ) -> Result<(Value, Vec<Target>), Error> {
     let (mut graph, targets) = runtime_graph(document, generations, version)?;
     crate::docker_compute::configure(&mut graph, &targets)?;
+    crate::docker_compute::authenticate(&mut graph, &document.spec.registries);
     if let Some(gateway) = targets.iter().find(|target| target.kind == GATEWAY_KIND)
         && document.spec.gateway.runtime().provider == ComputeDriver::Docker
     {
@@ -256,28 +260,6 @@ pub(crate) fn compiled_runtime(
         dependencies.push(json!("data.openshell_docker_gateway_readiness.current"));
         capabilities["depends_on"] = json!(dependencies);
     }
-    for target in targets
-        .iter()
-        .filter(|target| matches!(target.kind.as_str(), "inference_service" | "ollama_service"))
-    {
-        let container = crate::docker_compute::address(&target.address);
-        let logical = container.split_once('.').unwrap().1;
-        let spec = Spec::from_values(&target.kind, &target.values)?;
-        let literal = |value: &str| value.replace("${", "$${").replace("%{", "%%{");
-        let source = if target.kind == "inference_service" {
-            crate::services::installers::vllm::RUNTIME_DATA_SOURCE
-        } else {
-            crate::services::installers::ollama::RUNTIME_DATA_SOURCE
-        };
-        // Readiness checks the contract the container runs with.
-        graph["data"]["nemoclaw_service_readiness"][logical] = json!({
-            "engine":literal(spec.engine()),
-            "name":literal(&spec.name),
-            "contract":format!("${{data.nemoclaw_{source}.{logical}.spec}}"),
-            "container_id":format!("${{{container}.id}}"),
-            "read_trigger":"${timestamp() != \"\"}",
-            "wait_timeout_seconds":9 * 3600
-        });
-    }
+    crate::services::configure_readiness(&mut graph, &targets)?;
     Ok((graph, crate::docker_compute::targets(&targets)?))
 }

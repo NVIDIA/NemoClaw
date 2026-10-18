@@ -18,7 +18,9 @@ mod kube_api;
 use http_fixture as transport;
 pub use nemoclaw_test_fixtures::{openshell, tofu};
 
+mod api;
 mod capabilities;
+mod driver_config;
 // Gateway installation: Docker gateway reads, the Podman gateway and its
 // storage, and the Kubernetes gateway types.
 // A managed gateway needs a local engine, which only Unix clients reach.
@@ -29,9 +31,13 @@ mod gateway_readiness;
 // clients reach.
 #[cfg(unix)]
 mod gateway_storage;
+mod inference;
 mod kubernetes_hcl;
 mod kubernetes_lifecycle;
+mod sandbox_providers;
+mod services;
 mod standalone;
+mod web_search;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract/fixtures");
 
@@ -52,7 +58,6 @@ pub fn workspace() -> TofuWorkspace {
     TofuWorkspace::with_providers(
         bundle.tofu(),
         &[
-            ("nemoclaw", &bundle.provider("nemoclaw")),
             ("openshell", &provider()),
             ("fabric", &bundle.provider("fabric")),
         ],
@@ -76,13 +81,21 @@ pub fn assert_same_managed_resources(actual: &[u8], expected: &[u8]) {
     assert_eq!(managed(actual), managed(expected));
 }
 
-/// Credential variables the fixture's registrations name, with fixture values.
+/// Credential variables the fixture's registrations, inference servers, and
+/// web search resources name, with fixture values.
 fn credentials(fixture: &Value) -> BTreeSet<String> {
-    fixture["resource"]["openshell_provider_registration"]
+    let direct = ["openshell_provider_registration", "openshell_web_search"]
+        .into_iter()
+        .filter_map(|kind| fixture["resource"][kind].as_object())
+        .flat_map(|registrations| registrations.values())
+        .filter_map(|registration| registration["credential_env"].as_str());
+    let servers = fixture["resource"]["openshell_inference"]
         .as_object()
         .into_iter()
         .flat_map(|registrations| registrations.values())
-        .filter_map(|registration| registration["credential_env"].as_str())
+        .filter_map(|registration| registration["server"]["credential_env"].as_str());
+    direct
+        .chain(servers)
         .filter(|name| !name.is_empty())
         .map(str::to_owned)
         .collect()
@@ -185,13 +198,16 @@ fn every_type_has_a_contract_test() {
         )
         .collect();
     let mut sources = [
+        include_str!("api.rs"),
         include_str!("capabilities.rs"),
         include_str!("gateway_installation.rs"),
         include_str!("gateway_readiness.rs"),
         include_str!("gateway_storage.rs"),
         include_str!("kubernetes_hcl.rs"),
         include_str!("kubernetes_lifecycle.rs"),
+        include_str!("inference.rs"),
         include_str!("standalone.rs"),
+        include_str!("web_search.rs"),
     ]
     .concat();
     for entry in fs::read_dir(FIXTURES).unwrap() {
@@ -250,8 +266,8 @@ macro_rules! fixtures {
                 .collect();
             for kind in [
                 "openshell_workspace",
-                "openshell_provider_profile",
-                "openshell_provider_registration",
+                "openshell_inference",
+                "openshell_web_search",
                 "openshell_sandbox",
                 "openshell_gateway",
             ] {
@@ -274,14 +290,12 @@ fixtures! {
     fabric_pi => "fabric-pi",
     fabric_remote_agent => "fabric-remote-agent",
     hermes_auth => "hermes-auth",
-    hermes_interfaces => "hermes-interfaces",
     inference_tuning => "inference-tuning",
     inline_inference => "inline-inference",
     local => "local",
     multiple_models => "multiple-models",
     multiple_providers => "multiple-providers",
     multiple_sandboxes => "multiple-sandboxes",
-    openclaw_dashboard => "openclaw-dashboard",
-    openclaw_web_search => "openclaw-web-search",
-    tavily_web_search => "tavily-web-search",
+    openclaw => "openclaw",
+    web_search => "web-search",
 }

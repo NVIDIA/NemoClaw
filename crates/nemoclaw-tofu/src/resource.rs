@@ -200,9 +200,12 @@ impl ResourceAdapter {
             }
         }
     }
+    /// The backend row for `state`. Derived attributes stay out: backends
+    /// never observe them, and they are recomputed from every observation.
     fn row(&self, state: &State, creating: bool) -> Result<Row, ObservationError> {
         state
             .iter()
+            .filter(|(k, _)| !self.definition.derived.iter().any(|(name, _)| name == k))
             .map(|(k, v)| match v {
                 Value::Value(v) => Ok((k.clone(), v.clone())),
                 Value::Unknown | Value::Null if self.definition.is_computed(k) => {
@@ -478,15 +481,31 @@ impl Resource for ResourceAdapter {
             // installation. Apply still reconciles running:false.
             state.insert("running".into(), running.clone());
         }
-        if self.definition.refuse_replacement && !replacements.is_empty() {
+        let refusal = if replacements.is_empty() {
+            None
+        } else if self.definition.refuse_replacement {
+            Some(
+                "Replacement would discard retained identity; use explicit teardown and a new resource identity",
+            )
+        } else {
+            self.definition
+                .refuse_replacement_when
+                .and_then(|refuse| refuse(&prior, &state))
+        };
+        if let Some(reason) = refusal {
             let name = match prior.get("name") {
                 Some(Value::Value(name)) => name.as_str(),
                 _ => "unknown",
             };
-            diags.root_error("Resource replacement refused", format!(
-                "{}/{}: changed fields: {}. Replacement would discard retained identity or sandbox files; use explicit teardown and a new resource identity",
-                self.definition.kind, name.escape_default(), replacements.join(", "),
-            ));
+            diags.root_error(
+                "Resource replacement refused",
+                format!(
+                    "{}/{}: changed fields: {}. {reason}",
+                    self.definition.kind,
+                    name.escape_default(),
+                    replacements.join(", "),
+                ),
+            );
             return None;
         }
         Some((
@@ -503,9 +522,12 @@ impl Resource for ResourceAdapter {
         _: ValueEmpty,
     ) -> Option<ValueEmpty> {
         if self.protected_binding() {
-            diags.root_error_short(
-                "Sandbox deletion requires destroy = true because files and history are removed; workspaces must be retained",
-            );
+            diags.root_error_short(match self.definition.protection {
+                Protection::Always => "This resource is retained and cannot be deleted",
+                _ => {
+                    "Deletion requires the provider's destroy = true, because it removes data such as sandbox files and history"
+                }
+            });
             return None;
         }
         Some(private)

@@ -177,8 +177,7 @@ async fn managed_installers_accept_current_runtime_readiness_without_collecting_
         let connections =
             crate::docker::Connections::fixed([fixture.engine_for(spec.engine())]).unwrap();
         assert!(
-            graph["resource"]["nemoclaw_inference_storage"].is_null()
-                && graph["resource"]["nemoclaw_ollama_service_storage"].is_null(),
+            graph["resource"]["vllm_credential_storage"].is_null(),
             "unauthenticated compute must not require immutable cache identity"
         );
         let cancel = crate::CancellationToken::new();

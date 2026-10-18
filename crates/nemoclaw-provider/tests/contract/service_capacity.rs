@@ -45,7 +45,9 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
     .map(|kind| (kind.into(), "a".repeat(32)))
     .into();
     let compiled = compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
-    assert!(compiled["data"]["nemoclaw_service_capacity"].is_null());
+    for source in ["vllm_capacity", "ollama_capacity"] {
+        assert!(compiled["data"][source].is_null(), "{source}");
+    }
     // Capacity is opt-in. Exercise the production data source with an explicit
     // consumer without creating model processes or contacting a live gateway.
     // Capacity takes each service's runtime contract.
@@ -62,12 +64,12 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
         })
         .collect();
     assert_eq!(contracts.len(), 2);
-    let capacity = "data.nemoclaw_service_capacity.selected";
+    let capacity = "data.vllm_capacity.selected";
     let condition = json!({"precondition":[{
         "condition":format!("${{{capacity}.compatible}}"),
         "error_message":format!("Combined service memory requires ${{{capacity}.required_bytes}} bytes; observed ${{{capacity}.observed_bytes}} bytes.")
     }]});
-    let mut graph = json!({"terraform":{"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}}, "provider":{"nemoclaw":{}}, "data":{"nemoclaw_service_capacity":{"selected":{"engine":"ssh://operator@gpu-box","contracts":contracts}}}, "resource":{"terraform_data":{"consumer":{"input":"capacity checked", "lifecycle":condition}}}});
+    let mut graph = json!({"terraform":{"required_version":"= 1.12.6", "required_providers":{"vllm":{"source":"registry.opentofu.org/nvidia/vllm"}}}, "provider":{"vllm":{}}, "data":{"vllm_capacity":{"selected":{"engine":"ssh://operator@gpu-box","contracts":contracts}}}, "resource":{"terraform_data":{"consumer":{"input":"capacity checked", "lifecycle":condition}}}});
     let write_graph =
         |graph: &Value| fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     let control = |value: Value| fs::write(root.join("control.json"), value.to_string()).unwrap();
@@ -115,7 +117,7 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
         run(&["plan", "-input=false"], false);
         assert_eq!(fs::read(root.join("terraform.tfstate")).unwrap(), prior);
     }
-    let source = graph["data"]["nemoclaw_service_capacity"]
+    let source = graph["data"]["vllm_capacity"]
         .as_object_mut()
         .unwrap()
         .values_mut()
@@ -146,4 +148,73 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
     let state: Value =
         serde_json::from_slice(&fs::read(root.join("engine.json")).unwrap()).unwrap();
     assert_eq!(state["effects"], 0);
+}
+
+/// Each runtime's reads take only its own contracts: Ollama's readiness and
+/// capacity reject a vLLM contract during validation, before contacting any
+/// engine, and name the provider that reads it.
+#[test]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
+fn ollama_reads_reject_a_vllm_contract() {
+    let document =
+        Document::parse(include_bytes!("../../../../examples/spark/two-models.yaml").as_slice())
+            .unwrap();
+    let mut value = serde_json::to_value(document).unwrap();
+    value["spec"]["gateway"] = json!({"management":"external", "endpoint":"http://127.0.0.1:1"});
+    // With an external gateway, services name their own engine.
+    for service in value["spec"]["services"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+    {
+        service["placement"] =
+            json!({"engine":"ssh://operator@gpu-box", "networkCidr":"172.30.180.0/24"});
+        service["publication"] = json!({"endpoint":format!("http://10.0.0.8:{}/v1",service["serving"]["port"]),"bindAddress":"10.0.0.8"});
+    }
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    let generations = ["workspace", "provider", "sandbox", "inference_service"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    let contract = compile::runtime_targets(&document, &generations)
+        .unwrap()
+        .into_iter()
+        .find(|target| target.kind == "inference_service")
+        .map(|target| {
+            serde_json::from_str::<nemoclaw_sdk::managed::Spec>(&target.values["spec"])
+                .unwrap()
+                .runtime_configuration()
+                .unwrap()
+                .to_owned()
+        })
+        .unwrap();
+    let directory = crate::workspace();
+    let engine = "ssh://operator@gpu-box";
+    for (source, inputs) in [
+        (
+            "ollama_readiness",
+            json!({"engine":engine, "name":"qwen", "contract":contract, "container_id":"owned"}),
+        ),
+        (
+            "ollama_capacity",
+            json!({"engine":engine, "contracts":[contract]}),
+        ),
+    ] {
+        let graph = json!({
+            "terraform":{"required_version":"= 1.12.6", "required_providers":{"ollama":{"source":"registry.opentofu.org/nvidia/ollama"}}},
+            "provider":{"ollama":{}},
+            "data":{source:{"selected":inputs}}
+        });
+        fs::write(directory.path().join("main.tf.json"), graph.to_string()).unwrap();
+        let output = directory
+            .command()
+            .args(["validate", "-no-color"])
+            .output()
+            .unwrap();
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{source}");
+        assert!(
+            diagnostic.contains("a vLLM contract; read it with the vllm provider"),
+            "{source}: {diagnostic}"
+        );
+    }
 }

@@ -33,6 +33,7 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
     }).await;
     let directory = crate::workspace();
     let root = directory.path();
+    // One engine read answers both the engine facts and the advertised hardware.
     // An engine nothing serves: a missing socket, or a closed loopback port.
     let unreachable = if cfg!(unix) {
         format!("unix://{}", root.join("missing.sock").display())
@@ -40,10 +41,10 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
         "ssh://127.0.0.1:1".to_owned()
     };
     let config = json!({
-        "terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"nvidia/nemoclaw"},"fabric":{"source":"nvidia/fabric"}}},
-        "provider":{"nemoclaw":{},"fabric":{}},
+        "terraform":{"required_version":"= 1.12.6","required_providers":{"host":{"source":"nvidia/host"},"fabric":{"source":"nvidia/fabric"}}},
+        "provider":{"host":{},"fabric":{}},
         "data":{
-            "nemoclaw_engine_capabilities":{
+            "host_engine":{
                 "present":{"engine":fixture.endpoint},
                 "unknown":{"engine":unreachable}
             },
@@ -53,8 +54,11 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
             }
         },
         "output":{
-            "engine":{"value":"${data.nemoclaw_engine_capabilities.present.observation_json}"},
-            "unknown":{"value":"${data.nemoclaw_engine_capabilities.unknown.observation_json}"},
+            "engine":{"value":"${data.host_engine.present.engine_json}"},
+            "hardware":{"value":"${data.host_engine.present.hardware_json}"},
+            "status":{"value":"${data.host_engine.present.status}"},
+            "unknown":{"value":"${data.host_engine.unknown.engine_json}"},
+            "unknown_hardware":{"value":"${data.host_engine.unknown.hardware_json}"},
             "fabric":{"value":"${data.fabric_harnesses.present.observation_json}"},
             "absent":{"value":"${data.fabric_harnesses.absent.observation_json}"}
         }
@@ -82,7 +86,13 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
     };
     assert_eq!(observation("engine")["status"], "available");
     assert_eq!(observation("engine")["architecture"], "arm64");
+    assert_eq!(
+        plan["planned_values"]["outputs"]["status"]["value"],
+        "available"
+    );
+    assert!(observation("hardware")["status"].is_string());
     assert_eq!(observation("unknown")["status"], "unknown");
+    assert_eq!(observation("unknown_hardware")["status"], "unknown");
     assert_eq!(observation("absent")["status"], "unavailable");
     assert_eq!(
         observation("fabric")["catalog"],
@@ -180,7 +190,7 @@ output "status" {{
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
-async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabilities() {
+async fn compiled_discovery_requires_the_image_runtime_metadata() {
     use nemoclaw_sdk::{compile::compile, config::Document};
     let document =
         Document::parse(include_bytes!("../../../../examples/onboarding/openclaw.yaml").as_slice())
@@ -206,10 +216,6 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
                 },
                 2=>return Some((200,br#"{"Id":"sha256:unlabeled","Config":{"Labels":{}}}"#.to_vec())),
                 3=>return Some((404,br#"{"message":"not found"}"#.to_vec())),
-                4=>{
-                    catalog.adapters.iter_mut().find(|adapter|adapter.adapter_id()=="nvidia.fabric.openclaw")
-                        .unwrap().descriptor.as_object_mut().unwrap().remove("extension_schemas");
-                },
                 _=>{}
             }
             json!({"Id":"sha256:fixture", "Architecture":"arm64", "Os":"linux", "RepoDigests":[image], "Config":{"Labels":{IMAGE_CATALOG_LABEL:serde_json::to_string(&catalog).unwrap()}}})
@@ -241,19 +247,18 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
                 && !name.starts_with("endpoint_")
         });
     let graph = json!({
-        "terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"nvidia/nemoclaw"},"fabric":{"source":"nvidia/fabric"}}},
-        "provider":{"nemoclaw":{},"fabric":{}},
+        "terraform":{"required_version":"= 1.12.6","required_providers":{"host":{"source":"nvidia/host"},"fabric":{"source":"nvidia/fabric"}}},
+        "provider":{"host":{},"fabric":{}},
         "data":{
-            "nemoclaw_engine_capabilities":compiled["data"]["nemoclaw_engine_capabilities"],
-            "fabric_harnesses":compiled["data"]["fabric_harnesses"],
-            "nemoclaw_target_hardware":compiled["data"]["nemoclaw_target_hardware"]
+            "host_engine":compiled["data"]["host_engine"],
+            "fabric_harnesses":compiled["data"]["fabric_harnesses"]
         },
         "output":output
     });
     let directory = crate::workspace();
     let root = directory.path();
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
-    for selected in 0..5 {
+    for selected in 0..4 {
         mode.store(selected, Ordering::SeqCst);
         let result = directory
             .command()
@@ -267,7 +272,6 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
         );
         let compatible = match selected {
             0 => Some("supported"),
-            4 => Some("unknown"),
             _ => None,
         };
         assert_eq!(
@@ -295,7 +299,7 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
                     .as_array()
                     .unwrap()
                     .iter()
-                    .any(|check| check["requirement"] == "fabric_plan"
+                    .any(|check| check["requirement"] == "fabric_adapter"
                         && check["status"] == expected)
             );
         } else if selected == 1 {
@@ -314,6 +318,7 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
             );
         }
     }
-    assert_eq!(requests.load(Ordering::SeqCst), 15);
+    // Three engine requests per case.
+    assert_eq!(requests.load(Ordering::SeqCst), 12);
     assert!(!root.join("terraform.tfstate").exists());
 }

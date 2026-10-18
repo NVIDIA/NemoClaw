@@ -13,7 +13,7 @@ use std::{
 };
 fn bindings(directory: &Path) -> BTreeMap<String, String> {
     let mut result = BTreeMap::new();
-    for stage in ["terraform.tfstate", "runtime/terraform.tfstate"] {
+    for stage in ["terraform.tfstate"] {
         let state: Value =
             serde_json::from_slice(&fs::read(directory.join(stage)).unwrap()).unwrap();
         for resource in state["resources"].as_array().unwrap() {
@@ -92,14 +92,14 @@ async fn exercise(fresh: bool) {
     if fresh {
         assert!(!planned.changes.is_empty());
         // A first plan must not leave any actual resource binding.
-        if let Ok(bytes) = fs::read(directory.join("runtime/terraform.tfstate")) {
+        if let Ok(bytes) = fs::read(directory.join("terraform.tfstate")) {
             let state: Value = serde_json::from_slice(&bytes).unwrap();
             assert!(state["resources"].as_array().is_none_or(|resources| {
                 resources.iter().all(|resource| resource["mode"] == "data")
             }));
         }
     } else {
-        assert!(directory.join("runtime/terraform.tfstate").is_file());
+        assert!(directory.join("terraform.tfstate").is_file());
     }
     deployment.apply(&document, &cancel).await.unwrap();
     let before = bindings(&directory);
@@ -194,8 +194,10 @@ async fn exercise(fresh: bool) {
     );
     deployment.apply(&document, &cancel).await.unwrap();
     let recovered = bindings(&directory);
+    // OpenShell objects and the model cache volume are durable; the
+    // container may be replaced.
     for (address, id) in before.iter().filter(|(address, _)| {
-        address.starts_with("nemoclaw_") || address.starts_with("openshell_")
+        address.starts_with("openshell_") || address.starts_with("docker_volume.")
     }) {
         assert_eq!(
             recovered.get(address),
@@ -216,15 +218,15 @@ async fn exercise(fresh: bool) {
     deployment.destroy(&cancel).await.unwrap();
     // Destroy removes disposable compute while retaining durable storage bindings.
     assert!(engine.container(&container).await.unwrap().is_none());
+    // Destroy deletes the workspace with the gateway; only data remains.
     let retained = bindings(&directory);
-    assert_eq!(retained.len(), 3);
+    assert_eq!(retained.len(), 2);
     for address in [
-        "openshell_workspace.deployment",
         "openshell_gateway_storage.runtime",
         before
             .keys()
-            .find(|address| address.starts_with("nemoclaw_inference_storage."))
-            .unwrap()
+            .find(|address| address.starts_with("docker_volume.inference_storage_"))
+            .expect("a model cache volume")
             .as_str(),
     ] {
         assert_eq!(retained.get(address), before.get(address));

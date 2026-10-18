@@ -125,7 +125,7 @@ fn default_progress_hides_known_supporting_reads_but_preserves_failures_and_unkn
         "data.docker_image.image_abcd",
         "data.openshell_gateway.current",
         "data.openshell_docker_gateway_readiness.current",
-        "openshell_provider_profile.inference_hosted",
+        "openshell_inference.inference_hosted",
     ] {
         let event = Progress::Resource {
             resource: "resource",

@@ -685,6 +685,13 @@ impl OpenShell for TestOpenShell {
         Ok(Response::new(proto::ProviderResponse::default()))
     }
 
+    async fn get_provider_credentials(
+        &self,
+        _request: tonic::Request<proto::GetProviderCredentialsRequest>,
+    ) -> Result<Response<proto::GetProviderCredentialsResponse>, Status> {
+        Err(Status::unimplemented("not used by this mock"))
+    }
+
     async fn get_provider(
         &self,
         _: tonic::Request<proto::GetProviderRequest>,

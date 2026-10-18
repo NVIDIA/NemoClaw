@@ -47,6 +47,13 @@ pub(super) trait OpenShellGateway: Send + Sync {
     async fn create(&self, kind: &str, want: &Row) -> Result<String, ObservationError>;
     async fn update_provider(&self, want: &Row, live: &Row) -> Result<(), ObservationError>;
     async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError>;
+    /// One service endpoint of the bound sandbox, verified to belong to it.
+    async fn service(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+        name: &str,
+    ) -> Result<Option<crate::services::Endpoint>, ObservationError>;
     async fn delete(&self, kind: &str, workspace: &str, name: &str)
     -> Result<(), ObservationError>;
     async fn gateway_capabilities(&self) -> Result<GatewayCapabilities, ObservationError>;
@@ -209,7 +216,7 @@ impl ConnectedOpenShellGateway {
                 else {
                     return Ok(None);
                 };
-                let (row, ready, grants) = checked_sandbox_row_with(
+                let (mut row, ready, grants) = checked_sandbox_row_with(
                     response,
                     workspace,
                     name,
@@ -231,10 +238,11 @@ impl ConnectedOpenShellGateway {
                         .await
                         .map_err(|error| remote_error(&error))?
                         .into_inner();
-                    active_policy(
+                    let hash = active_policy(
                         status,
                         &policy_json(&network::granted_row_policy(&row, &grants)?)?,
                     )?;
+                    row.insert(crate::POLICY_HASH.into(), hash);
                 }
                 Some(row)
             }
@@ -275,6 +283,15 @@ impl OpenShellGateway for ConnectedOpenShellGateway {
 
     async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError> {
         ConnectedOpenShellGateway::delete_bound_sandbox(self, want).await
+    }
+
+    async fn service(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+        name: &str,
+    ) -> Result<Option<crate::services::Endpoint>, ObservationError> {
+        ConnectedOpenShellGateway::service(self, workspace, sandbox, name).await
     }
 
     async fn delete(
@@ -530,6 +547,15 @@ mod tests {
 
         async fn delete_bound_sandbox(&self, _want: &Row) -> Result<(), ObservationError> {
             unreachable!()
+        }
+
+        async fn service(
+            &self,
+            _workspace: &str,
+            _sandbox: &Row,
+            _name: &str,
+        ) -> Result<Option<crate::services::Endpoint>, ObservationError> {
+            Ok(None)
         }
 
         async fn delete(

@@ -3,27 +3,12 @@
 //! Image capabilities through OpenTofu, read from a fake Docker engine.
 
 use super::*;
-use nemoclaw_fabric::catalog::{BridgeCapabilities, FabricCatalog, IMAGE_CATALOG_LABEL};
+use nemoclaw_fabric::catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
 
 /// A Docker engine that serves one image declaring the bundled Fabric
 /// catalog, and no image for references containing `missing`.
 async fn engine(digest: String) -> http::Fixture {
     let mut catalog = FabricCatalog::bundled();
-    catalog.bridge = Some(BridgeCapabilities {
-        interface_version: 1,
-        operations: [
-            "validate",
-            "prepare",
-            "configure",
-            "check",
-            "invoke",
-            "serve",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect(),
-        health_checks: Vec::new(),
-    });
     // One adapter, so the image's runtime declares binaries for all of them.
     catalog
         .adapters

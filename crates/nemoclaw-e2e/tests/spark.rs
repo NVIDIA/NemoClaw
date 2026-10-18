@@ -52,10 +52,6 @@ fn assert_applied(result: &OperationResult, expected_changes: &[Change]) {
     assert_eq!(result.changes, expected_changes);
     assert!(result.deferred.is_empty());
     assert!(result.retained.is_empty());
-    assert_eq!(result.health.len(), 1);
-    assert_eq!(result.health[0].sandbox, "assistant");
-    assert_eq!(result.health[0].agents, ["assistant"]);
-    assert!(result.health[0].health.allows_apply_completion());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -82,41 +78,32 @@ async fn spark_yaml_plans_and_applies_expected_resources() {
     .map(|kind| (kind.into(), "a".repeat(32)))
     .into();
     let runtime = nemoclaw_sdk::compile::runtime_targets(&document, &generations).unwrap();
+    // One plan creates the runtime and the objects it serves, in address order.
     let mut addresses: Vec<_> = runtime
         .iter()
         .filter(|target| !target.address.starts_with("data."))
         .map(|target| target.address.as_str())
+        .chain([
+            "openshell_inference.inference_qwen",
+            "openshell_sandbox.assistant",
+            "openshell_workspace.deployment",
+        ])
         .collect();
     addresses.sort();
-    let expected_runtime = creates(&addresses);
+    let expected = creates(&addresses);
     let plan = deployment.plan(&document, &cancel).await.unwrap();
     assert_eq!(plan.outcome, Outcome::Planned);
-    assert_eq!(plan.changes, expected_runtime);
-    assert!(
-        plan.deferred
-            .iter()
-            .any(|message| message
-                == "OpenShell registration and sandbox require the managed gateway")
-    );
+    assert_eq!(plan.changes, expected);
     assert!(plan.retained.is_empty());
-    assert!(plan.health.is_empty());
     assert!(!plan.discovery.resources.is_empty());
 
-    let mut expected_apply = expected_runtime;
-    expected_apply.extend(creates(&[
-        "openshell_provider_registration.inference_qwen",
-        "openshell_provider_profile.inference_qwen",
-        "openshell_sandbox.assistant",
-        "openshell_workspace.deployment",
-    ]));
     let applied = deployment.apply(&document, &cancel).await.unwrap();
-    assert_applied(&applied, &expected_apply);
+    assert_applied(&applied, &expected);
 
     let unchanged = deployment.plan(&document, &cancel).await.unwrap();
     assert_eq!(unchanged.outcome, Outcome::Planned);
     assert!(unchanged.changes.is_empty());
     assert!(unchanged.retained.is_empty());
-    assert!(unchanged.health.is_empty());
     assert!(!unchanged.discovery.resources.is_empty());
     let reapplied = deployment.apply(&document, &cancel).await.unwrap();
     assert_applied(&reapplied, &[]);
@@ -174,7 +161,6 @@ async fn spark_image_change_plans_and_applies_replacement() {
     assert_eq!(plan.outcome, Outcome::Planned);
     assert_eq!(plan.changes, expected_changes);
     assert!(plan.retained.is_empty());
-    assert!(plan.health.is_empty());
     assert!(!plan.discovery.resources.is_empty());
     let applied = deployment.apply(&document, &cancel).await.unwrap();
     assert_applied(&applied, &expected_changes);

@@ -87,6 +87,44 @@ impl ProviderPreset {
             ],
         }
     }
+
+    /// Curated onboarding suggestions, not an exhaustive list or a live
+    /// observation of access, adapter compatibility, or inference support.
+    /// Generic endpoints have no vendor catalog.
+    pub fn recommended_models(self) -> &'static [&'static str] {
+        // Adapted from main at 4088879ac07445d4b89fc02c05adcd5fe213cf9d,
+        // src/lib/inference/{config,model-prompts}.ts. Keep the v1 preset
+        // defaults first; catalog updates belong to source review, not discovery.
+        match self {
+            Self::NvidiaEndpoints => &[NVIDIA_MODEL, "nvidia/nemotron-3-ultra-550b-a55b"],
+            Self::OpenRouter => &[
+                NVIDIA_MODEL,
+                "nvidia/nemotron-3-ultra-550b-a55b",
+                "minimaxai/minimax-m3",
+            ],
+            Self::OpenAi => &[
+                "gpt-5.4",
+                "gpt-5.4-mini",
+                "gpt-5.4-nano",
+                "gpt-5.4-pro-2026-03-05",
+            ],
+            Self::Anthropic => &["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"],
+            Self::Gemini => &[
+                "gemini-3.6-flash",
+                "gemini-3.1-pro-preview",
+                "gemini-3.1-flash-lite-preview",
+                "gemini-3-flash-preview",
+                "gemini-2.5-pro",
+                "gemini-2.5-flash-lite",
+            ],
+            Self::Nous => &[
+                "moonshotai/kimi-k2.6",
+                "xiaomi/mimo-v2.5-pro",
+                "xiaomi/mimo-v2.5",
+            ],
+            Self::OpenAiCompatible | Self::AnthropicCompatible => &[],
+        }
+    }
 }
 
 fn provider_profile(inference: ProviderPreset) -> ProviderProfile {

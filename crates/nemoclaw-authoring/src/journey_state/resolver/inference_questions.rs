@@ -175,5 +175,48 @@ impl QuestionResolver<'_> {
                 description: None,
             });
         }
+
+        if let Some(preset) = self.catalog_preset()
+            && let Some(path) = self.route_model_path()
+            && let Some(question) = questions.iter_mut().find(|question| question.id == path)
+        {
+            question.kind = JourneyQuestionKind::InferenceModel;
+            // Preserve a supplied custom model as the default menu selection.
+            if let Some(suggestion) = question.suggestion.clone() {
+                question.choices.push(suggestion);
+            }
+            for model in preset.recommended_models() {
+                let value = Value::String((*model).into());
+                if !question.choices.contains(&value) {
+                    question.choices.push(value);
+                }
+            }
+            question.description = Some(format!(
+                "Curated {} suggestions; other model identifiers remain available. Catalog membership does not verify endpoint access or inference support.",
+                preset.label()
+            ));
+        }
+    }
+
+    pub(super) fn catalog_information(&self) -> Vec<String> {
+        let Some(preset) = self.catalog_preset() else {
+            return Vec::new();
+        };
+        let Some(model) = self
+            .route_model_path()
+            .and_then(|path| self.authored.values.pointer(&path))
+            .and_then(Value::as_str)
+        else {
+            return Vec::new();
+        };
+        if preset.recommended_models().contains(&model) {
+            Vec::new()
+        } else {
+            // Authored identifiers may contain sensitive text; do not echo it.
+            vec![format!(
+                "The selected model is outside the curated {} catalog. It is retained as a custom model; inference support is unverified.",
+                preset.label()
+            )]
+        }
     }
 }

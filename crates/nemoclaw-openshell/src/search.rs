@@ -64,6 +64,25 @@ impl SearchProvider {
     }
 }
 
+/// The OpenShell profile and registration names a web search resource named
+/// `name` owns: a profile scoped by `name`, and the registration identity that
+/// binds the credential reference and profile.
+pub fn web_search_names(
+    provider: SearchProvider,
+    credential_env: &str,
+    name: &str,
+) -> (String, String) {
+    use sha2::{Digest, Sha256};
+    let scope: String = Sha256::digest(name.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()[..24]
+        .to_owned();
+    let profile = provider.image_profile(&scope);
+    let registration = search_provider_name(provider, credential_env, &profile);
+    (profile, registration)
+}
+
 /// Stable registration identity for a search credential reference, never its value.
 pub fn search_provider_name(provider: SearchProvider, reference: &str, profile: &str) -> String {
     use sha2::{Digest, Sha256};

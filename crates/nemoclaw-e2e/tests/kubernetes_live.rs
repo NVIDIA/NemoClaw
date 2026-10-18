@@ -4,6 +4,11 @@
 //! and providers, with no Helm executable on PATH. Requires an owned cluster
 //! with Agent Sandbox, its explicit kubeconfig/context, and a verified bundle.
 
+#[path = "kubernetes_oidc.rs"]
+mod oidc;
+#[path = "kubernetes_registry.rs"]
+mod registry;
+
 use k8s_openapi::api::{
     apps::v1::StatefulSet,
     core::v1::{Namespace, PersistentVolumeClaim, Secret},
@@ -438,11 +443,14 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
             &generations,
             &tofu.bundle.manifest.version,
             &tofu.addresses().await,
-            true,
         )
         .unwrap();
         assert_eq!(teardown.retained, storage);
+        // The teardown graph comes from the deployment's whole graph, so it
+        // can require more providers than the runtime graph; the SDK
+        // initializes before every plan, and so does this test.
         tofu.graph(&teardown.graph);
+        tofu.success(&["init", "-input=false", "-no-color"]).await;
         tofu.plan(&actions(workloads, "delete")).await;
         tofu.apply().await;
         assert_eq!(tofu.addresses().await, storage);
@@ -465,6 +473,7 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
         );
         if cycle == 0 {
             tofu.graph(&graph);
+            tofu.success(&["init", "-input=false", "-no-color"]).await;
             tofu.plan(&actions(workloads, "create")).await;
             tofu.apply().await;
             tofu.plan(&BTreeMap::new()).await;
@@ -487,8 +496,25 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
 /// - `NEMOCLAW_TEST_AGENT_IMAGE`: the agent image by digest, loaded into kind
 /// - `NEMOCLAW_TEST_AGENT_HARNESS`: its Fabric adapter
 /// - `NEMOCLAW_TEST_AGENT_METADATA`: its metadata bundle
-async fn deploy_to_the_health_check(provider: &str, while_applying: impl AsyncFnOnce(&str)) {
-    use nemoclaw_sdk::{CancellationToken, Deployment, Error, config::Document};
+async fn deploy_and_export(provider: &str, while_applying: impl AsyncFnOnce(&str)) {
+    let _ = deploy_image_and_export(
+        provider,
+        &required("NEMOCLAW_TEST_AGENT_IMAGE"),
+        &required("NEMOCLAW_TEST_AGENT_METADATA"),
+        &[],
+        while_applying,
+    )
+    .await;
+}
+
+async fn deploy_image_and_export(
+    provider: &str,
+    image: &str,
+    metadata: &str,
+    pull_secrets: &[&str],
+    while_applying: impl AsyncFnOnce(&str),
+) -> Vec<u8> {
+    use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
     let mut uid = [0u8; 16];
     getrandom::fill(&mut uid).unwrap();
     uid[6] = (uid[6] & 0x0f) | 0x40;
@@ -508,6 +534,7 @@ async fn deploy_to_the_health_check(provider: &str, while_applying: impl AsyncFn
         .local_addr()
         .unwrap()
         .port();
+    let harness = required("NEMOCLAW_TEST_AGENT_HARNESS");
     let yaml = format!(
         "apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
@@ -525,6 +552,7 @@ spec:
       context: {context}
       namespace: {namespace}
       authentication: {{profile: development}}
+      imagePullSecrets: {pull_secrets}
   inferenceProviders:
     - name: hosted
       provider: openai
@@ -546,18 +574,19 @@ spec:
               providerRef: hosted
               overrides:
                 model: fixture-model
-                settings:
-                  model_metadata:
-                    api: openai-completions
-                    contextWindow: 8192
-                    maxTokens: 2048
-                    reasoning: false
-                    input:
-                    - text
+                maxTokens: 2048{extensions}
 ",
         context = required("NEMOCLAW_TEST_KUBE_CONTEXT"),
-        image = required("NEMOCLAW_TEST_AGENT_IMAGE"),
-        harness = required("NEMOCLAW_TEST_AGENT_HARNESS"),
+        image = image,
+        pull_secrets = serde_json::to_string(pull_secrets).unwrap(),
+        harness = harness,
+        // Pi needs a context window for a model it does not ship; OpenClaw
+        // declares no model extensions.
+        extensions = if harness == "nvidia.fabric.pi" {
+            "\n                extensions:\n                  context_window: 8192"
+        } else {
+            ""
+        },
     );
     let document = Document::parse(yaml.as_bytes()).unwrap();
     let state = tempfile::tempdir().unwrap();
@@ -572,10 +601,7 @@ spec:
             "NEMOCLAW_TEST_KUBECONFIG".into(),
             relative.to_string_lossy().into_owned(),
         ),
-        (
-            "NEMOCLAW_TEST_AGENT_METADATA".into(),
-            required("NEMOCLAW_TEST_AGENT_METADATA"),
-        ),
+        ("NEMOCLAW_TEST_AGENT_METADATA".into(), metadata.to_owned()),
     ]));
     let deployment = Deployment::new(
         state.path(),
@@ -588,22 +614,11 @@ spec:
         deployment.apply(&document, &cancel),
         while_applying(&namespace)
     );
-    let error = applied.expect_err("the agent's health is unsupported at this Fabric pin");
-    match &error {
-        Error::Execution {
-            postcondition_failures: Some(failures),
-            ..
-        } => assert_eq!(
-            failures,
-            &["data.fabric_agent_readiness.assistant".to_owned()],
-            "apply must stop only at the agent's health check"
-        ),
-        other => panic!("apply must stop at the agent's health check, not earlier: {other}"),
-    }
+    applied.expect("the agent starts through fabric-agent-ctl");
+    let state_snapshot = fs::read(state.path().join("terraform.tfstate")).unwrap();
 
-    // A readiness failure retains a complete deployment that must be
-    // exportable. Clean up before asserting so failed export retains no live
-    // workload after this test.
+    // A complete deployment must be exportable. Clean up before asserting so a
+    // failed export retains no live workload after this test.
     let exported = deployment.export(&cancel).await;
     let destroyed = deployment.destroy(&cancel).await.unwrap();
     for change in &destroyed.changes {
@@ -614,16 +629,11 @@ spec:
         );
     }
     assert_eq!(
-        exported.expect("export after the expected health-check failure must succeed"),
+        exported.expect("export of the applied deployment must succeed"),
         document,
         "export recovers the authored configuration without readiness checks"
     );
-}
-
-#[tokio::test]
-#[ignore = "needs a Kubernetes cluster with Agent Sandbox and a loaded agent image; run through cargo ci live-kind"]
-async fn an_agent_sandbox_reaches_its_health_check_and_destroy_keeps_storage() {
-    deploy_to_the_health_check("kubernetes", async |_| {}).await;
+    state_snapshot
 }
 
 /// The OpenShift profile on kind. kind does not enforce OpenShift's security
@@ -653,7 +663,7 @@ async fn on_openshift_the_sandbox_runs_as_the_namespace_uid() {
     )
     .unwrap();
     let observed = std::sync::Mutex::new(None::<(Option<i64>, Option<i64>)>);
-    deploy_to_the_health_check("openshift", async |namespace| {
+    deploy_and_export("openshift", async |namespace| {
         // Annotate the namespace as soon as the SDK creates it, as OpenShift
         // does when a project is created.
         let namespaces: Api<Namespace> = Api::all(client.clone());

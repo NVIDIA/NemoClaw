@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::config::{HarnessKind, InferenceProviderKind};
 
-use nemoclaw_sdk::config::{Document, ServiceDefinition, validate_endpoint};
+use nemoclaw_sdk::config::{Document, ServiceDefinition, validate_endpoint, validate_endpoint_url};
 use serde_json::Value;
 
 #[test]
@@ -82,6 +82,48 @@ fn endpoint_policy_rejects_credentials_metadata_and_remote_plaintext() {
         assert!(validate_endpoint(endpoint, false).is_ok());
     }
     assert!(validate_endpoint("http://172.20.0.1:17671", true).is_err());
+}
+
+#[test]
+fn inference_endpoints_leave_destination_checks_to_openshell() {
+    let destinations = [
+        "http://host.openshell.internal:11446/v1",
+        "http://ollama:11434/v1",
+        "http://inference.example.com/v1",
+    ];
+    for endpoint in destinations {
+        assert!(validate_endpoint_url(endpoint).is_ok(), "{endpoint}");
+        // NemoClaw's own connections keep their policy.
+        assert!(validate_endpoint(endpoint, false).is_err(), "{endpoint}");
+    }
+    for endpoint in [
+        "https://user:secret@example.com/v1",
+        "https://example.com/v1?key=secret",
+        "file:///etc/passwd",
+        "http://example.com/${var}/v1",
+    ] {
+        assert!(validate_endpoint_url(endpoint).is_err(), "{endpoint}");
+    }
+    // A registered external provider may use them, and the graph passes the
+    // endpoint unchanged.
+    let fixture = include_str!("fixtures/config/fabric.yaml");
+    for endpoint in destinations {
+        let document = Document::parse(
+            fixture
+                .replace("http://172.20.0.1:11446/v1", endpoint)
+                .as_bytes(),
+        )
+        .unwrap_or_else(|error| panic!("{endpoint}: {error}"));
+        let generations: nemoclaw_sdk::compile::Generations = ["workspace", "provider", "sandbox"]
+            .map(|kind| (kind.into(), "a".repeat(32)))
+            .into();
+        let targets = nemoclaw_sdk::compile::targets(&document, &generations).unwrap();
+        let inference = targets
+            .iter()
+            .find(|target| target.kind == "inference")
+            .unwrap();
+        assert_eq!(inference.values["endpoint"], endpoint);
+    }
 }
 
 #[test]
@@ -297,7 +339,9 @@ fn pi_model_is_an_optional_opaque_object() {
 }
 
 #[test]
-fn pi_model_updates_leave_the_sandbox_connection_unchanged() {
+/// A model change changes only the agent and the configuration that
+/// replaces its sandbox; the sandbox's own inputs stay the same.
+fn pi_model_updates_change_only_the_agent_and_its_configuration() {
     use nemoclaw_sdk::compile::{Generations, targets};
     let mut document =
         Document::parse(include_str!("fixtures/config/fabric-pi.yaml").as_bytes()).unwrap();
@@ -327,6 +371,18 @@ fn pi_model_updates_leave_the_sandbox_connection_unchanged() {
     configuration
         .values
         .insert("models_json".into(), prior.values["models_json"].clone());
+    let trigger = after
+        .iter_mut()
+        .find(|target| target.kind == nemoclaw_sdk::compile::AGENT_CONFIGURATION)
+        .unwrap();
+    let prior = before
+        .iter()
+        .find(|target| target.address == trigger.address)
+        .unwrap();
+    assert_ne!(trigger.values["input"], prior.values["input"]);
+    trigger
+        .values
+        .insert("input".into(), prior.values["input"].clone());
     assert_eq!(after, before);
 }
 

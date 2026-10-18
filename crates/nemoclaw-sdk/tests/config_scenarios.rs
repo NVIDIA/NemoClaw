@@ -65,13 +65,7 @@ fn openai_compatible_endpoint_with_tuning_should_work() {
         "https://inference.example.com/v1"
     );
     assert_eq!(document.credential_names(), ["COMPATIBLE_API_KEY"]);
-    assert_eq!(overrides["settings"]["reasoning_effort"], "high");
-    assert_eq!(
-        overrides["settings"]["model_metadata"]["contextWindow"],
-        65536
-    );
     assert_eq!(overrides["maxTokens"], 8192);
-    assert_eq!(overrides["settings"]["model_metadata"]["reasoning"], true);
 }
 
 #[test]
@@ -127,34 +121,19 @@ fn multiple_openclaw_sandboxes_with_policy_tools_and_observability_should_work()
     assert_eq!(sandboxes[2]["agent"]["name"], "reader");
     assert_eq!(sandboxes[2]["agent"]["tools"]["allow"], json!(["read"]));
     assert_eq!(
-        desired["spec"]["harnesses"]["assistant"]["settings"]["native_config"]["tools"]["toolSearch"]
-            ["mode"],
-        "tools"
-    );
-    assert_eq!(
-        desired["spec"]["harnesses"]["assistant"]["settings"]["native_config"]["diagnostics"]["otel"]
-            ["enabled"],
-        true
-    );
-    assert_eq!(
         desired["spec"]["harnesses"]["assistant"]["execution"]["timeoutSeconds"],
         900
     );
 }
 
 #[test]
-fn pi_with_native_model_metadata_should_work() {
+fn pi_should_work() {
     let yaml = include_bytes!("../../../examples/fabric-pi.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
         desired["spec"]["sandboxes"][0]["harness"]["kind"],
         "nvidia.fabric.pi"
-    );
-    assert_eq!(
-        desired["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["settings"]
-            ["model_metadata"]["api"],
-        "openai-completions"
     );
 }
 
@@ -222,36 +201,19 @@ fn managed_podman_with_an_explicit_gateway_port_should_work() {
 }
 
 #[test]
-fn openclaw_dashboard_should_work() {
-    let yaml = include_bytes!("../../../examples/openclaw-dashboard.yaml");
+fn openclaw_should_work() {
+    let yaml = include_bytes!("../../../examples/openclaw.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
-    assert_eq!(
-        desired["spec"]["sandboxes"][0]["harness"]["settings"]["native_config"]["gateway"]["port"],
-        18800
-    );
-}
-
-#[test]
-fn hermes_api_dashboard_and_tui_should_work() {
-    let yaml = include_bytes!("../../../examples/hermes-interfaces.yaml");
-    let document = Document::parse(yaml.as_slice()).unwrap();
-    let desired = normalized(&document);
-    let interfaces = &desired["spec"]["sandboxes"][0]["harness"]["settings"]["interfaces"];
     assert_eq!(
         desired["spec"]["sandboxes"][0]["harness"]["kind"],
-        "nvidia.fabric.hermes"
+        "nvidia.fabric.openclaw"
     );
-    assert_eq!(interfaces["api"]["port"], 8643);
-    assert_eq!(interfaces["dashboard"]["enabled"], true);
-    assert_eq!(interfaces["dashboard"]["port"], 18800);
-    assert_eq!(interfaces["dashboard"]["internalPort"], 19120);
-    assert_eq!(interfaces["dashboard"]["tui"]["enabled"], true);
 }
 
 #[test]
 fn brave_web_search_should_work() {
-    let yaml = include_bytes!("../../../examples/openclaw-web-search.yaml");
+    let yaml = include_bytes!("../../../examples/web-search.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
@@ -378,9 +340,8 @@ fn trusted_private_hosts_are_not_supported_yet() {
 
 #[test]
 fn tavily_search_preserves_the_selected_provider_and_credential_reference() {
-    let desired =
-        DesiredState::from_yaml(include_bytes!("../../../examples/openclaw-web-search.yaml"))
-            .search_provider("tavily", "TAVILY_API_KEY");
+    let desired = DesiredState::from_yaml(include_bytes!("../../../examples/web-search.yaml"))
+        .search_provider("tavily", "TAVILY_API_KEY");
     let document = Document::parse(desired.yaml().as_bytes()).expect("Tavily intent must parse");
     assert!(document.credential_names().contains(&"TAVILY_API_KEY"));
     let normalized = serde_json::to_value(&document).unwrap();

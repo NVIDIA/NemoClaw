@@ -26,6 +26,9 @@ pub struct GatewayState {
     tls_ca_env: Value<String>,
     tls_certificate_env: Value<String>,
     tls_key_env: Value<String>,
+    /// A managed Kubernetes gateway's specification, from which providers
+    /// connect to it themselves.
+    kubernetes: Value<String>,
     /// How resources reach this gateway, which they take as `gateway`.
     #[serde(rename = "ref")]
     reference: Value<BTreeMap<String, Value<String>>>,
@@ -50,6 +53,7 @@ impl GatewayState {
             tls_ca_env: &self.tls_ca_env,
             tls_certificate_env: &self.tls_certificate_env,
             tls_key_env: &self.tls_key_env,
+            kubernetes: &self.kubernetes,
         }
     }
     /// The `ref` naming this connection; unknown inputs leave it unknown.
@@ -67,6 +71,7 @@ impl GatewayState {
             &self.tls_ca_env,
             &self.tls_certificate_env,
             &self.tls_key_env,
+            &self.kubernetes,
         ];
         Value::Value(
             std::iter::once((
@@ -155,6 +160,11 @@ impl DataSource for GatewayDataSource {
                     ),
                     (
                         "tls_key_env",
+                        AttributeType::String,
+                        AttributeConstraint::Optional,
+                    ),
+                    (
+                        "kubernetes",
                         AttributeType::String,
                         AttributeConstraint::Optional,
                     ),
@@ -288,7 +298,7 @@ impl DataSource for GatewayDataSource {
             }
         };
         config.reference = config.reference();
-        let observed = match self.0.connect(&connection) {
+        let observed = match self.0.connect(&connection).await {
             Err(error) => {
                 diags.root_error("Gateway connection", error);
                 return None;

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Ollama installer implementation.
-use crate::config::ComputeDriver;
+use super::container::base;
 mod config;
 pub use config::{
     ExternalOllama, ExternalOllamaModel, ManagedOllama, OllamaMemory, OllamaModel, OllamaProxy,
@@ -11,10 +11,10 @@ mod proxy_container;
 pub use proxy_container::{ProxySettings, ProxySpec};
 pub mod proxy;
 
-use crate::managed::{Process, Spec, Storage};
+use crate::managed::{Process, Spec};
 use crate::{
     Error,
-    compile::{Generations, Target},
+    compile::Generations,
     config::Document,
     services::contract::{InstallPlan, Installer, RemovePlan},
 };
@@ -101,7 +101,9 @@ impl OllamaProxy {
             }),
             "proxy engine must be a local Unix socket",
         )?;
-        crate::config::validate_endpoint(&self.endpoint, false)?;
+        // Sandboxes reach the proxy's endpoint, which OpenShell checks; the
+        // proxy itself connects to its upstream.
+        crate::config::validate_endpoint_url(&self.endpoint)?;
         crate::config::validate_endpoint(&self.upstream.endpoint, false)?;
         let upstream = Url::parse(&self.upstream.endpoint)
             .map_err(|_| crate::config::ConfigError::new("invalid Ollama upstream"))?;
@@ -132,7 +134,7 @@ pub(crate) fn service_address(name: &str) -> String {
 }
 
 fn address(kind: &str, name: &str) -> String {
-    format!("nemoclaw_{kind}.{name}")
+    format!("{}.{name}", crate::compile::resource_type(kind))
 }
 
 pub const SERVICE_KIND: &str = "ollama_service";
@@ -156,87 +158,46 @@ pub fn configured_service(spec: &Spec) -> Result<nemoclaw_runtime::ollama::Manag
     }
 }
 
-fn managed_targets(
+fn specification(
     document: &Document,
     name: &str,
     service: &ManagedOllama,
     generations: &Generations,
-) -> Result<Vec<Target>, Error> {
-    let generation = generations
-        .get(SERVICE_KIND)
-        .filter(|value| !value.is_empty())
-        .ok_or(Error::State("missing Ollama service generation"))?;
+) -> Result<Spec, Error> {
     let runtime = nemoclaw_runtime::RuntimeSpec::Ollama(Box::new(service.runtime_settings()));
     let placed = crate::services::placement::ResolvedPlacement::resolve(
         service.published_placement()?,
         &document.spec.gateway,
         service.serving.port,
     )?;
-    let resources = super::vllm::ServiceContainer::resources(service.container.as_ref());
-    let process = Process {
-        engine: placed.engine.clone(),
-        image: service.image.clone(),
-        network_cidr: placed.network_cidr.clone(),
-        create_network: placed.explicit,
-        architecture: service.architecture()?.into(),
-        image_labels: BTreeMap::from([
-            ("org.nemoclaw.backend".into(), "ollama".into()),
-            (
-                nemoclaw_runtime::SPEC_VERSION_LABEL.into(),
-                nemoclaw_runtime::SPEC_VERSION.into(),
-            ),
-        ]),
-        pull_image: false,
-        image_pull_policy: None,
-        configuration: serde_json::to_string(&runtime)
-            .map_err(|_| Error::State("cannot serialize Ollama runtime configuration"))?,
-        entrypoint: vec!["/usr/local/bin/nemoclaw-runtime".into()],
-        command: Vec::new(),
-        mount_target: "/data".into(),
-        bind_address: placed.bind_address,
-        port: service.serving.port as u16,
-        shared_memory_bytes: resources.shared_memory_bytes,
-        host_ipc: resources.host_ipc,
-        cpu_limit_millis: resources.cpu_limit_millis,
-        memory_bytes: resources.memory_bytes,
-        gpu: true,
-    };
-    let spec = Spec {
-        layout: 0,
-        compute_driver: ComputeDriver::Docker,
-        kind: SERVICE_KIND.into(),
-        name: format!("{}-ollama-{name}", document.workspace()),
-        owner: document.metadata.uid.clone(),
-        generation: generation.clone(),
-        gateway: if placed.explicit {
+    let process = base::managed_process(
+        runtime,
+        service.container.as_ref(),
+        Process {
+            engine: placed.engine.clone(),
+            image: service.image.clone(),
+            network_cidr: placed.network_cidr.clone(),
+            create_network: placed.explicit,
+            architecture: service.architecture()?.into(),
+            image_labels: BTreeMap::from([("org.nemoclaw.backend".into(), "ollama".into())]),
+
+            bind_address: placed.bind_address,
+            port: service.serving.port as u16,
+            ..Process::default()
+        },
+    )?;
+    base::specification(
+        document,
+        generations,
+        SERVICE_KIND,
+        format!("{}-ollama-{name}", document.workspace()),
+        if placed.explicit {
             Default::default()
         } else {
             document.spec.gateway.managed()?.runtime_settings()
         },
-        process: Some(process),
-    };
-    let storage = Storage {
-        name: format!("{}-data", spec.name),
-        owner: spec.owner.clone(),
-        generation: spec.generation.clone(),
-        engine: spec.engine().into(),
-    };
-    let mut values = crate::backend::Row::from([("spec".into(), spec.json()?)]);
-    if let Some(policy) = service.image_pull_policy {
-        values.insert("image_pull_policy".into(), policy.as_str().into());
-    }
-    Ok(vec![
-        Target {
-            kind: STORAGE_KIND.into(),
-            address: address(STORAGE_KIND, name),
-            values: storage.row()?,
-        },
-        Target {
-            kind: SERVICE_KIND.into(),
-            address: address(SERVICE_KIND, name),
-            values,
-        },
-    ])
+        process,
+    )
 }
 
 impl Installer for ManagedOllama {
@@ -246,15 +207,21 @@ impl Installer for ManagedOllama {
         name: &str,
         generations: &Generations,
     ) -> Result<InstallPlan, Error> {
-        let service = address(SERVICE_KIND, name);
-        let mut dependencies = vec![address(STORAGE_KIND, name)];
+        let mut prerequisites = Vec::new();
         if document.spec.gateway.as_managed().is_some() && self.placement.is_none() {
-            dependencies.insert(0, "openshell_podman_gateway.runtime".into());
+            prerequisites.push("openshell_podman_gateway.runtime".into());
         }
-        Ok(InstallPlan {
-            targets: managed_targets(document, name, self, generations)?,
-            dependencies: BTreeMap::from([(service, dependencies)]),
-        })
+        base::install(
+            specification(document, name, self, generations)?,
+            name,
+            STORAGE_KIND,
+            self.image_pull_policy,
+            Default::default(),
+            InstallPlan {
+                targets: Vec::new(),
+                dependencies: BTreeMap::from([(address(SERVICE_KIND, name), prerequisites)]),
+            },
+        )
     }
 
     fn remove(
@@ -280,10 +247,7 @@ impl Installer for OllamaProxy {
         let service = address(proxy::PROXY, name);
         Ok(InstallPlan {
             targets: proxy::targets(document, name, self, generations)?,
-            dependencies: BTreeMap::from([(
-                service,
-                vec![address(proxy::STORAGE, name), address(proxy::MODEL, name)],
-            )]),
+            dependencies: BTreeMap::from([(service, vec![address(proxy::STORAGE, name)])]),
         })
     }
 

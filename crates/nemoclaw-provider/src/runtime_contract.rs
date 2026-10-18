@@ -16,6 +16,94 @@ use tf_provider::{
 pub(crate) type RuntimeState = BTreeMap<String, Value<Dynamic>>;
 
 const SPEC: &str = "spec";
+const LAUNCH: &str = "launch";
+const REQUIREMENTS: &str = "requirements";
+
+/// What any platform runs for a runtime specification, and what the runtime
+/// needs from it: the launch and requirements Docker placement uses.
+fn placement(spec: &str) -> Option<(serde_json::Value, serde_json::Value)> {
+    use nemoclaw_sdk::managed::{
+        RUNTIME_DATA_PATH, RUNTIME_ENTRYPOINT, RUNTIME_SPEC_ENV, RUNTIME_ULIMITS,
+        default_shared_memory_bytes,
+    };
+    let parsed = serde_json::from_str::<serde_json::Value>(spec).ok()?;
+    let port = parsed["serving"]["port"].as_u64()?;
+    // An authenticated server takes a platform's key from this variable.
+    let key_env = if parsed["authentication"].is_null() {
+        ""
+    } else {
+        nemoclaw_runtime::INFERENCE_KEY_ENV
+    };
+    let ulimits: serde_json::Map<String, serde_json::Value> = RUNTIME_ULIMITS
+        .iter()
+        .map(|(name, limit)| ((*name).to_owned(), serde_json::json!(limit)))
+        .collect();
+    Some((
+        serde_json::json!({
+            "entrypoint": [RUNTIME_ENTRYPOINT],
+            "command": [],
+            "environment": {RUNTIME_SPEC_ENV: spec},
+            "port": port,
+            "data_path": RUNTIME_DATA_PATH,
+            "key_env": key_env,
+        }),
+        serde_json::json!({
+            "gpu": true,
+            "shared_memory_bytes": default_shared_memory_bytes(),
+            "ulimits": ulimits,
+        }),
+    ))
+}
+
+/// A JSON value as an OpenTofu dynamic value.
+fn dynamic(value: serde_json::Value) -> Value<Dynamic> {
+    match value {
+        serde_json::Value::Null => Value::Null,
+        serde_json::Value::Bool(value) => Value::Value(Dynamic::Bool(value)),
+        serde_json::Value::Number(number) => Value::Value(match number.as_i64() {
+            Some(integer) => Dynamic::Integer(integer),
+            None => Dynamic::Float(number.as_f64().unwrap_or_default()),
+        }),
+        serde_json::Value::String(value) => Value::Value(Dynamic::String(value)),
+        serde_json::Value::Array(values) => {
+            Value::Value(Dynamic::List(values.into_iter().map(dynamic).collect()))
+        }
+        serde_json::Value::Object(values) => Value::Value(Dynamic::Map(
+            values
+                .into_iter()
+                .map(|(key, value)| (key, dynamic(value)))
+                .collect(),
+        )),
+    }
+}
+
+/// The OpenTofu types of `launch` and `requirements`.
+fn placement_types() -> [(&'static str, AttributeType, &'static str); 2] {
+    use AttributeType::{Bool, List, Map, Number, Object, String};
+    [
+        (
+            LAUNCH,
+            Object(std::collections::HashMap::from([
+                ("entrypoint".into(), List(Box::new(String))),
+                ("command".into(), List(Box::new(String))),
+                ("environment".into(), Map(Box::new(String))),
+                ("port".into(), Number),
+                ("data_path".into(), String),
+                ("key_env".into(), String),
+            ])),
+            "What any platform runs: entrypoint, command, environment (including the contract), the port the server listens on, the path for its data, and key_env, the variable an authenticated server reads a supplied API key from (empty without authentication). Place it with any container platform.",
+        ),
+        (
+            REQUIREMENTS,
+            Object(std::collections::HashMap::from([
+                ("gpu".into(), Bool),
+                ("shared_memory_bytes".into(), Number),
+                ("ulimits".into(), Map(Box::new(Number))),
+            ])),
+            "What the runtime needs from its platform: a GPU, shared memory (a recommended minimum), and process limits by name, where -1 is unlimited. Platforms that cannot set process limits leave them to the node.",
+        ),
+    ]
+}
 
 /// One runtime's contract: its settings schema and its encoding.
 pub(crate) struct RuntimeDataSource {
@@ -174,6 +262,17 @@ impl DataSource for RuntimeDataSource {
                 ..Default::default()
             },
         );
+        for (name, attr_type, description) in placement_types() {
+            block.attributes.insert(
+                name.into(),
+                Attribute {
+                    attr_type,
+                    description: Description::plain(description),
+                    constraint: AttributeConstraint::Computed,
+                    ..Default::default()
+                },
+            );
+        }
         Some(Schema { version: 0, block })
     }
 
@@ -195,6 +294,12 @@ impl DataSource for RuntimeDataSource {
     ) -> Option<RuntimeState> {
         match self.specification(&config) {
             Ok(Some(spec)) => {
+                let Some((launch, requirements)) = placement(&spec) else {
+                    diags.root_error_short("Runtime specification has no serving port");
+                    return None;
+                };
+                config.insert(LAUNCH.into(), dynamic(launch));
+                config.insert(REQUIREMENTS.into(), dynamic(requirements));
                 config.insert(SPEC.into(), Value::Value(Dynamic::String(spec)));
                 Some(config)
             }
@@ -258,17 +363,17 @@ mod tests {
         for (kind, data, yaml) in [
             (
                 "inference_service",
-                "nemoclaw_vllm_runtime",
+                "vllm_runtime",
                 include_str!("../../../examples/spark/vllm.yaml"),
             ),
             (
                 "inference_service",
-                "nemoclaw_vllm_runtime",
+                "vllm_runtime",
                 include_str!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml"),
             ),
             (
                 "ollama_service",
-                "nemoclaw_ollama_runtime",
+                "ollama_runtime",
                 include_str!("../../../examples/managed-ollama.yaml"),
             ),
         ] {
@@ -307,9 +412,45 @@ mod tests {
                 .replace("$${", "${")
                 .replace("%%{", "%{");
             let config: RuntimeState = serde_json::from_str(&settings).unwrap();
+            let computed = source.specification(&config).unwrap().unwrap();
+            let process = spec.process.clone().unwrap();
+            assert_eq!(computed, process.configuration);
+            // The platform-neutral launch is what Docker placement runs.
+            let (launch, requirements) = placement(&computed).unwrap();
+            let docker =
+                serde_json::to_value(spec.container(&process.mount_target).unwrap()).unwrap();
+            assert_eq!(launch["entrypoint"], docker["Entrypoint"], "{kind}");
+            assert_eq!(launch["command"], docker["Cmd"], "{kind}");
+            let environment: Vec<String> = launch["environment"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(name, value)| format!("{name}={}", value.as_str().unwrap()))
+                .collect();
+            assert_eq!(serde_json::json!(environment), docker["Env"], "{kind}");
+            assert_eq!(launch["port"], process.port, "{kind}");
+            assert_eq!(launch["data_path"], process.mount_target, "{kind}");
+            assert_eq!(requirements["gpu"], process.gpu, "{kind}");
             assert_eq!(
-                source.specification(&config).unwrap().unwrap(),
-                spec.process.unwrap().configuration
+                requirements["shared_memory_bytes"], process.shared_memory_bytes,
+                "{kind}"
+            );
+            let ulimits: serde_json::Map<String, serde_json::Value> =
+                docker["HostConfig"]["Ulimits"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|limit| {
+                        (
+                            limit["Name"].as_str().unwrap().to_owned(),
+                            limit["Hard"].clone(),
+                        )
+                    })
+                    .collect();
+            assert_eq!(
+                requirements["ulimits"],
+                serde_json::Value::Object(ulimits),
+                "{kind}"
             );
         }
     }
@@ -336,5 +477,15 @@ mod tests {
             AttributePath::new("serving").index(0).attribute("port")
         );
         assert!(detail.starts_with("serving.port: "), "{detail}");
+    }
+
+    #[test]
+    fn the_launch_names_the_key_variable_only_for_authenticated_servers() {
+        let authenticated = r#"{"serving":{"port":8000},"authentication":"bearer"}"#;
+        let (launch, _) = placement(authenticated).unwrap();
+        assert_eq!(launch["key_env"], nemoclaw_runtime::INFERENCE_KEY_ENV);
+        let open = r#"{"serving":{"port":8000}}"#;
+        let (launch, _) = placement(open).unwrap();
+        assert_eq!(launch["key_env"], "");
     }
 }

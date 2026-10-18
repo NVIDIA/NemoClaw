@@ -7,8 +7,7 @@ pub use nemoclaw_sdk::{
     services::installers::ollama::configured_service,
 };
 use nemoclaw_sdk::{
-    services::installers::ollama::proxy::MODEL, services::installers::ollama::proxy::STORAGE,
-    services::installers::ollama::proxy::supports,
+    services::installers::ollama::proxy::STORAGE, services::installers::ollama::proxy::supports,
 };
 mod backend;
 pub use backend::ProxyBackend;

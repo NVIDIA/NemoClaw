@@ -238,7 +238,10 @@ fn multiple_services_share_image_acquisition_without_custom_capacity_gates() {
     .map(|kind| (kind.into(), "b".repeat(32)))
     .into();
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    assert!(graph["data"].get("nemoclaw_service_capacity").is_none());
+    assert!(
+        graph["data"].get("vllm_capacity").is_none()
+            && graph["data"].get("ollama_capacity").is_none()
+    );
     assert!(
         graph["data"].get("fabric_agent_readiness").is_none(),
         "the runtime graph cannot observe sandboxes owned by the deployment graph"
@@ -307,7 +310,7 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
         graph["resource"]["docker_container"]["managed_gateway_runtime"]["depends_on"],
         json!([
             "openshell_gateway_storage.runtime",
-            "data.nemoclaw_runtime_image.runtime_image_acquired_inference_service_inference_qwen"
+            "data.host_image.runtime_image_acquired_inference_service_inference_qwen"
         ])
     );
     let gateway = &graph["resource"]["docker_container"]["managed_gateway_runtime"];
@@ -356,7 +359,7 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
         BTreeSet::from([
             "docker_container.managed_gateway_runtime",
             "docker_volume.inference_storage_inference_qwen",
-            "data.nemoclaw_runtime_image.runtime_image_acquired_inference_service_inference_qwen"
+            "data.host_image.runtime_image_acquired_inference_service_inference_qwen"
         ])
     );
     for target in targets
@@ -414,7 +417,7 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
         BTreeSet::from([
             "docker_volume.inference_storage_inference_qwen",
             network_address.as_str(),
-            "data.nemoclaw_runtime_image.runtime_image_acquired_inference_service_inference_qwen",
+            "data.host_image.runtime_image_acquired_inference_service_inference_qwen",
         ])
     );
     assert_eq!(
@@ -501,7 +504,10 @@ fn docker_provider_owns_disposable_compute_and_image_acquisition() {
             .unwrap()
             .starts_with("${docker_image.")
     );
-    assert!(graph["data"].get("nemoclaw_service_capacity").is_none());
+    assert!(
+        graph["data"].get("vllm_capacity").is_none()
+            && graph["data"].get("ollama_capacity").is_none()
+    );
     assert!(container.get("lifecycle").is_none());
     let targets = runtime_targets(&document, &generations).unwrap();
     assert!(targets.iter().any(|target| target.address
@@ -524,8 +530,7 @@ fn service_readiness_follows_provider_identity_and_is_fresh_on_unchanged_apply()
     .map(|kind| (kind.into(), "a".repeat(32)))
     .into();
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    let readiness =
-        &graph["data"]["nemoclaw_service_readiness"]["inference_service_inference_qwen"];
+    let readiness = &graph["data"]["vllm_readiness"]["inference_service_inference_qwen"];
     assert_eq!(
         readiness["container_id"],
         "${docker_container.inference_service_inference_qwen.id}"
@@ -533,7 +538,7 @@ fn service_readiness_follows_provider_identity_and_is_fresh_on_unchanged_apply()
     assert_eq!(readiness["read_trigger"], "${timestamp() != \"\"}");
     assert_eq!(
         readiness["contract"],
-        "${data.nemoclaw_vllm_runtime.inference_service_inference_qwen.spec}"
+        "${data.vllm_runtime.inference_service_inference_qwen.spec}"
     );
     let container = &graph["resource"]["docker_container"]["inference_service_inference_qwen"];
     assert_eq!(readiness["name"], container["name"]);
@@ -578,11 +583,10 @@ fn gateway_readiness_observes_the_exact_docker_provider_container() {
     );
 }
 
-/// Deployment state binds a local gateway's resource attributes, and the
-/// specifications labelling its containers embed its settings, so both keep
-/// this layout with the SDK's gateway image pin.
+/// A local gateway's resource attributes and specification carry the SDK's
+/// gateway image pin, and its services embed its settings without an image.
 #[test]
-fn local_gateway_settings_keep_their_bound_layout_and_pinned_image() {
+fn local_gateway_specifications_carry_the_sdk_image_pin() {
     let document =
         Document::parse(include_bytes!("fixtures/config/spark.yaml").as_slice()).unwrap();
     let generations = ["managed_gateway", "inference_service"]
@@ -610,21 +614,19 @@ fn local_gateway_settings_keep_their_bound_layout_and_pinned_image() {
     .map(|(name, value)| (name.into(), value.into()))
     .collect();
     assert_eq!(values(managed::GATEWAY_KIND), &gateway);
-    let settings = format!(
-        r#""gateway":{{"runtime":{{"provider":"docker"}},"endpoint":"http://127.0.0.1:17681","engine":"unix:///var/run/docker.sock","image":"{DEFAULT_GATEWAY_IMAGE}","networkCIDR":"172.30.110.0/24"}}"#
-    );
+    let settings = r#""gateway":{"runtime":{"provider":"docker"},"endpoint":"http://127.0.0.1:17681","engine":"unix:///var/run/docker.sock","networkCIDR":"172.30.110.0/24"}"#;
     let spec = managed::Spec::from_gateway_row(managed::GATEWAY_KIND, &gateway).unwrap();
     assert_eq!(
         spec.json().unwrap(),
         format!(
-            r#"{{"layout":2,"kind":"managed_gateway","name":"nc-68d203b0c7e6083f-gateway","owner":"302ff5e1-088d-42ce-959f-4ff4c3570c13","generation":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",{settings}}}"#
+            r#"{{"layout":2,"kind":"managed_gateway","name":"nc-68d203b0c7e6083f-gateway","owner":"302ff5e1-088d-42ce-959f-4ff4c3570c13","generation":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",{settings},"image":"{DEFAULT_GATEWAY_IMAGE}"}}"#
         )
     );
     // Docker gateway data does not depend on the listen endpoint.
     gateway.remove("endpoint");
     assert_eq!(values(managed::GATEWAY_STORAGE_KIND), &gateway);
     // A service placed on the gateway's engine embeds the same settings.
-    assert!(values("inference_service")["spec"].contains(&settings));
+    assert!(values("inference_service")["spec"].contains(settings));
 }
 
 #[test]

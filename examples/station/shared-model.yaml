@@ -66,9 +66,6 @@ spec:
               overrides:
                 model: Qwen/Qwen3-4B
                 maxTokens: 2048
-                settings:
-                  model_metadata:
-                    contextWindow: 32768
     - name: pi
       image:
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -86,11 +83,3 @@ spec:
               providerRef: shared
               overrides:
                 model: Qwen/Qwen3-4B
-                settings:
-                  model_metadata:
-                    api: openai-completions
-                    contextWindow: 32768
-                    maxTokens: 2048
-                    reasoning: false
-                    input:
-                      - text

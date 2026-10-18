@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Packaged like Fabric's own adapters: the module, plus its descriptor where
+# Fabric finds installed adapters.
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nemoclaw-test-adapter"
+version = "0.1.0"
+description = "NemoClaw's test-only Fabric adapter; never a replacement for a real adapter."
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+  "nemo-fabric-adapter-contract == 0.5.0",
+  "nemo-fabric-adapters-common == 0.5.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.data-files]
+"share/nemo-fabric/adapters/nemoclaw-dummy" = ["dummy.fabric-adapter.json"]

@@ -39,13 +39,13 @@ impl Workspace {
         Self::with(
             engine,
             &format!(
-                r#"data "nemoclaw_{source}" "qwen" {{
+                r#"data "{source}" "qwen" {{
 {settings}}}
 
 resource "docker_container" "qwen" {{
   name       = "qwen"
   image      = "runtime@sha256:{digest}"
-  env        = ["{variable}=${{data.nemoclaw_{source}.qwen.spec}}"]
+  env        = ["{variable}=${{data.{source}.qwen.spec}}"]
 }}
 "#,
                 digest = "a".repeat(64),
@@ -79,12 +79,14 @@ resource "docker_container" "qwen" {{
             format!(
                 r#"terraform {{
   required_providers {{
-    nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw", version = "= {version}" }}
+    vllm     = {{ source = "registry.opentofu.org/nvidia/vllm", version = "= {version}" }}
+    ollama   = {{ source = "registry.opentofu.org/nvidia/ollama", version = "= {version}" }}
     docker   = {{ source = "registry.opentofu.org/kreuzwerker/docker", version = "= 4.6.0" }}
   }}
 }}
 
-provider "nemoclaw" {{}}
+provider "vllm" {{}}
+provider "ollama" {{}}
 
 provider "docker" {{
   host = "{engine}"
@@ -172,6 +174,95 @@ async fn authored_vllm_container_takes_its_runtime_contract_from_typed_settings(
     assert_eq!(spec["serving"]["modelName"], "qwen");
     assert_eq!(spec["serving"]["port"], 18898);
     assert_eq!(spec["memory"]["gpuMemoryGiB"], 20);
+}
+
+/// Any platform can place a runtime from `launch` and `requirements`; here
+/// Docker does, without the SDK.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
+async fn authored_container_placed_from_launch_runs_the_runtime_contract() {
+    let engine = engine().await;
+    let workspace = Workspace::with(
+        &engine.endpoint,
+        &format!(
+            r#"data "vllm_runtime" "qwen" {{
+  hardware {{
+    profile = "dgx-spark"
+  }}
+  model {{
+    repository = "Qwen/Qwen3-4B"
+    revision   = "{REVISION}"
+  }}
+  serving {{
+    port       = 18898
+    model_name = "qwen"
+  }}
+}}
+
+locals {{
+  launch       = data.vllm_runtime.qwen.launch
+  requirements = data.vllm_runtime.qwen.requirements
+}}
+
+resource "docker_container" "qwen" {{
+  name       = "qwen"
+  image      = "runtime@sha256:{digest}"
+  entrypoint = local.launch.entrypoint
+  command    = local.launch.command
+  env        = [for name, value in local.launch.environment : "${{name}}=${{value}}"]
+  shm_size   = local.requirements.shared_memory_bytes / 1048576
+  ports {{
+    internal = local.launch.port
+    external = local.launch.port
+    ip       = "127.0.0.1"
+  }}
+}}
+
+output "requirements" {{
+  value = local.requirements
+}}
+
+output "data_path" {{
+  value = local.launch.data_path
+}}
+"#,
+            digest = "a".repeat(64),
+        ),
+    );
+    let output = workspace.plan();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let shown = workspace.run(&["show", "-json", "runtime.plan"]);
+    let plan: Value = serde_json::from_slice(&shown.stdout).unwrap();
+    let container = &plan["resource_changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|change| change["address"] == "docker_container.qwen")
+        .unwrap()["change"]["after"];
+    assert_eq!(
+        container["entrypoint"],
+        serde_json::json!(["/usr/local/bin/nemoclaw-runtime"])
+    );
+    assert_eq!(container["ports"][0]["internal"], 18898);
+    assert_eq!(container["shm_size"], 8192);
+    let environment = container["env"].as_array().unwrap();
+    assert_eq!(environment.len(), 1);
+    let encoded = environment[0]
+        .as_str()
+        .unwrap()
+        .strip_prefix("NEMOCLAW_RUNTIME_SPEC=")
+        .expect("the launch carries the runtime contract");
+    nemoclaw_runtime::RuntimeSpec::decode(encoded).expect("the runtime accepts the contract");
+    let outputs = &plan["planned_values"]["outputs"];
+    assert_eq!(outputs["data_path"]["value"], "/data");
+    let requirements = &outputs["requirements"]["value"];
+    assert_eq!(requirements["gpu"], true);
+    assert_eq!(requirements["ulimits"]["memlock"], -1);
+    assert_eq!(requirements["ulimits"]["stack"], 67108864);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

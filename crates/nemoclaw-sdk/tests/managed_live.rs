@@ -72,7 +72,7 @@ async fn retained_inference_credentials_preserve_their_reference_binding() {
     let state: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let mut observed = 0;
     for resource in state["resources"].as_array().unwrap() {
-        if resource["type"] != "nemoclaw_inference_storage" {
+        if resource["type"] != "vllm_credential_storage" {
             continue;
         }
         let instances = resource["instances"].as_array().unwrap();

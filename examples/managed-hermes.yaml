@@ -39,11 +39,6 @@ spec:
         tier: isolated
       harness:
         kind: nvidia.fabric.hermes
-        settings:
-          mode: service
-          interfaces:
-            dashboard:
-              enabled: false
       agent:
         name: main
         inference:

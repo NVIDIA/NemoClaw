@@ -31,6 +31,7 @@ async fn revision(client: &OpenShellClient, sandbox: &SandboxRef) -> u64 {
         .get_sandbox_provider_environment(proto::GetSandboxProviderEnvironmentRequest {
             sandbox_id: sandbox.id.clone(),
             supports_static_credential_bindings: true,
+            supports_stable_placeholder_environment_keys: false,
         })
         .await
         .unwrap()

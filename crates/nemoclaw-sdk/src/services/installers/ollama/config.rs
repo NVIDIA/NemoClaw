@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::super::vllm::ServiceContainer;
+use super::super::container::ServiceContainer;
 use crate::config::{ConfigError, ImagePullPolicy};
 use crate::config::{InferenceApi, InferenceProvider, InferenceProviderKind};
 use crate::services::placement::{ServicePlacement, ServicePublication};

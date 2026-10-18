@@ -45,6 +45,3 @@ spec:
               providerRef: local
               overrides:
                 model: qwen3:0.6b
-                settings:
-                  model_metadata:
-                    contextWindow: 32768

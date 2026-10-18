@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Compile disposable service compute into standard Docker provider resources.
 use crate::config::ComputeDriver;
+use crate::services::literal;
 use crate::{Error, backend::Row, compile::Target, config::ImagePullPolicy, managed::Spec};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -13,12 +14,17 @@ fn process(target: &Target) -> bool {
         && spec(target).is_ok_and(|spec| spec.compute_driver == ComputeDriver::Docker))
         || matches!(
             target.kind.as_str(),
-            "inference_service" | "ollama_service" | "ollama_proxy"
+            "inference_service" | "ollama_service" | "ollama_proxy" | "container_service"
         )
 }
 pub(crate) fn address(logical: &str) -> String {
-    for kind in ["inference_storage", "ollama_service_storage"] {
-        if let Some(name) = logical.strip_prefix(&format!("nemoclaw_{kind}."))
+    for kind in [
+        "inference_storage",
+        "ollama_service_storage",
+        "container_storage",
+    ] {
+        if let Some(name) =
+            logical.strip_prefix(&format!("{}.", crate::compile::resource_type(kind)))
             && !name.ends_with("_auth")
         {
             return format!("docker_volume.{kind}_{name}");
@@ -29,6 +35,7 @@ pub(crate) fn address(logical: &str) -> String {
         "ollama_service",
         "ollama_proxy",
         "managed_gateway",
+        "container_service",
     ] {
         if let Some(name) =
             logical.strip_prefix(&format!("{}.", crate::compile::resource_type(kind)))
@@ -74,6 +81,8 @@ fn image(target: &Target) -> Result<Target, Error> {
         let platform = spec
             .process
             .as_ref()
+            // An image-owned application runs on the engine's own platform.
+            .filter(|process| !process.architecture.is_empty())
             .map(|process| format!("linux/{}", process.architecture));
         (spec.engine().to_owned(), spec.image().to_owned(), platform)
     };
@@ -129,6 +138,7 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
     let mut result = raw.to_vec();
     for target in &mut result {
         if address(&target.address).starts_with("docker_volume.") {
+            let retained = crate::services::resource_behavior(&target.kind).retained_storage;
             let storage = crate::managed::Storage::from_row(&target.values)?;
             target.address = address(&target.address);
             target.kind = "docker_volume".into();
@@ -137,6 +147,12 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
                 ("name".into(), storage.name),
                 ("owner".into(), storage.owner),
             ]);
+            if !retained {
+                target
+                    .values
+                    .insert("generation".into(), storage.generation);
+                target.values.insert("disposable".into(), "true".into());
+            }
         }
     }
     let mut ancillary: BTreeMap<String, Target> = BTreeMap::new();
@@ -172,22 +188,25 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
     result.extend(ancillary.into_values());
     Ok(result)
 }
-/// Escape OpenTofu template sequences in every string of `value`.
-pub(crate) fn literal(value: &mut Value) {
-    match value {
-        Value::String(text) => *text = text.replace("${", "$${").replace("%{", "%%{"),
-        Value::Array(values) => values.iter_mut().for_each(literal),
-        Value::Object(values) => values.values_mut().for_each(literal),
-        _ => {}
-    }
-}
 fn rewrite(value: &mut Value, old: &str, new: &str) {
     match value {
-        Value::String(text) if text == old => *text = new.into(),
         Value::Array(values) => values.iter_mut().for_each(|value| rewrite(value, old, new)),
-        Value::Object(values) => values
-            .values_mut()
-            .for_each(|value| rewrite(value, old, new)),
+        Value::Object(values) => {
+            for (key, value) in values {
+                // Resource references, not arbitrary application strings.
+                if matches!(key.as_str(), "depends_on" | "replace_triggered_by") {
+                    if let Some(references) = value.as_array_mut() {
+                        for reference in references {
+                            if reference.as_str() == Some(old) {
+                                *reference = json!(new);
+                            }
+                        }
+                    }
+                } else {
+                    rewrite(value, old, new);
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -212,7 +231,7 @@ fn container(target: &Target) -> Result<Value, Error> {
             .port()
             .ok_or(Error::State("missing gateway port"))?;
         return Ok(
-            json!({"name":spec.name,"user":"0:0","labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"networks_advanced":[{"name":spec.network(),"ipv4_address":spec.gateway_address()?}],"ports":[{"internal":port,"external":port,"ip":endpoint.host_str().ok_or(Error::State("missing gateway host"))?,"protocol":"tcp"}],"mounts":[{"type":"volume","source":spec.volume(),"target":"/NEMOCLAW_GATEWAY_DATA"},{"type":"bind","source":spec.gateway.engine.strip_prefix("unix://").ok_or(Error::State("gateway requires Unix engine"))?,"target":"/var/run/docker.sock"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"no","log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60}),
+            json!({"name":spec.name,"user":"0:0","labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"networks_advanced":[{"name":spec.network(),"ipv4_address":spec.gateway_address()?}],"ports":[{"internal":port,"external":port,"ip":endpoint.host_str().ok_or(Error::State("missing gateway host"))?,"protocol":"tcp"}],"mounts":[{"type":"volume","source":spec.volume(),"target":"/NEMOCLAW_GATEWAY_DATA"},{"type":"bind","source":spec.gateway.engine.strip_prefix("unix://").ok_or(Error::State("gateway requires Unix engine"))?,"target":"/var/run/docker.sock"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"unless-stopped","log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60}),
         );
     }
     let process = spec
@@ -221,6 +240,40 @@ fn container(target: &Target) -> Result<Value, Error> {
         .ok_or(Error::State("missing runtime process"))?;
     let launch = spec.container("/data")?;
     let mut attrs = json!({"name":spec.name,"labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"network_mode":spec.network(),"mounts":[{"type":"volume","source":spec.volume(),"target":process.mount_target}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"no","memory":process.memory_bytes/(1<<20),"memory_swap":process.memory_bytes/(1<<20),"shm_size":process.shared_memory_bytes/(1<<20),"ipc_mode":if process.host_ipc {"host"} else {"private"},"ulimit":[{"name":"memlock","soft":-1,"hard":-1},{"name":"stack","soft":67108864,"hard":67108864}],"ports":[{"internal":process.port,"external":process.port,"ip":process.bind_address,"protocol":"tcp"}],"log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60});
+    if let Some(image) = &process.image_owned {
+        let attrs_map = attrs.as_object_mut().unwrap();
+        attrs_map.remove("entrypoint");
+        if image.command.is_none() {
+            attrs_map.remove("command");
+        }
+        attrs_map.remove("ulimit");
+        if process.port == 0 || process.bind_address.is_empty() {
+            attrs_map.remove("ports");
+        }
+        if !image.ulimits.is_empty() {
+            attrs["ulimit"] = json!(
+                image
+                    .ulimits
+                    .iter()
+                    .map(|(name, value)| json!({"name":name,"soft":value,"hard":value}))
+                    .collect::<Vec<_>>()
+            );
+        }
+        if !image.files.is_empty() {
+            attrs["upload"] = json!(image.files.iter().map(|(path, content)|
+                json!({"file":path,"content":content,"permissions":"0444","owner":"0","group":"0"})).collect::<Vec<_>>());
+        }
+        attrs["user"] = json!(launch.user);
+        attrs["labels"] = json!(
+            spec.labels()?
+                .into_iter()
+                .collect::<BTreeMap<_, _>>()
+                .into_iter()
+                .map(|(label, value)| json!({"label":label,"value":value}))
+                .collect::<Vec<_>>()
+        );
+        attrs["destroy_grace_seconds"] = json!(15);
+    }
     if target.kind == "inference_service"
         && crate::services::installers::vllm::configured_service(&spec)?
             .authentication
@@ -246,7 +299,7 @@ fn container(target: &Target) -> Result<Value, Error> {
     // Containers created before memory limits were configurable used the
     // default and have no label; keep them unchanged.
     let memory_gib = process.memory_bytes / nemoclaw_runtime::hardware::GIB;
-    if memory_gib != crate::services::installers::vllm::DEFAULT_MEMORY_LIMIT_GIB {
+    if memory_gib != crate::services::installers::container::DEFAULT_MEMORY_LIMIT_GIB {
         push_label(
             &mut attrs,
             "nemoclaw.nvidia.com/memory-limit-gib",
@@ -274,7 +327,15 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
         providers.insert(alias.clone(), engine.clone());
         let mut attrs = match target.kind.as_str() {
             "docker_volume" => {
-                json!({"name":target.values["name"],"driver":"local","labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"lifecycle":{"prevent_destroy":true}})
+                let mut volume = json!({"name":target.values["name"],"driver":"local","labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"lifecycle":{"prevent_destroy":true}});
+                if target.values.get("disposable").is_some_and(|v| v == "true") {
+                    volume["labels"].as_array_mut().unwrap().push(json!({
+                        "label":crate::managed::GENERATION_LABEL,
+                        "value":target.values["generation"]
+                    }));
+                    volume.as_object_mut().unwrap().remove("lifecycle");
+                }
+                volume
             }
             "docker_network" => {
                 json!({"name":target.values["name"],"labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"driver":"bridge","ipam_config":[{"subnet":target.values["cidr"],"gateway":crate::config::bridge_address(&target.values["cidr"])?}]})
@@ -372,10 +433,9 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
                 .1
                 .to_owned();
             literal(&mut settings);
-            graph["data"][format!("nemoclaw_{source}")][&logical] = settings;
-            attrs["env"] = json!([format!(
-                "{variable}=${{data.nemoclaw_{source}.{logical}.spec}}"
-            )]);
+            let source = crate::compile::data_source_type(source);
+            graph["data"][&source][&logical] = settings;
+            attrs["env"] = json!([format!("{variable}=${{data.{source}.{logical}.spec}}")]);
         }
         if target.kind == crate::managed::GATEWAY_KIND {
             // The launch comes from typed settings and the storage's data path.
@@ -409,11 +469,16 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             }
             storage_path(&mut attrs);
         }
-        if matches!(target.kind.as_str(), "inference_service" | "ollama_service") {
+        if matches!(
+            target.kind.as_str(),
+            "inference_service" | "ollama_service" | "container_service"
+        ) {
             let cache_kind = if target.kind == "inference_service" {
                 "inference_storage"
-            } else {
+            } else if target.kind == "ollama_service" {
                 "ollama_service_storage"
+            } else {
+                "container_storage"
             };
             let name = target.address.split_once('.').unwrap().1;
             attrs["mounts"][0]["source"] =
@@ -439,10 +504,7 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             dependencies.push(json!(network.address));
         }
         attrs["depends_on"] = json!(dependencies);
-        if let Some(preconditions) = old
-            .get("lifecycle")
-            .and_then(|lifecycle| lifecycle.get("precondition"))
-        {
+        if let Some(preconditions) = old.get("lifecycle").and_then(|l| l.get("precondition")) {
             attrs["lifecycle"] = json!({"precondition":preconditions});
         }
         let physical = address(&target.address);
@@ -499,8 +561,8 @@ fn runtime_image_checks(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             "allow_missing": image.kind == "docker_image",
         });
         literal(&mut config);
-        graph["data"]["nemoclaw_runtime_image"][&present] = config.clone();
-        let present_address = format!("data.nemoclaw_runtime_image.{present}");
+        graph["data"]["host_image"][&present] = config.clone();
+        let present_address = format!("data.host_image.{present}");
         let attribute = if image.kind == "docker_image_data" {
             "id"
         } else {
@@ -508,7 +570,7 @@ fn runtime_image_checks(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
         };
         config["image_id"] = json!(format!("${{{}.{attribute}}}", image.address));
         config["allow_missing"] = json!(false);
-        graph["data"]["nemoclaw_runtime_image"][&acquired] = config;
+        graph["data"]["host_image"][&acquired] = config;
         if image.kind == "docker_image" {
             let name = image.address.split_once('.').unwrap().1;
             add_dependencies(
@@ -516,7 +578,7 @@ fn runtime_image_checks(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
                 &[json!(present_address)],
             );
         }
-        gates.push(json!(format!("data.nemoclaw_runtime_image.{acquired}")));
+        gates.push(json!(format!("data.host_image.{acquired}")));
     }
     if !gates.is_empty()
         && let Some(resources) = graph["resource"].as_object_mut()
@@ -547,6 +609,29 @@ fn add_dependencies(attrs: &mut Value, dependencies: &[Value]) {
     attrs["depends_on"] = json!(all);
 }
 
+/// Have every Docker provider authenticate to the listed registries with the
+/// logins of the machine running OpenTofu. The provider reads its Docker
+/// configuration file; the graph holds only addresses.
+pub(crate) fn authenticate(graph: &mut Value, registries: &[crate::config::Registry]) {
+    if registries.is_empty() {
+        return;
+    }
+    let auth = json!(
+        registries
+            .iter()
+            .map(|registry| match &registry.config_file {
+                Some(file) => json!({"address": registry.address, "config_file": file}),
+                None => json!({"address": registry.address}),
+            })
+            .collect::<Vec<_>>()
+    );
+    if let Some(providers) = graph["provider"]["docker"].as_array_mut() {
+        for provider in providers {
+            provider["registry_auth"] = auth.clone();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -566,7 +651,7 @@ mod tests {
         let cache = &graph["resource"]["docker_volume"]["inference_storage_inference_qwen"];
         assert!(cache["name"].as_str().unwrap().ends_with("-data"));
         assert_eq!(cache["lifecycle"]["prevent_destroy"], true);
-        assert!(graph["resource"]["nemoclaw_inference_storage"].is_null());
+        assert!(graph["resource"]["vllm_credential_storage"].is_null());
         let mounts =
             &graph["resource"]["docker_container"]["inference_service_inference_qwen"]["mounts"];
         assert_eq!(
@@ -595,7 +680,7 @@ mod tests {
         assert_eq!(mounts[0]["target"], "/data");
         assert_eq!(mounts[1]["target"], "/credentials");
         assert_ne!(mounts[0]["source"], mounts[1]["source"]);
-        let auth = &graph["resource"]["nemoclaw_inference_storage"]["inference_qwen_auth"];
+        let auth = &graph["resource"]["vllm_credential_storage"]["inference_qwen_auth"];
         assert!(auth["name"].as_str().unwrap().ends_with("-auth"));
         assert_eq!(auth["lifecycle"]["prevent_destroy"], true);
     }
@@ -649,17 +734,17 @@ mod tests {
         );
         assert_eq!(gateway["mounts"][1]["target"], "/var/run/docker.sock");
         assert_eq!(gateway["wait"], false);
-        assert_eq!(gateway["restart"], "no");
+        // The engine brings the gateway back after it or the host restarts;
+        // an explicit stop keeps it stopped.
+        assert_eq!(gateway["restart"], "unless-stopped");
         assert_eq!(
             gateway["depends_on"],
             json!([
                 "openshell_gateway_storage.runtime",
-                "data.nemoclaw_runtime_image.runtime_image_acquired_inference_service_inference_qwen"
+                "data.host_image.runtime_image_acquired_inference_service_inference_qwen"
             ])
         );
-        let gate = json!(
-            "data.nemoclaw_runtime_image.runtime_image_acquired_inference_service_inference_qwen"
-        );
+        let gate = json!("data.host_image.runtime_image_acquired_inference_service_inference_qwen");
         for (kind, resources) in graph["resource"].as_object().unwrap() {
             if kind != "docker_image" {
                 for resource in resources.as_object().unwrap().values() {
@@ -789,7 +874,7 @@ mod tests {
         assert!(is_disposable(
             "docker_container.inference_service_inference_qwen"
         ));
-        assert!(!is_disposable("nemoclaw_inference_storage.inference_qwen"));
+        assert!(!is_disposable("vllm_credential_storage.inference_qwen"));
     }
     #[test]
     fn omitted_image_policy_uses_provider_acquisition_and_never_only_reads_local_images() {

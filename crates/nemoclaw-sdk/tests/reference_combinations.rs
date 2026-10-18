@@ -98,10 +98,12 @@ fn declaration_scope_combinations_preserve_runtime_and_authored_intent() {
     }
 }
 
+/// Every example's generated agent configuration is a valid Fabric
+/// configuration. Whether each harness accepts it is Fabric's to decide when
+/// the agent is configured, which the live suites exercise.
 #[test]
-fn example_configurations_pass_the_canonical_fabric_planner() {
+fn example_configurations_are_valid_fabric_configurations() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
     let generations: Generations = [
         "workspace",
         "provider",
@@ -110,6 +112,7 @@ fn example_configurations_pass_the_canonical_fabric_planner() {
         "inference_service",
         "ollama",
         "ollama_proxy",
+        "kubernetes_gateway",
     ]
     .map(|key| (key.into(), "a".repeat(32)))
     .into();
@@ -121,24 +124,9 @@ fn example_configurations_pass_the_canonical_fabric_planner() {
         for definition in &document.spec.sandboxes {
             let configuration =
                 nemoclaw_sdk::fabric_config::for_sandbox(&document, definition).unwrap();
-            let descriptors = catalog
-                .adapters
-                .iter()
-                .map(|adapter| {
-                    serde_json::from_value(serde_json::to_value(adapter).unwrap()).unwrap()
-                })
-                .collect::<Vec<_>>();
-            let targets = catalog
-                .targets
-                .iter()
-                .map(|target| serde_json::from_value(target.clone()).unwrap())
-                .collect::<Vec<_>>();
-            if let Err(error) = nemo_fabric_core::resolve_run_plan_from_descriptors(
-                serde_json::from_value(configuration).unwrap(),
-                nemo_fabric_core::ResolveContext::new("/sandbox"),
-                &descriptors,
-                &targets,
-            ) {
+            if let Err(error) =
+                serde_json::from_value::<nemo_fabric_core::FabricConfig>(configuration)
+            {
                 failures.push(format!("{} / {}: {error}", path.display(), definition.name));
             }
             checked += 1;

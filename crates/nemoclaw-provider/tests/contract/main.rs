@@ -18,10 +18,12 @@ use http_fixture as transport;
 mod image_runtime;
 
 mod discovery;
-mod inference_capabilities;
+mod endpoint_readiness;
+mod host_container_health;
+mod host_image;
 mod provider_protocol;
+mod readiness_refs;
 mod references;
-mod runtime_image;
 mod service_capacity;
 mod service_readiness;
 mod service_storage;
@@ -32,15 +34,29 @@ mod vllm_runtime;
 
 pub use nemoclaw_test_fixtures::{openshell, tofu};
 
-/// The nemoclaw provider Cargo built from this checkout, the one under test.
-pub fn provider() -> std::path::PathBuf {
-    nemoclaw_test_fixtures::package_executable!("terraform-provider-nemoclaw")
-}
-
-/// A workspace with the provider under test, and OpenTofu and the openshell
-/// and fabric providers from the bundle.
+/// A workspace with this package's providers under test (vllm, ollama, and
+/// host), and OpenTofu and the openshell and fabric providers from the bundle.
 pub fn workspace() -> tofu::TofuWorkspace {
-    tofu::TofuWorkspace::new(&nemoclaw_test_fixtures::Bundle::from_env(), provider())
+    let bundle = nemoclaw_test_fixtures::Bundle::from_env();
+    tofu::TofuWorkspace::with_providers(
+        bundle.tofu(),
+        &[
+            (
+                "vllm",
+                &nemoclaw_test_fixtures::package_executable!("terraform-provider-vllm"),
+            ),
+            (
+                "ollama",
+                &nemoclaw_test_fixtures::package_executable!("terraform-provider-ollama"),
+            ),
+            (
+                "host",
+                &nemoclaw_test_fixtures::package_executable!("terraform-provider-host"),
+            ),
+            ("openshell", &bundle.provider("openshell")),
+            ("fabric", &bundle.provider("fabric")),
+        ],
+    )
 }
 
 /// Failed apply may record new data-source observations and condition
@@ -68,24 +84,37 @@ const ELSEWHERE: [(&str, &str); 0] = [];
 #[test]
 fn every_type_has_a_contract_test() {
     use tf_provider::Provider;
-    let provider = nemoclaw_provider::NemoClawProvider::default();
-    let mut diagnostics = tf_provider::Diagnostics::default();
-    let types: Vec<String> = provider
-        .get_resources(&mut diagnostics)
-        .unwrap()
-        .into_keys()
-        .chain(
-            provider
-                .get_data_sources(&mut diagnostics)
-                .unwrap()
-                .into_keys(),
-        )
+    fn served(prefix: &str, provider: impl Provider) -> Vec<String> {
+        let mut diagnostics = tf_provider::Diagnostics::default();
+        provider
+            .get_resources(&mut diagnostics)
+            .unwrap()
+            .into_keys()
+            .chain(
+                provider
+                    .get_data_sources(&mut diagnostics)
+                    .unwrap()
+                    .into_keys(),
+            )
+            .map(|name| format!("{prefix}_{name}"))
+            .collect()
+    }
+    // Every type this package's providers serve, by full type name.
+    let types: Vec<String> = served("vllm", nemoclaw_provider::ServiceProvider::vllm())
+        .into_iter()
+        .chain(served(
+            "ollama",
+            nemoclaw_provider::ServiceProvider::ollama(),
+        ))
+        .chain(served("host", nemoclaw_provider::HostProvider::default()))
         .collect();
     let sources = [
         include_str!("discovery.rs"),
-        include_str!("inference_capabilities.rs"),
+        include_str!("endpoint_readiness.rs"),
+        include_str!("readiness_refs.rs"),
         include_str!("provider_protocol.rs"),
-        include_str!("runtime_image.rs"),
+        include_str!("host_container_health.rs"),
+        include_str!("host_image.rs"),
         include_str!("service_capacity.rs"),
         include_str!("service_readiness.rs"),
         include_str!("service_storage.rs"),
@@ -94,10 +123,11 @@ fn every_type_has_a_contract_test() {
     .concat();
     let missing: Vec<_> = types
         .iter()
-        .filter(|kind| {
-            !sources.contains(&format!("nemoclaw_{kind}"))
+        .filter(|name| {
+            let kind = name.strip_prefix("nemoclaw_").unwrap_or(name);
+            !sources.contains(name.as_str())
                 && !sources.contains(&format!("\"{kind}\""))
-                && !ELSEWHERE.iter().any(|(elsewhere, _)| elsewhere == kind)
+                && !ELSEWHERE.iter().any(|(elsewhere, _)| *elsewhere == kind)
         })
         .collect();
     for (kind, _) in ELSEWHERE {

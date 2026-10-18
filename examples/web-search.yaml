@@ -1,0 +1,59 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+
+# Two agents share one inference provider and one Brave search definition.
+# OpenShell holds the search key and allows each agent's harness to reach the
+# search API; the agent's own tools make the requests. Set your own deployment
+# UID, endpoints, and model; see docs/agents.md#web-search.
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: web-search
+  uid: 7f0b6d2e-5c1a-4e8f-9d3b-2a6c4e1f8b90
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:17681
+  inferenceProviders:
+    - name: local
+      provider: openai
+      endpoint: http://172.20.0.1:11446/v1
+  integrations:
+    search:
+      kind: webSearch
+      provider: brave
+      credential:
+        env: BRAVE_API_KEY
+  sandboxes:
+    - name: researcher
+      image:
+        # Replace with the digest from a current Hermes image build.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      harness:
+        kind: nvidia.fabric.hermes
+      agent:
+        name: researcher
+        integrationRefs: [search]
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:4b
+    - name: writer
+      image:
+        # Replace with the digest from a current Hermes image build.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      harness:
+        kind: nvidia.fabric.hermes
+      agent:
+        name: writer
+        integrationRefs: [search]
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:4b

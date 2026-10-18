@@ -14,7 +14,7 @@ pub struct CompiledTeardown {
 
 /// Compile removal of workloads while keeping established storage tracked.
 ///
-/// `established` contains resource addresses from the selected stage's saved
+/// `established` contains resource addresses from the deployment's saved
 /// OpenTofu state. The caller must verify that bindings belong to this deployment
 /// and agree with its retained intent before applying the graph. Missing retained
 /// resources are omitted so teardown cannot create storage after partial apply.
@@ -23,26 +23,18 @@ pub fn compile_teardown(
     generations: &Generations,
     version: &str,
     established: &BTreeSet<String>,
-    runtime: bool,
 ) -> Result<CompiledTeardown, crate::Error> {
-    let mut graph = if runtime {
-        compile_runtime(document, generations, version)?
-    } else {
-        compile(document, generations, version)?
-    };
+    let mut graph = compile(document, generations, version)?;
     let mut retained: BTreeSet<String> = crate::services::remove_plans(document, generations)?
         .into_iter()
         .flat_map(|plan| plan.retained)
         .collect();
-    retained.insert(if runtime {
-        if document.spec.gateway.as_kubernetes().is_some() {
-            "openshell_kubernetes_storage.runtime".into()
-        } else {
-            "openshell_gateway_storage.runtime".into()
-        }
-    } else {
-        "openshell_workspace.deployment".into()
-    });
+    // Only data survives teardown. The workspace lives in the gateway, which
+    // teardown removes, so it's destroyed with the deployment's other objects.
+    retained.extend([
+        "openshell_kubernetes_storage.runtime".into(),
+        "openshell_gateway_storage.runtime".into(),
+    ]);
     retained.retain(|address| {
         established.contains(address)
             && address.split_once('.').is_some_and(|(kind, name)| {
@@ -71,9 +63,6 @@ pub fn compile_teardown(
             graph["provider"][name]["destroy"] = json!(true);
         }
     }
-    // Without data sources, retained objects name their gateway literally.
-    let gateway = crate::compile::gateway_ref(&document.spec.gateway);
-    let gateway_expression = crate::compile::gateway_ref_expression();
     let resources = graph["resource"]
         .as_object_mut()
         .expect("compiled resources");
@@ -81,9 +70,6 @@ pub fn compile_teardown(
         let instances = instances.as_object_mut().expect("compiled instances");
         instances.retain(|name, _| retained.contains(&format!("{kind}.{name}")));
         for attrs in instances.values_mut() {
-            if attrs["gateway"] == json!(gateway_expression) {
-                attrs["gateway"] = gateway.clone();
-            }
             attrs["lifecycle"] = json!({"prevent_destroy":true});
             if let Some(dependencies) = attrs.get_mut("depends_on").and_then(Value::as_array_mut) {
                 dependencies.retain(|dependency| {
@@ -163,7 +149,7 @@ mod tests {
             .into_iter()
             .filter(|address| {
                 address.starts_with("docker_volume.")
-                    || address.starts_with("nemoclaw_inference_storage.")
+                    || address.starts_with("vllm_credential_storage.")
                     || address == "openshell_gateway_storage.runtime"
             })
             .collect();
@@ -178,7 +164,7 @@ mod tests {
             retained.clone(),
         ] {
             let compiled =
-                compile_teardown(&document, &generations, "0.1.0", &established, true).unwrap();
+                compile_teardown(&document, &generations, "0.1.0", &established).unwrap();
             assert_eq!(compiled.retained, established);
             let graph = compiled.graph;
             if established.is_empty() {
@@ -197,9 +183,10 @@ mod tests {
                 graph.get("output").is_none(),
                 "teardown must not retain discovery references"
             );
-            for provider in ["nemoclaw", "openshell", "fabric"] {
+            for provider in ["openshell", "fabric"] {
                 assert_eq!(graph["provider"][provider]["destroy"], true, "{provider}");
             }
+            assert!(graph["provider"].get("nemoclaw").is_none());
             assert_eq!(graph["provider"]["docker"], full["provider"]["docker"]);
             for address in &established {
                 let (kind, name) = address.split_once('.').unwrap();
@@ -245,23 +232,20 @@ mod tests {
             ]),
         ] {
             let compiled =
-                compile_teardown(&document, &generations, "0.1.0", &established, true).unwrap();
+                compile_teardown(&document, &generations, "0.1.0", &established).unwrap();
             let expected = established
                 .into_iter()
                 .filter(|address| address == &storage)
                 .collect();
             assert_eq!(compiled.retained, expected);
             assert_eq!(addresses(&compiled.graph), expected);
-            // The platform stage installs the gateway: openshell serves the
-            // Kubernetes gateway types; fabric needs a running gateway.
-            for provider in ["nemoclaw", "openshell"] {
+            for provider in ["openshell", "fabric"] {
                 assert_eq!(
                     compiled.graph["provider"][provider],
                     json!({"destroy": true}),
                     "{provider}"
                 );
             }
-            assert!(compiled.graph["provider"].get("fabric").is_none());
             assert!(compiled.graph.get("data").is_none());
             assert!(compiled.graph.get("output").is_none());
             if compiled.retained.contains(&storage) {
@@ -274,35 +258,24 @@ mod tests {
     }
 
     #[test]
-    fn reported_retention_matches_the_selected_stage_graph() {
+    fn reported_retention_matches_the_teardown_graph() {
         let (document, generations) = fixture();
-        let established: BTreeSet<_> =
-            addresses(&compile(&document, &generations, "0.1.0").unwrap())
-                .union(&addresses(
-                    &compile_runtime(&document, &generations, "0.1.0").unwrap(),
-                ))
-                .cloned()
-                .collect();
-        for runtime in [false, true] {
-            let compiled =
-                compile_teardown(&document, &generations, "0.1.0", &established, runtime).unwrap();
-            assert_eq!(compiled.retained, addresses(&compiled.graph));
-            assert_eq!(compiled.retained.len(), if runtime { 3 } else { 1 });
-            let repeated = compile_teardown(
-                &document,
-                &generations,
-                "0.1.0",
-                &compiled.retained,
-                runtime,
-            )
-            .unwrap();
-            assert_eq!(repeated.retained, compiled.retained);
-            assert_eq!(repeated.graph, compiled.graph);
-        }
+        let established = addresses(&compile(&document, &generations, "0.1.0").unwrap());
+        let compiled = compile_teardown(&document, &generations, "0.1.0", &established).unwrap();
+        assert_eq!(compiled.retained, addresses(&compiled.graph));
+        // Gateway storage, and the model cache and credentials: data only.
+        assert_eq!(compiled.retained.len(), 3);
+        assert!(!compiled.retained.contains("openshell_workspace.deployment"));
+        let repeated =
+            compile_teardown(&document, &generations, "0.1.0", &compiled.retained).unwrap();
+        assert_eq!(repeated.retained, compiled.retained);
+        assert_eq!(repeated.graph, compiled.graph);
     }
 
     #[test]
-    fn teardown_retains_workspace_only_when_established() {
+    fn teardown_deletes_the_workspace() {
+        // The workspace lives in the gateway, which teardown removes; keeping
+        // it would leave state that the next plan can't refresh.
         let (document, generations) = fixture();
         for established in [
             BTreeSet::new(),
@@ -312,14 +285,10 @@ mod tests {
             ]),
         ] {
             let compiled =
-                compile_teardown(&document, &generations, "0.1.0", &established, false).unwrap();
+                compile_teardown(&document, &generations, "0.1.0", &established).unwrap();
             let graph = compiled.graph;
-            let expected = established
-                .into_iter()
-                .filter(|address| address == "openshell_workspace.deployment")
-                .collect();
-            assert_eq!(addresses(&graph), expected);
-            assert_eq!(compiled.retained, expected);
+            assert_eq!(addresses(&graph), BTreeSet::new());
+            assert_eq!(compiled.retained, BTreeSet::new());
             assert!(graph.get("data").is_none());
         }
     }

@@ -12,10 +12,13 @@ path = "src/main.rs"
 required-features = ["installation"]
 
 [features]
-default = ["installation"]
-# Serve the gateway installation types, which nemoclaw-provider implements.
-# Providers that only reach a gateway, such as fabric, turn this off.
-installation = ["dep:nemoclaw-provider"]
+default = ["installation", "kubernetes"]
+# Serve the types the SDK and nemoclaw-provider implement: gateway installation,
+# and the external inference server check. Providers that only reach a gateway,
+# such as fabric, turn this off.
+installation = ["dep:nemoclaw-provider", "dep:nemoclaw-sdk"]
+# Reach managed Kubernetes gateways through port-forwards the provider opens.
+kubernetes = ["dep:nemoclaw-sdk"]
 
 [lints]
 workspace = true
@@ -25,9 +28,11 @@ nemoclaw-backend = { path = "../nemoclaw-backend" }
 nemoclaw-docker = { path = "../nemoclaw-docker" }
 nemoclaw-openshell = { path = "../nemoclaw-openshell" }
 nemoclaw-provider = { path = "../nemoclaw-provider", optional = true }
+nemoclaw-sdk = { path = "../nemoclaw-sdk", optional = true }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
 async-trait.workspace = true
 openshell-core.workspace = true
+prost-types.workspace = true
 openshell-policy.workspace = true
 openshell-sdk.workspace = true
 rustls.workspace = true
