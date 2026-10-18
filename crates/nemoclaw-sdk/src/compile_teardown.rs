@@ -29,10 +29,11 @@ pub fn compile_teardown(
         .into_iter()
         .flat_map(|plan| plan.retained)
         .collect();
+    // Only data survives teardown. The workspace lives in the gateway, which
+    // teardown removes, so it's destroyed with the deployment's other objects.
     retained.extend([
         "openshell_kubernetes_storage.runtime".into(),
         "openshell_gateway_storage.runtime".into(),
-        "openshell_workspace.deployment".into(),
     ]);
     retained.retain(|address| {
         established.contains(address)
@@ -262,8 +263,9 @@ mod tests {
         let established = addresses(&compile(&document, &generations, "0.1.0").unwrap());
         let compiled = compile_teardown(&document, &generations, "0.1.0", &established).unwrap();
         assert_eq!(compiled.retained, addresses(&compiled.graph));
-        // Gateway storage, the model cache and credentials, and the workspace.
-        assert_eq!(compiled.retained.len(), 4);
+        // Gateway storage, and the model cache and credentials: data only.
+        assert_eq!(compiled.retained.len(), 3);
+        assert!(!compiled.retained.contains("openshell_workspace.deployment"));
         let repeated =
             compile_teardown(&document, &generations, "0.1.0", &compiled.retained).unwrap();
         assert_eq!(repeated.retained, compiled.retained);
@@ -271,7 +273,9 @@ mod tests {
     }
 
     #[test]
-    fn teardown_retains_workspace_only_when_established() {
+    fn teardown_deletes_the_workspace() {
+        // The workspace lives in the gateway, which teardown removes; keeping
+        // it would leave state that the next plan can't refresh.
         let (document, generations) = fixture();
         for established in [
             BTreeSet::new(),
@@ -283,12 +287,8 @@ mod tests {
             let compiled =
                 compile_teardown(&document, &generations, "0.1.0", &established).unwrap();
             let graph = compiled.graph;
-            let expected = established
-                .into_iter()
-                .filter(|address| address == "openshell_workspace.deployment")
-                .collect();
-            assert_eq!(addresses(&graph), expected);
-            assert_eq!(compiled.retained, expected);
+            assert_eq!(addresses(&graph), BTreeSet::new());
+            assert_eq!(compiled.retained, BTreeSet::new());
             assert!(graph.get("data").is_none());
         }
     }
