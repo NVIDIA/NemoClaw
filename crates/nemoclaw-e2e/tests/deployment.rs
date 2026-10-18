@@ -473,6 +473,27 @@ async fn api_integration_applies_exports_and_reapplies_unchanged() {
     lifecycle.destroy();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn network_grants_apply_export_and_reapply_unchanged() {
+    // Grants added to the isolated preset reach the sandbox's managed policy
+    // and survive export and re-apply.
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.sandboxes[0].network = serde_json::from_value(serde_json::json!({
+        "tier": "isolated",
+        "grants": {"docs": {"endpoints": [{
+            "host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce",
+            "rules": [{"allow": {"method": "GET", "path": "/**"}}]
+        }]}}
+    }))
+    .unwrap();
+    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    let effects = lifecycle.apply().await;
+    lifecycle.export_and_reapply_unchanged(effects).await;
+    lifecycle.destroy();
+}
+
 /// Progress events that the deployment's callback records.
 type Recorded<T> = std::sync::Arc<std::sync::Mutex<Vec<T>>>;
 

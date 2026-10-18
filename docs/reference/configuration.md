@@ -405,6 +405,21 @@ An existing gateway managed outside this deployment.
 | `runtime` | [Runtime](#runtime) | No | — | Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports. |
 | `tls` | [TLS](#tls) | No | — | Optional mutual TLS references for an external HTTPS gateway. |
 
+## Grant
+
+Endpoint grants added to the isolated preset, restricted to executables.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.sandboxes[].network.grants.{key}`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `binaries` | array of [PolicyBinary](#policybinary) | No | — | Executables allowed to use the endpoints. Omitted or empty selects the harness's executables. |
+| `endpoints` | array of [PolicyEndpoint](#policyendpoint) | Yes | — | Allowed destinations and optional application-protocol restrictions, in OpenShell's endpoint shape. |
+
 ## HardwareProfile
 
 GPU-family contracts, not model or whole-system qualifications. System profiles fix ARM64; GPU profiles require architecture. Each currently requires one visible GPU.
@@ -701,6 +716,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
+| `grants` | map of [Grant](#grant) | No | — | Named grants added to the isolated preset, each like an OpenShell network policy rule without its name. An explicit policy holds its own grants. |
 | `policy` | [ExplicitPolicySelection](#explicitpolicyselection) | No | — | Complete authored OpenShell policy, replacing the isolated preset. |
 | `tier` | string | No | `"isolated"` | Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated. Constraints: `""` or `"isolated"`. Omitted or empty selects isolated only without policy.explicit. |
 
@@ -786,6 +802,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[]`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[]`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -800,6 +817,10 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].tool`
+- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.tool`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].tool`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.params.{key}`
@@ -817,6 +838,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.binaries[]`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.binaries[]`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -831,6 +853,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.endpoints[]`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[]`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -876,6 +899,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.endpoints[].json_rpc`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].json_rpc`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -904,6 +928,8 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[]`
+- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[]`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow`
 
@@ -922,6 +948,7 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.endpoints[].mcp`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].mcp`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -970,6 +997,10 @@ Guide: [Sandbox policy](../sandbox-network.md).
 
 Paths:
 
+- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].tool`
+- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.tool`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].tool`
 - `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.params.{key}`

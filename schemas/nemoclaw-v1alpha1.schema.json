@@ -774,6 +774,30 @@
         }
       ]
     },
+    "Grant": {
+      "additionalProperties": false,
+      "description": "Endpoint grants added to the isolated preset, restricted to executables.",
+      "properties": {
+        "binaries": {
+          "description": "Executables allowed to use the endpoints. Omitted or empty selects the harness's executables.",
+          "items": {
+            "$ref": "#/$defs/PolicyBinary"
+          },
+          "type": "array"
+        },
+        "endpoints": {
+          "description": "Allowed destinations and optional application-protocol restrictions, in OpenShell's endpoint shape.",
+          "items": {
+            "$ref": "#/$defs/PolicyEndpoint"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "endpoints"
+      ],
+      "type": "object"
+    },
     "HardwareProfile": {
       "description": "GPU-family contracts, not model or whole-system qualifications. System profiles fix ARM64; GPU profiles require architecture. Each currently requires one visible GPU.",
       "enum": [
@@ -1583,6 +1607,13 @@
         ]
       },
       "properties": {
+        "grants": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Grant"
+          },
+          "description": "Named grants added to the isolated preset, each like an OpenShell network policy rule without its name. An explicit policy holds its own grants.",
+          "type": "object"
+        },
         "policy": {
           "$ref": "#/$defs/ExplicitPolicySelection",
           "description": "Complete authored OpenShell policy, replacing the isolated preset."

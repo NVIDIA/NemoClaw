@@ -16,6 +16,28 @@ Omitting `network`, or declaring `tier: isolated`, selects the image's advertise
 NemoClaw adds the declared inference and search endpoint grants without granting general egress.
 Those managed grants use only the selected adapter's executable paths resolved during image assembly.
 
+To grant a few more endpoints without restating the preset, add named `grants` to it:
+
+```yaml
+network:
+  tier: isolated
+  grants:
+    documentation:
+      endpoints:
+        - host: docs.example.com
+          port: 443
+          protocol: rest
+          enforcement: enforce
+          rules:
+            - allow:
+                method: GET
+                path: /docs/**
+```
+
+Each grant takes `endpoints` in the same shape as an explicit policy rule, including MCP method and tool rules.
+Its optional `binaries` default to the harness's executables, like the managed inference and search grants.
+Grant names can't reuse a managed grant's name, and an explicit policy can't take `grants`, since it already lists every rule.
+
 An explicit policy replaces the entire preset.
 Omit `tier` when declaring `policy.explicit`; combining a nonempty tier with an explicit policy is rejected.
 Omitted fields inside an explicit policy follow OpenShell defaults, so copy the filesystem and process settings you intend to retain.

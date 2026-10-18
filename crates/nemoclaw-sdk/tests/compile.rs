@@ -523,3 +523,46 @@ fn sandboxes_pass_driver_configuration_through() {
         doc
     );
 }
+
+#[test]
+fn isolated_sandboxes_take_extra_network_grants() {
+    let generations: nemoclaw_sdk::compile::Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let mut value: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+    let grant = serde_json::json!({"endpoints": [{
+        "host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce",
+        "rules": [{"allow": {"method": "GET", "path": "/**"}}]
+    }]});
+    value["spec"]["sandboxes"][0]["network"] =
+        serde_json::json!({"tier": "isolated", "grants": {"docs": grant}});
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
+        .expect("grants must parse");
+    assert_eq!(
+        nemoclaw_sdk::config::Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
+        doc
+    );
+    let rows = nemoclaw_sdk::compile::targets(&doc, &generations).unwrap();
+    let sandbox = rows.iter().find(|r| r.kind == "sandbox").unwrap();
+    let input: serde_json::Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
+    // The grant joins the managed rules, on top of the isolated preset, and
+    // without executables it takes the harness's.
+    assert!(input["explicit"].is_null(), "{input}");
+    let rules: Vec<_> = input["managed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|rule| rule["name"] == "docs")
+        .collect();
+    assert_eq!(rules.len(), 1, "{input}");
+    assert_eq!(rules[0]["endpoints"][0]["host"], "docs.example.com");
+    assert_eq!(rules[0]["binaries"], serde_json::json!([]));
+
+    // An explicit policy already holds every grant.
+    value["spec"]["sandboxes"][0]["network"] = serde_json::json!({
+        "policy": {"explicit": {"version": 1}},
+        "grants": {"docs": grant}
+    });
+    assert!(nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).is_err());
+}

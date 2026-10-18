@@ -67,6 +67,21 @@ pub fn policy_input(
             .map_err(|_| ConfigError::new("cannot represent inference policy"))?;
         managed.extend(policy.network_policies);
     }
+    for (name, grant) in &sandbox.network.grants {
+        if managed.contains_key(name) {
+            return Err(ConfigError::new(
+                "a network grant name is reserved for inference or web search",
+            ));
+        }
+        managed.insert(
+            name.clone(),
+            crate::config::PolicyRule {
+                name: name.clone(),
+                endpoints: grant.endpoints.clone(),
+                binaries: grant.binaries.clone(),
+            },
+        );
+    }
     if explicit.as_ref().is_some_and(|policy| {
         managed
             .keys()
