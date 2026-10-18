@@ -573,7 +573,15 @@ fn live_docker_loads_prebuilt_images_under_its_own_names_instead_of_building() {
         String::from_utf8_lossy(&output.stderr)
     );
     let log = fixture.docker_log();
-    assert!(!log.contains("buildx"), "{log}");
+    // The only build is the derived reference image: one layer on the loaded
+    // reference image, not an agent build.
+    let builds: Vec<_> = log.lines().filter(|line| line.contains("buildx")).collect();
+    assert!(
+        builds.len() == 1
+            && builds[0].starts_with("buildx build --builder default")
+            && builds[0].contains(":dummy-derived"),
+        "{log}"
+    );
     let loaded = fs::read_to_string(fixture.0.path().join("docker.stdin")).unwrap();
     assert_eq!(loaded, "prebuilt images\n");
     for image in ["pi", "dummy", "proxy-a", "proxy-b"] {

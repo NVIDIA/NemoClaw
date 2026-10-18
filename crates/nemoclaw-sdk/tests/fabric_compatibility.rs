@@ -70,7 +70,9 @@ fn public_fabric_configuration_passes_through_without_overriding_deployment_bind
 }
 
 #[test]
-fn different_fabric_revision_is_unverified_even_when_the_configuration_is_valid() {
+fn a_different_fabric_revision_is_left_to_fabric() {
+    // The image's own Fabric reports an incompatible runtime when the agent
+    // starts; NemoClaw doesn't compare revisions.
     use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, Support, assess_fabric};
     let mut catalog = catalog();
     catalog.fabric_revision = "0".repeat(40);
@@ -81,7 +83,13 @@ fn different_fabric_revision_is_unverified_even_when_the_configuration_is_valid(
             filesystem_read: None,
         },
     );
-    assert_eq!(report.status, Support::Unknown);
+    assert_eq!(report.status, Support::Supported, "{report:?}");
+    assert!(
+        report
+            .checks
+            .iter()
+            .all(|check| check.requirement != "fabric_contract")
+    );
 }
 
 #[test]
